@@ -36,15 +36,15 @@ authority.
 
 ## Capacity and account
 
-`agents.piastra.max_parallel` is one. On the configured host, the independently
-logged-in Pi account was compared with the existing Codex account on
-2026-09-23 and matched. Consequently `providers.pi_astra.account` is `codex1`:
-Pi and that Codex lane share its existing account cap of two. Fleet capacity
-is unchanged. Verify the account mapping when installing on another host or
-changing the login; a different client name does not establish another account.
-On 2026-09-26 the Pi directory was found logged in to the Codex2 account, whose
-usage limit was exhausted; re-login with the Codex1 account restores the
-mapping above.
+`agents.piastra.max_parallel` is one. The account id names the upstream
+ChatGPT account, not the client: lanes logged in to the same account must
+share one id and one cap. Since 2026-09-29 the operator logs `~/.codex`,
+`~/.codex2` and the Pi agent directory in to one ChatGPT account, so every
+Codex lane and `providers.pi_astra` use account `codex1`, capped at four
+concurrent workers in `ready_dispatcher.max_concurrent_per_account`. Account
+ids do not affect reviewer eligibility; Codex and Codex2 still review each
+other. Compare the logged-in account ids again whenever a login changes, and
+split the account id only when the logins really differ.
 
 ## Dispatch routing
 
