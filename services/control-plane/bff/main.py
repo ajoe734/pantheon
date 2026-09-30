@@ -2871,40 +2871,16 @@ def _dataset_surface_status(
 ) -> Dict[str, Any]:
     resolved_store = read_store if read_store is not None else globals().get("read_store")
     if source is None:
-        store_source = None
-        if resolved_store is not None and hasattr(resolved_store, "dataset_source"):
-            try:
-                store_source = str(resolved_store.dataset_source(dataset) or "missing")
-            except Exception:
-                store_source = "missing"
+        src = getattr(resolved_store, "dataset_source", lambda d: "missing")(dataset) if resolved_store else "missing"
         if dataset == "incidents":
-            inc_port = getattr(getattr(resolved_store, "lifecycle_telemetry_governance", None), "incidents", None) or getattr(resolved_store, "incident_port", None) or getattr(resolved_store, "incidents", None)
-            if store_source == "missing":
-                source = "missing"
-            elif inc_port is not None and hasattr(inc_port, "dataset_source"):
-                port_source = str(inc_port.dataset_source() or "missing")
-                if port_source == "unavailable" or getattr(inc_port, "_last_error", False):
-                    source = "unavailable"
-                elif store_source in (None, "typed_store"):
-                    source = port_source
-                else:
-                    source = store_source
-            else:
-                source = store_source or "missing"
+            p = getattr(getattr(resolved_store, "lifecycle_telemetry_governance", None), "incidents", None) or getattr(resolved_store, "incident_port", None) or getattr(resolved_store, "incidents", None)
+            psrc = getattr(p, "dataset_source", lambda: "missing")() if p else "missing"
+            source = "unavailable" if (psrc == "unavailable" or getattr(p, "_last_error", False)) else (psrc if src in (None, "typed_store") else src)
         else:
-            source = store_source or "missing"
-    res = _format_dataset_surface_status(
-        dataset,
-        snapshot_at=snapshot_at,
-        has_data=has_data,
-        missing_message=missing_message,
-        source=source,
-        utc_now=utc_now,
-        **kwargs,
-    )
+            source = str(src or "missing")
+    res = _format_dataset_surface_status(dataset, snapshot_at=snapshot_at, has_data=has_data, missing_message=missing_message, source=source, utc_now=utc_now, **kwargs)
     if source in ("unavailable", "missing"):
-        res["status"] = "unavailable"
-        res["source"] = source
+        res.update(status="unavailable", source=source)
     return res
 def _loop_run_surface_status(
     available: bool,
@@ -7011,18 +6987,13 @@ def _gov_bff_action_command(
         from .command_adapters.base import ActionUnavailableError
         try:
             inc_id = entity_id if command_type == CommandType.INCIDENT_ACTION else (str(payload.get("incident_id") or ("" if not entity_id.startswith("alert-incident-") else entity_id[15:])))
-            domain_res = dispatch_domain_command(
-                command_id=command_id,
-                command_type=command_type,
-                params={"entity_type": entity_type.value, "entity_id": entity_id, "action_id": action_id, **({"alert_id": entity_id} if command_type == CommandType.RISK_ALERT_ACTION else {}), **({"incident_id": inc_id} if inc_id else {}), **payload},
-            )
+            domain_res = dispatch_domain_command(command_id=command_id, command_type=command_type, params={"entity_type": entity_type.value, "entity_id": entity_id, "action_id": action_id, **({"alert_id": entity_id} if command_type == CommandType.RISK_ALERT_ACTION else {}), **({"incident_id": inc_id} if inc_id else {}), **payload})
             exec_status = CommandStatus.EXECUTED
         except ActionUnavailableError as exc:
             raise _bff_error(422, ErrorCode.OPERATION_NOT_ALLOWED, "Action unavailable", str(exc), precondition_failed="durable_owner_unavailable") from exc
         except urllib_error.HTTPError as exc:
-            if exc.code == 404:
-                raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Incident not found", str(exc)) from exc
-            raise _bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Incident service unavailable", str(exc), precondition_failed="downstream_unavailable") from exc
+            c, e = (404, ErrorCode.RESOURCE_NOT_FOUND) if exc.code == 404 else (503, ErrorCode.DEPENDENCY_UNAVAILABLE)
+            raise _bff_error(c, e, "Incident not found" if c == 404 else "Incident service unavailable", str(exc), **({"precondition_failed": "downstream_unavailable"} if c == 503 else {})) from exc
         except (urllib_error.URLError, TimeoutError, ConnectionError, OSError) as exc:
             raise _bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Incident service unavailable", str(exc), precondition_failed="downstream_unavailable") from exc
 

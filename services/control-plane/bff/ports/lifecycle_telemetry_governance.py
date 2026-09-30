@@ -339,30 +339,23 @@ class DomainIncidentPort:
             self._last_error = True
             return None
 
-    def _http_err(self, exc: urllib.error.HTTPError, nf_msg: str) -> None:
+    def _err(self, exc: Any, nf_msg: str = "") -> None:
+        self._last_error = True
         from fastapi import HTTPException
-        if exc.code == 404:
+        if isinstance(exc, urllib.error.HTTPError) and exc.code == 404:
             raise HTTPException(status_code=404, detail={"error": {"code": "RESOURCE_NOT_FOUND", "message": nf_msg, "status_code": 404}}) from exc
-        self._last_error = True
-        raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": f"Incident service returned HTTP {exc.code}", "status_code": 503}}) from exc
-
-    def _conn_err(self, exc: Any) -> None:
-        self._last_error = True
-        from fastapi import HTTPException
-        raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": f"Incident service unavailable: {exc}", "status_code": 503}}) from (exc if isinstance(exc, BaseException) else None)
+        code = getattr(exc, "code", 503) if isinstance(exc, urllib.error.HTTPError) else 503
+        msg = f"Incident service returned HTTP {code}" if isinstance(exc, urllib.error.HTTPError) else f"Incident service unavailable: {exc}"
+        raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": msg, "status_code": 503}}) from (exc if isinstance(exc, BaseException) else None)
 
     def create_incident(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if self._incidents is not None:
             self._incidents[str(payload.get("incident_id") or payload.get("id") or "")] = payload
             return payload
-        if not self._incidents_api_url:
-            self._conn_err("PANTHEON_INCIDENTS_API_URL unconfigured")
         try:
             return self._http_json("/api/incidents", method="POST", payload=payload)
-        except urllib.error.HTTPError as exc:
-            self._http_err(exc, "Incident endpoint not found")
         except Exception as exc:
-            self._conn_err(exc)
+            self._err(exc, "Incident endpoint not found")
 
     def update_incident_status(
         self,
@@ -375,14 +368,10 @@ class DomainIncidentPort:
             inc = self._incidents.setdefault(cid, {"incident_id": cid})
             inc.update(body)
             return inc
-        if not self._incidents_api_url:
-            self._conn_err("PANTHEON_INCIDENTS_API_URL unconfigured")
         try:
             return self._http_json(f"/api/incidents/{urllib.parse.quote(cid, safe='')}/status", method="POST", payload=body)
-        except urllib.error.HTTPError as exc:
-            self._http_err(exc, f"Incident {cid!r} does not exist")
         except Exception as exc:
-            self._conn_err(exc)
+            self._err(exc, f"Incident {cid!r} does not exist")
 
     def list_postmortems(self, time_range: Optional[str] = None) -> List[Dict[str, Any]]:
         return list(self._postmortems.values())
@@ -1277,18 +1266,10 @@ class CompositeLifecycleTelemetryGovernancePort:
         return self.incidents.get_rollbacks_by_incident(incident_id)
 
     def create_incident(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        fn = getattr(self.incidents, "create_incident", None)
-        if fn is None:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": "Incident create delegate unavailable", "status_code": 503}})
-        return fn(payload)
+        return getattr(self.incidents, "create_incident")(payload)
 
     def update_incident_status(self, incident_id: str, status: str, resolved_at: Optional[str] = None) -> Dict[str, Any]:
-        fn = getattr(self.incidents, "update_incident_status", None)
-        if fn is None:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": "Incident status update delegate unavailable", "status_code": 503}})
-        return fn(incident_id, status=status, resolved_at=resolved_at)
+        return getattr(self.incidents, "update_incident_status")(incident_id, status=status, resolved_at=resolved_at)
 
     def dataset_source(self, dataset: str = "incidents") -> str:
         return getattr(self.incidents, "dataset_source", lambda: "typed_store")() if dataset == "incidents" else "typed_store"
