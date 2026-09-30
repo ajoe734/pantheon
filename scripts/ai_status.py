@@ -3334,6 +3334,10 @@ def _delivered_commit_timestamp(
 ) -> str:
     """Return the ISO timestamp the delivered content was actually authored at.
 
+    This is the author date: a rebase or `git commit --amend` rewrites the
+    committer date to the rewrite time, so a branch rebased onto dev after a
+    reassignment would otherwise look authored after that reassignment.
+
     A squash merge creates a brand-new commit object with a fresh
     author/committer date stamped at merge time, while copying the
     original commit's message -- including any LLM-Agent/Reviewer trailer
@@ -3356,7 +3360,7 @@ def _delivered_commit_timestamp(
     selected_ref = str(commit_ref or "").strip()
     if selected_ref:
         return run_git_command(
-            ["show", "-s", "--format=%cI", selected_ref],
+            ["show", "-s", "--format=%aI", selected_ref],
             cwd=repository_root,
             failure_message=(
                 "Cannot finalize task: delivered commit timestamp is "
@@ -3387,7 +3391,7 @@ def _delivered_commit_timestamp(
             )
         if reachable:
             return run_git_command(
-                ["show", "-s", "--format=%cI", reviewed_head],
+                ["show", "-s", "--format=%aI", reviewed_head],
                 cwd=repository_root,
                 failure_message=(
                     "Cannot finalize task: delivered commit timestamp is "
@@ -3395,7 +3399,7 @@ def _delivered_commit_timestamp(
                 ),
             )
     return run_git_command(
-        ["show", "-s", "--format=%cI", "HEAD"],
+        ["show", "-s", "--format=%aI", "HEAD"],
         cwd=repository_root,
         failure_message=(
             "Cannot finalize task: delivered commit timestamp is "

@@ -10102,7 +10102,7 @@ class SupervisorReassignmentEventIdCompatibilityTests(unittest.TestCase):
                 ),
                 ("show", "-s", "--format=%an", "HEAD"): "Antigravity",
                 ("show", "-s", "--format=%ae", "HEAD"): "agent@example.com",
-                ("show", "-s", "--format=%cI", "HEAD"): (
+                ("show", "-s", "--format=%aI", "HEAD"): (
                     "2026-08-20T13:33:53+00:00"
                 ),
                 ("status", "--porcelain"): "",
@@ -10536,7 +10536,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 ),
                 ("show", "-s", "--format=%an", "HEAD"): "Codex2",
                 ("show", "-s", "--format=%ae", "HEAD"): "codex2@example.com",
-                ("show", "-s", "--format=%cI", "HEAD"): "2026-07-31T16:20:00+00:00",
+                ("show", "-s", "--format=%aI", "HEAD"): "2026-07-31T16:20:00+00:00",
                 ("status", "--porcelain"): "",
                 ("remote",): "",
             }
@@ -10778,7 +10778,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 ),
                 ("show", "-s", "--format=%an", "HEAD"): llm_agent,
                 ("show", "-s", "--format=%ae", "HEAD"): "worker@example.com",
-                ("show", "-s", "--format=%cI", "HEAD"): commit_timestamp,
+                ("show", "-s", "--format=%aI", "HEAD"): commit_timestamp,
                 ("status", "--porcelain"): "",
                 ("remote",): "",
             }
@@ -12209,9 +12209,9 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 ("show", "-s", "--format=%ae", "HEAD"): "worker@example.com",
                 # HEAD's own (post-squash) timestamp -- must NOT be what
                 # decides the ordering check, or this reproduces the bug.
-                ("show", "-s", "--format=%cI", "HEAD"): "2026-08-19T06:48:00+00:00",
+                ("show", "-s", "--format=%aI", "HEAD"): "2026-08-19T06:48:00+00:00",
                 # The exact reviewed head's true authoring timestamp.
-                ("show", "-s", "--format=%cI", reviewed_head): "2026-08-18T15:30:12+00:00",
+                ("show", "-s", "--format=%aI", reviewed_head): "2026-08-18T15:30:12+00:00",
                 ("status", "--porcelain"): "",
                 ("remote",): "",
             }
@@ -12258,7 +12258,7 @@ class DeliveredCommitTimestampTests(unittest.TestCase):
             result = ai_status._delivered_commit_timestamp(Path("/repo"), task)
         self.assertEqual(result, "2026-08-18T15:30:12+00:00")
         run_git.assert_called_once_with(
-            ["show", "-s", "--format=%cI", reviewed_head],
+            ["show", "-s", "--format=%aI", reviewed_head],
             cwd=Path("/repo"),
             failure_message=mock.ANY,
         )
@@ -12298,7 +12298,7 @@ class DeliveredCommitTimestampTests(unittest.TestCase):
             result = ai_status._delivered_commit_timestamp(Path("/repo"), task)
         self.assertEqual(result, "2026-08-19T06:48:00+00:00")
         run_git.assert_called_once_with(
-            ["show", "-s", "--format=%cI", "HEAD"],
+            ["show", "-s", "--format=%aI", "HEAD"],
             cwd=Path("/repo"),
             failure_message=mock.ANY,
         )
@@ -12316,7 +12316,7 @@ class DeliveredCommitTimestampTests(unittest.TestCase):
         self.assertEqual(result, "2026-08-19T06:48:00+00:00")
         succeeds.assert_not_called()
         run_git.assert_called_once_with(
-            ["show", "-s", "--format=%cI", "HEAD"],
+            ["show", "-s", "--format=%aI", "HEAD"],
             cwd=Path("/repo"),
             failure_message=mock.ANY,
         )
@@ -12334,6 +12334,30 @@ class DeliveredCommitTimestampTests(unittest.TestCase):
             result = ai_status._delivered_commit_timestamp(Path("/repo"), task)
         self.assertEqual(result, "2026-08-19T06:48:00+00:00")
         succeeds.assert_not_called()
+
+    def test_uses_author_date_that_survives_a_rebase(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            env = {
+                **os.environ,
+                "GIT_AUTHOR_NAME": "Test",
+                "GIT_AUTHOR_EMAIL": "test@example.invalid",
+                "GIT_COMMITTER_NAME": "Test",
+                "GIT_COMMITTER_EMAIL": "test@example.invalid",
+                "GIT_AUTHOR_DATE": "2026-09-30T14:33:05+00:00",
+                "GIT_COMMITTER_DATE": "2026-09-30T15:05:04+00:00",
+            }
+            subprocess.run(["git", "init", "-q", str(repo)], check=True, env=env)
+            subprocess.run(
+                ["git", "commit", "-q", "--allow-empty", "-m", "rebased"],
+                cwd=repo,
+                check=True,
+                env=env,
+            )
+            result = ai_status._delivered_commit_timestamp(
+                repo, {}, commit_ref="HEAD"
+            )
+        self.assertEqual(result, "2026-09-30T14:33:05+00:00")
 
 
 class ArchiveWorkflowTests(unittest.TestCase):
