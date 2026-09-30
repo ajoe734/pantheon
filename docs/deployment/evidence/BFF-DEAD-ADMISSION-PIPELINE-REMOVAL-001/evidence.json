@@ -5,370 +5,259 @@
   {
    "symbol": "_command_runtime_auth_context",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    620,
-    640
-   ],
+   "lines": [620, 640],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_foundation_request_payload",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    641,
-    658
-   ],
+   "lines": [641, 658],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_foundation_idempotency_payload",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    659,
-    671
-   ],
+   "lines": [659, 671],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_foundation_route_metadata",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    672,
-    676
-   ],
+   "lines": [672, 676],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_build_foundation_command_context",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    705,
-    787
-   ],
+   "lines": [705, 787],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_extract_error_fields",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    800,
-    826
-   ],
+   "lines": [800, 826],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_foundation_bff_error",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    827,
-    930
-   ],
+   "lines": [827, 930],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_foundation_idempotency_conflict_error",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    931,
-    977
-   ],
+   "lines": [931, 977],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_ensure_live_broker_scope_allowed",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    1292,
-    1308
-   ],
+   "lines": [1292, 1308],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_validate_drawer_runtime_target",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    1315,
-    1331
-   ],
+   "lines": [1315, 1331],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_validate_audit_context",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    1332,
-    1340
-   ],
+   "lines": [1332, 1340],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_reject_server_managed_rebalance_evidence_command",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    1616,
-    1632
-   ],
+   "lines": [1616, 1632],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_require_final_command_confirm_token",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    1859,
-    1930
-   ],
+   "lines": [1859, 1930],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_require_final_command_preconditions",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    1931,
-    2080
-   ],
+   "lines": [1931, 2080],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_validate_final_command_target_type",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    2092,
-    2103
-   ],
+   "lines": [2092, 2103],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_validate_capital_authority_target_binding",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    2104,
-    2136
-   ],
+   "lines": [2104, 2136],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_validate_paper_runtime_authority_target_binding",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    2137,
-    2179
-   ],
+   "lines": [2137, 2179],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_canonicalize_validated_precondition_evidence",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    2180,
-    2201
-   ],
+   "lines": [2180, 2201],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_normalize_human_gate_command",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    2408,
-    2452
-   ],
+   "lines": [2408, 2452],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_normalize_quarterly_recommendation_command",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    2453,
-    2499
-   ],
+   "lines": [2453, 2499],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_normalize_b5_command_payload",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    2500,
-    2503
-   ],
+   "lines": [2500, 2503],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_normalize_operator_command_payload",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    2504,
-    2615
-   ],
+   "lines": [2504, 2615],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_assert_duplicate_confirm_token_matches",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    2629,
-    2664
-   ],
+   "lines": [2629, 2664],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_persist_admitted_command_with_confirm_token",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    2665,
-    2710
-   ],
+   "lines": [2665, 2710],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_sem_session_state",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    2793,
-    2794
-   ],
+   "lines": [2793, 2794],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_ppl_alloc_009_paper_rebalance_authority",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    5026,
-    5140
-   ],
+   "lines": [5026, 5140],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_deployment_url",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    5451,
-    5455
-   ],
+   "lines": [5451, 5455],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_current_read_store_for_legacy_incident_seam",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    6888,
-    6889
-   ],
+   "lines": [6888, 6889],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_bff_incident_service",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    6890,
-    6898
-   ],
+   "lines": [6890, 6898],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_list_bff_incidents",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    6899,
-    6907
-   ],
+   "lines": [6899, 6907],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_get_bff_incident",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    6908,
-    6909
-   ],
+   "lines": [6908, 6909],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_sem_command_payload_from_record",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    7041,
-    7081
-   ],
+   "lines": [7041, 7081],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_sem_command_dry_run_payload",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    7082,
-    7123
-   ],
+   "lines": [7082, 7123],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_scoped_idempotency_cache_key",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    7124,
-    7125
-   ],
+   "lines": [7124, 7125],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_confirm_token_records",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    7153,
-    7160
-   ],
+   "lines": [7153, 7160],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_confirm_token_expiry_from_record",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    7161,
-    7178
-   ],
+   "lines": [7161, 7178],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   },
   {
    "symbol": "_confirm_token_lifecycle_payload",
    "file": "services/control-plane/bff/main.py",
-   "lines": [
-    7196,
-    7246
-   ],
+   "lines": [7196, 7246],
    "ast_scan_external_refs": 0,
    "grep_refs_outside_main_py_at_HEAD": 0
   }
