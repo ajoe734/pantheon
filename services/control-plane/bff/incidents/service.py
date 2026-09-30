@@ -514,7 +514,7 @@ class IncidentService:
         store_src = getattr(store, "dataset_source", lambda ds: "typed_store")(dataset) if store else "typed_store"
         if store_src == "missing":
             src = "missing"
-        elif getattr(inc_port, "_last_error", False):
+        elif dataset == "incidents" and getattr(inc_port, "_last_error", False):
             src = "unavailable"
         elif dataset == "incidents" and store_src in ("typed_store", None) and inc_port is not None and hasattr(inc_port, "dataset_source"):
             src = inc_port.dataset_source()

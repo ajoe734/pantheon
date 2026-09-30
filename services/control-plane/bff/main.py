@@ -7019,6 +7019,12 @@ def _gov_bff_action_command(
             exec_status = CommandStatus.EXECUTED
         except ActionUnavailableError as exc:
             raise _bff_error(422, ErrorCode.OPERATION_NOT_ALLOWED, "Action unavailable", str(exc), precondition_failed="durable_owner_unavailable") from exc
+        except urllib_error.HTTPError as exc:
+            if exc.code == 404:
+                raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Incident not found", str(exc)) from exc
+            raise _bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Incident service unavailable", str(exc), precondition_failed="downstream_unavailable") from exc
+        except (urllib_error.URLError, TimeoutError, ConnectionError, OSError) as exc:
+            raise _bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Incident service unavailable", str(exc), precondition_failed="downstream_unavailable") from exc
 
     command_store.submit_command(command_id=command_id, command_type=command_type, target=target, submitted_at=submitted_at, params={"action_id": action_id, **payload}, audit_context=audit_record, foundation_context=foundation_ctx)
     if exec_status == CommandStatus.EXECUTED:

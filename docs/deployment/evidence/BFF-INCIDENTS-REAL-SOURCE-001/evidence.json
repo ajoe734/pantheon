@@ -15,9 +15,9 @@
   },
   "verification": {
     "test_command": "python3 -m pytest services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/tests/test_bff_alerts_acknowledge.py services/control-plane/bff/tests/test_console_data_incidents_reviews.py services/control-plane/bff/test_read_store_incident.py services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py services/control-plane/bff/test_pkt012_alerts_rail_contract.py services/control-plane/bff/tests/test_incidents_real_source.py",
-    "test_results": "41 passed, 3 warnings in 38.07s",
+    "test_results": "46 passed, 3 warnings in 29.30s (and reviewer probe 5/5 passed, test_bff_test_architecture AST scan passed)",
     "diff_budget_command": "python3 scripts/git/diff_budget.py --base 41774a87f7ae857bb9fc7b97559f0b3bbb72c657 --change-class corrective",
-    "diff_budget_result": "production +407/-464 = net -57 lines (<= 0 budget satisfied)"
+    "diff_budget_result": "production +525/-542 = net -17 lines (<= 0 budget satisfied)"
   },
   "touched_files": [
     "services/control-plane/bff/command_adapters/incident_adapter.py",

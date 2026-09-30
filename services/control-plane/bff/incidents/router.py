@@ -772,8 +772,8 @@ def create_incident_router(
             pass
         clean_id = incident_id.strip()
         snapshot_at = _utc_now()
-        surface = _service.get_surface_status("incidents", snapshot_at=snapshot_at)
         incident = _get_bff_inc(clean_id)
+        surface = _service.get_surface_status("incidents", snapshot_at=snapshot_at)
         if not incident:
             _raise_unavailable(surface, label="Incident")
             raise _err(
@@ -1150,12 +1150,10 @@ def create_incident_router(
         }
 
     # -------------------------------------------------------------------------
-    # Route 23-27: Generic Incident & Alert Command Handlers
+    # Route 23, 25, 27: Status Incident & Alert Command Handlers
     # -------------------------------------------------------------------------
     @router.post("/bff/alerts/{id}/escalate-incident", status_code=200)
-    @router.post("/bff/incidents/{id}/append-postmortem", status_code=200)
     @router.post("/bff/incidents/{id}/resolve", status_code=200)
-    @router.post("/bff/incidents/{id}/rollback-deployment", status_code=200)
     @router.post("/bff/incidents/{id}/start-mitigation", status_code=200)
     async def sem_final_generic_id_command_alias(
         id: str,
@@ -1247,6 +1245,67 @@ def create_incident_router(
                 },
                 "meta": {"snapshot_at": snapshot_at, "idempotency_key": resolved_key},
             },
+        )
+
+    # -------------------------------------------------------------------------
+    # Route 24, 26: Non-status incident actions (fail unavailable without mutating incident status)
+    # -------------------------------------------------------------------------
+    @router.post("/bff/incidents/{id}/append-postmortem", status_code=200)
+    @router.post("/bff/incidents/{id}/rollback-deployment", status_code=200)
+    async def bff_incident_non_status_action(
+        id: str,
+        request: Request,
+        payload: Dict[str, Any] = Body(default_factory=dict),
+        authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
+    ):
+        """BFF: non-status incident actions fail unavailable without mutating incident status."""
+        identity = _extract_ident(authorization)
+        _require_operator(identity)
+        snapshot_at = _utc_now()
+        is_dry_run = request_dry_run_requested(x_dry_run) if request_dry_run_requested else bool(x_dry_run and x_dry_run.strip().lower() in ("1", "true", "yes"))
+        resolved_key = _resolve_key(idempotency_key, x_idempotency_key)
+        route_path = str(getattr(request.scope.get("route"), "path", "") or request.url.path)
+
+        if is_dry_run:
+            if dry_run_success_response is not None:
+                return dry_run_success_response(
+                    {
+                        "id": id,
+                        "status": "preview",
+                        "route": route_path,
+                        "params": jsonable_encoder(payload or {}),
+                        "submitted_by": getattr(identity, "operator_id", "operator"),
+                    },
+                    snapshot_at=snapshot_at,
+                    idempotency_key=resolved_key,
+                    evidence_kind="generic_id_command.preview",
+                )
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "preview",
+                    "preview": True,
+                    "data": {
+                        "id": id,
+                        "status": "preview",
+                        "route": route_path,
+                        "params": payload,
+                    },
+                    "meta": {"snapshot_at": snapshot_at, "idempotency_key": resolved_key},
+                },
+            )
+
+        action_name = "append-postmortem" if "append-postmortem" in route_path else "rollback-deployment"
+        raise _err(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            f"Incident {action_name} unavailable",
+            f"Action {action_name!r} has no durable owner; action is unavailable.",
+            precondition_failed="durable_owner_unavailable",
+            suggestion="Use the dedicated postmortem or deployment service endpoints.",
         )
 
     return router

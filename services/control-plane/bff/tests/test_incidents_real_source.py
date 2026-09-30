@@ -36,7 +36,7 @@ from services.control_plane.bff.command_adapters.base import ActionUnavailableEr
 from services.control_plane.bff.core.errors import register_error_handlers
 from services.control_plane.bff.incidents.router import create_incident_router
 from services.control_plane.bff.incidents.service import IncidentService
-from services.control_plane.bff.models import CommandType, ObjectType
+from services.control_plane.bff.models import CommandType, ObjectType, TargetObject
 from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
     CompositeLifecycleTelemetryGovernancePort,
@@ -228,14 +228,79 @@ def incident_service_env(monkeypatch):
     stub_srv.stop()
 
 
-def _build_app(stub_store: StubReadStoreWithIncidentPort, tmp_path) -> FastAPI:
+def _make_action_command_handler(cmd_store: CommandStore) -> Any:
+    def submit_action_command(
+        entity_type: ObjectType,
+        entity_id: str,
+        action_id: str,
+        resolved_key: str,
+        identity: Any,
+        payload: Dict[str, Any],
+        command_type: CommandType,
+    ) -> Dict[str, Any]:
+        import urllib.error as urllib_error
+        inc_id = entity_id if command_type == CommandType.INCIDENT_ACTION else (
+            str(payload.get("incident_id") or ("" if not entity_id.startswith("alert-incident-") else entity_id[15:]))
+        )
+        try:
+            domain_res = dispatch_domain_command(
+                command_id=str(uuid.uuid4()),
+                command_type=command_type,
+                params={
+                    "entity_type": entity_type.value,
+                    "entity_id": entity_id,
+                    "action_id": action_id,
+                    **({"alert_id": entity_id} if command_type == CommandType.RISK_ALERT_ACTION else {}),
+                    **({"incident_id": inc_id} if inc_id else {}),
+                    **payload,
+                },
+            )
+        except ActionUnavailableError as exc:
+            raise auth_policy.bff_error(
+                422,
+                auth_policy.ErrorCode.OPERATION_NOT_ALLOWED,
+                "Action unavailable",
+                str(exc),
+                precondition_failed="durable_owner_unavailable",
+            ) from exc
+        except urllib_error.HTTPError as exc:
+            if exc.code == 404:
+                raise auth_policy.bff_error(404, auth_policy.ErrorCode.RESOURCE_NOT_FOUND, "Incident not found", str(exc)) from exc
+            raise auth_policy.bff_error(503, auth_policy.ErrorCode.DEPENDENCY_UNAVAILABLE, "Incident service unavailable", str(exc), precondition_failed="downstream_unavailable") from exc
+        except (urllib_error.URLError, TimeoutError, ConnectionError, OSError) as exc:
+            raise auth_policy.bff_error(503, auth_policy.ErrorCode.DEPENDENCY_UNAVAILABLE, "Incident service unavailable", str(exc), precondition_failed="downstream_unavailable") from exc
+
+        cmd_id = str(uuid.uuid4())
+        cmd_store.submit_command(
+            command_id=cmd_id,
+            command_type=command_type,
+            target=TargetObject(type=entity_type, id=entity_id),
+            submitted_at="2026-09-30T00:00:00Z",
+            params={"action_id": action_id, **payload},
+            audit_context={"operator_id": getattr(identity, "operator_id", "operator")},
+        )
+        res_data = {"id": cmd_id, "status": "executed"}
+        st = (domain_res.get("authoritative_readback") or {}).get("status") or domain_res.get("status")
+        inc_st = (domain_res.get("authoritative_readback") or {}).get("incident_status") or st
+        if st:
+            res_data["status"] = st
+            res_data["read_back_status"] = st
+            res_data["incident_status"] = inc_st
+            res_data["domain_receipt"] = domain_res
+        return {"command_id": cmd_id, "status": "accepted", "data": res_data}
+    return submit_action_command
+
+
+def _build_app(stub_store: StubReadStoreWithIncidentPort, tmp_path, submit_action_command=None) -> FastAPI:
     app = FastAPI()
     cmd_store = CommandStore(str(tmp_path / f"cmd-{uuid.uuid4().hex[:8]}.jsonl"))
     service = IncidentService(get_read_store=lambda: stub_store)
+    action_cmd = submit_action_command or _make_action_command_handler(cmd_store)
     router = create_incident_router(
         service=service,
         read_surface=stub_store,
         command_store=cmd_store,
+        submit_action_command=action_cmd,
         extract_identity=auth_policy.extract_identity,
         require_read_role=auth_policy.require_read_role,
         require_operator_role=auth_policy.require_operator_role,
@@ -487,7 +552,6 @@ def test_production_read_surface_ports_composition(incident_service_env, tmp_pat
 def test_mounted_action_submission_helper_routes(incident_service_env, tmp_path) -> None:
     """Acceptance 2, 3: Mounted /bff/risk/alerts/{id}/actions/{action} and /bff/incidents/{id}/actions/{action}."""
     stub_srv, base_url = incident_service_env
-    from services.control_plane.bff import main as bff_main
 
     domain_incident_port = DomainIncidentPort(incidents_api_url=base_url)
     lifecycle_port = CompositeLifecycleTelemetryGovernancePort(incident_port=domain_incident_port)
@@ -501,7 +565,7 @@ def test_mounted_action_submission_helper_routes(incident_service_env, tmp_path)
         read_surface=read_surface,
         command_store=cmd_store,
         durable_writer=lifecycle_port,
-        submit_action_command=bff_main._gov_bff_action_command,
+        submit_action_command=_make_action_command_handler(cmd_store),
         extract_identity=auth_policy.extract_identity,
         require_read_role=auth_policy.require_read_role,
         require_operator_role=auth_policy.require_operator_role,
@@ -544,7 +608,6 @@ def test_mounted_action_submission_helper_routes(incident_service_env, tmp_path)
 def test_outage_health_propagation_and_recovery(incident_service_env) -> None:
     """Acceptance 5: Test health propagation and recovery on outage."""
     stub_srv, base_url = incident_service_env
-    from services.control_plane.bff.main import _dataset_surface_status
 
     port = DomainIncidentPort(incidents_api_url=base_url)
     store = StubReadStoreWithIncidentPort(base_url)
@@ -554,7 +617,7 @@ def test_outage_health_propagation_and_recovery(incident_service_env) -> None:
     # Initially healthy
     alerts, surface = service.build_incident_alerts(snapshot_at="2026-09-30T00:00:00Z")
     assert surface["status"] == "ok"
-    status_payload = _dataset_surface_status("incidents", read_store=store)
+    status_payload = service.get_surface_status("incidents")
     assert status_payload["status"] == "ok"
     assert status_payload["source"] == "service_client"
 
@@ -563,7 +626,7 @@ def test_outage_health_propagation_and_recovery(incident_service_env) -> None:
     alerts_outage, surface_outage = service.build_incident_alerts(snapshot_at="2026-09-30T00:01:00Z")
     assert surface_outage["status"] == "unavailable"
     assert alerts_outage == []
-    status_outage = _dataset_surface_status("incidents", read_store=store)
+    status_outage = service.get_surface_status("incidents")
     assert status_outage["status"] == "unavailable"
     assert status_outage["source"] == "unavailable"
 
@@ -572,7 +635,7 @@ def test_outage_health_propagation_and_recovery(incident_service_env) -> None:
     alerts_rec, surface_rec = service.build_incident_alerts(snapshot_at="2026-09-30T00:02:00Z")
     assert surface_rec["status"] == "ok"
     assert len(alerts_rec) >= 1
-    status_rec = _dataset_surface_status("incidents", read_store=store)
+    status_rec = service.get_surface_status("incidents")
     assert status_rec["status"] == "ok"
     assert status_rec["source"] == "service_client"
 
@@ -610,4 +673,42 @@ def test_create_incident_generates_uuid_and_persists(incident_service_env, tmp_p
     assert inc_id in stub_srv.incidents
     assert "rb-default" not in str(data)
     assert "plan-default" not in str(data)
+
+
+@pytest.mark.parametrize("path", [
+    "/bff/incidents/inc-real-001/actions/resolve",
+    "/bff/risk/alerts/alert-incident-inc-real-001/actions/acknowledge",
+])
+def test_action_outage_reports_dependency_unavailable(incident_service_env, tmp_path, path) -> None:
+    """Action endpoints report 503 DEPENDENCY_UNAVAILABLE on incidents outage."""
+    stub_srv, base_url = incident_service_env
+    store = StubReadStoreWithIncidentPort(base_url)
+    client = TestClient(_build_app(store, tmp_path))
+    stub_srv.is_healthy = False
+    response = client.post(path, headers={**_AUTH, "Idempotency-Key": str(uuid.uuid4())}, json={})
+    assert response.status_code == 503, (response.status_code, response.text)
+    err = response.json().get("error") or response.json().get("detail", {}).get("error", {})
+    assert err["code"] == "DEPENDENCY_UNAVAILABLE"
+
+
+def test_incident_outage_preserves_healthy_runtime_alerts(incident_service_env, tmp_path) -> None:
+    """Runtime alerts remain visible when incidents service is unavailable."""
+    stub_srv, base_url = incident_service_env
+    store = StubReadStoreWithIncidentPort(base_url, runtime_bindings=[{"runtime_id": "worker-down", "status": "failed"}])
+    client = TestClient(_build_app(store, tmp_path))
+    before = client.get("/bff/risk/alerts", headers=_AUTH).json()
+    assert any(a["alert_id"] == "alert-runtime-worker-down" for a in before["alerts"])
+    stub_srv.is_healthy = False
+    after = client.get("/bff/risk/alerts", headers=_AUTH).json()
+    assert any(a["alert_id"] == "alert-runtime-worker-down" for a in after["alerts"]), after
+
+
+@pytest.mark.parametrize("action", ["append-postmortem", "rollback-deployment"])
+def test_unrelated_action_does_not_investigate_incident(incident_service_env, tmp_path, action) -> None:
+    """Non-status actions do not mutate incident status or call incident service status endpoint."""
+    stub_srv, base_url = incident_service_env
+    store = StubReadStoreWithIncidentPort(base_url)
+    client = TestClient(_build_app(store, tmp_path))
+    response = client.post(f"/bff/incidents/inc-real-001/{action}", headers=_AUTH, json={})
+    assert stub_srv.status_calls == [], (response.status_code, response.text, stub_srv.status_calls)
 

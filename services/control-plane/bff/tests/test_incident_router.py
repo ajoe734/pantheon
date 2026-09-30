@@ -595,9 +595,7 @@ def test_fast_path_semantic_commands() -> None:
 
     routes = [
         "/bff/alerts/a1/escalate-incident",
-        "/bff/incidents/inc-1/append-postmortem",
         "/bff/incidents/inc-1/resolve",
-        "/bff/incidents/inc-1/rollback-deployment",
         "/bff/incidents/inc-1/start-mitigation",
     ]
 
@@ -612,6 +610,16 @@ def test_fast_path_semantic_commands() -> None:
         resp_dry = client.post(r, json={"reason": "test dry run"}, headers={"X-Dry-Run": "true"})
         assert resp_dry.status_code == 200
         assert resp_dry.json()["status"] == "preview"
+
+    # Non-status incident actions fail unavailable without mutating incident status
+    for r in [
+        "/bff/incidents/inc-1/append-postmortem",
+        "/bff/incidents/inc-1/rollback-deployment",
+    ]:
+        resp = client.post(r, json={"reason": "test action"})
+        assert resp.status_code == 503, f"Expected 503 for {r}: {resp.text}"
+        err = resp.json().get("error") or resp.json().get("detail", {}).get("error", {})
+        assert err.get("code") == "DEPENDENCY_UNAVAILABLE"
 
 
 def test_production_app_incident_routes_wiring() -> None:
@@ -655,9 +663,9 @@ def test_production_app_incident_routes_wiring() -> None:
         ("/bff/audit/export", ("GET",), "bff_audit_export"),
         ("/bff/audit/export", ("POST",), "sem_audit_export_command"),
         ("/bff/incidents/{id}/start-mitigation", ("POST",), "sem_final_generic_id_command_alias"),
-        ("/bff/incidents/{id}/rollback-deployment", ("POST",), "sem_final_generic_id_command_alias"),
+        ("/bff/incidents/{id}/rollback-deployment", ("POST",), "bff_incident_non_status_action"),
         ("/bff/incidents/{id}/resolve", ("POST",), "sem_final_generic_id_command_alias"),
-        ("/bff/incidents/{id}/append-postmortem", ("POST",), "sem_final_generic_id_command_alias"),
+        ("/bff/incidents/{id}/append-postmortem", ("POST",), "bff_incident_non_status_action"),
         ("/bff/alerts/{id}/escalate-incident", ("POST",), "sem_final_generic_id_command_alias"),
     ]
 
