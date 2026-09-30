@@ -77,10 +77,10 @@ def _publish_event(buffer: deque, subscribers: list, event_type: str, data: dict
 
 
 class _Identity:
-    def __init__(self, operator_id: str, roles: Set[str]) -> None:
+    def __init__(self, operator_id: str, roles: Set[str], tenant_id: str = "tenant-a") -> None:
         self.operator_id = operator_id
         self.roles = roles
-        self.claims: Dict[str, Any] = {}
+        self.claims: Dict[str, Any] = {"tenant_id": tenant_id}
         self.is_authenticated = bool(operator_id != "anonymous")
 
 
@@ -88,10 +88,12 @@ def _extract_identity(auth_header: Optional[str]) -> _Identity:
     if not auth_header:
         return _Identity("anonymous", set())
     token = auth_header.removeprefix("Bearer ").strip()
-    actor_id = token.split(":")[0] if ":" in token else "anonymous"
-    roles_str = token.split(":")[1] if ":" in token else ""
+    parts = token.split(":")
+    actor_id = parts[0] if parts else "anonymous"
+    roles_str = parts[1] if len(parts) > 1 else ""
     roles = {r.strip() for r in roles_str.split(",")} if roles_str else set()
-    return _Identity(actor_id, roles)
+    tenant_id = parts[2] if len(parts) > 2 else "tenant-a"
+    return _Identity(actor_id, roles, tenant_id=tenant_id)
 
 
 def _require_read(ident: Any) -> None:
@@ -129,8 +131,11 @@ class _GovernanceStore:
     def dataset_source(self, ds: str) -> str:
         return "missing"
 
+    def get_approval_decision(self, aid: str) -> Optional[Dict[str, Any]]:
+        return {"id": aid, "decision_id": aid, "tenant_id": "tenant-a", "decision_state": "pending"}
+
     def get_approval_detail(self, aid: str) -> Optional[Dict[str, Any]]:
-        return {"id": aid, "decision_state": "pending"}
+        return {"id": aid, "decision_id": aid, "tenant_id": "tenant-a", "decision_state": "pending"}
 
 
 async def _submit_action(

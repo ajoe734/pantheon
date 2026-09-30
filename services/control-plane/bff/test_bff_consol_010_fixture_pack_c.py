@@ -26,7 +26,7 @@ from services.control_plane.bff.tests.conftest import build_consolidated_cross_c
 from services.control_plane.bff.tools_integrations.service import SSE_CHANNEL_CATALOG
 
 
-HEADERS = {"Authorization": "Bearer op-2:operator"}
+HEADERS = {"Authorization": "Bearer op-2:operator:tenant-a"}
 FIXTURE_PATH = Path(__file__).resolve().parent / "data" / "fixtures_pack_c.json"
 
 SERVICE_ENV_BLANKS = {
@@ -63,7 +63,11 @@ class FixturePackCTestReadPorts(ReadSurfacePorts):
         return {"status": status, "source": src, "snapshot_at": snapshot_at}
 
     def _get_dataset(self, name: str) -> dict[str, Any] | list[Any]:
-        return self._data.get(name, {})
+        data = self._data.get(name, {})
+        if not name.startswith("approval_"):
+            return data
+        stamp = lambda item: {**item, "tenant_id": "tenant-a"}  # noqa: E731
+        return {k: stamp(v) for k, v in data.items()} if isinstance(data, dict) else [stamp(v) for v in data]
 
     def list_alerts(self, **kwargs: Any) -> list[dict[str, Any]]:
         ds = self._get_dataset("alerts")

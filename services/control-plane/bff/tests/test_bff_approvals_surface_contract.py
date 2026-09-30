@@ -27,7 +27,7 @@ from services.control_plane.bff.auth.policy import (
 from services.control_plane.bff.governance.router import create_governance_router
 from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
 
-ADMIN_HEADERS = {"Authorization": "Bearer op-dev:admin:mfa"}
+ADMIN_HEADERS = {"Authorization": "Bearer op-dev:admin:mfa::tenant-a"}
 OPERATOR_HEADERS = {"Authorization": "Bearer op-dev:operator"}
 
 
@@ -36,6 +36,7 @@ OPERATOR_HEADERS = {"Authorization": "Bearer op-dev:operator"}
 # ---------------------------------------------------------------------------
 
 _PENDING_APPROVAL: Dict[str, Any] = {
+    "tenant_id": "tenant-a",
     "decision_id": "apv-consdata-001",
     "target_type": "registry_entry",
     "target_id": "reg-consdata-model-v1",

@@ -199,7 +199,7 @@ def _extract_identity(authorization: Optional[str] = None, **kwargs: Any) -> Ope
         parts = token.split(":")
         op_id = parts[0]
         roles = parts[1].split(",") if len(parts) > 1 else ["operator"]
-        return OperatorIdentity(operator_id=op_id, roles=roles, mfa_verified=True)
+        return OperatorIdentity(operator_id=op_id, roles=roles, mfa_verified=True, claims={"tenant_id": "tenant-a"})
     return OperatorIdentity(operator_id="op-gap-005", roles=["operator"], mfa_verified=True)
 
 
@@ -366,6 +366,7 @@ def test_bff_governance_review_routes_and_approval_evidence() -> None:
 
         store.get_approval_decision = lambda approval_id: {
             "id": approval_id,
+            "tenant_id": "tenant-a",
             "correlation_id": "corr-approval-005",
             "evidence_refs": [{"ref_id": "ev-005", "type": "IncidentReport", "url": None}],
         } if approval_id == "approval-gap-005" else None

@@ -252,7 +252,7 @@ class GovernanceService:
         self.capabilities_for_identity = capabilities_for_identity or (lambda identity: None)
         self.read_surface_state = read_surface_state or (lambda: "fresh")
         self._created_approvals: Dict[str, Dict[str, Any]] = {}
-        self._idempotency: Dict[str, Dict[str, Any]] = {}
+        self._idempotency: Dict[Any, Dict[str, Any]] = {}
 
     def submitted_promotion_reviews(
         self,
@@ -350,7 +350,17 @@ class GovernanceService:
     # Approval decisions -------------------------------------------------
 
     def list_approval_decisions(
-        self, *, outcome: Optional[str] = None, state: Optional[str] = None, identity: Any = None
+        self, *, outcome: Optional[str] = None, state: Optional[str] = None, identity: Any
+    ) -> List[Dict[str, Any]]:
+        tenant = _identity_tenant(identity) if identity is not None else None
+        return [
+            item
+            for item in self._all_approval_decisions(outcome=outcome, state=state)
+            if _in_tenant(item, tenant)
+        ]
+
+    def _all_approval_decisions(
+        self, *, outcome: Optional[str] = None, state: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         try:
             records = self._call(
@@ -382,8 +392,6 @@ class GovernanceService:
         seen: set[str] = set()
         result: List[Dict[str, Any]] = []
         for item in items:
-            if identity is not None and not _in_tenant(item, _identity_tenant(identity)):
-                continue
             item_id = record_id(item, "decision_id", "id", "item_id")
             if item_id and item_id in seen:
                 continue
@@ -392,7 +400,7 @@ class GovernanceService:
             result.append(item)
         return result
 
-    def get_approval_detail(self, approval_id: str, identity: Any = None) -> Optional[Dict[str, Any]]:
+    def get_approval_detail(self, approval_id: str, identity: Any) -> Optional[Dict[str, Any]]:
         """Typed replacement for the former generic ``/bff/approvals/{id}`` alias."""
         clean_id = str(approval_id or "").strip()
         if not clean_id:
@@ -406,12 +414,12 @@ class GovernanceService:
             decision = next(
                 (
                     item
-                    for item in self.list_approval_decisions()
+                    for item in self._all_approval_decisions()
                     if record_id(item, "decision_id", "id", "item_id") == clean_id
                 ),
                 None,
             )
-        if decision is None or (identity is not None and not _in_tenant(decision, _identity_tenant(identity))):
+        if decision is None or identity is None or not _in_tenant(decision, _identity_tenant(identity)):
             return None
         return copy.deepcopy(decision)
 
@@ -437,6 +445,7 @@ class GovernanceService:
         request_hash = stable_json_hash(
             {"plan_id": plan_id, "decision": decision, "memo": memo}
         )
+        idempotency_key = (_identity_tenant(identity), idempotency_key)
         existing = self._idempotency.get(idempotency_key)
         if existing:
             if existing["request_hash"] != request_hash:
@@ -444,7 +453,7 @@ class GovernanceService:
             return copy.deepcopy(existing["result"])
 
         decided_at = self.utc_now()
-        decision_id = str(payload.get("decision_id") or payload.get("id") or uuid.uuid4())
+        decision_id = str(uuid.uuid4())
         record = {
             "id": decision_id,
             "decision_id": decision_id,
@@ -1450,16 +1459,18 @@ class GovernanceService:
 
     # Compatibility surfaces ------------------------------------------
 
-    def list_pending_approvals(self) -> List[Dict[str, Any]]:
+    def list_pending_approvals(self, identity: Any) -> List[Dict[str, Any]]:
+        tenant = _identity_tenant(identity) if identity is not None else None
         return [
             item
             for item in self.list_approval_queue()
+            if _in_tenant(item, tenant)
             if str(item.get("decision_state") or item.get("state") or item.get("status") or "").lower()
             in self._PENDING_APPROVAL_STATES
         ]
 
-    def approval_evidence(self, approval_id: str) -> Optional[List[Dict[str, Any]]]:
-        decision = self.get_approval_detail(approval_id)
+    def approval_evidence(self, approval_id: str, identity: Any) -> Optional[List[Dict[str, Any]]]:
+        decision = self.get_approval_detail(approval_id, identity)
         if decision is None:
             return None
         refs = decision.get("evidence_refs") or decision.get("evidence") or []
@@ -1541,7 +1552,7 @@ class GovernanceService:
         entries_by_id: Dict[str, Dict[str, Any]] = {}
         for dataset, records in (
             ("approval_queue_items", self.list_approval_queue()),
-            ("approval_decisions", self.list_approval_decisions()),
+            ("approval_decisions", self._all_approval_decisions()),
         ):
             for item in records:
                 decision_id = record_id(item, "decision_id", "item_id", "id")

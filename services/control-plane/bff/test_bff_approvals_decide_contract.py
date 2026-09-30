@@ -45,9 +45,9 @@ from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.governance.router import create_governance_router
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
-APPROVER_HEADERS = {"Authorization": "Bearer op-app001:approver"}
-ADMIN_HEADERS = {"Authorization": "Bearer op-app001-admin:admin"}
-OPERATOR_HEADERS = {"Authorization": "Bearer op-app001-op:operator"}
+APPROVER_HEADERS = {"Authorization": "Bearer op-app001:approver:tenant-a"}
+ADMIN_HEADERS = {"Authorization": "Bearer op-app001-admin:admin:tenant-a"}
+OPERATOR_HEADERS = {"Authorization": "Bearer op-app001-op:operator:tenant-a"}
 ANON_HEADERS: dict = {}
 
 PENDING_APPROVAL_ID = "appr-dec-c5a9f11e"
@@ -56,6 +56,7 @@ UNKNOWN_ID = "unknown-approval-xyz"
 
 _APPROVAL_DECISIONS: dict[str, dict[str, Any]] = {
     PENDING_APPROVAL_ID: {
+        "tenant_id": "tenant-a",
         "id": PENDING_APPROVAL_ID,
         "decision_id": PENDING_APPROVAL_ID,
         "approval_id": PENDING_APPROVAL_ID,
@@ -65,6 +66,7 @@ _APPROVAL_DECISIONS: dict[str, dict[str, Any]] = {
         "target_id": "strat-001",
     },
     DECIDED_APPROVAL_ID: {
+        "tenant_id": "tenant-a",
         "id": DECIDED_APPROVAL_ID,
         "decision_id": DECIDED_APPROVAL_ID,
         "approval_id": DECIDED_APPROVAL_ID,
