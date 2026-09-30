@@ -12,9 +12,9 @@
       "net": -4934
     },
     "test": {
-      "additions": 17,
-      "deletions": 2607,
-      "net": -2590
+      "additions": 44,
+      "deletions": 2374,
+      "net": -2330
     },
     "requirement": "net production lines <= -3000",
     "achieved": "net production lines = -4934"
@@ -70,29 +70,24 @@
   ],
   "validation": [
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_agora_journal_merge_patch.py services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_write_authority.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_agora_journal_merge_patch.py services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_write_authority.py",
       "exit_code": 0,
-      "result": "All core preserved Agora router, journal patch, canonical alias, and write authority suites pass (44 passed)."
+      "result": "All core preserved Agora router, journal patch, canonical alias, contract tests, and write authority suites pass (46 passed)."
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_identity_scope.py services/control-plane/bff/tests/test_agora_candidate_decisions.py services/control-plane/bff/tests/test_agora_candidate_pool.py services/control-plane/bff/tests/test_agora_candidate_truth.py services/control-plane/bff/tests/test_agora_strategy_workshop.py services/control-plane/bff/tests/test_agora_governed_proposals.py services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py",
       "exit_code": 0,
-      "result": "All preserved workshop, candidate decision/pool, governance, identity, and performance test suites pass (109 passed)."
+      "result": "All preserved workshop, candidate decision/pool, governance, identity, and performance test suites pass (147 passed, 1 skipped)."
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_persona_interactions.py services/control-plane/bff/tests/test_agora_servant_sessions.py services/control-plane/bff/tests/test_agora_servant_production_write_owner.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_agora_research_run_projection.py services/control-plane/bff/tests/test_agora_operational_readiness_live_binding.py services/control-plane/bff/tests/test_agora_dataset_handoff_integration.py services/control-plane/bff/tests/test_agora_route_ownership.py",
       "exit_code": 0,
-      "result": "All preserved servant, interaction, research projection, operational readiness, dataset extraction, and route ownership suites pass (63 passed)."
+      "result": "All preserved servant, interaction, research projection, operational readiness, dataset extraction, and route ownership suites pass (62 passed)."
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py scripts/test_agora_bundle_digests.py",
       "exit_code": 0,
-      "result": "All 39 architectural invariant and inventory bound tests pass."
-    },
-    {
-      "command": ".venv-pantheon/bin/python3 -m pytest scripts/test_agora_bundle_digests.py",
-      "exit_code": 0,
-      "result": "All 9 Agora bundle digest and generation provenance tests pass."
+      "result": "All 48 architectural invariant and bundle digest tests pass (48 passed)."
     },
     {
       "command": ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
