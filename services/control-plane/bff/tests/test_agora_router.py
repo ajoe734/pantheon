@@ -66,37 +66,6 @@ from services.control_plane.bff.personas.service import (
     _require_operator_role,
     _bff_error,
 )
-try:
-    from agora.service import _AGORA_SIGNAL_WRITE_ROLES, _AGORA_BULK_FEEDBACK_ROLES
-except ImportError:
-    from services.control_plane.bff.agora.service import (
-        _AGORA_SIGNAL_WRITE_ROLES,
-        _AGORA_BULK_FEEDBACK_ROLES,
-    )
-
-
-def _require_agora_signal_write_role(identity: Any) -> None:
-    if not _AGORA_SIGNAL_WRITE_ROLES.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Agora signal creation requires analyst-level role",
-            "Operator does not hold the required analyst, operator, reviewer, approver, or admin role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with analyst-level Agora write access",
-        )
-
-
-def _require_agora_bulk_feedback_role(identity: Any) -> None:
-    if not _AGORA_BULK_FEEDBACK_ROLES.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Agora feedback access requires analyst role",
-            "Operator does not hold the required Agora feedback role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with analyst, operator, reviewer, approver, or admin role",
-        )
 
 _OPERATOR_AUTH = "Bearer agora-test-user:operator"
 _ANALYST_AUTH = "Bearer agora-test-analyst:analyst"
@@ -274,8 +243,6 @@ def _create_test_app() -> FastAPI:
         require_write_role=_require_operator_role,
         require_operator_role=_require_operator_role,
         require_journal_write_role=_require_operator_role,
-        require_agora_signal_write_role=_require_agora_signal_write_role,
-        require_agora_bulk_feedback_role=_require_agora_bulk_feedback_role,
         bff_error=_bff_error,
         utc_now=_utc_now_rfc3339,
         get_read_store=lambda: _runtime.read_store if _runtime.read_store is not None else _create_test_agora_store(),
@@ -357,29 +324,20 @@ def test_agora_router_factory_importable():
 
 def test_agora_sub_router_factories_importable():
     try:
-        from agora.identity.router import create_identity_router
         from agora.servant.router import create_servant_router
         from agora.strategy_workshop.router import create_strategy_workshop_router
         from agora.research.router import create_research_router
         from agora.trading_room.router import create_trading_room_router
-        from agora.dashboard.router import create_dashboard_router
-        from agora.shadow.router import create_shadow_router
-        from agora.personalization.router import create_personalization_router
         from agora.management_projection.router import create_management_projection_router
     except (ImportError, ValueError):
-        from services.control_plane.bff.agora.identity.router import create_identity_router
         from services.control_plane.bff.agora.servant.router import create_servant_router
         from services.control_plane.bff.agora.strategy_workshop.router import create_strategy_workshop_router
         from services.control_plane.bff.agora.research.router import create_research_router
         from services.control_plane.bff.agora.trading_room.router import create_trading_room_router
-        from services.control_plane.bff.agora.dashboard.router import create_dashboard_router
-        from services.control_plane.bff.agora.shadow.router import create_shadow_router
-        from services.control_plane.bff.agora.personalization.router import create_personalization_router
         from services.control_plane.bff.agora.management_projection.router import create_management_projection_router
     for factory in (
-        create_identity_router, create_servant_router, create_strategy_workshop_router,
-        create_research_router, create_trading_room_router, create_dashboard_router,
-        create_shadow_router, create_personalization_router, create_management_projection_router,
+        create_servant_router, create_strategy_workshop_router,
+        create_research_router, create_trading_room_router, create_management_projection_router,
     ):
         assert callable(factory)
 
@@ -768,23 +726,6 @@ def test_existing_bff_health_not_broken(monkeypatch):
     assert "timestamp" in payload
 
 
-def test_existing_agora_sessions_not_broken(monkeypatch):
-    """Existing route must still respond (not shadowed by package router)."""
-    store = _create_test_agora_store()
-    _install_agora_store(monkeypatch, store)
-    client = _client(monkeypatch)
-    resp = client.get("/bff/agora/sessions", headers={"Authorization": _OPERATOR_AUTH})
-    assert resp.status_code == 200, f"Existing /bff/agora/sessions broken: {resp.status_code}"
-
-
-def test_existing_agora_signals_not_broken(monkeypatch):
-    store = _create_test_agora_store()
-    _install_agora_store(monkeypatch, store)
-    client = _client(monkeypatch)
-    resp = client.get("/bff/agora/signals", headers={"Authorization": _OPERATOR_AUTH})
-    assert resp.status_code == 200, f"Existing /bff/agora/signals broken: {resp.status_code}"
-
-
 def test_servant_ensure_and_eligibility_with_read_surface_ports_and_explicit_write_owner(monkeypatch, tmp_path):
     """Verifies that ReadSurfacePorts resolves list_personas with include_market_persona_defaults=True
 
@@ -878,25 +819,20 @@ def test_servant_ensure_fails_if_read_surface_ports_is_used_as_write_owner(monke
 
 
 def test_agora_routers_have_zero_reverse_imports_of_main():
-    """Verify that agora identity and personalization routers do not import main.py."""
+    """Verify that agora router and service do not import main.py."""
     try:
-        import agora.identity.router as id_router
-        import agora.personalization.router as pers_router
+        import agora.router as agora_router
         import agora.service as agora_service
     except (ImportError, ValueError):
-        import services.control_plane.bff.agora.identity.router as id_router
-        import services.control_plane.bff.agora.personalization.router as pers_router
+        import services.control_plane.bff.agora.router as agora_router
         import services.control_plane.bff.agora.service as agora_service
     import inspect
 
-    id_src = inspect.getsource(id_router)
-    pers_src = inspect.getsource(pers_router)
+    router_src = inspect.getsource(agora_router)
     svc_src = inspect.getsource(agora_service)
 
-    assert "import main" not in id_src, "agora.identity.router still imports main"
-    assert "from main import" not in id_src, "agora.identity.router still imports from main"
-    assert "import main" not in pers_src, "agora.personalization.router still imports main"
-    assert "from main import" not in pers_src, "agora.personalization.router still imports from main"
+    assert "import main" not in router_src, "agora.router still imports main"
+    assert "from main import" not in router_src, "agora.router still imports from main"
     assert "import main" not in svc_src, "agora.service still imports main"
     assert "from main import" not in svc_src, "agora.service still imports from main"
 
@@ -940,78 +876,6 @@ def test_default_allowlisted_adapter_emits_simulation_provenance_by_default():
     assert result_verified_real.provenance == "simulation"
 
 
-def test_agora_service_session_and_insight_lifecycle():
-    """Verify AgoraService session creation, message append, and insight creation."""
-    try:
-        from agora.service import AgoraService
-    except (ImportError, ValueError):
-        from services.control_plane.bff.agora.service import AgoraService
-
-    store = _create_test_agora_store()
-    svc = AgoraService(get_read_store=lambda: store)
-
-    # Session lifecycle
-    sess = svc.create_session(
-        session_id="sess-test-01",
-        title="Test Session",
-        actor_id="test-operator",
-        payload={"mode": "quick_ask"},
-        created_at="2026-08-30T00:00:00Z",
-    )
-    assert sess["sessionId"] == "sess-test-01"
-    assert svc.get_session("sess-test-01") is not None
-
-    msg = svc.append_session_message(
-        "sess-test-01",
-        message_id="msg-test-01",
-        content="Hello Agora",
-        actor_id="test-operator",
-        payload={"role": "user"},
-        created_at="2026-08-30T00:00:01Z",
-    )
-    assert msg["messageId"] == "msg-test-01"
-
-    # Insight lifecycle
-    ins = svc.create_insight(
-        insight_id="ins-test-01",
-        summary="Test Insight",
-        actor_id="test-operator",
-        payload={"scope": "global"},
-        created_at="2026-08-30T00:00:00Z",
-    )
-    assert ins["insightId"] == "ins-test-01"
-    assert svc.get_insight("ins-test-01") is not None
-
-
-def test_agora_service_session_status_uses_canonical_consultation_port():
-    """The HTTP singular status filter must not leak into the plural port API."""
-    try:
-        from agora.service import AgoraService
-        from ports import ReadSurfacePorts
-    except (ImportError, ValueError):
-        from services.control_plane.bff.agora.service import AgoraService
-        from services.control_plane.bff.ports import ReadSurfacePorts
-
-    class _ConsultationReads:
-        def list_consult_requests(
-            self, *, statuses=None, target_type=None, consultation_type=None
-        ):
-            del target_type, consultation_type
-            records = [
-                {"id": "sess-active", "status": "active"},
-                {"id": "sess-done", "status": "completed"},
-            ]
-            if statuses:
-                return [record for record in records if record["status"] in statuses]
-            return records
-
-    ports = ReadSurfacePorts(operations_consultation=_ConsultationReads())
-    svc = AgoraService(get_read_store=lambda: ports)
-
-    assert [item["id"] for item in svc.list_sessions(status="ACTIVE")] == ["sess-active"]
-    assert [item["id"] for item in svc.list_sessions()] == ["sess-active", "sess-done"]
-
-
 def test_main_py_has_zero_legacy_agora_route_decorators():
     """Acceptance: main.py must have 0 legacy @app Agora route decorators remaining."""
     import re
@@ -1028,22 +892,9 @@ def test_migrated_agora_routes_preserve_legacy_http_contracts():
     """The extracted routes retain the query, header, and optional-body API shapes."""
     schema = _create_test_app().openapi()
 
-    signals = schema["paths"]["/bff/agora/signals"]["get"]
-    signal_parameters = {parameter["name"]: parameter for parameter in signals["parameters"]}
-    assert {"reviewStatus", "status", "page_token", "page_size"}.issubset(signal_parameters)
-    assert signal_parameters["page_size"]["schema"]["minimum"] == 1
-    assert signal_parameters["page_size"]["schema"]["maximum"] == 200
-
     for path in (
-        "/bff/agora/watchlist",
-        "/bff/agora/markets",
-        "/bff/agora/notes",
-        "/bff/agora/market-notes",
         "/bff/agora/journal",
         "/bff/agora/decision-journal",
-        "/bff/agora/training-examples",
-        "/bff/agora/research-tasks",
-        "/bff/research/tasks",
     ):
         parameters = {
             parameter["name"]: parameter
@@ -1063,64 +914,12 @@ def test_migrated_agora_routes_preserve_legacy_http_contracts():
     }
     assert {"x-mfa-token", "x-trace-id"}.issubset(journal_headers)
 
-    for path in (
-        "/api/v1/agora/ask/stream",
-        "/bff/sse/agora/signals",
-        "/bff/sse/agora/sessions/{sessionId}",
-    ):
-        parameters = schema["paths"][path]["get"]["parameters"]
-        assert any(
-            parameter["name"] == "last_event_id" and parameter["in"] == "query"
-            for parameter in parameters
-        ), path
-
-    for path in (
-        "/bff/agora/committee/{sessionId}/evidence-pack",
-        "/bff/agora/committee/sessions",
-        "/bff/agora/committee/sessions/{sessionId}/memos",
-    ):
-        request_body = schema["paths"][path]["post"].get("requestBody", {})
-        assert request_body.get("required", False) is False, path
-
-
-def test_migrated_agora_signals_supports_legacy_status_and_pagination(monkeypatch):
-    """Legacy snake-case pagination and status filters remain valid after extraction."""
-    store = _create_test_agora_store()
-    captured: dict[str, str | None] = {}
-
-    def list_signals(*, review_status=None, **_kwargs):
-        captured["review_status"] = review_status
-        return []
-
-    store.list_agora_signals = list_signals
-    _install_agora_store(monkeypatch, store)
-    client = _client(monkeypatch)
-
-    response = client.get(
-        "/bff/agora/signals",
-        params={"status": "pending", "page_token": "signal-17", "page_size": 1},
-        headers={"Authorization": _OPERATOR_AUTH},
-    )
-    assert response.status_code == 200, response.text
-    assert captured == {"review_status": "pending"}
-
-    for invalid_page_size in (0, 201):
-        invalid = client.get(
-            "/bff/agora/signals",
-            params={"page_size": invalid_page_size},
-            headers={"Authorization": _OPERATOR_AUTH},
-        )
-        assert invalid.status_code == 422, invalid.text
-
 
 @pytest.mark.parametrize(
     "path",
     (
-        "/bff/agora/watchlist",
-        "/bff/agora/notes",
         "/bff/agora/journal",
-        "/bff/agora/training-examples",
-        "/bff/agora/research-tasks",
+        "/bff/agora/decision-journal",
     ),
 )
 def test_migrated_agora_list_routes_preserve_legacy_pagination_bounds(monkeypatch, path):
@@ -1145,45 +944,6 @@ def test_migrated_agora_list_routes_preserve_legacy_pagination_bounds(monkeypatc
         assert invalid.status_code == 422, invalid.text
 
 
-def test_migrated_agora_committee_posts_accept_optional_bodies(monkeypatch):
-    """The route migration must not turn legacy optional JSON bodies into 422s."""
-    store = _create_test_agora_store()
-    committee_session_id = "committee-optional-body"
-    store.get_agora_session = lambda session_id: (
-        {"id": committee_session_id, "sessionId": committee_session_id, "mode": "committee"}
-        if session_id == committee_session_id else None
-    )
-    store.create_agora_committee_evidence_pack = lambda **kwargs: {
-        "id": kwargs["pack_id"],
-        "sessionId": kwargs["session_id"],
-    }
-    store.get_consult_memo = lambda _memo_id: None
-    store.submit_committee_session_memo = lambda session_id, **kwargs: {
-        "memoId": kwargs["memo_id"],
-        "sessionId": session_id,
-    }
-    _install_agora_store(monkeypatch, store)
-    client = _client(monkeypatch)
-
-    session_response = client.post(
-        "/bff/agora/committee/sessions",
-        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4())},
-    )
-    assert session_response.status_code == 201, session_response.text
-
-    evidence_response = client.post(
-        f"/bff/agora/committee/{committee_session_id}/evidence-pack",
-        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4())},
-    )
-    assert evidence_response.status_code == 201, evidence_response.text
-
-    memo_response = client.post(
-        f"/bff/agora/committee/sessions/{committee_session_id}/memos",
-        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4())},
-    )
-    assert memo_response.status_code == 201, memo_response.text
-
-
 def test_agora_service_imports_ports_package_interfaces():
     """Acceptance: agora/service.py must import canonical ports interfaces from ports package."""
     try:
@@ -1196,186 +956,4 @@ def test_agora_service_imports_ports_package_interfaces():
     assert hasattr(agora_service, "ReadSurfacePorts")
     assert agora_service.ReadSurfacePorts is ReadSurfacePorts
 
-
-def test_agora_session_and_message_dry_run_non_mutating(monkeypatch):
-    """Regression: X-Dry-Run on session and message create returns 200 without mutating read surfaces."""
-    store = _create_test_agora_store()
-    _install_agora_store(monkeypatch, store)
-    client = _client(monkeypatch)
-
-    sess_resp = client.post(
-        "/bff/agora/sessions",
-        json={"title": "Dry-run session marker 999"},
-        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4()), "X-Dry-Run": "1"},
-    )
-    assert sess_resp.status_code == 200, sess_resp.text
-    sess_body = sess_resp.json()
-    assert sess_body["meta"]["dryRun"] is True
-    assert sess_body["meta"]["durable"] is False
-    sess_id = sess_body["data"]["id"]
-
-    # Verify session is not persisted
-    get_sess = client.get(f"/bff/agora/sessions/{sess_id}", headers={"Authorization": _OPERATOR_AUTH})
-    assert get_sess.status_code == 404
-
-    # Create real session for message dry run test
-    real_sess = client.post(
-        "/bff/agora/sessions",
-        json={"title": "Real session for message test"},
-        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4())},
-    )
-    assert real_sess.status_code == 201
-    real_sess_id = real_sess.json()["data"]["id"]
-
-    msg_resp = client.post(
-        f"/bff/agora/sessions/{real_sess_id}/messages",
-        json={"content": "Dry-run message marker 999"},
-        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4()), "X-Dry-Run": "1"},
-    )
-    assert msg_resp.status_code == 200, msg_resp.text
-    msg_body = msg_resp.json()
-    assert msg_body["meta"]["dryRun"] is True
-    msg_id = msg_body["data"]["id"]
-
-    # Verify message is not listed in session
-    list_msgs = client.get(f"/bff/agora/sessions/{real_sess_id}/messages", headers={"Authorization": _OPERATOR_AUTH})
-    assert list_msgs.status_code == 200
-    assert all(m.get("id") != msg_id for m in list_msgs.json().get("data", []))
-
-
-def test_agora_insight_dry_run_non_mutating(monkeypatch):
-    """Regression: X-Dry-Run on insight create returns 200 without mutating read surfaces."""
-    store = _create_test_agora_store()
-    _install_agora_store(monkeypatch, store)
-    client = _client(monkeypatch)
-
-    ins_resp = client.post(
-        "/bff/agora/insights",
-        json={"summary": "Dry-run insight marker 999"},
-        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4()), "X-Dry-Run": "1"},
-    )
-    assert ins_resp.status_code == 200, ins_resp.text
-    ins_body = ins_resp.json()
-    assert ins_body["meta"]["dryRun"] is True
-    assert ins_body["meta"]["durable"] is False
-    ins_id = ins_body["data"]["id"]
-
-    # Verify insight is not in list
-    list_ins = client.get("/bff/agora/insights", headers={"Authorization": _OPERATOR_AUTH})
-    assert list_ins.status_code == 200
-    assert all((it.get("id") or it.get("insight_id")) != ins_id for it in list_ins.json().get("items", []))
-
-
-def test_agora_message_create_on_nonexistent_session_returns_404(monkeypatch):
-    """Regression: POST /bff/agora/sessions/{sessionId}/messages returns 404 for nonexistent session."""
-    store = _create_test_agora_store()
-    _install_agora_store(monkeypatch, store)
-    client = _client(monkeypatch)
-
-    resp = client.post(
-        "/bff/agora/sessions/nonexistent-session-xyz/messages",
-        json={"content": "Hello on missing session"},
-        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4())},
-    )
-    assert resp.status_code == 404, resp.text
-
-
-def test_agora_feedback_returns_201(monkeypatch):
-    """Regression: POST /bff/agora/feedback returns 201 per API contract."""
-    store = _create_test_agora_store()
-    _install_agora_store(monkeypatch, store)
-    client = _client(monkeypatch)
-
-    resp = client.post(
-        "/bff/agora/feedback",
-        json={"signal_id": "sig-test-001", "verdict": "useful", "memo": "great signal"},
-        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4()), "X-Dry-Run": "1"},
-    )
-    # Dry run returns 200 with dryRun: true
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["meta"]["dryRun"] is True
-
-    # Real signal feedback against existing signal
-    sig_resp = client.post(
-        "/bff/agora/signals",
-        json={"title": "Feedback test signal", "body": "Testing feedback route"},
-        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4())},
-    )
-    assert sig_resp.status_code == 201
-    sig_id = sig_resp.json()["data"]["id"]
-
-    real_fb = client.post(
-        "/bff/agora/feedback",
-        json={"signal_id": sig_id, "verdict": "useful", "memo": "great signal"},
-        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4())},
-    )
-    assert real_fb.status_code == 201, real_fb.text
-
-
-def test_agora_missing_idempotency_key_returns_400(monkeypatch):
-    """Regression: Missing Idempotency-Key returns HTTP 400 on mutating Agora routes."""
-    store = _create_test_agora_store()
-    _install_agora_store(monkeypatch, store)
-    client = _client(monkeypatch)
-
-    routes = [
-        ("POST", "/bff/agora/ask/sessions", {"title": "Test"}),
-        ("POST", "/bff/agora/committee/sessions", {"title": "Test"}),
-        ("POST", "/bff/agora/committee/sessions/comm-1/open", {}),
-        ("POST", "/bff/agora/committee/sessions/comm-1/close", {}),
-    ]
-    for method, path, payload in routes:
-        resp = client.request(method, path, json=payload, headers={"Authorization": _OPERATOR_AUTH})
-        assert resp.status_code == 400, f"Expected 400 for {method} {path}, got {resp.status_code}: {resp.text}"
-
-
-def test_agora_signal_and_feedback_callbacks_accept_analyst_and_reject_viewer(monkeypatch):
-    """Verify require_agora_signal_write_role and require_agora_bulk_feedback_role accept analyst and reject viewer."""
-    store = _create_test_agora_store()
-    _install_agora_store(monkeypatch, store)
-    client = _client(monkeypatch)
-
-    analyst_headers = {"Authorization": _ANALYST_AUTH, "Idempotency-Key": str(uuid.uuid4())}
-    viewer_headers = {"Authorization": _VIEWER_AUTH, "Idempotency-Key": str(uuid.uuid4())}
-
-    # Signal creation: analyst succeeds
-    sig_resp = client.post(
-        "/bff/agora/signals",
-        headers=analyst_headers,
-        json={"title": "Analyst signal", "body": "Testing analyst access"},
-    )
-    assert sig_resp.status_code == 201, sig_resp.text
-    sig_id = sig_resp.json()["data"]["id"]
-
-    # Signal creation: viewer rejected with 403
-    viewer_sig = client.post(
-        "/bff/agora/signals",
-        headers=viewer_headers,
-        json={"title": "Viewer signal", "body": "Testing viewer access"},
-    )
-    assert viewer_sig.status_code == 403, viewer_sig.text
-    err = viewer_sig.json()["error"]
-    assert err["code"] == "FORBIDDEN"
-    assert err["message"] == "Agora signal creation requires analyst-level role"
-    assert err["details"]["precondition_failed"] == "role_check"
-
-    # Feedback: analyst succeeds
-    fb_resp = client.post(
-        "/bff/agora/feedback",
-        headers={"Authorization": _ANALYST_AUTH, "Idempotency-Key": str(uuid.uuid4())},
-        json={"signal_id": sig_id, "verdict": "useful", "memo": "Analyst feedback"},
-    )
-    assert fb_resp.status_code == 201, fb_resp.text
-
-    # Feedback: viewer rejected with 403
-    viewer_fb = client.post(
-        "/bff/agora/feedback",
-        headers={"Authorization": _VIEWER_AUTH, "Idempotency-Key": str(uuid.uuid4())},
-        json={"signal_id": sig_id, "verdict": "useful"},
-    )
-    assert viewer_fb.status_code == 403, viewer_fb.text
-    err_fb = viewer_fb.json()["error"]
-    assert err_fb["code"] == "FORBIDDEN"
-    assert err_fb["message"] == "Agora feedback access requires analyst role"
-    assert err_fb["details"]["precondition_failed"] == "role_check"
 

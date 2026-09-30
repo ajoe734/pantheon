@@ -1262,69 +1262,6 @@ class ReadSurfacePorts:
                 return None
         return memo
 
-    def list_agora_insights(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        if hasattr(self.operations_consultation, "list_agora_insights"):
-            res = self.operations_consultation.list_agora_insights(**kwargs)
-            if res:
-                return res
-        return self.research_knowledge_source.list_insight_cards(**kwargs)
-
-    def list_agora_notes(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        if hasattr(self.operations_consultation, "list_agora_notes"):
-            res = self.operations_consultation.list_agora_notes(**kwargs)
-            if res:
-                return res
-        return self.research_knowledge_source.list_research_notes(**kwargs)
-
-    def list_agora_sessions(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        if hasattr(self.operations_consultation, "list_agora_sessions"):
-            res = self.operations_consultation.list_agora_sessions(**kwargs)
-            if res:
-                return res
-        return self.operations_consultation.list_consult_requests(**kwargs)
-
-    def list_agora_signals(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        if hasattr(self.operations_consultation, "list_agora_signals"):
-            res = self.operations_consultation.list_agora_signals(**kwargs)
-            if res:
-                return res
-        return self.research_knowledge_source.list_evidence_refs(**kwargs)
-
-    def list_agora_training_examples(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        if hasattr(self.operations_consultation, "list_agora_training_examples"):
-            res = self.operations_consultation.list_agora_training_examples(**kwargs)
-            if res:
-                return res
-        return self.persona_training.list_trainer_replays(**kwargs)
-
-    def list_agora_watchlist(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        if hasattr(self.operations_consultation, "list_agora_watchlist"):
-            res = self.operations_consultation.list_agora_watchlist(**kwargs)
-            if res:
-                return res
-        return self.persona_capital_runtime.list_personas(**kwargs)
-
-    def get_agora_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        if hasattr(self.operations_consultation, "get_agora_session"):
-            res = self.operations_consultation.get_agora_session(session_id or "")
-            if res is not None:
-                return res
-        return self.operations_consultation.get_consult_request(session_id or "")
-
-    def get_agora_signal(self, signal_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        if hasattr(self.operations_consultation, "get_agora_signal"):
-            res = self.operations_consultation.get_agora_signal(signal_id or "")
-            if res is not None:
-                return res
-        return self.research_knowledge_source.get_evidence_ref(signal_id or "")
-
-    def get_agora_committee_evidence_pack(self, session_id: Optional[str]) -> Any:
-        if hasattr(self.operations_consultation, "get_agora_committee_evidence_pack"):
-            res = self.operations_consultation.get_agora_committee_evidence_pack(session_id or "")
-            if res is not None:
-                return res
-        return self.operations_consultation.get_consultation_evidence(session_id or "")
-
 
 def create_read_surface_ports(
     *,

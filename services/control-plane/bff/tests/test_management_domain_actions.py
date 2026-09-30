@@ -33,7 +33,6 @@ from services.control_plane.bff.command_adapters import (
     RuntimeCommandAdapter,
     StrategyCommandAdapter,
     CapabilitiesCommandAdapter,
-    AgoraCommandAdapter,
     AuditCommandAdapter,
     dispatch_domain_command,
     find_adapter,
@@ -214,10 +213,7 @@ class TestActionToOwnerMatrix(unittest.TestCase):
         adapter3 = find_adapter("SkillAction", "skill", "health_check")
         self.assertIsInstance(adapter3, CapabilitiesCommandAdapter)
 
-    def test_agora_and_audit_adapter_mapping(self):
-        adapter = find_adapter("AgoraSignalFeedback", "agorasignal", "feedback")
-        self.assertIsInstance(adapter, AgoraCommandAdapter)
-
+    def test_audit_adapter_mapping(self):
         adapter2 = find_adapter("AuditExport", "auditexport", "export")
         self.assertIsInstance(adapter2, AuditCommandAdapter)
 

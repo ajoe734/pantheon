@@ -256,6 +256,8 @@ def app_route_index(app: object) -> list[dict]:
 def _load_bff_app() -> object:
     """Import and return the BFF FastAPI app object."""
     os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
+    os.environ.setdefault("RANKING_STORE_DSN", "postgresql://test:test@localhost:5432/test")
+    os.environ.setdefault("RANKING_STORE_BOOTSTRAP", "0")
     if str(BFF_DIR) not in sys.path:
         sys.path.insert(0, str(BFF_DIR))
     if str(REPO_ROOT) not in sys.path:

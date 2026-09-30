@@ -3258,7 +3258,7 @@ def _persona_intent_agora_item(session: Dict[str, Any]) -> Optional[Dict[str, An
         "redacted": True,
         "redaction": _persona_intent_redaction(["messages", "message_content", "raw_transcript"]),
         "route": "/management/persona-intent?source_type=agora_session",
-        "bff_detail_path": f"/bff/agora/ask/sessions/{session_id}",
+        "bff_detail_path": None,
     }
 
 

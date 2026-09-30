@@ -285,9 +285,7 @@ class ReadStoreAgoraOperationalReadinessProvider:
     """
 
     _SURFACE_READERS: Dict[str, str] = {
-        "signals": "list_agora_signals",
         "journal": "list_decision_journal_entries",
-        "inbox": "list_evidence_refs",
     }
 
     def __init__(

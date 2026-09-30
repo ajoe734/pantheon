@@ -1,0 +1,103 @@
+{
+  "task_id": "AGORA-DEAD-SURFACES-REMOVAL-001",
+  "change_class": "simplify",
+  "net_prod_line_budget": -3000,
+  "scope": "Delete dead Agora backend surfaces no longer used by the V6 trading desk (signals, feedback, signals SSE alias, watchlist, markets, notes, market-notes, training-examples, insights, memory, committee sessions, evidence-pack, persona-lab, skill-coaching, evaluation suites/runs, alerts triage, daily, sessions, messages, ask, inbox, incoming, handoffs, research-tasks, shadow router, dashboard-recipes, and widgets), preserving trading-room, workshops, interactions, proposals, candidate decisions, candidate-pools, performance, capabilities, operational-readiness, journal, postmortems, servant, research plans/runs, trading-intents, and me.",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "budget_summary": {
+    "production": {
+      "additions": 361,
+      "deletions": 5389,
+      "net": -5028
+    },
+    "test": {
+      "additions": 17,
+      "deletions": 2607,
+      "net": -2590
+    },
+    "requirement": "net production lines <= -3000",
+    "achieved": "net production lines = -5028"
+  },
+  "preserved_surfaces": [
+    "/bff/agora/me",
+    "/bff/agora/capabilities",
+    "/bff/agora/operational-readiness",
+    "/bff/agora/journal",
+    "/bff/agora/journal/{entry_id}",
+    "/bff/agora/decision-journal",
+    "/bff/agora/postmortems",
+    "/bff/agora/trading-room/*",
+    "/bff/agora/workshops/*",
+    "/bff/agora/interactions/*",
+    "/bff/agora/proposals/*",
+    "/bff/agora/candidate-decisions/*",
+    "/bff/agora/candidate-pools/*",
+    "/bff/agora/performance/*",
+    "/bff/agora/servant/*",
+    "/bff/agora/research/*"
+  ],
+  "deleted_surfaces": [
+    "/bff/agora/signals",
+    "/bff/agora/signals/{signal_id}",
+    "/bff/agora/signals/{signal_id}/feedback",
+    "/bff/agora/feedback",
+    "/bff/sse/agora/signals",
+    "/bff/sse/agora/sessions/{session_id}",
+    "/bff/agora/watchlist",
+    "/bff/agora/markets",
+    "/bff/agora/notes",
+    "/bff/agora/market-notes",
+    "/bff/agora/training-examples",
+    "/bff/agora/insights",
+    "/bff/agora/memory",
+    "/bff/agora/committee/*",
+    "/bff/agora/persona-lab/*",
+    "/bff/agora/skill-coaching/*",
+    "/bff/agora/evaluation-suites",
+    "/bff/agora/evaluation-runs",
+    "/bff/agora/alerts/triage",
+    "/bff/agora/daily",
+    "/bff/agora/sessions",
+    "/bff/agora/messages",
+    "/bff/agora/ask",
+    "/bff/agora/inbox",
+    "/bff/agora/incoming",
+    "/bff/agora/handoffs",
+    "/bff/research/tasks",
+    "/bff/agora/shadow/*",
+    "/bff/agora/dashboard/*"
+  ],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_agora_journal_merge_patch.py services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_write_authority.py",
+      "exit_code": 0,
+      "result": "All core preserved Agora router, journal patch, canonical alias, and write authority suites pass (44 passed)."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_identity_scope.py services/control-plane/bff/tests/test_agora_candidate_decisions.py services/control-plane/bff/tests/test_agora_candidate_pool.py services/control-plane/bff/tests/test_agora_candidate_truth.py services/control-plane/bff/tests/test_agora_strategy_workshop.py services/control-plane/bff/tests/test_agora_governed_proposals.py services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py",
+      "exit_code": 0,
+      "result": "All preserved workshop, candidate decision/pool, governance, identity, and performance test suites pass (109 passed)."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_persona_interactions.py services/control-plane/bff/tests/test_agora_servant_sessions.py services/control-plane/bff/tests/test_agora_servant_production_write_owner.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_agora_research_run_projection.py services/control-plane/bff/tests/test_agora_operational_readiness_live_binding.py services/control-plane/bff/tests/test_agora_dataset_handoff_integration.py services/control-plane/bff/tests/test_agora_route_ownership.py",
+      "exit_code": 0,
+      "result": "All preserved servant, interaction, research projection, operational readiness, dataset extraction, and route ownership suites pass (63 passed)."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "result": "All 39 architectural invariant and inventory bound tests pass."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest scripts/test_agora_bundle_digests.py",
+      "exit_code": 0,
+      "result": "All 9 Agora bundle digest and generation provenance tests pass."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
+      "exit_code": 0,
+      "result": "Routes match updated backend routes manifest snapshot (634 routes total, 405 deletions of dead surfaces)."
+    }
+  ]
+}
