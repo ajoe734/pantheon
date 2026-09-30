@@ -7,7 +7,7 @@
   "target_repo": "ajoe734/pantheon",
   "task_class": "corrective",
   "delivery_state": "ready_for_independent_review",
-  "base_sha": "7833ee1a28717b2b28f94f5f118f369be9665aca",
+  "base_sha": "f3e267c1fd700e9452470e43d73da3c3dd57146e",
   "scope": {
     "owned": [
       "services/capital/models.py",
@@ -96,7 +96,7 @@
         "result": "9 passed, 1 warning in 5.72s"
       },
       {
-        "command": "python3 scripts/git/diff_budget.py --base 7833ee1a28717b2b28f94f5f118f369be9665aca --change-class corrective --budget 150",
+        "command": "python3 scripts/git/diff_budget.py --base f3e267c1fd700e9452470e43d73da3c3dd57146e --change-class corrective --budget 150",
         "result": "net production lines +130 <= 150"
       }
     ]
