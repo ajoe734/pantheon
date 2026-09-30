@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Compute and verify the Agora v1 schema bundle sha256 index.
+"""Compute the Agora v1 index and verify every Agora bundle's sha256 digests.
 
 Usage:
     python3 scripts/agora_schema_bundle.py [--verify]
 
 Without --verify: writes services/control-plane/specs/agora/bundle_index.json.
-With --verify: reads the existing bundle_index.json and checks all digests.
+With --verify: checks every bundle_index*.json, including parent and OpenAPI hashes.
 """
 
 import hashlib
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -74,8 +73,13 @@ def build_index() -> dict:
 
 def verify_index(index: dict) -> bool:
     ok = True
-    for rel_path, expected in index.get("files", {}).items():
-        path = REPO_ROOT / "services" / "control-plane" / rel_path
+    entries = {f"services/control-plane/{p}": h for p, h in index["files"].items()}
+    if parent := index.get("extends"):
+        entries[parent["bundle_path"]] = parent["bundle_index_sha256"]
+    if openapi := index.get("openapi"):
+        entries[openapi["path"]] = openapi["sha256"]
+    for rel_path, expected in entries.items():
+        path = REPO_ROOT / rel_path
         if not path.exists():
             print(f"MISSING: {rel_path}", file=sys.stderr)
             ok = False
@@ -91,18 +95,23 @@ def verify_index(index: dict) -> bool:
     return ok
 
 
+def verify_all_indices() -> bool:
+    paths = sorted(AGORA_SPECS.glob("bundle_index*.json"))
+    if not paths:
+        print(f"ERROR: no bundle indices found at {AGORA_SPECS}", file=sys.stderr)
+        return False
+    results = []
+    for path in paths:
+        print(f"Verifying {path.name}")
+        results.append(verify_index(json.loads(path.read_text())))
+    return all(results)
+
+
 def main() -> None:
     verify = "--verify" in sys.argv
 
     if verify:
-        index_path = AGORA_SPECS / "bundle_index.json"
-        if not index_path.exists():
-            print(f"ERROR: bundle_index.json not found at {index_path}", file=sys.stderr)
-            sys.exit(1)
-        with open(index_path) as f:
-            index = json.load(f)
-        ok = verify_index(index)
-        sys.exit(0 if ok else 1)
+        sys.exit(0 if verify_all_indices() else 1)
     else:
         index = build_index()
         out_path = AGORA_SPECS / "bundle_index.json"
