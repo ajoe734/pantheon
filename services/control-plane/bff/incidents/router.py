@@ -321,6 +321,7 @@ def create_incident_router(
     acknowledged_alerts: Optional[Any] = None,
     incident_overlay: Optional[Any] = None,
     idempotency_ledger: Optional[Any] = None,
+    durable_writer: Optional[Any] = None,
 ) -> APIRouter:
     """Build the canonical BFF Incidents domain router.
 
@@ -352,6 +353,7 @@ def create_incident_router(
         command_store=command_store,
         get_read_store=get_read_store,
         get_command_store=get_command_store,
+        durable_writer=durable_writer,
         idempotency_ledger=idempotency_ledger,
         incident_events=incident_events,
         incident_subscribers=incident_subscribers,
@@ -1205,6 +1207,14 @@ def create_incident_router(
         incident_id = clean_id
         if clean_id.startswith("alert-incident-"):
             incident_id = clean_id[len("alert-incident-"):].strip()
+        elif clean_id.startswith("alert-"):
+            raise _err(
+                422,
+                ErrorCode.OPERATION_NOT_ALLOWED,
+                "Alert action unavailable",
+                f"Alert {id!r} has no durable owner; action is unavailable.",
+                precondition_failed="durable_owner_unavailable",
+            )
         target_status = "resolved" if "resolve" in route_path else "investigating"
         resolved_at = payload.get("resolved_at") or (snapshot_at if target_status == "resolved" else None)
 

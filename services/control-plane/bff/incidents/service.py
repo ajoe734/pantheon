@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+import uuid
 
 from services.control_plane.bff.models import (
     CommandStatus,
@@ -161,10 +162,8 @@ def _incident_home_severity(value: Optional[str]) -> Optional[str]:
 
 def _project_incident_home_item(incident: Dict[str, Any]) -> Dict[str, Any]:
     return {
-        "incident_id": incident.get("incident_id") or incident.get("id"),
-        "title": incident.get("title"),
-        "severity": _incident_home_severity(incident.get("severity")),
-        "status": incident.get("status"),
+        "incident_id": incident.get("incident_id") or incident.get("id"), "title": incident.get("title"),
+        "severity": _incident_home_severity(incident.get("severity")), "status": incident.get("status"),
         "artifact_id": incident.get("artifact_id"),
         "opened_at": incident.get("opened_at") or incident.get("created_at") or incident.get("submitted_at"),
         "resolved_at": incident.get("resolved_at"),
@@ -173,14 +172,10 @@ def _project_incident_home_item(incident: Dict[str, Any]) -> Dict[str, Any]:
 
 def _project_incident_detail_incident(incident: Dict[str, Any]) -> Dict[str, Any]:
     return {
-        "incident_id": incident.get("incident_id") or incident.get("id"),
-        "title": incident.get("title"),
-        "severity": _incident_home_severity(incident.get("severity")),
-        "status": incident.get("status"),
-        "artifact_id": incident.get("artifact_id"),
-        "artifact_version": incident.get("artifact_version"),
-        "runtime_id": incident.get("runtime_id"),
-        "trace_id": incident.get("trace_id") or incident.get("correlation_id"),
+        "incident_id": incident.get("incident_id") or incident.get("id"), "title": incident.get("title"),
+        "severity": _incident_home_severity(incident.get("severity")), "status": incident.get("status"),
+        "artifact_id": incident.get("artifact_id"), "artifact_version": incident.get("artifact_version"),
+        "runtime_id": incident.get("runtime_id"), "trace_id": incident.get("trace_id") or incident.get("correlation_id"),
         "opened_at": incident.get("opened_at") or incident.get("created_at") or incident.get("submitted_at"),
     }
 
@@ -257,34 +252,13 @@ def _project_affected_binding(
 
 
 def _default_incident_allowed_actions() -> Dict[str, bool]:
-    return {
-        "canPause": False,
-        "canRiskOff": False,
-        "canLiquidateAll": False,
-        "canHardRollback": False,
-        "canIssueSafeMode": False,
-        "canOpenActionDrawer": False,
-    }
+    return {k: False for k in ("canPause", "canRiskOff", "canLiquidateAll", "canHardRollback", "canIssueSafeMode", "canOpenActionDrawer")}
 
 
-def _derive_incident_allowed_actions(
-    roles: Union[Sequence[str], Set[str]],
-    incident: Dict[str, Any],
-) -> Dict[str, bool]:
+def _derive_incident_allowed_actions(roles: Union[Sequence[str], Set[str]], incident: Dict[str, Any]) -> Dict[str, bool]:
     actions = _default_incident_allowed_actions()
-    incident_status = str(incident.get("status") or "").lower()
-    runtime_id = incident.get("runtime_id")
-    if incident_status not in {"open", "in_progress"} or not runtime_id:
-        return actions
-
-    role_set = set(roles)
-    if not {"operator", "admin"}.intersection(role_set):
-        return actions
-
-    actions["canPause"] = True
-    actions["canRiskOff"] = True
-    actions["canIssueSafeMode"] = True
-    actions["canOpenActionDrawer"] = True
+    if str(incident.get("status") or "").lower() in {"open", "in_progress"} and incident.get("runtime_id") and {"operator", "admin"}.intersection(set(roles)):
+        actions.update({"canPause": True, "canRiskOff": True, "canIssueSafeMode": True, "canOpenActionDrawer": True})
     return actions
 
 
@@ -420,33 +394,16 @@ def _project_kill_switch_contract(ks: Dict[str, Any], surface: Dict[str, Any]) -
     }
 
 
-def _project_action_drawer_allowed_actions(
-    kill_switch_surface: Dict[str, Any],
-    allowed_actions_surface: Dict[str, Any],
-) -> Dict[str, bool]:
-    allowed_actions = {
-        "canPause": False,
-        "canRiskOff": False,
-        "canLiquidateAll": False,
-        "canHardRollback": False,
-        "canIssueSafeMode": False,
-        "secondaryPathAvailable": False,
-    }
-
+def _project_action_drawer_allowed_actions(kill_switch_surface: Dict[str, Any], allowed_actions_surface: Dict[str, Any]) -> Dict[str, bool]:
+    allowed_actions = {k: False for k in ("canPause", "canRiskOff", "canLiquidateAll", "canHardRollback", "canIssueSafeMode", "secondaryPathAvailable")}
     if allowed_actions_surface.get("status") != "ok":
         return allowed_actions
-
     secondary_path_available = kill_switch_surface.get("status") != "unavailable"
     allowed_actions["secondaryPathAvailable"] = secondary_path_available
-
     if kill_switch_surface.get("status") == "ok":
         allowed_actions.update(_ACTION_DRAWER_PRIMARY_ALLOWED_ACTIONS)
-        return allowed_actions
-
-    if secondary_path_available:
-        allowed_actions["canPause"] = True
-        allowed_actions["canRiskOff"] = True
-
+    elif secondary_path_available:
+        allowed_actions.update({"canPause": True, "canRiskOff": True})
     return allowed_actions
 
 
@@ -480,6 +437,7 @@ class IncidentService:
         command_store: Optional[Any] = None,
         get_read_store: Optional[Callable[[], Any]] = None,
         get_command_store: Optional[Callable[[], Any]] = None,
+        durable_writer: Optional[Any] = None,
         incident_overlay: Optional[Dict[str, Dict[str, Any]]] = None,
         acknowledged_alerts: Optional[Dict[str, Dict[str, Any]]] = None,
         idempotency_ledger: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -498,6 +456,7 @@ class IncidentService:
             self._get_command_store = (lambda: command_store() if callable(command_store) else command_store)
         else:
             self._get_command_store = get_command_store or (lambda: None)
+        self._durable_writer = durable_writer
         self._idempotency_ledger: Dict[str, Dict[str, Any]] = (
             idempotency_ledger if idempotency_ledger is not None else {}
         )
@@ -511,6 +470,26 @@ class IncidentService:
         self._dataset_surface_status_fn = dataset_surface_status
         self._meta_staleness_fn = meta_staleness
         self._surface_degradation_reason_fn = surface_degradation_reason
+
+    def _resolve_durable_writer(self) -> Optional[Any]:
+        if self._durable_writer is not None:
+            return self._durable_writer
+        store = self.get_read_store()
+        if store is None:
+            return None
+        if hasattr(store, "update_incident_status"):
+            return store
+        ltg = getattr(store, "lifecycle_telemetry_governance", None)
+        if ltg is not None:
+            if hasattr(ltg, "update_incident_status"):
+                return ltg
+            inc = getattr(ltg, "incidents", None)
+            if inc is not None and hasattr(inc, "update_incident_status"):
+                return inc
+        inc_port = getattr(store, "incident_port", None) or getattr(store, "incidents", None)
+        if inc_port is not None and hasattr(inc_port, "update_incident_status"):
+            return inc_port
+        return None
 
     def get_read_store(self) -> Any:
         return self._get_read_store()
@@ -530,19 +509,27 @@ class IncidentService:
         missing_message: Optional[str] = None,
     ) -> Dict[str, Any]:
         now_ts = snapshot_at or self.now()
+        store = self.get_read_store()
+        inc_port = getattr(getattr(store, "lifecycle_telemetry_governance", None), "incidents", None) or getattr(store, "incident_port", None) or getattr(store, "incidents", None)
+        store_src = getattr(store, "dataset_source", lambda ds: "typed_store")(dataset) if store else "typed_store"
+        if store_src == "missing":
+            src = "missing"
+        elif getattr(inc_port, "_last_error", False):
+            src = "unavailable"
+        elif dataset == "incidents" and store_src in ("typed_store", None) and inc_port is not None and hasattr(inc_port, "dataset_source"):
+            src = inc_port.dataset_source()
+        else:
+            src = store_src or "missing"
+
         if self._dataset_surface_status_fn is not None:
             return self._dataset_surface_status_fn(
                 dataset,
                 snapshot_at=now_ts,
                 has_data=has_data,
                 missing_message=missing_message,
+                source=src,
+                read_store=store,
             )
-        store = self.get_read_store()
-        src = getattr(store, "dataset_source", lambda ds: "local_snapshot")(dataset) if store else "local_snapshot"
-        if dataset == "incidents" and src in ("typed_store", "local_snapshot"):
-            inc_port = getattr(getattr(store, "lifecycle_telemetry_governance", None), "incidents", None) or getattr(store, "incident_port", None)
-            if inc_port is not None and hasattr(inc_port, "dataset_source"):
-                src = inc_port.dataset_source()
         if src in ("missing", "unavailable"):
             return {
                 "status": "unavailable",
@@ -660,21 +647,17 @@ class IncidentService:
             "status": payload.get("status") or "open",
             "title": payload.get("title") or "Untitled Incident",
             "severity": payload.get("severity") or "medium",
-            "binding_id": payload.get("binding_id") or "rb-default",
-            "deployment_stage": payload.get("deployment_stage") or "paper",
-            "deployment_plan_id": payload.get("deployment_plan_id") or "plan-default",
-            "capital_pool_id": payload.get("capital_pool_id") or payload.get("affected_pool_id") or "pool-default",
-            "persona_capital_binding_id": payload.get("persona_capital_binding_id") or "pcb-default",
-            "artifact_id": payload.get("artifact_id") or "art-default",
-            "artifact_version": payload.get("artifact_version") or "1.0",
-            "runtime_id": payload.get("runtime_id") or "runtime-default",
-            "trace_id": payload.get("trace_id") or incident_id,
         }
-        store = self.get_read_store()
-        if store and hasattr(store, "create_incident"):
-            created = store.create_incident(req_body)
-            if created and isinstance(created, dict):
-                req_body.update(created)
+        writer = self._resolve_durable_writer()
+        if writer is None or not hasattr(writer, "create_incident"):
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=503,
+                detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": "Incident creation unavailable: durable writer is not configured", "status_code": 503}},
+            )
+        created = writer.create_incident(req_body)
+        if created and isinstance(created, dict):
+            req_body.update(created)
         return _project_bff_incident_case({
             **req_body,
             "id": incident_id,
@@ -694,19 +677,24 @@ class IncidentService:
         status: str,
         resolved_at: Optional[str] = None,
     ) -> Dict[str, Any]:
-        store = self.get_read_store()
-        if store and hasattr(store, "update_incident_status"):
-            return store.update_incident_status(incident_id, status=status, resolved_at=resolved_at)
-        return {"incident_id": incident_id, "status": status}
+        writer = self._resolve_durable_writer()
+        if writer is None or not hasattr(writer, "update_incident_status"):
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=503,
+                detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": f"Incident {incident_id!r} durable writer is unavailable.", "status_code": 503}},
+            )
+        return writer.update_incident_status(incident_id, status=status, resolved_at=resolved_at)
 
     # -- Alert Builders -------------------------------------------------------
 
     def build_incident_alerts(self, snapshot_at: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        incidents = self.list_incidents()
         surface = self.get_surface_status("incidents", snapshot_at=snapshot_at)
         if surface.get("status") == "unavailable":
             return [], surface
         alerts = []
-        for inc in self.list_incidents():
+        for inc in incidents:
             st = str(inc.get("status") or "").lower()
             if st in {"open", "in_progress"}:
                 iid = str(inc.get("incident_id") or inc.get("id") or "")

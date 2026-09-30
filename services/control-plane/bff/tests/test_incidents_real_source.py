@@ -25,6 +25,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import os
+os.environ.setdefault("RANKING_STORE_DSN", "postgresql://test:test@localhost:5432/test")
+os.environ.setdefault("RANKING_STORE_BOOTSTRAP", "0")
+
 from services.control_plane.bff.auth import policy as auth_policy
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.command_adapters.registry import dispatch_domain_command
@@ -33,7 +37,11 @@ from services.control_plane.bff.core.errors import register_error_handlers
 from services.control_plane.bff.incidents.router import create_incident_router
 from services.control_plane.bff.incidents.service import IncidentService
 from services.control_plane.bff.models import CommandType, ObjectType
-from services.control_plane.bff.ports.lifecycle_telemetry_governance import DomainIncidentPort
+from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
+    CompositeLifecycleTelemetryGovernancePort,
+    DomainIncidentPort,
+)
 
 
 class StubIncidentsServer:
@@ -383,7 +391,8 @@ def test_command_adapters_incident_and_alert_actions(incident_service_env) -> No
         params={"alert_id": "alert-incident-inc-real-001", "action_id": "acknowledge"},
     )
     assert res_ack["status"] == "acknowledged"
-    assert res_ack["authoritative_readback"]["status"] == "investigating"
+    assert res_ack["authoritative_readback"]["status"] == "acknowledged"
+    assert res_ack["authoritative_readback"]["incident_status"] == "investigating"
 
     # 4. RiskAlertAction on orphan alert raises ActionUnavailableError
     with pytest.raises(ActionUnavailableError) as exc_info:
@@ -414,3 +423,191 @@ def test_incidents_service_unavailable_reports_unavailable(incident_service_env,
     assert list_resp.status_code == 200, list_resp.text
     surfaces = list_resp.json()["meta"]["surfaces"]
     assert surfaces["incidents"]["status"] == "unavailable"
+
+
+def test_production_read_surface_ports_composition(incident_service_env, tmp_path) -> None:
+    """Acceptance 1, 2, 3: Verify with real ReadSurfacePorts + CompositeLifecycleTelemetryGovernancePort."""
+    stub_srv, base_url = incident_service_env
+    domain_incident_port = DomainIncidentPort(incidents_api_url=base_url)
+    lifecycle_port = CompositeLifecycleTelemetryGovernancePort(incident_port=domain_incident_port)
+    read_surface = ReadSurfacePorts(lifecycle_telemetry_governance=lifecycle_port)
+
+    app = FastAPI()
+    cmd_store = CommandStore(str(tmp_path / f"cmd-{uuid.uuid4().hex[:8]}.jsonl"))
+    service = IncidentService(get_read_store=lambda: read_surface, durable_writer=lifecycle_port)
+    router = create_incident_router(
+        service=service,
+        read_surface=read_surface,
+        command_store=cmd_store,
+        durable_writer=lifecycle_port,
+        extract_identity=auth_policy.extract_identity,
+        require_read_role=auth_policy.require_read_role,
+        require_operator_role=auth_policy.require_operator_role,
+        bff_error=auth_policy.bff_error,
+    )
+    app.include_router(router)
+    register_error_handlers(app)
+    client = TestClient(app)
+
+    # 1. Resolve reaches POST /api/incidents/inc-real-001/status
+    resp = client.post("/bff/incidents/inc-real-001/resolve", headers=_AUTH, json={"reason": "fixed"})
+    assert resp.status_code == 200
+    assert stub_srv.incidents["inc-real-001"]["status"] == "resolved"
+    assert any(c["incident_id"] == "inc-real-001" and c["body"]["status"] == "resolved" for c in stub_srv.status_calls)
+
+    # 2. Acknowledge reaches POST /api/incidents/inc-real-001/status
+    resp = client.post("/bff/alerts/alert-incident-inc-real-001/acknowledge", headers={**_AUTH, "Idempotency-Key": "ack-p-1"}, json={})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "acknowledged"
+    assert stub_srv.incidents["inc-real-001"]["status"] == "investigating"
+
+    # 3. Fresh instance restart preserves investigating status
+    fresh_domain_port = DomainIncidentPort(incidents_api_url=base_url)
+    fresh_lifecycle = CompositeLifecycleTelemetryGovernancePort(incident_port=fresh_domain_port)
+    fresh_read_surface = ReadSurfacePorts(lifecycle_telemetry_governance=fresh_lifecycle)
+    fresh_service = IncidentService(get_read_store=lambda: fresh_read_surface, durable_writer=fresh_lifecycle)
+    fresh_app = FastAPI()
+    fresh_app.include_router(create_incident_router(
+        service=fresh_service,
+        read_surface=fresh_read_surface,
+        command_store=cmd_store,
+        durable_writer=fresh_lifecycle,
+        extract_identity=auth_policy.extract_identity,
+        require_read_role=auth_policy.require_read_role,
+        require_operator_role=auth_policy.require_operator_role,
+        bff_error=auth_policy.bff_error,
+    ))
+    register_error_handlers(fresh_app)
+    fresh_client = TestClient(fresh_app)
+    detail_resp = fresh_client.get("/bff/incidents/inc-real-001", headers=_AUTH)
+    assert detail_resp.status_code == 200
+    assert detail_resp.json()["data"]["status"] == "investigating"
+
+
+def test_mounted_action_submission_helper_routes(incident_service_env, tmp_path) -> None:
+    """Acceptance 2, 3: Mounted /bff/risk/alerts/{id}/actions/{action} and /bff/incidents/{id}/actions/{action}."""
+    stub_srv, base_url = incident_service_env
+    from services.control_plane.bff import main as bff_main
+
+    domain_incident_port = DomainIncidentPort(incidents_api_url=base_url)
+    lifecycle_port = CompositeLifecycleTelemetryGovernancePort(incident_port=domain_incident_port)
+    read_surface = ReadSurfacePorts(lifecycle_telemetry_governance=lifecycle_port)
+
+    app = FastAPI()
+    cmd_store = CommandStore(str(tmp_path / f"cmd-{uuid.uuid4().hex[:8]}.jsonl"))
+    service = IncidentService(get_read_store=lambda: read_surface, durable_writer=lifecycle_port)
+    router = create_incident_router(
+        service=service,
+        read_surface=read_surface,
+        command_store=cmd_store,
+        durable_writer=lifecycle_port,
+        submit_action_command=bff_main._gov_bff_action_command,
+        extract_identity=auth_policy.extract_identity,
+        require_read_role=auth_policy.require_read_role,
+        require_operator_role=auth_policy.require_operator_role,
+        bff_error=auth_policy.bff_error,
+    )
+    app.include_router(router)
+    register_error_handlers(app)
+    client = TestClient(app)
+
+    # 1. IncidentAction via /bff/incidents/{id}/actions/resolve
+    resp_inc = client.post("/bff/incidents/inc-real-001/actions/resolve", headers=_AUTH, json={"reason": "resolved by operator"})
+    assert resp_inc.status_code == 202
+    assert stub_srv.incidents["inc-real-001"]["status"] == "resolved"
+    assert resp_inc.json()["data"]["status"] == "resolved"
+    assert resp_inc.json()["data"]["incident_status"] == "resolved"
+
+    # 2. RiskAlertAction with durable owner via /bff/risk/alerts/alert-incident-inc-real-001/actions/acknowledge
+    resp_alert = client.post(
+        "/bff/risk/alerts/alert-incident-inc-real-001/actions/acknowledge",
+        headers={**_AUTH, "Idempotency-Key": f"ack-{uuid.uuid4().hex[:6]}"},
+        json={},
+    )
+    assert resp_alert.status_code == 202
+    assert resp_alert.json()["data"]["status"] == "acknowledged"
+    assert stub_srv.incidents["inc-real-001"]["status"] == "investigating"
+    assert any(c["incident_id"] == "inc-real-001" for c in stub_srv.status_calls)
+    assert not any(c["incident_id"].startswith("alert-") for c in stub_srv.status_calls)
+
+    # 3. RiskAlertAction without durable owner via /bff/risk/alerts/alert-runtime-worker-1/actions/acknowledge
+    resp_orphan = client.post(
+        "/bff/risk/alerts/alert-runtime-worker-1/actions/acknowledge",
+        headers={**_AUTH, "Idempotency-Key": f"ack-orphan-{uuid.uuid4().hex[:6]}"},
+        json={},
+    )
+    assert resp_orphan.status_code == 422
+    assert resp_orphan.json()["error"]["code"] == "OPERATION_NOT_ALLOWED"
+    assert resp_orphan.json()["error"]["details"]["precondition_failed"] == "durable_owner_unavailable"
+
+
+def test_outage_health_propagation_and_recovery(incident_service_env) -> None:
+    """Acceptance 5: Test health propagation and recovery on outage."""
+    stub_srv, base_url = incident_service_env
+    from services.control_plane.bff.main import _dataset_surface_status
+
+    port = DomainIncidentPort(incidents_api_url=base_url)
+    store = StubReadStoreWithIncidentPort(base_url)
+    store.incident_port = port
+    service = IncidentService(get_read_store=lambda: store, durable_writer=port)
+
+    # Initially healthy
+    alerts, surface = service.build_incident_alerts(snapshot_at="2026-09-30T00:00:00Z")
+    assert surface["status"] == "ok"
+    status_payload = _dataset_surface_status("incidents", read_store=store)
+    assert status_payload["status"] == "ok"
+    assert status_payload["source"] == "service_client"
+
+    # Upstream fails (503)
+    stub_srv.is_healthy = False
+    alerts_outage, surface_outage = service.build_incident_alerts(snapshot_at="2026-09-30T00:01:00Z")
+    assert surface_outage["status"] == "unavailable"
+    assert alerts_outage == []
+    status_outage = _dataset_surface_status("incidents", read_store=store)
+    assert status_outage["status"] == "unavailable"
+    assert status_outage["source"] == "unavailable"
+
+    # Upstream recovers
+    stub_srv.is_healthy = True
+    alerts_rec, surface_rec = service.build_incident_alerts(snapshot_at="2026-09-30T00:02:00Z")
+    assert surface_rec["status"] == "ok"
+    assert len(alerts_rec) >= 1
+    status_rec = _dataset_surface_status("incidents", read_store=store)
+    assert status_rec["status"] == "ok"
+    assert status_rec["source"] == "service_client"
+
+
+def test_detail_404_preserves_not_found_without_service_error(incident_service_env, tmp_path) -> None:
+    """Acceptance 1, 5: 404 on missing incident preserves not-found without marking service down."""
+    stub_srv, base_url = incident_service_env
+    store = StubReadStoreWithIncidentPort(base_url)
+    client = TestClient(_build_app(store, tmp_path))
+
+    resp_404 = client.get("/bff/incidents/inc-does-not-exist", headers=_AUTH)
+    assert resp_404.status_code == 404
+    assert resp_404.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+    assert not store.incident_port._last_error
+
+    resp_200 = client.get("/bff/incidents/inc-real-001", headers=_AUTH)
+    assert resp_200.status_code == 200
+
+
+def test_create_incident_generates_uuid_and_persists(incident_service_env, tmp_path) -> None:
+    """Acceptance 1, 4: POST /bff/incidents generates UUID and persists without invented defaults."""
+    stub_srv, base_url = incident_service_env
+    store = StubReadStoreWithIncidentPort(base_url)
+    client = TestClient(_build_app(store, tmp_path))
+
+    resp = client.post(
+        "/bff/incidents",
+        headers={**_AUTH, "Idempotency-Key": f"create-{uuid.uuid4().hex[:6]}"},
+        json={"title": "Spike in errors", "severity": "high"},
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    inc_id = data.get("id") or data.get("incident_id")
+    assert inc_id and inc_id.strip()
+    assert inc_id in stub_srv.incidents
+    assert "rb-default" not in str(data)
+    assert "plan-default" not in str(data)
+

@@ -2871,14 +2871,29 @@ def _dataset_surface_status(
 ) -> Dict[str, Any]:
     resolved_store = read_store if read_store is not None else globals().get("read_store")
     if source is None:
+        store_source = None
         if resolved_store is not None and hasattr(resolved_store, "dataset_source"):
             try:
-                source = str(resolved_store.dataset_source(dataset) or "missing")
+                store_source = str(resolved_store.dataset_source(dataset) or "missing")
             except Exception:
+                store_source = "missing"
+        if dataset == "incidents":
+            inc_port = getattr(getattr(resolved_store, "lifecycle_telemetry_governance", None), "incidents", None) or getattr(resolved_store, "incident_port", None) or getattr(resolved_store, "incidents", None)
+            if store_source == "missing":
                 source = "missing"
+            elif inc_port is not None and hasattr(inc_port, "dataset_source"):
+                port_source = str(inc_port.dataset_source() or "missing")
+                if port_source == "unavailable" or getattr(inc_port, "_last_error", False):
+                    source = "unavailable"
+                elif store_source in (None, "typed_store"):
+                    source = port_source
+                else:
+                    source = store_source
+            else:
+                source = store_source or "missing"
         else:
-            source = "missing"
-    return _format_dataset_surface_status(
+            source = store_source or "missing"
+    res = _format_dataset_surface_status(
         dataset,
         snapshot_at=snapshot_at,
         has_data=has_data,
@@ -2887,6 +2902,10 @@ def _dataset_surface_status(
         utc_now=utc_now,
         **kwargs,
     )
+    if source in ("unavailable", "missing"):
+        res["status"] = "unavailable"
+        res["source"] = source
+    return res
 def _loop_run_surface_status(
     available: bool,
     *,
@@ -6880,6 +6899,7 @@ def _merged_mcp_tool_records() -> List[Dict[str, Any]]:
 _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _GOV_BFF_EXPERIMENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
 # _GOV_BFF_IDEMPOTENCY defined earlier
+from .action_catalog import get_catalog_entry
 from .incidents.service import IncidentService as _IncidentService
 def _current_read_store_for_legacy_incident_seam() -> Any:
     return read_store
@@ -6990,56 +7010,27 @@ def _gov_bff_action_command(
         from .command_adapters.registry import dispatch_domain_command
         from .command_adapters.base import ActionUnavailableError
         try:
+            inc_id = entity_id if command_type == CommandType.INCIDENT_ACTION else (str(payload.get("incident_id") or ("" if not entity_id.startswith("alert-incident-") else entity_id[15:])))
             domain_res = dispatch_domain_command(
                 command_id=command_id,
                 command_type=command_type,
-                params={"entity_type": entity_type.value, "entity_id": entity_id, "action_id": action_id, "incident_id": entity_id, "alert_id": entity_id, **payload},
+                params={"entity_type": entity_type.value, "entity_id": entity_id, "action_id": action_id, **({"alert_id": entity_id} if command_type == CommandType.RISK_ALERT_ACTION else {}), **({"incident_id": inc_id} if inc_id else {}), **payload},
             )
             exec_status = CommandStatus.EXECUTED
         except ActionUnavailableError as exc:
-            raise _bff_error(
-                422,
-                ErrorCode.OPERATION_NOT_ALLOWED,
-                "Action unavailable",
-                str(exc),
-                precondition_failed="durable_owner_unavailable",
-            ) from exc
+            raise _bff_error(422, ErrorCode.OPERATION_NOT_ALLOWED, "Action unavailable", str(exc), precondition_failed="durable_owner_unavailable") from exc
 
-    command_store.submit_command(
-        command_id=command_id,
-        command_type=command_type,
-        target=target,
-        submitted_at=submitted_at,
-        params={"action_id": action_id, **payload},
-        audit_context=audit_record,
-        foundation_context=foundation_ctx,
-    )
+    command_store.submit_command(command_id=command_id, command_type=command_type, target=target, submitted_at=submitted_at, params={"action_id": action_id, **payload}, audit_context=audit_record, foundation_context=foundation_ctx)
     if exec_status == CommandStatus.EXECUTED:
-        command_store.update_status(
-            command_id=command_id,
-            status=exec_status,
-            result=domain_res,
-        )
-    result = _project_final_command_response(
-        command_id=command_id,
-        command=command_type,
-        accepted_at=submitted_at,
-        status=exec_status,
-        staleness_warning=staleness_warning,
-    )
+        command_store.update_status(command_id=command_id, status=exec_status, result=domain_res)
+    result = _project_final_command_response(command_id=command_id, command=command_type, accepted_at=submitted_at, status=exec_status, staleness_warning=staleness_warning)
     res_dict = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
     if domain_res is not None:
-        read_back_status = (
-            (domain_res.get("authoritative_readback") or {}).get("status")
-            or domain_res.get("status")
-        )
-        if read_back_status:
-            res_dict["read_back_status"] = read_back_status
-            if isinstance(res_dict.get("data"), dict):
-                res_dict["data"]["status"] = read_back_status
-                res_dict["data"]["incident_status"] = read_back_status
-                res_dict["data"]["read_back_status"] = read_back_status
-        if isinstance(res_dict.get("data"), dict):
+        st = (domain_res.get("authoritative_readback") or {}).get("status") or domain_res.get("status")
+        inc_st = (domain_res.get("authoritative_readback") or {}).get("incident_status") or st
+        if st and isinstance(res_dict.get("data"), dict):
+            res_dict["read_back_status"] = res_dict["data"]["status"] = res_dict["data"]["read_back_status"] = st
+            res_dict["data"]["incident_status"] = inc_st
             res_dict["data"]["domain_receipt"] = domain_res
     _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": res_dict}
     return res_dict

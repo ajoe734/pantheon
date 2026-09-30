@@ -284,6 +284,11 @@ class DomainIncidentPort:
             with self._opener(req, timeout=5.0) as resp:
                 self._last_error = False
                 return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise
+            self._last_error = True
+            raise
         except Exception:
             self._last_error = True
             raise
@@ -325,14 +330,39 @@ class DomainIncidentPort:
             return None
         try:
             return self._http_json(f"/api/incidents/{urllib.parse.quote(cid, safe='')}")
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            self._last_error = True
+            return None
         except Exception:
+            self._last_error = True
             return None
 
+    def _http_err(self, exc: urllib.error.HTTPError, nf_msg: str) -> None:
+        from fastapi import HTTPException
+        if exc.code == 404:
+            raise HTTPException(status_code=404, detail={"error": {"code": "RESOURCE_NOT_FOUND", "message": nf_msg, "status_code": 404}}) from exc
+        self._last_error = True
+        raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": f"Incident service returned HTTP {exc.code}", "status_code": 503}}) from exc
+
+    def _conn_err(self, exc: Any) -> None:
+        self._last_error = True
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": f"Incident service unavailable: {exc}", "status_code": 503}}) from (exc if isinstance(exc, BaseException) else None)
+
     def create_incident(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        if self._incidents is None:
+        if self._incidents is not None:
+            self._incidents[str(payload.get("incident_id") or payload.get("id") or "")] = payload
+            return payload
+        if not self._incidents_api_url:
+            self._conn_err("PANTHEON_INCIDENTS_API_URL unconfigured")
+        try:
             return self._http_json("/api/incidents", method="POST", payload=payload)
-        self._incidents[str(payload.get("incident_id") or payload.get("id") or "")] = payload
-        return payload
+        except urllib.error.HTTPError as exc:
+            self._http_err(exc, "Incident endpoint not found")
+        except Exception as exc:
+            self._conn_err(exc)
 
     def update_incident_status(
         self,
@@ -341,11 +371,18 @@ class DomainIncidentPort:
         resolved_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         cid, body = incident_id.strip(), {"status": status, **({"resolved_at": resolved_at} if resolved_at else {})}
-        if self._incidents is None:
+        if self._incidents is not None:
+            inc = self._incidents.setdefault(cid, {"incident_id": cid})
+            inc.update(body)
+            return inc
+        if not self._incidents_api_url:
+            self._conn_err("PANTHEON_INCIDENTS_API_URL unconfigured")
+        try:
             return self._http_json(f"/api/incidents/{urllib.parse.quote(cid, safe='')}/status", method="POST", payload=body)
-        inc = self._incidents.setdefault(cid, {"incident_id": cid})
-        inc.update(body)
-        return inc
+        except urllib.error.HTTPError as exc:
+            self._http_err(exc, f"Incident {cid!r} does not exist")
+        except Exception as exc:
+            self._conn_err(exc)
 
     def list_postmortems(self, time_range: Optional[str] = None) -> List[Dict[str, Any]]:
         return list(self._postmortems.values())
@@ -1240,11 +1277,18 @@ class CompositeLifecycleTelemetryGovernancePort:
         return self.incidents.get_rollbacks_by_incident(incident_id)
 
     def create_incident(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return getattr(self.incidents, "create_incident", lambda p: p)(payload)
+        fn = getattr(self.incidents, "create_incident", None)
+        if fn is None:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": "Incident create delegate unavailable", "status_code": 503}})
+        return fn(payload)
 
     def update_incident_status(self, incident_id: str, status: str, resolved_at: Optional[str] = None) -> Dict[str, Any]:
         fn = getattr(self.incidents, "update_incident_status", None)
-        return fn(incident_id, status=status, resolved_at=resolved_at) if fn else {"incident_id": incident_id, "status": status}
+        if fn is None:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": "Incident status update delegate unavailable", "status_code": 503}})
+        return fn(incident_id, status=status, resolved_at=resolved_at)
 
     def dataset_source(self, dataset: str = "incidents") -> str:
         return getattr(self.incidents, "dataset_source", lambda: "typed_store")() if dataset == "incidents" else "typed_store"

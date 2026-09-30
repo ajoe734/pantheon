@@ -1371,6 +1371,7 @@ def mount_bff_routers(
         create_incident_router(
             read_surface=app_deps.read_surface,
             command_store=app_deps.command_store,
+            durable_writer=getattr(app_deps.read_surface, "lifecycle_telemetry_governance", None),
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),
             require_operator_role=_dep("_require_operator_role"),
