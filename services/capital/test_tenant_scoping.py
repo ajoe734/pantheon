@@ -674,6 +674,174 @@ def test_untenanted_live_owner_hidden(capital_test_env):
     response = client.get("/api/capital-pools/pool-a/live-owner", headers=headers)
     assert response.json() is None, "Untenanted binding leaked through live-owner endpoint"
 
+    # 1. Probe 1 (activate conflict): POST new live_owner binding succeeds, activate fails without disclosing hidden binding id
+    create_lo = client.post(
+        "/api/bindings",
+        json={
+            "actor_id": "admin-alpha",
+            "actor_role": "persona.admin",
+            "binding_id": "alpha-new-binding",
+            "persona_id": "persona-alpha",
+            "capital_pool_id": "pool-a",
+            "role": "live_owner",
+            "allowed_deployment_scope": "live",
+        },
+        headers=headers,
+    )
+    assert create_lo.status_code == 201, create_lo.text
+    act_lo = client.post(
+        "/api/bindings/alpha-new-binding/activate",
+        json={"actor_id": "admin-alpha", "actor_role": "persona.admin", "approval_decision_id": "app-alpha"},
+        headers=headers,
+    )
+    assert act_lo.status_code == 400
+    assert "Single-live-owner rule" in act_lo.json()["detail"]
+    assert "legacy-untenanted" not in act_lo.text
+
+    # 2. Probe 2 (create conflict): Assign hidden fixture binding capital_sleeve_id=sleeve-a; POST new binding for sleeve-a returns 400 without disclosing hidden binding id
+    binding["capital_sleeve_id"] = "sleeve-a"
+    (tempdir / "persona_capital_bindings.json").write_text(json.dumps([binding]))
+    module.binding_store._load(module.binding_store._path)
+
+    create_sleeve = client.post(
+        "/api/bindings",
+        json={
+            "actor_id": "admin-alpha",
+            "actor_role": "persona.admin",
+            "binding_id": "alpha-sleeve-binding",
+            "persona_id": "persona-alpha-2",
+            "capital_pool_id": "pool-a",
+            "capital_sleeve_id": "sleeve-a",
+            "role": "advisor",
+            "allowed_deployment_scope": "none",
+        },
+        headers=headers,
+    )
+    assert create_sleeve.status_code == 400
+    assert "already bound" in create_sleeve.json()["detail"]
+    assert "legacy-untenanted" not in create_sleeve.text
+
+
+def test_foreign_and_same_tenant_binding_conflict_redaction(capital_test_env):
+    client, module, tempdir = capital_test_env
+    headers_a = _auth_headers("tenant-alpha", actor_id="admin-alpha")
+
+    created_a = client.post(
+        "/api/capital-pools",
+        json={"actor_id": "admin-alpha", "actor_role": "capital.admin", "pool_id": "pool-x", "name": "X", "owner_id": "fund-x", "owner_type": "fund"},
+        headers=headers_a,
+    )
+    assert created_a.status_code == 201
+
+    # 1. Foreign-tenant live_owner conflict on activate:
+    foreign_binding = {
+        "binding_id": "beta-live-owner",
+        "tenant_id": "tenant-beta",
+        "persona_id": "persona-beta",
+        "capital_pool_id": "pool-x",
+        "role": "live_owner",
+        "allowed_deployment_scope": "live",
+        "status": "active",
+        "approval_decision_id": "app-b",
+        "created_at": "2026-01-01T00:00:00Z",
+        "metadata": {"tenant_id": "tenant-beta"},
+    }
+    (tempdir / "persona_capital_bindings.json").write_text(json.dumps([foreign_binding]))
+    module.binding_store._load(module.binding_store._path)
+
+    create_lo = client.post(
+        "/api/bindings",
+        json={
+            "actor_id": "admin-alpha",
+            "actor_role": "persona.admin",
+            "binding_id": "alpha-lo-foreign-test",
+            "persona_id": "persona-alpha",
+            "capital_pool_id": "pool-x",
+            "role": "live_owner",
+            "allowed_deployment_scope": "live",
+        },
+        headers=headers_a,
+    )
+    assert create_lo.status_code == 201
+    act_lo = client.post(
+        "/api/bindings/alpha-lo-foreign-test/activate",
+        json={"actor_id": "admin-alpha", "actor_role": "persona.admin", "approval_decision_id": "app-a"},
+        headers=headers_a,
+    )
+    assert act_lo.status_code == 400
+    assert "Single-live-owner rule" in act_lo.json()["detail"]
+    assert "beta-live-owner" not in act_lo.text
+    assert "tenant-beta" not in act_lo.text
+
+    # 2. Foreign-tenant sleeve conflict on create:
+    foreign_sleeve = {
+        "binding_id": "beta-sleeve-bound",
+        "tenant_id": "tenant-beta",
+        "persona_id": "persona-beta-2",
+        "capital_pool_id": "pool-x",
+        "capital_sleeve_id": "sleeve-foreign",
+        "role": "advisor",
+        "allowed_deployment_scope": "none",
+        "status": "pending",
+        "created_at": "2026-01-01T00:00:00Z",
+        "metadata": {"tenant_id": "tenant-beta"},
+    }
+    (tempdir / "persona_capital_bindings.json").write_text(json.dumps([foreign_sleeve]))
+    module.binding_store._load(module.binding_store._path)
+
+    create_sleeve = client.post(
+        "/api/bindings",
+        json={
+            "actor_id": "admin-alpha",
+            "actor_role": "persona.admin",
+            "binding_id": "alpha-sleeve-foreign-test",
+            "persona_id": "persona-alpha-3",
+            "capital_pool_id": "pool-x",
+            "capital_sleeve_id": "sleeve-foreign",
+            "role": "advisor",
+            "allowed_deployment_scope": "none",
+        },
+        headers=headers_a,
+    )
+    assert create_sleeve.status_code == 400
+    assert "already bound" in create_sleeve.json()["detail"]
+    assert "beta-sleeve-bound" not in create_sleeve.text
+    assert "tenant-beta" not in create_sleeve.text
+
+    # 3. Same-tenant conflict preserves binding ID disclosure for authorized caller:
+    same_binding = {
+        "binding_id": "alpha-sleeve-existing",
+        "tenant_id": "tenant-alpha",
+        "persona_id": "persona-alpha-4",
+        "capital_pool_id": "pool-x",
+        "capital_sleeve_id": "sleeve-same",
+        "role": "advisor",
+        "allowed_deployment_scope": "none",
+        "status": "pending",
+        "created_at": "2026-01-01T00:00:00Z",
+        "metadata": {"tenant_id": "tenant-alpha"},
+    }
+    (tempdir / "persona_capital_bindings.json").write_text(json.dumps([same_binding]))
+    module.binding_store._load(module.binding_store._path)
+
+    create_same = client.post(
+        "/api/bindings",
+        json={
+            "actor_id": "admin-alpha",
+            "actor_role": "persona.admin",
+            "binding_id": "alpha-sleeve-same-test",
+            "persona_id": "persona-alpha-5",
+            "capital_pool_id": "pool-x",
+            "capital_sleeve_id": "sleeve-same",
+            "role": "advisor",
+            "allowed_deployment_scope": "none",
+        },
+        headers=headers_a,
+    )
+    assert create_same.status_code == 400
+    assert "already bound" in create_same.json()["detail"]
+    assert "alpha-sleeve-existing" in create_same.json()["detail"]
+
 
 def test_postgres_migration_and_write_path(monkeypatch):
     import sys

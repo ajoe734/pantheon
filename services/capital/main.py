@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -133,6 +134,11 @@ def _tenant_match(obj: Any, tenant: Optional[str]) -> bool:
     return bool(tid and (tenant is None or tid == tenant))
 
 
+def _is_binding_authorized(conflicting: Any, caller_tenant: Optional[str]) -> bool:
+    tid = getattr(conflicting, "tenant_id", None) or (getattr(conflicting, "metadata", None) or {}).get("tenant_id")
+    return bool(caller_tenant and tid == caller_tenant)
+
+
 def _resolve_data_dir() -> Path:
     base = (
         os.getenv("CAPITAL_DATA_DIR")
@@ -254,11 +260,7 @@ class CapitalBoundaryService:
             if existing is not None and replayed:
                 if not _tenant_match(existing, tenant):
                     raise CapitalServiceError(f"CapitalPool '{pool_id}' already exists")
-                self._complete_create_idempotency(
-                    scope="capital_pool.create",
-                    actor_scope=body.actor_id,
-                    key=idempotency_key,
-                )
+                self._complete_create_idempotency(scope="capital_pool.create", actor_scope=body.actor_id, key=idempotency_key)
                 return existing, True
             if existing is not None:
                 raise CapitalServiceError(f"CapitalPool '{pool_id}' already exists")
@@ -280,11 +282,7 @@ class CapitalBoundaryService:
             if tenant:
                 object.__setattr__(pool, "tenant_id", tenant)
             created = self.pool_store.create(pool)
-            self._complete_create_idempotency(
-                scope="capital_pool.create",
-                actor_scope=body.actor_id,
-                key=idempotency_key,
-            )
+            self._complete_create_idempotency(scope="capital_pool.create", actor_scope=body.actor_id, key=idempotency_key)
         self._emit_nonfatal(
             event_type="capital_pool_created",
             resource_type="CapitalPool",
@@ -348,11 +346,7 @@ class CapitalBoundaryService:
             if existing is not None and replayed:
                 if not _tenant_match(existing, tenant):
                     raise CapitalServiceError(f"PersonaCapitalBinding '{binding_id}' already exists")
-                self._complete_create_idempotency(
-                    scope="persona_capital_binding.create",
-                    actor_scope=body.actor_id,
-                    key=idempotency_key,
-                )
+                self._complete_create_idempotency(scope="persona_capital_binding.create", actor_scope=body.actor_id, key=idempotency_key)
                 return existing, True
             if existing is not None:
                 raise CapitalServiceError(f"PersonaCapitalBinding '{binding_id}' already exists")
@@ -360,11 +354,7 @@ class CapitalBoundaryService:
                 binding_id=binding_id,
                 persona_id=body.persona_id,
                 capital_pool_id=body.capital_pool_id,
-                capital_sleeve_id=(
-                    str(body.capital_sleeve_id).strip()
-                    if body.capital_sleeve_id is not None
-                    else None
-                ),
+                capital_sleeve_id=str(body.capital_sleeve_id).strip() if body.capital_sleeve_id is not None else None,
                 role=body.role,
                 allowed_deployment_scope=body.allowed_deployment_scope,
                 status="pending",
@@ -378,12 +368,13 @@ class CapitalBoundaryService:
             )
             if tenant:
                 object.__setattr__(binding, "tenant_id", tenant)
-            created = self.binding_store.create(binding)
-            self._complete_create_idempotency(
-                scope="persona_capital_binding.create",
-                actor_scope=body.actor_id,
-                key=idempotency_key,
-            )
+            try:
+                created = self.binding_store.create(binding)
+            except Exception as exc:
+                if isinstance(exc, PersonaCapitalBindingError) or type(exc).__name__ == "PersonaCapitalBindingError":
+                    self._redact_binding_conflict_error(exc, tenant)
+                raise
+            self._complete_create_idempotency(scope="persona_capital_binding.create", actor_scope=body.actor_id, key=idempotency_key)
         self._emit_nonfatal(
             event_type="persona_capital_binding_created",
             resource_type="PersonaCapitalBinding",
@@ -427,7 +418,12 @@ class CapitalBoundaryService:
                 raise CapitalServiceError(
                     f"CapitalPool '{pool.pool_id}' must be active before bindings can be activated"
                 )
-            updated = self.binding_store.activate(binding_id, body.approval_decision_id)
+            try:
+                updated = self.binding_store.activate(binding_id, body.approval_decision_id)
+            except Exception as exc:
+                if isinstance(exc, PersonaCapitalBindingError) or type(exc).__name__ == "PersonaCapitalBindingError":
+                    self._redact_binding_conflict_error(exc, _current_tenant())
+                raise
         self._emit(
             event_type="persona_capital_binding_activated",
             resource_type="PersonaCapitalBinding",
@@ -437,6 +433,15 @@ class CapitalBoundaryService:
             detail={"approval_decision_id": body.approval_decision_id},
         )
         return updated
+
+    def _redact_binding_conflict_error(self, exc: Exception, caller_tenant: Optional[str]) -> None:
+        msg = str(exc)
+        m = re.search(r"(Single-live-owner rule violated: pool .+? already has an active live_owner binding) \(([^)]+)\)(\. Revoke.+)", msg)
+        if m and not _is_binding_authorized(self.binding_store.get(m.group(2)), caller_tenant):
+            raise type(exc)(f"{m.group(1)}{m.group(3)}") from exc
+        m = re.search(r"(Capital sleeve identity is already bound: .+?), binding=(?:'|\")([^'\"]+)(?:'|\")", msg)
+        if m and not _is_binding_authorized(self.binding_store.get(m.group(2)), caller_tenant):
+            raise type(exc)(m.group(1)) from exc
 
     def update_binding_status(
         self,
