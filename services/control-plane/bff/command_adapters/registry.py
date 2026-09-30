@@ -21,6 +21,7 @@ from .incident_adapter import IncidentCommandAdapter
 from .evolution_adapter import EvolutionCommandAdapter
 from .strategy_adapter import StrategyCommandAdapter
 from .capabilities_adapter import CapabilitiesCommandAdapter
+from .agora_adapter import AgoraCommandAdapter
 from .audit_adapter import AuditCommandAdapter
 from .experiment_adapter import ExperimentCommandAdapter
 from .job_adapter import JobCommandAdapter
@@ -47,6 +48,7 @@ _DEFAULT_ADAPTERS: List[DomainCommandAdapter] = [
     EvolutionCommandAdapter(),
     StrategyCommandAdapter(),
     CapabilitiesCommandAdapter(),
+    AgoraCommandAdapter(),
     AuditCommandAdapter(),
 ]
 

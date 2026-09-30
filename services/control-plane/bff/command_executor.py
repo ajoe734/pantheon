@@ -1901,6 +1901,10 @@ _EXECUTORS = {
     CommandType.SENTINEL_FINDING_STATUS: _make_adapter_executor(CommandType.SENTINEL_FINDING_STATUS),
     CommandType.SENTINEL_REMEDIATION_BUILD: _make_adapter_executor(CommandType.SENTINEL_REMEDIATION_BUILD),
     CommandType.SENTINEL_REMEDIATION_EXECUTE: _make_adapter_executor(CommandType.SENTINEL_REMEDIATION_EXECUTE),
+    CommandType.AGORA_SIGNAL_FEEDBACK: _make_adapter_executor(CommandType.AGORA_SIGNAL_FEEDBACK),
+    CommandType.AGORA_MESSAGE_ACTION: _make_adapter_executor(CommandType.AGORA_MESSAGE_ACTION),
+    CommandType.AGORA_INSIGHT_ACTION: _make_adapter_executor(CommandType.AGORA_INSIGHT_ACTION),
+    CommandType.AGORA_MEMORY_ACTION: _make_adapter_executor(CommandType.AGORA_MEMORY_ACTION),
 }
 
 
