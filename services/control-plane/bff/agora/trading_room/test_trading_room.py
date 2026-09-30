@@ -16,6 +16,8 @@ import os
 import sys
 import uuid
 
+import pytest
+
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
@@ -55,6 +57,8 @@ def _make_event(
     return {
         "spec_version": "1.0",
         "decision_event_id": event_id or str(uuid.uuid4()),
+        "tenant_id": "tenant-001",
+        "user_id": "user-001",
         "event_kind": event_kind,
         "origin": "strategy_signal",
         "strategy_id": strategy_id,
@@ -119,6 +123,7 @@ def _make_intent(intent_id: str = "int-001") -> dict:
         "spec_version": "1.0",
         "intent_id": intent_id,
         "operator_id": "user-001",
+        "metadata": {"tenant_id": "tenant-001", "user_id": "user-001"},
         "intent_type": "entry_interest",
         "direction": "neutral",
         "subject": {"symbol": "AAPL", "strategy_ref": "strat-001"},
@@ -2261,7 +2266,7 @@ def test_get_trading_room_returns_200_for_object_identity_not_just_dict():
 
 def test_decide_trading_event_returns_201_for_object_identity_not_just_dict():
     store = make_trading_room_store()
-    store.upsert_decision_event(_make_event(event_id="evt-object-identity-001"))
+    store.upsert_decision_event({**_make_event(event_id="evt-object-identity-001"), "user_id": "op-001"})
     client = _object_identity_client(store)
     resp = client.post(
         "/bff/agora/trading-room/decision-events/evt-object-identity-001/decisions",
@@ -2362,3 +2367,148 @@ def test_trading_room_write_role_denies_read_only_user():
         headers=headers,
     )
     assert resp_decide.status_code == 403
+
+
+@pytest.mark.parametrize("decision", ["approve", "modify", "reject", "defer"])
+def test_decision_etag_and_intent_reload(decision):
+    store = TradingRoomStore()
+    store.upsert_decision_event(_make_event(event_id="reload"))
+    client = _client(store)
+    url = "/bff/agora/trading-room/decision-events/reload"
+    before = client.get(url, headers=_write_headers())
+    assert before.status_code == 200
+    etag = before.headers["etag"]
+    page = client.get(url.rsplit("/", 1)[0], headers=_write_headers())
+    assert page.headers["etag"]
+    assert page.json()["items"][0]["etag"] == etag
+    import jsonschema
+    with open(_SCHEMA_PATH) as schema_file:
+        jsonschema.validate(page.json()["items"][0], json.load(schema_file))
+    headers = {**_write_headers("reload"), "If-Match": etag}
+    missing = {k: v for k, v in headers.items() if k != "If-Match"}
+    assert client.post(url + "/decisions", headers=missing, json={"decision": decision}).status_code == 428
+    result = client.post(url + "/decisions", headers=headers, json={"decision": decision})
+    assert result.status_code == 201, result.text
+    after = _client(store).get(url, headers=_write_headers())
+    assert after.headers["etag"] != etag
+    stale = client.post(url + "/decisions", headers={**headers, "Idempotency-Key": "stale"}, json={"decision": decision})
+    assert stale.status_code == 412
+    intent_id = result.json()["data"]["intent_ref"]
+    if decision in {"approve", "modify"}:
+        assert after.json()["intent_ref"] == intent_id
+        with open(_SCHEMA_PATH) as schema_file:
+            jsonschema.validate(after.json(), json.load(schema_file))
+        aggregate = client.get("/bff/agora/trading-room", headers=headers).json()
+        assert aggregate["top_decision_events"][0]["intent_ref"] == intent_id
+        detail = _client(store).get(f"/bff/agora/trading-intents/{intent_id}", headers=headers)
+        assert detail.status_code == 200
+        assert detail.json()["status"] == "draft"
+        assert detail.json()["handoffs"] == []
+        assert detail.json()["data"]["no_order_route_proof"] == "agora_intent_record_only"
+    else:
+        assert intent_id is None
+        assert "intent_ref" not in after.json()
+        assert not store._intents
+
+
+@pytest.mark.parametrize("foreign", [{"tenant_id": "foreign"}, {"user_id": "foreign"}])
+def test_decisions_and_intents_hide_foreign_scope(foreign):
+    store = TradingRoomStore()
+    store.upsert_decision_event(_make_event(event_id="private"))
+    store.upsert_intent(_make_intent())
+    client = _client(store, **foreign)
+    event_url = "/bff/agora/trading-room/decision-events/private"
+    intent_url = "/bff/agora/trading-intents/int-001"
+    for url in (event_url, intent_url):
+        assert client.get(url, headers=_write_headers()).status_code == 404
+    for url, body in (
+        (event_url + "/decisions", {"decision": "approve"}),
+        (intent_url + "/handoffs", _make_handoff()),
+        (intent_url + "/withdraw", None),
+    ):
+        assert client.post(url, headers=_write_headers(), json=body).status_code == 404
+    assert client.get(event_url.rsplit("/", 1)[0], headers=_write_headers()).json()["items"] == []
+    aggregate = client.get("/bff/agora/trading-room", headers=_write_headers()).json()
+    assert aggregate["top_decision_events"] == []
+    assert not any(aggregate["queue_summary"].values())
+    assert client.get("/bff/agora/trading-room/strategies/strat-001", headers=_write_headers()).status_code == 404
+    assert store.get_decision_event("private")["state"] == "pending_review"
+    assert store.get_intent_state("int-001") == "draft"
+    assert store.list_handoffs_for_intent("int-001") == []
+    assert store._idempotency_keys == {}
+
+
+def test_unscoped_legacy_records_are_not_public():
+    store = TradingRoomStore()
+    event = _make_event(event_id="unscoped")
+    event.pop("tenant_id")
+    store.upsert_decision_event(event)
+    intent = _make_intent()
+    intent.pop("metadata")
+    store.upsert_intent(intent)
+    client = _client(store)
+    assert client.get("/bff/agora/trading-room/decision-events/unscoped", headers=_write_headers()).status_code == 404
+    assert client.get("/bff/agora/trading-intents/int-001", headers=_write_headers()).status_code == 404
+
+
+def test_scoped_decision_pagination_and_queue_etag():
+    store = TradingRoomStore()
+    for index, owner in enumerate(["foreign", "user-001", "foreign", "user-001"]):
+        store.upsert_decision_event({**_make_event(event_id=str(index)), "user_id": owner})
+    client = _client(store)
+    url = "/bff/agora/trading-room/decision-events"
+    first = client.get(url, params={"page_size": 1}, headers=_write_headers())
+    assert [e["decision_event_id"] for e in first.json()["items"]] == ["1"]
+    token = first.json()["page_info"]["next_page_token"]
+    second = client.get(url, params={"page_size": 1, "next_page_token": token}, headers=_write_headers())
+    assert [e["decision_event_id"] for e in second.json()["items"]] == ["3"]
+    assert second.json()["page_info"]["has_more"] is False
+    result = client.post(url + "/1/decisions", headers={**_write_headers(), "If-Match": first.json()["items"][0]["etag"]}, json={"decision": "approve"})
+    assert result.status_code == 201
+    assert client.get(url, params={"page_size": 1}, headers=_write_headers()).headers["etag"] != first.headers["etag"]
+
+
+@pytest.mark.parametrize("stage,kind,queue", [
+    ("shadow", "shadow_start", "shadow_research"),
+    ("paper", "paper_validation_request", "management_governance"),
+    ("canary", "promotion_review_request", "promotion_review"),
+    ("live", "promotion_review_request", "promotion_review"),
+])
+def test_handoff_readback_remains_request_only(stage, kind, queue):
+    store = TradingRoomStore()
+    store.upsert_intent(_make_intent())
+    client = _client(store)
+    url = "/bff/agora/trading-intents/int-001"
+    body = _make_handoff(requested_stage=stage, handoff_type=kind)
+    body["state"] = "converted"
+    assert client.post(url + "/handoffs", headers=_write_headers("forbidden"), json=body).status_code == 409
+    body["state"] = "submitted"
+    assert client.post(url + "/handoffs", headers=_write_headers(), json=body).status_code == 202
+    detail = _client(store).get(url, headers=_write_headers()).json()
+    assert detail["status"] == detail["lifecycle_state"] == "submitted"
+    assert detail["meta"]["handoff_count"] == 1
+    handoff = detail["handoffs"][0]
+    assert handoff["target_queue"] == queue
+    assert handoff["state"] == "submitted"
+    assert handoff["no_order_route_proof"] == "agora_request_only_no_order_route"
+    assert not any(handoff.get(key) for key in ("runtime_binding_ref", "deployment_plan_ref", "order_id"))
+    assert client.post(url + "/withdraw", headers=_write_headers("withdraw")).status_code == 200
+    detail = _client(store).get(url, headers=_write_headers()).json()
+    assert detail["status"] == detail["handoffs"][0]["state"] == "withdrawn"
+
+
+def test_decision_changed_during_write_returns_412_without_orphan_intent():
+    class ConcurrentChangeStore(TradingRoomStore):
+        def record_trader_decision(self, event_id, record, **kwargs):
+            self._decision_events[event_id]["state"] = "expired"
+            return super().record_trader_decision(event_id, record, **kwargs)
+
+    store = ConcurrentChangeStore()
+    store.upsert_decision_event(_make_event(event_id="race"))
+    client = _client(store)
+    url = "/bff/agora/trading-room/decision-events/race"
+    etag = client.get(url, headers=_write_headers()).headers["etag"]
+    result = client.post(url + "/decisions", headers={**_write_headers(), "If-Match": etag}, json={"decision": "approve"})
+    assert result.status_code == 412
+    assert not store._intents
+    assert not store._trader_decisions
