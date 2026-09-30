@@ -127,7 +127,6 @@ class StrategyRouteContext:
     normalize_lifecycle_state: Callable[[Any], str] = lambda s: str(s or "draft")
     normalize_risk_level: Callable[[Any], str] = lambda r: str(r or "medium")
     strategy_persona_idempotency_check: Callable[..., Optional[Dict[str, Any]]] = lambda k, h: None
-    strategy_persona_action_command: Optional[Callable[..., Any]] = None
     strategy_persona_idempotency: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     strategy_seed_replication_idempotency: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     strategy_seed_review_idempotency: Dict[str, Dict[str, Any]] = field(default_factory=dict)

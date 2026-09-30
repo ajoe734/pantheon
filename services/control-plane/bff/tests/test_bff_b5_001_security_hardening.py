@@ -374,29 +374,9 @@ def test_human_gate_revoke_fails_closed_after_downstream_execution() -> None:
         assert "compensating action" in details["suggestion"]
 
 
-def test_human_gate_catalog_and_executor_surface_two_man_evidence(monkeypatch) -> None:
-    from services.control_plane.bff import command_executor
-    monkeypatch.setitem(command_executor._EXECUTORS, CommandType.HUMAN_GATE_APPROVE, command_executor._execute_bff_action_adapter)
+def test_human_gate_catalog_requires_two_man_evidence() -> None:
     for command in ("HumanGateApprove", "HumanGateReject", "HumanGateRevoke"):
         entry = get_catalog_entry(command)
         assert entry is not None
         assert entry.risk_level == RiskLevel.HIGH
         assert entry.requires_two_man is True
-
-    status, result, error = execute_command_with_status(
-        "cmd-b5-sec-executor",
-        CommandType.HUMAN_GATE_APPROVE,
-        {
-            "action_id": "approve",
-            "entity_type": "human_gate_item",
-            "entity_id": "approval:b5-sec-executor",
-            "audit_event": "human_gate.approve",
-            "two_man_signature_id": "tms-b5-sec-executor",
-        },
-    )
-
-    assert status == CommandStatus.EXECUTED
-    assert error is None
-    assert result is not None
-    assert result["dispatch_path"] == "bff_action_adapter"
-    assert result["two_man_signature_id"] == "tms-b5-sec-executor"

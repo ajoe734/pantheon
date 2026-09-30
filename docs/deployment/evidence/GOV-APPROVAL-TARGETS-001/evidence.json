@@ -1,0 +1,16 @@
+{
+  "task_id": "GOV-APPROVAL-TARGETS-001",
+  "new_target_types": [
+    "rebalance_apply",
+    "capital_binding_activation",
+    "persona_lifecycle_transition",
+    "evolution_execute"
+  ],
+  "design": "subject in metadata.subject, approving deciders in metadata.approvals; rules in services/governance/approval_targets.py shared by ApprovalDecision.decide and ApprovalEvidence.require_valid; no new store",
+  "verification": {
+    "command": "timeout 200 .venv-pantheon/bin/python3 -m pytest -q services/governance/test_approval_targets.py services/governance/test_approval_authority.py services/governance/test_paper_approval_scope.py services/governance/test_consultation_handoff.py services/control-plane/governance/test_approval_decision.py",
+    "result": "345 passed, 1 warning, exit 0",
+    "not_run": "test_governance_api.py and postgres tests: psycopg unavailable in worker test interpreter"
+  },
+  "review_fixes": "risk-increasing rebalance_apply now requires risk_direction and two distinct deciders; per-vote conditions/expiry persisted and merged (final vote cannot broaden); counted votes need nonempty actor_id and role authorized for risk level, malformed approvals fail closed; require_valid enforces per-vote conditions and earliest vote expiry against now and top-level expiry, and requires a nonblank proposer identity"
+}

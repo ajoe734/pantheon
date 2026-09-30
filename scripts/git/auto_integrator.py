@@ -1524,18 +1524,84 @@ def lock_file(lock_path: Path, *, enabled: bool = True) -> Iterator[None]:
         _release_lock_handle(handle)
 
 
-def fetch_refs(candidate: TaskCandidate, runner: CommandRunner, *, root: Path) -> None:
+def resolve_authoritative_head_branch(
+    candidate: TaskCandidate,
+    *,
+    head_branch: str = "",
+) -> str:
+    cleaned_head = str(head_branch or "").strip()
+    if cleaned_head:
+        return cleaned_head
+    raw_review = candidate.raw_task.get("review_binding")
+    if isinstance(raw_review, Mapping):
+        bound_head = str(raw_review.get("head_branch") or "").strip()
+        if bound_head:
+            return bound_head
+    raw_delivery = candidate.raw_task.get("delivery_binding")
+    if isinstance(raw_delivery, Mapping):
+        bound_head = str(raw_delivery.get("head_branch") or "").strip()
+        if bound_head:
+            return bound_head
+    return str(candidate.branch or "").strip()
+
+
+def fetch_refs(
+    candidate: TaskCandidate,
+    runner: CommandRunner,
+    *,
+    root: Path,
+    head_branch: str = "",
+    exact_head: str = "",
+) -> None:
     runner.run(["git", "fetch", "origin", candidate.target_branch, "--quiet"], cwd=root)
-    runner.run(
-        [
-            "git",
-            "fetch",
-            "origin",
-            f"+refs/heads/{candidate.branch}:refs/remotes/origin/{candidate.branch}",
-            "--quiet",
-        ],
-        cwd=root,
+    authoritative_branch = resolve_authoritative_head_branch(
+        candidate, head_branch=head_branch
     )
+    if authoritative_branch:
+        runner.run(
+            [
+                "git",
+                "fetch",
+                "origin",
+                f"+refs/heads/{authoritative_branch}:refs/remotes/origin/{authoritative_branch}",
+                "--quiet",
+            ],
+            cwd=root,
+        )
+
+    optional_branches: set[str] = set()
+    candidate_branch = str(candidate.branch or "").strip()
+    if candidate_branch and candidate_branch != authoritative_branch:
+        optional_branches.add(candidate_branch)
+    raw_delivery = candidate.raw_task.get("delivery_binding")
+    if isinstance(raw_delivery, Mapping):
+        bound_head = str(raw_delivery.get("head_branch") or "").strip()
+        if bound_head and bound_head != authoritative_branch:
+            optional_branches.add(bound_head)
+    raw_review = candidate.raw_task.get("review_binding")
+    if isinstance(raw_review, Mapping):
+        bound_head = str(raw_review.get("head_branch") or "").strip()
+        if bound_head and bound_head != authoritative_branch:
+            optional_branches.add(bound_head)
+
+    for branch in sorted(optional_branches):
+        runner.run(
+            [
+                "git",
+                "fetch",
+                "origin",
+                f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
+                "--quiet",
+            ],
+            cwd=root,
+            check=False,
+        )
+    if exact_head and review_gate.OID_RE.fullmatch(exact_head):
+        runner.run(
+            ["git", "fetch", "origin", exact_head, "--quiet"],
+            cwd=root,
+            check=False,
+        )
 
 
 def run_rebase_smoke(
@@ -1548,8 +1614,15 @@ def run_rebase_smoke(
     extra_smoke_commands: Sequence[str] = (),
     allow_push: bool = True,
     exact_head: str = "",
+    head_branch: str = "",
 ) -> tuple[bool, str]:
-    fetch_refs(candidate, runner, root=root)
+    fetch_refs(
+        candidate,
+        runner,
+        root=root,
+        head_branch=head_branch,
+        exact_head=exact_head,
+    )
     commands = tuple(extra_smoke_commands) or settings.smoke_commands
 
     if not allow_push:
@@ -1613,9 +1686,13 @@ def run_rebase_smoke(
             finally:
                 runner.run(["git", "worktree", "remove", "--force", str(worktree)], cwd=root, check=False)
 
+    target_branch = (
+        resolve_authoritative_head_branch(candidate, head_branch=head_branch)
+        or candidate.branch
+    )
     with tempfile.TemporaryDirectory(prefix=f"pantheon-integrate-{candidate.task_id}-") as tmp:
         worktree = Path(tmp)
-        runner.run(["git", "worktree", "add", "--detach", str(worktree), f"origin/{candidate.branch}"], cwd=root)
+        runner.run(["git", "worktree", "add", "--detach", str(worktree), f"origin/{target_branch}"], cwd=root)
         try:
             before = runner.run(["git", "rev-parse", "HEAD"], cwd=worktree).stdout.strip()
             rebase = runner.run(["git", "rebase", f"origin/{candidate.target_branch}"], cwd=worktree, check=False)
@@ -1629,7 +1706,7 @@ def run_rebase_smoke(
             pushed = False
             if execute and allow_push and changed:
                 runner.run(
-                    ["git", "push", "--force-with-lease", "origin", f"HEAD:{candidate.branch}"],
+                    ["git", "push", "--force-with-lease", "origin", f"HEAD:{target_branch}"],
                     cwd=worktree,
                 )
                 pushed = True
@@ -3051,6 +3128,7 @@ def integrate_candidate(
             # being evaluated. The sole merge owner never rewrites task heads.
             allow_push=False,
             exact_head=decision.head_oid,
+            head_branch=str(pr.get("headRefName") or "").strip(),
         )
     except CommandFailure as exc:
         detail = f"Local smoke or git command failed for PR #{number}: {exc.output.strip() or exc.args_rendered}"
