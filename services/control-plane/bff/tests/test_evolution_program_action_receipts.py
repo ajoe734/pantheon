@@ -179,6 +179,8 @@ def test_adapter_handles_idempotent_replay() -> None:
                 params={
                     "action_id": "pause_program",
                     "program_id": program_id,
+                    "actor_id": "op-test",
+                    "actor_role": "operator",
                     "idempotency_key": "same-key",
                 },
             )
@@ -207,6 +209,8 @@ def test_adapter_propagates_idempotency_and_tenant_headers() -> None:
                 params={
                     "action_id": "submit_evolution_review",
                     "program_id": program_id,
+                    "actor_id": "op-test",
+                    "actor_role": "operator",
                     "idempotency_key": "unique-idemp-12345",
                     "tenant_id": "tenant-custom-xyz",
                 },
@@ -243,7 +247,7 @@ def test_adapter_propagates_409_conflict() -> None:
                 adapter.execute(
                     command_id="cmd-err",
                     command_type="EvolutionProgramAction",
-                    params={"action_id": "pause_program", "program_id": program_id},
+                    params={"action_id": "pause_program", "program_id": program_id, "actor_id": "op-test", "actor_role": "operator"},
                 )
             assert exc_info.value.downstream_status == 409
             assert "Cannot pause program in status 'draft'" in str(exc_info.value)
@@ -263,7 +267,7 @@ def test_adapter_propagates_503_on_connection_failure() -> None:
                 adapter.execute(
                     command_id="cmd-down",
                     command_type="EvolutionProgramAction",
-                    params={"action_id": "pause_program", "program_id": program_id},
+                    params={"action_id": "pause_program", "program_id": program_id, "actor_id": "op-test", "actor_role": "operator"},
                 )
             assert exc_info.value.downstream_status == 503
             assert exc_info.value.retryable is True
@@ -516,6 +520,7 @@ def test_adapter_end_to_end_with_real_program_router(tmp_path) -> None:
                     "action_id": "stop",
                     "program_id": pid,
                     "actor_id": "op-e2e",
+                "actor_role": "operator",
                 },
             )
             assert receipt_stop["status"] == "stopped"
@@ -529,6 +534,7 @@ def test_adapter_end_to_end_with_real_program_router(tmp_path) -> None:
                         "action_id": "resume_program",
                         "program_id": pid,
                         "actor_id": "op-e2e",
+                    "actor_role": "operator",
                     },
                 )
             assert exc_info.value.downstream_status == 409
@@ -548,6 +554,7 @@ def test_adapter_end_to_end_with_real_program_router(tmp_path) -> None:
                     "action_id": "pause_program",
                     "program_id": p2_id,
                     "actor_id": "op-e2e",
+                    "actor_role": "operator",
                     "idempotency_key": "e2e-idem-key-999",
                 },
             )
@@ -563,6 +570,7 @@ def test_adapter_end_to_end_with_real_program_router(tmp_path) -> None:
                     "action_id": "pause_program",
                     "program_id": p2_id,
                     "actor_id": "op-e2e",
+                    "actor_role": "operator",
                     "idempotency_key": "e2e-idem-key-999",
                 },
             )
@@ -580,6 +588,7 @@ def test_adapter_end_to_end_with_real_program_router(tmp_path) -> None:
                         "action_id": "pause_program",
                         "program_id": p2_id,
                         "actor_id": "different-actor-divergent",
+                        "actor_role": "operator",
                         "idempotency_key": "e2e-idem-key-999",
                     },
                 )

@@ -93,7 +93,7 @@ class IncidentCommandAdapter(DomainCommandAdapter):
         target_id = intervention_id or str(params.get("intervention_id") or "").strip()
         if not target_id:
             raise ValueError("RemediateSentinelIntervention requires intervention_id.")
-        two_man_signature_id = str(params.get("twoManSignatureId") or params.get("two_man_signature_id") or "sig-sentinel-remed").strip()
+        two_man_signature_id = str(params.get("twoManSignatureId") or params.get("two_man_signature_id")).strip()
 
         payload = {
             "intervention_id": target_id,

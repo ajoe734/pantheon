@@ -861,3 +861,109 @@ def test_main_app_command_confirmation_degraded_read_surface_regression() -> Non
         else:
             os.environ["BFF_READ_SURFACE_STATE"] = orig_env
 
+
+
+def _bare_client(td: str) -> TestClient:
+    svc = CommandAdapterService(
+        command_store=CommandStore(os.path.join(td, "wrapper_commands.jsonl")),
+        read_surface=None,
+        extract_identity=_test_extract_identity,
+    )
+    app = FastAPI()
+    app.include_router(
+        create_command_adapters_router(service=svc, submit_command_admission=svc.submit_command_admission)
+    )
+    return TestClient(app)
+
+
+def _submit(client: TestClient, key: str, body: Dict[str, Any], roles: str = "operator,approver"):
+    headers = {"Authorization": f"Bearer op-1:{roles}:mfa", "Idempotency-Key": key}
+    return client.post("/bff/v1/commands", headers=headers, json={"audit_context": {"reason": "wrapper gate"}, **body})
+
+
+def _outcome(resp) -> Any:
+    err = resp.json().get("detail", {}).get("error", {}) if resp.status_code >= 400 else {}
+    return resp.status_code, err.get("code"), (err.get("details") or {}).get("kind")
+
+
+@pytest.mark.parametrize(
+    "wrapper,direct,target_type,verb,roles",
+    [
+        ("RuntimeAction", "PauseRuntime", "Runtime", "pause", "operator,approver"),
+        ("RuntimeAction", "ActivateKillSwitch", "Runtime", "killswitch", "operator,approver"),
+        ("RuntimeAction", "RejectRollback", "Runtime", "RejectRollback", "operator"),
+        ("PersonaAction", "EmergencyContainment", "Persona", "EmergencyContainment", "operator,approver"),
+        ("PersonaAction", "PromoteCandidate", "Persona", "promote", "operator,approver"),
+        ("RebalanceAction", "ApprovedApply", "Rebalance", "apply", "operator,approver"),
+        ("DeploymentAction", "ApproveDeployment", "Deployment", "approve", "operator,approver"),
+        ("CapitalPoolAction", "ApprovePool", "CapitalPool", "approve", "operator,approver"),
+        ("IncidentAction", "RemediateSentinelIntervention", "SentinelIntervention", "remediate", "operator"),
+        ("IncidentAction", "RemediateSentinelIntervention", "SentinelIntervention", "remediate", "operator,approver"),
+    ],
+)
+def test_wrapper_is_rejected_exactly_like_direct_command(wrapper, direct, target_type, verb, roles) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _bare_client(td)
+        target = {"type": target_type, "id": "target-1"}
+        direct_resp = _submit(client, f"direct-{direct}-{roles}", {"command": direct, "target": target, "params": {}}, roles)
+        wrapped_resp = _submit(
+            client, f"wrapped-{wrapper}-{verb}-{roles}", {"command": wrapper, "target": target, "action": verb, "params": {}}, roles
+        )
+        assert direct_resp.status_code in {403, 409, 422, 428}, direct_resp.text
+        assert _outcome(wrapped_resp) == _outcome(direct_resp), (wrapped_resp.text, direct_resp.text)
+
+
+@pytest.mark.parametrize("wrapper,target_type", [("IncidentAction", "SentinelIntervention"), ("PersonaAction", "Persona")])
+def test_unmapped_wrapper_verb_is_rejected_before_dispatch(wrapper, target_type) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _bare_client(td)
+        resp = _submit(client, f"unmapped-{wrapper}", {"command": wrapper, "target": {"type": target_type, "id": "t-1"}, "action": "nuke", "params": {}})
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["detail"]["error"]["details"]["precondition_failed"] == "action_id"
+
+
+def test_wrapped_deployment_approve_requires_explicit_decision() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _bare_client(td)
+        resp = _submit(client, "dep-no-decision", {"command": "DeploymentAction", "target": {"type": "Deployment", "id": "d-1"}, "action": "approve", "params": {}})
+        assert resp.status_code == 422, resp.text
+
+
+def test_runtime_wrapper_rejects_unknown_action_and_entity_type_mismatch() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _bare_client(td)
+        target = {"type": "Runtime", "id": "runtime-1"}
+        unknown = _submit(client, "wrap-unknown", {"command": "RuntimeAction", "target": target, "action": "nuke", "params": {}})
+        assert unknown.status_code == 422, unknown.text
+        redirected = _submit(
+            client,
+            "wrap-entity",
+            {
+                "command": "RejectDecision",
+                "target": {"type": "ApprovalDecision", "id": "dec-1"},
+                "params": {"decision_id": "dec-1", "rejection_reason": "x", "entity_type": "Runtime"},
+            },
+        )
+        assert redirected.status_code == 422, redirected.text
+
+
+@pytest.mark.parametrize("verb", ["pause_program", "approve_program"])
+def test_evolution_program_alias_resolves_to_its_canonical_gate(verb) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        resp = _submit(_bare_client(td), f"evo-{verb}", {"command": "EvolutionProgramAction", "target": {"type": "EvolutionProgram", "id": "prog-1"}, "action": verb, "params": {}})
+        assert (resp.json().get("detail", {}).get("error", {}).get("details") or {}).get("precondition_failed") != "action_id", resp.text
+
+
+def test_token_binding_follows_the_resolved_command() -> None:
+    from services.control_plane.bff.command_adapters.preconditions import _binding_command_matches
+    from services.control_plane.bff.models import CommandType, OperatorCommand
+
+    def cmd(name: str, action: str = ""):
+        return OperatorCommand.model_construct(
+            command=CommandType(name), action=action, params={}, target=None
+        )
+
+    wrapped = cmd("RuntimeAction", "RestartPaperRuntime")
+    assert _binding_command_matches({"params": {"command": "RestartPaperRuntime"}}, wrapped)
+    assert not _binding_command_matches({"params": {"command": "RuntimeAction"}}, wrapped)
+    assert not _binding_command_matches({"params": {"command": "RestartTelemetryBridge"}}, wrapped)

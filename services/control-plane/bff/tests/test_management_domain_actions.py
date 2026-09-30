@@ -279,6 +279,8 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
                 "entity_id": "reb-001",
                 "action_id": "apply",
                 "approval_ref": "appr-999",
+                "actor_id": "op-test",
+                "actor_role": "operator",
             },
         )
 
@@ -588,6 +590,7 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
                 "entity_id": "persona-alpha",
                 "action_id": "AdvanceLifecycle",
                 "target_state": "paper_owner",
+                "confirm_token_id": "tok-test",
             },
         )
 
@@ -608,6 +611,7 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
                 "entity_type": "HumanGateItem",
                 "gate_id": "gate-xyz",
                 "reason": "Risk reviewed and authorized",
+                "actor_id": "op-test",
             },
         )
 

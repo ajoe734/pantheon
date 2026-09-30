@@ -160,7 +160,7 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         subpath = verb_map.get(action_name, action_name.lower().replace("humangate", ""))
         payload = {
             "command_id": command_id,
-            "operator_id": params.get("operator_id") or params.get("actor_id") or "operator",
+            "operator_id": params.get("operator_id") or params["actor_id"],
             "reason": params.get("reason") or f"Human gate {action_name}",
         }
         if "additional_ttl_seconds" in params:

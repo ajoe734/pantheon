@@ -13,7 +13,6 @@ from .base import (
     ActionUnavailableError,
     DomainCommandAdapter,
     build_domain_receipt,
-    capital_url,
     http_request_json,
     internal_url,
     utc_now,
@@ -58,8 +57,6 @@ class PersonaCommandAdapter(DomainCommandAdapter):
 
         if command_type == "AdvanceLifecycle" or action_id.lower() in {"advancelifecycle", "advance_lifecycle"}:
             return self._execute_advance_lifecycle(command_id, persona_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "EmergencyContainment" or action_id.lower() in {"emergencycontainment", "emergency_containment"}:
-            return self._execute_emergency_containment(command_id, persona_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type in {"Observe"} or action_id.lower() == "observe":
             return self._execute_observe(command_id, persona_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type in {"PromoteCandidate", "Demote"} or action_id.lower() in {"promote", "promotecandidate", "demote"}:
@@ -84,7 +81,7 @@ class PersonaCommandAdapter(DomainCommandAdapter):
             raise ValueError("AdvanceLifecycle requires persona_id.")
 
         target_state = str(params.get("target_state") or "paper_owner").strip()
-        confirm_token = str(params.get("confirm_token") or "lifecycle-confirm").strip()
+        confirm_token = params["confirm_token_id"]
 
         payload: Dict[str, Any] = {
             "target_state": target_state,
@@ -114,50 +111,6 @@ class PersonaCommandAdapter(DomainCommandAdapter):
                 "from_state": body.get("from_state"),
                 "to_state": body.get("to_state", target_state),
                 "audit_id": body.get("audit_id"),
-            },
-        )
-
-    def _execute_emergency_containment(
-        self,
-        command_id: str,
-        persona_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        target_persona_id = persona_id or str(params.get("persona_id") or "").strip()
-        if not target_persona_id:
-            raise ValueError("EmergencyContainment requires persona_id.")
-        two_man_signature_id = str(params.get("two_man_signature_id") or params.get("twoManSignatureId") or "sig-ops-containment").strip()
-
-        payload = {
-            "command_id": command_id,
-            "idempotency_key": str(params.get("idempotency_key") or command_id),
-            "request_hash": str(params.get("request_hash") or ""),
-            "persona_id": target_persona_id,
-            "two_man_signature_id": two_man_signature_id,
-            "entity_type": "Persona",
-            "entity_id": target_persona_id,
-            "actor_id": str(params.get("actor_id") or "operator-bff"),
-            "actor_role": str(params.get("actor_role") or "operator"),
-        }
-        url = capital_url("/api/containments")
-        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
-        containment_state = str(body.get("containment_state") or body.get("state") or "frozen").strip()
-
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="Persona",
-            entity_id=target_persona_id,
-            action_id="EmergencyContainment",
-            status=body.get("status") or "applied",
-            dispatch_path=url,
-            domain_receipt=body,
-            authoritative_readback={"persona_id": target_persona_id, "containment_state": containment_state},
-            extra={
-                "containment": True,
-                "containment_state": containment_state,
-                "risk_direction": "decrease_only",
             },
         )
 

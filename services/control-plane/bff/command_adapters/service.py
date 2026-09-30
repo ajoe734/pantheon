@@ -149,7 +149,7 @@ def stored_command_params(
         canonical_action_id = cmd.command.value
     params.update(
         {
-            "entity_type": "Runtime" if canonical_paper else (cmd.params.get("entity_type") or cmd.target.type.value),
+            "entity_type": "Runtime" if canonical_paper else cmd.target.type.value,
             "entity_id": cmd.target.id,
             "action_id": canonical_action_id,
             "actionId": canonical_action_id,
@@ -170,6 +170,7 @@ def stored_command_params(
 _stored_command_params = stored_command_params
 
 from .preconditions import (
+    validate_wrapped_command,
     assert_duplicate_confirm_token_matches,
     canonicalize_validated_precondition_evidence,
     ensure_live_broker_scope_allowed,
@@ -1436,9 +1437,7 @@ class CommandAdapterService:
             ensure_live_broker_scope_allowed(cmd, payload)
             validate_drawer_runtime_target(cmd)
             validate_final_command_target_type(cmd)
-            validator = self._validators.get(cmd.command)
-            if validator:
-                validator(cmd.params, identity)
+            validate_wrapped_command(cmd, self._validators, identity)
         except HTTPException as exc:
             raise foundation_bff_error(exc, foundation_context=foundation_context) from exc
 

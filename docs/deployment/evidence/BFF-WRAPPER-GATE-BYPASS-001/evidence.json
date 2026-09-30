@@ -1,0 +1,17 @@
+{
+  "task_id": "BFF-WRAPPER-GATE-BYPASS-001",
+  "change_class": "corrective",
+  "net_production_lines": 0,
+  "changes": [
+    "preconditions.gate_command_id resolves every wrapper command to the canonical catalog command (or an explicit own-verb) and rejects unmapped action_id with 422 for all wrappers before adapter dispatch; service admission selects the param/role validator by the resolved canonical command (validate_wrapped_command)",
+    "validate_final_command_target_type rejects params.entity_type/entityType that differs from target.type; service.py no longer prefers caller entity_type",
+    "incident adapter no longer fabricates two_man_signature_id and deployment adapter no longer defaults approval_decision; admission rejects a missing approval_decision",
+    "removed duplicate persona EmergencyContainment adapter branch (capital adapter owns it)",
+    "binding/approval/two-man evidence match by the resolved canonical command (gate_command_id), not the wrapper name, so a token bound to RuntimeAction no longer admits RestartPaperRuntime and a canonical token admits its wrapper; EvolutionProgramAction snake_case verbs (pause_program, approve_program, ...) map to their catalog commands"
+  ],
+  "tests": {
+    "added": "tests/test_command_adapters_router.py: test_wrapper_is_rejected_exactly_like_direct_command (10 direct-vs-wrapped mounted cases incl. role parity), test_unmapped_wrapper_verb_is_rejected_before_dispatch, test_wrapped_deployment_approve_requires_explicit_decision; test_evolution_program_alias_resolves_to_its_canonical_gate, test_token_binding_follows_the_resolved_command",
+    "result": "4-file batch: 92+ passed, 3 failed (same 3 pre-existing baseline failures)"
+  },
+  "known_limits": "Wrapper verbs without a catalog canonical command are limited to the explicit IncidentAction resolve/investigate/close/reopen own-verbs; other wrappers' non-catalog verbs are rejected. Empty action falls back to the wrapper's own catalog entry. Actor defaults in experiment/job adapters are outside this task's scope."
+}

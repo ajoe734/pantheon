@@ -203,7 +203,7 @@ class CapitalCommandAdapter(DomainCommandAdapter):
             payload = {
                 "command_id": command_id,
                 "pool_id": params.get("pool_id") or params.get("capital_pool_id") or "default-pool",
-                "proposed_by": params.get("proposed_by") or params.get("actor_id") or "operator",
+                "proposed_by": params.get("proposed_by") or params["actor_id"],
                 "allocations": params.get("allocations") or {},
                 "reason": params.get("reason") or "Operator rebalance proposal",
             }
@@ -248,15 +248,15 @@ class CapitalCommandAdapter(DomainCommandAdapter):
         rebalance_id = entity_id or requested_rebalance_id
         if not rebalance_id:
             raise ValueError("ApprovedApply requires a trusted rebalance_id")
-        approval_ref = str(params.get("approval_ref") or "auto-approved").strip()
+        approval_ref = params["approval_ref"]
 
         payload = {
             "command_id": command_id,
             "idempotency_key": str(params.get("idempotency_key") or command_id),
             "request_hash": str(params.get("request_hash") or ""),
             "approval_ref": approval_ref,
-            "actor_id": str(params.get("actor_id") or "operator-bff"),
-            "actor_role": str(params.get("actor_role") or "operator"),
+            "actor_id": params["actor_id"],
+            "actor_role": params["actor_role"],
             "proposal_version": params.get("proposal_version"),
         }
         url = capital_url(f"/api/rebalances/{quote(rebalance_id, safe='')}/apply")
@@ -296,7 +296,7 @@ class CapitalCommandAdapter(DomainCommandAdapter):
         persona_id = entity_id or requested_persona_id
         if not persona_id:
             raise ValueError("EmergencyContainment requires a trusted Persona identity")
-        two_man_signature_id = str(params.get("two_man_signature_id") or params.get("twoManSignatureId") or "sig-emergency-ops").strip()
+        two_man_signature_id = params["two_man_signature_id"]
 
         payload = {
             key: value
@@ -311,8 +311,8 @@ class CapitalCommandAdapter(DomainCommandAdapter):
             "two_man_signature_id": two_man_signature_id,
             "entity_type": "Persona",
             "entity_id": persona_id,
-            "actor_id": str(params.get("actor_id") or "operator-bff"),
-            "actor_role": str(params.get("actor_role") or "operator"),
+            "actor_id": params["actor_id"],
+            "actor_role": params["actor_role"],
         })
 
         url = capital_url("/api/containments")
@@ -351,7 +351,7 @@ class CapitalCommandAdapter(DomainCommandAdapter):
         if action_id.lower() == "activate":
             url = capital_url(f"/api/bindings/{quote(binding_id, safe='')}/activate")
             payload = {
-                "actor_id": str(params.get("actor_id") or "operator"),
+                "actor_id": params["actor_id"],
                 "reason": str(params.get("reason") or "Operator activation"),
             }
             body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)

@@ -182,8 +182,8 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
         }
         subpath = str(verb_map.get(command_type, "approve")).lower()
         payload = {
-            "actor_id": params.get("actor_id") or "operator",
-            "actor_role": params.get("actor_role") or "operator",
+            "actor_id": params["actor_id"],
+            "actor_role": params["actor_role"],
             "note": params.get("note") or params.get("rationale") or f"Operator {command_type}",
         }
         if "approval_decision_id" in params:
@@ -221,7 +221,7 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
             raise ValueError(f"{command_type} requires evolution_decision_id.")
 
         payload = {
-            "actor_id": params.get("actor_id") or "operator",
+            "actor_id": params["actor_id"],
             "actor_role": "operator",
             "note": params.get("note") or params.get("rationale") or "Operator execute mutation",
         }
@@ -276,8 +276,8 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
             ) from exc
 
         sub_payload = params.get("payload") if isinstance(params.get("payload"), dict) else {}
-        actor_id = params.get("actor_id") or sub_payload.get("actor_id") or "operator"
-        actor_role = params.get("actor_role") or sub_payload.get("actor_role") or "operator"
+        actor_id = params["actor_id"]
+        actor_role = params["actor_role"]
         note = params.get("note") or params.get("rationale") or sub_payload.get("note") or f"Operator {clean_action}"
 
         payload: Dict[str, Any] = {

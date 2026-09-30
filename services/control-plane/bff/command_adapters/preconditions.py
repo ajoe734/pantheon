@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from fastapi import HTTPException
 
 try:
-    from ..action_catalog import get_catalog_entry
+    from ..action_catalog import catalog_action_ids, get_catalog_entry
     from ..auth.policy import (
         bff_error as _auth_bff_error,
         bff_me_tenant_payload as _auth_bff_me_tenant_payload,
@@ -28,7 +28,7 @@ try:
         OperatorIdentity,
     )
 except (ImportError, ValueError):
-    from action_catalog import get_catalog_entry
+    from action_catalog import catalog_action_ids, get_catalog_entry
     from auth.policy import (
         bff_error as _auth_bff_error,
         bff_me_tenant_payload as _auth_bff_me_tenant_payload,
@@ -249,6 +249,49 @@ _FINAL_COMMAND_TARGET_TYPES: Dict[CommandType, ObjectType] = {
     CommandType.RESUME_PAPER_RUNTIME: ObjectType.RUNTIME,
 }
 
+_WRAPPER_VERB_ALIASES = {
+    ("RuntimeAction", "start"): "StartRuntime",
+    ("RuntimeAction", "pause"): "PauseRuntime",
+    ("RuntimeAction", "resume"): "ResumePaperRuntime",
+    ("RuntimeAction", "rollback"): "ExecuteRollback",
+    ("RuntimeAction", "killswitch"): "ActivateKillSwitch",
+    ("RebalanceAction", "apply"): "ApprovedApply",
+    ("CapitalPoolAction", "approve"): "ApprovePool",
+    ("DeploymentAction", "approve"): "ApproveDeployment",
+    ("DeploymentAction", "escalatediff"): "EscalateDiff",
+    ("PersonaAction", "promote"): "PromoteCandidate",
+    ("RiskAlertAction", "acknowledge"): "AlertAcknowledge",
+    ("IncidentAction", "acknowledge"): "AlertAcknowledge",
+    ("IncidentAction", "remediate"): "RemediateSentinelIntervention",
+    **{("EvolutionProgramAction", v.lower() + "program"): v + "EvolutionProgram" for v in ("Approve", "Pause", "Resume", "Complete", "Retire")},
+    **{("EvolutionProgramAction", k): v for k, v in {"stop": "StopEvolutionProgram", "freezegeneration": "FreezeEvolutionGeneration",
+        "promotecandidatepaper": "PromoteEvolutionCandidatePaper", "promotecandidatelive": "PromoteEvolutionCandidateLive"}.items()},
+}
+_WRAPPER_OWN_VERBS = {("IncidentAction", v) for v in ("resolve", "investigate", "close", "reopen")}
+
+
+def gate_command_id(cmd: OperatorCommand) -> str:
+    wrapper = cmd.command.value
+    if not wrapper.endswith("Action"):
+        return wrapper
+    verb = re.sub(r"[^a-z0-9]", "", str(cmd.action or cmd.params.get("action_id") or cmd.params.get("actionId") or "").lower())
+    canonical = (_WRAPPER_VERB_ALIASES.get((wrapper, verb))
+        or {i.lower(): i for i in catalog_action_ids() if not i.endswith("Action")}.get(verb)
+        or (wrapper if (wrapper, verb) in _WRAPPER_OWN_VERBS or verb in {"", wrapper.lower()} else None)
+    )
+    if canonical is None:
+        raise _auth_bff_error(422, ErrorCode.VALIDATION_FAILED, "Unknown wrapped action", f"{wrapper} action {verb!r} has no canonical command", precondition_failed="action_id")
+    return canonical
+
+
+def validate_wrapped_command(cmd: OperatorCommand, validators: Dict[CommandType, Any], identity: OperatorIdentity) -> None:
+    gate_id = gate_command_id(cmd)
+    if gate_id == "ApproveDeployment" and not str(cmd.params.get("approval_decision") or "").strip():
+        raise _auth_bff_error(422, ErrorCode.VALIDATION_FAILED, "approval_decision is required", "ApproveDeployment requires approval_decision", precondition_failed="approval_decision")
+    if validator := validators.get(next((c for c in CommandType if c.value == gate_id), None)):
+        validator(cmd.params, identity)
+
+
 _SERVER_MANAGED_REBALANCE_EVIDENCE_TYPES = {
     CommandType.REBALANCE_APPROVAL,
     CommandType.REBALANCE_TWO_MAN_SIGN,
@@ -445,6 +488,11 @@ def validate_drawer_runtime_target(cmd: OperatorCommand) -> None:
 
 
 def validate_final_command_target_type(cmd: OperatorCommand) -> None:
+    _norm = lambda v: re.sub(r"[^a-z0-9]", "", str(v or "").lower())
+    for key in ("entity_type", "entityType"):
+        if cmd.params.get(key) and _norm(cmd.params[key]) != _norm(cmd.target.type.value):
+            raise _auth_bff_error(422, ErrorCode.VALIDATION_FAILED, "Invalid command target type",
+                                  f"params.{key} must match target.type {cmd.target.type.value}", precondition_failed="params.entity_type")
     expected = _FINAL_COMMAND_TARGET_TYPES.get(cmd.command)
     if expected is None or cmd.target.type == expected:
         return
@@ -604,7 +652,7 @@ def _binding_command_matches(record: Dict[str, Any], cmd: OperatorCommand) -> bo
     values = [value for value in values if value]
     if not values:
         return False
-    expected = _binding_token(cmd.command.value)
+    expected = _binding_token(gate_command_id(cmd))
     return any(_binding_token(value) == expected for value in values)
 
 
@@ -704,7 +752,7 @@ def _final_precondition_details(
     kind: str,
 ) -> Dict[str, Any]:
     return {
-        "actionId": cmd.command.value,
+        "actionId": gate_command_id(cmd),
         "entityType": cmd.target.type.value,
         "entityId": cmd.target.id,
         "kind": kind,
@@ -748,7 +796,7 @@ def require_final_command_confirm_token(
     confirm_token_records_fn: Optional[Callable[[str], List[Dict[str, Any]]]] = None,
     confirm_token_lifecycle_fn: Optional[Callable[[str], Dict[str, Any]]] = None,
 ) -> Optional[str]:
-    entry = get_catalog_entry(cmd.command.value)
+    entry = get_catalog_entry(gate_command_id(cmd))
     if entry is None or not getattr(entry, "requires_confirm_token", False):
         return None
 
@@ -890,7 +938,7 @@ def _two_man_signature_record(
     for record in records:
         if cmd is None:
             continue
-        if cmd.command == CommandType.APPROVED_APPLY:
+        if gate_command_id(cmd) == CommandType.APPROVED_APPLY.value:
             trusted = _trusted_rebalance_evidence_record(
                 record,
                 command_type=CommandType.REBALANCE_TWO_MAN_SIGN,
@@ -1316,7 +1364,7 @@ def require_final_command_preconditions(
     read_store: Optional[Any] = None,
     command_store: Optional[Any] = None,
 ) -> Dict[str, str]:
-    entry = get_catalog_entry(cmd.command.value)
+    entry = get_catalog_entry(gate_command_id(cmd))
     if entry is None:
         return {}
 

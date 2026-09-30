@@ -85,7 +85,7 @@ class DeploymentCommandAdapter(DomainCommandAdapter):
             raise ValueError("ApproveDeployment requires deployment_plan_id.")
 
         payload = {
-            "approval_decision": params.get("approval_decision", "approve"),
+            "approval_decision": params["approval_decision"],
             "verification_timestamp": params.get("verification_timestamp", utc_now()),
         }
         url = internal_url(f"/api/internal/v1/deployments/{quote(target_plan_id, safe='')}/approve")

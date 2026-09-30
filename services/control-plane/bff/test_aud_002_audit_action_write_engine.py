@@ -195,15 +195,15 @@ def test_runtime_action_writes_audit_action_visible_in_bff_audit() -> None:
     with _isolated_audit_client(allow_fallback=True) as client:
         response = client.post(
             "/bff/v1/commands",
-            headers={**HEADERS, "Idempotency-Key": "aud-002-runtime-pause"},
+            headers={**HEADERS, "Idempotency-Key": "aud-002-incident-resolve"},
             json={
-                "command": "RuntimeAction",
-                "target": {"type": "Runtime", "id": "runtime-042"},
-                "action": "pause",
+                "command": "IncidentAction",
+                "target": {"type": "Incident", "id": "incident-042"},
+                "action": "resolve",
                 "params": {
-                    "action_id": "pause",
-                    "entity_type": "runtime",
-                    "entity_id": "runtime-042",
+                    "action_id": "resolve",
+                    "entity_type": "incident",
+                    "entity_id": "incident-042",
                     "reason": "AUD-002 runtime audit write proof",
                 },
                 "audit_context": {"reason": "AUD-002 runtime audit write proof"},
@@ -216,7 +216,7 @@ def test_runtime_action_writes_audit_action_visible_in_bff_audit() -> None:
         assert len(records) == 1
         foundation = records[0]["foundation"]
         assert foundation["audit_action"]["action_type"] == "bff.command.accepted"
-        assert foundation["audit_action"]["target_ref"] == "Runtime:runtime-042"
+        assert foundation["audit_action"]["target_ref"] == "Incident:incident-042"
         assert foundation["audit_action"]["payload_checksum"]
 
         # CommandStore caches records exactly as submitted (with a live
@@ -227,19 +227,19 @@ def test_runtime_action_writes_audit_action_visible_in_bff_audit() -> None:
 
         audit = client.get(
             "/bff/audit",
-            params={"target_type": "Runtime"},
+            params={"target_type": "Incident"},
             headers=HEADERS,
         )
         assert audit.status_code == 200, audit.text
         event = _command_event(audit.json()["data"], command_id)
         assert event["actor"] == "op-aud-002"
-        assert event["action_type"] == "RuntimeAction"
-        assert event["target_id"] == "runtime-042"
-        assert event["audit_context"]["idempotency_key"] == "aud-002-runtime-pause"
+        assert event["action_type"] == "IncidentAction"
+        assert event["target_id"] == "incident-042"
+        assert event["audit_context"]["idempotency_key"] == "aud-002-incident-resolve"
         assert event["command_ref"] == command_id
         assert event["audit_action"]["trace_id"].startswith("trace-")
 
-        entity = client.get("/bff/audit/entities/Runtime/runtime-042", headers=HEADERS)
+        entity = client.get("/bff/audit/entities/Incident/incident-042", headers=HEADERS)
         assert entity.status_code == 200, entity.text
         assert _command_event(entity.json()["events"], command_id)["entry_id"] == event["entry_id"]
 

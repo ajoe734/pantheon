@@ -516,7 +516,7 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
         actual_id = target_id or str(params.get(target_key) or "").strip()
         if not actual_id:
             raise ValueError(f"{action_name} requires {target_key}.")
-        confirm_token = str(params.get("confirm_token") or "repair-confirm-token").strip()
+        confirm_token = params["confirm_token_id"]
 
         payload = {
             "command_id": command_id,
@@ -524,7 +524,7 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
             "reason": params.get("reason") or f"Operator repair {action_name}",
             "idempotency_key": params.get("idempotency_key") or command_id,
             "trace_id": params.get("trace_id"),
-            "actor_id": params.get("actor_id") or "operator",
+            "actor_id": params["actor_id"],
             "stage": params.get("stage") or "paper",
         }
         if "staleness_evidence" in params:
@@ -558,7 +558,7 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
             raise ValueError("IssueSafeMode requires capital_pool_id.")
 
         target_state = str(params.get("target_state") or "guarded").strip()
-        actor_id = str(params.get("actor_id") or "operator-command").strip()
+        actor_id = str(params["actor_id"]).strip()
         client = _get_runtime_manager_client()
         body = client.advance_safe_mode(
             capital_pool_id,
