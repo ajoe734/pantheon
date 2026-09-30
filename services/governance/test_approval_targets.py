@@ -1,6 +1,7 @@
 """Action-bound approval targets: subject binding, proposer separation, decider counts."""
 import importlib.util
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -135,7 +136,8 @@ def test_malformed_vote_expiry_rejected(bad):
         decision.decide('approved', 'ok', actor_role='risk_owner', actor_id='risk-b', expires_at=bad)
     decision.metadata['approvals'][0]['expires_at'] = bad
     assert any('expires_at' in e for e in ad.approval_targets.evidence_errors(
-        decision.target_type, decision.metadata, 'proposer', 'high'))
+        decision.target_type, decision.metadata, 'proposer', 'high', '2099-01-01T00:00:00Z',
+        datetime(2026, 1, 1, tzinfo=timezone.utc)))
 
 
 @pytest.mark.parametrize('target_type', TYPES)
@@ -153,4 +155,34 @@ def test_malformed_or_unauthorized_votes_fail_closed(target_type, approvals):
     body = snapshot(decision)
     body['metadata']['approvals'] = approvals
     with pytest.raises(ApprovalInvalid, match='approvals|insufficient'):
+        ApprovalEvidence.model_validate(body).require_valid()
+
+
+@pytest.mark.parametrize('target_type', TYPES)
+@pytest.mark.parametrize('change', [
+    lambda m: m['approvals'][0].update(expires_at='2000-01-01T00:00:00Z'),
+    lambda m: m['approvals'][0].update(conditions=['maximum allocation 1%']),
+    lambda m: m.pop('approvals'),
+])
+def test_vote_level_expiry_and_conditions_enforced(target_type, change):
+    body = snapshot(decide(proposed(target_type)))
+    change(body['metadata'])
+    with pytest.raises(ApprovalInvalid):
+        ApprovalEvidence.model_validate(body).require_valid()
+
+
+def test_expired_first_vote_not_masked_by_later_top_level_expiry():
+    decision = _two_decider_body()
+    decision.metadata['approvals'][0]['conditions'] = []
+    decision.decide('approved', 'ok', actor_role='risk_owner', actor_id='risk-b', expires_at='2099-01-01T00:00:00Z')
+    body = snapshot(decision) | {'conditions': [], 'decision': 'approved', 'expires_at': '2099-01-01T00:00:00Z'}
+    with pytest.raises(ApprovalInvalid):
+        ApprovalEvidence.model_validate(body).require_valid(now=datetime(2031, 1, 1, tzinfo=timezone.utc))
+
+
+@pytest.mark.parametrize('target_type', TYPES)
+@pytest.mark.parametrize('owner', [None, '', '  '])
+def test_missing_proposer_identity_rejected(target_type, owner):
+    body = snapshot(decide(proposed(target_type))) | {'owner_user_id': owner}
+    with pytest.raises(ApprovalInvalid, match='proposer'):
         ApprovalEvidence.model_validate(body).require_valid()
