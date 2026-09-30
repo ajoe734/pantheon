@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import datetime
 import json
 import os
@@ -74,6 +75,44 @@ class PersistentCapitalPoolStore(CapitalPoolStore):
             return updated
 
 
+def _ensure_tenant_column(store: Any) -> None:
+    if hasattr(store, "_connect"):
+        idx = f"idx_{(getattr(store, 'table_name', None) or getattr(store, 'table', '')).replace('\"', '').replace('.', '_')}_tenant_id"
+        with store._connect() as conn:
+            conn.execute(
+                f"ALTER TABLE {store.table} ADD COLUMN IF NOT EXISTS tenant_id TEXT; "
+                f'CREATE INDEX IF NOT EXISTS "{idx}" ON {store.table} (tenant_id)'
+            )
+
+
+def _fetch_records(records: Any, key_field: str) -> list[tuple[str, Any, str | None]]:
+    if hasattr(records, "_connect"):
+        with records._connect() as conn:
+            return conn.execute(f"SELECT record_id, payload, tenant_id FROM {records.table}").fetchall()
+    return [(r.get(key_field), r, (r.get("metadata") or {}).get("tenant_id") or r.get("tenant_id")) for r in records.list_all()]
+
+
+def _put_record(records: Any, record_id: str, payload_dict: dict[str, Any], tenant_id: str | None) -> None:
+    if not hasattr(records, "_connect"):
+        return records.put(record_id, payload_dict)
+    with records._connect() as conn:
+        conn.execute(
+            f"INSERT INTO {records.table} (record_id, payload, updated_at, tenant_id) VALUES (%s, %s::jsonb, now(), %s) "
+            "ON CONFLICT (record_id) DO UPDATE SET payload=EXCLUDED.payload, updated_at=EXCLUDED.updated_at, tenant_id=EXCLUDED.tenant_id",
+            (record_id, json.dumps(payload_dict, ensure_ascii=True, sort_keys=True), tenant_id),
+        )
+
+
+def _load_entity(cls: Any, row: tuple) -> Any:
+    rec, tid = (row[1] if isinstance(row[1], dict) else json.loads(row[1])), row[2]
+    ent = cls.from_dict(rec)
+    tid = tid or (getattr(ent, "metadata", None) or {}).get("tenant_id") or rec.get("tenant_id")
+    if tid:
+        object.__setattr__(ent, "tenant_id", tid)
+        if getattr(ent, "metadata", None) is not None: ent.metadata["tenant_id"] = tid
+    return ent
+
+
 class PostgresCapitalPoolStore(PersistentCapitalPoolStore):
     """Postgres owner store for CapitalPool records."""
 
@@ -89,6 +128,7 @@ class PostgresCapitalPoolStore(PersistentCapitalPoolStore):
             owner_service="capital-pool-svc",
             bootstrap=bootstrap,
         )
+        _ensure_tenant_column(self._records)
         super().__init__(path=None)
         self._refresh_from_postgres()
 
@@ -125,14 +165,12 @@ class PostgresCapitalPoolStore(PersistentCapitalPoolStore):
 
     def _save(self) -> None:
         for pool in self._pools.values():
-            self._records.put(pool.pool_id, pool.to_dict())
+            tenant_id = getattr(pool, "tenant_id", None) or (pool.metadata or {}).get("tenant_id")
+            _put_record(self._records, pool.pool_id, pool.to_dict(), tenant_id)
 
     def _refresh_from_postgres(self) -> None:
         with self._lock:
-            self._pools = {}
-            for record in self._records.list_all():
-                pool = CapitalPool.from_dict(record)
-                self._pools[pool.pool_id] = pool
+            self._pools = {p.pool_id: p for p in (_load_entity(CapitalPool, r) for r in _fetch_records(self._records, "pool_id"))}
 
 
 class PostgresPersonaCapitalBindingStore(PersonaCapitalBindingStore):
@@ -150,6 +188,7 @@ class PostgresPersonaCapitalBindingStore(PersonaCapitalBindingStore):
             owner_service="capital-pool-svc",
             bootstrap=bootstrap,
         )
+        _ensure_tenant_column(self._records)
         super().__init__(path=None)
         self._refresh_from_postgres()
 
@@ -191,19 +230,15 @@ class PostgresPersonaCapitalBindingStore(PersonaCapitalBindingStore):
 
     def _save(self) -> None:
         for binding in self._bindings.values():
-            self._records.put(binding.binding_id, binding.to_dict())
+            tenant_id = getattr(binding, "tenant_id", None) or (binding.metadata or {}).get("tenant_id")
+            _put_record(self._records, binding.binding_id, binding.to_dict(), tenant_id)
 
     def _refresh_from_postgres(self) -> None:
         with self._lock:
             self._bindings = {}
-            for record in self._records.list_all():
-                binding = PersonaCapitalBinding.from_dict(record)
-                try:
-                    self._check_unique_capital_sleeve(binding, exclude_id=None)
-                except PersonaCapitalBindingError as exc:
-                    raise PersonaCapitalBindingError(
-                        "Postgres contains duplicate capital sleeve binding identity"
-                    ) from exc
+            for r in _fetch_records(self._records, "binding_id"):
+                binding = _load_entity(PersonaCapitalBinding, r)
+                self._check_unique_capital_sleeve(binding, exclude_id=None)
                 self._bindings[binding.binding_id] = binding
 
 
@@ -220,6 +255,7 @@ class JsonlCapitalAuditStore:
         actor_id: str | None,
         actor_role: str | None,
         detail: dict[str, Any] | None = None,
+        tenant_id: str | None = None,
     ) -> str:
         try:
             from .audit_log import append_audit_event
@@ -234,6 +270,7 @@ class JsonlCapitalAuditStore:
             actor_role=actor_role,
             detail=detail,
             audit_log_path=str(self.audit_log_path),
+            tenant_id=tenant_id,
         )
 
     def list_events(
@@ -241,6 +278,7 @@ class JsonlCapitalAuditStore:
         *,
         resource_type: str | None = None,
         resource_id: str | None = None,
+        tenant_id: str | None = None,
     ) -> list[dict[str, Any]]:
         if not self.audit_log_path.exists():
             return []
@@ -249,6 +287,8 @@ class JsonlCapitalAuditStore:
             if not line.strip():
                 continue
             event = json.loads(line)
+            if not event.get("tenant_id") or (tenant_id and event.get("tenant_id") != tenant_id):
+                continue
             if resource_type and event.get("resource_type") != resource_type:
                 continue
             if resource_id and event.get("resource_id") != resource_id:
@@ -272,6 +312,7 @@ class PostgresCapitalAuditStore:
             owner_service="capital-pool-svc",
             bootstrap=bootstrap,
         )
+        _ensure_tenant_column(self._records)
 
     def append_event(
         self,
@@ -282,10 +323,12 @@ class PostgresCapitalAuditStore:
         actor_id: str | None,
         actor_role: str | None,
         detail: dict[str, Any] | None = None,
+        tenant_id: str | None = None,
     ) -> str:
         event_id = str(uuid.uuid4())
         event = {
             "event_id": event_id,
+            "tenant_id": tenant_id,
             "event_type": event_type,
             "resource_type": resource_type,
             "resource_id": resource_id,
@@ -294,7 +337,7 @@ class PostgresCapitalAuditStore:
             "detail": detail or {},
             "timestamp": datetime.datetime.now(_UTC).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z",
         }
-        self._records.put(event_id, event)
+        _put_record(self._records, event_id, event, tenant_id)
         return event_id
 
     def list_events(
@@ -302,13 +345,15 @@ class PostgresCapitalAuditStore:
         *,
         resource_type: str | None = None,
         resource_id: str | None = None,
+        tenant_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        events = self._records.list_all()
-        if resource_type:
-            events = [event for event in events if event.get("resource_type") == resource_type]
-        if resource_id:
-            events = [event for event in events if event.get("resource_id") == resource_id]
-        return events
+        evs = [(r[1] if isinstance(r[1], dict) else json.loads(r[1]), r[2]) for r in _fetch_records(self._records, "event_id")]
+        return [
+            e for e, tid in evs
+            if (tid or e.get("tenant_id")) and (tenant_id is None or (tid or e.get("tenant_id")) == tenant_id)
+            and (not resource_type or e.get("resource_type") == resource_type)
+            and (not resource_id or e.get("resource_id") == resource_id)
+        ]
 
 
 class PostgresAllocationAuthorityStore(AllocationAuthorityStore):
@@ -320,13 +365,36 @@ class PostgresAllocationAuthorityStore(AllocationAuthorityStore):
         table: str = "capital.allocation_authority",
         bootstrap: bool = True,
     ) -> None:
-        records = PostgresJsonOwnerStore(
+        self._records = PostgresJsonOwnerStore(
             dsn=dsn,
             table=table,
             owner_service="capital-pool-svc",
             bootstrap=bootstrap,
         )
-        super().__init__(owner_store=records)
+        if bootstrap:
+            _ensure_tenant_column(self._records)
+        super().__init__(owner_store=self._records)
+
+    def _persist_locked(self) -> None:
+        payload = copy.deepcopy(self._data)
+        tenant_id = payload.get("tenant_id") or "default"
+        _put_record(self._records, self._POSTGRES_RECORD_ID, payload, tenant_id)
+
+
+def migrate_capital_tables(dsn: str, default_tenant: str = "default") -> None:
+    try:
+        import psycopg
+    except ImportError as exc:
+        raise RuntimeError("psycopg is required for capital database migrations") from exc
+    with psycopg.connect(dsn) as conn:
+        for tbl in ("capital.capital_pools", "capital.persona_capital_bindings", "capital.allocation_authority", "capital.audit_events"):
+            raw = tbl.replace('"', '').replace('.', '_')
+            conn.execute(f'ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS tenant_id TEXT; CREATE INDEX IF NOT EXISTS "idx_{raw}_tenant_id" ON {tbl} (tenant_id)')
+            p = "metadata,tenant_id" if "pools" in tbl or "bindings" in tbl else "tenant_id"
+            conn.execute(f"UPDATE {tbl} SET tenant_id = COALESCE(payload#>>'{{{p}}}', %s) WHERE tenant_id IS NULL", (default_tenant,))
+            conn.execute(f"UPDATE {tbl} SET payload = jsonb_set(payload, '{{{p}}}', to_jsonb(tenant_id), true) WHERE payload#>>'{{{p}}}' IS NULL")
+    PostgresAllocationAuthorityStore(dsn=dsn, table="capital.allocation_authority", bootstrap=False).backfill_tenant(default_tenant=default_tenant)
+
 
 
 def _capital_backend() -> str:
