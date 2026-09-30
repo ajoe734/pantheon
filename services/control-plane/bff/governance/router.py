@@ -1022,7 +1022,7 @@ def create_governance_router(
         snapshot_at = _now()
         if run_management_read is not None:
             try:
-                items = await run_management_read(lambda: _service().list_pending_approvals())
+                items = await run_management_read(lambda: _service().list_pending_approvals(identity))
             except Exception:
                 return {
                     "items": [],
@@ -1042,7 +1042,7 @@ def create_governance_router(
                     },
                 }
         else:
-            items = _service().list_pending_approvals()
+            items = _service().list_pending_approvals(identity)
         redacted_items, total_redacted = _redact_evidence_field_items(identity, items)
         return {
             "items": redacted_items,
@@ -1208,8 +1208,8 @@ def create_governance_router(
     ) -> Dict[str, Any]:
         identity = _identity(authorization)
         clean_id = approval_id.strip()
-        refs = _service().approval_evidence(clean_id)
-        decision = _service().get_approval_detail(clean_id)
+        refs = _service().approval_evidence(clean_id, identity)
+        decision = _service().get_approval_detail(clean_id, identity)
         if refs is None or decision is None:
             _not_found("Approval decision", approval_id)
         processed, redacted_count = _safe_redact(identity, refs)
@@ -1229,7 +1229,7 @@ def create_governance_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = _identity(authorization)
-        detail = _service().get_approval_detail(approval_id)
+        detail = _service().get_approval_detail(approval_id, identity)
         if detail is None:
             _not_found("Approval decision", approval_id)
         redacted, total_redacted = _redact_evidence_field_items(identity, [detail])
@@ -1250,7 +1250,7 @@ def create_governance_router(
         identity = _identity(authorization, operator=True)
         _require_approver(identity)
         clean_id = approval_id.strip()
-        if _service().get_approval_detail(clean_id) is None and _service().dataset_source("approval_decisions") != "missing":
+        if _service().get_approval_detail(clean_id, identity) is None:
             _not_found("Approval decision", clean_id)
         try:
             decision = _service().validate_decision(payload)
@@ -1295,7 +1295,7 @@ def create_governance_router(
             item_id = str(item["id"]).strip()
             try:
                 decision = _service().validate_decision(item)
-                if _service().get_approval_detail(item_id) is None and _service().dataset_source("approval_decisions") != "missing":
+                if _service().get_approval_detail(item_id, identity) is None:
                     raise LookupError(item_id)
                 command = await _service().submit_governance_action(
                     action_kind="approval",
