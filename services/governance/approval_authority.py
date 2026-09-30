@@ -95,8 +95,9 @@ class ApprovalEvidence(BaseModel):
         from services.governance import approval_targets
         metadata = getattr(self, 'metadata', None)
         if approval_targets.is_action_target(self.target_type):
-            problems = approval_targets.evidence_errors(self.target_type, metadata, getattr(self, 'owner_user_id', None),
-                                                       getattr(self, 'risk_level', None))
+            problems = approval_targets.evidence_errors(
+                self.target_type, metadata, getattr(self, 'owner_user_id', None), getattr(self, 'risk_level', None),
+                self.expires_at, now or datetime.now(timezone.utc))
             if problems:
                 raise ApprovalInvalid('Approval target rejected: ' + '; '.join(problems))
         values = self.model_dump()

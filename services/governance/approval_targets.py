@@ -1,9 +1,5 @@
-"""Subject binding and decider-count rules for action-bound approval targets.
-
-Shared by the ApprovalDecision state machine and ApprovalEvidence so both
-enforce one definition. Subject lives in ``metadata['subject']``; approving
-deciders accumulate in ``metadata['approvals']``.
-"""
+"""Subject binding and decider-count rules shared by ApprovalDecision and ApprovalEvidence.
+Subject: metadata['subject']; approving deciders: metadata['approvals']."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -41,7 +37,6 @@ def approvals(metadata: Optional[Mapping[str, Any]]) -> List[Any]:
 def approvers(metadata: Optional[Mapping[str, Any]]) -> List[Any]:
     return [a.get('actor_id') for a in approvals(metadata) if isinstance(a, Mapping)]
 
-
 def parse_expiry(value: Any) -> datetime:
     """A vote expiry must be a timezone-aware ISO instant."""
     try:
@@ -78,23 +73,26 @@ def subject_errors(target_type: Any, metadata: Optional[Mapping[str, Any]]) -> L
     return errors
 
 
-def evidence_errors(target_type: Any, metadata: Optional[Mapping[str, Any]], proposer: Optional[str],
-                    risk_level: Any = None) -> List[str]:
+def evidence_errors(target_type: Any, metadata: Optional[Mapping[str, Any]], proposer: Any,
+                    risk_level: Any, expires_at: Any, now: datetime) -> List[str]:
     """Errors that make a decided approval unusable for its action target."""
     errors = subject_errors(target_type, metadata)
-    votes = approvals(metadata)
-    risk = target_name(risk_level)
+    votes, risk = approvals(metadata), target_name(risk_level)
     bad = [v for v in votes if not (isinstance(v, Mapping) and isinstance(v.get('actor_id'), str)
                                     and v['actor_id'].strip() and is_authorized_to_decide(v.get('actor_role'), risk))]
-    if bad or (metadata or {}).get('approvals') is not None and not isinstance(metadata['approvals'], list):
+    if bad or not isinstance((metadata or {}).get('approvals', []), list):
         errors.append('approvals must be distinct identified deciders with authorized roles')
     ids = [v['actor_id'] for v in votes if v not in bad]
-    named = ids + [v.get('actor_id') for v in bad if isinstance(v, Mapping)]
+    named = approvers(metadata)
     try:
-        merged_constraints(metadata)
+        conditions, expiry = merged_constraints(metadata)
+        if conditions or (expiry is not None and not now < parse_expiry(expiry) == parse_expiry(expires_at)):
+            errors.append('vote conditions or expiry are inconsistent with the decision or expired')
     except ValueError as exc:
         errors.append(str(exc))
-    if proposer and proposer in named:
+    if not isinstance(proposer, str) or not proposer.strip():
+        errors.append('proposer identity is required')
+    elif proposer in named:
         errors.append('decider must not be the proposer')
     if len(set(ids)) < required_deciders(target_type, metadata):
         errors.append('insufficient distinct deciders')
