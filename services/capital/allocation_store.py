@@ -606,6 +606,7 @@ class AllocationAuthorityStore:
                     )
                     continue
                 expected_identity = {
+                    "tenant_id": str(proposal.get("tenant_id") or "").strip(),
                     "capital_pool_id": proposal["capital_pool_id"],
                     "capital_scope": str(line.get("capital_scope") or "pool"),
                     "capital_sleeve_id": str(line.get("capital_sleeve_id") or "").strip() or None,
@@ -613,6 +614,7 @@ class AllocationAuthorityStore:
                     "binding_id": str(line.get("binding_id") or "").strip() or None,
                 }
                 actual_identity = {
+                    "tenant_id": str(allocation.get("tenant_id") or "").strip(),
                     "capital_pool_id": allocation.get("capital_pool_id"),
                     "capital_scope": str(allocation.get("capital_scope") or "pool"),
                     "capital_sleeve_id": (
@@ -621,7 +623,11 @@ class AllocationAuthorityStore:
                     "persona_id": str(allocation.get("persona_id") or "").strip(),
                     "binding_id": str(allocation.get("binding_id") or "").strip() or None,
                 }
-                if actual_identity != expected_identity:
+                if (
+                    not actual_identity["tenant_id"]
+                    or not expected_identity["tenant_id"]
+                    or actual_identity != expected_identity
+                ):
                     stale.append(
                         {
                             "allocation_id": line.get("allocation_id"),
@@ -706,6 +712,10 @@ class AllocationAuthorityStore:
                         "canonical_write_authority": "capital_service",
                     }
                     allocations[line["allocation_id"]] = allocation
+                else:
+                    atid, ptid = str(allocation.get("tenant_id") or "").strip(), str(proposal.get("tenant_id") or "").strip()
+                    if not atid or not ptid or atid != ptid:
+                        raise AllocationAuthorityConflict(f"Allocation {line['allocation_id']!r} belongs to a different tenant")
                 allocation.update(
                     {
                         "current_weight": line["target_weight"],
@@ -906,6 +916,7 @@ class AllocationAuthorityStore:
                 for allocation in self._data["allocations"].values()
                 if allocation.get("persona_id") == persona_id
                 and (pool_id is None or allocation.get("capital_pool_id") == pool_id)
+                and bool(allocation.get("tenant_id"))
                 and (tenant_id is None or allocation.get("tenant_id") == tenant_id)
             ]
             baseline_weight = sum(float(item.get("current_weight") or 0) for item in matches)

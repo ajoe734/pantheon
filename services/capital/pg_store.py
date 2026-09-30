@@ -371,7 +371,8 @@ class PostgresAllocationAuthorityStore(AllocationAuthorityStore):
             owner_service="capital-pool-svc",
             bootstrap=bootstrap,
         )
-        _ensure_tenant_column(self._records)
+        if bootstrap:
+            _ensure_tenant_column(self._records)
         super().__init__(owner_store=self._records)
 
     def _persist_locked(self) -> None:
@@ -392,7 +393,8 @@ def migrate_capital_tables(dsn: str, default_tenant: str = "default") -> None:
             p = "metadata,tenant_id" if "pools" in tbl or "bindings" in tbl else "tenant_id"
             conn.execute(f"UPDATE {tbl} SET tenant_id = COALESCE(payload#>>'{{{p}}}', %s) WHERE tenant_id IS NULL", (default_tenant,))
             conn.execute(f"UPDATE {tbl} SET payload = jsonb_set(payload, '{{{p}}}', to_jsonb(tenant_id), true) WHERE payload#>>'{{{p}}}' IS NULL")
-        PostgresAllocationAuthorityStore(dsn=dsn, table="capital.allocation_authority", bootstrap=False).backfill_tenant(default_tenant=default_tenant)
+    PostgresAllocationAuthorityStore(dsn=dsn, table="capital.allocation_authority", bootstrap=False).backfill_tenant(default_tenant=default_tenant)
+
 
 
 def _capital_backend() -> str:

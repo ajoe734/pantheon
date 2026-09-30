@@ -782,3 +782,237 @@ def test_postgres_migration_and_write_path(monkeypatch):
     alloc_store.backfill_tenant(default_tenant="tenant-restored")
     row = fake_conn.tables["capital.allocation_authority"][0]
     assert row[2] == "tenant-migrated"
+
+
+def test_apply_rebalance_rejects_foreign_and_untenanted_allocations(capital_test_env):
+    client, module, tempdir = capital_test_env
+    headers_a = _auth_headers("tenant-alpha", actor_id="admin-alpha")
+
+    # 1. Create tenant-alpha pool
+    pool_res = client.post(
+        "/api/capital-pools",
+        json={
+            "actor_id": "admin-alpha",
+            "actor_role": "capital.admin",
+            "pool_id": "pool-rebal-guard",
+            "name": "Guard Pool",
+            "owner_id": "fund",
+            "owner_type": "fund",
+        },
+        headers=headers_a,
+    )
+    assert pool_res.status_code == 201
+
+    # 2. Seed matching sleeveless allocation baseline weight 0.5 with tenant_id null
+    alloc_id = "pool-rebal-guard|persona:persona-g1"
+    store = module.allocation_authority_store
+    with store._lock:
+        store._reload_locked()
+        store._data["allocations"][alloc_id] = {
+            "allocation_id": alloc_id,
+            "tenant_id": None,
+            "capital_pool_id": "pool-rebal-guard",
+            "capital_scope": "pool",
+            "capital_sleeve_id": None,
+            "persona_id": "persona-g1",
+            "binding_id": None,
+            "binding_state": "bound",
+            "stage": "paper",
+            "current_weight": 0.5,
+            "target_weight": 0.5,
+            "allocation_version": 1,
+            "updated_at": "2026-09-30T00:00:00Z",
+        }
+        store._persist_locked()
+
+    # 3. Submit risk-decreasing sleeveless paper rebalance to 0 as tenant-alpha
+    line = {
+        "ranking_snapshot_id": "snap-g1",
+        "allocation_evaluation_id": "eval-g1",
+        "allocation_policy_version": "v1",
+        "persona_id": "persona-g1",
+        "capital_sleeve_id": None,
+        "current_weight": 0.5,
+        "target_weight": 0.0,
+        "capital_scope": "pool",
+        "stage": "paper",
+    }
+    line["allocation_line_digest"] = allocation_line_digest(line)
+    prop_res = client.post(
+        "/api/rebalances",
+        json={
+            "actor_id": "admin-alpha",
+            "actor_role": "operator",
+            "rebalance_id": "rb-guard-null",
+            "capital_pool_id": "pool-rebal-guard",
+            "ranking_snapshot_id": "snap-g1",
+            "allocation_evaluation_id": "eval-g1",
+            "allocation_policy_version": "v1",
+            "request_hash": "hash-guard-null",
+            "idempotency_key": "idem-guard-null",
+            "lines": [line],
+        },
+        headers=headers_a,
+    )
+    assert prop_res.status_code == 201
+
+    # 4. Attempt to apply rebalance: MUST be rejected, and null row must be UNCHANGED
+    apply_res = client.post(
+        "/api/rebalances/rb-guard-null/apply",
+        json={
+            "actor_id": "admin-alpha",
+            "actor_role": "operator",
+            "command_id": "cmd-guard-null",
+            "rebalance_id": "rb-guard-null",
+            "request_hash": "hash-guard-null-apply",
+            "idempotency_key": "idem-guard-null-apply",
+        },
+        headers=headers_a,
+    )
+    assert apply_res.status_code == 409
+    with store._lock:
+        store._reload_locked()
+        assert store._data["allocations"][alloc_id]["current_weight"] == 0.5
+        assert store._data["allocations"][alloc_id]["tenant_id"] is None
+
+    # 5. Now seed with tenant_id: "tenant-beta"
+    with store._lock:
+        store._data["allocations"][alloc_id]["tenant_id"] = "tenant-beta"
+        store._data["allocations"][alloc_id]["current_weight"] = 0.5
+        store._persist_locked()
+
+    prop_res2 = client.post(
+        "/api/rebalances",
+        json={
+            "actor_id": "admin-alpha",
+            "actor_role": "operator",
+            "rebalance_id": "rb-guard-beta",
+            "capital_pool_id": "pool-rebal-guard",
+            "ranking_snapshot_id": "snap-g1",
+            "allocation_evaluation_id": "eval-g1",
+            "allocation_policy_version": "v1",
+            "request_hash": "hash-guard-beta",
+            "idempotency_key": "idem-guard-beta",
+            "lines": [line],
+        },
+        headers=headers_a,
+    )
+    assert prop_res2.status_code == 201
+
+    # Attempt to apply: MUST be rejected, and foreign row must be UNCHANGED
+    apply_res2 = client.post(
+        "/api/rebalances/rb-guard-beta/apply",
+        json={
+            "actor_id": "admin-alpha",
+            "actor_role": "operator",
+            "command_id": "cmd-guard-beta",
+            "rebalance_id": "rb-guard-beta",
+            "request_hash": "hash-guard-beta-apply",
+            "idempotency_key": "idem-guard-beta-apply",
+        },
+        headers=headers_a,
+    )
+    assert apply_res2.status_code == 409
+    with store._lock:
+        store._reload_locked()
+        assert store._data["allocations"][alloc_id]["current_weight"] == 0.5
+        assert store._data["allocations"][alloc_id]["tenant_id"] == "tenant-beta"
+
+    # 6. When tenant matches ("tenant-alpha"), apply succeeds and weight is updated
+    with store._lock:
+        store._data["allocations"][alloc_id]["tenant_id"] = "tenant-alpha"
+        store._data["allocations"][alloc_id]["current_weight"] = 0.5
+        store._persist_locked()
+
+    prop_res3 = client.post(
+        "/api/rebalances",
+        json={
+            "actor_id": "admin-alpha",
+            "actor_role": "operator",
+            "rebalance_id": "rb-guard-alpha",
+            "capital_pool_id": "pool-rebal-guard",
+            "ranking_snapshot_id": "snap-g1",
+            "allocation_evaluation_id": "eval-g1",
+            "allocation_policy_version": "v1",
+            "request_hash": "hash-guard-alpha",
+            "idempotency_key": "idem-guard-alpha",
+            "lines": [line],
+        },
+        headers=headers_a,
+    )
+    assert prop_res3.status_code == 201
+    apply_res3 = client.post(
+        "/api/rebalances/rb-guard-alpha/apply",
+        json={
+            "actor_id": "admin-alpha",
+            "actor_role": "operator",
+            "command_id": "cmd-guard-alpha",
+            "rebalance_id": "rb-guard-alpha",
+            "request_hash": "hash-guard-alpha-apply",
+            "idempotency_key": "idem-guard-alpha-apply",
+        },
+        headers=headers_a,
+    )
+    assert apply_res3.status_code == 200
+    assert apply_res3.json()["allocation_readback"][0]["tenant_id"] == "tenant-alpha"
+    assert apply_res3.json()["allocation_readback"][0]["current_weight"] == 0.0
+    with store._lock:
+        store._reload_locked()
+        assert store._data["allocations"][alloc_id]["current_weight"] == 0.0
+        assert store._data["allocations"][alloc_id]["tenant_id"] == "tenant-alpha"
+
+
+def test_real_postgres_migration_regression_preexisting_rows():
+    dsn = os.environ.get("CAPITAL_TEST_DSN", "postgresql://postgres:postgres@127.0.0.1:15432/pantheon")
+    try:
+        import psycopg
+        with psycopg.connect(dsn, connect_timeout=2) as conn:
+            pass
+    except Exception:
+        pytest.skip("Disposable PostgreSQL instance not available at " + dsn)
+
+    from services.capital.pg_store import migrate_capital_tables
+
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        conn.execute("CREATE SCHEMA IF NOT EXISTS capital;")
+        for tbl in ("capital_pools", "persona_capital_bindings", "allocation_authority", "audit_events"):
+            conn.execute(f"DROP TABLE IF EXISTS capital.{tbl} CASCADE;")
+            conn.execute(f"CREATE TABLE capital.{tbl} (record_id TEXT PRIMARY KEY, payload JSONB, updated_at TIMESTAMPTZ);")
+
+        conn.execute("INSERT INTO capital.capital_pools (record_id, payload) VALUES ('pool-1', '{\"name\": \"Alpha Pool\", \"metadata\": {}}');")
+        conn.execute("INSERT INTO capital.persona_capital_bindings (record_id, payload) VALUES ('bind-1', '{\"binding_id\": \"bind-1\", \"metadata\": {}}');")
+        conn.execute("INSERT INTO capital.audit_events (record_id, payload) VALUES ('evt-1', '{\"event_id\": \"evt-1\"}');")
+        alloc_doc = {
+            "schema_version": 3,
+            "allocations": {"al-1": {"allocation_id": "al-1", "current_weight": 0.5}},
+            "rebalances": {"rb-1": {"rebalance_id": "rb-1"}},
+            "containments": {"ct-1": {"containment_id": "ct-1"}},
+            "command_receipts": {"cr-1": {"command_id": "cr-1"}},
+            "containment_commands": {"cc-1": {"command_id": "cc-1"}},
+        }
+        conn.execute("INSERT INTO capital.allocation_authority (record_id, payload) VALUES ('capital-allocation-authority', %s);", (json.dumps(alloc_doc),))
+        conn.execute("ALTER DATABASE pantheon SET lock_timeout = '1500ms';")
+
+    try:
+        migrate_capital_tables(dsn, default_tenant="tenant-backfilled")
+
+        with psycopg.connect(dsn) as conn:
+            for tbl in ("capital.capital_pools", "capital.persona_capital_bindings", "capital.allocation_authority", "capital.audit_events"):
+                row = conn.execute(f"SELECT record_id, payload, tenant_id FROM {tbl};").fetchone()
+                assert row is not None
+                assert row[2] == "tenant-backfilled"
+
+            cur = conn.execute("SELECT payload FROM capital.allocation_authority WHERE record_id = 'capital-allocation-authority';")
+            payload = cur.fetchone()[0]
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            assert payload["tenant_id"] == "tenant-backfilled"
+            assert payload["allocations"]["al-1"]["tenant_id"] == "tenant-backfilled"
+            assert payload["rebalances"]["rb-1"]["tenant_id"] == "tenant-backfilled"
+            assert payload["containments"]["ct-1"]["tenant_id"] == "tenant-backfilled"
+            assert payload["command_receipts"]["cr-1"]["tenant_id"] == "tenant-backfilled"
+            assert payload["containment_commands"]["cc-1"]["tenant_id"] == "tenant-backfilled"
+    finally:
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            conn.execute("ALTER DATABASE pantheon RESET lock_timeout;")
+

@@ -33,22 +33,22 @@
     {
       "criterion": "1. Capital pools and persona capital bindings and allocation authority and capital audit events carry a tenant id with a migration that backfills existing rows",
       "status": "passed",
-      "verification": "Added tenant_id column, quoted indexes, and JSONB backfill migration in pg_store.py (migrate_capital_tables) and aggregate backfill in allocation_store.py (backfill_tenant) stamping both root and nested rebalances/allocations/containments/receipts and SQL columns."
+      "verification": "Added tenant_id column, quoted indexes, and JSONB backfill migration in pg_store.py (migrate_capital_tables) committing DDL transactions before nested store backfill, and aggregate backfill in allocation_store.py (backfill_tenant) stamping both root and nested rebalances/allocations/containments/receipts and SQL columns. Verified against real PostgreSQL with preexisting rows and lock_timeout=1500ms."
     },
     {
       "criterion": "2. Every capital read and write route filters and stamps the caller tenant from the verified token and a caller cannot read or change another tenant's rows",
       "status": "passed",
-      "verification": "All 23 capital routes filter by caller's verified tenant; responses stamp X-Pantheon-Tenant header and tenant_id; create idempotency identity and replay lookups are bound to caller tenant."
+      "verification": "All 23 capital routes filter by caller's verified tenant; responses stamp X-Pantheon-Tenant header and tenant_id; create idempotency identity and replay lookups are bound to caller tenant; apply_rebalance requires nonempty matching tenant on existing allocations before mutation or readback."
     },
     {
       "criterion": "3. Rows without a tenant are visible to no caller",
       "status": "passed",
-      "verification": "Untenanted rows return 404 on direct lookup and are excluded from all list endpoints across pools, bindings, rebalances, allocations, receipts, containments, live-owner, admissibility, and audit events."
+      "verification": "Untenanted rows return 404 on direct lookup, cannot be mutated or read back during rebalances/containment, and are excluded from all list endpoints across pools, bindings, rebalances, allocations, receipts, containments, live-owner, admissibility, and audit events."
     },
     {
       "criterion": "4. Tests cover same-tenant and cross-tenant access for every capital route",
       "status": "passed",
-      "verification": "services/capital/test_tenant_scoping.py covers all 23 capital routes with both same-tenant and cross-tenant assertions, cross-tenant idempotency replay tests, untenanted live owner isolation, and postgres migration/persistence tests."
+      "verification": "services/capital/test_tenant_scoping.py covers all 23 capital routes with both same-tenant and cross-tenant assertions, cross-tenant idempotency replay tests, untenanted live owner isolation, route-level rebalance apply foreign/untenanted allocation rejection, and real postgres migration/persistence regression."
     }
   ],
   "covered_routes_count": 23,
@@ -80,24 +80,24 @@
   "diff_budget": {
     "change_class": "corrective",
     "budget": 150,
-    "production_lines_added": 289,
-    "production_lines_deleted": 173,
-    "net_production_lines": 116,
+    "production_lines_added": 303,
+    "production_lines_deleted": 174,
+    "net_production_lines": 129,
     "under_budget": true
   },
   "verification": {
     "passed": [
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/capital",
-        "result": "70 passed, 1 warning in 34.92s"
+        "result": "72 passed, 1 warning in 33.40s"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/capital/test_tenant_scoping.py",
-        "result": "6 passed in 4.37s"
+        "result": "8 passed, 1 warning in 4.86s"
       },
       {
         "command": "python3 scripts/git/diff_budget.py --base 5e2f3b1b7 --change-class corrective --budget 150",
-        "result": "net production lines +116 <= 150"
+        "result": "net production lines +129 <= 150"
       }
     ]
   }
