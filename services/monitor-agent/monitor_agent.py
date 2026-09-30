@@ -65,11 +65,29 @@ def _http(url: str, *, data: Any = None, headers: dict[str, str] | None = None, 
         return parsed
 
 
-def collect_snapshot(sources: dict[str, str], fetch: Callable[..., Any] = _http) -> dict[str, Any]:
+def source_headers(env: Callable[[str, str], str]) -> dict[str, dict[str, str]]:
+    """Read-only credentials per protected source (same contracts the reconciler uses)."""
+    tenant = env("PANTHEON_TENANT_ID", "default")
+    return {
+        "runtime_status": {"Authorization": f"Bearer {env('PANTHEON_RUNTIME_MANAGER_TOKEN', '')}"},
+        "performance": {
+            "Authorization": f"Bearer {env('PANTHEON_TELEMETRY_SERVICE_TOKEN', '')}",
+            "X-Tenant-Id": tenant,
+        },
+    }
+
+
+def collect_snapshot(
+    sources: dict[str, str],
+    fetch: Callable[..., Any] = _http,
+    headers: dict[str, dict[str, str]] | None = None,
+) -> dict[str, Any]:
     snapshot: dict[str, Any] = {}
     for name, url in sources.items():
         try:
-            snapshot[name] = json.dumps(fetch(url), sort_keys=True, default=str)[:SNAPSHOT_BYTES]
+            snapshot[name] = json.dumps(
+                fetch(url, headers=(headers or {}).get(name)), sort_keys=True, default=str
+            )[:SNAPSHOT_BYTES]
         except Exception as exc:
             raise Degraded(f"read API {name} unavailable: {exc}") from exc
     return snapshot
@@ -138,12 +156,13 @@ def run_once(
     adapter_url: str,
     adapter_token: str,
     limiter: RateLimiter,
+    headers: dict[str, dict[str, str]] | None = None,
     fetch: Callable[..., Any] = _http,
     now: Callable[[], float] = time.time,
 ) -> dict[str, Any]:
     """One run. Returns a record; a degraded run creates no incident."""
     try:
-        snapshot = collect_snapshot(sources, fetch)
+        snapshot = collect_snapshot(sources, fetch, headers)
         open_incidents = fetch(f"{incidents_url}/api/incidents?open_only=true")
         ref = snapshot_ref(snapshot)
         findings = ask_agent(build_prompt(snapshot, open_incidents), adapter_url, adapter_token, fetch)
@@ -183,6 +202,7 @@ def main() -> None:
             adapter_url=env("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-gateway-adapter:8104"),
             adapter_token=env("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", ""),
             limiter=limiter,
+            headers=source_headers(lambda k, d: env(k) or d),
         )
         print(json.dumps({"ts": datetime.now(timezone.utc).isoformat(), **record}), flush=True)
         if env("MONITOR_AGENT_ONCE"):

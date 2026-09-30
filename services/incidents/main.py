@@ -544,7 +544,6 @@ def consume_agent_finding_incident(
         digest = uuid.uuid5(uuid.NAMESPACE_URL, fingerprint).hex[:12]
         payload = {
             "schema_version": "pantheon.infrastructure-incident/1",
-            "incident_id": f"agent-{digest}-{uuid.uuid4().hex[:8]}",
             "source_event_id": snapshot_ref,
             "tenant_id": str(body.get("tenant_id") or os.getenv("PANTHEON_TENANT_ID") or "default"),
             "producer": "monitor-agent",
@@ -557,20 +556,36 @@ def consume_agent_finding_incident(
             "severity": body.get("severity"),
             "evidence_summary": f"snapshot_ref={snapshot_ref}; rationale={rationale[:1500]}",
         }
-        incoming = build_incident_from_infrastructure_health_payload(payload)
+        incoming = build_incident_from_infrastructure_health_payload(
+            {**payload, "incident_id": f"agent-{digest}-0000"}
+        )
     except (IncidentConsumerError, IncidentError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    for existing in store.find_open_incidents():
-        if existing.incident_cluster_id == incoming.incident_cluster_id:
-            merged = store.merge_incident_evidence(existing.incident_id, incoming)
-            response.status_code = 200
-            log.info("Merged agent finding into IncidentCase %s", merged.incident_id)
-            return _to_response(merged)
-
-    created = store.create_incident(incoming)
-    log.info("Created IncidentCase %s from agent finding", created.incident_id)
-    return _to_response(created)
+    # Atomic dedupe: incident ids are sequential per fingerprint, so two racing
+    # creators pick the same id and the store's own create guard lets exactly one
+    # win; the loser loops back and merges into the winner's open incident.
+    prefix = f"agent-{digest}-"
+    for _ in range(5):
+        # Sequence is read before the open check: a creator that lost the race
+        # either sees the winner's open incident or collides on the same id.
+        seq = sum(1 for i in store.list_incidents() if i.incident_id.startswith(prefix))
+        for existing in store.find_open_incidents():
+            if existing.incident_cluster_id == incoming.incident_cluster_id:
+                merged = store.merge_incident_evidence(existing.incident_id, incoming)
+                response.status_code = 200
+                log.info("Merged agent finding into IncidentCase %s", merged.incident_id)
+                return _to_response(merged)
+        candidate = build_incident_from_infrastructure_health_payload(
+            {**payload, "incident_id": f"{prefix}{seq:04d}"}
+        )
+        try:
+            created = store.create_incident(candidate)
+        except IncidentError:
+            continue
+        log.info("Created IncidentCase %s from agent finding", created.incident_id)
+        return _to_response(created)
+    raise HTTPException(status_code=409, detail="could not dedupe agent finding")
 
 
 # ---------------------------------------------------------------------------

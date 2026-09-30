@@ -88,3 +88,42 @@ def test_agent_down_is_degraded_without_incident(tmp_path):
     fetch, posts = _fetch([_finding(1)], agent_fail=True)
     record = _run(tmp_path, fetch)
     assert record["status"] == "degraded" and posts == []
+
+
+def _compose_env(key, default=""):
+    """Compose defaults for the monitor-agent service, not test-local values."""
+    import re
+    text = (Path(__file__).resolve().parents[2] / "docker-compose.yml").read_text()
+    block = text[text.index("\n  monitor-agent:"):]
+    match = re.search(rf"{key}: \$\{{[A-Z_]+:-(?:\$\{{[A-Z_]+:-)?([^}}]+)\}}", block)
+    return match.group(1) if match else default
+
+
+def test_source_credentials_pass_real_route_auth_contracts(monkeypatch):
+    """The headers the job sends must satisfy the protected routes' real auth guards."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from flask import Flask, jsonify
+    from services.runtime_auth_inbound import require_authn
+    from services.telemetry.auth import require_telemetry_authority, request_tenant_id
+
+    app = Flask(__name__)
+    app.add_url_rule("/rt", "rt", require_authn(roles=("operator", "admin", "approver", "reviewer", "risk_owner"))(lambda: jsonify(ok=1)))
+    app.add_url_rule(
+        "/tel", "tel",
+        require_telemetry_authority(("service", "operator", "reviewer", "admin"))(lambda: jsonify(tenant=request_tenant_id())),
+    )
+    # Telemetry validates against its own service token/tenants (compose defaults).
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", _compose_env("PANTHEON_TELEMETRY_SERVICE_TOKEN"))
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TENANTS", _compose_env("PANTHEON_TENANT_ID"))
+    headers = ma.source_headers(_compose_env)
+    client = app.test_client()
+    assert client.get("/rt").status_code == 401  # unauthenticated is really rejected
+    assert client.get("/rt", headers=headers["runtime_status"]).status_code == 200
+    resp = client.get("/tel", headers=headers["performance"])
+    assert resp.status_code == 200 and resp.get_json()["tenant"] == _compose_env("PANTHEON_TENANT_ID")
+
+
+def test_collect_snapshot_sends_source_specific_headers():
+    seen = {}
+    ma.collect_snapshot(SOURCES, lambda url, headers=None: seen.setdefault(url, headers) or {}, {"performance": {"X-Tenant-Id": "t"}})
+    assert seen["http://perf"] == {"X-Tenant-Id": "t"} and seen["http://rt"] is None

@@ -1,6 +1,7 @@
 {
   "task_id": "MONITOR-AGENT-001",
   "tests": ["services/monitor-agent/test_monitor_agent.py", "services/incidents/test_consume_agent_finding.py"],
-  "result": "10 passed",
-  "notes": "test_main_routes.py has 5-6 pre-existing failures on unmodified dev"
+  "result": "13 passed",
+  "covers": ["source credentials accepted by real require_authn and require_telemetry_authority guards", "concurrent same-fingerprint posts create one open incident"],
+  "notes": "services/incidents/test_main_routes.py has 5 pre-existing failures, identical with unmodified services/incidents/main.py"
 }

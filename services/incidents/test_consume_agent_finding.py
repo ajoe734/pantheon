@@ -55,3 +55,30 @@ def test_different_fingerprint_opens_new_incident():
 
 def test_missing_fields_rejected():
     assert TestClient(app).post(URL, json=_body(rationale="")).status_code == 422
+
+
+def test_concurrent_same_fingerprint_creates_one_open_incident(store):
+    import threading
+
+    barrier = threading.Barrier(2)
+    original = store.find_open_incidents
+
+    def racing_find():
+        found = original()
+        try:
+            barrier.wait(timeout=2)  # both threads see "no open incident" before either creates
+        except threading.BrokenBarrierError:
+            pass
+        return found
+
+    store.find_open_incidents = racing_find
+    codes = []
+
+    def post():
+        codes.append(TestClient(app).post(URL, json=_body(fingerprint="fp-race")).status_code)
+
+    threads = [threading.Thread(target=post) for _ in range(2)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert sorted(codes) == [200, 201]
+    assert len([i for i in original() if "agent-" in i.incident_id]) == 1

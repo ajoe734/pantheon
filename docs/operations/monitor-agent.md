@@ -10,6 +10,11 @@ anomalies that no open incident already explains. It can do nothing else.
    `MONITOR_AGENT_SOURCES_JSON` (default: runtime-manager desired state,
    telemetry runtime summaries for drawdown/fill rate/slippage, persona
    `/readyz`, paper-fleet-reconciler `/readyz` for control-loop health).
+   Protected sources use read-only credentials wired in Compose: runtime-manager
+   gets `Authorization: Bearer $PANTHEON_RUNTIME_MANAGER_TOKEN`; telemetry gets
+   `Authorization: Bearer $PANTHEON_TELEMETRY_SERVICE_TOKEN` plus
+   `X-Tenant-Id: $PANTHEON_TENANT_ID` (same contracts the reconciler uses).
+   Custom `MONITOR_AGENT_SOURCES_JSON` entries keep the same source names.
 2. Ask one agent through the openclaw gateway adapter
    (`/assistant/providers/openclaw/structured`) to compare the snapshot with the
    open incidents. That route pins a data-only `emit_extraction` tool and the
@@ -19,7 +24,8 @@ anomalies that no open incident already explains. It can do nothing else.
 3. POST each finding to `POST /api/incidents/consume-agent-finding` with the
    snapshot reference. A finding whose fingerprint matches an open incident
    merges its evidence into that incident (HTTP 200) instead of creating
-   another (HTTP 201). Each incident carries `snapshot_ref` and the rationale in
+   another (HTTP 201). Dedupe is atomic: incident ids are sequential per
+   fingerprint, so concurrent creators collide in the store and the loser merges. Each incident carries `snapshot_ref` and the rationale in
    its `evidence_summary`.
 
 ## Limits and degraded runs
