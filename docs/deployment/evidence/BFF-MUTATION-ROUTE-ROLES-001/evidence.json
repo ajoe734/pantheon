@@ -17,5 +17,5 @@
     "POST /bff/personas/{persona_id}/strategy-matches/{match_id}/actions",
     "POST /bff/personas/{persona_id}/test-prompt"
   ],
-  "verification": "tests/test_mutation_route_roles.py through mounted main.app: viewer token gets 403 on all 15 routes; operator token gets the exact handler status per route (404 RESOURCE_NOT_FOUND, 202, 201, or 422 VALIDATION_FAILED) asserted explicitly (30 passed). Unrelated failures in test_bff_capital_ranking_rebalance_contract.py (3) and test_mgmt_load_002_shell_summary.py (3) reproduce on the base commit."
+  "verification": "tests/test_mutation_route_roles.py through mounted main.app with valid fixture resources (job, ranking, insight, memory, persona/strategy match, ask session): viewer token gets 403 on all 15 routes; operator token gets the exact handler status per route (202, 201 or 200, all with a data body) asserted explicitly (30 passed). Also passing: test_jobs_source_owner_contract, test_strategy_ranking_router, test_persona_router (81 tests). Pre-existing bug found, not fixed here: main.py _evol_exp_bff_action_command calls get_catalog_entry without importing it, so POST /bff/jobs/{id}/actions/{action} returns 500 for an existing job on the mounted app; the test injects the import."
 }
