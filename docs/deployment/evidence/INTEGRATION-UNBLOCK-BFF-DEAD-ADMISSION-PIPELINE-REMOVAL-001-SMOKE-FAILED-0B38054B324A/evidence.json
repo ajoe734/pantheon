@@ -1,0 +1,14 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-DEAD-ADMISSION-PIPELINE-REMOVAL-001-SMOKE-FAILED-0B38054B324A",
+  "blocked_task": "BFF-DEAD-ADMISSION-PIPELINE-REMOVAL-001",
+  "root_cause": "During integration of BFF-DEAD-ADMISSION-PIPELINE-REMOVAL-001, PR #6021 was approved at exact head 909c4524724dc96b41e77c5c25409d273115143d on replacement branch task/BFF-DEAD-ADMISSION-PIPELINE-REMOVAL-001-v2 while the original branch also existed on origin. Base auto_integrator.py::fetch_refs fetched only candidate.branch and did not fetch the replacement branch or exact head commit. When run_rebase_smoke verified exact head ancestry, git failed with 'fatal: invalid reference: 909c4524724dc96b41e77c5c25409d273115143d' (event 26329), stranding PR #6021 in smoke-failed.",
+  "resolution": "Implemented resolve_authoritative_head_branch to select the authoritative live or bound head branch (from head_branch, review_binding, or delivery_binding) for required fetching (check=True) and rebase target. Secondary and default branches are fetched optionally with check=False, preventing absent obsolete refs from aborting integration. Added direct fetch of exact_head commit. Preserved exact-head failure behavior (CommandFailure on invalid or unreachable exact head SHA; exact_head_missing when empty).",
+  "original_pr": "https://github.com/ajoe734/pantheon/pull/6021",
+  "code_change": "scripts/git/auto_integrator.py: implemented resolve_authoritative_head_branch; updated fetch_refs to fetch authoritative branch as required, optional branches as check=False, and exact_head commit directly; updated run_rebase_smoke target_branch; updated integrate_candidate head_branch argument.",
+  "verification": {
+    "reproduction_and_control": "Fresh-repository control with existing original branch and replacement-only commit reproduced 'fatal: invalid reference: 909c4524724dc96b41e77c5c25409d273115143d' on base and yielded clean_exact_head with fix. Additional regression scenario verified: absent obsolete original branch with existing replacement branch raises CommandFailure (128) fatal: could not find remote ref on base, but cleanly succeeds with check=False optional fetching. Negative tests confirmed empty exact head yields exact_head_missing and invalid exact head raises CommandFailure.",
+    "unit_tests": "python3 -m unittest scripts.git.test_auto_integrator scripts.git.test_task_review_merge_gate test_supervisor.AutoIntegratorUnblockAuthorityTests (298 OK)",
+    "head_ancestry_check": "git merge-base --is-ancestor origin/dev 909c4524724dc96b41e77c5c25409d273115143d verified exit 0 once fetched.",
+    "fetch_refs_verification": "Verified authoritative live/bound branch is selected for required fetching, exact head commit is fetched directly, absent obsolete branches do not fail with check=False, and exact head failure behavior is preserved on missing or invalid commit references."
+  }
+}
