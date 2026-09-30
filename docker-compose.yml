@@ -2964,6 +2964,25 @@ services:
     command: ["python", "smoke_test.py", "--backend", "memory"]
     restart: "no"
 
+  monitor-agent:
+    build:
+      context: .
+      dockerfile: services/monitor-agent/Dockerfile
+    restart: unless-stopped
+    environment:
+      PANTHEON_INCIDENTS_API_URL: http://incidents:8090
+      PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
+      MONITOR_AGENT_INTERVAL_SECONDS: ${MONITOR_AGENT_INTERVAL_SECONDS:-900}
+      MONITOR_AGENT_STATE_PATH: /data/monitor-agent/creations.json
+    volumes:
+      - monitor-agent-data:/data/monitor-agent
+    depends_on:
+      incidents:
+        condition: service_healthy
+      openclaw-gateway-adapter:
+        condition: service_started
+
 volumes:
   dev-paper-deployment-tokens:
   dev-paper-registry-tokens:
@@ -2982,6 +3001,7 @@ volumes:
   incident-data:
   minio-data:
   memory-data:
+  monitor-agent-data:
   nats-data:
   openclaw-data:
   openclaw-adapter-data:

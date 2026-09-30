@@ -26,6 +26,7 @@ POST  /api/incidents/consume-drift-report
     existing binding/runtime/cluster incident.
 
 POST  /api/incidents/consume-infrastructure-health
+POST  /api/incidents/consume-agent-finding
     Consume a non-trading infrastructure-health incident payload and create a
     stable IncidentCase without caller-supplied RuntimeBinding evidence.
     Returns 201 on first write and 200 for exact idempotent replay.
@@ -141,6 +142,7 @@ try:
         IncidentConsumerError,
         IncidentConsumerRetryableError,
         ThresholdTelemetryIncidentConsumer,
+        build_incident_from_infrastructure_health_payload,
     )
 except ImportError:
     from models import (  # type: ignore
@@ -157,6 +159,7 @@ except ImportError:
         IncidentConsumerError,
         IncidentConsumerRetryableError,
         ThresholdTelemetryIncidentConsumer,
+        build_incident_from_infrastructure_health_payload,
     )
 
 try:
@@ -511,6 +514,63 @@ def consume_infrastructure_health_incident(
         result.created,
     )
     return _to_response(result.incident)
+
+
+@app.post(
+    "/api/incidents/consume-agent-finding",
+    response_model=IncidentResponse,
+    status_code=201,
+    summary="Consume a monitor-agent finding, deduped by fingerprint",
+)
+def consume_agent_finding_incident(
+    response: Response,
+    body: Dict[str, Any] = Body(...),
+) -> IncidentResponse:
+    """Open an incident for an agent finding, or merge into the open one.
+
+    A finding whose fingerprint matches an open incident's cluster updates that
+    incident's evidence (new snapshot reference and rationale) instead of
+    creating another one.
+    """
+    try:
+        fingerprint = str(body.get("fingerprint") or "").strip()
+        snapshot_ref = str(body.get("snapshot_ref") or "").strip()
+        rationale = str(body.get("rationale") or "").strip()
+        title = str(body.get("title") or "").strip()
+        if not (fingerprint and snapshot_ref and rationale and title):
+            raise IncidentConsumerError(
+                "fingerprint, snapshot_ref, rationale and title are required"
+            )
+        digest = uuid.uuid5(uuid.NAMESPACE_URL, fingerprint).hex[:12]
+        payload = {
+            "schema_version": "pantheon.infrastructure-incident/1",
+            "incident_id": f"agent-{digest}-{uuid.uuid4().hex[:8]}",
+            "source_event_id": snapshot_ref,
+            "tenant_id": str(body.get("tenant_id") or os.getenv("PANTHEON_TENANT_ID") or "default"),
+            "producer": "monitor-agent",
+            "component": {
+                "service_name": f"agent-finding-{digest}",
+                "component_kind": "monitor-agent-finding",
+                "endpoint": f"monitor-agent://{digest}",
+            },
+            "title": title[:200],
+            "severity": body.get("severity"),
+            "evidence_summary": f"snapshot_ref={snapshot_ref}; rationale={rationale[:1500]}",
+        }
+        incoming = build_incident_from_infrastructure_health_payload(payload)
+    except (IncidentConsumerError, IncidentError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    for existing in store.find_open_incidents():
+        if existing.incident_cluster_id == incoming.incident_cluster_id:
+            merged = store.merge_incident_evidence(existing.incident_id, incoming)
+            response.status_code = 200
+            log.info("Merged agent finding into IncidentCase %s", merged.incident_id)
+            return _to_response(merged)
+
+    created = store.create_incident(incoming)
+    log.info("Created IncidentCase %s from agent finding", created.incident_id)
+    return _to_response(created)
 
 
 # ---------------------------------------------------------------------------
