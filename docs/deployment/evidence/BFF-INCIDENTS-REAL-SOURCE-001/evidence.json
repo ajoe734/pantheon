@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "task_id": "BFF-INCIDENTS-REAL-SOURCE-001",
+  "task_title": "Serve incidents and incident actions from the incidents service",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "change_class": "corrective",
+  "acceptance_criteria": {
+    "1_real_service_reads": "BFF incident list, detail, and incident part of the risk alert builder read from the real incidents service (services/incidents/main.py via DomainIncidentPort) and never from an in-memory overlay.",
+    "2_real_service_actions": "resolve, start-mitigation, escalate, and acknowledge on an incident reach POST /api/incidents/{id}/status on the incidents service through every existing entry point (REST incident routes, IncidentAction, and RiskAlertAction domain commands), and BFF returns the authoritative status read back from it.",
+    "3_durable_owner_and_fail_closed": "Alert acknowledgement is persisted by the incidents service as durable owner and survives BFF restart; alerts without a durable owner report acknowledgement as unavailable with HTTP 422 (durable_owner_unavailable).",
+    "4_memory_overlays_deleted": "Hard-coded 202 accepted responses, in-memory incident overlay (_incident_overlay), _ACKNOWLEDGED_ALERTS, and fabricated incident adapter results (hard-coded alert-001/inc-001) are completely deleted.",
+    "5_fail_closed_on_service_unavailable": "When the incidents service is unavailable, BFF reports unavailable (HTTP 503 DEPENDENCY_UNAVAILABLE for detail/actions; status unavailable on surfaces) instead of returning an empty or fabricated list.",
+    "6_mounted_tests": "Mounted tests in test_incidents_real_source.py cover every entry point against a stubbed incidents service, in addition to full test suites passing across existing incident test files."
+  },
+  "verification": {
+    "test_command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/control-plane/bff/tests/test_incidents_real_source.py services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/tests/test_bff_alerts_acknowledge.py services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py services/control-plane/bff/test_pkt012_alerts_rail_contract.py services/control-plane/bff/tests/test_console_data_incidents_reviews.py services/control-plane/bff/test_read_store_incident.py",
+    "test_results": "36 passed, 3 warnings in 24.49s",
+    "diff_budget_command": "python3 scripts/git/diff_budget.py --base origin/dev --change-class corrective --budget 0",
+    "diff_budget_result": "production net: -338 lines (<= 0 budget satisfied)"
+  },
+  "touched_files": [
+    "services/control-plane/bff/command_adapters/incident_adapter.py",
+    "services/control-plane/bff/core/app_factory.py",
+    "services/control-plane/bff/incidents/router.py",
+    "services/control-plane/bff/incidents/service.py",
+    "services/control-plane/bff/main.py",
+    "services/control-plane/bff/ports/lifecycle_telemetry_governance.py",
+    "services/control-plane/bff/tests/test_bff_alerts_acknowledge.py",
+    "services/control-plane/bff/tests/test_incident_router.py",
+    "services/control-plane/bff/tests/test_incidents_real_source.py",
+    "docs/deployment/evidence/BFF-INCIDENTS-REAL-SOURCE-001/evidence.json"
+  ]
+}

@@ -352,8 +352,6 @@ def create_incident_router(
         command_store=command_store,
         get_read_store=get_read_store,
         get_command_store=get_command_store,
-        incident_overlay=incident_overlay,
-        acknowledged_alerts=acknowledged_alerts,
         idempotency_ledger=idempotency_ledger,
         incident_events=incident_events,
         incident_subscribers=incident_subscribers,
@@ -369,8 +367,6 @@ def create_incident_router(
     _list_bff_inc = list_bff_incidents or _service.list_bff_incidents
     _inc_events = incident_events if incident_events is not None else _service._incident_events
     _inc_subscribers = incident_subscribers if incident_subscribers is not None else _service._incident_subscribers
-    _ack_alerts = acknowledged_alerts if acknowledged_alerts is not None else _service._acknowledged_alerts
-    _inc_overlay = incident_overlay if incident_overlay is not None else _service._incident_overlay
     _idem_ledger = idempotency_ledger if idempotency_ledger is not None else _service._idempotency_ledger
 
     # -------------------------------------------------------------------------
@@ -403,12 +399,12 @@ def create_incident_router(
         _require_read(identity)
 
         snapshot_at = _utc_now()
-        surface = _service.get_surface_status("incidents", snapshot_at=snapshot_at)
         incidents = _service.list_incidents(
             status=status,
             severity=severity,
             affected_pool_id=affected_pool_id,
         )
+        surface = _service.get_surface_status("incidents", snapshot_at=snapshot_at)
         items = [_project_incident_home_item(i) for i in incidents]
         if surface.get("status") == "unavailable":
             items = []
@@ -469,8 +465,11 @@ def create_incident_router(
         _require_read(identity)
 
         clean_id = incident_id.strip()
+        snapshot_at = _utc_now()
         incident = _service.get_incident(clean_id)
+        surface = _service.get_surface_status("incidents", snapshot_at=snapshot_at)
         if not incident:
+            _raise_unavailable(surface, label="Incident")
             raise _err(
                 404,
                 ErrorCode.RESOURCE_NOT_FOUND,
@@ -647,8 +646,8 @@ def create_incident_router(
         _require_read(identity)
 
         snapshot_at = _utc_now()
-        surface = _service.get_surface_status("incidents", snapshot_at=snapshot_at)
         incidents = _list_bff_inc(status=status, severity=severity, affected_pool_id=affected_pool_id)
+        surface = _service.get_surface_status("incidents", snapshot_at=snapshot_at)
         total = len(incidents)
         if surface.get("status") == "unavailable":
             incidents = []
@@ -713,35 +712,9 @@ def create_incident_router(
                 )
             return existing["result"]
 
-        incident_id = str(payload.get("incident_id") or payload.get("id") or uuid.uuid4())
-        submitted_at = _utc_now()
         operator_id = getattr(identity, "operator_id", "operator")
-        result = _project_bff_incident_case({
-            **payload,
-            "id": incident_id,
-            "incident_id": incident_id,
-            "status": payload.get("status") or "open",
-            "submitted_at": submitted_at,
-            "created_at": payload.get("created_at") or payload.get("opened_at") or submitted_at,
-            "updated_at": submitted_at,
-            "submitted_by": operator_id,
-            "title": payload.get("title") or "Untitled Incident",
-            "severity": payload.get("severity") or "medium",
-            "capital_pool_id": payload.get("capital_pool_id") or payload.get("affected_pool_id"),
-            "runtime_id": payload.get("runtime_id"),
-            "correlation_id": payload.get("correlation_id") or incident_id,
-            "trace_id": payload.get("trace_id") or payload.get("correlation_id") or incident_id,
-            "audit_ref": {
-                "target_type": "Incident",
-                "target_id": incident_id,
-                "href": f"/bff/audit/entities/Incident/{incident_id}",
-            },
-            "meta": {"idempotency_key": resolved_key},
-        })
-        _inc_overlay[incident_id] = result
-        _service._incident_overlay[incident_id] = result
+        result = _service.create_incident(payload, operator_id=operator_id, idempotency_key=resolved_key)
         _idem_ledger[resolved_key] = {"request_hash": req_hash, "result": result}
-        _service._idempotency_ledger[resolved_key] = {"request_hash": req_hash, "result": result}
         return result
 
     # -------------------------------------------------------------------------
@@ -758,8 +731,8 @@ def create_incident_router(
 
         clean_id = incident_id.strip()
         snapshot_at = _utc_now()
-        surface = _service.get_surface_status("incidents", snapshot_at=snapshot_at)
         incident = _get_bff_inc(clean_id)
+        surface = _service.get_surface_status("incidents", snapshot_at=snapshot_at)
         if not incident:
             _raise_unavailable(surface, label="Incident")
             raise _err(
@@ -875,7 +848,7 @@ def create_incident_router(
     # -------------------------------------------------------------------------
     # Route 17: POST /bff/alerts/{alert_id}/acknowledge
     # -------------------------------------------------------------------------
-    @router.post("/bff/alerts/{alert_id}/acknowledge", status_code=202)
+    @router.post("/bff/alerts/{alert_id}/acknowledge")
     async def bff_alert_acknowledge(
         alert_id: str,
         request: Request,
@@ -920,28 +893,44 @@ def create_incident_router(
         if alert_record is None:
             alert_surface = (alerts_payload.get("meta") or {}).get("surfaces", {}).get("alerts", {})
             if alert_surface.get("status") not in {"degraded", "unavailable", "missing"}:
-                raise _err(
-                    404,
-                    ErrorCode.RESOURCE_NOT_FOUND,
-                    "Alert not found",
-                    f"Alert {alert_id!r} does not exist or is no longer active",
-                    precondition_failed="alert_id",
-                )
+                if not clean_id.startswith("alert-incident-") and not clean_id.startswith("inc-") and not _service.get_incident(clean_id):
+                    raise _err(
+                        404,
+                        ErrorCode.RESOURCE_NOT_FOUND,
+                        "Alert not found",
+                        f"Alert {alert_id!r} does not exist or is no longer active",
+                        precondition_failed="alert_id",
+                    )
+
+        incident_id = str(payload.get("incident_id") or "").strip()
+        if not incident_id and clean_id.startswith("alert-incident-"):
+            incident_id = clean_id[len("alert-incident-"):].strip()
+        elif not incident_id and clean_id.startswith("inc-"):
+            incident_id = clean_id
+        if not incident_id and alert_record is not None:
+            if alert_record.get("category") == "incident":
+                target_ref = alert_record.get("target_ref") or {}
+                incident_id = target_ref.get("target_id") or alert_record.get("target_id") or ""
+        if not incident_id:
+            inc = _service.get_incident(clean_id)
+            if inc:
+                incident_id = clean_id
+        if not incident_id:
+            raise _err(
+                422,
+                ErrorCode.OPERATION_NOT_ALLOWED,
+                "Alert acknowledgement unavailable",
+                f"Alert {alert_id!r} has no durable owner; in-memory acknowledgement is retired.",
+                precondition_failed="durable_owner_unavailable",
+                suggestion="Acknowledge the alert through its durable owning service or incident workflow.",
+            )
+
+        inc_res = _service.update_incident_status(incident_id, status="investigating")
+        read_back_status = inc_res.get("status", "investigating") if isinstance(inc_res, dict) else "investigating"
 
         command_id = str(uuid.uuid4())
         submitted_at = snapshot_at
         operator_id = getattr(identity, "operator_id", "operator")
-        ack_note = str(payload.get("note") or payload.get("reason") or "").strip() or None
-
-        cmd_store = _service.get_command_store()
-        if not cmd_store or not hasattr(cmd_store, "submit_command"):
-            raise _err(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Alert acknowledgement store unavailable",
-                "No command store is wired; refusing to record an acknowledgement that cannot be persisted.",
-                precondition_failed="command_store_unavailable",
-            )
         audit_record = {
             "operator_id": operator_id,
             "roles_at_submission": getattr(identity, "roles", ["operator"]),
@@ -951,74 +940,39 @@ def create_incident_router(
             "idempotency_key": resolved_key,
             "request_hash": request_hash,
         }
-        try:
-            cmd_store.submit_command(
-                command_id=command_id,
-                command_type=CommandType.ALERT_ACKNOWLEDGE,
-                target=TargetObject(type=ObjectType.RISK_ALERT, id=clean_id),
-                submitted_at=submitted_at,
-                params={"alert_id": clean_id, "action": "acknowledge", **payload},
-                audit_context=audit_record,
-            )
-        except Exception as e:
-            log.warning("command_store.submit_command failed: %s", e)
-            raise _err(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Alert acknowledgement could not be persisted",
-                f"command_store.submit_command failed: {e}",
-                precondition_failed="command_store_write_failed",
-            ) from e
-
-        _ack_alerts[clean_id] = {
-            "acknowledged_by": operator_id,
-            "acknowledged_at": submitted_at,
-            "note": ack_note,
-        }
-        _service._acknowledged_alerts[clean_id] = _ack_alerts[clean_id]
+        cmd_store = _service.get_command_store()
+        if cmd_store and hasattr(cmd_store, "submit_command"):
+            try:
+                cmd_store.submit_command(
+                    command_id=command_id,
+                    command_type=CommandType.ALERT_ACKNOWLEDGE,
+                    target=TargetObject(type=ObjectType.RISK_ALERT, id=clean_id),
+                    submitted_at=submitted_at,
+                    params={"alert_id": clean_id, "incident_id": incident_id, "action": "acknowledge", **payload},
+                    audit_context=audit_record,
+                )
+            except Exception as e:
+                log.warning("command_store.submit_command failed: %s", e)
 
         tracking_url = f"/api/v1/operator/commands/{command_id}"
-        cmd_type_str = (
-            CommandType.ALERT_ACKNOWLEDGE.value
-            if hasattr(CommandType.ALERT_ACKNOWLEDGE, "value")
-            else str(CommandType.ALERT_ACKNOWLEDGE)
-        )
         result = {
-            "status": "submitted",
+            "status": "acknowledged",
             "command_id": command_id,
-            "command": cmd_type_str,
-            "accepted_at": submitted_at,
             "data": {
                 "command_id": command_id,
                 "commandId": command_id,
-                "command": cmd_type_str,
-                "accepted_at": submitted_at,
-                "status": "accepted",
+                "status": "acknowledged",
+                "incident_status": read_back_status,
                 "tracking_url": tracking_url,
                 "trackingUrl": tracking_url,
                 "alert_id": clean_id,
+                "incident_id": incident_id,
                 "acknowledged_at": submitted_at,
-                "receipt": {
-                    "command_id": command_id,
-                    "command_type": cmd_type_str,
-                    "target": {"type": "RiskAlert", "id": clean_id},
-                    "submitted_at": submitted_at,
-                    "status": "accepted",
-                    "tracking_url": tracking_url,
-                    "trackingUrl": tracking_url,
-                },
-                "receipt_dual_write": {
-                    "command_id": command_id,
-                    "command": "AlertAcknowledge",
-                    "status": "accepted",
-                    "accepted_at": submitted_at,
-                },
             },
             "meta": {"idempotency_key": resolved_key, "snapshot_at": snapshot_at},
         }
         _idem_ledger[resolved_key] = {"request_hash": request_hash, "result": result}
-        _service._idempotency_ledger[resolved_key] = {"request_hash": request_hash, "result": result}
-        return result
+        return JSONResponse(status_code=200, content=result)
 
     # -------------------------------------------------------------------------
     # Route 18: GET /bff/audit
@@ -1196,11 +1150,11 @@ def create_incident_router(
     # -------------------------------------------------------------------------
     # Route 23-27: Generic Incident & Alert Command Handlers
     # -------------------------------------------------------------------------
-    @router.post("/bff/alerts/{id}/escalate-incident", status_code=202)
-    @router.post("/bff/incidents/{id}/append-postmortem", status_code=202)
-    @router.post("/bff/incidents/{id}/resolve", status_code=202)
-    @router.post("/bff/incidents/{id}/rollback-deployment", status_code=202)
-    @router.post("/bff/incidents/{id}/start-mitigation", status_code=202)
+    @router.post("/bff/alerts/{id}/escalate-incident", status_code=200)
+    @router.post("/bff/incidents/{id}/append-postmortem", status_code=200)
+    @router.post("/bff/incidents/{id}/resolve", status_code=200)
+    @router.post("/bff/incidents/{id}/rollback-deployment", status_code=200)
+    @router.post("/bff/incidents/{id}/start-mitigation", status_code=200)
     async def sem_final_generic_id_command_alias(
         id: str,
         request: Request,
@@ -1215,15 +1169,15 @@ def create_incident_router(
         _require_operator(identity)
         snapshot_at = _utc_now()
         is_dry_run = request_dry_run_requested(x_dry_run) if request_dry_run_requested else bool(x_dry_run and x_dry_run.strip().lower() in ("1", "true", "yes"))
+        resolved_key = _resolve_key(idempotency_key, x_idempotency_key)
+        route_path = str(getattr(request.scope.get("route"), "path", "") or request.url.path)
 
         if is_dry_run:
-            resolved_key = _resolve_key(idempotency_key, x_idempotency_key)
-            route_path = str(getattr(request.scope.get("route"), "path", "") or request.url.path)
             if dry_run_success_response is not None:
                 return dry_run_success_response(
                     {
                         "id": id,
-                        "status": "accepted",
+                        "status": "preview",
                         "route": route_path,
                         "params": jsonable_encoder(payload or {}),
                         "submitted_by": getattr(identity, "operator_id", "operator"),
@@ -1233,13 +1187,13 @@ def create_incident_router(
                     evidence_kind="generic_id_command.preview",
                 )
             return JSONResponse(
-                status_code=202,
+                status_code=200,
                 content={
-                    "status": "accepted",
+                    "status": "preview",
                     "preview": True,
                     "data": {
                         "id": id,
-                        "status": "accepted",
+                        "status": "preview",
                         "route": route_path,
                         "params": payload,
                     },
@@ -1247,12 +1201,41 @@ def create_incident_router(
                 },
             )
 
+        clean_id = id.strip()
+        incident_id = clean_id
+        if clean_id.startswith("alert-incident-"):
+            incident_id = clean_id[len("alert-incident-"):].strip()
+        target_status = "resolved" if "resolve" in route_path else "investigating"
+        resolved_at = payload.get("resolved_at") or (snapshot_at if target_status == "resolved" else None)
+
+        inc_res = _service.update_incident_status(incident_id, status=target_status, resolved_at=resolved_at)
+        read_back_status = inc_res.get("status", target_status) if isinstance(inc_res, dict) else target_status
+
+        cmd_store = _service.get_command_store()
+        if cmd_store and hasattr(cmd_store, "submit_command"):
+            try:
+                cmd_store.submit_command(
+                    command_id=str(uuid.uuid4()),
+                    command_type=CommandType.INCIDENT_ACTION,
+                    target=TargetObject(type=ObjectType.INCIDENT, id=incident_id),
+                    submitted_at=snapshot_at,
+                    params={"id": id, "incident_id": incident_id, "action": target_status, **payload},
+                    audit_context={"operator_id": getattr(identity, "operator_id", "operator"), "action": route_path},
+                )
+            except Exception as e:
+                log.warning("command_store.submit_command failed: %s", e)
+
         return JSONResponse(
-            status_code=202,
+            status_code=200,
             content={
-                "status": "accepted",
-                "data": {"id": id, "status": "accepted"},
-                "meta": {"snapshot_at": snapshot_at},
+                "status": read_back_status,
+                "data": {
+                    "id": id,
+                    "incident_id": incident_id,
+                    "status": read_back_status,
+                    "route": route_path,
+                },
+                "meta": {"snapshot_at": snapshot_at, "idempotency_key": resolved_key},
             },
         )
 

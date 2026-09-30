@@ -13,6 +13,7 @@ from .base import (
     ActionUnavailableError,
     DomainCommandAdapter,
     build_domain_receipt,
+    get_base_url,
     http_request_json,
     internal_url,
     utc_now,
@@ -129,17 +130,33 @@ class IncidentCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        target_id = alert_id or str(params.get("alert_id") or "alert-001").strip()
+        target_id = alert_id or str(params.get("alert_id") or "").strip()
+        incident_id = str(params.get("incident_id") or "").strip()
+        if not incident_id and target_id.startswith("alert-incident-"):
+            incident_id = target_id[len("alert-incident-"):].strip()
+        elif not incident_id and target_id.startswith("inc-"):
+            incident_id = target_id
+        if not incident_id:
+            raise ActionUnavailableError(
+                f"Alert {target_id!r} has no durable owner; acknowledgement is unavailable.",
+                action_id=action_id,
+                entity_type="RiskAlert",
+            )
+        payload = {"status": "investigating"}
+        base = get_base_url("PANTHEON_INCIDENTS_API_URL", "PANTHEON_INCIDENTS_URL")
+        url = f"{base}/api/incidents/{quote(incident_id, safe='')}/status"
+        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
+        read_back_status = body.get("status") or "investigating"
         return build_domain_receipt(
             command_id=command_id,
             entity_type="RiskAlert",
             entity_id=target_id,
             action_id=action_id,
             status="acknowledged",
-            dispatch_path="incident_alert_authority",
-            domain_receipt={"alert_id": target_id, "acknowledged": True, "acknowledged_by": params.get("actor_id", "operator")},
-            authoritative_readback={"alert_id": target_id, "status": "acknowledged"},
-            extra={"alert_id": target_id},
+            dispatch_path=url,
+            domain_receipt=body,
+            authoritative_readback={"alert_id": target_id, "incident_id": incident_id, "status": read_back_status},
+            extra={"alert_id": target_id, "incident_id": incident_id, "incident_status": read_back_status},
         )
 
     def _execute_incident_action(
@@ -151,18 +168,29 @@ class IncidentCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        target_id = incident_id or str(params.get("incident_id") or "inc-001").strip()
+        target_id = incident_id or str(params.get("incident_id") or "").strip()
+        if not target_id:
+            raise ActionUnavailableError(
+                "Incident action requires incident_id.",
+                action_id=action_id,
+                entity_type="Incident",
+            )
         new_status = "resolved" if action_id.lower() in {"resolve", "close"} else "investigating"
+        payload = {"status": new_status, "resolved_at": params.get("resolved_at")}
+        base = get_base_url("PANTHEON_INCIDENTS_API_URL", "PANTHEON_INCIDENTS_URL")
+        url = f"{base}/api/incidents/{quote(target_id, safe='')}/status"
+        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
+        read_back_status = body.get("status") or new_status
         return build_domain_receipt(
             command_id=command_id,
             entity_type="Incident",
             entity_id=target_id,
             action_id=action_id,
-            status=new_status,
-            dispatch_path="incident_store_authority",
-            domain_receipt={"incident_id": target_id, "new_status": new_status, "reason": params.get("reason")},
-            authoritative_readback={"incident_id": target_id, "status": new_status},
-            extra={"incident_id": target_id, "status": new_status},
+            status=read_back_status,
+            dispatch_path=url,
+            domain_receipt=body,
+            authoritative_readback={"incident_id": target_id, "status": read_back_status},
+            extra={"incident_id": target_id, "status": read_back_status},
         )
 
     def _execute_sentinel_action(

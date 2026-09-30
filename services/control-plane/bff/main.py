@@ -3196,12 +3196,12 @@ def _alert_severity_for_risk_level(
         return "high"
     return severity
 def _build_incident_alerts(snapshot_at: str) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    incidents = read_store.list_incidents()
     incident_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
     if incident_surface.get("status") == "unavailable":
         return [], incident_surface
 
     alerts: List[Dict[str, Any]] = []
-    incidents = read_store.list_incidents()
     for incident in incidents:
         incident_status = str(incident.get("status") or "").lower()
         if incident_status not in {"open", "in_progress"}:
@@ -3496,10 +3496,7 @@ def _build_operator_alerts_payload(snapshot_at: str) -> Dict[str, Any]:
         key=_alert_sort_key,
         reverse=True,
     )
-    alerts = [
-        a for a in alerts
-        if str(a.get("alert_id") or a.get("id") or "") not in _ACKNOWLEDGED_ALERTS
-    ]
+
     if alerts_surface.get("status") == "unavailable":
         alerts = []
 
@@ -6883,18 +6880,15 @@ def _merged_mcp_tool_records() -> List[Dict[str, Any]]:
 _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _GOV_BFF_EXPERIMENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
 # _GOV_BFF_IDEMPOTENCY defined earlier
-_ACKNOWLEDGED_ALERTS: Dict[str, Dict[str, Any]] = {}
 from .incidents.service import IncidentService as _IncidentService
 def _current_read_store_for_legacy_incident_seam() -> Any:
     return read_store
 def _bff_incident_service() -> _IncidentService:
     """Composition-root binding: incidents/service.py's IncidentService is the
     sole owner of Incident-case projection and filtering; inject the live
-    ``read_store``/``_ACKNOWLEDGED_ALERTS`` globals rather than duplicating
-    the projection logic here."""
+    ``read_store`` global rather than duplicating the projection logic here."""
     return _IncidentService(
         get_read_store=_current_read_store_for_legacy_incident_seam,
-        acknowledged_alerts=_ACKNOWLEDGED_ALERTS,
     )
 def _list_bff_incidents(
     *,
@@ -6990,6 +6984,27 @@ def _gov_bff_action_command(
         "audit_action": audit_action.to_dict(),
     }
     audit_record["foundation"] = foundation_ctx
+    exec_status = CommandStatus.SUBMITTED
+    domain_res = None
+    if command_type in {CommandType.INCIDENT_ACTION, CommandType.RISK_ALERT_ACTION}:
+        from .command_adapters.registry import dispatch_domain_command
+        from .command_adapters.base import ActionUnavailableError
+        try:
+            domain_res = dispatch_domain_command(
+                command_id=command_id,
+                command_type=command_type,
+                params={"entity_type": entity_type.value, "entity_id": entity_id, "action_id": action_id, "incident_id": entity_id, "alert_id": entity_id, **payload},
+            )
+            exec_status = CommandStatus.EXECUTED
+        except ActionUnavailableError as exc:
+            raise _bff_error(
+                422,
+                ErrorCode.OPERATION_NOT_ALLOWED,
+                "Action unavailable",
+                str(exc),
+                precondition_failed="durable_owner_unavailable",
+            ) from exc
+
     command_store.submit_command(
         command_id=command_id,
         command_type=command_type,
@@ -6999,14 +7014,33 @@ def _gov_bff_action_command(
         audit_context=audit_record,
         foundation_context=foundation_ctx,
     )
+    if exec_status == CommandStatus.EXECUTED:
+        command_store.update_status(
+            command_id=command_id,
+            status=exec_status,
+            result=domain_res,
+        )
     result = _project_final_command_response(
         command_id=command_id,
         command=command_type,
         accepted_at=submitted_at,
-        status=CommandStatus.SUBMITTED,
+        status=exec_status,
         staleness_warning=staleness_warning,
     )
     res_dict = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+    if domain_res is not None:
+        read_back_status = (
+            (domain_res.get("authoritative_readback") or {}).get("status")
+            or domain_res.get("status")
+        )
+        if read_back_status:
+            res_dict["read_back_status"] = read_back_status
+            if isinstance(res_dict.get("data"), dict):
+                res_dict["data"]["status"] = read_back_status
+                res_dict["data"]["incident_status"] = read_back_status
+                res_dict["data"]["read_back_status"] = read_back_status
+        if isinstance(res_dict.get("data"), dict):
+            res_dict["data"]["domain_receipt"] = domain_res
     _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": res_dict}
     return res_dict
 

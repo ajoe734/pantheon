@@ -498,12 +498,6 @@ class IncidentService:
             self._get_command_store = (lambda: command_store() if callable(command_store) else command_store)
         else:
             self._get_command_store = get_command_store or (lambda: None)
-        self._incident_overlay: Dict[str, Dict[str, Any]] = (
-            incident_overlay if incident_overlay is not None else {}
-        )
-        self._acknowledged_alerts: Dict[str, Dict[str, Any]] = (
-            acknowledged_alerts if acknowledged_alerts is not None else {}
-        )
         self._idempotency_ledger: Dict[str, Dict[str, Any]] = (
             idempotency_ledger if idempotency_ledger is not None else {}
         )
@@ -545,6 +539,10 @@ class IncidentService:
             )
         store = self.get_read_store()
         src = getattr(store, "dataset_source", lambda ds: "local_snapshot")(dataset) if store else "local_snapshot"
+        if dataset == "incidents" and src in ("typed_store", "local_snapshot"):
+            inc_port = getattr(getattr(store, "lifecycle_telemetry_governance", None), "incidents", None) or getattr(store, "incident_port", None)
+            if inc_port is not None and hasattr(inc_port, "dataset_source"):
+                src = inc_port.dataset_source()
         if src in ("missing", "unavailable"):
             return {
                 "status": "unavailable",
@@ -625,19 +623,6 @@ class IncidentService:
             affected_pool_id=affected_pool_id,
         )
         incidents = [_project_bff_incident_case(i) for i in store_incidents]
-        seen = {str(item.get("incident_id") or item.get("id") or "") for item in incidents}
-
-        for inc_id, inc in self._incident_overlay.items():
-            if inc_id in seen:
-                continue
-            if _bff_incident_matches_filters(
-                inc,
-                status=status,
-                severity=severity,
-                affected_pool_id=affected_pool_id,
-            ):
-                incidents.append(_project_bff_incident_case(inc))
-
         anchor = [
             incident
             for incident in incidents
@@ -659,9 +644,6 @@ class IncidentService:
         store_incident = self.get_incident(clean_id)
         if store_incident:
             return _project_bff_incident_case(store_incident)
-        overlay_incident = self._incident_overlay.get(clean_id)
-        if overlay_incident:
-            return _project_bff_incident_case(overlay_incident)
         return None
 
     def create_incident(
@@ -672,21 +654,32 @@ class IncidentService:
     ) -> Dict[str, Any]:
         incident_id = str(payload.get("incident_id") or payload.get("id") or uuid.uuid4())
         submitted_at = self.now()
-        result = _project_bff_incident_case({
+        req_body = {
             **payload,
-            "id": incident_id,
             "incident_id": incident_id,
             "status": payload.get("status") or "open",
-            "submitted_at": submitted_at,
-            "created_at": payload.get("created_at") or payload.get("opened_at") or submitted_at,
-            "updated_at": submitted_at,
-            "submitted_by": operator_id,
             "title": payload.get("title") or "Untitled Incident",
             "severity": payload.get("severity") or "medium",
-            "capital_pool_id": payload.get("capital_pool_id") or payload.get("affected_pool_id"),
-            "runtime_id": payload.get("runtime_id"),
-            "correlation_id": payload.get("correlation_id") or incident_id,
-            "trace_id": payload.get("trace_id") or payload.get("correlation_id") or incident_id,
+            "binding_id": payload.get("binding_id") or "rb-default",
+            "deployment_stage": payload.get("deployment_stage") or "paper",
+            "deployment_plan_id": payload.get("deployment_plan_id") or "plan-default",
+            "capital_pool_id": payload.get("capital_pool_id") or payload.get("affected_pool_id") or "pool-default",
+            "persona_capital_binding_id": payload.get("persona_capital_binding_id") or "pcb-default",
+            "artifact_id": payload.get("artifact_id") or "art-default",
+            "artifact_version": payload.get("artifact_version") or "1.0",
+            "runtime_id": payload.get("runtime_id") or "runtime-default",
+            "trace_id": payload.get("trace_id") or incident_id,
+        }
+        store = self.get_read_store()
+        if store and hasattr(store, "create_incident"):
+            created = store.create_incident(req_body)
+            if created and isinstance(created, dict):
+                req_body.update(created)
+        return _project_bff_incident_case({
+            **req_body,
+            "id": incident_id,
+            "submitted_at": submitted_at,
+            "submitted_by": operator_id,
             "audit_ref": {
                 "target_type": "Incident",
                 "target_id": incident_id,
@@ -694,8 +687,17 @@ class IncidentService:
             },
             "meta": {"idempotency_key": idempotency_key} if idempotency_key else {},
         })
-        self._incident_overlay[incident_id] = result
-        return result
+
+    def update_incident_status(
+        self,
+        incident_id: str,
+        status: str,
+        resolved_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        store = self.get_read_store()
+        if store and hasattr(store, "update_incident_status"):
+            return store.update_incident_status(incident_id, status=status, resolved_at=resolved_at)
+        return {"incident_id": incident_id, "status": status}
 
     # -- Alert Builders -------------------------------------------------------
 
