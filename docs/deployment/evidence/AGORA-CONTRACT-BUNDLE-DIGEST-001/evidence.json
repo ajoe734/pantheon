@@ -1,0 +1,58 @@
+{
+  "task_id": "AGORA-CONTRACT-BUNDLE-DIGEST-001",
+  "scope": "Refresh schema digest, inherited bundle hashes and generation provenance; enforce drift checks in smoke acceptance.",
+  "base_dev_commit": "6b38242809a4276680d93a4d6484ea61a1bed755",
+  "revalidation_base_dev_commit": "41774a87f7ae857bb9fc7b97559f0b3bbb72c657",
+  "revalidation": "Merged current dev before renewed handoff; all 14 indices verified, 72 focused tests passed (2 known route-parity tests deselected), schema diff remained empty, and execute-plans loadBundle again verified 49 schemas. Local smoke again exited 1 at the recorded SSH transport stub failure (41 passed, 2 skipped, 1 failed).",
+  "contract_source_commit": "ef1380e0efb02cab76b1ace3f581eb65fab57f39",
+  "schema_sha256": "08daf802a237547030c9abb678c493357d5a83d7505bab481ef70eb22259139f",
+  "schema_unchanged": true,
+  "optional_fields": [
+    "tenant_id",
+    "user_id",
+    "intent_ref",
+    "etag"
+  ],
+  "validation": [
+    {
+      "command": "python3 scripts/agora_schema_bundle.py --verify",
+      "exit_code": 0,
+      "result": "All 14 indices pass, including file, parent and OpenAPI digests."
+    },
+    {
+      "command": "python -m pytest -q scripts/test_agora_bundle_digests.py scripts/test_agora_v1*bundle.py -k 'not test_openapi_manifest_and_live_decorators_have_exact_route_parity'",
+      "exit_code": 0,
+      "result": "72 passed, 2 deselected; includes injected digest/missing-file/parent/OpenAPI failures."
+    },
+    {
+      "command": "git diff --exit-code origin/dev -- services/control-plane/specs/agora/v4/trading_decision_event.schema.json",
+      "exit_code": 0,
+      "result": "Schema bytes unchanged."
+    },
+    {
+      "command": "PATH=$PWD/.venv-pantheon/bin:$PATH PYTHON=$PWD/.venv-pantheon/bin/python3 timeout 240 bash scripts/run-acceptance.sh smoke",
+      "exit_code": 1,
+      "result": "Stage0 stopped at test_deploy_nonprod_vm.py::test_actual_ssh_command_forwards_drift_metadata (41 passed, 2 skipped, 1 failed); identical failure reproduced on base_dev_commit. New digest gate separately passes all 9 tests."
+    }
+  ],
+  "existing_baseline_failures": {
+    "tests": [
+      "scripts/test_agora_v1_7_bundle.py::test_openapi_manifest_and_live_decorators_have_exact_route_parity",
+      "scripts/test_agora_v1_8_bundle.py::test_openapi_manifest_and_live_decorators_have_exact_route_parity",
+      "scripts/test_deploy_nonprod_vm.py::test_actual_ssh_command_forwards_drift_metadata"
+    ],
+    "result": "All three failures reproduced on an isolated git archive of base_dev_commit: two static route-location assertions and one SSH transport stub assertion. No related implementation files changed.",
+    "exit_code": 1
+  },
+  "execute_plans_reproducibility": {
+    "pr": "https://github.com/ajoe734/execute-plans/pull/787",
+    "commit": "510e7d609d0da893d754f83967fb732e9e056106",
+    "checker": "scripts/contract-drift-check.mjs::loadBundle",
+    "method": "In an isolated checkout of the exact frontend commit, copy the checker to scripts/digest-proof.mjs and append export { loadBundle };. Import that module and invoke loadBundle(PANTHEON_CONTRACT_ROOT) against this task worktree. Function bodies and Git provenance checks remain unchanged.",
+    "command": "PANTHEON_CONTRACT_ROOT=<pantheon-task-checkout> node --input-type=module -e 'import {loadBundle} from \"./scripts/digest-proof.mjs\"; console.log(loadBundle(process.env.PANTHEON_CONTRACT_ROOT).schemas.length)'",
+    "exit_code": 0,
+    "result": "49 schemas; exact file digests and contract source Git bytes pass.",
+    "full_checker_result": "node scripts/contract-drift-check.mjs --summary passes bundle loading, then exits 1 because frontend generated types are stale; the frontend task must regenerate and bind its outputs.",
+    "updated_dev_replay": "Pending supervisor merge after independent review. Repeat the same loadBundle check against the merged dev checkout during owner closeout; candidate proof is not a claim of merged dev or green frontend CI."
+  }
+}
