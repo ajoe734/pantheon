@@ -733,6 +733,36 @@ def create_servant_router(
 ) -> APIRouter:
     router = APIRouter(tags=["agora-servant"])
 
+    @router.get("/bff/agora/servant")
+    def get_agora_servant(
+        authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+    ) -> Dict[str, Any]:
+        """Return the provisioned servant profile scoped to the caller."""
+        scope = _scope_for_servant_session(
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+            authorization=authorization,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+        )
+        profile = _servant_profile_for_scope(
+            read_store=get_read_store(),
+            scope=scope,
+            bff_error=bff_error,
+        )
+        return AgoraEnvelope(
+            data=profile.model_dump(),
+            meta=AgoraMeta(
+                snapshot_at=utc_now(),
+                capability=_SERVANT_CAPABILITY,
+                audience=f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+            ),
+        ).model_dump()
+
     @router.post("/bff/agora/servant/ensure")
     def agora_servant_ensure(
         authorization: Optional[str] = Header(default=None),

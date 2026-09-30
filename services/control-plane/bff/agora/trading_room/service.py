@@ -45,6 +45,7 @@ from .routes.common import (
     _workspace_scope,
     _record_visible_to_scope,
     _proposal_etag,
+    _decision_event_etag,
     _workspace_etag,
     _revision_proposal_etag,
     _version_etag,
@@ -392,6 +393,7 @@ class TradingRoomService:
     def list_decision_events(
         self,
         *,
+        identity: Any,
         event_kind: Optional[str] = None,
         state: Optional[str] = None,
         page_size: int = 20,
@@ -401,15 +403,16 @@ class TradingRoomService:
         if event_kind and event_kind not in valid_kinds:
             raise self.bff_error(422, "VALIDATION_ERROR", f"event_kind must be one of {sorted(valid_kinds)}", "invalid_event_kind")
         return self.store.list_decision_events(
+            scope=_workspace_scope(identity),
             event_kind=event_kind,
             state=state,
             page_size=page_size,
             next_page_token=next_page_token,
         )
 
-    def get_decision_event(self, decision_event_id: str) -> Dict[str, Any]:
+    def get_decision_event(self, decision_event_id: str, identity: Any) -> Dict[str, Any]:
         event = self.store.get_decision_event(decision_event_id)
-        if event is None:
+        if event is None or not _record_visible_to_scope(event, _workspace_scope(identity)):
             raise self.bff_error(404, "NOT_FOUND", f"Decision event {decision_event_id!r} not found", "decision_event_not_found")
         return event
 
@@ -421,8 +424,11 @@ class TradingRoomService:
         identity: Any,
         idempotency_key: str,
         x_request_id: str,
+        if_match: str,
     ) -> Dict[str, Any]:
-        event = self.get_decision_event(decision_event_id)
+        event = copy.deepcopy(self.get_decision_event(decision_event_id, identity))
+        if if_match.strip() not in {"*", _decision_event_etag(event)}:
+            raise self.bff_error(412, "PRECONDITION_FAILED", "Decision event changed", "decision_event_etag_mismatch")
         self.check_idempotency(
             identity,
             f"POST:/bff/agora/trading-room/decision-events/{decision_event_id}/decisions",
@@ -446,8 +452,8 @@ class TradingRoomService:
             "decided_by": scope["user_id"] or "unknown",
             "decided_at": now,
         }
-        self.store.record_trader_decision(decision_event_id, decision_record)
 
+        intent = None
         intent_ref: Optional[str] = None
         if body.decision in ("approve", "modify"):
             intent_ref = str(uuid.uuid4())
@@ -459,7 +465,14 @@ class TradingRoomService:
                 intent_id=intent_ref,
                 x_request_id=x_request_id,
             )
-            self.store.upsert_intent(intent, state="draft")
+        try:
+            self.store.record_trader_decision(
+                decision_event_id, decision_record, expected_event=event, intent=intent,
+            )
+        except ValueError as exc:
+            if str(exc) != "decision_event_changed":
+                raise
+            raise self.bff_error(412, "PRECONDITION_FAILED", "Decision event changed", "decision_event_etag_mismatch") from exc
 
         data = {
             "decision_record_id": decision_record["decision_record_id"],
@@ -482,9 +495,9 @@ class TradingRoomService:
     # Trading Intents & Governed Handoffs
     # -----------------------------------------------------------------------
 
-    def get_intent_detail(self, intent_id: str) -> Tuple[Dict[str, Any], str, List[Dict[str, Any]]]:
+    def get_intent_detail(self, intent_id: str, identity: Any) -> Tuple[Dict[str, Any], str, List[Dict[str, Any]]]:
         intent = self.store.get_intent(intent_id)
-        if intent is None:
+        if intent is None or not _record_visible_to_scope(intent.get("metadata") or {}, _workspace_scope(identity)):
             raise self.bff_error(404, "NOT_FOUND", f"TradingIntent {intent_id!r} not found", "intent_not_found")
         state = self.store.get_intent_state(intent_id) or "draft"
         handoffs = self.store.list_handoffs_for_intent(intent_id)
@@ -513,16 +526,13 @@ class TradingRoomService:
                 "intent_id in body must match path parameter",
                 "intent_id_mismatch",
             )
-        intent = self.store.get_intent(intent_id)
-        if intent is None:
-            raise self.bff_error(404, "NOT_FOUND", f"TradingIntent {intent_id!r} not found", "intent_not_found")
+        intent, intent_state, _handoffs = self.get_intent_detail(intent_id, identity)
 
         self.check_idempotency(
             identity,
             f"POST:/bff/agora/trading-intents/{intent_id}/handoffs",
             idempotency_key,
         )
-        intent_state = self.store.get_intent_state(intent_id) or "draft"
         if intent_state != "draft":
             raise self.bff_error(
                 409,
@@ -588,8 +598,7 @@ class TradingRoomService:
         identity: Any,
         idempotency_key: str,
     ) -> Dict[str, Any]:
-        if self.store.get_intent(intent_id) is None:
-            raise self.bff_error(404, "NOT_FOUND", f"TradingIntent {intent_id!r} not found", "intent_not_found")
+        self.get_intent_detail(intent_id, identity)
         self.check_idempotency(
             identity,
             f"POST:/bff/agora/trading-intents/{intent_id}/withdraw",
@@ -611,9 +620,9 @@ class TradingRoomService:
 
     def get_trading_room_aggregate(self, identity: Any) -> Dict[str, Any]:
         now = self.utc_now()
-        page = self.store.list_decision_events(page_size=5)
+        page = self.list_decision_events(identity=identity, page_size=5)
         top_events = page["items"]
-        all_events = self.store.list_decision_events(page_size=1000)["items"]
+        all_events = self.list_decision_events(identity=identity, page_size=1000)["items"]
 
         queue_counts: Dict[str, int] = {"entry": 0, "add": 0, "reduce": 0, "exit": 0, "review": 0}
         for ev in all_events:
@@ -643,7 +652,7 @@ class TradingRoomService:
 
     def get_strategy_aggregate(self, strategy_id: str, identity: Any) -> Tuple[Dict[str, Any], Dict[str, int]]:
         scope = _workspace_scope(identity)
-        all_events = self.store.list_decision_events(page_size=1000)["items"]
+        all_events = self.list_decision_events(identity=identity, page_size=1000)["items"]
         events = [e for e in all_events if e.get("strategy_id") == strategy_id]
         counts: Dict[str, int] = {"entry": 0, "add": 0, "reduce": 0, "exit": 0, "review": 0}
         for ev in events:
@@ -1535,6 +1544,7 @@ class TradingRoomService:
             linked_event_ids=[str(event["decision_event_id"])],
             expressed_at=str(decision_record["decided_at"]),
             metadata={
+                **scope,
                 "decision_record_id": decision_record["decision_record_id"],
                 "decision": body.decision,
                 "x_request_id": x_request_id,

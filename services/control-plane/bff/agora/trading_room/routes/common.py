@@ -200,6 +200,7 @@ class TradingDecisionEvent(BaseModel):
     suggested_action: Literal["enter", "add", "reduce", "exit", "review", "no_action"]
     suggested_size: Optional[SuggestedSize] = None
     position_snapshot: Optional[Dict[str, Any]] = None
+    intent_ref: Optional[str] = None
     decision_state: Optional[Literal[
         "pending", "approved_by_trader", "rejected_by_trader",
         "deferred", "expired", "handed_off", "superseded"
@@ -456,6 +457,10 @@ def _stable_hash(payload: Any) -> str:
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
     ).hexdigest()
+
+
+def _decision_event_etag(event: Dict[str, Any]) -> str:
+    return f'"tr-decision:{event["decision_event_id"]}:{_stable_hash(event)}"'
 
 
 def _proposal_etag(proposal: Dict[str, Any]) -> str:
@@ -958,7 +963,9 @@ def _workspace_data_freshness(
     rather than trusting caller-supplied health.
     """
     resolved = copy.deepcopy(reported)
-    events = store.list_decision_events(page_size=10_000).get("items") or []
+    events = store.list_decision_events(
+        page_size=10_000, scope={"tenant_id": tenant_id, "user_id": user_id},
+    ).get("items") or []
     strategy_events = [
         event
         for event in events
