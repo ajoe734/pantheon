@@ -875,6 +875,35 @@ def test_apply_rebalance_rejects_foreign_and_untenanted_allocations(capital_test
         assert store._data["allocations"][alloc_id]["current_weight"] == 0.5
         assert store._data["allocations"][alloc_id]["tenant_id"] is None
 
+    # Regression assertions after rejected apply for null row:
+    get_res_null = client.get("/api/rebalances/rb-guard-null", headers=headers_a)
+    assert get_res_null.status_code == 200
+    null_fail = get_res_null.json()["failure"]
+    assert null_fail["code"] == "STALE_CURRENT_WEIGHT"
+    assert null_fail["details"][0]["reason"] == "allocation_identity_mismatch"
+    assert not any("actual_identity" in item for item in null_fail["details"])
+    assert "actual_identity" not in get_res_null.text
+
+    list_res_null = client.get("/api/rebalances", headers=headers_a)
+    assert list_res_null.status_code == 200
+    rb_null_entry = next(r for r in list_res_null.json() if r["rebalance_id"] == "rb-guard-null")
+    assert not any("actual_identity" in item for item in rb_null_entry["failure"]["details"])
+
+    replay_null = client.post(
+        "/api/rebalances/rb-guard-null/apply",
+        json={
+            "actor_id": "admin-alpha",
+            "actor_role": "operator",
+            "command_id": "cmd-guard-null",
+            "rebalance_id": "rb-guard-null",
+            "request_hash": "hash-guard-null-apply",
+            "idempotency_key": "idem-guard-null-apply",
+        },
+        headers=headers_a,
+    )
+    assert replay_null.status_code == 409
+    assert client.get("/api/rebalances/receipts/cmd-guard-null", headers=headers_a).status_code == 404
+
     # 5. Now seed with tenant_id: "tenant-beta"
     with store._lock:
         store._data["allocations"][alloc_id]["tenant_id"] = "tenant-beta"
@@ -917,6 +946,40 @@ def test_apply_rebalance_rejects_foreign_and_untenanted_allocations(capital_test
         store._reload_locked()
         assert store._data["allocations"][alloc_id]["current_weight"] == 0.5
         assert store._data["allocations"][alloc_id]["tenant_id"] == "tenant-beta"
+
+    # Regression assertions after rejected apply for foreign row:
+    get_res_beta = client.get("/api/rebalances/rb-guard-beta", headers=headers_a)
+    assert get_res_beta.status_code == 200
+    beta_fail = get_res_beta.json()["failure"]
+    assert beta_fail["code"] == "STALE_CURRENT_WEIGHT"
+    assert beta_fail["details"][0]["reason"] == "allocation_identity_mismatch"
+    assert not any("actual_identity" in item for item in beta_fail["details"])
+    assert "tenant-beta" not in get_res_beta.text
+
+    list_res_beta = client.get("/api/rebalances", headers=headers_a)
+    assert list_res_beta.status_code == 200
+    rb_beta_entry = next(r for r in list_res_beta.json() if r["rebalance_id"] == "rb-guard-beta")
+    assert not any("actual_identity" in item for item in rb_beta_entry["failure"]["details"])
+    assert "tenant-beta" not in json.dumps(rb_beta_entry)
+
+    replay_beta = client.post(
+        "/api/rebalances/rb-guard-beta/apply",
+        json={
+            "actor_id": "admin-alpha",
+            "actor_role": "operator",
+            "command_id": "cmd-guard-beta",
+            "rebalance_id": "rb-guard-beta",
+            "request_hash": "hash-guard-beta-apply",
+            "idempotency_key": "idem-guard-beta-apply",
+        },
+        headers=headers_a,
+    )
+    assert replay_beta.status_code == 409
+    assert client.get("/api/rebalances/receipts/cmd-guard-beta", headers=headers_a).status_code == 404
+
+    # Cross-tenant access: tenant-beta cannot view tenant-alpha's rebalance proposal
+    headers_b = _auth_headers("tenant-beta", actor_id="admin-beta")
+    assert client.get("/api/rebalances/rb-guard-beta", headers=headers_b).status_code == 404
 
     # 6. When tenant matches ("tenant-alpha"), apply succeeds and weight is updated
     with store._lock:
@@ -1015,4 +1078,3 @@ def test_real_postgres_migration_regression_preexisting_rows():
     finally:
         with psycopg.connect(dsn, autocommit=True) as conn:
             conn.execute("ALTER DATABASE pantheon RESET lock_timeout;")
-

@@ -7,7 +7,7 @@
   "target_repo": "ajoe734/pantheon",
   "task_class": "corrective",
   "delivery_state": "ready_for_independent_review",
-  "base_sha": "5bbae47a50220e32880971a3e5f2a6ab84f1c5a3",
+  "base_sha": "16a13a20074fc3c971b5eaed18644b0f59fd7a17",
   "scope": {
     "owned": [
       "services/capital/models.py",
@@ -38,7 +38,7 @@
     {
       "criterion": "2. Every capital read and write route filters and stamps the caller tenant from the verified token and a caller cannot read or change another tenant's rows",
       "status": "passed",
-      "verification": "All 23 capital routes filter by caller's verified tenant; responses stamp X-Pantheon-Tenant header and tenant_id; create idempotency identity and replay lookups are bound to caller tenant; apply_rebalance requires nonempty matching tenant on existing allocations before mutation or readback."
+      "verification": "All 23 capital routes filter by caller's verified tenant; responses stamp X-Pantheon-Tenant header and tenant_id; create idempotency identity and replay lookups are bound to caller tenant; apply_rebalance requires nonempty matching tenant on existing allocations before mutation or readback without copying foreign/null allocation identity into failure details."
     },
     {
       "criterion": "3. Rows without a tenant are visible to no caller",
@@ -48,7 +48,7 @@
     {
       "criterion": "4. Tests cover same-tenant and cross-tenant access for every capital route",
       "status": "passed",
-      "verification": "services/capital/test_tenant_scoping.py covers all 23 capital routes with both same-tenant and cross-tenant assertions, cross-tenant idempotency replay tests, untenanted live owner isolation, route-level rebalance apply foreign/untenanted allocation rejection, and real postgres migration/persistence regression."
+      "verification": "services/capital/test_tenant_scoping.py covers all 23 capital routes with both same-tenant and cross-tenant assertions, cross-tenant idempotency replay tests, untenanted live owner isolation, route-level rebalance apply foreign/untenanted allocation rejection with non-disclosure checks, and real postgres migration/persistence regression."
     }
   ],
   "covered_routes_count": 23,
@@ -81,23 +81,23 @@
     "change_class": "corrective",
     "budget": 150,
     "production_lines_added": 303,
-    "production_lines_deleted": 174,
-    "net_production_lines": 129,
+    "production_lines_deleted": 175,
+    "net_production_lines": 128,
     "under_budget": true
   },
   "verification": {
     "passed": [
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/capital",
-        "result": "72 passed, 1 warning in 33.40s"
+        "result": "72 passed, 1 warning in 37.63s"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/capital/test_tenant_scoping.py",
-        "result": "8 passed, 1 warning in 4.86s"
+        "result": "8 passed, 1 warning in 5.31s"
       },
       {
-        "command": "python3 scripts/git/diff_budget.py --base 5bbae47a5 --change-class corrective --budget 150",
-        "result": "net production lines +129 <= 150"
+        "command": "python3 scripts/git/diff_budget.py --base 16a13a200 --change-class corrective --budget 150",
+        "result": "net production lines +128 <= 150"
       }
     ]
   }

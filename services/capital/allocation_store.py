@@ -632,7 +632,6 @@ class AllocationAuthorityStore:
                         {
                             "allocation_id": line.get("allocation_id"),
                             "expected_identity": expected_identity,
-                            "actual_identity": actual_identity,
                             "reason": "allocation_identity_mismatch",
                         }
                     )
