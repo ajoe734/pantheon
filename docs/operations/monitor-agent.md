@@ -31,7 +31,9 @@ anomalies that no open incident already explains. It can do nothing else.
 ## Limits and degraded runs
 
 - At most 5 incidents per run and 20 per rolling hour (persisted in
-  `MONITOR_AGENT_STATE_PATH`, so restarts do not reset it).
+  `MONITOR_AGENT_STATE_PATH`, so restarts do not reset it). A slot is reserved durably *before* each
+  post and released only when the incidents service confirms an update; a post
+  with an unknown outcome (timeout, lost response) keeps its slot for the hour.
 - If any read API or the agent is unavailable, or the agent output is malformed,
   the run logs `status=degraded` and creates no incident.
 

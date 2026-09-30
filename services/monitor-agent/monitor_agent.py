@@ -141,12 +141,26 @@ class RateLimiter:
             times = []
         return [t for t in times if now - t < 3600]
 
-    def remaining(self, now: float) -> int:
-        return MAX_PER_HOUR - len(self._times(now))
-
-    def record(self, now: float) -> None:
+    def _save(self, times: list[float]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self._times(now) + [now]))
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(times))
+        tmp.replace(self.path)
+
+    def reserve(self, now: float) -> bool:
+        """Durably reserve one creation slot before a possibly-creating POST."""
+        times = self._times(now)
+        if len(times) >= MAX_PER_HOUR:
+            return False
+        self._save(times + [now])
+        return True
+
+    def release(self, now: float, reserved_at: float) -> None:
+        """Return a slot once the POST is confirmed not to have created an incident."""
+        times = self._times(now)
+        if reserved_at in times:
+            times.remove(reserved_at)
+            self._save(times)
 
 
 def run_once(
@@ -171,7 +185,8 @@ def run_once(
 
     created = updated = skipped = 0
     for finding in findings[:MAX_PER_RUN]:
-        if created >= MAX_PER_RUN or limiter.remaining(now()) <= 0:
+        reserved_at = now()
+        if created >= MAX_PER_RUN or not limiter.reserve(reserved_at):
             skipped += 1
             continue
         try:
@@ -180,13 +195,13 @@ def run_once(
                 data={**{k: finding.get(k) for k in ("fingerprint", "title", "severity", "rationale")}, "snapshot_ref": ref},
             )
         except Exception:
-            skipped += 1
+            skipped += 1  # outcome unknown: the reservation is kept so a lost 201 still counts
             continue
         if resp.get("_http_status") == 201:
             created += 1
-            limiter.record(now())
         else:
             updated += 1
+            limiter.release(now(), reserved_at)
     return {"status": "ok", "snapshot_ref": ref, "created": created, "updated": updated, "skipped": skipped}
 
 

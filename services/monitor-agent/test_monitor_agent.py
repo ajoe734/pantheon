@@ -78,6 +78,32 @@ def test_at_most_twenty_per_hour(tmp_path):
     assert later["created"] == 1
 
 
+def test_lost_response_still_consumes_budget_across_restarts(tmp_path):
+    """A POST that committed but whose response was lost must count toward the hourly cap."""
+    stored = 0
+    for run in range(6):
+        fetch, _p = _fetch([_finding(run * 5 + i) for i in range(5)])
+        inner = fetch
+
+        def lossy(url, data=None, headers=None, timeout=20, inner=inner):
+            nonlocal stored
+            resp = inner(url, data=data, headers=headers, timeout=timeout)
+            if "consume-agent-finding" in url:
+                stored += 1
+                raise TimeoutError("response lost")
+            return resp
+
+        _run(tmp_path, lossy, now=lambda run=run: 1000.0 + run * 60)  # fresh limiter each run
+    assert stored == 20
+
+
+def test_confirmed_update_releases_reservation(tmp_path):
+    fetch, _p = _fetch([_finding(i) for i in range(5)], statuses={f"fp{i}": 200 for i in range(5)})
+    for _ in range(6):
+        assert _run(tmp_path, fetch)["updated"] == 5
+    assert ma.RateLimiter(tmp_path / "s.json").reserve(1000.0)
+
+
 def test_read_api_down_is_degraded_without_incident(tmp_path):
     fetch, posts = _fetch([_finding(1)], fail="http://perf")
     record = _run(tmp_path, fetch)
