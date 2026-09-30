@@ -701,274 +701,134 @@ class IncidentService:
 
     # -- Alert Builders -------------------------------------------------------
 
-    def build_incident_alerts(
-        self,
-        snapshot_at: str,
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    def build_incident_alerts(self, snapshot_at: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         surface = self.get_surface_status("incidents", snapshot_at=snapshot_at)
         if surface.get("status") == "unavailable":
             return [], surface
-
-        alerts: List[Dict[str, Any]] = []
-        incidents = self.list_incidents()
-        for incident in incidents:
-            incident_status = str(incident.get("status") or "").lower()
-            if incident_status not in {"open", "in_progress"}:
-                continue
-            incident_id = str(incident.get("incident_id") or incident.get("id") or "")
-            severity = _alert_severity_for_incident(incident)
-            title = str(incident.get("title") or incident_id or "Unnamed incident")
-            status_prefix = "Active" if incident_status == "open" else "In-progress"
-            alerts.append({
-                "alert_id": f"alert-incident-{incident_id}",
-                "severity": severity,
-                "category": "incident",
-                "raised_at": incident.get("opened_at") or incident.get("created_at") or snapshot_at,
-                "summary": f"{status_prefix} incident: {title}.",
-                "target_ref": _alert_target_ref(
-                    surface_id="PKT-002",
-                    label="Open incident response",
-                    href=_incident_detail_href(incident_id),
-                    target_id=incident_id,
-                ),
-            })
+        alerts = []
+        for inc in self.list_incidents():
+            st = str(inc.get("status") or "").lower()
+            if st in {"open", "in_progress"}:
+                iid = str(inc.get("incident_id") or inc.get("id") or "")
+                title = str(inc.get("title") or iid or "Unnamed incident")
+                prefix = "Active" if st == "open" else "In-progress"
+                alerts.append({
+                    "alert_id": f"alert-incident-{iid}",
+                    "severity": _alert_severity_for_incident(inc),
+                    "category": "incident",
+                    "raised_at": inc.get("opened_at") or inc.get("created_at") or snapshot_at,
+                    "summary": f"{prefix} incident: {title}.",
+                    "target_ref": _alert_target_ref(surface_id="PKT-002", label="Open incident response", href=_incident_detail_href(iid), target_id=iid),
+                })
         return alerts, surface
 
-    def build_governance_alerts(
-        self,
-        snapshot_at: str,
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    def build_governance_alerts(self, snapshot_at: str) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
         store = self.get_read_store()
-        review_queue_surface = self.get_surface_status("governance_review_queue_items", snapshot_at=snapshot_at)
-        approval_queue_surface = self.get_surface_status("approval_queue_items", snapshot_at=snapshot_at)
-        alerts: List[Dict[str, Any]] = []
-
-        if review_queue_surface.get("status") != "unavailable" and store and hasattr(store, "list_governance_review_queue_items"):
+        rq_s = self.get_surface_status("governance_review_queue_items", snapshot_at=snapshot_at)
+        aq_s = self.get_surface_status("approval_queue_items", snapshot_at=snapshot_at)
+        alerts = []
+        if rq_s.get("status") != "unavailable" and store and hasattr(store, "list_governance_review_queue_items"):
             for item in store.list_governance_review_queue_items():
-                item_id = str(item.get("item_id") or "")
-                status = str(item.get("status") or "").lower()
-                if status not in {"pending", "in_review", "escalated"}:
-                    continue
-                severity = _alert_severity_for_risk_level(
-                    item.get("risk_level"),
-                    elevated=status == "escalated",
-                )
-                item_type = str(item.get("item_type") or "Governance item")
-                if status == "escalated":
-                    summary = f"Escalated governance review: {item_type} {item_id}."
-                elif status == "in_review":
-                    summary = f"Governance review in progress: {item_type} {item_id}."
-                else:
-                    summary = f"Pending governance review: {item_type} {item_id}."
-                alerts.append({
-                    "alert_id": f"alert-governance-review-{item_id}",
-                    "severity": severity,
-                    "category": "governance",
-                    "raised_at": item.get("submitted_at") or snapshot_at,
-                    "summary": summary,
-                    "target_ref": _alert_target_ref(
-                        surface_id="PKT-001",
-                        label="Open governance review queue",
-                        href=_GOVERNANCE_REVIEW_QUEUE_ROUTE,
-                        target_id=item_id,
-                    ),
-                })
-
-        if approval_queue_surface.get("status") != "unavailable" and store and hasattr(store, "list_approval_queue_items"):
+                st, iid, itype = str(item.get("status") or "").lower(), str(item.get("item_id") or ""), str(item.get("item_type") or "Governance item")
+                if st in {"pending", "in_review", "escalated"}:
+                    alerts.append({
+                        "alert_id": f"alert-governance-review-{iid}",
+                        "severity": _alert_severity_for_risk_level(item.get("risk_level"), elevated=st == "escalated"),
+                        "category": "governance", "raised_at": item.get("submitted_at") or snapshot_at,
+                        "summary": f"Escalated governance review: {itype} {iid}." if st == "escalated" else (f"Governance review in progress: {itype} {iid}." if st == "in_review" else f"Pending governance review: {itype} {iid}."),
+                        "target_ref": _alert_target_ref(surface_id="PKT-001", label="Open governance review queue", href=_GOVERNANCE_REVIEW_QUEUE_ROUTE, target_id=iid),
+                    })
+        if aq_s.get("status") != "unavailable" and store and hasattr(store, "list_approval_queue_items"):
             for item in store.list_approval_queue_items():
-                decision_id = str(item.get("decision_id") or "")
-                decision_state = str(item.get("decision_state") or "").lower()
-                if decision_state not in {"pending", "in_review"}:
-                    continue
-                severity = _alert_severity_for_risk_level(
-                    item.get("risk_level"),
-                    elevated=decision_state == "in_review",
-                )
-                decision_type = str(item.get("decision_type") or "Approval item")
-                if decision_state == "in_review":
-                    summary = f"Approval decision in review: {decision_type} {decision_id}."
-                else:
-                    summary = f"Approval required: {decision_type} {decision_id}."
-                alerts.append({
-                    "alert_id": f"alert-approval-{decision_id}",
-                    "severity": severity,
-                    "category": "governance",
-                    "raised_at": item.get("submitted_at") or snapshot_at,
-                    "summary": summary,
-                    "target_ref": _alert_target_ref(
-                        surface_id="GV-02",
-                        label="Open approval queue",
-                        href=_GOVERNANCE_APPROVAL_QUEUE_ROUTE,
-                        target_id=decision_id,
-                    ),
-                })
+                st, did, dtype = str(item.get("decision_state") or "").lower(), str(item.get("decision_id") or ""), str(item.get("decision_type") or "Approval item")
+                if st in {"pending", "in_review"}:
+                    alerts.append({
+                        "alert_id": f"alert-approval-{did}",
+                        "severity": _alert_severity_for_risk_level(item.get("risk_level"), elevated=st == "in_review"),
+                        "category": "governance", "raised_at": item.get("submitted_at") or snapshot_at,
+                        "summary": f"Approval decision in review: {dtype} {did}." if st == "in_review" else f"Approval required: {dtype} {did}.",
+                        "target_ref": _alert_target_ref(surface_id="GV-02", label="Open approval queue", href=_GOVERNANCE_APPROVAL_QUEUE_ROUTE, target_id=did),
+                    })
+        return alerts, {"review_queue": rq_s, "approval_queue": aq_s}
 
-        return alerts, {
-            "review_queue": review_queue_surface,
-            "approval_queue": approval_queue_surface,
-        }
-
-    def build_kill_switch_alerts(
-        self,
-        snapshot_at: str,
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
+    def build_kill_switch_alerts(self, snapshot_at: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
         surface = self.get_surface_status("kill_switch", snapshot_at=snapshot_at)
         if surface.get("status") == "unavailable":
             return [], surface, {}
-
         store = self.get_read_store()
-        kill_switch = store.get_kill_switch_status() if store and hasattr(store, "get_kill_switch_status") else {}
-        safe_mode_status = str(kill_switch.get("safe_mode_status") or "").lower()
-        kill_switch_status = str(kill_switch.get("status") or "").lower()
-        safe_mode_active = safe_mode_status not in {"", "off", "released", "none", "null"}
-        alerts: List[Dict[str, Any]] = []
-
-        if kill_switch.get("active") or kill_switch_status == "triggered":
-            severity = "critical"
-            summary = "Kill-switch active; operator intervention is required."
-        elif kill_switch_status == "cooling_down":
-            severity = "high"
-            summary = "Kill-switch cooling down; verify runtime stability before resuming operations."
-        elif safe_mode_active:
-            severity = "high"
-            summary = f"Safe mode active ({safe_mode_status}); use the health board to verify current restrictions."
+        ks = store.get_kill_switch_status() if store and hasattr(store, "get_kill_switch_status") else {}
+        sm, kst = str(ks.get("safe_mode_status") or "").lower(), str(ks.get("status") or "").lower()
+        if ks.get("active") or kst == "triggered":
+            sev, summary = "critical", "Kill-switch active; operator intervention is required."
+        elif kst == "cooling_down":
+            sev, summary = "high", "Kill-switch cooling down; verify runtime stability before resuming operations."
+        elif sm not in {"", "off", "released", "none", "null"}:
+            sev, summary = "high", f"Safe mode active ({sm}); use the health board to verify current restrictions."
         else:
-            return [], surface, kill_switch
-
-        alerts.append({
-            "alert_id": "alert-kill-switch-state",
-            "severity": severity,
-            "category": "kill_switch",
-            "raised_at": (
-                kill_switch.get("last_triggered_at")
-                or kill_switch.get("last_confirmed_at")
-                or snapshot_at
-            ),
+            return [], surface, ks
+        return [{
+            "alert_id": "alert-kill-switch-state", "severity": sev, "category": "kill_switch",
+            "raised_at": ks.get("last_triggered_at") or ks.get("last_confirmed_at") or snapshot_at,
             "summary": summary,
-            "target_ref": _alert_target_ref(
-                surface_id="OC-03",
-                label="Open health status board",
-                href=_OPERATOR_HEALTH_STATUS_ROUTE,
-                target_id=kill_switch_status or safe_mode_status or "kill-switch",
-            ),
-        })
-        return alerts, surface, kill_switch
+            "target_ref": _alert_target_ref(surface_id="OC-03", label="Open health status board", href=_OPERATOR_HEALTH_STATUS_ROUTE, target_id=kst or sm or "kill-switch"),
+        }], surface, ks
 
-    def build_runtime_alerts(
-        self,
-        snapshot_at: str,
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
-        runtime_surface = self.get_surface_status("runtime_bindings", snapshot_at=snapshot_at)
-        telemetry_surface = self.get_surface_status("telemetry_summaries", snapshot_at=snapshot_at)
-        if runtime_surface.get("status") == "unavailable":
-            return [], {
-                "runtime_roster": runtime_surface,
-                "telemetry_summary": telemetry_surface,
-            }
-
-        store = self.get_read_store()
-        alerts: List[Dict[str, Any]] = []
+    def build_runtime_alerts(self, snapshot_at: str) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+        rs = self.get_surface_status("runtime_bindings", snapshot_at=snapshot_at)
+        ts = self.get_surface_status("telemetry_summaries", snapshot_at=snapshot_at)
+        if rs.get("status") == "unavailable":
+            return [], {"runtime_roster": rs, "telemetry_summary": ts}
+        store, alerts = self.get_read_store(), []
         bindings = store.list_runtime_bindings() if store and hasattr(store, "list_runtime_bindings") else []
-        for binding in bindings:
-            runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
-            telemetry_summary = None
-            if runtime_id and telemetry_surface.get("status") != "unavailable" and store and hasattr(store, "get_telemetry_summary"):
-                telemetry_summary = store.get_telemetry_summary(runtime_id)
-
-            reasons: List[str] = []
-            severities: List[Optional[str]] = []
-            runtime_status = str(binding.get("status") or "").lower()
-            if runtime_status in _RUNTIME_STATUS_ALERT_SEVERITY:
-                severities.append(_RUNTIME_STATUS_ALERT_SEVERITY[runtime_status])
-                reasons.append(f"runtime status is {runtime_status}")
-
-            if telemetry_summary:
-                drawdown = telemetry_summary.get("drawdown")
-                if isinstance(drawdown, (int, float)):
-                    for threshold, sev in _TELEMETRY_DRAWDOWN_THRESHOLDS:
-                        if drawdown >= threshold:
-                            severities.append(sev)
-                            reasons.append(f"drawdown is {drawdown:.3f}")
-                            break
-                fill_rate = telemetry_summary.get("fill_rate")
-                if isinstance(fill_rate, (int, float)):
-                    for threshold, sev in _TELEMETRY_FILL_RATE_THRESHOLDS:
-                        if fill_rate < threshold:
-                            severities.append(sev)
-                            reasons.append(f"fill rate dropped to {fill_rate:.2f}")
-                            break
-                slippage = telemetry_summary.get("avg_slippage_bps")
-                if isinstance(slippage, (int, float)):
-                    for threshold, sev in _TELEMETRY_SLIPPAGE_THRESHOLDS:
-                        if slippage >= threshold:
-                            severities.append(sev)
-                            reasons.append(f"average slippage reached {slippage:.1f} bps")
-                            break
-
-            severity = _max_alert_severity(severities)
-            if reasons and severity:
+        for b in bindings:
+            rid = str(b.get("runtime_id") or b.get("id") or "")
+            tel = store.get_telemetry_summary(rid) if rid and ts.get("status") != "unavailable" and store and hasattr(store, "get_telemetry_summary") else None
+            reasons, sevs = [], []
+            rst = str(b.get("status") or "").lower()
+            if rst in _RUNTIME_STATUS_ALERT_SEVERITY:
+                sevs.append(_RUNTIME_STATUS_ALERT_SEVERITY[rst])
+                reasons.append(f"runtime status is {rst}")
+            if tel:
+                dd = tel.get("drawdown")
+                if isinstance(dd, (int, float)):
+                    for th, s in _TELEMETRY_DRAWDOWN_THRESHOLDS:
+                        if dd >= th: sevs.append(s); reasons.append(f"drawdown is {dd:.3f}"); break
+                fr = tel.get("fill_rate")
+                if isinstance(fr, (int, float)):
+                    for th, s in _TELEMETRY_FILL_RATE_THRESHOLDS:
+                        if fr < th: sevs.append(s); reasons.append(f"fill rate dropped to {fr:.2f}"); break
+                sl = tel.get("avg_slippage_bps")
+                if isinstance(sl, (int, float)):
+                    for th, s in _TELEMETRY_SLIPPAGE_THRESHOLDS:
+                        if sl >= th: sevs.append(s); reasons.append(f"average slippage reached {sl:.1f} bps"); break
+            sev = _max_alert_severity(sevs)
+            if reasons and sev:
                 alerts.append({
-                    "alert_id": f"alert-runtime-{runtime_id}",
-                    "severity": severity,
-                    "category": "runtime",
-                    "raised_at": (
-                        (telemetry_summary or {}).get("collected_at")
-                        or binding.get("updated_at")
-                        or binding.get("last_updated_at")
-                        or binding.get("started_at")
-                        or snapshot_at
-                    ),
-                    "summary": f"Runtime {runtime_id} anomaly: {'; '.join(reasons[:2])}.",
-                    "target_ref": _alert_target_ref(
-                        surface_id="OC-04",
-                        label="Open runtime state board",
-                        href=_OPERATOR_RUNTIME_STATE_ROUTE,
-                        target_id=runtime_id,
-                    ),
+                    "alert_id": f"alert-runtime-{rid}", "severity": sev, "category": "runtime",
+                    "raised_at": (tel or {}).get("collected_at") or b.get("updated_at") or b.get("last_updated_at") or b.get("started_at") or snapshot_at,
+                    "summary": f"Runtime {rid} anomaly: {'; '.join(reasons[:2])}.",
+                    "target_ref": _alert_target_ref(surface_id="OC-04", label="Open runtime state board", href=_OPERATOR_RUNTIME_STATE_ROUTE, target_id=rid),
                 })
-
-        return alerts, {
-            "runtime_roster": runtime_surface,
-            "telemetry_summary": telemetry_surface,
-        }
+        return alerts, {"runtime_roster": rs, "telemetry_summary": ts}
 
     def build_operator_alerts_payload(self, snapshot_at: str) -> Dict[str, Any]:
-        incident_alerts, incident_surface = self.build_incident_alerts(snapshot_at)
-        governance_alerts, governance_surfaces = self.build_governance_alerts(snapshot_at)
-        kill_switch_alerts, kill_switch_surface, _ = self.build_kill_switch_alerts(snapshot_at)
-        runtime_alerts, runtime_surfaces = self.build_runtime_alerts(snapshot_at)
-
-        alerts = sorted(
-            incident_alerts + governance_alerts + kill_switch_alerts + runtime_alerts,
-            key=_alert_sort_key,
-            reverse=True,
-        )
-
-        meta: Dict[str, Any] = {
-            "snapshot_at": snapshot_at,
-            "acknowledgement_supported": True,
+        inc_alerts, inc_s = self.build_incident_alerts(snapshot_at)
+        gov_alerts, gov_s = self.build_governance_alerts(snapshot_at)
+        ks_alerts, ks_s, _ = self.build_kill_switch_alerts(snapshot_at)
+        rt_alerts, rt_s = self.build_runtime_alerts(snapshot_at)
+        alerts = sorted(inc_alerts + gov_alerts + ks_alerts + rt_alerts, key=_alert_sort_key, reverse=True)
+        meta = {
+            "snapshot_at": snapshot_at, "acknowledgement_supported": True,
             "surfaces": {
-                "alerts": {
-                    "status": "ok" if incident_surface.get("status") != "unavailable" else "degraded",
-                    "source": "bff_composed",
-                },
-                "incident": incident_surface,
-                "kill_switch": kill_switch_surface,
-                "review_queue": governance_surfaces["review_queue"],
-                "approval_queue": governance_surfaces["approval_queue"],
-                "runtime_roster": runtime_surfaces["runtime_roster"],
-                "telemetry_summary": runtime_surfaces["telemetry_summary"],
+                "alerts": {"status": "ok" if inc_s.get("status") != "unavailable" else "degraded", "source": "bff_composed"},
+                "incident": inc_s, "kill_switch": ks_s, "review_queue": gov_s["review_queue"],
+                "approval_queue": gov_s["approval_queue"], "runtime_roster": rt_s["runtime_roster"],
+                "telemetry_summary": rt_s["telemetry_summary"],
             },
         }
         staleness = self.get_staleness()
-        if staleness is not None:
-            meta["staleness"] = staleness
-
-        return {
-            "alerts": alerts,
-            "summary": _build_alert_summary(alerts),
-            "meta": meta,
-        }
+        if staleness is not None: meta["staleness"] = staleness
+        return {"alerts": alerts, "summary": _build_alert_summary(alerts), "meta": meta}
 
     def management_alerts_degraded_payload(self, snapshot_at: str) -> Dict[str, Any]:
         meta: Dict[str, Any] = {

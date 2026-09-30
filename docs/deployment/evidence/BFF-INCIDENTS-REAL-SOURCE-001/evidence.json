@@ -17,7 +17,7 @@
     "test_command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/control-plane/bff/tests/test_incidents_real_source.py services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/tests/test_bff_alerts_acknowledge.py services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py services/control-plane/bff/test_pkt012_alerts_rail_contract.py services/control-plane/bff/tests/test_console_data_incidents_reviews.py services/control-plane/bff/test_read_store_incident.py",
     "test_results": "36 passed, 3 warnings in 24.49s",
     "diff_budget_command": "python3 scripts/git/diff_budget.py --base origin/dev --change-class corrective --budget 0",
-    "diff_budget_result": "production net: -338 lines (<= 0 budget satisfied)"
+    "diff_budget_result": "production net: -57 lines (<= 0 budget satisfied)"
   },
   "touched_files": [
     "services/control-plane/bff/command_adapters/incident_adapter.py",
