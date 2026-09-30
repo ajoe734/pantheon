@@ -1,0 +1,20 @@
+{
+  "task_id": "AGORA-SERVANT-STATUS-READ-001",
+  "scope": "Caller-scoped GET /bff/agora/servant; reads the existing servant profile through the configured read store.",
+  "acceptance": {
+    "provisioned_profile": "GET returns the caller's servant profile in the agora.servant.v1 envelope.",
+    "unprovisioned": "GET returns RESOURCE_NOT_FOUND (404); no creation or fallback is performed.",
+    "authorization_and_scope": "Viewer role is accepted; tenant and user scope are resolved from the caller identity.",
+    "foreign_user": "A different user receives 404 rather than another user's profile."
+  },
+  "validation": [
+    {
+      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/agora/servant/test_servant_status.py",
+      "result": "3 passed"
+    },
+    {
+      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_agora_router.py",
+      "result": "43 passed"
+    }
+  ]
+}
