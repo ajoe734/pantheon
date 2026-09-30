@@ -2,6 +2,8 @@
   "task_id": "AGORA-CONTRACT-BUNDLE-DIGEST-001",
   "scope": "Refresh schema digest, inherited bundle hashes and generation provenance; enforce drift checks in smoke acceptance.",
   "base_dev_commit": "6b38242809a4276680d93a4d6484ea61a1bed755",
+  "revalidation_base_dev_commit": "41774a87f7ae857bb9fc7b97559f0b3bbb72c657",
+  "revalidation": "Merged current dev before renewed handoff; all 14 indices verified, 72 focused tests passed (2 known route-parity tests deselected), schema diff remained empty, and execute-plans loadBundle again verified 49 schemas. Local smoke again exited 1 at the recorded SSH transport stub failure (41 passed, 2 skipped, 1 failed).",
   "contract_source_commit": "ef1380e0efb02cab76b1ace3f581eb65fab57f39",
   "schema_sha256": "08daf802a237547030c9abb678c493357d5a83d7505bab481ef70eb22259139f",
   "schema_unchanged": true,
@@ -28,7 +30,7 @@
       "result": "Schema bytes unchanged."
     },
     {
-      "command": "PATH=/tmp/agora-digest-001-venv/bin:$PATH PYTHON=/tmp/agora-digest-001-venv/bin/python timeout 240 bash scripts/run-acceptance.sh smoke",
+      "command": "PATH=$PWD/.venv-pantheon/bin:$PATH PYTHON=$PWD/.venv-pantheon/bin/python3 timeout 240 bash scripts/run-acceptance.sh smoke",
       "exit_code": 1,
       "result": "Stage0 stopped at test_deploy_nonprod_vm.py::test_actual_ssh_command_forwards_drift_metadata (41 passed, 2 skipped, 1 failed); identical failure reproduced on base_dev_commit. New digest gate separately passes all 9 tests."
     }
