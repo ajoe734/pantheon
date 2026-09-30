@@ -62,6 +62,7 @@ class TradingRoomStore:
     def list_decision_events(
         self,
         *,
+        scope: Optional[Dict[str, str]] = None,
         strategy_id: Optional[str] = None,
         event_kind: Optional[str] = None,
         state: Optional[str] = None,
@@ -69,6 +70,8 @@ class TradingRoomStore:
         next_page_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         items = list(self._decision_events.values())
+        if scope is not None:
+            items = [e for e in items if all(e.get(k) == v for k, v in scope.items())]
         if strategy_id:
             items = [e for e in items if e.get("strategy_id") == strategy_id]
         if event_kind:
@@ -95,10 +98,16 @@ class TradingRoomStore:
         }
 
     def record_trader_decision(
-        self, decision_event_id: str, decision_record: Dict[str, Any]
+        self, decision_event_id: str, decision_record: Dict[str, Any],
+        *, expected_event: Optional[Dict[str, Any]] = None,
+        intent: Optional[Dict[str, Any]] = None,
     ) -> None:
-        self._trader_decisions.setdefault(decision_event_id, []).append(decision_record)
         event = self._decision_events.get(decision_event_id)
+        if expected_event is not None and event != expected_event:
+            raise ValueError("decision_event_changed")
+        if intent is not None:
+            self.upsert_intent(intent, state="draft")
+        self._trader_decisions.setdefault(decision_event_id, []).append(decision_record)
         if event is not None:
             action = decision_record.get("decision")
             state_map = {
@@ -116,6 +125,8 @@ class TradingRoomStore:
                     "modify": "approved_by_trader",
                 }
                 event["decision_state"] = decision_state_map[action]
+                if intent is not None:
+                    event["intent_ref"] = intent["intent_id"]
 
     # ------------------------------------------------------------------
     # Trading intents

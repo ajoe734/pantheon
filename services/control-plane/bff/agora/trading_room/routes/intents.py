@@ -32,7 +32,7 @@ def build_intents_router(ctx: TradingRoomRouteContext) -> APIRouter:
         identity = ctx.extract_identity(authorization, session_cookie=pantheon_session)
         ctx.require_read_role(identity)
 
-        intent, state, handoffs = ctx.service.get_intent_detail(intent_id)
+        intent, state, handoffs = ctx.service.get_intent_detail(intent_id, identity)
 
         return {
             "object_ref": {"type": "trading_intent", "id": intent_id},
@@ -48,6 +48,7 @@ def build_intents_router(ctx: TradingRoomRouteContext) -> APIRouter:
                 "withdraw": f"/bff/agora/trading-intents/{intent_id}/withdraw",
             },
             "data": intent,
+            "handoffs": handoffs,
         }
 
     # ------------------------------------------------------------------
