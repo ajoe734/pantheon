@@ -16,7 +16,7 @@
     "specs/agora/trading_intent.schema.json": "588a0508e6b00206be1361e6337b440b7710df0075d6272adb4e85040be4f7ad",
     "specs/agora/shadow_decision.schema.json": "1414c77ddebb5102b81a10fb57db32520c607daba76cb3736f7eb20eb751b0b2",
     "specs/agora/personalization_event.schema.json": "df7991d19943650a61d58a065182fe4bda20f967b4098a36f36b1ab4b33bcb21",
-    "specs/agora/capability_manifest.json": "5988cac6d8ca38fc0c51922086c1cc2564b1bb31b2b36ee276e6d363249e9e3e",
-    "openapi/agora_v1.openapi.yaml": "4da5ea91923e40c13a9118ee4f784a5d6627e6cb91e4d4712d8fac244912118f"
+    "specs/agora/capability_manifest.json": "e70b8d38d7dbffc81846307957f07e030b350aed1d0d28efc2d31aefaa3e56a8",
+    "openapi/agora_v1.openapi.yaml": "afd4ad122b54c570691f0d927d0d582561b6fc21285308e69464f7527389a107"
   }
 }

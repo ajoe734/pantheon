@@ -9,9 +9,9 @@
     "runtime_commit": "6ad99d2e5abe4f31c9f48892ae7f44bf3bbab980",
     "contract_commit": "6ad99d2e5abe4f31c9f48892ae7f44bf3bbab980",
     "handoff_commit": "b2f63cfdc2cccccaddf9f53057e4ca39cda75a1d",
-    "bundle_index_sha256": "bd11b4f152e7808e71d146fd6ade26c5394b2a74031abb9eb1b04c7f70ff1948",
+    "bundle_index_sha256": "b0d0b51174a76ed3d956bf480b00cffcf1583230bed08d0cbdb7a7365622b6ca",
     "openapi_sha256": "56f12e43bb6041a0f83bf4ff69bf13ae86a335a38246f68a10f0a4ef3a856087",
-    "capability_manifest_sha256": "8b44dd85412b6ba7a0b9686b25d657fa9e3f95efdd4b0f280ff97d2be1186ff5"
+    "capability_manifest_sha256": "e07033124bd549cc4aa207d83573865c07f0fe02988fea1babaa5eb3bff2f80c"
   },
   "frontend": {
     "repo": "ajoe734/execute-plans",
@@ -19,7 +19,7 @@
     "runtime_commit": "95d03944c8c4d595ed50ca6d499c4d2af3752f06",
     "handoff_commit": "24a0cfb6b53b1e0e1441a82101871eaf5c3dc554",
     "generated_from_contract_commit": "6ad99d2e5abe4f31c9f48892ae7f44bf3bbab980",
-    "bundle_index_sha256": "bd11b4f152e7808e71d146fd6ade26c5394b2a74031abb9eb1b04c7f70ff1948",
+    "bundle_index_sha256": "b0d0b51174a76ed3d956bf480b00cffcf1583230bed08d0cbdb7a7365622b6ca",
     "openapi_sha256": "56f12e43bb6041a0f83bf4ff69bf13ae86a335a38246f68a10f0a4ef3a856087",
     "generated_types_sha256": "9a56c57827e5e9be8c7c878dafd52d9bfa41e4a49adde98bc18bd9d4afda2f7f"
   },
@@ -36,7 +36,7 @@
     "backend": {
       "path": "docs/contracts/agora/backend-generation-input.v1_13.json",
       "commit": "b2f63cfdc2cccccaddf9f53057e4ca39cda75a1d",
-      "sha256": "2406c594634d735fd8cf5b5da5510c3704740b5e860ba1ad454ac7f06eb39001"
+      "sha256": "101c3bc460a7c62ad9fc0d429c3495383454987d0fe7323bafbfdeb68413be88"
     },
     "frontend": {
       "path": "docs/contracts/agora/frontend-generation-output.v1_13.json",
@@ -106,22 +106,12 @@
       "required": true
     },
     {
-      "name": "agora.personalization.v1",
-      "version": "1.0",
-      "required": true
-    },
-    {
       "name": "agora.research.v1",
       "version": "1.1",
       "required": true
     },
     {
       "name": "agora.servant.v1",
-      "version": "1.0",
-      "required": true
-    },
-    {
-      "name": "agora.session.v1",
       "version": "1.0",
       "required": true
     },

@@ -294,12 +294,12 @@ def _strict_rbac_matrix_items(
     read_paths = {
         "bff-strategies": "/bff/strategies",
         "bff-ranking-formulas": "/bff/ranking-formulas",
-        "bff-agora-signals": "/bff/agora/signals",
+        "bff-agora-journal": "/bff/agora/journal",
     }
     write_paths = {
         "strategy": "/bff/strategies",
         "ranking-formula": "/bff/ranking-formulas",
-        "agora-note": "/bff/agora/notes",
+        "agora-journal": "/bff/agora/journal",
         "intervention-claim": "/bff/v5/interventions/int-live-rbac-matrix/claim",
     }
     read_allowed = {"viewer", "operator", "reviewer", "approver", "admin"}
@@ -353,7 +353,7 @@ def _strict_rbac_matrix_items(
             if with_write_side_effect_checks:
                 if label in write_allowed:
                     readback = None
-                    if name == "agora-note":
+                    if name == "agora-journal":
                         readback = {
                             "kind": "list_readback_not_persisted",
                             "ok": True,

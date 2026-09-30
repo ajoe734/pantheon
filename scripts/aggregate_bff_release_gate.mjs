@@ -68,19 +68,19 @@ const gateTitles = {
 
 const REQUIRED_RBAC_LABELS = ["anonymous", "viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"];
 const REQUIRED_RBAC_READ_ALLOWED_LABELS = ["viewer", "operator", "reviewer", "approver", "admin"];
-const REQUIRED_RBAC_READ_FAMILIES = ["bff-strategies", "bff-ranking-formulas", "bff-agora-signals"];
-const REQUIRED_RBAC_WRITE_FAMILIES = ["strategy", "ranking-formula", "agora-note", "intervention-claim"];
-const REQUIRED_RBAC_WRITE_READBACK_FAMILIES = ["strategy", "ranking-formula", "agora-note"];
+const REQUIRED_RBAC_READ_FAMILIES = ["bff-strategies", "bff-ranking-formulas", "bff-agora-journal"];
+const REQUIRED_RBAC_WRITE_FAMILIES = ["strategy", "ranking-formula", "agora-journal", "intervention-claim"];
+const REQUIRED_RBAC_WRITE_READBACK_FAMILIES = ["strategy", "ranking-formula", "agora-journal"];
 const REQUIRED_RBAC_WRITE_ALLOWED_LABELS = ["operator", "reviewer", "approver", "admin"];
 const REQUIRED_RBAC_READ_PATHS = {
   "bff-strategies": "/bff/strategies",
   "bff-ranking-formulas": "/bff/ranking-formulas",
-  "bff-agora-signals": "/bff/agora/signals",
+  "bff-agora-journal": "/bff/agora/journal",
 };
 const REQUIRED_RBAC_WRITE_PATHS = {
   strategy: "/bff/strategies",
   "ranking-formula": "/bff/ranking-formulas",
-  "agora-note": "/bff/agora/notes",
+  "agora-journal": "/bff/agora/journal",
   "intervention-claim": "/bff/v5/interventions/int-live-rbac-matrix/claim",
 };
 const REQUIRED_RBAC_MATRIX_FAMILIES = REQUIRED_RBAC_LABELS.flatMap((label) => [
@@ -837,7 +837,7 @@ function analyzeStrictAuthEvidence(stepOutcomes, preflight = {}) {
   const rbacWriteReadbackProofs = rbacWriteReadbackRequired.filter((item) => {
     const resource = String(item?.rbac_resource || "");
     const readback = item?.side_effect_check?.readback_not_persisted || {};
-    if (resource === "agora-note") {
+    if (resource === "agora-journal") {
       return readback?.ok === true
         && readback?.kind === "list_readback_not_persisted"
         && Number(readback?.status ?? 0) === 200
@@ -1225,11 +1225,8 @@ function buildGate3(routeProbe, authSmoke, sseSmoke, strictAuth, preflight) {
     "/bff/tools",
     "/bff/ranking-formulas",
     "/bff/research-experiments",
-    "/bff/agora/signals",
-    "/bff/agora/inbox",
     "/bff/agora/journal",
     "/bff/agora/postmortems",
-    "/bff/agora/ask/sessions",
   ];
   const v5Paths = [
     "/bff/v5/loop-runs",

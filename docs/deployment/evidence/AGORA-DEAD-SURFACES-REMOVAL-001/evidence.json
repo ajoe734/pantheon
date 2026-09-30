@@ -7,17 +7,17 @@
   "reviewer": "Codex",
   "budget_summary": {
     "production": {
-      "additions": 361,
-      "deletions": 5295,
-      "net": -4934
+      "additions": 410,
+      "deletions": 6508,
+      "net": -6098
     },
     "test": {
-      "additions": 44,
-      "deletions": 2374,
-      "net": -2330
+      "additions": 61,
+      "deletions": 3024,
+      "net": -2963
     },
     "requirement": "net production lines <= -3000",
-    "achieved": "net production lines = -4934"
+    "achieved": "net production lines = -6098"
   },
   "preserved_surfaces": [
     "/bff/agora/me",
@@ -85,14 +85,29 @@
       "result": "All preserved servant, interaction, research projection, operational readiness, dataset extraction, and route ownership suites pass (62 passed)."
     },
     {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py services/control-plane/bff/test_pkt005_sse_substrate_contract.py",
+      "exit_code": 0,
+      "result": "Preserved approvals SSE event publishing and substrate contract tests pass (16 passed); deleted obsolete ask001 sessions tests and cleaned dead agora identity imports."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest scripts/test_probe_bff_authenticated_live.py scripts/test_verify_bff_live_evidence_artifact.py scripts/test_release_gate_current_run.py scripts/test_agora_bundle_digests.py",
+      "exit_code": 1,
+      "result": "Probe, verifier, release-gate fixtures, and bundle digests suite passes 132 passed / 1 failed (the single failure is the pre-existing stage-0 workflow dispatch fixture identical to base; 10 stale signals/notes fixture regressions resolved)."
+    },
+    {
       "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py scripts/test_agora_bundle_digests.py",
       "exit_code": 0,
-      "result": "All 48 architectural invariant and bundle digest tests pass (48 passed)."
+      "result": "All 48 architectural invariant and bundle digest tests pass (39 test architecture + 9 digest passed); inventory synchronized."
     },
     {
       "command": ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
       "exit_code": 0,
       "result": "Routes match updated backend routes manifest snapshot (634 routes total, 405 deletions of dead surfaces)."
+    },
+    {
+      "command": "python3 scripts/agora_schema_bundle.py --verify",
+      "exit_code": 0,
+      "result": "All 14 Agora bundle indices (bundle_index.json through bundle_index.v1_13.json) verified successfully against schema files and OpenAPI specifications."
     }
   ]
 }

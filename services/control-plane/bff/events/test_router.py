@@ -49,7 +49,7 @@ def test_events_router_routes_uniqueness():
 
     assert len(events_get_routes) == 1
     assert len(stream_get_routes) == 1
-    assert len(router.routes) == 14
+    assert len(router.routes) == 12
 
 
 def test_events_router_list_events_and_filtering():
@@ -192,8 +192,6 @@ def test_events_router_native_sse_routes_flag():
         "/bff/sse/alerts",
         "/bff/sse/incidents/{incidentId}/timeline",
         "/bff/sse/deployment/events",
-        "/bff/sse/agora/signals",
-        "/bff/sse/agora/sessions/{sessionId}",
         "/bff/sse/review/updates",
     }
     for route in router.routes:
