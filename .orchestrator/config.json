@@ -225,14 +225,12 @@
         "Claude2"
       ],
       "Codex": [
-        "Codex2",
         "Claude",
         "Claude2",
         "Antigravity",
         "Antigravity2"
       ],
       "Codex2": [
-        "Codex",
         "Claude",
         "Claude2",
         "Antigravity",
