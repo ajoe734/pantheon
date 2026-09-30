@@ -205,6 +205,7 @@ from common import (
     prepare_activity_audit_unlocked,
     read_activity_log_tail_bytes,
     read_regular_file_bytes,
+    recent_activity_event_digests_unlocked,
     strict_activity_json_loads,
     utc_now as iso_now,
     canonical_task_state_identity_from_environment,
@@ -2255,6 +2256,43 @@ def _activity_event_index_unlocked(event_ids: set[str]) -> dict[str, str]:
         ) from exc
 
 
+# Clock-step slack when bounding which archives an outbox event could have
+# been rotated into.
+OUTBOX_ARCHIVE_MTIME_SLACK_SECONDS = 3600
+
+
+def _outbox_event_index_unlocked(events: list[dict[str, Any]]) -> dict[str, str]:
+    """Look up outbox events without revalidating the whole activity history.
+
+    An outbox event exists before it can be appended, so only the active log
+    and archives rotated after its ts can hold it. An event without a
+    parseable ts falls back to the whole-history index.
+    """
+
+    event_ids = {str(event["event_id"]) for event in events}
+    created = [_parse_utc_timestamp(event.get("ts")) for event in events]
+    if any(value is None for value in created):
+        return _activity_event_index_unlocked(event_ids)
+    not_before = (
+        min(value.timestamp() for value in created if value is not None)
+        - OUTBOX_ARCHIVE_MTIME_SLACK_SECONDS
+    )
+    try:
+        return recent_activity_event_digests_unlocked(
+            LOG_FILE,
+            event_ids,
+            not_before=not_before,
+        )
+    except ActivityAuditInvariantError:
+        raise
+    except RuntimeError as exc:
+        raise activity_audit_invariant_error(
+            exc,
+            log_path=LOG_FILE,
+            operation="status_outbox_recovery",
+        ) from exc
+
+
 def _active_activity_event_digests_unlocked(
     event_ids: set[str],
 ) -> dict[str, str]:
@@ -2554,7 +2592,7 @@ def recover_status_activity_outbox(
         existing = (
             {}
             if known_unappended
-            else _activity_event_index_unlocked(pending_event_ids)
+            else _outbox_event_index_unlocked(pending["events"])
         )
         missing: list[dict[str, Any]] = []
         for event in pending["events"]:
@@ -2577,7 +2615,7 @@ def recover_status_activity_outbox(
             raise
         final = _active_activity_event_digests_unlocked(pending_event_ids)
         if set(final) != pending_event_ids:
-            final = _activity_event_index_unlocked(pending_event_ids)
+            final = _outbox_event_index_unlocked(pending["events"])
         if any(
             final.get(str(event["event_id"])) != _canonical_json_sha256(event)
             for event in pending["events"]
