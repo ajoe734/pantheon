@@ -7,7 +7,7 @@
   "target_repo": "ajoe734/pantheon",
   "task_class": "corrective",
   "delivery_state": "ready_for_independent_review",
-  "base_sha": "0ab65eadec74c43ed6921b0d68b7e5c7f59152b8",
+  "base_sha": "7833ee1a28717b2b28f94f5f118f369be9665aca",
   "scope": {
     "owned": [
       "services/capital/models.py",
@@ -80,9 +80,9 @@
   "diff_budget": {
     "change_class": "corrective",
     "budget": 150,
-    "production_lines_added": 303,
-    "production_lines_deleted": 175,
-    "net_production_lines": 128,
+    "production_lines_added": 335,
+    "production_lines_deleted": 202,
+    "net_production_lines": 133,
     "under_budget": true
   },
   "verification": {
@@ -93,11 +93,11 @@
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/capital/test_tenant_scoping.py",
-        "result": "9 passed, 1 warning in 12.15s"
+        "result": "9 passed, 1 warning in 5.43s"
       },
       {
-        "command": "python3 scripts/git/diff_budget.py --base 0ab65eadec74c43ed6921b0d68b7e5c7f59152b8 --change-class corrective --budget 150",
-        "result": "net production lines +128 <= 150"
+        "command": "python3 scripts/git/diff_budget.py --base 7833ee1a28717b2b28f94f5f118f369be9665aca --change-class corrective --budget 150",
+        "result": "net production lines +133 <= 150"
       }
     ]
   }
