@@ -96,7 +96,7 @@ def isolated_state(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def scripted_downstream():
+def scripted_downstream(execution_approvals):
     """Install a downstream the test controls, across every plane."""
     original = dict(evo_main.receipt_registry)
     adapter = install_scripted_adapter(evo_main.receipt_registry, *ALL_PLANES)

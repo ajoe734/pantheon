@@ -62,6 +62,9 @@ from services.foundation import (
 )
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
+from services.governance.approval_authority import (
+    ApprovalInvalid, ApprovalUnavailable, configured_approval_reader,
+)
 
 # ---------------------------------------------------------------------------
 # Path bootstrap — platform objects live in control-plane/governance
@@ -2024,6 +2027,29 @@ def cancel_proposal(decision_id: str, body: CancelRequest):
 
 # --- Execute -----------------------------------------------------------------
 
+def _require_execution_approval(decision: EvolutionDecision) -> None:
+    """Re-read governance authority bound to this stored proposal before effects."""
+    if decision.decision_state != EvolutionDecisionState.APPROVED:
+        raise HTTPException(status_code=422, detail="Can only execute from approved")
+    try:
+        if not decision.approval_decision_id:
+            raise ApprovalInvalid("A governance approval is required to execute")
+        configured_approval_reader("evolution").get(
+            decision.approval_decision_id
+        ).require_valid(expected={
+            "tenant_id": decision.tenant_id,
+            "target_type": "evolution_execute",
+            "target_id": decision.decision_id,
+            "target_version": decision.target_version,
+            "subject.proposal_id": decision.decision_id,
+            "subject.proposal_content_digest": _immutable_decision_fingerprint(decision),
+        })
+    except ApprovalUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ApprovalInvalid as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
 @app.post("/api/evolution/proposals/{decision_id}/execute", response_model=DecisionResponse)
 def execute_proposal(decision_id: str, body: ExecuteRequest):
     """
@@ -2042,7 +2068,7 @@ def execute_proposal(decision_id: str, body: ExecuteRequest):
     -----------
     - Decision must be in ``approved`` state.
     - Actor tenant must match the decision's tenant.
-    - actor_role must be in the execution-roles set.
+    - Governance must authorize this exact proposal; body actor_role is ignored.
     - The receipt's plane must have a real receipt source; planes that have no
       automatic downstream are refused rather than approximated.
     - The downstream must report a terminal state.  A ``submitted`` dispatch
@@ -2055,6 +2081,7 @@ def execute_proposal(decision_id: str, body: ExecuteRequest):
     if decision is None:
         raise _not_found(decision_id)
     tenant = _guard_actor_tenant(decision, body.tenant_id)
+    _require_execution_approval(decision)
     try:
         freeze_mode = FreezeFollowthroughMode(body.freeze_mode)
     except ValueError as exc:
@@ -2127,7 +2154,7 @@ def execute_proposal(decision_id: str, body: ExecuteRequest):
 
     try:
         decision.execute(
-            body.actor_role,
+            EvolutionActorRole.EVOLUTION_CONTROLLER,
             body.actor_id,
             execution_result,
             cooldown_ends_at=outcome.primary_command.cooldown_ends_at,
@@ -2234,6 +2261,7 @@ def rollback_followthrough(decision_id: str, body: RollbackFollowthroughRequest)
             ),
         )
     tenant = _guard_actor_tenant(decision, body.tenant_id)
+    _require_execution_approval(decision)
     if body.execution_receipt is None:
         raise HTTPException(
             status_code=422,
@@ -2281,7 +2309,7 @@ def rollback_followthrough(decision_id: str, body: RollbackFollowthroughRequest)
 
     try:
         decision.execute(
-            body.actor_role,
+            EvolutionActorRole.EVOLUTION_CONTROLLER,
             body.actor_id,
             ExecutionResult(
                 status=(

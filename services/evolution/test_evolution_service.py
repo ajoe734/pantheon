@@ -261,7 +261,7 @@ def advance_to_reviewed(decision_id: str, apv_id: str = "apv-001") -> dict:
 
 
 @pytest.fixture(autouse=True)
-def scripted_receipts():
+def scripted_receipts(execution_approvals):
     """Give /execute a downstream it can really read back.
 
     An EvolutionDecision now only reaches ``executed`` on a terminal receipt the
@@ -589,7 +589,7 @@ def test_approve_wrong_role_rejected():
     assert r.status_code == 422
 
 
-def test_execute_wrong_role_rejected():
+def test_execute_uses_governance_authority_not_body_role():
     d = propose()
     advance_to_reviewed(d["decision_id"])
     advance_to_approved(d["decision_id"])
@@ -598,7 +598,8 @@ def test_execute_wrong_role_rejected():
         "actor_role": "reviewer_on_duty",  # not a valid execution role
         "actor_id": "actor-003",
     })
-    assert r.status_code == 422
+    assert r.status_code == 200, r.text
+    assert r.json()["review_chain"][-1]["actor_role"] == "evolution_controller"
 
 
 def test_medium_risk_operator_cannot_approve_without_risk_owner():
@@ -2304,4 +2305,3 @@ def test_learn_feedback_writeback_success():
     assert data["contributing_persona_ids"] == ["persona-b", "persona-c"]
     assert data["summary"] == "Sharpe degraded; retrain requested."
     assert any(ref["ref_id"] == d_id for ref in data["evidence_refs"])
-
