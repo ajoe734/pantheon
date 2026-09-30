@@ -468,6 +468,18 @@ else
   log "published verified supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
 fi
 
+# Shared test interpreter handed to workers as PANTHEON_DEPENDENCY_PYTHON
+# (worker_runtime.dependency_python). Without it every worker builds its own
+# venv, and a worker that cannot cannot run tests at all. Non-fatal: workers
+# fall back to provisioning their own interpreter.
+WORKER_TEST_PYTHON_PARENT="${PANTHEON_WORKER_TEST_PYTHON_DIR:-${DEPLOY_ROOT}/runtime/worker-test-python}"
+if worker_test_output="$(python3 -B "${candidate_root}/scripts/dev/ensure_worker_test_python.py" \
+  --root "$candidate_root" --parent "$WORKER_TEST_PYTHON_PARENT" 2>&1)"; then
+  log "worker test interpreter ready: $worker_test_output"
+else
+  log "WARNING: worker test interpreter build failed; workers keep self-provisioning: ${worker_test_output: -500}"
+fi
+
 log "replacing supervisor from explicit config identity=${active_root:-none} candidate=$candidate_root coordination=$COORDINATION_ROOT"
 if ! "$candidate_root/scripts/promote-supervisor-runtime.sh" \
   --promote --repo "$candidate_root" --status-root "$COORDINATION_ROOT" \

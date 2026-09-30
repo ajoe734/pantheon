@@ -17513,6 +17513,21 @@ def publish_scheduler_cadence_completion(
     return True
 
 
+def export_worker_dependency_python(config: Mapping[str, Any]) -> None:
+    """Hand workers the shared test interpreter (scripts/dev/ensure_worker_test_python.py).
+
+    Adapters copy this process's environment into every worker, so one export
+    here reaches all of them. An explicit operator setting wins, and a missing
+    interpreter is skipped rather than handed out.
+    """
+    configured = str((config.get("worker_runtime") or {}).get("dependency_python") or "").strip()
+    if not configured or os.environ.get("PANTHEON_DEPENDENCY_PYTHON"):
+        return
+    interpreter = Path(configured).expanduser()
+    if interpreter.is_file():
+        os.environ["PANTHEON_DEPENDENCY_PYTHON"] = str(interpreter)
+
+
 def main() -> int:
     global SUPERVISOR_LOG_QUIET
     args = parse_args()
@@ -17522,6 +17537,7 @@ def main() -> int:
     validate_supervisor_launch_authority(config, supervisor_path=Path(__file__))
     validate_provider_accounts(config)
     check_status_root_consistency(config, allow_isolated=args.allow_isolated_status_root)
+    export_worker_dependency_python(config)
     if args.request_delivery_health_refresh:
         with runtime_state_update(config) as state:
             request_delivery_health_refresh(state)

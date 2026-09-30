@@ -1162,6 +1162,8 @@ class AgoraResearchService:
             decision_event = {
                 "spec_version": "1.0",
                 "decision_event_id": f"trevt-cpm-{artifact_id[:12]}-{uuid.uuid4().hex[:8]}",
+                "tenant_id": pool.get("tenant_id"),
+                "user_id": pool.get("user_id"),
                 "event_kind": event_kind,
                 "origin": "trader_request",
                 "strategy_id": member_strategy_id,

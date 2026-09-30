@@ -1,0 +1,46 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "AGORA-TRADING-INTENT-READBACK-001",
+  "base_commit": "da1f1e402362deaab601727cdadf07cf8730da1b",
+  "implementation_commit": "228aadfcf",
+  "change_class": "corrective",
+  "net_production_lines": 46,
+  "net_production_line_budget": 150,
+  "acceptance": {
+    "etag": "Detail GET supplies a strong event ETag; decision POST validates it, rejects stale versions with 412 and missing If-Match with 428. Queue items carry their own etag; the queue header identifies the page. Existing If-Match wildcard semantics remain supported.",
+    "intent_ref": "Approve/modify atomically persist the event state, intent_ref and draft intent in the existing Postgres transaction. A changed event at persistence time returns 412 without an orphan intent.",
+    "readback": "Intent detail retains data/status/lifecycle_state and adds top-level handoffs, including submitted and withdrawn states across new Postgres store instances.",
+    "isolation": "Tenant and owner checks guard event detail/decision, intent detail/handoff/withdraw, event pagination, aggregate counts and workspace source availability. Unscoped legacy rows fail closed.",
+    "safety": "Shadow/paper/canary/live handoffs retain existing request-only stage/type/queue rules; converted state is rejected. No order or broker client was added.",
+    "scope_completion": "Both existing event producers now copy trusted tenant/user ownership into the trading-room projection. Event schema permits ownership, intent_ref and queue-item etag; the existing two-instance architecture fixture now declares its owner. These adjacent changes prevent the scoped reads from hiding newly produced events."
+  },
+  "validation": [
+    {
+      "command": "TEST_DATABASE_URL=<isolated local postgres> timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/trading_room services/control-plane/bff/agora/decision_projection/test_agora_projections_decision_producer.py",
+      "result": "91 passed, 0 skipped, 3 deprecation warnings",
+      "exit_code": 0
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "result": "39 passed, 3 deprecation warnings",
+      "exit_code": 0
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/trading_room/test_trading_room.py -k etag_and_intent_reload",
+      "result": "4 passed after queue-item etag schema completion; 75 deselected",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD --change-class corrective --budget 150",
+      "result": "production +69/-23 = +46; within budget",
+      "exit_code": 0
+    }
+  ],
+  "environment": "Task-local provisioned Python 3.12; isolated postgres:16-alpine container bound to loopback; no hosted deployment or capital-affecting writes.",
+  "review": "Pending independent Claude review; exact PR/head/manifest binding is supplied by governed handoff.",
+  "limitations": [
+    "Legacy records without ownership remain inaccessible; ownership is not inferred or backfilled.",
+    "Memory store retains its documented single-process, thread-unsafe development semantics.",
+    "This evidence proves local mounted routes and Postgres persistence, not hosted deployment."
+  ]
+}
