@@ -544,7 +544,6 @@ def test_project_strategy_dto_rejects_overlay() -> None:
         normalize_lifecycle_state=lambda s: str(s or "draft"),
         normalize_risk_level=lambda r: str(r or "medium"),
         strategy_persona_idempotency_check=lambda *a: None,
-        strategy_persona_action_command=None,
         strategy_persona_idempotency={},
         strategy_seed_replication_idempotency={},
         strategy_seed_review_idempotency={},

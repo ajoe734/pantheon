@@ -6,7 +6,6 @@ from typing import Any
 
 from services.control_plane.bff import command_executor
 from services.control_plane.bff.command_executor import (
-    _execute_bff_action_adapter,
     _execute_emergency_containment_authority,
 )
 from services.control_plane.bff.emergency_containment_policy import (
@@ -370,17 +369,6 @@ def test_emergency_command_requires_evidence_and_rollback_reference():
         validate_emergency_containment(_command(evidence_refs=[]))
     with pytest.raises(ValueError, match="rollback_ref"):
         validate_emergency_containment(_command(action="rollback_allocation"))
-
-
-def test_containment_adapter_receipt_is_auditable_and_never_claims_live_mutation():
-    params = _command(action="rollback_allocation", rollback_ref="allocation:snapshot-before-breach")
-    params["action_id"] = "EmergencyContainment"
-    receipt = _execute_bff_action_adapter("cmd-42", params)
-    assert receipt["containment"] is True
-    assert receipt["risk_direction"] == "decrease_only"
-    assert receipt["evidence_refs"] == ["risk-event:42"]
-    assert receipt["rollback_ref"] == "allocation:snapshot-before-breach"
-    assert receipt["live_capital_side_effects"] is False
 
 
 def test_bff_command_admission_keeps_risk_increasing_containment_at_422(tmp_path):

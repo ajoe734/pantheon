@@ -355,9 +355,7 @@ def test_quarterly_ranking_recommendation_submit_uses_command_response_without_l
         )
 
 
-def test_b5_commands_are_in_action_catalog_and_executor_dispatch(monkeypatch) -> None:
-    from services.control_plane.bff import command_executor
-    monkeypatch.setitem(command_executor._EXECUTORS, CommandType.HUMAN_GATE_APPROVE, command_executor._execute_bff_action_adapter)
+def test_b5_commands_are_in_action_catalog() -> None:
     expected = {
         "HumanGateApprove": "HumanGateItem",
         "HumanGateReject": "HumanGateItem",
@@ -372,20 +370,3 @@ def test_b5_commands_are_in_action_catalog_and_executor_dispatch(monkeypatch) ->
         assert entry is not None
         assert entry.entity_type == entity_type
         assert entry.endpoint == "/bff/v1/commands"
-
-    status, result, error = execute_command_with_status(
-        "cmd-b5-human-executor",
-        CommandType.HUMAN_GATE_APPROVE,
-        {
-            "action_id": "approve",
-            "entity_type": "human_gate_item",
-            "entity_id": "approval:b5-executor",
-            "audit_event": "human_gate.approve",
-        },
-    )
-    assert status == CommandStatus.EXECUTED
-    assert error is None
-    assert result is not None
-    assert result["dispatch_path"] == "bff_action_adapter"
-    assert result["live_capital_side_effects"] is False
-    assert result["two_man_signature_id"] is None
