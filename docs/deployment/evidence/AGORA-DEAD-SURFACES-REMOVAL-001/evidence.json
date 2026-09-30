@@ -7,22 +7,22 @@
   "reviewer": "Codex",
   "budget_summary": {
     "production": {
-      "additions": 420,
-      "deletions": 7275,
-      "net": -6855
+      "additions": 423,
+      "deletions": 7142,
+      "net": -6719
     },
     "test": {
       "additions": 77,
-      "deletions": 3170,
-      "net": -3093
+      "deletions": 3033,
+      "net": -2956
     },
     "docs_evidence": {
-      "additions": 159,
-      "deletions": 48,
-      "net": 111
+      "additions": 176,
+      "deletions": 38,
+      "net": 138
     },
     "requirement": "net production lines <= -3000",
-    "achieved": "net production lines = -6855"
+    "achieved": "net production lines = -6719"
   },
   "preserved_surfaces": [
     "/bff/agora/me",
@@ -77,7 +77,7 @@
     {
       "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD --change-class simplify --budget -3000",
       "exit_code": 0,
-      "result": "Diff budget check passes with net production lines -6855 (added 420, deleted 7275), net test lines -3093 (added 77, deleted 3170), and net docs/evidence +112 (added 160, deleted 48), exceeding the -3000 net production line reduction requirement."
+      "result": "Diff budget check passes with net production lines -6719 (added 423, deleted 7142), net test lines -2956 (added 77, deleted 3033), and net docs/evidence +138 (added 176, deleted 38), exceeding the -3000 net production line reduction requirement."
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff --collect-only",
@@ -117,7 +117,7 @@
     {
       "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/governance/test_decision_journal_write_owner.py",
       "exit_code": 0,
-      "result": "Decision journal write owner tests pass (1 passed, exit code 0); retired obsolete daily assertions while retaining tenant-isolation journal integrity."
+      "result": "Decision journal write owner tests pass (38 passed, exit code 0); retired obsolete daily assertions while retaining tenant-isolation journal integrity."
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py scripts/test_agora_bundle_digests.py",
@@ -127,7 +127,7 @@
     {
       "command": ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
       "exit_code": 0,
-      "result": "Routes match updated backend routes manifest snapshot (634 routes total, 405 deletions of dead surfaces, exit code 0)."
+      "result": "Routes match updated backend routes manifest snapshot (635 routes total, 405 deletions of dead surfaces, exit code 0)."
     },
     {
       "command": "python3 scripts/agora_schema_bundle.py --verify",

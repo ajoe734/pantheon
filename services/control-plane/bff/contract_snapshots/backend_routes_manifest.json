@@ -3,7 +3,7 @@
     "snapshot_date": "2026-09-30",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 634,
+    "total_routes": 635,
     "status_values": [
       "implemented",
       "alias",
@@ -759,6 +759,12 @@
     {
       "method": "POST",
       "path": "/bff/agora/workshops/{param}/research-plans",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/workshops/{param}/research-plans/servant-proposal",
       "family": "agora-core",
       "status": "implemented"
     },
