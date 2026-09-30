@@ -16,7 +16,8 @@ sys.modules[_spec.name] = ad
 _spec.loader.exec_module(ad)
 
 SUBJECTS = {
-    'rebalance_apply': {'plan_id': 'p1', 'plan_digest': 'sha256:a', 'capital_pool_id': 'pool1'},
+    'rebalance_apply': {'plan_id': 'p1', 'plan_digest': 'sha256:a', 'capital_pool_id': 'pool1',
+                        'risk_direction': 'reduce'},
     'capital_binding_activation': {'binding_id': 'b1', 'persona_id': 'per1', 'capital_pool_id': 'pool1',
                                    'risk_direction': 'reduce'},
     'persona_lifecycle_transition': {'persona_id': 'per1', 'from_state': 'paper', 'to_state': 'live'},
@@ -95,6 +96,30 @@ def test_risk_increasing_capital_needs_two_distinct_deciders():
                     expires_at='2099-01-01T00:00:00Z')
     assert decision.decision_state == ad.DecisionState.DECIDED
     ApprovalEvidence.model_validate(snapshot(decision)).require_valid()
+
+
+def test_risk_increasing_rebalance_needs_two_distinct_deciders():
+    subject = {**SUBJECTS['rebalance_apply'], 'risk_direction': 'increase'}
+    decision = proposed('rebalance_apply', subject=subject, risk='high')
+    decide(decision, 'risk-a', role='risk_owner')
+    assert decision.decision_state == ad.DecisionState.UNDER_REVIEW
+    with pytest.raises(ValueError, match='already approved'):
+        decision.decide('approved', 'again', actor_role='risk_owner', actor_id='risk-a')
+    body = snapshot(decision) | {'decision_state': 'decided', 'decision': 'approved', 'actor_id': 'risk-a',
+                                 'actor_role': 'risk_owner',
+                                 **{k: approval_snapshot()[k] for k in ('decided_at', 'expires_at', 'recorded_at', 'authority_status', 'controller_record_ref')}}
+    with pytest.raises(ApprovalInvalid, match='insufficient'):
+        ApprovalEvidence.model_validate(body).require_valid()
+    decision.decide('approved', 'second', actor_role='risk_owner', actor_id='risk-b',
+                    expires_at='2099-01-01T00:00:00Z')
+    assert decision.decision_state == ad.DecisionState.DECIDED
+    ApprovalEvidence.model_validate(snapshot(decision)).require_valid()
+
+
+def test_rebalance_missing_risk_classification_rejected():
+    subject = {k: v for k, v in SUBJECTS['rebalance_apply'].items() if k != 'risk_direction'}
+    with pytest.raises(ValueError, match='risk_direction'):
+        decide(proposed('rebalance_apply', subject=subject))
 
 
 @pytest.mark.parametrize('target_type', TYPES)
