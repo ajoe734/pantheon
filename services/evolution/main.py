@@ -2041,6 +2041,7 @@ def _require_execution_approval(decision: EvolutionDecision) -> None:
             "target_type": "evolution_execute",
             "target_id": decision.decision_id,
             "target_version": decision.target_version,
+            "risk_level": _enum_value(decision.risk_level),
             "subject.proposal_id": decision.decision_id,
             "subject.proposal_content_digest": _immutable_decision_fingerprint(decision),
         })
