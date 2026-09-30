@@ -518,6 +518,44 @@ def apply_failure(
     )
 
 
+def apply_worker_progress(
+    snapshot: Mapping[str, Any] | None,
+    *,
+    endpoint_id: str,
+    progress_at: datetime,
+    valid_for_seconds: int = 300,
+) -> dict[str, Any]:
+    """Clear an endpoint auth verdict that later model output on it disproves.
+
+    A probe can read a CLI's silent-auth startup as "not logged in" (no output
+    yet while it authenticates), and an UNAVAILABLE entry never expires, so one
+    misread keeps the lane out of dispatch and reassigns its tasks. A worker on
+    the same endpoint streaming meaningful model output after that verdict
+    proves the credential works. Only an endpoint-level auth verdict older than
+    the output is cleared; quota and every other reason are left untouched.
+    """
+
+    entry = endpoint_health_entry(snapshot, endpoint_id)
+    observed = _parse_time(entry.get("observed_at"))
+    if (
+        entry.get("state") != DeliveryHealthState.UNAVAILABLE.value
+        or str(entry.get("reason_kind") or "") != "auth"
+        or observed is None
+        or progress_at <= observed
+    ):
+        return normalize_delivery_health(snapshot)
+    return _write_entry(
+        snapshot,
+        bucket="endpoints",
+        identity=endpoint_id,
+        state=DeliveryHealthState.HEALTHY,
+        observed_at=progress_at,
+        valid_until=progress_at + timedelta(seconds=max(1, int(valid_for_seconds))),
+        source="worker_progress",
+        evidence_endpoint=endpoint_id,
+    )
+
+
 def _norm(kind: object) -> str:
     return str(kind or "").strip().lower()
 
