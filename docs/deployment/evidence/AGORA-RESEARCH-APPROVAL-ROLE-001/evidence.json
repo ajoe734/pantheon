@@ -1,0 +1,25 @@
+{
+  "task": "AGORA-RESEARCH-APPROVAL-ROLE-001",
+  "owner": "Codex",
+  "reviewer": "Claude2",
+  "base_commit": "fcfaf44f2cd25e4940126ba0887c4f626935bfae",
+  "implementation_anchor": "bb71d540d",
+  "behavior": [
+    "Approve and cancel share service authorization: exact plan tenant, matching workshop tenant when present, and workshop owner with write role or explicit operator role.",
+    "Other same-tenant writers receive 403; foreign tenants and plans without tenant identity receive 404.",
+    "The workshop owner can differ from the plan author. Operator decisions retain plan ownership while recording the actual caller in audit and approval records.",
+    "Viewer writes are denied even in permissive stub mode, with both injected and default write-role checks.",
+    "General private reads and research dispatch remain unchanged. Operators may decide tenant-scoped plans whose workshop session is absent; other callers require a persisted workshop ownership record."
+  ],
+  "validation": {
+    "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q -rs services/control-plane/bff/agora/research/test_approval_roles.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_agora_research_run_projection.py services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py",
+    "exit_code": 0,
+    "result": "80 passed, 1 skipped in 62.61s",
+    "skip": "PostgreSQL integration case: neither REVIEW_TEST_DSN nor TEST_DATABASE_URL is set",
+    "coverage": "Mounted and direct service approve/cancel matrix; owner, operator, author/approver, reviewer, admin, viewer, foreign tenant; rejected calls leave plans, audit and published events unchanged; existing CAS, dispatch, outbox and provenance regressions.",
+    "updated_regression": "The former same-tenant operator approval=404 expectation now expects 200 while retaining private read isolation assertions.",
+    "checks": ["git diff --check", "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD --change-class corrective --budget 30"],
+    "net_production_lines": 2
+  },
+  "delivery": "Independent review and supervisor integration pending; no hosted deployment claim."
+}
