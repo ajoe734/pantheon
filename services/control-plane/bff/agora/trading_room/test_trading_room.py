@@ -2381,6 +2381,9 @@ def test_decision_etag_and_intent_reload(decision):
     page = client.get(url.rsplit("/", 1)[0], headers=_write_headers())
     assert page.headers["etag"]
     assert page.json()["items"][0]["etag"] == etag
+    import jsonschema
+    with open(_SCHEMA_PATH) as schema_file:
+        jsonschema.validate(page.json()["items"][0], json.load(schema_file))
     headers = {**_write_headers("reload"), "If-Match": etag}
     missing = {k: v for k, v in headers.items() if k != "If-Match"}
     assert client.post(url + "/decisions", headers=missing, json={"decision": decision}).status_code == 428
@@ -2393,7 +2396,6 @@ def test_decision_etag_and_intent_reload(decision):
     intent_id = result.json()["data"]["intent_ref"]
     if decision in {"approve", "modify"}:
         assert after.json()["intent_ref"] == intent_id
-        import jsonschema
         with open(_SCHEMA_PATH) as schema_file:
             jsonschema.validate(after.json(), json.load(schema_file))
         aggregate = client.get("/bff/agora/trading-room", headers=headers).json()
