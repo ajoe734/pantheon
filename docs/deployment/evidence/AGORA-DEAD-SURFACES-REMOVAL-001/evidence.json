@@ -7,22 +7,22 @@
   "reviewer": "Codex",
   "budget_summary": {
     "production": {
-      "additions": 437,
-      "deletions": 6704,
-      "net": -6267
+      "additions": 410,
+      "deletions": 6508,
+      "net": -6098
     },
     "test": {
       "additions": 61,
-      "deletions": 3302,
-      "net": -3241
+      "deletions": 3024,
+      "net": -2963
     },
     "docs_evidence": {
-      "additions": 136,
-      "deletions": 46,
-      "net": 90
+      "additions": 156,
+      "deletions": 33,
+      "net": 123
     },
     "requirement": "net production lines <= -3000",
-    "achieved": "net production lines = -6267"
+    "achieved": "net production lines = -6098"
   },
   "preserved_surfaces": [
     "/bff/agora/me",
@@ -77,7 +77,7 @@
     {
       "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD --change-class simplify --budget -3000",
       "exit_code": 0,
-      "result": "Diff budget check passes with net production lines -6267 (added 437, deleted 6704), net test lines -3241 (added 61, deleted 3302), and net docs/evidence +90 (added 136, deleted 46), exceeding the -3000 net production line reduction requirement."
+      "result": "Diff budget check passes with net production lines -6098 (added 410, deleted 6508), net test lines -2963 (added 61, deleted 3024), and net docs/evidence +123 (added 156, deleted 33), exceeding the -3000 net production line reduction requirement."
     },
     {
       "command": "Full recursive BFF test suite collection across root and all subdirectories (.venv-pantheon/bin/python3 -m pytest --collect-only)",
