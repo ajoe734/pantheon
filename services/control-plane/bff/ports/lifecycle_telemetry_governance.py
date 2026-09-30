@@ -19,6 +19,9 @@ import os
 from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, Protocol, Tuple, Union, runtime_checkable
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from services.control_plane.bff.trade_journey_projection_store import (
     configured_projection_reader,
@@ -238,7 +241,7 @@ class LifecycleTelemetryGovernancePort(
 # =====================================================================
 
 class DomainIncidentPort:
-    """Incident and Postmortem domain reader adapter."""
+    """Incident owner reads/writes and Postmortem domain reads."""
 
     def __init__(
         self,
@@ -247,11 +250,55 @@ class DomainIncidentPort:
         postmortems: Optional[Dict[str, Dict[str, Any]]] = None,
         evolution_decisions: Optional[Dict[str, Dict[str, Any]]] = None,
         rollbacks_by_incident: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        incidents_api_url: Optional[str] = None,
+        opener: Optional[Any] = None,
     ) -> None:
-        self._incidents = dict(incidents or {})
+        self._incidents = dict(incidents) if incidents is not None else None
         self._postmortems = dict(postmortems or {})
         self._evolution_decisions = dict(evolution_decisions or {})
         self._rollbacks_by_incident = dict(rollbacks_by_incident or {})
+        self._incidents_api_url = (
+            incidents_api_url
+            or os.getenv("PANTHEON_INCIDENTS_API_URL")
+            or os.getenv("PANTHEON_INCIDENTS_URL")
+        )
+        if self._incidents_api_url:
+            self._incidents_api_url = self._incidents_api_url.strip().rstrip("/")
+        self._opener = opener or urllib.request.urlopen
+        self._last_error = False
+
+    def dataset_source(self) -> str:
+        return "typed_store" if self._incidents is not None else ("unavailable" if not self._incidents_api_url or self._last_error else "service_client")
+
+    def is_available(self) -> bool:
+        return self.dataset_source() != "unavailable"
+
+    def _http_json(
+        self, path: str, method: str = "GET", payload: Optional[Dict[str, Any]] = None,
+        *, auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
+    ) -> Any:
+        if not self._incidents_api_url:
+            self._last_error = True
+            raise RuntimeError("PANTHEON_INCIDENTS_API_URL is unconfigured")
+        data = json.dumps(payload).encode("utf-8") if payload is not None else None
+        headers = {"Accept": "application/json", **({"Content-Type": "application/json"} if data else {})}
+        if auth_token:
+            headers["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
+        if mfa_token:
+            headers["X-MFA-Token"] = mfa_token
+        req = urllib.request.Request(f"{self._incidents_api_url}{path}", data=data, headers=headers, method=method)
+        try:
+            with self._opener(req, timeout=5.0) as resp:
+                self._last_error = False
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise
+            self._last_error = True
+            raise
+        except Exception:
+            self._last_error = True
+            raise
 
     def list_incidents(
         self,
@@ -259,36 +306,94 @@ class DomainIncidentPort:
         severity: Optional[str] = None,
         affected_pool_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        incidents = list(self._incidents.values())
+        if self._incidents is not None:
+            incidents = list(self._incidents.values())
+        elif not self._incidents_api_url:
+            self._last_error = True
+            return []
+        else:
+            q = [("severity", severity)] if severity else []
+            if affected_pool_id:
+                q.append(("capital_pool_id", affected_pool_id))
+            st_parts = [s.strip() for s in status.split(",") if s.strip()] if status else []
+            if len(st_parts) == 1:
+                q.append(("status", st_parts[0].lower()))
+            p = dict(q)
+            try:
+                incidents = [r for r in self._http_json(f"/api/incidents{('?' + urllib.parse.urlencode(p)) if p else ''}") if isinstance(r, dict)]
+            except Exception:
+                return []
         if status:
-            requested_statuses = {
-                token.strip().lower()
-                for token in status.split(",")
-                if token.strip()
-            }
-            incidents = [
-                i for i in incidents
-                if str(i.get("status") or "").lower() in requested_statuses
-            ]
+            requested = {s.strip().lower() for s in status.split(",") if s.strip()}
+            incidents = [i for i in incidents if str(i.get("status") or "").lower() in requested]
         if severity:
-            incidents = [i for i in incidents if i.get("severity") == severity]
+            incidents = [i for i in incidents if str(i.get("severity") or "").lower() == severity.lower()]
         if affected_pool_id:
-            incidents = [i for i in incidents if i.get("capital_pool_id") == affected_pool_id]
-
-        anchor = [
-            incident
-            for incident in incidents
-            if str(incident.get("incident_id") or incident.get("id") or "") == "inc-20260410-001"
-        ]
-        rest = [
-            incident
-            for incident in incidents
-            if str(incident.get("incident_id") or incident.get("id") or "") != "inc-20260410-001"
-        ]
+            incidents = [i for i in incidents if (i.get("capital_pool_id") or i.get("affected_pool_id")) == affected_pool_id]
+        anchor = [i for i in incidents if str(i.get("incident_id") or i.get("id") or "") == "inc-20260410-001"]
+        rest = [i for i in incidents if str(i.get("incident_id") or i.get("id") or "") != "inc-20260410-001"]
         return anchor + sorted(rest, key=lambda x: str(x.get("created_at") or ""), reverse=True)
 
     def get_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
-        return self._incidents.get(incident_id)
+        cid = incident_id.strip()
+        if self._incidents is not None:
+            return self._incidents.get(cid)
+        if not self._incidents_api_url:
+            self._last_error = True
+            return None
+        try:
+            return self._http_json(f"/api/incidents/{urllib.parse.quote(cid, safe='')}")
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            self._last_error = True
+            return None
+        except Exception:
+            self._last_error = True
+            return None
+
+    def _err(self, exc: Any, nf_msg: str = "") -> None:
+        self._last_error = True
+        from fastapi import HTTPException
+        if isinstance(exc, urllib.error.HTTPError) and 400 <= exc.code < 500:
+            self._last_error = False
+            error_code = "RESOURCE_NOT_FOUND" if exc.code == 404 else "DOWNSTREAM_ERROR"
+            message = nf_msg if exc.code == 404 else f"Incident service returned HTTP {exc.code}"
+            raise HTTPException(status_code=exc.code, detail={"error": {"code": error_code, "message": message, "status_code": exc.code}}) from exc
+        code = getattr(exc, "code", 503) if isinstance(exc, urllib.error.HTTPError) else 503
+        msg = f"Incident service returned HTTP {code}" if isinstance(exc, urllib.error.HTTPError) else f"Incident service unavailable: {exc}"
+        raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": msg, "status_code": 503}}) from (exc if isinstance(exc, BaseException) else None)
+
+    def create_incident(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self._incidents is not None:
+            self._incidents[str(payload.get("incident_id") or payload.get("id") or "")] = payload
+            return payload
+        try:
+            return self._http_json("/api/incidents", method="POST", payload=payload)
+        except Exception as exc:
+            self._err(exc, "Incident endpoint not found")
+
+    def update_incident_status(
+        self,
+        incident_id: str,
+        status: str,
+        resolved_at: Optional[str] = None,
+        *,
+        auth_token: Optional[str] = None,
+        mfa_token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        cid, body = incident_id.strip(), {"status": status, **({"resolved_at": resolved_at} if resolved_at else {})}
+        if self._incidents is not None:
+            inc = self._incidents.setdefault(cid, {"incident_id": cid})
+            inc.update(body)
+            return inc
+        try:
+            return self._http_json(
+                f"/api/incidents/{urllib.parse.quote(cid, safe='')}/status", method="POST", payload=body,
+                auth_token=auth_token, mfa_token=mfa_token,
+            )
+        except Exception as exc:
+            self._err(exc, f"Incident {cid!r} does not exist")
 
     def list_postmortems(self, time_range: Optional[str] = None) -> List[Dict[str, Any]]:
         return list(self._postmortems.values())
@@ -1181,6 +1286,15 @@ class CompositeLifecycleTelemetryGovernancePort:
 
     def get_rollbacks_by_incident(self, incident_id: str) -> List[Dict[str, Any]]:
         return self.incidents.get_rollbacks_by_incident(incident_id)
+
+    def create_incident(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return getattr(self.incidents, "create_incident")(payload)
+
+    def update_incident_status(self, incident_id: str, status: str, resolved_at: Optional[str] = None) -> Dict[str, Any]:
+        return getattr(self.incidents, "update_incident_status")(incident_id, status=status, resolved_at=resolved_at)
+
+    def dataset_source(self, dataset: str = "incidents") -> str:
+        return getattr(self.incidents, "dataset_source", lambda: "typed_store")() if dataset == "incidents" else "typed_store"
 
     # LifecycleReaderPort
     def list_loop_runs(self) -> Tuple[bool, List[Dict[str, Any]]]:
