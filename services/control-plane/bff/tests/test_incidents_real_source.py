@@ -22,7 +22,7 @@ import urllib.parse
 import uuid
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 import os
@@ -33,10 +33,11 @@ from services.control_plane.bff.auth import policy as auth_policy
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.command_adapters.registry import dispatch_domain_command
 from services.control_plane.bff.command_adapters.base import ActionUnavailableError
+from services.control_plane.bff.command_executor import execute_command_with_status
 from services.control_plane.bff.core.errors import register_error_handlers
 from services.control_plane.bff.incidents.router import create_incident_router
 from services.control_plane.bff.incidents.service import IncidentService
-from services.control_plane.bff.models import CommandType, ObjectType, TargetObject
+from services.control_plane.bff.models import CommandStatus, CommandType, ObjectType, TargetObject
 from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
     CompositeLifecycleTelemetryGovernancePort,
@@ -59,6 +60,7 @@ class StubIncidentsServer:
         }
         self.status_calls: List[Dict[str, Any]] = []
         self.is_healthy: bool = True
+        self.status_rejection: Optional[int] = None
         self.server: Optional[HTTPServer] = None
         self.thread: Optional[threading.Thread] = None
         self.port: int = 0
@@ -139,9 +141,19 @@ class StubIncidentsServer:
                         self.wfile.write(json.dumps(body).encode("utf-8"))
                         return
                     elif len(parts) == 4 and parts[3] == "status":  # POST /api/incidents/{id}/status
-                        inc_id = parts[2]
-                        outer.status_calls.append({"incident_id": inc_id, "body": body})
-                        inc = outer.incidents.get(inc_id, {"incident_id": inc_id})
+                        if outer.status_rejection:
+                            self.send_response(outer.status_rejection)
+                            self.end_headers()
+                            self.wfile.write(b'{"error": "status change rejected"}')
+                            return
+                        inc_id = urllib.parse.unquote(parts[2])
+                        outer.status_calls.append({"incident_id": inc_id, "body": body, "headers": dict(self.headers)})
+                        if inc_id not in outer.incidents:
+                            self.send_response(404)
+                            self.end_headers()
+                            self.wfile.write(b'{"error": "not found"}')
+                            return
+                        inc = outer.incidents[inc_id]
                         inc["status"] = body.get("status", "investigating")
                         if "resolved_at" in body:
                             inc["resolved_at"] = body["resolved_at"]
@@ -260,6 +272,20 @@ def _build_app(stub_store: StubReadStoreWithIncidentPort, tmp_path, submit_actio
 _AUTH = {"Authorization": "Bearer tester:operator"}
 
 
+@pytest.fixture()
+def status_writer_calls(monkeypatch):
+    """Observe the shared writer while keeping the real owner HTTP call."""
+    calls = []
+    original = DomainIncidentPort.update_incident_status
+
+    def record(self, incident_id, status, *args, **kwargs):
+        calls.append((incident_id, status))
+        return original(self, incident_id, status, *args, **kwargs)
+
+    monkeypatch.setattr(DomainIncidentPort, "update_incident_status", record)
+    return calls
+
+
 def test_incident_reads_come_from_incidents_service(incident_service_env, tmp_path) -> None:
     """Acceptance 1: Incident list and detail read from incidents service."""
     stub_srv, base_url = incident_service_env
@@ -282,7 +308,7 @@ def test_incident_reads_come_from_incidents_service(incident_service_env, tmp_pa
     assert resp_detail.json()["data"]["status"] == "open"
 
 
-def test_rest_routes_reach_status_endpoint_and_return_200(incident_service_env, tmp_path) -> None:
+def test_rest_routes_reach_status_endpoint_and_return_200(incident_service_env, tmp_path, status_writer_calls) -> None:
     """Acceptance 2: resolve, start-mitigation, escalate-incident reach POST /api/incidents/{id}/status
 
     and BFF returns the read-back status with HTTP 200 (hardcoded 202 is deleted).
@@ -309,6 +335,9 @@ def test_rest_routes_reach_status_endpoint_and_return_200(incident_service_env, 
     assert resp_res.json()["status"] == "resolved"
     assert stub_srv.incidents["inc-real-001"]["status"] == "resolved"
     assert any(c["incident_id"] == "inc-real-001" and c["body"]["status"] == "resolved" for c in stub_srv.status_calls)
+    assert status_writer_calls == [
+        ("inc-real-001", "investigating"), ("inc-real-001", "investigating"), ("inc-real-001", "resolved"),
+    ]
 
 
 def test_alert_acknowledge_persists_in_incidents_service_and_survives_restart(incident_service_env, tmp_path) -> None:
@@ -372,7 +401,7 @@ def test_alert_without_durable_owner_fails_closed(incident_service_env, tmp_path
     assert err["details"]["precondition_failed"] == "durable_owner_unavailable"
 
 
-def test_command_adapters_incident_and_alert_actions(incident_service_env) -> None:
+def test_command_adapters_incident_and_alert_actions(incident_service_env, status_writer_calls) -> None:
     """Acceptance 2 & 4: IncidentAction and RiskAlertAction reach /status via IncidentCommandAdapter."""
     stub_srv, base_url = incident_service_env
 
@@ -413,6 +442,96 @@ def test_command_adapters_incident_and_alert_actions(incident_service_env) -> No
             params={"alert_id": "alert-runtime-memory-99", "action_id": "acknowledge"},
         )
     assert "durable owner" in str(exc_info.value)
+    assert status_writer_calls == [
+        ("inc-real-001", "resolved"), ("inc-real-001", "investigating"), ("inc-real-001", "investigating"),
+    ]
+
+
+@pytest.mark.parametrize("token", ["tester:operator", "Bearer tester:operator"])
+@pytest.mark.parametrize("command_type", [CommandType.INCIDENT_ACTION, CommandType.RISK_ALERT_ACTION, CommandType.ALERT_ACKNOWLEDGE])
+def test_shared_writer_preserves_command_credentials_and_encoded_id(incident_service_env, token, command_type):
+    server, _ = incident_service_env
+    incident_id = "inc-special/with space"
+    server.incidents[incident_id] = {"incident_id": incident_id, "status": "open", "title": "Owner data"}
+    is_incident = command_type == CommandType.INCIDENT_ACTION
+    params = (
+        {"incident_id": incident_id, "action_id": "resolve", "resolved_at": "2026-09-30T01:00:00Z"}
+        if is_incident else {"alert_id": f"alert-incident-{incident_id}", "action_id": "acknowledge"}
+    )
+    result = dispatch_domain_command(
+        command_id="cmd-encoded", command_type=command_type, params=params,
+        auth_token=token, mfa_token="existing-test-token",
+    )
+    assert len(server.status_calls) == 1
+    call = server.status_calls[0]
+    assert call["incident_id"] == incident_id
+    assert call["body"] == (
+        {"status": "resolved", "resolved_at": "2026-09-30T01:00:00Z"} if is_incident else {"status": "investigating"}
+    )
+    assert call["headers"]["Authorization"] == "Bearer tester:operator"
+    assert call["headers"]["X-Mfa-Token"] == "existing-test-token"
+    assert result["domain_receipt"]["title"] == "Owner data"
+
+
+@pytest.mark.parametrize("command_type, params", [
+    (CommandType.INCIDENT_ACTION, {"incident_id": "inc-real-001", "action_id": "resolve"}),
+    (CommandType.RISK_ALERT_ACTION, {"alert_id": "alert-incident-inc-real-001", "action_id": "acknowledge"}),
+    (CommandType.ALERT_ACKNOWLEDGE, {"alert_id": "alert-incident-inc-real-001"}),
+])
+@pytest.mark.parametrize("failure, expected_status, expected_code", [
+    ("missing", 404, "RESOURCE_NOT_FOUND"),
+    ("outage", 503, "DEPENDENCY_UNAVAILABLE"),
+    ("unconfigured", 503, "DEPENDENCY_UNAVAILABLE"),
+    ("rejected", 400, "DOWNSTREAM_ERROR"),
+    ("conflict", 409, "DOWNSTREAM_ERROR"),
+])
+def test_shared_writer_failures_remain_meaningful_in_command_queue(
+    incident_service_env, monkeypatch, command_type, params, failure, expected_status, expected_code,
+):
+    server, _ = incident_service_env
+    if failure == "missing":
+        server.incidents.clear()
+    elif failure == "outage":
+        server.is_healthy = False
+    elif failure in {"rejected", "conflict"}:
+        server.status_rejection = expected_status
+    else:
+        monkeypatch.delenv("PANTHEON_INCIDENTS_API_URL")
+        monkeypatch.delenv("PANTHEON_INCIDENTS_URL")
+    status, result, error = execute_command_with_status("cmd-owner-failure", command_type, params)
+    assert status == CommandStatus.FAILED and result is None
+    assert error["code"] == expected_code
+    assert error["downstream_status"] == expected_status
+    assert error["retryable"] is (expected_status == 503)
+
+
+@pytest.mark.parametrize("owner_status", [400, 409])
+@pytest.mark.parametrize("path", [
+    "/bff/incidents/inc-real-001/resolve",
+    "/bff/incidents/inc-real-001/actions/resolve",
+    "/bff/risk/alerts/alert-incident-inc-real-001/actions/acknowledge",
+])
+def test_owner_rejection_is_preserved_across_routes(incident_service_env, tmp_path, owner_status, path):
+    server, base_url = incident_service_env
+    server.status_rejection = owner_status
+    store = StubReadStoreWithIncidentPort(base_url)
+    client = TestClient(_build_app(store, tmp_path))
+    response = client.post(path, headers={**_AUTH, "Idempotency-Key": str(uuid.uuid4())}, json={})
+    assert response.status_code == owner_status, response.text
+    assert response.json()["error"]["code"] == "UPSTREAM_ERROR"
+    assert server.incidents["inc-real-001"]["status"] == "open"
+    assert store.incident_port.is_available()
+
+
+@pytest.mark.parametrize("detail", ["Owner unavailable", {"error": "Owner unavailable"}])
+def test_command_http_error_without_structured_details_does_not_escape(monkeypatch, detail):
+    def reject(*args, **kwargs):
+        raise HTTPException(status_code=503, detail=detail)
+
+    monkeypatch.setattr("services.control_plane.bff.command_executor.execute_command", reject)
+    status, result, error = execute_command_with_status("cmd-http-failure", CommandType.INCIDENT_ACTION, {})
+    assert status == CommandStatus.FAILED and result is None
+    assert error["code"] == "DOWNSTREAM_ERROR" and error["downstream_status"] == 503
 
 
 def test_incidents_service_unavailable_reports_unavailable(incident_service_env, tmp_path) -> None:
@@ -697,5 +816,3 @@ def test_multi_status_query_matches_real_owner_equality_contract(incident_servic
     port = DomainIncidentPort(incidents_api_url=base_url)
     results = port.list_incidents(status="open,investigating")
     assert len(results) == 2
-
-

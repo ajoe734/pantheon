@@ -9,11 +9,12 @@ import logging
 from typing import Any, Dict, Optional
 from urllib.parse import quote
 
+from ..ports.lifecycle_telemetry_governance import DomainIncidentPort
+
 from .base import (
     ActionUnavailableError,
     DomainCommandAdapter,
     build_domain_receipt,
-    get_base_url,
     http_request_json,
     internal_url,
     utc_now,
@@ -138,15 +139,13 @@ class IncidentCommandAdapter(DomainCommandAdapter):
         p_inc = p_inc[15:].strip() if p_inc.startswith("alert-incident-") else p_inc
         if not incident_id or (p_inc and p_inc != incident_id):
             raise ActionUnavailableError(f"Alert {target_id!r} has no durable owner; acknowledgement is unavailable.", action_id=action_id, entity_type="RiskAlert")
-        base = get_base_url("PANTHEON_INCIDENTS_API_URL", "PANTHEON_INCIDENTS_URL")
-        if not base:
-            raise ActionUnavailableError("Incident service base URL is unconfigured", action_id=action_id, entity_type="RiskAlert")
-        url = f"{base}/api/incidents/{quote(incident_id, safe='')}/status"
-        body = http_request_json(url, method="POST", payload={"status": "investigating"}, auth_token=auth_token, mfa_token=mfa_token)
+        body = DomainIncidentPort().update_incident_status(
+            incident_id, "investigating", auth_token=auth_token, mfa_token=mfa_token,
+        )
         read_back_status = body.get("status") or "investigating"
         return build_domain_receipt(
             command_id=command_id, entity_type="RiskAlert", entity_id=target_id, action_id=action_id, status="acknowledged",
-            dispatch_path=url, domain_receipt=body, authoritative_readback={"alert_id": target_id, "incident_id": incident_id, "status": "acknowledged", "incident_status": read_back_status},
+            dispatch_path="incidents_service", domain_receipt=body, authoritative_readback={"alert_id": target_id, "incident_id": incident_id, "status": "acknowledged", "incident_status": read_back_status},
             extra={"alert_id": target_id, "incident_id": incident_id, "incident_status": read_back_status},
         )
 
@@ -160,13 +159,14 @@ class IncidentCommandAdapter(DomainCommandAdapter):
         new_status = "resolved" if k in {"resolve", "close"} else ("investigating" if k in {"start-mitigation", "mitigate", "escalate", "acknowledge", "ack", "investigate", "reopen"} else None)
         if not new_status:
             raise ActionUnavailableError(f"Incident action {action_id!r} on {target_id!r} is not supported.", action_id=action_id, entity_type="Incident")
-        base = get_base_url("PANTHEON_INCIDENTS_API_URL", "PANTHEON_INCIDENTS_URL")
-        url = f"{base}/api/incidents/{quote(target_id, safe='')}/status"
-        body = http_request_json(url, method="POST", payload={"status": new_status, "resolved_at": params.get("resolved_at")}, auth_token=auth_token, mfa_token=mfa_token)
+        body = DomainIncidentPort().update_incident_status(
+            target_id, new_status, resolved_at=params.get("resolved_at"),
+            auth_token=auth_token, mfa_token=mfa_token,
+        )
         read_back_status = body.get("status") or new_status
         return build_domain_receipt(
             command_id=command_id, entity_type="Incident", entity_id=target_id, action_id=action_id, status=read_back_status,
-            dispatch_path=url, domain_receipt=body, authoritative_readback={"incident_id": target_id, "status": read_back_status},
+            dispatch_path="incidents_service", domain_receipt=body, authoritative_readback={"incident_id": target_id, "status": read_back_status},
             extra={"incident_id": target_id, "status": read_back_status},
         )
 

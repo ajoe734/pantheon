@@ -241,7 +241,7 @@ class LifecycleTelemetryGovernancePort(
 # =====================================================================
 
 class DomainIncidentPort:
-    """Incident and Postmortem domain reader adapter."""
+    """Incident owner reads/writes and Postmortem domain reads."""
 
     def __init__(
         self,
@@ -273,12 +273,19 @@ class DomainIncidentPort:
     def is_available(self) -> bool:
         return self.dataset_source() != "unavailable"
 
-    def _http_json(self, path: str, method: str = "GET", payload: Optional[Dict[str, Any]] = None) -> Any:
+    def _http_json(
+        self, path: str, method: str = "GET", payload: Optional[Dict[str, Any]] = None,
+        *, auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
+    ) -> Any:
         if not self._incidents_api_url:
             self._last_error = True
             raise RuntimeError("PANTHEON_INCIDENTS_API_URL is unconfigured")
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
         headers = {"Accept": "application/json", **({"Content-Type": "application/json"} if data else {})}
+        if auth_token:
+            headers["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
+        if mfa_token:
+            headers["X-MFA-Token"] = mfa_token
         req = urllib.request.Request(f"{self._incidents_api_url}{path}", data=data, headers=headers, method=method)
         try:
             with self._opener(req, timeout=5.0) as resp:
@@ -348,8 +355,11 @@ class DomainIncidentPort:
     def _err(self, exc: Any, nf_msg: str = "") -> None:
         self._last_error = True
         from fastapi import HTTPException
-        if isinstance(exc, urllib.error.HTTPError) and exc.code == 404:
-            raise HTTPException(status_code=404, detail={"error": {"code": "RESOURCE_NOT_FOUND", "message": nf_msg, "status_code": 404}}) from exc
+        if isinstance(exc, urllib.error.HTTPError) and 400 <= exc.code < 500:
+            self._last_error = False
+            error_code = "RESOURCE_NOT_FOUND" if exc.code == 404 else "DOWNSTREAM_ERROR"
+            message = nf_msg if exc.code == 404 else f"Incident service returned HTTP {exc.code}"
+            raise HTTPException(status_code=exc.code, detail={"error": {"code": error_code, "message": message, "status_code": exc.code}}) from exc
         code = getattr(exc, "code", 503) if isinstance(exc, urllib.error.HTTPError) else 503
         msg = f"Incident service returned HTTP {code}" if isinstance(exc, urllib.error.HTTPError) else f"Incident service unavailable: {exc}"
         raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": msg, "status_code": 503}}) from (exc if isinstance(exc, BaseException) else None)
@@ -368,6 +378,9 @@ class DomainIncidentPort:
         incident_id: str,
         status: str,
         resolved_at: Optional[str] = None,
+        *,
+        auth_token: Optional[str] = None,
+        mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         cid, body = incident_id.strip(), {"status": status, **({"resolved_at": resolved_at} if resolved_at else {})}
         if self._incidents is not None:
@@ -375,7 +388,10 @@ class DomainIncidentPort:
             inc.update(body)
             return inc
         try:
-            return self._http_json(f"/api/incidents/{urllib.parse.quote(cid, safe='')}/status", method="POST", payload=body)
+            return self._http_json(
+                f"/api/incidents/{urllib.parse.quote(cid, safe='')}/status", method="POST", payload=body,
+                auth_token=auth_token, mfa_token=mfa_token,
+            )
         except Exception as exc:
             self._err(exc, f"Incident {cid!r} does not exist")
 
