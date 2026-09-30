@@ -662,6 +662,157 @@ def test_cross_tenant_pool_idempotency(capital_test_env):
     assert second.status_code >= 400 or second.json().get("tenant_id") == "tenant-beta", "Tenant beta received tenant alpha pool on idempotent create"
 
 
+def test_containment_idempotent_replay_tenant_scoping(capital_test_env):
+    client, module, _ = capital_test_env
+    headers_a = _auth_headers("tenant-alpha", actor_id="admin-alpha")
+    payload = {
+        "persona_id": "persona-p1",
+        "action": "freeze",
+        "trigger": "manual_override",
+        "evidence_refs": ["ev-1"],
+        "actor_id": "admin-alpha",
+        "actor_role": "operator",
+        "idempotency_key": "idem-cont-replay-1",
+        "request_hash": "req-cont-replay-1",
+    }
+    # Initial create succeeds and returns tenant-alpha
+    res = client.post("/api/containments", json=payload, headers=headers_a)
+    assert res.status_code == 201, res.text
+    data = res.json()
+    cont_id = data["containment_id"]
+    cmd_id = data["command_id"]
+    assert data["tenant_id"] == "tenant-alpha"
+    assert data["idempotent_replay"] is False
+
+    # Same-tenant replay succeeds with idempotent_replay=True
+    same_replay = client.post("/api/containments", json=payload, headers=headers_a)
+    assert same_replay.status_code == 201
+    assert same_replay.json()["idempotent_replay"] is True
+    assert same_replay.json()["tenant_id"] == "tenant-alpha"
+
+    # Injected null tenant in stored containment hides it from GET and fails idempotent replay
+    store = module.allocation_authority_store
+    store._data["containments"][cont_id]["tenant_id"] = None
+    store._persist_locked()
+    assert client.get(f"/api/containments/receipts/{cmd_id}", headers=headers_a).status_code == 404
+    replay_null = client.post("/api/containments", json=payload, headers=headers_a)
+    assert replay_null.status_code == 404
+
+    # Injected foreign tenant in stored containment hides it from GET and fails idempotent replay
+    store._data["containments"][cont_id]["tenant_id"] = "tenant-beta"
+    store._persist_locked()
+    assert client.get(f"/api/containments/receipts/{cmd_id}", headers=headers_a).status_code == 404
+    replay_foreign = client.post("/api/containments", json=payload, headers=headers_a)
+    assert replay_foreign.status_code == 404
+
+
+def test_rebalance_idempotent_replay_tenant_scoping(capital_test_env):
+    client, module, _ = capital_test_env
+    headers_a = _auth_headers("tenant-alpha", actor_id="admin-alpha")
+    client.post("/api/capital-pools", json={
+        "actor_id": "admin-alpha",
+        "actor_role": "capital.admin",
+        "pool_id": "pool-replay-test",
+        "name": "Pool Replay Test",
+        "owner_id": "fund-1",
+        "owner_type": "fund",
+    }, headers=headers_a)
+    client.post("/api/bindings", json={
+        "actor_id": "admin-alpha",
+        "actor_role": "persona.admin",
+        "binding_id": "bind-replay-test",
+        "persona_id": "persona-replay-test",
+        "capital_pool_id": "pool-replay-test",
+        "capital_sleeve_id": "sleeve-1",
+        "role": "live_owner",
+        "allowed_deployment_scope": "canary",
+    }, headers=headers_a)
+    client.post("/api/bindings/bind-replay-test/activate", json={
+        "actor_id": "admin-alpha",
+        "actor_role": "persona.admin",
+        "approval_decision_id": "app-replay-test",
+    }, headers=headers_a)
+
+    rb_line = {
+        "capital_pool_id": "pool-replay-test",
+        "ranking_snapshot_id": "snap-1",
+        "allocation_evaluation_id": "eval-1",
+        "allocation_policy_version": "v1",
+        "persona_id": "persona-replay-test",
+        "capital_sleeve_id": "sleeve-1",
+        "target_weight": 0.5,
+        "current_weight": 0.0,
+        "capital_scope": "sleeve",
+        "stage": "canary",
+    }
+    rb_line["allocation_line_digest"] = allocation_line_digest(rb_line)
+    rb_payload = {
+        "actor_id": "admin-alpha",
+        "actor_role": "operator",
+        "rebalance_id": "rb-replay-test",
+        "capital_pool_id": "pool-replay-test",
+        "ranking_snapshot_id": "snap-1",
+        "allocation_evaluation_id": "eval-1",
+        "allocation_policy_version": "v1",
+        "request_hash": "req-rb-replay-1",
+        "idempotency_key": "idem-rb-replay-1",
+        "lines": [rb_line],
+    }
+    res = client.post("/api/rebalances", json=rb_payload, headers=headers_a)
+    assert res.status_code == 201, res.text
+    rb_id = res.json()["rebalance_id"]
+
+    # Same tenant rebalance create replay succeeds
+    same_rb = client.post("/api/rebalances", json=rb_payload, headers=headers_a)
+    assert same_rb.status_code == 201
+    assert same_rb.json()["rebalance_id"] == rb_id
+
+    store = module.allocation_authority_store
+    # Untenanted / foreign tenant rebalance create replay fails
+    store._data["rebalances"][rb_id]["tenant_id"] = None
+    store._persist_locked()
+    assert client.get(f"/api/rebalances/{rb_id}", headers=headers_a).status_code == 404
+    assert client.post("/api/rebalances", json=rb_payload, headers=headers_a).status_code == 404
+
+    store._data["rebalances"][rb_id]["tenant_id"] = "tenant-beta"
+    store._persist_locked()
+    assert client.get(f"/api/rebalances/{rb_id}", headers=headers_a).status_code == 404
+    assert client.post("/api/rebalances", json=rb_payload, headers=headers_a).status_code == 404
+
+    # Restore rebalance tenant and apply
+    store._data["rebalances"][rb_id]["tenant_id"] = "tenant-alpha"
+    store._persist_locked()
+
+    apply_payload = {
+        "actor_id": "admin-alpha",
+        "actor_role": "operator",
+        "command_id": "cmd-apply-replay-1",
+        "rebalance_id": rb_id,
+        "request_hash": "hash-apply-replay-1",
+        "idempotency_key": "idem-apply-replay-1",
+        "approval_ref": "appr-replay-1",
+    }
+    res_apply = client.post(f"/api/rebalances/{rb_id}/apply", json=apply_payload, headers=headers_a)
+    assert res_apply.status_code == 200, res_apply.text
+    assert res_apply.json()["idempotent_replay"] is False
+
+    # Same tenant apply replay succeeds
+    same_apply = client.post(f"/api/rebalances/{rb_id}/apply", json=apply_payload, headers=headers_a)
+    assert same_apply.status_code == 200
+    assert same_apply.json()["idempotent_replay"] is True
+
+    # Untenanted / foreign tenant apply replay fails
+    store._data["command_receipts"]["cmd-apply-replay-1"]["tenant_id"] = None
+    store._persist_locked()
+    assert client.get("/api/rebalances/receipts/cmd-apply-replay-1", headers=headers_a).status_code == 404
+    assert client.post(f"/api/rebalances/{rb_id}/apply", json=apply_payload, headers=headers_a).status_code == 404
+
+    store._data["command_receipts"]["cmd-apply-replay-1"]["tenant_id"] = "tenant-beta"
+    store._persist_locked()
+    assert client.get("/api/rebalances/receipts/cmd-apply-replay-1", headers=headers_a).status_code == 404
+    assert client.post(f"/api/rebalances/{rb_id}/apply", json=apply_payload, headers=headers_a).status_code == 404
+
+
 def test_untenanted_live_owner_hidden(capital_test_env):
     client, module, tempdir = capital_test_env
     headers = _auth_headers("tenant-alpha", actor_id="admin-alpha")

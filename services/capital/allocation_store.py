@@ -52,13 +52,7 @@ def utc_now() -> str:
 
 
 def stable_payload_hash(payload: Dict[str, Any]) -> str:
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=True,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 ALLOCATION_LINE_DIGEST_FIELDS = (
@@ -90,16 +84,17 @@ def allocation_line_digest(line: Dict[str, Any]) -> str:
 
 
 def _server_payload_hash(payload: Dict[str, Any]) -> str:
-    semantic = {
-        key: value
-        for key, value in payload.items()
-        if key not in {"idempotency_key", "request_hash"}
-    }
-    return stable_payload_hash(semantic)
+    return stable_payload_hash({k: v for k, v in payload.items() if k not in {"idempotency_key", "request_hash"}})
 
 
 def _deepcopy(value: Any) -> Any:
     return copy.deepcopy(value)
+
+
+def _require_replay_tenant(target: Optional[Dict[str, Any]], caller_tenant: Optional[str], exc: Exception) -> None:
+    rec_tenant = (target or {}).get("tenant_id")
+    if not caller_tenant or not rec_tenant or rec_tenant != caller_tenant:
+        raise exc
 
 
 class AllocationAuthorityStore:
@@ -424,6 +419,11 @@ class AllocationAuthorityStore:
                 record = self._data["rebalances"].get(replay.get("resource_id"))
                 if record is None:
                     raise AllocationAuthorityError("Durable rebalance idempotency record is orphaned")
+                _require_replay_tenant(
+                    record,
+                    payload.get("tenant_id"),
+                    AllocationAuthorityNotFound(f"Rebalance not found: {replay.get('resource_id')}"),
+                )
                 return _deepcopy(record), True
 
             pool_id = self._require_text(payload, "capital_pool_id")
@@ -536,12 +536,19 @@ class AllocationAuthorityStore:
                 request_hash=request_hash,
                 payload_hash=payload_hash,
             )
+            caller_tenant = tenant_id or payload.get("tenant_id")
             if replay is not None:
                 if replay.get("outcome") == "failed":
                     raise AllocationAuthorityConflict(str(replay.get("error") or "Rebalance apply failed"))
                 receipt = self._data["command_receipts"].get(replay.get("command_id"))
                 if receipt is None:
                     raise AllocationAuthorityError("Durable apply idempotency record is orphaned")
+                cmd_id = str(replay.get("command_id") or command_id)
+                _require_replay_tenant(
+                    receipt,
+                    caller_tenant,
+                    AllocationAuthorityNotFound(f"Rebalance receipt not found for command: {cmd_id}"),
+                )
                 result = _deepcopy(receipt)
                 result["idempotent_replay"] = True
                 return result, True
@@ -556,6 +563,11 @@ class AllocationAuthorityStore:
                     raise AllocationAuthorityConflict(
                         f"Command {command_id!r} was already used for a different apply request"
                     )
+                _require_replay_tenant(
+                    command_replay,
+                    caller_tenant,
+                    AllocationAuthorityNotFound(f"Rebalance receipt not found for command: {command_id}"),
+                )
                 self._data["idempotency"][f"rebalance.apply:{rebalance_id}:{idempotency_key}"] = {
                     "operation": "rebalance.apply",
                     "request_hash": request_hash,
@@ -876,6 +888,12 @@ class AllocationAuthorityStore:
                 record = self._data["containments"].get(replay.get("resource_id"))
                 if record is None:
                     raise AllocationAuthorityError("Durable containment idempotency record is orphaned")
+                cmd_id = str(record.get("command_id") or replay.get("command_id") or payload.get("command_id") or "")
+                _require_replay_tenant(
+                    record,
+                    payload.get("tenant_id"),
+                    AllocationAuthorityNotFound(f"Containment command {cmd_id!r} has no durable receipt"),
+                )
                 result = _deepcopy(record)
                 result["idempotent_replay"] = True
                 return result, True
@@ -892,16 +910,7 @@ class AllocationAuthorityStore:
                 raise AllocationAuthorityValidationError(
                     "Emergency containment cannot promote or increase allocation"
                 )
-            allowed = {
-                "freeze",
-                "reduce_capital",
-                "reduce_capital_access",
-                "suspend",
-                "risk_off",
-                "flatten",
-                "rollback_allocation",
-                "retire",
-            }
+            allowed = {"freeze", "reduce_capital", "reduce_capital_access", "suspend", "risk_off", "flatten", "rollback_allocation", "retire"}
             if action not in allowed:
                 raise AllocationAuthorityValidationError(f"Unsupported containment action: {action}")
             evidence_refs = list(payload.get("evidence_refs") or [])
@@ -1104,10 +1113,8 @@ class AllocationAuthorityStore:
     def backfill_tenant(self, default_tenant: str = "default") -> None:
         with self._lock:
             self._reload_locked()
-            if not self._data.get("tenant_id"):
-                self._data["tenant_id"] = default_tenant
+            if not self._data.get("tenant_id"): self._data["tenant_id"] = default_tenant
             for key in ("rebalances", "allocations", "containments", "command_receipts", "containment_commands"):
                 for item in self._data.get(key, {}).values():
-                    if isinstance(item, dict) and not item.get("tenant_id"):
-                        item["tenant_id"] = default_tenant
+                    if isinstance(item, dict) and not item.get("tenant_id"): item["tenant_id"] = default_tenant
             self._persist_locked()

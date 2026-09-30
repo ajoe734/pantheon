@@ -38,7 +38,7 @@
     {
       "criterion": "2. Every capital read and write route filters and stamps the caller tenant from the verified token and a caller cannot read or change another tenant's rows",
       "status": "passed",
-      "verification": "All 23 capital routes filter by caller's verified tenant; responses stamp X-Pantheon-Tenant header and tenant_id; create idempotency identity and replay lookups are bound to caller tenant; apply_rebalance requires nonempty matching tenant on existing allocations before mutation or readback without copying foreign/null allocation identity into failure details."
+      "verification": "All 23 capital routes filter by caller's verified tenant; responses stamp X-Pantheon-Tenant header and tenant_id; create and apply idempotency replay targets require a nonempty matching caller tenant on containments, rebalances, and command receipts before returning replay responses or updating audit delivery, rejecting null/foreign tenant replays with 404; apply_rebalance requires nonempty matching tenant on existing allocations before mutation or readback without copying foreign/null allocation identity into failure details."
     },
     {
       "criterion": "3. Rows without a tenant are visible to no caller",
@@ -48,7 +48,7 @@
     {
       "criterion": "4. Tests cover same-tenant and cross-tenant access for every capital route",
       "status": "passed",
-      "verification": "services/capital/test_tenant_scoping.py covers all 23 capital routes with both same-tenant and cross-tenant assertions, cross-tenant idempotency replay tests, untenanted live owner isolation, route-level rebalance apply foreign/untenanted allocation rejection with non-disclosure checks, structured conflict redaction regressions with parentheses/newlines/quotes for foreign, null, and same tenant, and real postgres migration/persistence regression."
+      "verification": "services/capital/test_tenant_scoping.py covers all 23 capital routes with both same-tenant and cross-tenant assertions, cross-tenant idempotency replay tests for pools, containments (including null/foreign replay target rejection and same-tenant replay retention), rebalances (create and apply null/foreign replay rejection and same-tenant replay retention), untenanted live owner isolation, route-level rebalance apply foreign/untenanted allocation rejection with non-disclosure checks, structured conflict redaction regressions with parentheses/newlines/quotes for foreign, null, and same tenant, and real postgres migration/persistence regression."
     }
   ],
   "covered_routes_count": 23,
@@ -80,24 +80,24 @@
   "diff_budget": {
     "change_class": "corrective",
     "budget": 150,
-    "production_lines_added": 349,
-    "production_lines_deleted": 219,
-    "net_production_lines": 130,
+    "production_lines_added": 379,
+    "production_lines_deleted": 242,
+    "net_production_lines": 137,
     "under_budget": true
   },
   "verification": {
     "passed": [
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/capital",
-        "result": "73 passed, 1 warning in 34.18s"
+        "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/capital -k 'not real_postgres_migration_regression_preexisting_rows'",
+        "result": "74 passed, 1 deselected, 1 warning in 35.58s"
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/capital/test_tenant_scoping.py",
-        "result": "9 passed, 1 warning in 5.72s"
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/capital -k 'real_postgres_migration_regression_preexisting_rows'",
+        "result": "1 passed, 74 deselected, 1 warning in 2.80s"
       },
       {
         "command": "python3 scripts/git/diff_budget.py --base f3e267c1fd700e9452470e43d73da3c3dd57146e --change-class corrective --budget 150",
-        "result": "net production lines +130 <= 150"
+        "result": "net production lines +137 <= 150"
       }
     ]
   }
