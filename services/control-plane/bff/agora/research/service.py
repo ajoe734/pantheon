@@ -226,6 +226,20 @@ class AgoraResearchService:
         if self.store.check_and_record_idempotency_key(scope_str, key):
             raise self.bff_error(409, self._error_code("IDEMPOTENCY_CONFLICT"), "Duplicate Idempotency-Key", key)
 
+    def _plan_for_decision(self, plan_id: str, scope: Any) -> Dict[str, Any]:
+        plan = self.store.get_plan(plan_id)
+        if plan is None or plan.get("tenant_id") != scope.tenant_id:
+            raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), "Research plan not found", plan_id)
+        workshop = self.workshop_store.get_session(plan["workshop_id"]) if self.workshop_store else None
+        if workshop is not None and workshop.get("tenant_id") != scope.tenant_id:
+            raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), "Research plan not found", plan_id)
+        if not _operator_grade_scope(scope) or (
+            "operator" not in scope.roles
+            and (workshop is None or workshop.get("user_id") != scope.user_id)
+        ):
+            raise self.bff_error(403, self._error_code("FORBIDDEN"), "Workshop owner or operator required", plan_id)
+        return plan
+
     def approve_plan(
         self,
         plan_id: str,
@@ -233,9 +247,7 @@ class AgoraResearchService:
         scope: Any,
         if_match: Optional[str] = None,
     ) -> Dict[str, Any]:
-        plan = self.get_plan(plan_id, scope=scope)
-        if plan is None:
-            raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), f"Research plan '{plan_id}' not found", plan_id)
+        plan = self._plan_for_decision(plan_id, scope)
         self._check_plan_if_match(plan, if_match)
         if plan["status"] != "draft":
             raise self.bff_error(
@@ -259,7 +271,7 @@ class AgoraResearchService:
                 "updated_at": now,
             },
             tenant_id=scope.tenant_id,
-            user_id=scope.user_id,
+            user_id=plan.get("user_id"),
         )
         self.store.record_audit_action({
             "action_type": "research_plan.approve",
@@ -283,9 +295,7 @@ class AgoraResearchService:
         scope: Any,
         if_match: Optional[str] = None,
     ) -> Dict[str, Any]:
-        plan = self.get_plan(plan_id, scope=scope)
-        if plan is None:
-            raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), f"Research plan '{plan_id}' not found", plan_id)
+        plan = self._plan_for_decision(plan_id, scope)
         self._check_plan_if_match(plan, if_match)
         cancellable = {"draft", "approved", "running"}
         if plan["status"] not in cancellable:
@@ -304,7 +314,7 @@ class AgoraResearchService:
                 "updated_at": now,
             },
             tenant_id=scope.tenant_id,
-            user_id=scope.user_id,
+            user_id=plan.get("user_id"),
         )
         self.store.record_audit_action({
             "action_type": "research_plan.cancel",
@@ -1383,4 +1393,3 @@ class AgoraResearchService:
             "subject_id": artifact_id,
         })
         return next_lock_version, now
-
