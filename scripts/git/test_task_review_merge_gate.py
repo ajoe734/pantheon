@@ -722,6 +722,26 @@ class FailClosedTests(unittest.TestCase):
         self.assertFalse(decision.allow_merge)
         self.assertEqual(decision.reason, "head_branch_mismatch")
 
+    def test_versioned_replacement_branch_allowed_with_bound_approval(self) -> None:
+        decision = decide(
+            pr=open_pr(headRefName="task/ABC-001-v2"),
+            events=[approval_event(review_binding=approval_binding(head_branch="task/ABC-001-v2"))],
+        )
+
+        self.assertTrue(decision.allow_merge, decision.reason)
+
+    def test_versioned_replacement_branch_rejects_approval_for_other_branch(self) -> None:
+        decision = decide(pr=open_pr(headRefName="task/ABC-001-v2"))
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_head_branch_mismatch")
+
+    def test_non_numeric_version_suffix_blocks(self) -> None:
+        decision = decide(pr=open_pr(headRefName="task/ABC-001-vx"))
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "head_branch_mismatch")
+
     def test_wrong_base_branch_blocks(self) -> None:
         decision = decide(pr=open_pr(baseRefName="master"))
 
