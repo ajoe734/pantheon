@@ -12357,7 +12357,11 @@ class DeliveredCommitTimestampTests(unittest.TestCase):
             result = ai_status._delivered_commit_timestamp(
                 repo, {}, commit_ref="HEAD"
             )
-        self.assertEqual(result, "2026-09-30T14:33:05+00:00")
+        # git renders UTC as "Z" or "+00:00" depending on its version.
+        self.assertEqual(
+            ai_status._parse_utc_timestamp(result),
+            ai_status._parse_utc_timestamp("2026-09-30T14:33:05Z"),
+        )
 
 
 class ArchiveWorkflowTests(unittest.TestCase):
