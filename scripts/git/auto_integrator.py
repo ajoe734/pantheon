@@ -2504,7 +2504,7 @@ def integrate_candidate(
             unblock = (
                 open_unblock_task(
                     candidate,
-                    "ambiguous-merged-prs",
+                    "pr-lookup-failed",
                     detail,
                     settings,
                     runner,

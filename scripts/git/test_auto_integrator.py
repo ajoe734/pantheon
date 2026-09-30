@@ -4134,6 +4134,52 @@ class SupersedingVersionDiscoveryTests(unittest.TestCase):
         self.assertEqual(result.action, "blocked")
         self.assertIn("refusing to choose a merged head", result.detail)
 
+    def test_ambiguous_merged_versions_publish_unblock_request_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            status_root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001",
+                title="Ready",
+                owner="Codex",
+                reviewer="Claude",
+                branch="task/ABC-001",
+                repository_root=Path("/worker/source/pantheon"),
+                raw_task={
+                    "generation": 1,
+                    "delivery_binding": {"pr": 7, "head_sha": APPROVED_HEAD},
+                },
+            )
+            runner = self._runner({"merged": [
+                {"number": 7, "headRefName": "task/ABC-001-v2"},
+                {"number": 8, "headRefName": "task/ABC-001-v3"},
+            ]})
+            settings = auto_integrator.Settings(
+                status_identity_sha256="d" * 64,
+                command_runtime_sha="b" * 40,
+            )
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                settings,
+                runner,
+                status_root=status_root,
+                execute=True,
+                open_unblock=True,
+                gate=approved_gate(),
+            )
+            self.assertEqual(result.action, "blocked")
+            self.assertEqual(
+                result.unblock_task_id,
+                auto_integrator.unblock_task_id(candidate, "pr-lookup-failed"),
+            )
+            self.assertIn("refusing to choose a merged head", result.detail)
+            requests = list((status_root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))
+            self.assertEqual(len(requests), 1)
+            request = json.loads(requests[0].read_text(encoding="utf-8"))
+            self.assertEqual(request["reason"], "pr-lookup-failed")
+            self.assertIn("refusing to choose a merged head", request["detail"])
+            self.assertEqual(request["pr"], 7)
+            self.assertEqual(request["head_sha"], APPROVED_HEAD)
+
 
 class TwoTaskFakeRunner(FakeRunner):
     """FakeRunner keyed by task branch instead of a single PR.
