@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import datetime
 import json
 import os
@@ -76,20 +77,18 @@ class PersistentCapitalPoolStore(CapitalPoolStore):
 
 def _ensure_tenant_column(store: Any) -> None:
     if hasattr(store, "_connect"):
-        try:
-            with store._connect() as conn:
-                conn.execute(f"ALTER TABLE {store.table} ADD COLUMN IF NOT EXISTS tenant_id TEXT; CREATE INDEX IF NOT EXISTS idx_{store.table.replace('.', '_')}_tenant_id ON {store.table} (tenant_id)")
-        except Exception:
-            pass
+        idx = f"idx_{(getattr(store, 'table_name', None) or getattr(store, 'table', '')).replace('\"', '').replace('.', '_')}_tenant_id"
+        with store._connect() as conn:
+            conn.execute(
+                f"ALTER TABLE {store.table} ADD COLUMN IF NOT EXISTS tenant_id TEXT; "
+                f'CREATE INDEX IF NOT EXISTS "{idx}" ON {store.table} (tenant_id)'
+            )
 
 
 def _fetch_records(records: Any, key_field: str) -> list[tuple[str, Any, str | None]]:
     if hasattr(records, "_connect"):
-        try:
-            with records._connect() as conn:
-                return conn.execute(f"SELECT record_id, payload, tenant_id FROM {records.table}").fetchall()
-        except Exception:
-            pass
+        with records._connect() as conn:
+            return conn.execute(f"SELECT record_id, payload, tenant_id FROM {records.table}").fetchall()
     return [(r.get(key_field), r, (r.get("metadata") or {}).get("tenant_id") or r.get("tenant_id")) for r in records.list_all()]
 
 
@@ -110,8 +109,7 @@ def _load_entity(cls: Any, row: tuple) -> Any:
     tid = tid or (getattr(ent, "metadata", None) or {}).get("tenant_id") or rec.get("tenant_id")
     if tid:
         object.__setattr__(ent, "tenant_id", tid)
-        if getattr(ent, "metadata", None) is not None:
-            ent.metadata["tenant_id"] = tid
+        if getattr(ent, "metadata", None) is not None: ent.metadata["tenant_id"] = tid
     return ent
 
 
@@ -367,27 +365,34 @@ class PostgresAllocationAuthorityStore(AllocationAuthorityStore):
         table: str = "capital.allocation_authority",
         bootstrap: bool = True,
     ) -> None:
-        records = PostgresJsonOwnerStore(
+        self._records = PostgresJsonOwnerStore(
             dsn=dsn,
             table=table,
             owner_service="capital-pool-svc",
             bootstrap=bootstrap,
         )
-        _ensure_tenant_column(records)
-        super().__init__(owner_store=records)
+        _ensure_tenant_column(self._records)
+        super().__init__(owner_store=self._records)
+
+    def _persist_locked(self) -> None:
+        payload = copy.deepcopy(self._data)
+        tenant_id = payload.get("tenant_id") or "default"
+        _put_record(self._records, self._POSTGRES_RECORD_ID, payload, tenant_id)
 
 
 def migrate_capital_tables(dsn: str, default_tenant: str = "default") -> None:
     try:
         import psycopg
-    except ImportError:
-        return
+    except ImportError as exc:
+        raise RuntimeError("psycopg is required for capital database migrations") from exc
     with psycopg.connect(dsn) as conn:
         for tbl in ("capital.capital_pools", "capital.persona_capital_bindings", "capital.allocation_authority", "capital.audit_events"):
-            conn.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS tenant_id TEXT; CREATE INDEX IF NOT EXISTS idx_{tbl.replace('.', '_')}_tenant_id ON {tbl} (tenant_id)")
+            raw = tbl.replace('"', '').replace('.', '_')
+            conn.execute(f'ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS tenant_id TEXT; CREATE INDEX IF NOT EXISTS "idx_{raw}_tenant_id" ON {tbl} (tenant_id)')
             p = "metadata,tenant_id" if "pools" in tbl or "bindings" in tbl else "tenant_id"
             conn.execute(f"UPDATE {tbl} SET tenant_id = COALESCE(payload#>>'{{{p}}}', %s) WHERE tenant_id IS NULL", (default_tenant,))
             conn.execute(f"UPDATE {tbl} SET payload = jsonb_set(payload, '{{{p}}}', to_jsonb(tenant_id), true) WHERE payload#>>'{{{p}}}' IS NULL")
+        PostgresAllocationAuthorityStore(dsn=dsn, table="capital.allocation_authority", bootstrap=False).backfill_tenant(default_tenant=default_tenant)
 
 
 def _capital_backend() -> str:

@@ -1094,7 +1094,10 @@ class AllocationAuthorityStore:
     def backfill_tenant(self, default_tenant: str = "default") -> None:
         with self._lock:
             self._reload_locked()
+            if not self._data.get("tenant_id"):
+                self._data["tenant_id"] = default_tenant
             for key in ("rebalances", "allocations", "containments", "command_receipts", "containment_commands"):
                 for item in self._data.get(key, {}).values():
-                    item.setdefault("tenant_id", default_tenant)
+                    if isinstance(item, dict) and not item.get("tenant_id"):
+                        item["tenant_id"] = default_tenant
             self._persist_locked()

@@ -630,7 +630,7 @@ def test_backfill_and_migration(capital_test_env):
         "status": "applied",
     }
     alloc_store._persist_locked()
-    # Initially invisble
+    # Initially invisible
     with pytest.raises(module.AllocationAuthorityNotFound):
         alloc_store.get_rebalance("rb-old", tenant_id="tenant-restored")
 
@@ -643,6 +643,142 @@ def test_backfill_and_migration(capital_test_env):
     with pytest.raises(module.AllocationAuthorityNotFound):
         alloc_store.get_rebalance("rb-old", tenant_id="tenant-other")
 
-    # Test migrate_capital_tables with dummy DSN doesn't crash if psycopg not installed
-    from services.capital.pg_store import migrate_capital_tables
-    migrate_capital_tables("postgresql://dummy:5432/db", default_tenant="tenant-restored")
+
+def test_cross_tenant_pool_idempotency(capital_test_env):
+    client, module, _ = capital_test_env
+    payload = {
+        "actor_id": "shared-actor",
+        "actor_role": "capital.admin",
+        "pool_id": "pool-replay",
+        "name": "Private alpha pool",
+        "owner_id": "fund",
+        "owner_type": "fund",
+        "idempotency_key": "same-key",
+        "request_hash": "same-hash",
+    }
+    first = client.post("/api/capital-pools", json=payload, headers=_auth_headers("tenant-alpha", actor_id="shared-actor"))
+    assert first.status_code == 201, first.text
+    second = client.post("/api/capital-pools", json=payload, headers=_auth_headers("tenant-beta", actor_id="shared-actor"))
+    assert second.status_code >= 400 or second.json().get("tenant_id") == "tenant-beta", "Tenant beta received tenant alpha pool on idempotent create"
+
+
+def test_untenanted_live_owner_hidden(capital_test_env):
+    client, module, tempdir = capital_test_env
+    headers = _auth_headers("tenant-alpha", actor_id="admin-alpha")
+    created = client.post("/api/capital-pools", json={"actor_id": "admin-alpha", "actor_role": "capital.admin", "pool_id": "pool-a", "name": "A", "owner_id": "fund", "owner_type": "fund"}, headers=headers)
+    assert created.status_code == 201, created.text
+    binding = {"binding_id": "legacy-untenanted", "persona_id": "legacy-persona", "capital_pool_id": "pool-a", "role": "live_owner", "allowed_deployment_scope": "live", "status": "active", "approval_decision_id": "app", "created_at": "2026-01-01T00:00:00Z", "metadata": {}}
+    (tempdir / "persona_capital_bindings.json").write_text(json.dumps([binding]))
+    module.binding_store._load(module.binding_store._path)
+    assert client.get("/api/bindings/legacy-untenanted", headers=headers).status_code == 404
+    response = client.get("/api/capital-pools/pool-a/live-owner", headers=headers)
+    assert response.json() is None, "Untenanted binding leaked through live-owner endpoint"
+
+
+def test_postgres_migration_and_write_path(monkeypatch):
+    import sys
+    from services.capital.pg_store import (
+        PostgresAllocationAuthorityStore,
+        migrate_capital_tables,
+    )
+
+    # 1. Missing psycopg fails closed with RuntimeError
+    monkeypatch.setitem(sys.modules, "psycopg", None)
+    with pytest.raises(RuntimeError, match="psycopg is required"):
+        migrate_capital_tables("postgresql://user:pass@localhost:5432/db")
+
+    # 2. Fake psycopg to test DDL, index quoting, backfill, and persistence
+    class FakeCursor:
+        def __init__(self, rows=None):
+            self.rows = rows or []
+
+        def fetchall(self):
+            return self.rows
+
+        def fetchone(self):
+            return self.rows[0] if self.rows else None
+
+    class FakeConn:
+        def __init__(self):
+            self.executed_statements = []
+            self.tables = {
+                "capital.capital_pools": [
+                    ("p1", {"name": "Pool 1", "metadata": {}}, None),
+                ],
+                "capital.persona_capital_bindings": [
+                    ("b1", {"binding_id": "b1", "metadata": {}}, None),
+                ],
+                "capital.audit_events": [
+                    ("a1", {"event_id": "a1"}, None),
+                ],
+                "capital.allocation_authority": [
+                    ("capital-allocation-authority", {
+                        "schema_version": 3,
+                        "rebalances": {"rb-1": {"rebalance_id": "rb-1"}},
+                        "allocations": {"al-1": {"allocation_id": "al-1"}},
+                        "containments": {"ct-1": {"containment_id": "ct-1"}},
+                        "command_receipts": {"cr-1": {"command_id": "cr-1"}},
+                        "containment_commands": {"cc-1": {"command_id": "cc-1"}},
+                    }, None),
+                ],
+            }
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, sql, params=()):
+            self.executed_statements.append((sql, params))
+            norm = " ".join(sql.replace('"', '').split()).upper()
+            if "SELECT PAYLOAD FROM" in norm:
+                row = self.tables["capital.allocation_authority"][0]
+                return FakeCursor([(json.dumps(row[1]),)])
+            if "SELECT RECORD_ID, PAYLOAD, TENANT_ID" in norm:
+                for tbl_name, tbl_rows in self.tables.items():
+                    if tbl_name.upper() in norm:
+                        return FakeCursor([(r[0], json.dumps(r[1]), r[2]) for r in tbl_rows])
+            if "INSERT INTO" in norm and "CAPITAL.ALLOCATION_AUTHORITY" in norm:
+                self.tables["capital.allocation_authority"][0] = (
+                    params[0],
+                    json.loads(params[1]) if isinstance(params[1], str) else params[1],
+                    params[2],
+                )
+                return FakeCursor([])
+            return FakeCursor([])
+
+    fake_conn = FakeConn()
+    fake_psycopg = type("FakePsycopg", (), {"connect": lambda dsn: fake_conn})
+    monkeypatch.setitem(sys.modules, "psycopg", fake_psycopg)
+
+    # Test migrate_capital_tables with fake postgres connection
+    migrate_capital_tables("postgresql://user:pass@localhost:5432/db", default_tenant="tenant-migrated")
+
+    # Verify DDL executed and index identifiers have no embedded quotes
+    ddl_sqls = [sql for sql, _ in fake_conn.executed_statements if "CREATE INDEX" in sql]
+    assert len(ddl_sqls) >= 4
+    for sql in ddl_sqls:
+        assert '"idx_' in sql
+        assert '""' not in sql  # no double double-quotes
+
+    # Verify allocation authority row was stamped with tenant-migrated
+    row = fake_conn.tables["capital.allocation_authority"][0]
+    record_id, payload, sql_tenant_id = row
+    assert sql_tenant_id == "tenant-migrated"
+    assert payload["tenant_id"] == "tenant-migrated"
+    assert payload["rebalances"]["rb-1"]["tenant_id"] == "tenant-migrated"
+    assert payload["allocations"]["al-1"]["tenant_id"] == "tenant-migrated"
+    assert payload["containments"]["ct-1"]["tenant_id"] == "tenant-migrated"
+    assert payload["command_receipts"]["cr-1"]["tenant_id"] == "tenant-migrated"
+    assert payload["containment_commands"]["cc-1"]["tenant_id"] == "tenant-migrated"
+
+    # Verify PostgresAllocationAuthorityStore._persist_locked stamps SQL tenant column
+    alloc_store = PostgresAllocationAuthorityStore(
+        dsn="postgresql://user:pass@localhost:5432/db",
+        table="capital.allocation_authority",
+        bootstrap=False,
+    )
+    alloc_store.backfill_tenant(default_tenant="tenant-restored")
+    row = fake_conn.tables["capital.allocation_authority"][0]
+    assert row[2] == "tenant-migrated"

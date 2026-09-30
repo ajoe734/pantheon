@@ -124,10 +124,8 @@ log = logging.getLogger(__name__)
 
 
 def _current_tenant() -> Optional[str]:
-    try:
-        return current_authority().tenant_id
-    except RuntimeError:
-        return None
+    try: return current_authority().tenant_id
+    except RuntimeError: return None
 
 
 def _tenant_match(obj: Any, tenant: Optional[str]) -> bool:
@@ -210,50 +208,35 @@ class CapitalBoundaryService:
         key = str(getattr(body, "idempotency_key", None) or "").strip() or None
         request_hash = str(getattr(body, "request_hash", None) or "").strip() or None
         if bool(key) != bool(request_hash):
-            raise CapitalServiceError(
-                "idempotency_key and request_hash must be supplied together"
-            )
-        actor_scope = str(getattr(body, "actor_id", None) or "").strip()
-        if not actor_scope:
+            raise CapitalServiceError("idempotency_key and request_hash must be supplied together")
+        actor = str(getattr(body, "actor_id", None) or "").strip()
+        if not actor:
             raise CapitalServiceError("actor_id is required for owner create idempotency")
-        resource_id = str(requested_id or "").strip()
-        if not resource_id:
-            resource_id = (
-                f"{id_prefix}-{stable_payload_hash({'scope': scope, 'actor_scope': actor_scope, 'key': key})[:12]}"
-                if key
-                else f"{id_prefix}-{uuid.uuid4().hex[:12]}"
-            )
+        tenant = _current_tenant()
+        actor_scope = f"{tenant}:{actor}" if tenant else actor
+        resource_id = str(requested_id or "").strip() or (
+            f"{id_prefix}-{stable_payload_hash({'tenant': tenant, 'scope': scope, 'actor_scope': actor_scope, 'key': key})[:12]}"
+            if key else f"{id_prefix}-{uuid.uuid4().hex[:12]}"
+        )
         if not key or not request_hash:
             return resource_id, None, False
-        semantic_payload = body.model_dump(mode="json")
-        semantic_payload.pop("idempotency_key", None)
-        semantic_payload.pop("request_hash", None)
-        payload_hash = stable_payload_hash(semantic_payload)
+        semantic = body.model_dump(mode="json")
+        semantic.pop("idempotency_key", None)
+        semantic.pop("request_hash", None)
+        if tenant: semantic["tenant_id"] = tenant
         _, replayed = self.allocation_store.reserve_owner_create(
-            scope=scope,
-            actor_scope=actor_scope,
-            key=key,
-            request_hash=request_hash,
-            payload_hash=payload_hash,
+            scope=scope, actor_scope=actor_scope, key=key,
+            request_hash=request_hash, payload_hash=stable_payload_hash(semantic),
             resource_id=resource_id,
         )
         return resource_id, key, replayed
 
-    def _complete_create_idempotency(
-        self,
-        *,
-        scope: str,
-        actor_scope: str,
-        key: str | None,
-    ) -> None:
-        if not key:
-            return
+    def _complete_create_idempotency(self, *, scope: str, actor_scope: str, key: str | None) -> None:
+        if not key: return
+        tenant = _current_tenant()
+        scoped = f"{tenant}:{actor_scope}" if tenant and not actor_scope.startswith(f"{tenant}:") else actor_scope
         try:
-            self.allocation_store.complete_owner_create(
-                scope=scope,
-                actor_scope=actor_scope,
-                key=key,
-            )
+            self.allocation_store.complete_owner_create(scope=scope, actor_scope=scoped, key=key)
         except Exception:
             log.exception("Unable to mark %s idempotency reservation complete", scope)
 
@@ -269,6 +252,8 @@ class CapitalBoundaryService:
             )
             existing = self.pool_store.get(pool_id)
             if existing is not None and replayed:
+                if not _tenant_match(existing, tenant):
+                    raise CapitalServiceError(f"CapitalPool '{pool_id}' already exists")
                 self._complete_create_idempotency(
                     scope="capital_pool.create",
                     actor_scope=body.actor_id,
@@ -361,6 +346,8 @@ class CapitalBoundaryService:
             )
             existing = self.binding_store.get(binding_id)
             if existing is not None and replayed:
+                if not _tenant_match(existing, tenant):
+                    raise CapitalServiceError(f"PersonaCapitalBinding '{binding_id}' already exists")
                 self._complete_create_idempotency(
                     scope="persona_capital_binding.create",
                     actor_scope=body.actor_id,
@@ -560,7 +547,12 @@ class CapitalBoundaryService:
         for line in proposal.get("lines") or []:
             if not self._line_increases_risk(line):
                 continue
-            pool = self.pool_store.require(pool_id)
+            try:
+                pool = self.get_pool(pool_id)
+            except CapitalPoolError as exc:
+                raise AllocationAuthorityConflict(
+                    f"CapitalPool {pool_id!r} is not available"
+                ) from exc
             if pool.status != "active":
                 raise AllocationAuthorityConflict(
                     f"CapitalPool {pool_id!r} must be active for a risk-increasing rebalance"
@@ -582,7 +574,7 @@ class CapitalBoundaryService:
                     f"for sleeve {sleeve_id!r}"
                 )
             try:
-                binding = self.binding_store.require(binding_id)
+                binding = self.get_binding(binding_id)
             except PersonaCapitalBindingError as exc:
                 raise AllocationAuthorityConflict(
                     f"Rebalance binding {binding_id!r} is no longer available"
@@ -849,7 +841,8 @@ class CapitalBoundaryService:
 
     def current_live_owner(self, pool_id: str) -> PersonaCapitalBinding | None:
         self.get_pool(pool_id)
-        return self.binding_store.live_owner_for_pool(pool_id)
+        owner = self.binding_store.live_owner_for_pool(pool_id)
+        return owner if owner and _tenant_match(owner, _current_tenant()) else None
 
     def binding_admissibility(
         self,
@@ -859,7 +852,7 @@ class CapitalBoundaryService:
         target_stage: str,
     ) -> BindingAdmissibilityResponse:
         pool = self.get_pool(capital_pool_id)
-        live_owner = self.binding_store.live_owner_for_pool(capital_pool_id)
+        live_owner = self.current_live_owner(capital_pool_id)
         if pool.status != "active":
             return BindingAdmissibilityResponse(
                 persona_id=persona_id,
@@ -1039,42 +1032,24 @@ def _raise_http_error(exc: Exception) -> None:
         raise HTTPException(status_code=exc.status_code, detail=exc.message)
     if isinstance(exc, PermissionError):
         raise HTTPException(status_code=403, detail=str(exc))
-    explicit_status = getattr(exc, "status_code", None)
-    if isinstance(explicit_status, int):
-        raise HTTPException(status_code=explicit_status, detail=str(exc))
-    message = str(exc)
-    if "not found" in message.lower():
-        raise HTTPException(status_code=404, detail=message)
-    raise HTTPException(status_code=400, detail=message)
+    status = getattr(exc, "status_code", None) or (404 if "not found" in str(exc).lower() else 400)
+    raise HTTPException(status_code=status, detail=str(exc))
 
 
 CAPITAL_HTTP_ERRORS = (
-    CapitalServiceError,
-    CapitalPoolError,
-    PersonaCapitalBindingError,
-    AllocationAuthorityError,
-    ValueError,
-    PermissionError,
-    CapitalInboundAuthorityError,
+    CapitalServiceError, CapitalPoolError, PersonaCapitalBindingError,
+    AllocationAuthorityError, ValueError, PermissionError, CapitalInboundAuthorityError,
 )
 
 
 def _pool_body(pool: CapitalPool, *, idempotent_replay: bool = False) -> CapitalPoolBody:
-    tenant_id = getattr(pool, "tenant_id", None) or (pool.metadata or {}).get("tenant_id")
-    return CapitalPoolBody(**pool.to_dict(), tenant_id=tenant_id, idempotent_replay=idempotent_replay)
+    tid = getattr(pool, "tenant_id", None) or (pool.metadata or {}).get("tenant_id")
+    return CapitalPoolBody(**pool.to_dict(), tenant_id=tid, idempotent_replay=idempotent_replay)
 
 
-def _binding_body(
-    binding: PersonaCapitalBinding,
-    *,
-    idempotent_replay: bool = False,
-) -> PersonaCapitalBindingBody:
-    tenant_id = getattr(binding, "tenant_id", None) or (binding.metadata or {}).get("tenant_id")
-    return PersonaCapitalBindingBody(
-        **binding.to_dict(),
-        tenant_id=tenant_id,
-        idempotent_replay=idempotent_replay,
-    )
+def _binding_body(binding: PersonaCapitalBinding, *, idempotent_replay: bool = False) -> PersonaCapitalBindingBody:
+    tid = getattr(binding, "tenant_id", None) or (binding.metadata or {}).get("tenant_id")
+    return PersonaCapitalBindingBody(**binding.to_dict(), tenant_id=tid, idempotent_replay=idempotent_replay)
 
 
 @app.post("/api/capital-pools", response_model=CapitalPoolBody, status_code=201)
