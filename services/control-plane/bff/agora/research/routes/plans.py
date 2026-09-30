@@ -9,10 +9,14 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Header, Query, Response
+from pydantic import ValidationError
+
+from ...servant.research_proposal import ServantDraftError, draft_research_plan
 
 from .common import (
     AgoraResearchRouteContext,
     ResearchPlanCreateRequest,
+    ServantResearchProposalRequest,
     _CAPABILITY,
     _plan_detail_envelope,
     _plan_etag,
@@ -81,6 +85,54 @@ def build_plans_router(ctx: AgoraResearchRouteContext) -> APIRouter:
             scope=scope,
             trace_id=x_trace_id,
             correlation_id=x_correlation_id,
+        )
+        envelope = _plan_detail_envelope(plan, ctx.utc_now, scope)
+        if response is not None:
+            response.headers["ETag"] = envelope["meta"]["etag"]
+        return envelope
+
+    # -------------------------------------------------------------------
+    # POST /bff/agora/workshops/{workshop_id}/research-plans/servant-proposal
+    # -------------------------------------------------------------------
+    @router.post("/bff/agora/workshops/{workshop_id}/research-plans/servant-proposal", status_code=201)
+    def propose_workshop_research_plan(
+        workshop_id: str,
+        body: ServantResearchProposalRequest,
+        response: Response,
+        authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+        x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    ) -> Dict[str, Any]:
+        """Servant drafts a plan (data-only); it is stored as 'draft' and never dispatched here."""
+        scope = ctx.write_scope(authorization, x_tenant_id)
+        ctx.require_idempotency_key(idempotency_key)
+        ctx.check_idempotency(
+            scope,
+            f"POST:/bff/agora/workshops/{workshop_id}/research-plans/servant-proposal",
+            idempotency_key,  # type: ignore[arg-type]
+        )
+        errors = ctx.error_code_enum()
+        try:
+            draft = draft_research_plan(body.prompt, operator_id=scope.user_id, trace_id=x_trace_id)
+            plan_body = ResearchPlanCreateRequest.model_validate(draft)
+        except ServantDraftError as exc:
+            raise ctx.bff_error(exc.status_code, errors.UPSTREAM_ERROR, "Servant research draft failed", exc.message)
+        except ValidationError as exc:
+            raise ctx.bff_error(
+                422, errors.VALIDATION_FAILED,
+                "Servant research draft violates the research plan contract",
+                "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors()),
+            )
+        _validate_create_body(plan_body, workshop_id, ctx.bff_error, ctx.error_code_enum)
+        plan = ctx.service.create_workshop_plan(
+            workshop_id,
+            plan_body,
+            scope=scope,
+            trace_id=x_trace_id,
+            correlation_id=x_correlation_id,
+            proposed_by="servant",
         )
         envelope = _plan_detail_envelope(plan, ctx.utc_now, scope)
         if response is not None:
