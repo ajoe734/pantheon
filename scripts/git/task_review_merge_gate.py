@@ -963,21 +963,28 @@ def evaluate_gate(
             f"no PR payload was supplied for {contract.task_id}",
         )
 
-    expected_branch = f"{task_branch_prefix}{contract.task_id}"
-    if str(pr.get("headRefName") or "").strip() != expected_branch:
+    canonical_branch = f"{task_branch_prefix}{contract.task_id}"
+    pr_head_branch = str(pr.get("headRefName") or "").strip()
+    # A rewritten replacement branch `<canonical>-vN` is accepted only as the
+    # PR's own head; the declared/approved branch must still bind that same head.
+    if pr_head_branch != canonical_branch and re.fullmatch(
+        re.escape(canonical_branch) + r"-v[0-9]+", pr_head_branch
+    ) is None:
         return block(
             contract,
             approval,
             "head_branch_mismatch",
-            f"PR head {str(pr.get('headRefName') or '')!r} is not the exact task branch {expected_branch!r}",
+            f"PR head {pr_head_branch!r} is not the exact task branch {canonical_branch!r} "
+            f"or a {canonical_branch}-vN replacement",
         )
+    expected_branch = pr_head_branch
     if contract.declared_head_branch and contract.declared_head_branch != expected_branch:
         return block(
             contract,
             approval,
             "declared_head_branch_mismatch",
             f"{contract.task_id} declares head branch {contract.declared_head_branch!r} "
-            f"but the canonical task branch is {expected_branch!r}",
+            f"but the PR head branch is {expected_branch!r}",
         )
     if str(pr.get("baseRefName") or "").strip() != dev_branch:
         return block(
