@@ -225,14 +225,12 @@
         "Claude2"
       ],
       "Codex": [
-        "Codex2",
         "Claude",
         "Claude2",
         "Antigravity",
         "Antigravity2"
       ],
       "Codex2": [
-        "Codex",
         "Claude",
         "Claude2",
         "Antigravity",
@@ -564,7 +562,7 @@
     },
     "codex2": {
       "delivery_mode": "codex",
-      "account": "codex2",
+      "account": "codex1",
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
@@ -663,7 +661,7 @@
     },
     "codex2-1": {
       "delivery_mode": "codex",
-      "account": "codex2",
+      "account": "codex1",
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
@@ -682,7 +680,7 @@
     },
     "codex2-2": {
       "delivery_mode": "codex",
-      "account": "codex2",
+      "account": "codex1",
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
@@ -701,7 +699,7 @@
     },
     "codex2-3": {
       "delivery_mode": "codex",
-      "account": "codex2",
+      "account": "codex1",
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
@@ -720,7 +718,7 @@
     },
     "codex2-4": {
       "delivery_mode": "codex",
-      "account": "codex2",
+      "account": "codex1",
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
@@ -817,8 +815,7 @@
       "claude2": 1,
       "antigravity": 4,
       "antigravity2": 4,
-      "codex1": 2,
-      "codex2": 2,
+      "codex1": 4,
       "copilot": 0
     },
     "max_concurrent_workers": 13
