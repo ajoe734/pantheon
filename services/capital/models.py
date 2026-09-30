@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class CapitalPoolBody(BaseModel):
     pool_id: str
+    tenant_id: Optional[str] = None
     name: str
     owner_id: str
     owner_type: str
@@ -107,6 +108,7 @@ class RiskPolicyEvaluationResponse(BaseModel):
 
 class PersonaCapitalBindingBody(BaseModel):
     binding_id: str
+    tenant_id: Optional[str] = None
     persona_id: str
     capital_pool_id: str
     capital_sleeve_id: Optional[str] = None
@@ -128,6 +130,7 @@ class PersonaCapitalBindingBody(BaseModel):
 class CreateCapitalPoolRequest(BaseModel):
     actor_id: str
     actor_role: str
+    tenant_id: Optional[str] = None
     idempotency_key: Optional[str] = None
     request_hash: Optional[str] = None
     pool_id: Optional[str] = None
@@ -152,6 +155,7 @@ class UpdateCapitalPoolStatusRequest(BaseModel):
 class CreateBindingRequest(BaseModel):
     actor_id: str
     actor_role: str
+    tenant_id: Optional[str] = None
     idempotency_key: Optional[str] = None
     request_hash: Optional[str] = None
     binding_id: Optional[str] = None
@@ -228,6 +232,7 @@ class RebalanceAllocationLine(BaseModel):
 class CreateRebalanceRequest(BaseModel):
     actor_id: str
     actor_role: str
+    tenant_id: Optional[str] = None
     idempotency_key: str
     request_hash: str
     rebalance_id: Optional[str] = None
@@ -256,6 +261,7 @@ class ApplyRebalanceRequest(BaseModel):
 
 class AllocationBody(BaseModel):
     allocation_id: str
+    tenant_id: Optional[str] = None
     capital_pool_id: str
     persona_id: str
     capital_scope: str
@@ -284,6 +290,7 @@ class AllocationListResponse(BaseModel):
 class RebalanceBody(BaseModel):
     id: str
     rebalance_id: str
+    tenant_id: Optional[str] = None
     capital_pool_id: str
     status: str
     applied: bool
@@ -314,6 +321,7 @@ class RebalanceBody(BaseModel):
 class RebalanceApplyReceipt(BaseModel):
     status: str
     rebalance_id: str
+    tenant_id: Optional[str] = None
     capital_pool_id: str
     command_id: str
     approval_ref: Optional[str] = None
@@ -338,6 +346,7 @@ class RebalanceApplyReceipt(BaseModel):
 class CreateContainmentRequest(BaseModel):
     actor_id: str
     actor_role: str
+    tenant_id: Optional[str] = None
     idempotency_key: str
     request_hash: str
     persona_id: str
@@ -359,6 +368,7 @@ class CreateContainmentRequest(BaseModel):
 
 class ContainmentBody(BaseModel):
     containment_id: str
+    tenant_id: Optional[str] = None
     persona_id: str
     action: str
     state: str

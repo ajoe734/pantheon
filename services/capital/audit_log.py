@@ -21,10 +21,12 @@ def append_audit_event(
     actor_role: Optional[str],
     detail: Optional[Dict[str, Any]] = None,
     audit_log_path: Optional[str] = None,
+    tenant_id: Optional[str] = None,
 ) -> str:
     event_id = str(uuid.uuid4())
     event = {
         "event_id": event_id,
+        "tenant_id": tenant_id,
         "event_type": event_type,
         "resource_type": resource_type,
         "resource_id": resource_id,

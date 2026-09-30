@@ -175,6 +175,7 @@ class AgoraResearchService:
         scope: Any,
         trace_id: Optional[str] = None,
         correlation_id: Optional[str] = None,
+        proposed_by: Optional[str] = None,
     ) -> Dict[str, Any]:
         now = self.utc_now()
         plan_id = str(uuid.uuid4())
@@ -196,7 +197,7 @@ class AgoraResearchService:
             "subject_type": "research_plan",
             "subject_id": plan_id,
             "workshop_id": workshop_id,
-            "payload": {"status": plan["status"]},
+            "payload": {"status": plan["status"], **({"proposed_by": proposed_by} if proposed_by else {})},
         })
         self._publish_research_event(
             workshop_id,

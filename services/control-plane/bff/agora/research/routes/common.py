@@ -485,6 +485,11 @@ class ResearchPlanCreateRequest(BaseModel):
     execution_constraints: Optional[_ExecutionConstraintsRequest] = None
 
 
+class ServantResearchProposalRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    prompt: str = Field(min_length=1, max_length=4000)
+
+
 class CandidatePoolFilterRequest(BaseModel):
     model_config = {"extra": "forbid"}
     asset_classes: List[str] = Field(default_factory=list)
