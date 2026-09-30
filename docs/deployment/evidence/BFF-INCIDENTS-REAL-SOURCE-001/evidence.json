@@ -30,12 +30,13 @@
     "services/control-plane/bff/tests/test_incident_router.py",
     "services/control-plane/bff/tests/test_incidents_real_source.py",
     "docs/deployment/evidence/BFF-INCIDENTS-REAL-SOURCE-001/evidence.json",
-    "services/control-plane/bff/smoke_test_incident.py"
+    "services/control-plane/bff/smoke_test_incident.py",
+    "services/control-plane/bff/tests/test_main_composition_seam_extraction_003.py"
   ],
   "review_rejection_fixes": {
     "P1_action_allowlist": "RiskAlertAction accepts only acknowledge/ack; other actions raise ActionUnavailableError before any write.",
     "P1_alert_ownership": "Incident derived only from alert id (alert-incident-*/inc-*); mismatched payload incident_id or unowned alert fails 422 with no write.",
     "P2_idempotency": "Ledger stores request_hash + original receipt; identical retry returns original 202 without redispatch.",
-    "tests": "smoke_test_incident.py (main-importer allowlisted) mounts production main._gov_bff_action_command; test_in02 detail expectation updated to 503."
+    "tests": "tests/test_main_composition_seam_extraction_003.py (main-importer allowlisted) mounts production main._gov_bff_action_command; test_in02 detail expectation updated to 503."
   }
 }
