@@ -130,12 +130,13 @@ class IncidentCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        target_id = alert_id or str(params.get("alert_id") or "").strip()
+        target_id = str(params.get("alert_id") or alert_id).strip()
+        if action_id.lower() not in {"acknowledge", "ack", "alertacknowledge"}:
+            raise ActionUnavailableError(f"Alert action {action_id!r} on {target_id!r} is not supported.", action_id=action_id, entity_type="RiskAlert")
+        incident_id = target_id[15:].strip() if target_id.startswith("alert-incident-") else (target_id if target_id.startswith("inc-") else "")
         p_inc = str(params.get("incident_id") or "").strip()
-        incident_id = p_inc[15:].strip() if p_inc.startswith("alert-incident-") else ("" if p_inc.startswith("alert-") else p_inc)
-        if not incident_id:
-            incident_id = target_id[15:].strip() if target_id.startswith("alert-incident-") else (target_id if target_id.startswith("inc-") else "")
-        if not incident_id:
+        p_inc = p_inc[15:].strip() if p_inc.startswith("alert-incident-") else p_inc
+        if not incident_id or (p_inc and p_inc != incident_id):
             raise ActionUnavailableError(f"Alert {target_id!r} has no durable owner; acknowledgement is unavailable.", action_id=action_id, entity_type="RiskAlert")
         base = get_base_url("PANTHEON_INCIDENTS_API_URL", "PANTHEON_INCIDENTS_URL")
         if not base:

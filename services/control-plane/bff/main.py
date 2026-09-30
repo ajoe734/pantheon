@@ -6985,6 +6985,7 @@ def _gov_bff_action_command(
         return submit_incident_action_command(
             command_store, entity_type, entity_id, action_id, resolved_key,
             identity, payload, command_type, bff_error=_bff_error, idempotency_ledger=_GOV_BFF_IDEMPOTENCY,
+            request_hash=request_hash,
         )
     exec_status = CommandStatus.SUBMITTED
 

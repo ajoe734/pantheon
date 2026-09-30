@@ -288,6 +288,7 @@ def submit_incident_action_command(
     command_store: Any, entity_type: Any, entity_id: str, action_id: str, resolved_key: str,
     identity: Any, payload: Dict[str, Any], command_type: Any, *,
     bff_error: Optional[Callable[..., Any]] = None, idempotency_ledger: Optional[Dict[str, Any]] = None,
+    request_hash: str = "",
 ) -> Dict[str, Any]:
     from services.control_plane.bff.command_adapters.base import ActionUnavailableError
     from services.control_plane.bff.command_adapters.registry import dispatch_domain_command
@@ -295,9 +296,7 @@ def submit_incident_action_command(
     err_fn = bff_error or _default_bff_error
     cmd_type = command_type if isinstance(command_type, CommandType) else CommandType(command_type)
     obj_type = entity_type if isinstance(entity_type, ObjectType) else ObjectType(entity_type)
-    inc_id = entity_id if cmd_type == CommandType.INCIDENT_ACTION else (
-        str(payload.get("incident_id") or ("" if not entity_id.startswith("alert-incident-") else entity_id[15:]))
-    )
+    inc_id = entity_id if cmd_type == CommandType.INCIDENT_ACTION else (entity_id[15:] if entity_id.startswith("alert-incident-") else (entity_id if entity_id.startswith("inc-") else ""))
     cmd_id = str(uuid.uuid4())
     try:
         domain_res = dispatch_domain_command(
@@ -329,7 +328,7 @@ def submit_incident_action_command(
     res_data = {"id": cmd_id, "status": "executed", **({"status": st, "read_back_status": st, "incident_status": inc_st, "domain_receipt": domain_res} if st else {})}
     res_dict = {"command_id": cmd_id, "status": "accepted", "read_back_status": st or "executed", "data": res_data}
     if idempotency_ledger is not None and resolved_key:
-        idempotency_ledger[resolved_key] = {"result": res_dict}
+        idempotency_ledger[resolved_key] = {"request_hash": request_hash, "result": res_dict}
     return res_dict
 
 
