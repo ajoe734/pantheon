@@ -1630,25 +1630,18 @@ class AgoraResearchRouteContext:
             from services.control_plane.bff.agora.models import AGORA_REQUIRED_ROLES
 
         identity = self.extract_identity(authorization)
-        auth_mode = os.environ.get("PANTHEON_BFF_AUTH_MODE", "strict").lower()
-        auth_stub = os.environ.get("PANTHEON_BFF_AUTH_STUB", "false").lower() == "true"
-
         if self.require_write_role is not None:
-            if auth_mode == "permissive" and auth_stub and "viewer" in getattr(identity, "roles", []):
-                pass
-            else:
-                self.require_write_role(identity)
+            self.require_write_role(identity)
         else:
             roles = set(getattr(identity, "roles", []) or [])
             if not (roles & AGORA_REQUIRED_ROLES):
-                if not (auth_mode == "permissive" and auth_stub and "viewer" in roles):
-                    ErrorCode = self.error_code_enum()
-                    raise self.bff_error(
-                        403, ErrorCode.FORBIDDEN,
-                        "Write authority required for Agora research mutations",
-                        "operator_write_role_required",
-                        suggestion="Ensure caller holds one of operator, approver, admin, reviewer roles",
-                    )
+                ErrorCode = self.error_code_enum()
+                raise self.bff_error(
+                    403, ErrorCode.FORBIDDEN,
+                    "Write authority required for Agora research mutations",
+                    "operator_write_role_required",
+                    suggestion="Ensure caller holds one of operator, approver, admin, reviewer roles",
+                )
         try:
             return resolve_agora_user_scope(
                 identity,
