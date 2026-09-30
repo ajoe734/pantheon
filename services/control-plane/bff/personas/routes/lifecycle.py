@@ -417,7 +417,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
     ):
         """BFF: create a transient research-only discovery session view."""
         identity = _extract_identity(authorization)
-        _require_read_role(identity)
+        _require_operator_role(identity)
         _reject_body_idempotency_key(payload)
         resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         request_hash = _stable_json_hash(
@@ -464,7 +464,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
     ):
         """BFF: research-only action for a Persona strategy match."""
         identity = _extract_identity(authorization)
-        _require_read_role(identity)
+        _require_operator_role(identity)
         _reject_body_idempotency_key(payload)
         resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         return _persona_strategy_match_action_response(
@@ -555,7 +555,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
     ):
         """BFF: send a test prompt to a persona; returns a stub trial handle."""
         identity = _extract_identity(authorization)
-        _require_read_role(identity)
+        _require_operator_role(identity)
         _reject_body_idempotency_key(payload)
         resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         _ensure_persona_exists(persona_id)

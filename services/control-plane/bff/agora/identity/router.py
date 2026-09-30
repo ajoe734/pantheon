@@ -276,7 +276,7 @@ def create_identity_router(
     ):
         """BFF: route an Agora message action through command admission."""
         identity = extract_identity(authorization)
-        require_read_role(identity)
+        _require_operator(identity)
         svc.reject_body_idempotency_key(payload)
         resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         store = svc.read_store
@@ -322,7 +322,7 @@ def create_identity_router(
     ):
         """ASK-001: create an agora ask session explicitly."""
         identity = extract_identity(authorization)
-        require_read_role(identity)
+        _require_operator(identity)
         svc.reject_body_idempotency_key(payload)
         resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         request_hash = svc.stable_json_hash({"route": "POST /bff/agora/ask/sessions", "payload": payload})
@@ -413,7 +413,7 @@ def create_identity_router(
     ):
         """ASK-001: close an agora ask session."""
         identity = extract_identity(authorization)
-        require_read_role(identity)
+        _require_operator(identity)
         svc.reject_body_idempotency_key(payload)
         resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         request_hash = svc.stable_json_hash({
@@ -490,7 +490,7 @@ def create_identity_router(
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         identity = extract_identity(authorization)
-        require_read_role(identity)
+        _require_operator(identity)
         svc.reject_body_idempotency_key(payload)
         resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         request_hash = svc.stable_json_hash({"route": "POST /bff/agora/ask", "payload": payload})

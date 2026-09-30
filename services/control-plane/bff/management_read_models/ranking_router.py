@@ -23,6 +23,7 @@ from fastapi import APIRouter, Body, Header, HTTPException, Query, Request, Resp
 from fastapi.encoders import jsonable_encoder
 from starlette.responses import JSONResponse
 
+from services.control_plane.bff.auth.policy import require_operator_role as _policy_require_operator_role
 from services.control_plane.bff.models import ErrorCode
 
 log = logging.getLogger(__name__)
@@ -90,19 +91,6 @@ def _default_require_read_role(identity: Any) -> None:
     pass
 
 
-def _default_require_operator_role(identity: Any, err_fn=None) -> None:
-    roles = getattr(identity, "roles", set())
-    if not ({"operator", "admin", "approver"}.intersection(roles)):
-        _err = err_fn or _default_bff_error
-        raise _err(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Operator role required",
-            "Operator role required to mutate ranking formulas",
-            precondition_failed="role_check",
-        )
-
-
 def _stable_json_hash(payload: Any) -> str:
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -136,7 +124,7 @@ def create_ranking_formulas_router(
 
     _extract_ident = extract_identity or _default_extract_identity
     _require_read = require_read_role or _default_require_read_role
-    _require_op = require_operator_role or (lambda ident: _default_require_operator_role(ident, bff_error))
+    _require_op = require_operator_role or _policy_require_operator_role
     _err = bff_error or _default_bff_error
     _utc_now = utc_now or _default_utc_now
     _snapshot_meta = snapshot_meta or _default_snapshot_meta
@@ -390,6 +378,7 @@ def create_rankings_long_tail_router(
     get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Optional[Callable[..., Any]] = None,
     require_read_role: Optional[Callable[..., None]] = None,
+    require_operator_role: Optional[Callable[..., None]] = None,
     bff_error: Optional[Callable[..., HTTPException]] = None,
     utc_now: Optional[Callable[[], str]] = None,
     page_slice: Optional[Callable[..., Any]] = None,
@@ -424,6 +413,7 @@ def create_rankings_long_tail_router(
     _extract_identity = extract_identity or _default_extract_identity
     _require_read_role = require_read_role or _default_require_read_role
     _err = bff_error or _default_bff_error
+    _require_op = require_operator_role or _policy_require_operator_role
     _utc_now = utc_now or _default_utc_now
 
     def _get_read_store() -> Any:
@@ -562,7 +552,7 @@ def create_rankings_long_tail_router(
     ):
         """BFF: ranking action (full-spec long tail) — routes through command/precondition machinery."""
         identity = _extract_identity(authorization)
-        _require_read_role(identity)
+        _require_op(identity)
         reject_body_idempotency_key(payload)
         resolved_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         read_store = _get_read_store()
