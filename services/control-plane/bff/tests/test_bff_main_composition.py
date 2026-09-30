@@ -577,3 +577,8 @@ def test_operator_token_keeps_handler_behavior(mutation_roles_client, method, pa
     else:
         assert "data" in body
         assert isinstance(body["data"], (dict, list))
+
+def test_reviewer_token_accepted_on_ranking_action(mutation_roles_client):
+    r = mutation_roles_client.post("/bff/rankings/r1/actions/publish", json={}, headers={
+        "Authorization": "Bearer rev-1:reviewer", "Idempotency-Key": "k-reviewer-ranking"})
+    assert r.status_code == 202, r.text
