@@ -233,6 +233,7 @@ class _ExactGovernanceDecisionVerifier:
         *,
         decision_id: str,
         persona_id: str,
+        tenant_id: str,
         source_state: str,
         target_state: str,
     ) -> bool:
@@ -259,7 +260,7 @@ def test_persona_http_decision_executor_requires_exact_governance_binding(
     admin_headers = _persona_headers("operator-persona", "persona.admin")
     assert client.post(
         "/api/personas",
-        json=_persona_create_payload(),
+        json=_persona_create_payload(tenant_id="tenant-owner-proof"),
         headers=admin_headers,
     ).status_code == 201
     assert client.patch(
