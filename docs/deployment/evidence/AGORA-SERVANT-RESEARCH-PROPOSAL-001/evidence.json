@@ -1,0 +1,12 @@
+{
+  "task_id": "AGORA-SERVANT-RESEARCH-PROPOSAL-001",
+  "scope": "Servant drafts research plans via the data-only structured path; BFF stores them as draft plans that only a person's approval makes dispatchable.",
+  "route": "POST /bff/agora/workshops/{workshop_id}/research-plans/servant-proposal",
+  "draft_path": "servant.research_proposal -> OpenClawOpsClient._request -> adapter /assistant/providers/openclaw/structured (single pinned emit_extraction tool, no other tool)",
+  "validation": "Draft validated by ResearchPlanCreateRequest and _validate_create_body; invalid draft returns 422/502 and creates no plan",
+  "proposed_state": "draft (dispatch requires approved; POST /runs on a draft returns 409)",
+  "tests": {
+    "command": "pytest services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/agora/servant services/control-plane/bff/agora/research services/control-plane/bff/tests/test_agora_research_run_projection.py",
+    "result": "101 passed; servant proposal test uses canonical package imports and an injected router fixture, no sys.path mutation"
+  }
+}
