@@ -144,6 +144,16 @@ def count_by(records: Iterable[Mapping[str, Any]], field: str) -> Dict[str, int]
     return counts
 
 
+def _identity_tenant(identity: Any) -> Optional[str]:
+    claims = getattr(identity, "claims", None) or {}
+    ids = claims.get("tenant_ids") or claims.get("tenantIds") or []
+    return str(claims.get("tenant_id") or claims.get("tenantId") or (ids[0] if len(ids) == 1 else "") or "") or None
+
+
+def _in_tenant(item: Mapping[str, Any], tenant: Optional[str]) -> bool:
+    return bool(tenant) and item.get("tenant_id") == tenant
+
+
 def _identity_operator_id(identity: Any) -> str:
     return str(getattr(identity, "operator_id", None) or getattr(identity, "id", None) or "operator")
 
@@ -340,7 +350,7 @@ class GovernanceService:
     # Approval decisions -------------------------------------------------
 
     def list_approval_decisions(
-        self, *, outcome: Optional[str] = None, state: Optional[str] = None
+        self, *, outcome: Optional[str] = None, state: Optional[str] = None, identity: Any = None
     ) -> List[Dict[str, Any]]:
         try:
             records = self._call(
@@ -372,6 +382,8 @@ class GovernanceService:
         seen: set[str] = set()
         result: List[Dict[str, Any]] = []
         for item in items:
+            if identity is not None and not _in_tenant(item, _identity_tenant(identity)):
+                continue
             item_id = record_id(item, "decision_id", "id", "item_id")
             if item_id and item_id in seen:
                 continue
@@ -380,26 +392,28 @@ class GovernanceService:
             result.append(item)
         return result
 
-    def get_approval_detail(self, approval_id: str) -> Optional[Dict[str, Any]]:
+    def get_approval_detail(self, approval_id: str, identity: Any = None) -> Optional[Dict[str, Any]]:
         """Typed replacement for the former generic ``/bff/approvals/{id}`` alias."""
         clean_id = str(approval_id or "").strip()
         if not clean_id:
             return None
-        if clean_id in self._created_approvals:
-            return copy.deepcopy(self._created_approvals[clean_id])
-        decision = self._call("get_approval_decision", clean_id, default=None)
+        decision = self._created_approvals.get(clean_id)
+        if decision is None:
+            decision = self._call("get_approval_decision", clean_id, default=None)
         if decision is None:
             decision = self._call("get_approval_decision_by_id", clean_id, default=None)
-        if decision is not None:
-            return copy.deepcopy(decision)
-        return next(
-            (
-                copy.deepcopy(item)
-                for item in self.list_approval_decisions()
-                if record_id(item, "decision_id", "id", "item_id") == clean_id
-            ),
-            None,
-        )
+        if decision is None:
+            decision = next(
+                (
+                    item
+                    for item in self.list_approval_decisions()
+                    if record_id(item, "decision_id", "id", "item_id") == clean_id
+                ),
+                None,
+            )
+        if decision is None or (identity is not None and not _in_tenant(decision, _identity_tenant(identity))):
+            return None
+        return copy.deepcopy(decision)
 
     def create_approval_decision(
         self,
@@ -440,6 +454,7 @@ class GovernanceService:
             "decision_state": "decided",
             "memo": memo,
             "approver_id": _identity_operator_id(identity),
+            "tenant_id": _identity_tenant(identity),
             "decided_at": decided_at,
         }
         data = {

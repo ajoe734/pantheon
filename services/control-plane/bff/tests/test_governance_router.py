@@ -58,6 +58,7 @@ class MockGovernanceStore:
             "approval-1": {
                 "id": "approval-1",
                 "decision_id": "approval-1",
+                "tenant_id": "tenant-a",
                 "decision_type": "DeploymentPlan",
                 "decision_state": "pending",
                 "risk_level": "high",
@@ -67,6 +68,7 @@ class MockGovernanceStore:
             "approval-2": {
                 "id": "approval-2",
                 "decision_id": "approval-2",
+                "tenant_id": "tenant-a",
                 "decision_type": "StrategySpec",
                 "decision_state": "approved",
                 "outcome": "approved",
@@ -242,8 +244,22 @@ class MockGovernanceStore:
         return self.evolution_decisions.get(decision_id)
 
 
+def _tenant_identity(authorization: Optional[str] = None) -> Any:
+    tenant, _, role = (authorization or "tenant-a").replace("Bearer ", "").partition(":")
+    return type(
+        "Identity",
+        (),
+        {
+            "operator_id": f"op-{tenant}",
+            "roles": {role} if role else {"operator", "viewer", "reviewer", "approver", "admin"},
+            "claims": {"tenant_id": tenant} if tenant != "none" else {},
+        },
+    )()
+
+
 def build_client(store: Optional[MockGovernanceStore] = None, **router_kwargs: Any) -> TestClient:
     store = store or MockGovernanceStore()
+    router_kwargs.setdefault("extract_identity", _tenant_identity)
     app = FastAPI()
     app.include_router(create_governance_router(get_read_store=lambda: store, **router_kwargs))
     return TestClient(app)
@@ -273,6 +289,52 @@ def test_typed_approval_detail_replaces_generic_alias_and_preserves_envelope() -
     assert canonical.json()["data"]["decision_id"] == "approval-1"
     assert compatibility.json()["data"]["decision_id"] == "approval-1"
     assert client.get("/bff/approvals/missing").status_code == 404
+
+
+def test_approval_decisions_are_scoped_to_viewer_tenant_on_mounted_routes() -> None:
+    store = MockGovernanceStore()
+    store.approval_decisions["approval-unknown-tenant"] = {
+        "id": "approval-unknown-tenant",
+        "decision_id": "approval-unknown-tenant",
+    }
+    store.approval_decisions["approval-fallback"] = {
+        "id": "approval-fallback",
+        "decision_id": "approval-fallback",
+        "tenant_id": "tenant-a",
+    }
+    store.get_approval_decision = lambda _id: None  # type: ignore[method-assign]  # exercise list fallback
+
+    def viewer_identity(authorization: Optional[str] = None) -> Any:
+        tenant, _, role = (authorization or "tenant-a").removeprefix("Bearer ").partition(":")
+        return type("Identity", (), {
+            "operator_id": f"op-{tenant}",
+            "roles": {role or "viewer"},
+            "claims": {"tenant_id": tenant} if tenant != "none" else {},
+        })()
+
+    client = build_client(store, extract_identity=viewer_identity)
+    tenant_a, tenant_b, no_tenant = (
+        {"Authorization": tenant} for tenant in ("tenant-a", "tenant-b", "none")
+    )
+
+    ids = {item["decision_id"] for item in client.get("/api/v1/approval-decisions", headers=tenant_a).json()["data"]}
+    assert ids == {"approval-1", "approval-2", "approval-fallback"}
+    assert client.get("/api/v1/approval-decisions/approval-1", headers=tenant_a).status_code == 200
+    assert client.get("/api/v1/approval-decisions/approval-fallback", headers=tenant_a).status_code == 200
+    for headers in (tenant_b, no_tenant):
+        assert client.get("/api/v1/approval-decisions", headers=headers).json()["data"] == []
+        assert client.get("/api/v1/approval-decisions/approval-1", headers=headers).status_code == 404
+        assert client.get("/api/v1/approval-decisions/approval-fallback", headers=headers).status_code == 404
+    for headers in (tenant_a, tenant_b, no_tenant):
+        assert client.get("/api/v1/approval-decisions/approval-unknown-tenant", headers=headers).status_code == 404
+
+    approver = {"Authorization": "tenant-a:approver", "Idempotency-Key": "scope-1"}
+    payload = {"plan_id": "plan-1", "decision": "approve", "memo": "Approved with evidence", "tenant_id": "tenant-b"}
+    created = client.post("/api/v1/approval-decisions", json=payload, headers=approver)
+    assert created.status_code == 202
+    decision_id = created.json()["data"]["commandId"]
+    assert client.get(f"/api/v1/approval-decisions/{decision_id}", headers=tenant_a).status_code == 200
+    assert client.get(f"/api/v1/approval-decisions/{decision_id}", headers=tenant_b).status_code == 404
 
 
 def test_create_approval_decision_validation_dry_run_and_idempotent_replay() -> None:
