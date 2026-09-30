@@ -305,7 +305,13 @@ class DomainIncidentPort:
             self._last_error = True
             return []
         else:
-            p = {k: v for k, v in [("status", status), ("severity", severity), ("capital_pool_id", affected_pool_id)] if v}
+            q = [("severity", severity)] if severity else []
+            if affected_pool_id:
+                q.append(("capital_pool_id", affected_pool_id))
+            st_parts = [s.strip() for s in status.split(",") if s.strip()] if status else []
+            if len(st_parts) == 1:
+                q.append(("status", st_parts[0].lower()))
+            p = dict(q)
             try:
                 incidents = [r for r in self._http_json(f"/api/incidents{('?' + urllib.parse.urlencode(p)) if p else ''}") if isinstance(r, dict)]
             except Exception:

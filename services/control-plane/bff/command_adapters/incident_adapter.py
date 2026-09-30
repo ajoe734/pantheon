@@ -131,13 +131,10 @@ class IncidentCommandAdapter(DomainCommandAdapter):
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         target_id = alert_id or str(params.get("alert_id") or "").strip()
-        incident_id = str(params.get("incident_id") or "").strip()
-        if incident_id.startswith("alert-incident-"):
-            incident_id = incident_id[len("alert-incident-"):].strip()
-        elif incident_id.startswith("alert-"):
-            incident_id = ""
+        p_inc = str(params.get("incident_id") or "").strip()
+        incident_id = p_inc[15:].strip() if p_inc.startswith("alert-incident-") else ("" if p_inc.startswith("alert-") else p_inc)
         if not incident_id:
-            incident_id = target_id[len("alert-incident-"):].strip() if target_id.startswith("alert-incident-") else (target_id if target_id.startswith("inc-") else "")
+            incident_id = target_id[15:].strip() if target_id.startswith("alert-incident-") else (target_id if target_id.startswith("inc-") else "")
         if not incident_id:
             raise ActionUnavailableError(f"Alert {target_id!r} has no durable owner; acknowledgement is unavailable.", action_id=action_id, entity_type="RiskAlert")
         base = get_base_url("PANTHEON_INCIDENTS_API_URL", "PANTHEON_INCIDENTS_URL")
@@ -158,7 +155,10 @@ class IncidentCommandAdapter(DomainCommandAdapter):
         target_id = incident_id or str(params.get("incident_id") or "").strip()
         if not target_id:
             raise ActionUnavailableError("Incident action requires incident_id.", action_id=action_id, entity_type="Incident")
-        new_status = "resolved" if action_id.lower() in {"resolve", "close"} else "investigating"
+        k = action_id.lower()
+        new_status = "resolved" if k in {"resolve", "close"} else ("investigating" if k in {"start-mitigation", "mitigate", "escalate", "acknowledge", "ack", "investigate", "reopen"} else None)
+        if not new_status:
+            raise ActionUnavailableError(f"Incident action {action_id!r} on {target_id!r} is not supported.", action_id=action_id, entity_type="Incident")
         base = get_base_url("PANTHEON_INCIDENTS_API_URL", "PANTHEON_INCIDENTS_URL")
         url = f"{base}/api/incidents/{quote(target_id, safe='')}/status"
         body = http_request_json(url, method="POST", payload={"status": new_status, "resolved_at": params.get("resolved_at")}, auth_token=auth_token, mfa_token=mfa_token)

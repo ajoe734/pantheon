@@ -284,6 +284,54 @@ def _default_handle_sse_stream(
         headers=headers,
     )
 
+def submit_incident_action_command(
+    command_store: Any, entity_type: Any, entity_id: str, action_id: str, resolved_key: str,
+    identity: Any, payload: Dict[str, Any], command_type: Any, *,
+    bff_error: Optional[Callable[..., Any]] = None, idempotency_ledger: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    from services.control_plane.bff.command_adapters.base import ActionUnavailableError
+    from services.control_plane.bff.command_adapters.registry import dispatch_domain_command
+    import urllib.error as urllib_error
+    err_fn = bff_error or _default_bff_error
+    cmd_type = command_type if isinstance(command_type, CommandType) else CommandType(command_type)
+    obj_type = entity_type if isinstance(entity_type, ObjectType) else ObjectType(entity_type)
+    inc_id = entity_id if cmd_type == CommandType.INCIDENT_ACTION else (
+        str(payload.get("incident_id") or ("" if not entity_id.startswith("alert-incident-") else entity_id[15:]))
+    )
+    cmd_id = str(uuid.uuid4())
+    try:
+        domain_res = dispatch_domain_command(
+            command_id=cmd_id, command_type=cmd_type,
+            params={"entity_type": obj_type.value, "entity_id": entity_id, "action_id": action_id,
+                    **({"alert_id": entity_id} if cmd_type == CommandType.RISK_ALERT_ACTION else {}),
+                    **({"incident_id": inc_id} if inc_id else {}), **payload},
+        )
+    except ActionUnavailableError as exc:
+        raise err_fn(422, ErrorCode.OPERATION_NOT_ALLOWED, "Action unavailable", str(exc), precondition_failed="durable_owner_unavailable") from exc
+    except urllib_error.HTTPError as exc:
+        c, e = (404, ErrorCode.RESOURCE_NOT_FOUND) if exc.code == 404 else (503, ErrorCode.DEPENDENCY_UNAVAILABLE)
+        raise err_fn(c, e, "Incident not found" if c == 404 else "Incident service unavailable", str(exc), **({"precondition_failed": "downstream_unavailable"} if c == 503 else {})) from exc
+    except (urllib_error.URLError, TimeoutError, ConnectionError, OSError) as exc:
+        raise err_fn(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Incident service unavailable", str(exc), precondition_failed="downstream_unavailable") from exc
+
+    if hasattr(command_store, "submit_command"):
+        command_store.submit_command(
+            command_id=cmd_id, command_type=cmd_type, target=TargetObject(type=obj_type, id=entity_id),
+            submitted_at=_default_utc_now(), params={"action_id": action_id, **payload},
+            audit_context={"operator_id": getattr(identity, "operator_id", "operator"), "action_id": action_id},
+        )
+        if hasattr(command_store, "update_status"):
+            try: command_store.update_status(command_id=cmd_id, status="executed", result=domain_res)
+            except Exception: pass
+
+    st = (domain_res.get("authoritative_readback") or {}).get("status") or domain_res.get("status")
+    inc_st = (domain_res.get("authoritative_readback") or {}).get("incident_status") or st
+    res_data = {"id": cmd_id, "status": "executed", **({"status": st, "read_back_status": st, "incident_status": inc_st, "domain_receipt": domain_res} if st else {})}
+    res_dict = {"command_id": cmd_id, "status": "accepted", "read_back_status": st or "executed", "data": res_data}
+    if idempotency_ledger is not None and resolved_key:
+        idempotency_ledger[resolved_key] = {"result": res_dict}
+    return res_dict
+
 
 def create_incident_router(
     *,
@@ -370,6 +418,14 @@ def create_incident_router(
     _inc_events = incident_events if incident_events is not None else _service._incident_events
     _inc_subscribers = incident_subscribers if incident_subscribers is not None else _service._incident_subscribers
     _idem_ledger = idempotency_ledger if idempotency_ledger is not None else _service._idempotency_ledger
+    _submit_action = submit_action_command
+    if _submit_action is None and (command_store or _service.get_command_store()) is not None:
+        _cs = command_store or _service.get_command_store()
+        _submit_action = lambda et, eid, aid, rk, ident, pl, ct: submit_incident_action_command(
+            command_store=_cs, entity_type=et, entity_id=eid, action_id=aid,
+            resolved_key=rk, identity=ident, payload=pl, command_type=ct,
+            bff_error=_err, idempotency_ledger=_idem_ledger,
+        )
 
     # -------------------------------------------------------------------------
     # Route 1: GET /api/v1/operator/alerts
@@ -523,6 +579,8 @@ def create_incident_router(
         roles = getattr(identity, "roles", []) or []
         res = _service.get_incident_response(incident_id, roles=roles, snapshot=snapshot)
         if res is None:
+            surface = _service.get_surface_status("incidents", snapshot_at=_utc_now())
+            _raise_unavailable(surface, label="Incident")
             raise _err(
                 404,
                 ErrorCode.RESOURCE_NOT_FOUND,
@@ -545,6 +603,8 @@ def create_incident_router(
         _require_read(identity)
         res = _service.get_post_incident_review(incident_id, snapshot=snapshot)
         if res is None:
+            surface = _service.get_surface_status("incidents", snapshot_at=_utc_now())
+            _raise_unavailable(surface, label="Incident")
             raise _err(
                 404,
                 ErrorCode.RESOURCE_NOT_FOUND,
@@ -619,7 +679,7 @@ def create_incident_router(
             pass
         clean_id = alert_id.strip()
 
-        if submit_action_command is None:
+        if _submit_action is None:
             raise _err(
                 503,
                 ErrorCode.DEPENDENCY_UNAVAILABLE,
@@ -627,7 +687,7 @@ def create_incident_router(
                 "Command admission is not wired for this deployment; refusing to fabricate an accepted receipt.",
                 precondition_failed="command_admission_unavailable",
             )
-        return submit_action_command(
+        return _submit_action(
             ObjectType.RISK_ALERT, clean_id, action_id, resolved_key, identity, payload, CommandType.RISK_ALERT_ACTION
         )
 
@@ -783,7 +843,7 @@ def create_incident_router(
                 f"Incident {incident_id} does not exist",
             )
 
-        if submit_action_command is None:
+        if _submit_action is None:
             raise _err(
                 503,
                 ErrorCode.DEPENDENCY_UNAVAILABLE,
@@ -791,7 +851,7 @@ def create_incident_router(
                 "Command admission is not wired for this deployment; refusing to fabricate an accepted receipt.",
                 precondition_failed="command_admission_unavailable",
             )
-        return submit_action_command(
+        return _submit_action(
             ObjectType.INCIDENT, clean_id, action_id, resolved_key, identity, payload, CommandType.INCIDENT_ACTION
         )
 
@@ -905,27 +965,15 @@ def create_incident_router(
                     )
 
         incident_id = str(payload.get("incident_id") or "").strip()
-        if not incident_id and clean_id.startswith("alert-incident-"):
-            incident_id = clean_id[len("alert-incident-"):].strip()
-        elif not incident_id and clean_id.startswith("inc-"):
-            incident_id = clean_id
-        if not incident_id and alert_record is not None:
-            if alert_record.get("category") == "incident":
-                target_ref = alert_record.get("target_ref") or {}
-                incident_id = target_ref.get("target_id") or alert_record.get("target_id") or ""
         if not incident_id:
-            inc = _service.get_incident(clean_id)
-            if inc:
+            if clean_id.startswith("alert-incident-"):
+                incident_id = clean_id[15:].strip()
+            elif clean_id.startswith("inc-") or _service.get_incident(clean_id):
                 incident_id = clean_id
+            elif alert_record and alert_record.get("category") == "incident":
+                incident_id = (alert_record.get("target_ref") or {}).get("target_id") or alert_record.get("target_id") or ""
         if not incident_id:
-            raise _err(
-                422,
-                ErrorCode.OPERATION_NOT_ALLOWED,
-                "Alert acknowledgement unavailable",
-                f"Alert {alert_id!r} has no durable owner; in-memory acknowledgement is retired.",
-                precondition_failed="durable_owner_unavailable",
-                suggestion="Acknowledge the alert through its durable owning service or incident workflow.",
-            )
+            raise _err(422, ErrorCode.OPERATION_NOT_ALLOWED, "Alert acknowledgement unavailable", f"Alert {alert_id!r} has no durable owner; in-memory acknowledgement is retired.", precondition_failed="durable_owner_unavailable", suggestion="Acknowledge the alert through its durable owning service or incident workflow.")
 
         inc_res = _service.update_incident_status(incident_id, status="investigating")
         read_back_status = inc_res.get("status", "investigating") if isinstance(inc_res, dict) else "investigating"
@@ -945,14 +993,7 @@ def create_incident_router(
         cmd_store = _service.get_command_store()
         if cmd_store and hasattr(cmd_store, "submit_command"):
             try:
-                cmd_store.submit_command(
-                    command_id=command_id,
-                    command_type=CommandType.ALERT_ACKNOWLEDGE,
-                    target=TargetObject(type=ObjectType.RISK_ALERT, id=clean_id),
-                    submitted_at=submitted_at,
-                    params={"alert_id": clean_id, "incident_id": incident_id, "action": "acknowledge", **payload},
-                    audit_context=audit_record,
-                )
+                cmd_store.submit_command(command_id=command_id, command_type=CommandType.ALERT_ACKNOWLEDGE, target=TargetObject(type=ObjectType.RISK_ALERT, id=clean_id), submitted_at=submitted_at, params={"alert_id": clean_id, "incident_id": incident_id, "action": "acknowledge", **payload}, audit_context=audit_record)
             except Exception as e:
                 log.warning("command_store.submit_command failed: %s", e)
 

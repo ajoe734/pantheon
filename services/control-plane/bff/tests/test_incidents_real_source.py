@@ -83,6 +83,16 @@ class StubIncidentsServer:
                 if parsed.path.startswith("/api/incidents"):
                     if len(parts) == 2:  # /api/incidents
                         items = list(outer.incidents.values())
+                        qs = urllib.parse.parse_qs(parsed.query)
+                        if "status" in qs:
+                            st = qs["status"][0]
+                            items = [i for i in items if i.get("status") == st]
+                        if "severity" in qs:
+                            sev = qs["severity"][0]
+                            items = [i for i in items if i.get("severity") == sev]
+                        if "capital_pool_id" in qs:
+                            pool = qs["capital_pool_id"][0]
+                            items = [i for i in items if (i.get("capital_pool_id") or i.get("affected_pool_id")) == pool]
                         self.send_response(200)
                         self.send_header("Content-Type", "application/json")
                         self.end_headers()
@@ -228,79 +238,15 @@ def incident_service_env(monkeypatch):
     stub_srv.stop()
 
 
-def _make_action_command_handler(cmd_store: CommandStore) -> Any:
-    def submit_action_command(
-        entity_type: ObjectType,
-        entity_id: str,
-        action_id: str,
-        resolved_key: str,
-        identity: Any,
-        payload: Dict[str, Any],
-        command_type: CommandType,
-    ) -> Dict[str, Any]:
-        import urllib.error as urllib_error
-        inc_id = entity_id if command_type == CommandType.INCIDENT_ACTION else (
-            str(payload.get("incident_id") or ("" if not entity_id.startswith("alert-incident-") else entity_id[15:]))
-        )
-        try:
-            domain_res = dispatch_domain_command(
-                command_id=str(uuid.uuid4()),
-                command_type=command_type,
-                params={
-                    "entity_type": entity_type.value,
-                    "entity_id": entity_id,
-                    "action_id": action_id,
-                    **({"alert_id": entity_id} if command_type == CommandType.RISK_ALERT_ACTION else {}),
-                    **({"incident_id": inc_id} if inc_id else {}),
-                    **payload,
-                },
-            )
-        except ActionUnavailableError as exc:
-            raise auth_policy.bff_error(
-                422,
-                auth_policy.ErrorCode.OPERATION_NOT_ALLOWED,
-                "Action unavailable",
-                str(exc),
-                precondition_failed="durable_owner_unavailable",
-            ) from exc
-        except urllib_error.HTTPError as exc:
-            if exc.code == 404:
-                raise auth_policy.bff_error(404, auth_policy.ErrorCode.RESOURCE_NOT_FOUND, "Incident not found", str(exc)) from exc
-            raise auth_policy.bff_error(503, auth_policy.ErrorCode.DEPENDENCY_UNAVAILABLE, "Incident service unavailable", str(exc), precondition_failed="downstream_unavailable") from exc
-        except (urllib_error.URLError, TimeoutError, ConnectionError, OSError) as exc:
-            raise auth_policy.bff_error(503, auth_policy.ErrorCode.DEPENDENCY_UNAVAILABLE, "Incident service unavailable", str(exc), precondition_failed="downstream_unavailable") from exc
-
-        cmd_id = str(uuid.uuid4())
-        cmd_store.submit_command(
-            command_id=cmd_id,
-            command_type=command_type,
-            target=TargetObject(type=entity_type, id=entity_id),
-            submitted_at="2026-09-30T00:00:00Z",
-            params={"action_id": action_id, **payload},
-            audit_context={"operator_id": getattr(identity, "operator_id", "operator")},
-        )
-        res_data = {"id": cmd_id, "status": "executed"}
-        st = (domain_res.get("authoritative_readback") or {}).get("status") or domain_res.get("status")
-        inc_st = (domain_res.get("authoritative_readback") or {}).get("incident_status") or st
-        if st:
-            res_data["status"] = st
-            res_data["read_back_status"] = st
-            res_data["incident_status"] = inc_st
-            res_data["domain_receipt"] = domain_res
-        return {"command_id": cmd_id, "status": "accepted", "data": res_data}
-    return submit_action_command
-
-
 def _build_app(stub_store: StubReadStoreWithIncidentPort, tmp_path, submit_action_command=None) -> FastAPI:
     app = FastAPI()
     cmd_store = CommandStore(str(tmp_path / f"cmd-{uuid.uuid4().hex[:8]}.jsonl"))
     service = IncidentService(get_read_store=lambda: stub_store)
-    action_cmd = submit_action_command or _make_action_command_handler(cmd_store)
     router = create_incident_router(
         service=service,
         read_surface=stub_store,
         command_store=cmd_store,
-        submit_action_command=action_cmd,
+        submit_action_command=submit_action_command,
         extract_identity=auth_policy.extract_identity,
         require_read_role=auth_policy.require_read_role,
         require_operator_role=auth_policy.require_operator_role,
@@ -565,7 +511,6 @@ def test_mounted_action_submission_helper_routes(incident_service_env, tmp_path)
         read_surface=read_surface,
         command_store=cmd_store,
         durable_writer=lifecycle_port,
-        submit_action_command=_make_action_command_handler(cmd_store),
         extract_identity=auth_policy.extract_identity,
         require_read_role=auth_policy.require_read_role,
         require_operator_role=auth_policy.require_operator_role,
@@ -711,4 +656,45 @@ def test_unrelated_action_does_not_investigate_incident(incident_service_env, tm
     client = TestClient(_build_app(store, tmp_path))
     response = client.post(f"/bff/incidents/inc-real-001/{action}", headers=_AUTH, json={})
     assert stub_srv.status_calls == [], (response.status_code, response.text, stub_srv.status_calls)
+
+
+@pytest.mark.parametrize("action", ["append-postmortem", "rollback-deployment"])
+def test_command_action_does_not_mutate_status_for_unsupported_operation(incident_service_env, tmp_path, action: str) -> None:
+    """Non-status actions on command route reject without status mutation or upstream calls."""
+    stub_srv, base_url = incident_service_env
+    store = StubReadStoreWithIncidentPort(base_url)
+    client = TestClient(_build_app(store, tmp_path))
+    response = client.post(f"/bff/incidents/inc-real-001/actions/{action}", headers=_AUTH, json={})
+    assert stub_srv.status_calls == [], {"http": response.status_code, "calls": stub_srv.status_calls, "body": response.json()}
+    assert response.status_code == 422
+    err = response.json().get("error") or {}
+    assert err.get("code") == "OPERATION_NOT_ALLOWED"
+
+
+@pytest.mark.parametrize("path", ["incident-response", "post-incident-review"])
+def test_composed_details_report_outage_as_dependency_unavailable(incident_service_env, tmp_path, path: str) -> None:
+    """Composed details endpoints report 503 on owner outage while retaining genuine 404."""
+    stub_srv, base_url = incident_service_env
+    store = StubReadStoreWithIncidentPort(base_url)
+    client = TestClient(_build_app(store, tmp_path))
+    stub_srv.is_healthy = False
+    response = client.get(f"/api/v1/operator/{path}/inc-real-001", headers=_AUTH)
+    assert response.status_code == 503, response.text
+    err = response.json().get("error") or {}
+    assert err.get("code") == "DEPENDENCY_UNAVAILABLE"
+
+
+def test_multi_status_query_matches_real_owner_equality_contract(incident_service_env) -> None:
+    """Multi-status query preserves case-normalized filtering against faithful exact-match owner."""
+    stub_srv, base_url = incident_service_env
+    stub_srv.incidents["inc-real-002"] = {
+        "incident_id": "inc-real-002",
+        "title": "Database connection drop",
+        "severity": "high",
+        "status": "investigating",
+        "created_at": "2026-09-30T01:00:00Z",
+    }
+    port = DomainIncidentPort(incidents_api_url=base_url)
+    results = port.list_incidents(status="open,investigating")
+    assert len(results) == 2
 

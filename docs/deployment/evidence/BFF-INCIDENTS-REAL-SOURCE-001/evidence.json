@@ -14,10 +14,10 @@
     "6_mounted_tests": "Mounted tests in test_incidents_real_source.py cover every entry point against a stubbed incidents service, in addition to full test suites passing across existing incident test files."
   },
   "verification": {
-    "test_command": "python3 -m pytest services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/tests/test_bff_alerts_acknowledge.py services/control-plane/bff/tests/test_console_data_incidents_reviews.py services/control-plane/bff/test_read_store_incident.py services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py services/control-plane/bff/test_pkt012_alerts_rail_contract.py services/control-plane/bff/tests/test_incidents_real_source.py",
-    "test_results": "46 passed, 3 warnings in 29.30s (and reviewer probe 5/5 passed, test_bff_test_architecture AST scan passed)",
+    "test_command": "python3 -m pytest services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/tests/test_bff_alerts_acknowledge.py services/control-plane/bff/tests/test_console_data_incidents_reviews.py services/control-plane/bff/test_read_store_incident.py services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py services/control-plane/bff/test_pkt012_alerts_rail_contract.py services/control-plane/bff/tests/test_incidents_real_source.py services/control-plane/bff/tests/test_bff_test_architecture.py",
+    "test_results": "90 passed, 3 warnings in 88.90s (and independent test_codex2_bff_incidents_review.py 5/5 passed in 5.77s)",
     "diff_budget_command": "python3 scripts/git/diff_budget.py --base 41774a87f7ae857bb9fc7b97559f0b3bbb72c657 --change-class corrective",
-    "diff_budget_result": "production +518/-556 = net -38 lines (<= 0 budget satisfied)"
+    "diff_budget_result": "production +552/-561 = net -9 lines (<= 0 budget satisfied)"
   },
   "touched_files": [
     "services/control-plane/bff/command_adapters/incident_adapter.py",

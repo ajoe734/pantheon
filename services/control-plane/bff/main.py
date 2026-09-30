@@ -6980,35 +6980,17 @@ def _gov_bff_action_command(
         "audit_action": audit_action.to_dict(),
     }
     audit_record["foundation"] = foundation_ctx
-    exec_status = CommandStatus.SUBMITTED
-    domain_res = None
     if command_type in {CommandType.INCIDENT_ACTION, CommandType.RISK_ALERT_ACTION}:
-        from .command_adapters.registry import dispatch_domain_command
-        from .command_adapters.base import ActionUnavailableError
-        try:
-            inc_id = entity_id if command_type == CommandType.INCIDENT_ACTION else (str(payload.get("incident_id") or ("" if not entity_id.startswith("alert-incident-") else entity_id[15:])))
-            domain_res = dispatch_domain_command(command_id=command_id, command_type=command_type, params={"entity_type": entity_type.value, "entity_id": entity_id, "action_id": action_id, **({"alert_id": entity_id} if command_type == CommandType.RISK_ALERT_ACTION else {}), **({"incident_id": inc_id} if inc_id else {}), **payload})
-            exec_status = CommandStatus.EXECUTED
-        except ActionUnavailableError as exc:
-            raise _bff_error(422, ErrorCode.OPERATION_NOT_ALLOWED, "Action unavailable", str(exc), precondition_failed="durable_owner_unavailable") from exc
-        except urllib_error.HTTPError as exc:
-            c, e = (404, ErrorCode.RESOURCE_NOT_FOUND) if exc.code == 404 else (503, ErrorCode.DEPENDENCY_UNAVAILABLE)
-            raise _bff_error(c, e, "Incident not found" if c == 404 else "Incident service unavailable", str(exc), **({"precondition_failed": "downstream_unavailable"} if c == 503 else {})) from exc
-        except (urllib_error.URLError, TimeoutError, ConnectionError, OSError) as exc:
-            raise _bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Incident service unavailable", str(exc), precondition_failed="downstream_unavailable") from exc
+        from .incidents.router import submit_incident_action_command
+        return submit_incident_action_command(
+            command_store, entity_type, entity_id, action_id, resolved_key,
+            identity, payload, command_type, bff_error=_bff_error, idempotency_ledger=_GOV_BFF_IDEMPOTENCY,
+        )
+    exec_status = CommandStatus.SUBMITTED
 
     command_store.submit_command(command_id=command_id, command_type=command_type, target=target, submitted_at=submitted_at, params={"action_id": action_id, **payload}, audit_context=audit_record, foundation_context=foundation_ctx)
-    if exec_status == CommandStatus.EXECUTED:
-        command_store.update_status(command_id=command_id, status=exec_status, result=domain_res)
     result = _project_final_command_response(command_id=command_id, command=command_type, accepted_at=submitted_at, status=exec_status, staleness_warning=staleness_warning)
     res_dict = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
-    if domain_res is not None:
-        st = (domain_res.get("authoritative_readback") or {}).get("status") or domain_res.get("status")
-        inc_st = (domain_res.get("authoritative_readback") or {}).get("incident_status") or st
-        if st and isinstance(res_dict.get("data"), dict):
-            res_dict["read_back_status"] = res_dict["data"]["status"] = res_dict["data"]["read_back_status"] = st
-            res_dict["data"]["incident_status"] = inc_st
-            res_dict["data"]["domain_receipt"] = domain_res
     _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": res_dict}
     return res_dict
 
