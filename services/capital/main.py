@@ -372,22 +372,13 @@ class CapitalBoundaryService:
                 created = self.binding_store.create(binding)
             except Exception as exc:
                 if isinstance(exc, PersonaCapitalBindingError) or type(exc).__name__ == "PersonaCapitalBindingError":
-                    self._redact_binding_conflict_error(exc, tenant)
+                    self._redact_binding_conflict_error(exc, tenant, binding)
                 raise
             self._complete_create_idempotency(scope="persona_capital_binding.create", actor_scope=body.actor_id, key=idempotency_key)
         self._emit_nonfatal(
-            event_type="persona_capital_binding_created",
-            resource_type="PersonaCapitalBinding",
-            resource_id=created.binding_id,
-            actor_id=body.actor_id,
-            actor_role=body.actor_role,
-            detail={
-                "capital_pool_id": created.capital_pool_id,
-                "persona_id": created.persona_id,
-                "capital_sleeve_id": created.capital_sleeve_id,
-                "role": created.role,
-                "allowed_deployment_scope": created.allowed_deployment_scope,
-            },
+            event_type="persona_capital_binding_created", resource_type="PersonaCapitalBinding",
+            resource_id=created.binding_id, actor_id=body.actor_id, actor_role=body.actor_role,
+            detail={"capital_pool_id": created.capital_pool_id, "persona_id": created.persona_id, "capital_sleeve_id": created.capital_sleeve_id, "role": created.role, "allowed_deployment_scope": created.allowed_deployment_scope},
         )
         return created, False
 
@@ -422,26 +413,32 @@ class CapitalBoundaryService:
                 updated = self.binding_store.activate(binding_id, body.approval_decision_id)
             except Exception as exc:
                 if isinstance(exc, PersonaCapitalBindingError) or type(exc).__name__ == "PersonaCapitalBindingError":
-                    self._redact_binding_conflict_error(exc, _current_tenant())
+                    self._redact_binding_conflict_error(exc, _current_tenant(), binding)
                 raise
         self._emit(
-            event_type="persona_capital_binding_activated",
-            resource_type="PersonaCapitalBinding",
-            resource_id=updated.binding_id,
-            actor_id=body.actor_id,
-            actor_role=body.actor_role,
+            event_type="persona_capital_binding_activated", resource_type="PersonaCapitalBinding",
+            resource_id=updated.binding_id, actor_id=body.actor_id, actor_role=body.actor_role,
             detail={"approval_decision_id": body.approval_decision_id},
         )
         return updated
 
-    def _redact_binding_conflict_error(self, exc: Exception, caller_tenant: Optional[str]) -> None:
+    def _redact_binding_conflict_error(
+        self, exc: Exception, caller_tenant: Optional[str], binding: Optional[PersonaCapitalBinding] = None
+    ) -> None:
         msg = str(exc)
-        m = re.search(r"(Single-live-owner rule violated: pool .+? already has an active live_owner binding) \(([^)]+)\)(\. Revoke.+)", msg)
-        if m and not _is_binding_authorized(self.binding_store.get(m.group(2)), caller_tenant):
-            raise type(exc)(f"{m.group(1)}{m.group(3)}") from exc
-        m = re.search(r"(Capital sleeve identity is already bound: .+?), binding=(?:'|\")([^'\"]+)(?:'|\")", msg)
-        if m and not _is_binding_authorized(self.binding_store.get(m.group(2)), caller_tenant):
-            raise type(exc)(m.group(1)) from exc
+        if "Single-live-owner rule violated:" in msg:
+            pool = binding.capital_pool_id if binding else None
+            if not pool and " pool " in msg and " already has " in msg:
+                pool = msg.split(" pool ", 1)[1].split(" already has ", 1)[0].strip().strip("'\"")
+            conf = next((b for b in self.binding_store.list(capital_pool_id=pool, status="active", role="live_owner") if not binding or b.binding_id != binding.binding_id), None) if pool else None
+            if not conf or not _is_binding_authorized(conf, caller_tenant):
+                raise type(exc)(f"Single-live-owner rule violated: pool {pool!r} already has an active live_owner binding. Revoke or suspend it before activating a new live_owner.") from exc
+        if "Capital sleeve identity is already bound:" in msg:
+            pool, sleeve = (binding.capital_pool_id, str(getattr(binding, "capital_sleeve_id", "") or "").strip()) if binding else (None, "")
+            conf = next((b for b in self.binding_store.list(capital_pool_id=pool) if (not binding or b.binding_id != binding.binding_id) and str(getattr(b, "capital_sleeve_id", "") or "").strip() == sleeve), None) if pool and sleeve else None
+            if not conf or not _is_binding_authorized(conf, caller_tenant):
+                safe_msg = f"Capital sleeve identity is already bound: pool={pool!r}, sleeve={sleeve!r}" if pool and sleeve else (msg.split(", binding=")[0] if ", binding=" in msg else msg)
+                raise type(exc)(safe_msg) from exc
 
     def update_binding_status(
         self,

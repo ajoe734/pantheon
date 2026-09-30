@@ -43,12 +43,12 @@
     {
       "criterion": "3. Rows without a tenant are visible to no caller",
       "status": "passed",
-      "verification": "Untenanted rows return 404 on direct lookup, cannot be mutated or read back during rebalances/containment, and are excluded from all list endpoints across pools, bindings, rebalances, allocations, receipts, containments, live-owner, admissibility, and audit events. Binding conflict errors on sleeve create and live_owner activate redact unauthorized/untenanted conflicting binding identities to prevent information disclosure while enforcing uniqueness constraints."
+      "verification": "Untenanted rows return 404 on direct lookup, cannot be mutated or read back during rebalances/containment, and are excluded from all list endpoints across pools, bindings, rebalances, allocations, receipts, containments, live-owner, admissibility, and audit events. Binding conflict errors on sleeve create and live_owner activate use structured binding lookups and fail closed, redacting foreign/untenanted conflicting binding identities for all accepted binding IDs (including parentheses, newlines, and quotes) while preserving same-tenant disclosure."
     },
     {
       "criterion": "4. Tests cover same-tenant and cross-tenant access for every capital route",
       "status": "passed",
-      "verification": "services/capital/test_tenant_scoping.py covers all 23 capital routes with both same-tenant and cross-tenant assertions, cross-tenant idempotency replay tests, untenanted live owner isolation, route-level rebalance apply foreign/untenanted allocation rejection with non-disclosure checks, and real postgres migration/persistence regression."
+      "verification": "services/capital/test_tenant_scoping.py covers all 23 capital routes with both same-tenant and cross-tenant assertions, cross-tenant idempotency replay tests, untenanted live owner isolation, route-level rebalance apply foreign/untenanted allocation rejection with non-disclosure checks, structured conflict redaction regressions with parentheses/newlines/quotes for foreign, null, and same tenant, and real postgres migration/persistence regression."
     }
   ],
   "covered_routes_count": 23,
@@ -80,24 +80,24 @@
   "diff_budget": {
     "change_class": "corrective",
     "budget": 150,
-    "production_lines_added": 335,
-    "production_lines_deleted": 202,
-    "net_production_lines": 133,
+    "production_lines_added": 349,
+    "production_lines_deleted": 219,
+    "net_production_lines": 130,
     "under_budget": true
   },
   "verification": {
     "passed": [
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/capital",
-        "result": "73 passed, 1 warning in 69.75s"
+        "result": "73 passed, 1 warning in 34.18s"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/capital/test_tenant_scoping.py",
-        "result": "9 passed, 1 warning in 5.43s"
+        "result": "9 passed, 1 warning in 5.72s"
       },
       {
         "command": "python3 scripts/git/diff_budget.py --base 7833ee1a28717b2b28f94f5f118f369be9665aca --change-class corrective --budget 150",
-        "result": "net production lines +133 <= 150"
+        "result": "net production lines +130 <= 150"
       }
     ]
   }
