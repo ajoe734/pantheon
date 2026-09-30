@@ -183,7 +183,10 @@ class PiWorkerTests(unittest.TestCase):
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "piastra"), 1)
         self.assertEqual(supervisor.agent_account_id(config, "PiAstra"), "codex1")
         self.assertEqual(config["providers"]["pi_astra"]["account"], config["providers"]["codex"]["account"])
-        self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"]["codex1"], 2)
+        # Codex, Codex2 and Pi are logged in to one ChatGPT account and share one cap.
+        self.assertEqual(supervisor.agent_account_id(config, "Codex2"), "codex1")
+        self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"]["codex1"], 4)
+        self.assertNotIn("codex2", config["ready_dispatcher"]["max_concurrent_per_account"])
 
 
 if __name__ == "__main__":

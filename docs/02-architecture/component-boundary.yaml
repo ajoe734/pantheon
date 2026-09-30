@@ -73,6 +73,8 @@ components:
       - scripts/test_orchestrator_bundle.py
       - scripts/test_ai_status.py
       - scripts/dev/
+      - scripts/sync-dev-root.sh
+      - AI_COLLABORATION_GUIDE.md
       - scripts/test_supervisor_watchdog_install.py
       - scripts/test_supervisor_launch_ownership.py
       - docs-site/js/dashboard-*.js

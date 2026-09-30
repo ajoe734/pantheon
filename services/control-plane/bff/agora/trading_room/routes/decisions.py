@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-from fastapi import APIRouter, Cookie, Header, HTTPException, Query
+from fastapi import APIRouter, Cookie, Header, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 
 from .common import (
@@ -12,6 +12,8 @@ from .common import (
     TraderDecisionRequest,
     TradingDecisionEvent,
     _TR_SSE_BUFFER_SIZE,
+    _decision_event_etag,
+    _stable_hash,
     _tr_buffer,
     _tr_event_id,
     _tr_replay_after,
@@ -32,6 +34,7 @@ def build_decisions_router(ctx: TradingRoomRouteContext) -> APIRouter:
 
     @router.get("/bff/agora/trading-room/decision-events")
     def list_trading_decision_events(
+        response: Response,
         authorization: Optional[str] = Header(default=None),
         pantheon_session: Optional[str] = Cookie(default=None),
         event_kind: Optional[str] = Query(
@@ -47,13 +50,15 @@ def build_decisions_router(ctx: TradingRoomRouteContext) -> APIRouter:
         ctx.require_read_role(identity)
 
         page = ctx.service.list_decision_events(
+            identity=identity,
             event_kind=event_kind,
             state=state,
             page_size=page_size,
             next_page_token=next_page_token,
         )
+        response.headers["ETag"] = f'"tr-decision-page:{_stable_hash(page)}"'
         return {
-            "items": page["items"],
+            "items": [{**event, "etag": _decision_event_etag(event)} for event in page["items"]],
             "page_info": page["page_info"],
             "meta": ctx._meta(),
         }
@@ -65,6 +70,7 @@ def build_decisions_router(ctx: TradingRoomRouteContext) -> APIRouter:
     @router.get("/bff/agora/trading-room/decision-events/{decision_event_id}")
     def get_trading_decision_event(
         decision_event_id: str,
+        response: Response,
         authorization: Optional[str] = Header(default=None),
         pantheon_session: Optional[str] = Cookie(default=None),
     ) -> Dict[str, Any]:
@@ -72,7 +78,9 @@ def build_decisions_router(ctx: TradingRoomRouteContext) -> APIRouter:
         identity = ctx.extract_identity(authorization, session_cookie=pantheon_session)
         ctx.require_read_role(identity)
 
-        return ctx.service.get_decision_event(decision_event_id)
+        event = ctx.service.get_decision_event(decision_event_id, identity)
+        response.headers["ETag"] = _decision_event_etag(event)
+        return event
 
     # ------------------------------------------------------------------
     # POST /bff/agora/trading-room/decision-events/{decision_event_id}/decisions
@@ -108,6 +116,7 @@ def build_decisions_router(ctx: TradingRoomRouteContext) -> APIRouter:
             identity=identity,
             idempotency_key=idem_key,
             x_request_id=request_id,
+            if_match=if_match,
         )
 
         return {
