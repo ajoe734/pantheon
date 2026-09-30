@@ -5,7 +5,7 @@
   "backend": {
     "repo": "ajoe734/pantheon",
     "runtime_commit": "879ac6c8262d05cd734b391a24a5deb42331b9e1",
-    "contract_commit": "77df37d54f9da6f6091bc150fce03ca711b494ec"
+    "contract_commit": "ef1380e0efb02cab76b1ace3f581eb65fab57f39"
   },
   "contract": {
     "bundle_index": {
