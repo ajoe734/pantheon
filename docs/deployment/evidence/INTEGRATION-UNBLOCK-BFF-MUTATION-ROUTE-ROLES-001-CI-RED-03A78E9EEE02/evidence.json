@@ -1,0 +1,6 @@
+{
+  "task": "INTEGRATION-UNBLOCK-BFF-MUTATION-ROUTE-ROLES-001-CI-RED-03A78E9EEE02",
+  "root_cause": "PR #6020 (task/BFF-MUTATION-ROUTE-ROLES-001) failed only the 'Commit trailers' check: several commits lacked LLM-Agent/Task-ID/Reviewer trailers and two subjects exceeded 72 chars. All other checks were green.",
+  "resolution": "PR #6020 could not be amended in place (merge history, closed before force-push so not reopenable). Its net diff vs dev was squashed into one commit with valid trailers, force-pushed to task/BFF-MUTATION-ROUTE-ROLES-001 (18555c1da) and reopened as https://github.com/ajoe734/pantheon/pull/6027. This task's PR carries evidence only.",
+  "verification": "No local pytest environment in the worker; code is byte-identical to the PR diff, whose non-trailer CI checks passed."
+}
