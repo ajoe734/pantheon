@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task_id": "BFF-INCIDENTS-REAL-SOURCE-001",
   "task_title": "Serve incidents and incident actions from the incidents service",
-  "owner": "Antigravity2",
+  "owner": "Claude",
   "reviewer": "Codex2",
   "change_class": "corrective",
   "acceptance_criteria": {
@@ -15,9 +15,9 @@
   },
   "verification": {
     "test_command": "python3 -m pytest services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/tests/test_bff_alerts_acknowledge.py services/control-plane/bff/tests/test_console_data_incidents_reviews.py services/control-plane/bff/test_read_store_incident.py services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py services/control-plane/bff/test_pkt012_alerts_rail_contract.py services/control-plane/bff/tests/test_incidents_real_source.py services/control-plane/bff/tests/test_bff_test_architecture.py",
-    "test_results": "90 passed, 3 warnings in 80.37s (and independent test_codex2_bff_incidents_review.py 5/5 passed in 5.56s)",
+    "test_results": "115 passed after review fixes (manifest set + smoke_test_incident.py); production net -8",
     "diff_budget_command": "python3 scripts/git/diff_budget.py --base fcfaf44f2cd25e4940126ba0887c4f626935bfae --change-class corrective",
-    "diff_budget_result": "production +552/-561 = net -9 lines (<= 0 budget satisfied)"
+    "diff_budget_result": "production +553/-561 = net -8 lines (<= 0 budget satisfied)"
   },
   "touched_files": [
     "services/control-plane/bff/command_adapters/incident_adapter.py",
@@ -29,6 +29,13 @@
     "services/control-plane/bff/tests/test_bff_alerts_acknowledge.py",
     "services/control-plane/bff/tests/test_incident_router.py",
     "services/control-plane/bff/tests/test_incidents_real_source.py",
-    "docs/deployment/evidence/BFF-INCIDENTS-REAL-SOURCE-001/evidence.json"
-  ]
+    "docs/deployment/evidence/BFF-INCIDENTS-REAL-SOURCE-001/evidence.json",
+    "services/control-plane/bff/smoke_test_incident.py"
+  ],
+  "review_rejection_fixes": {
+    "P1_action_allowlist": "RiskAlertAction accepts only acknowledge/ack; other actions raise ActionUnavailableError before any write.",
+    "P1_alert_ownership": "Incident derived only from alert id (alert-incident-*/inc-*); mismatched payload incident_id or unowned alert fails 422 with no write.",
+    "P2_idempotency": "Ledger stores request_hash + original receipt; identical retry returns original 202 without redispatch.",
+    "tests": "smoke_test_incident.py (main-importer allowlisted) mounts production main._gov_bff_action_command; test_in02 detail expectation updated to 503."
+  }
 }

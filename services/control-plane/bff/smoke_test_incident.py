@@ -391,7 +391,7 @@ def test_in02_missing_backend_does_not_fabricate_incidents():
     assert list_body["meta"]["surfaces"]["incident_list"]["status"] == "unavailable"
     assert list_body["meta"]["surfaces"]["incident_list"]["source"] == "missing"
     assert list_body["meta"]["degradation"]["reason"]
-    assert detail_resp.status_code == 404
+    assert detail_resp.status_code == 503
     print("✅ IN-02: Missing backend does not fabricate incident records")
 
 
@@ -716,3 +716,66 @@ if __name__ == "__main__":
     if failed:
         sys.exit(1)
     print("ALL ACCEPTANCE CRITERIA VERIFIED")
+
+
+# BFF-INCIDENTS-REAL-SOURCE-001 review regressions: mounted with the production
+# _gov_bff_action_command callback (this file is on the main-importer allowlist).
+import runpy as _runpy
+import uuid
+import pytest as _pytest
+
+_real = _runpy.run_path(str(Path(__file__).parent / "tests" / "test_incidents_real_source.py"))
+StubIncidentsServer = _real["StubIncidentsServer"]
+StubReadStoreWithIncidentPort = _real["StubReadStoreWithIncidentPort"]
+_build_app = _real["_build_app"]
+_AUTH = _real["_AUTH"]
+CommandStore = _real["CommandStore"]
+
+# Review-rejection regressions: mounted with the production _gov_bff_action_command callback.
+@_pytest.fixture
+def mounted_prod_callback(monkeypatch, tmp_path):
+    server = StubIncidentsServer()
+    url = server.start()
+    monkeypatch.setenv('PANTHEON_INCIDENTS_API_URL', url)
+    monkeypatch.setenv('PANTHEON_INCIDENTS_URL', url)
+    monkeypatch.setenv('PANTHEON_BFF_AUTH_STUB', 'true')
+    monkeypatch.setenv('PANTHEON_BFF_AUTH_MODE', 'permissive')
+    from services.control_plane.bff import main
+    monkeypatch.setattr(main, '_GOV_BFF_IDEMPOTENCY', {})
+    monkeypatch.setattr(main, '_check_read_surface_state', lambda: None)
+    monkeypatch.setattr(main, 'command_store', CommandStore(str(tmp_path / 'production-commands.jsonl')))
+    app = _build_app(StubReadStoreWithIncidentPort(url), tmp_path,
+                          submit_action_command=main._gov_bff_action_command)
+    try:
+        yield server, TestClient(app, raise_server_exceptions=False)
+    finally:
+        server.stop()
+
+@_pytest.mark.parametrize('path', [
+    '/bff/incidents/inc-real-001/actions/resolve',
+    '/bff/risk/alerts/alert-incident-inc-real-001/actions/acknowledge',
+])
+def test_identical_retry_returns_original_receipt(mounted_prod_callback, path):
+    server, client = mounted_prod_callback
+    headers = {**_AUTH, 'Idempotency-Key': str(uuid.uuid4())}
+    first = client.post(path, headers=headers, json={})
+    second = client.post(path, headers=headers, json={})
+    assert first.status_code == 202, first.text
+    assert second.status_code == first.status_code, second.text
+    assert second.json() == first.json()
+    assert len(server.status_calls) == 1
+
+def test_unsupported_risk_action_cannot_change_incident(mounted_prod_callback):
+    server, client = mounted_prod_callback
+    response = client.post('/bff/risk/alerts/alert-incident-inc-real-001/actions/not-a-real-action',
+                           headers={**_AUTH, 'Idempotency-Key': str(uuid.uuid4())}, json={})
+    assert response.status_code == 422 and server.status_calls == [], {
+        'http': response.status_code, 'body': response.json(), 'writes': server.status_calls}
+
+def test_acknowledge_cannot_substitute_unrelated_durable_owner(mounted_prod_callback):
+    server, client = mounted_prod_callback
+    response = client.post('/bff/risk/alerts/alert-runtime-unowned/actions/acknowledge',
+                           headers={**_AUTH, 'Idempotency-Key': str(uuid.uuid4())},
+                           json={'incident_id': 'inc-real-001'})
+    assert response.status_code == 422 and server.status_calls == [], {
+        'http': response.status_code, 'body': response.json(), 'writes': server.status_calls}
