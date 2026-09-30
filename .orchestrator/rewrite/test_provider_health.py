@@ -366,5 +366,51 @@ class DeliveryHealthSnapshotTests(unittest.TestCase):
         self.assertEqual(entry["retry_at"], "2026-09-21T04:00:00Z")
 
 
+class WorkerProgressClearsStaleAuthTests(unittest.TestCase):
+    NOW = datetime(2026, 9, 30, 9, 8, tzinfo=timezone.utc)
+
+    def _auth_down(self):
+        return provider_health.apply_failure(
+            None, endpoint_id="antigravity", account_id="antigravity",
+            failure_kind="auth", observed_at=self.NOW, detail="not authenticated, trying silent auth",
+        )
+
+    def test_later_model_output_clears_endpoint_auth_verdict(self) -> None:
+        after = provider_health.apply_worker_progress(
+            self._auth_down(), endpoint_id="antigravity", progress_at=self.NOW + timedelta(minutes=5),
+        )
+        entry = after["endpoints"]["antigravity"]
+        self.assertEqual(entry["state"], DeliveryHealthState.HEALTHY.value)
+        self.assertEqual(entry["source"], "worker_progress")
+        self.assertEqual(
+            provider_health.endpoint_state(after, "antigravity", now=self.NOW + timedelta(minutes=6)),
+            DeliveryHealthState.HEALTHY,
+        )
+
+    def test_output_older_than_the_verdict_does_not_clear_it(self) -> None:
+        before = self._auth_down()
+        after = provider_health.apply_worker_progress(
+            before, endpoint_id="antigravity", progress_at=self.NOW - timedelta(seconds=1),
+        )
+        self.assertEqual(after, provider_health.normalize_delivery_health(before))
+
+    def test_only_endpoint_auth_verdicts_are_cleared(self) -> None:
+        quota = provider_health.apply_failure(
+            None, endpoint_id="antigravity", account_id="antigravity",
+            failure_kind="quota_terminal", observed_at=self.NOW,
+        )
+        after = provider_health.apply_worker_progress(
+            quota, endpoint_id="antigravity", progress_at=self.NOW + timedelta(minutes=5),
+        )
+        self.assertEqual(after, provider_health.normalize_delivery_health(quota))
+        self.assertEqual(after["accounts"]["antigravity"]["reason_kind"], "quota_terminal")
+
+    def test_unknown_endpoint_is_left_alone(self) -> None:
+        after = provider_health.apply_worker_progress(
+            None, endpoint_id="antigravity", progress_at=self.NOW,
+        )
+        self.assertEqual(after, provider_health.normalize_delivery_health(None))
+
+
 if __name__ == "__main__":
     unittest.main()
