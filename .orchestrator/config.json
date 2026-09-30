@@ -37,7 +37,8 @@
     "heartbeat_stale_seconds": 300,
     "heartbeat_grace_seconds": 60,
     "work_progress_stale_seconds": 7200,
-    "runner_heartbeat_interval_seconds": 15
+    "runner_heartbeat_interval_seconds": 15,
+    "dependency_python": "~/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3"
   },
   "watchdog": {
     "enabled": true,

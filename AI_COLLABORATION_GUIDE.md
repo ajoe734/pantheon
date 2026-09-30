@@ -536,13 +536,16 @@ interpreter you started it with, and probes each candidate for `pytest` before
 accepting it. In order:
 
 1. `--dependency-python`
-2. `$PANTHEON_DEPENDENCY_PYTHON`
+2. `$PANTHEON_DEPENDENCY_PYTHON` — **this is the one that normally answers for
+   an auto worker.** The supervisor exports `worker_runtime.dependency_python`,
+   a shared venv that `sync-dev-root.sh` builds from `scripts/dev/worker-test-requirements.txt`
+   (the same packages the Smoke acceptance CI job installs). Do not build your
+   own venv or `pip install` into `/usr/bin/python3` when it is set.
 3. the interpreter you ran the script with
 4. `$VIRTUAL_ENV`
 5. `<checkout>/.venv`
 6. `<main worktree>/.venv` — derived with `git rev-parse --git-common-dir`, so a
-   task worktree finds the main checkout's environment. **This is the one that
-   normally answers for an auto worker.**
+   task worktree finds the main checkout's environment.
 
 `.venv-pantheon` is then created *by* that interpreter and inherits its
 packages, and provisioning ends by re-proving that the interpreter it hands back
