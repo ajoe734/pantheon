@@ -257,9 +257,14 @@ def _tenant_identity(authorization: Optional[str] = None) -> Any:
     )()
 
 
+def _submit_action(*, action_kind: str, target_id: str, action_id: str, **_: Any) -> Dict[str, Any]:
+    return {"status": "accepted", "data": {"action": action_id, "command_id": f"cmd-{action_kind}-{target_id}"}}
+
+
 def build_client(store: Optional[MockGovernanceStore] = None, **router_kwargs: Any) -> TestClient:
     store = store or MockGovernanceStore()
     router_kwargs.setdefault("extract_identity", _tenant_identity)
+    router_kwargs.setdefault("submit_action", _submit_action)
     app = FastAPI()
     app.include_router(create_governance_router(get_read_store=lambda: store, **router_kwargs))
     return TestClient(app)
