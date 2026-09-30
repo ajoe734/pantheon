@@ -391,7 +391,7 @@ def test_in02_missing_backend_does_not_fabricate_incidents():
     assert list_body["meta"]["surfaces"]["incident_list"]["status"] == "unavailable"
     assert list_body["meta"]["surfaces"]["incident_list"]["source"] == "missing"
     assert list_body["meta"]["degradation"]["reason"]
-    assert detail_resp.status_code == 404
+    assert detail_resp.status_code == 503
     print("✅ IN-02: Missing backend does not fabricate incident records")
 
 

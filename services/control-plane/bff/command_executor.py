@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote
 
+from fastapi import HTTPException
+
 from .models import CommandStatus, CommandType
 from .command_adapters import ActionUnavailableError, dispatch_domain_command
 
@@ -1966,6 +1968,20 @@ def execute_command_with_status(
             "suggestion": exc.suggestion,
         }
         log.warning("Command %s action unavailable: %s", command_id, error["message"])
+        return CommandStatus.FAILED, None, error
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        owner_error = detail.get("error") or {}
+        if not isinstance(owner_error, dict):
+            owner_error = {}
+        error = {
+            "code": owner_error.get("code", "DOWNSTREAM_ERROR"),
+            "message": owner_error.get("message", str(exc.detail)),
+            "started_at": started_at,
+            "failed_at": _utc_now(),
+            "downstream_status": exc.status_code,
+            "retryable": exc.status_code >= 500,
+        }
         return CommandStatus.FAILED, None, error
     except urllib.error.HTTPError as exc:
         retryable = exc.code >= 500
