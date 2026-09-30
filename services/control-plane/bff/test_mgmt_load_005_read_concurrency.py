@@ -97,6 +97,12 @@ class _EmptyCommandLog:
         return []
 
 
+def _tenant_a_identity(authorization=None, *args, **kwargs):
+    identity = _default_extract_identity(authorization, *args, **kwargs)
+    identity.claims = {"tenant_id": "tenant-a"}
+    return identity
+
+
 def _build_app(
     store: ReadSurfacePorts,
     *,
@@ -121,7 +127,7 @@ def _build_app(
     app.include_router(
         create_governance_router(
             read_surface=store,
-            extract_identity=_default_extract_identity,
+            extract_identity=_tenant_a_identity,
             require_read_role=_default_require_read_role,
             utc_now=_utc_now_rfc3339,
             bff_error=_default_bff_error,
@@ -337,7 +343,7 @@ def test_approvals_slow_read_completes_without_hanging() -> None:
 
     def slow_list_approval_queue_items(**_kwargs):
         time.sleep(0.2)
-        return [{"decision_id": "should-appear", "decision_state": "pending"}]
+        return [{"decision_id": "should-appear", "decision_state": "pending", "tenant_id": "tenant-a"}]
 
     with _isolated_bff() as (client, store):
         store.list_approval_queue_items = slow_list_approval_queue_items
@@ -349,7 +355,7 @@ def test_approvals_slow_read_completes_without_hanging() -> None:
     assert elapsed >= 0.2
     assert elapsed < 1.0, f"approvals route took {elapsed:.3f}s; it should still complete promptly after the slow read"
     payload = response.json()
-    assert payload["items"] == [{"decision_id": "should-appear", "decision_state": "pending"}]
+    assert payload["items"] == [{"decision_id": "should-appear", "decision_state": "pending", "tenant_id": "tenant-a"}]
     assert payload["count"] == 1
 
 

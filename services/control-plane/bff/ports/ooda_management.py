@@ -747,6 +747,7 @@ class ManagementReviewQueuePort:
             items.append(
                 {
                     "decision_id": decision_id,
+                    "tenant_id": raw.get("tenant_id"),
                     "decision_type": target_type,
                     "risk_level": raw.get("risk_level"),
                     "submitted_at": raw.get("created_at") or raw.get("submitted_at"),
