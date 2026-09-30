@@ -71,5 +71,11 @@
    "arithmetic": "4695 base passed - 3 deleted tests + 4 base-only failures now passing - 1 candidate-only flaky failure = 4695"
   },
   "old_note": "supersedes earlier glob-limited (355/392 file) claim"
+ },
+ "post_dev_merge_addendum": {
+  "reason": "dev merge moved base so net production dropped to -1478; removed post-merge unreferenced incident seam",
+  "removed": ["_list_bff_incidents", "_get_bff_incident", "_bff_incident_service", "_current_read_store_for_legacy_incident_seam", "_IncidentService alias", "stale _GOV_BFF_IDEMPOTENCY comment"],
+  "proof": "AST top-level scan of main.py plus grep -rw over services/ and scripts/ *.py found only the removed chain referencing each name",
+  "net_production_lines": -1500
  }
 }

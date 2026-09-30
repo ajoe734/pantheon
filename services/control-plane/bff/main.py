@@ -5621,29 +5621,7 @@ def _merged_mcp_tool_records() -> List[Dict[str, Any]]:
         ("tool_id", "id"),
     )
 _GOV_BFF_EXPERIMENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
-# _GOV_BFF_IDEMPOTENCY defined earlier
 from .action_catalog import get_catalog_entry
-from .incidents.service import IncidentService as _IncidentService
-def _current_read_store_for_legacy_incident_seam() -> Any:
-    return read_store
-def _bff_incident_service() -> _IncidentService:
-    """Composition-root binding: incidents/service.py's IncidentService is the
-    sole owner of Incident-case projection and filtering; inject the live
-    ``read_store`` global rather than duplicating the projection logic here."""
-    return _IncidentService(
-        get_read_store=_current_read_store_for_legacy_incident_seam,
-    )
-def _list_bff_incidents(
-    *,
-    status: Optional[str] = None,
-    severity: Optional[str] = None,
-    affected_pool_id: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    return _bff_incident_service().list_bff_incidents(
-        status=status, severity=severity, affected_pool_id=affected_pool_id
-    )
-def _get_bff_incident(incident_id: str) -> Optional[Dict[str, Any]]:
-    return _bff_incident_service().get_bff_incident(incident_id)
 def _gov_bff_action_command(
     entity_type: ObjectType,
     entity_id: str,
