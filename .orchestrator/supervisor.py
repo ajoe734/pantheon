@@ -2543,6 +2543,30 @@ def record_delivery_health_failure(
     return True
 
 
+def record_delivery_health_worker_progress(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: Mapping[str, Any],
+) -> bool:
+    """Let live model output from a worker clear a stale auth verdict on its endpoint."""
+
+    endpoint_id = normalize_agent_id(str(worker.get("agent_id") or ""))
+    progress_at = _parse_iso_utc(str(worker.get("last_work_progress_at") or ""))
+    if not endpoint_id or progress_at is None:
+        return False
+    before = runtime_delivery_health(state)
+    after = rewrite_provider_health.apply_worker_progress(
+        before,
+        endpoint_id=endpoint_id,
+        progress_at=progress_at,
+        valid_for_seconds=delivery_health_settings(config)["evidence_ttl_seconds"],
+    )
+    if after == before:
+        return False
+    state["delivery_health"] = after
+    return True
+
+
 def worker_execution_context_files(task_id: str | None) -> list[str]:
     """Describe worker context without writing into the command checkout.
 
@@ -11607,6 +11631,8 @@ def poll_worker_observation_stage(
     meaningful_progress_advanced = update_from_log(config, worker, now=now)
     commit_progress_advanced = False
     alive = pid_is_alive(worker.get("pid"))
+    if meaningful_progress_advanced and alive and record_delivery_health_worker_progress(config, state, worker):
+        changed = True
     if (
         alive
         and worker.get("status") in active_worker_statuses
