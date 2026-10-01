@@ -158,7 +158,10 @@ def _validated_synthesis(result: Any, ids: List[str], opinions: List[Dict[str, A
     """Deterministic envelope, nested-shape and opinion/evidence membership checks only."""
     def text(value: Any) -> bool:
         return isinstance(value, str) and bool(value.strip())
-    supplied = {(str(r.get("ref_type")), str(r.get("ref_id"))) for o in opinions for r in o.get("evidence_refs") or []}
+    supplied: Dict[Any, Dict[str, Any]] = {}  # selected identity -> original supplied record (factual metadata kept)
+    for o in opinions:
+        for r in o.get("evidence_refs") or []:
+            supplied.setdefault((str(r.get("ref_type")), str(r.get("ref_id"))), r)
     ok = isinstance(result, dict) and result.get("status") in _SYNTHESIS_STATUSES and text(result.get("summary"))
     agreements, disagreements, refs = (result.get(k) if ok else None for k in ("agreements", "disagreements", "evidence_refs"))
     ok = ok and isinstance(agreements, list) and all(text(a) for a in agreements)
@@ -171,7 +174,8 @@ def _validated_synthesis(result: Any, ids: List[str], opinions: List[Dict[str, A
         and (r["ref_type"], r["ref_id"]) in supplied for r in refs)
     if not ok:
         raise ValueError("synthesis response is malformed or references unsupplied opinions/evidence")
-    return result
+    picked = {(r["ref_type"], r["ref_id"]) for r in refs}
+    return {**result, "evidence_refs": [supplied[key] for key in supplied if key in picked]}
 
 
 def _synthesize(

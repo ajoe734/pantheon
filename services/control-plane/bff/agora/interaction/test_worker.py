@@ -1178,3 +1178,39 @@ def test_resource_matches_committed_schema(bff_client):
         jsonschema.validate(detail["synthesis"], defs)
         for inv in detail["provider_invocations"]:
             jsonschema.validate(inv, {"$ref": "#/definitions/ProviderInvocation", "definitions": schema["definitions"]})
+
+
+def test_selected_evidence_resolves_to_supplied_records_and_matches_wire_schema(bff_client):
+    jsonschema = pytest.importorskip("jsonschema")
+    import pathlib
+    from services.control_plane.bff.agora.interaction.runner import _SYNTHESIS_SCHEMA
+    adapter_dir = str(pathlib.Path(__file__).resolve().parents[4] / "openclaw-gateway-adapter")
+    sys.path.insert(0, adapter_dir)
+    try:
+        import assistant_openclaw_provider as adapter
+    finally:
+        sys.path.remove(adapter_dir)
+    ref = {"ref_type": "market_data", "ref_id": "m-1", "observed_at": "2026-01-01T00:00:00Z",
+           "data_cutoff": "2026-01-01T00:00:00Z", "freshness": "fresh"}
+    def persona(prompt, **kw):
+        return {"status": "completed", "output": {
+            "request_id": f"r-{uuid.uuid4().hex[:6]}", "agent_id": str(kw.get("agent_id")),
+            "json_events": [{"item": {"text": json.dumps({
+                "conclusion": "support", "rationale": "r", "confidence": 0.7, "uncertainty": [], "risks": [],
+                "invalidation_conditions": [], "evidence_refs": [ref], "recommended_measures": []})}}]}}
+    def select(opinions):
+        result = {"status": "recommendation", "summary": "s", "agreements": ["a"], "disagreements": [],
+                  "evidence_refs": [{"ref_type": "market_data", "ref_id": "m-1"}]}
+        adapter._validate_extraction_arguments(result, _SYNTHESIS_SCHEMA)
+        return {"data": {"output": {"structured_data": result}}}
+    factory, _ = _make_mock_client(invoke_fn=persona, synthesis_fn=select)
+    submit_resp, _ = _submit_interaction(bff_client, personas=("risk-analyst", "macro-quant"))
+    interaction_id = submit_resp.json()["data"]["interaction_id"]
+    AgoraInteractionWorker(lifecycle_store=interaction_lifecycle, workshop_store=workshop_store,
+                           read_store=read_store, client_factory=factory).run_once()
+    synthesis = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")["synthesis"]
+    assert synthesis["status"] == "recommendation"
+    assert [{k: r[k] for k in ref} for r in synthesis["evidence_refs"]] == [ref]  # factual metadata preserved
+    root = pathlib.Path(__file__).resolve().parents[3] / "specs/agora/v10/persona_interaction_daily.schema.json"
+    schema = json.loads(root.read_text())
+    jsonschema.validate(synthesis, {"$ref": "#/definitions/InteractionSynthesis", "definitions": schema["definitions"]})
