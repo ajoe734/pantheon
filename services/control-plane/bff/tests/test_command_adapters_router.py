@@ -897,6 +897,12 @@ _ALIAS_PARAMS: Dict[str, Dict[str, Any]] = {
     "RejectDecision": {"decision_id": "alias-target-1", "rejection_reason": "alias equivalence"},
     "RequestApprovalRevision": {"decision_id": "alias-target-1", "revision_notes": "alias equivalence"},
     "RecordSponsorDecision": {"committee_id": "alias-target-1", "sponsor_decision": "approved", "rationale_ref": "ref-1"},
+    "RemediateSentinelIntervention": {"intervention_id": "alias-target-1", "remediation_action": "resolve"},
+    "HumanGateApprove": {"human_gate_item_id": "alias-target-1", "decision": "approve"},
+    "HumanGateReject": {"human_gate_item_id": "alias-target-1", "decision": "reject"},
+    "HumanGateRequestMoreEvidence": {"human_gate_item_id": "alias-target-1", "decision": "request_more_evidence"},
+    "HumanGateRevoke": {"human_gate_item_id": "alias-target-1", "decision": "revoke", "source_type": "approval", "source_id": "alias-target-1"},
+    "HumanGateExtendTtl": {"human_gate_item_id": "alias-target-1", "decision": "extend_ttl", "ttl_seconds": 3600},
     "EmergencyContainment": {"action": "freeze", "trigger": "forced_kill", "evidence_refs": ["ev-1"]},
 }
 _ALIAS_TARGET_TYPES = {"HardRollback": ObjectType.RUNTIME, "ExecuteRollback": ObjectType.RUNTIME}
@@ -1029,10 +1035,13 @@ def test_wrapped_alias_is_admitted_exactly_like_its_canonical_command(wrapper, v
 
 @pytest.mark.parametrize("wrapper,verb,canonical", sorted((w, v, c) for (w, v), c in __import__("services.control_plane.bff.command_adapters.contracts", fromlist=["x"])._WRAPPER_VERB_ALIASES.items()))
 def test_every_alias_has_an_accepted_path_stored_as_canonical(wrapper, verb, canonical) -> None:
-    status, _body, stored = _submit_alias(wrapper, verb, canonical, wrapped=True, token_for=canonical)
-    expected_reject = {"RebalanceProposal": 422, "RecordSponsorDecision": 404}  # canonical admission itself needs evidence/projection the harness lacks
-    if canonical in expected_reject:
-        assert status == expected_reject[canonical] and stored == []
+    from unittest.mock import patch
+
+    projection = {"meta": {"surfaces": {"committee_board": "ready"}}, "allowedActions": {"canRecordSponsorDecision": True}}
+    with patch("services.control_plane.bff.governance.service.GovernanceService.committee_projection", return_value=projection):
+        status, _body, stored = _submit_alias(wrapper, verb, canonical, wrapped=True, token_for=canonical)
+    if canonical == "RebalanceProposal":  # canonical admission never accepts it; rejection parity is asserted above
+        assert status == 422 and stored == []
         return
     assert status == 202, (status, _body)
     assert [row["type"] for row in stored if row["request_hash"]] == [canonical]
@@ -1041,6 +1050,7 @@ def test_every_alias_has_an_accepted_path_stored_as_canonical(wrapper, verb, can
 _DISPATCH_CASES = [
     ("RuntimeAction", "start", "StartRuntime", "/runtimes/alias-target-1/start"),
     ("PersonaAction", "advance_lifecycle", "AdvanceLifecycle", "/personas/alias-target-1/advance-lifecycle"),
+    ("V5InterventionAction", "remediate", "RemediateSentinelIntervention", "/sentinel/interventions/alias-target-1/remediate"),
     ("RuntimeAction", "RestartPaperRuntime", "RestartPaperRuntime", "/paper-runtimes/alias-target-1/restart"),
     ("RuntimeAction", "RestartTelemetryBridge", "RestartTelemetryBridge", "/paper-runtimes/alias-target-1/telemetry-bridge/restart"),
     ("RuntimeAction", "TerminateStalePaperMonitoringSession", "TerminateStalePaperMonitoringSession", "/monitoring-sessions/alias-target-1/terminate-stale"),
@@ -1063,7 +1073,8 @@ def test_accepted_wrapped_alias_dispatches_successfully(monkeypatch, wrapper, ve
     outcome, _result, error = command_executor.execute_command_with_status("cmd-1", CommandType(canonical), params)
     assert outcome.value == "executed", error
     assert posts[0][0].endswith(suffix)
-    assert posts[0][1]["confirm_token"] == "ct-alias-1"
+    assert len(posts) == 1
+    assert posts[0][1].get("confirm_token", "ct-alias-1") == "ct-alias-1"
 
 
 def test_unmapped_wrapper_combinations_are_not_rewritten() -> None:

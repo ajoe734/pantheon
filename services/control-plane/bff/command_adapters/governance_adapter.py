@@ -75,7 +75,7 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
             return self._execute_decision_action(command_id, entity_id, "reject", params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type == "RequestApprovalRevision":
             return self._execute_decision_action(command_id, entity_id, "request-revision", params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type.startswith("HumanGate") or action_id.lower().startswith("humangate"):
+        elif command_type.startswith("HumanGate"):
             return self._execute_human_gate_action(command_id, entity_id, command_type or action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type == "RecordSponsorDecision":
             return self._execute_sponsor_decision(command_id, entity_id, params, auth_token=auth_token, mfa_token=mfa_token)

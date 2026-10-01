@@ -70,7 +70,7 @@ class CapitalCommandAdapter(DomainCommandAdapter):
         action_id = str(params.get("action_id") or "").strip()
         entity_id = str(params.get("entity_id") or params.get("pool_id") or params.get("rebalance_id") or params.get("binding_id") or params.get("persona_id") or "").strip()
 
-        if command_type == "EmergencyContainment" or action_id.lower() == "emergencycontainment":
+        if command_type == "EmergencyContainment":
             return self._execute_containment(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif entity_type in {"capitalpool", "capital-pool"}:
             return self._execute_capital_pool_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)

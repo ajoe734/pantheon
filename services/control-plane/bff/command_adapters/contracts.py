@@ -362,7 +362,7 @@ _WRAPPER_CANONICALS = {
         "StartPaperMonitoringSession": (),
         "ProbeTelemetryIngest": (),
     },
-    "RebalanceAction": {"ApprovedApply": ("apply",), "RebalanceProposal": ("propose", "create")},
+    "RebalanceAction": {"ApprovedApply": ("apply",), "RebalanceProposal": ("propose", "create"), "EmergencyContainment": ()},
     "CapitalPoolAction": {"ApprovePool": ("approve",)},
     "DeploymentAction": {
         "ApproveDeployment": ("approve",),
@@ -383,7 +383,13 @@ _WRAPPER_CANONICALS = {
         "RejectDecision": ("reject",),
         "RequestApprovalRevision": ("requestrevision",),
         "RecordSponsorDecision": ("sponsordecision",),
+        "HumanGateApprove": (),
+        "HumanGateReject": (),
+        "HumanGateRequestMoreEvidence": (),
+        "HumanGateRevoke": (),
+        "HumanGateExtendTtl": (),
     },
+    "V5InterventionAction": {"RemediateSentinelIntervention": ("remediate",)},
     "RiskAlertAction": {"AlertAcknowledge": ("acknowledge", "ack")},
 }
 _WRAPPER_VERB_ALIASES = {
