@@ -58,21 +58,21 @@
   "budget_summary": {
     "production": {
       "additions": 614,
-      "deletions": 7350,
-      "net": -6736
+      "deletions": 7353,
+      "net": -6739
     },
     "test": {
       "additions": 347,
-      "deletions": 4741,
-      "net": -4394
+      "deletions": 4747,
+      "net": -4400
     },
     "docs_evidence": {
-      "additions": 255,
-      "deletions": 25,
+      "additions": 257,
+      "deletions": 27,
       "net": 230
     },
     "requirement": "net production lines <= -3000",
-    "achieved": "net production lines = -6736"
+    "achieved": "net production lines = -6739"
   },
   "preserved_surfaces": [
     "/bff/agora/me",
@@ -127,7 +127,7 @@
     {
       "command": "python3 scripts/git/diff_budget.py --base 3cde3a8983ff89c97fc4af6b2241bd7fb2923c90 --change-class simplify --budget -3000",
       "exit_code": 0,
-      "result": "Diff budget check passes with net production lines -6736 (added 614, deleted 7350), net test lines -4394 (added 347, deleted 4741), and net docs/evidence +230 (added 255, deleted 25), exceeding the -3000 net production line reduction requirement."
+      "result": "Diff budget check passes with net production lines -6739 (added 614, deleted 7353), net test lines -4400 (added 347, deleted 4747), and net docs/evidence +230 (added 257, deleted 27), exceeding the -3000 net production line reduction requirement."
     },
     {
       "command": ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
