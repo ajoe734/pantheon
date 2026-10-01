@@ -87,13 +87,6 @@ _DRAWER_RUNTIME_COMMANDS = {
     CommandType.ISSUE_SAFE_MODE,
 }
 
-_RUNTIME_REPAIR_TARGET_KEYS = {
-    CommandType.RESTART_PAPER_RUNTIME: "runtime_id",
-    CommandType.RESTART_TELEMETRY_BRIDGE: "runtime_id",
-    CommandType.TERMINATE_STALE_PAPER_MONITORING_SESSION: "session_id",
-    CommandType.START_PAPER_MONITORING_SESSION: "runtime_id",
-    CommandType.PROBE_TELEMETRY_INGEST: "runtime_id",
-}
 
 def stored_command_params(
     cmd: OperatorCommand,
@@ -1861,14 +1854,9 @@ def _resolve_execution_params_for_record(
                 params["entity_id"] = rt_id
                 params.pop("runtimeId", None)
                 params.pop("entityId", None)
-        elif command_type in {CommandType.START_RUNTIME, CommandType.ADVANCE_LIFECYCLE, *_RUNTIME_REPAIR_TARGET_KEYS}:
+        elif command_type == CommandType.ADVANCE_LIFECYCLE:
             evidence = (record.get("audit") or {}).get("precondition_evidence") or {}
             params["confirm_token"] = str(evidence.get("confirm_token_id") or params.get("confirm_token_id") or "")
-            target_id = str((record.get("target") or {}).get("id") or "").strip()
-            if command_type == CommandType.START_RUNTIME:
-                params["runtime_id"] = target_id
-            elif command_type in _RUNTIME_REPAIR_TARGET_KEYS:
-                params[_RUNTIME_REPAIR_TARGET_KEYS[command_type]] = target_id
         return params
 
     target = record.get("target") or {}

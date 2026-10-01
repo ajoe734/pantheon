@@ -1065,7 +1065,7 @@ def test_execute_governed_tool_denies_non_allowlisted_action() -> None:
 def test_execute_governed_tool_denies_shell_action() -> None:
     """Shell-like or arbitrary action_ids are not in the allowlist."""
     import pytest
-    for action_id in ("shell", "exec", "bash", "StartRuntime"):
+    for action_id in ("shell", "exec", "bash"):
         with pytest.raises(ToolNotAllowedError):
             execute_governed_tool(
                 action_id=action_id,
@@ -1234,7 +1234,6 @@ def test_allowlist_does_not_contain_critical_actions() -> None:
         "ActivateKillSwitch",
         "LiquidateAll",
         "HardRollback",
-        "StartRuntime",
         "IssueRiskOff",
         "IssueSafeMode",
         "PauseRuntime",
@@ -1461,7 +1460,7 @@ def test_tool_execute_route_boolean_true_passes_medium_risk_gate(tmp_path) -> No
 def test_epic_deny_first_empty_allowlist_returns_403() -> None:
     """EPIC deny-first: non-allowlisted action_id is always denied with 403."""
     client = TestClient(_make_tool_test_app())
-    for action_id in ("ActivateKillSwitch", "LiquidateAll", "HardRollback", "StartRuntime"):
+    for action_id in ("ActivateKillSwitch", "LiquidateAll", "HardRollback"):
         resp = client.post(
             "/bff/assistant/tools/execute",
             json={"action_id": action_id, "entity_type": "Unknown", "params": {}},

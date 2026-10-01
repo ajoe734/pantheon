@@ -891,7 +891,6 @@ _ALIAS_PARAMS: Dict[str, Dict[str, Any]] = {
     "ApproveRollback": {"rollback_id": "rb-1"},
     "RejectRollback": {"rollback_id": "rb-1", "rejection_reason": "alias equivalence"},
     "AdvanceLifecycle": {"target_state": "paper_owner"},
-    "TerminateStalePaperMonitoringSession": {"staleness_evidence": {"heartbeat_age_seconds": 900}},
     "RequestReview": {"persona_id": "alias-target-1"},
     "ApproveDecision": {"decision_id": "alias-target-1"},
     "RejectDecision": {"decision_id": "alias-target-1", "rejection_reason": "alias equivalence"},
@@ -1109,13 +1108,7 @@ def test_ranking_adapter_existing_canonical_alias_parity(params, expected) -> No
 
 
 _DISPATCH_CASES = [
-    ("RuntimeAction", "start", "StartRuntime", "/runtimes/alias-target-1/start"),
     # Persona lifecycle's real authenticated owner is covered by test_persona_lifecycle_forward.
-    ("RuntimeAction", "RestartPaperRuntime", "RestartPaperRuntime", "/paper-runtimes/alias-target-1/restart"),
-    ("RuntimeAction", "RestartTelemetryBridge", "RestartTelemetryBridge", "/paper-runtimes/alias-target-1/telemetry-bridge/restart"),
-    ("RuntimeAction", "TerminateStalePaperMonitoringSession", "TerminateStalePaperMonitoringSession", "/monitoring-sessions/alias-target-1/terminate-stale"),
-    ("RuntimeAction", "StartPaperMonitoringSession", "StartPaperMonitoringSession", "/paper-runtimes/alias-target-1/monitoring-sessions/start"),
-    ("RuntimeAction", "ProbeTelemetryIngest", "ProbeTelemetryIngest", "/paper-runtimes/alias-target-1/telemetry-ingest/probe"),
 ]
 
 
@@ -1163,6 +1156,28 @@ def test_unmapped_wrapper_is_rejected_before_storage(command) -> None:
         })
         assert resp.status_code == 422, resp.text
         assert store._get_all_commands() == []
+
+
+@pytest.mark.parametrize("verb", ["start", "restart"])
+def test_unavailable_runtime_verb_has_no_downstream_dispatch(verb, monkeypatch) -> None:
+    from services.control_plane.bff.command_adapters import runtime_adapter
+
+    def unexpected_dispatch(*args, **kwargs):
+        pytest.fail("Unavailable runtime action attempted downstream dispatch")
+
+    monkeypatch.setattr(runtime_adapter, "http_request_json", unexpected_dispatch)
+    with tempfile.TemporaryDirectory() as td:
+        store, _svc, client = _mounted_service(td)
+        response = client.post("/bff/v1/commands", headers={**HEADERS, "Idempotency-Key": "runtime-verb-1"}, json={
+            "command": "RuntimeAction", "action": verb,
+            "target": {"type": "Runtime", "id": "runtime-1"},
+            "params": {}, "audit_context": {"reason": "runtime recovery"},
+        })
+        assert response.status_code == 202, response.text
+        record = store._get_all_commands()[0]
+        assert record["type"] == "RuntimeAction"
+        assert record["status"] == CommandStatus.FAILED.value
+        assert record["error"]["code"] == "ACTION_UNAVAILABLE"
 
 
 @pytest.mark.parametrize("body", [

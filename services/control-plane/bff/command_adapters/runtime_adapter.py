@@ -1,6 +1,6 @@
 """Runtime Domain Command Adapter.
 
-Routes runtime start, pause, resume, repair, rollback, safe-mode, and kill-switch
+Routes runtime pause, resume, rollback, safe-mode, and kill-switch
 actions to the authoritative internal API and RuntimeManager service client.
 """
 from __future__ import annotations
@@ -55,7 +55,6 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
 
     _HANDLED_COMMANDS = {
         "RuntimeAction",
-        "StartRuntime",
         "PauseRuntime",
         "PauseExecution",
         "PausePaperRuntime",
@@ -104,9 +103,7 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
         action_id = command_type if command_type in {"PausePaperRuntime", "ResumePaperRuntime"} else str(params.get("action_id") or command_type or "").strip()
         entity_id = str(params.get("entity_id") or params.get("runtime_id") or params.get("binding_id") or params.get("runtime_binding_id") or "").strip()
 
-        if command_type == "StartRuntime":
-            return self._execute_start(command_id, entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"PauseRuntime", "PauseExecution", "PausePaperRuntime"}:
+        if command_type in {"PauseRuntime", "PauseExecution", "PausePaperRuntime"}:
             return self._execute_pause(command_id, entity_id, "pause", params, auth_token=auth_token, mfa_token=mfa_token, command_type=command_type)
         elif command_type == "ResumePaperRuntime":
             return self._execute_pause(command_id, entity_id, "resume", params, auth_token=auth_token, mfa_token=mfa_token, command_type=command_type)
@@ -126,49 +123,6 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
                 action_id=action_id,
                 entity_type="Runtime",
             )
-
-    def _execute_start(
-        self,
-        command_id: str,
-        runtime_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        target_id = runtime_id or str(params.get("runtime_id") or "").strip()
-        if not target_id:
-            raise ValueError("StartRuntime requires runtime_id.")
-        confirm_token = str(params.get("confirm_token") or "").strip()
-        if not confirm_token:
-            raise ValueError("StartRuntime requires confirm_token.")
-
-        two_man_token = params.get("two_man_token") or params.get("twoManToken") or params.get("two_man_signature_id") or ""
-        payload = {
-            "confirm_token": confirm_token,
-            "command_id": command_id,
-        }
-        if two_man_token:
-            payload["two_man_token"] = two_man_token
-
-        url = internal_url(f"/api/internal/v1/runtimes/{quote(target_id, safe='')}/start")
-        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
-
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="Runtime",
-            entity_id=target_id,
-            action_id="StartRuntime",
-            status=body.get("status", "accepted"),
-            dispatch_path=url,
-            domain_receipt=body,
-            authoritative_readback={"runtime_id": target_id, "state": body.get("state", "starting")},
-            extra={
-                "runtime_id": target_id,
-                "state": body.get("state", "starting"),
-                "started_at": body.get("started_at") or utc_now(),
-                "two_man_token": two_man_token or None,
-            },
-        )
 
     def _execute_pause(
         self,
