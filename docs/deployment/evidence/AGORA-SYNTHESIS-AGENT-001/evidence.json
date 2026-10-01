@@ -1,0 +1,38 @@
+{
+  "task_id": "AGORA-SYNTHESIS-AGENT-001",
+  "summary": "runner._synthesize heuristic replaced by one structured OpenClaw provider call (invoke_structured_extraction) under the existing InteractionLifecycleStore durable invocation claim (persona_id 'synthesis'). Wire projection matches the committed InteractionSynthesis schema (string agreements, {opinion_ids,cause,detail} disagreements, unavailable = status 'degraded'); the saved result rides the invocation row and is stripped from provider_invocations reads so ProviderInvocation stays schema-valid.",
+  "review_fixes": {
+    "crash_window": "adapter does not dedupe on Idempotency-Key, so a reclaimed claim (claim attempt > 1) is NOT re-executed: it is recorded as failed SYNTHESIS_OUTCOME_AMBIGUOUS (synthesis degraded) and only an operator-requested retry (new attempt) calls the provider again",
+    "set_identity": "opinions are sorted by opinion_id before hashing, so reordered saved sets share one synthesis id and adopt the saved result",
+    "schema": "InteractionSynthesis and ProviderInvocation (incl. synthesis entry) validated with jsonschema for success and failure",
+    "unsupported_schema_keyword": "removed uniqueItems from transmitted _IDS (adapter _SUPPORTED_SCHEMA_KEYWORDS lacks it; nonempty disagreements previously 422'd OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH); uniqueness still enforced locally in _validated_synthesis via len(set(ids))==len(ids)>=2. Regression test_synthesis_schema_accepted_by_real_adapter_validator runs actual adapter _validate_extraction_arguments with nonempty disagreements (fails with uniqueItems restored, passes now).",
+    "duplicate_ids": "[o1,o2,o1] previously passed local check but failed the InteractionSynthesis wire schema; now rejected locally (degraded). Regression test_duplicate_opinion_ids_rejected_by_adapter_and_runner goes through real adapter validator and validates the persisted synthesis against the committed schema.",
+    "ac6": "same-label test now supplies genuinely conflicting reasons (mean-reverting vs trending) and asserts both reach the provider prompt.",
+    "pint_003": "FakeProvider gained invoke_structured_extraction (provider-judged status); summary expectation updated; retry and persisted readback coverage retained. Base 33dc57e0f passed 10/10; head now passes."
+  },
+  "validation": {
+    "membership_checks": "nested shapes enforced; disagreement opinion_ids >=2 and subset of supplied opinions; evidence_refs subset of supplied opinion evidence",
+    "failure_mode": "provider/malformed/ambiguous -> synthesis status degraded 'Synthesis unavailable.', opinions preserved, retryable by operator; personas are not re-invoked"
+  },
+  "tests": {
+    "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/interaction services/control-plane/bff/tests/test_agora_persona_interactions.py services/control-plane/bff/tests/test_pint_013* services/control-plane/bff/tests/test_pint_003*",
+    "result": "82 passed, 11 skipped (PostgreSQL without DSN), exit 0"
+  },
+  "not_run": "AC7 hosted acceptance deferred to centralized post-merge hosted acceptance (external_wait); not a premerge gate.",
+  "production_net_lines": 92,
+  "compose_wiring": {
+    "change": "agora-interaction-worker gains existing PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL, PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN (reference, no default) and _AUTH_REQUIRED, same as operator-bff; no new service/credential",
+    "test": "test_compose_worker_env_wires_openclaw_client_and_adapter_service_auth parses docker-compose.yml, builds OpenClawOpsClient from worker env, asserts URL and X-Pantheon-Service-Token header; adapter acceptance and full-evidence wire-schema readback covered by test_synthesis_schema_accepted_by_real_adapter_validator and test_selected_evidence_resolves_to_supplied_records_and_matches_wire_schema"
+  },
+  "measured_deltas": {
+    "production": "+150/-58 net +92",
+    "test": "+313/-4 net +309",
+    "docs_evidence": "+38/-0 net +38"
+  },
+  "source_identity": {
+    "reviewed_functional_head": "cc172a34264ae3d12d0d6a0190d208bb668eec59",
+    "reviewed_pr": 6076,
+    "reviewed_manifest_blob": "35b1638c22edaaa71874a3be38a6bc91cc003469",
+    "continuation": "task/AGORA-SYNTHESIS-AGENT-001-v3 (clean from dev; same scoped tree, trailer repair and sys.path cleanup)"
+  }
+}
