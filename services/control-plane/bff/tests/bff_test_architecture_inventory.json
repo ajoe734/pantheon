@@ -29,8 +29,6 @@
   ],
   "migrated_suites": [
     "agora/performance/test_performance.py",
-    "test_ask_003_committee_lifecycle.py",
-    "test_ask_004_memo_publish_contract.py",
     "test_bff_consol_008_fixture_pack_a.py",
     "test_bff_consol_009_fixture_pack_b.py",
     "test_bff_consol_010_fixture_pack_c.py",
@@ -427,20 +425,7 @@
       "disposition": "DECOUPLED",
       "rationale": "Already decoupled from main composition globals"
     },
-    {
-      "file": "test_ask_003_committee_lifecycle.py",
-      "layer": "application",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Migrated suite: decoupled from main composition root and enforced by AST checks"
-    },
-    {
-      "file": "test_ask_004_memo_publish_contract.py",
-      "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Migrated suite: decoupled from main composition root and enforced by AST checks"
-    },
+
     {
       "file": "test_aud_002_audit_action_write_engine.py",
       "layer": "application",

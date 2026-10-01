@@ -784,43 +784,8 @@ class WriteGapTestReadPorts(ReadSurfacePorts):
 
 
 # ---------------------------------------------------------------------------
-# Isolation helpers (Agora)
+# Isolation helpers (Agora signals helper retired per AGORA-DEAD-SURFACES-REMOVAL-001)
 # ---------------------------------------------------------------------------
-
-
-@contextmanager
-def _isolated_agora_bff() -> Iterator[TestClient]:
-    _AGORA_CORE_BFF_IDEMPOTENCY.clear()
-    _sse_buffers["signal"].clear()
-    _sse_buffers["inbox"].clear()
-    store = WriteGapTestReadPorts(
-        seed_data={
-            "agora_signals": {},
-            "agora_audit_events": {},
-            "agora_signal_feedback": {},
-        }
-    )
-    router = create_agora_router(
-        extract_identity=_extract_identity,
-        require_read_role=lambda id: None,
-        require_write_role=lambda id: None,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        read_surface=store,
-        journal_write_owner=store,
-        sync_servant_agent=lambda d: d,
-        sse_buffers=_sse_buffers,
-        publish_event_fn=_publish_event,
-    )
-    app = FastAPI()
-    register_error_handlers(app)
-    app.include_router(router)
-    try:
-        yield TestClient(app)
-    finally:
-        _AGORA_CORE_BFF_IDEMPOTENCY.clear()
-        _sse_buffers["signal"].clear()
-        _sse_buffers["inbox"].clear()
 
 
 # ---------------------------------------------------------------------------
@@ -963,89 +928,8 @@ def _runtime_create_payload(binding_id: str = "binding-runtime-create-001") -> d
 
 
 # ---------------------------------------------------------------------------
-# Agora signal write tests
+# Agora signal write tests (retired per AGORA-DEAD-SURFACES-REMOVAL-001)
 # ---------------------------------------------------------------------------
-
-
-def test_bff_agora_signal_create_returns_201_persists_and_replays() -> None:
-    with _isolated_agora_bff() as client:
-        body = {
-            "id": "sig-write-gap-001",
-            "title": "Opening auction momentum",
-            "body": "Review a new opening auction momentum signal.",
-            "market": "US",
-            "tags": ["auction", "momentum"],
-            "linkedPersonaIds": ["persona-paper-owner"],
-            "linkedStrategyIds": ["strategy-alpha"],
-            "severity": "warn",
-        }
-        headers = {
-            **AGORA_BASE_HEADERS,
-            "Idempotency-Key": "agora-signal-create-001",
-            "X-Correlation-Id": "corr-agora-signal-create-001",
-        }
-
-        response = client.post("/bff/agora/signals", headers=headers, json=body)
-        replay = client.post("/bff/agora/signals", headers=headers, json=body)
-
-        assert response.status_code == 201, response.text
-        assert replay.status_code == 201, replay.text
-        assert response.headers["X-Correlation-Id"] == "corr-agora-signal-create-001"
-        payload = response.json()
-        assert payload["data"]["id"] == "sig-write-gap-001"
-        assert payload["data"]["status"] == "open"
-        assert payload["data"]["reviewStatus"] == "pending_trader_review"
-        assert payload["data"]["severity"] == "warn"
-        assert payload["meta"]["dryRun"] is False
-        assert payload["meta"]["audit"]["evidenceKind"] == "agora.signal.create"
-        assert replay.json()["data"]["id"] == payload["data"]["id"]
-
-        detail = client.get("/bff/agora/signals/sig-write-gap-001", headers=AGORA_READ_HEADERS)
-        assert detail.status_code == 200, detail.text
-        assert detail.json()["data"]["title"] == "Opening auction momentum"
-        assert len(_sse_buffers["signal"]) == 1
-        assert len(_sse_buffers["inbox"]) == 1
-
-def test_bff_agora_signal_create_dry_run_returns_200_without_persistence() -> None:
-    with _isolated_agora_bff() as client:
-        body = {
-            "id": "sig-write-gap-dry-run",
-            "title": "Dry-run signal",
-            "body": "Validate the signal create shape without persisting.",
-        }
-        response = client.post(
-            "/bff/agora/signals",
-            headers={
-                **AGORA_BASE_HEADERS,
-                "Idempotency-Key": "agora-signal-dry-run-001",
-                "X-Correlation-Id": "corr-agora-signal-dry-run-001",
-                "X-Dry-Run": "1",
-            },
-            json=body,
-        )
-
-        assert response.status_code == 200, response.text
-        payload = response.json()
-        assert payload["data"]["id"] == "sig-write-gap-dry-run"
-        assert payload["meta"]["dryRun"] is True
-        detail = client.get("/bff/agora/signals/sig-write-gap-dry-run", headers=AGORA_READ_HEADERS)
-        assert detail.status_code == 404, detail.text
-        assert len(_sse_buffers["signal"]) == 0
-        assert len(_sse_buffers["inbox"]) == 0
-
-
-def test_bff_agora_signal_create_rejects_invalid_payload() -> None:
-    with _isolated_agora_bff() as client:
-        response = client.post(
-            "/bff/agora/signals",
-            headers={**AGORA_BASE_HEADERS, "Idempotency-Key": "agora-signal-invalid-001"},
-            json={"title": "Missing body", "severity": "critical"},
-        )
-
-        assert response.status_code == 422, response.text
-        error = response.json()["error"]
-        assert error["code"] == "VALIDATION_FAILED"
-        assert error["details"]["precondition_failed"] == "body"
 
 
 # ---------------------------------------------------------------------------
