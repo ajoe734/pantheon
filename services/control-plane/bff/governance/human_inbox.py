@@ -1,7 +1,7 @@
 """Human Inbox domain projection, aggregation, and recommendation decision helpers.
 
 Encapsulates human inbox projection from contributors (governance reviews,
-approvals, interventions, sentinel findings, persona readiness, promotion reviews),
+approvals, incidents, persona readiness, promotion reviews),
 filtering, summary calculation, and recommendation decision tracking decoupled
 from main.py globals.
 """
@@ -54,7 +54,6 @@ _HUMAN_INBOX_OPEN_APPROVAL_STATES = {
     "proposed",
 }
 
-_HUMAN_INBOX_OPEN_INTERVENTION_STATUSES = {"pending", "escalated"}
 
 _HUMAN_INBOX_OPEN_GOVERNANCE_STATUSES = {
     "pending",
@@ -64,7 +63,7 @@ _HUMAN_INBOX_OPEN_GOVERNANCE_STATUSES = {
     "reviewed",
 }
 
-_HUMAN_INBOX_OPEN_SENTINEL_STATUSES = {"pending", "open", "active", "escalated"}
+_HUMAN_INBOX_OPEN_INCIDENT_STATUSES = {"pending", "open", "active", "escalated"}
 
 _HUMAN_INBOX_PRIORITY_RANK = {
     "critical": 4,
@@ -366,79 +365,14 @@ def _human_inbox_approval_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]
     )
 
 
-def _human_inbox_intervention_item(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    intervention_id = _management_record_id(record, "intervention_id", "id")
-    if not intervention_id:
-        return None
-    status = str(record.get("status") or "pending").strip().lower() or "pending"
-    kind = str(record.get("kind") or "hiq_sentinel").strip().lower() or "hiq_sentinel"
-    priority = _human_inbox_priority(
-        record.get("priority") or record.get("severity") or record.get("risk_level"),
-        fallback="critical" if status == "pending" and kind == "hiq_sentinel" else "high",
-    )
-    action_state = "pending" if status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES else "resolved"
-    raw_allowed_actions = record.get("allowedActions") if isinstance(record.get("allowedActions"), dict) else {}
-    allowed_actions = {
-        "canClaim": status == "pending",
-        "canRelease": status == "claimed",
-        "canEscalate": status == "pending",
-        "canDecide": status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES,
-        "canRemediate": status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES,
-        **raw_allowed_actions,
-    }
-    route = f"/management/interventions?intervention={intervention_id}"
-    created_at = record.get("triggered_at") or record.get("created_at")
-    updated_at = record.get("remediated_at") or record.get("updated_at") or created_at
-    projected = {
-        "id": f"intervention:{intervention_id}",
-        "inbox_id": f"intervention:{intervention_id}",
-        "inboxType": "intervention",
-        "source_type": "intervention",
-        "source_id": intervention_id,
-        "intervention_id": intervention_id,
-        "title": record.get("title") or f"{kind.replace('_', ' ').title()} intervention",
-        "summary": record.get("description") or "Human intervention is required before the loop can continue.",
-        "priority": priority,
-        "risk_level": str(record.get("risk_level") or priority).strip().lower(),
-        "status": status,
-        "action_state": action_state,
-        "created_at": created_at,
-        "updated_at": updated_at,
-        "triggered_by": record.get("triggered_by"),
-        "target": {
-            "type": record.get("target_type"),
-            "id": record.get("target_id"),
-        },
-        "route": route,
-        "bff_detail_path": f"/bff/v5/interventions/{intervention_id}",
-        "remediation_context": {
-            "kind": kind,
-            "remediation_action": record.get("remediation_action"),
-            "two_man_signature_id": record.get("two_man_signature_id"),
-            "correlation_id": record.get("correlation_id"),
-        },
-        "allowedActions": json.loads(json.dumps(allowed_actions)),
-    }
-    return _human_inbox_attach_common_fields(
-        projected,
-        inbox_type="intervention",
-        source_dataset="v5_interventions",
-        risk_level=str(record.get("risk_level") or priority).strip().lower(),
-        created_at=created_at,
-        updated_at=updated_at,
-        href=route,
-        source_record=record,
-    )
-
-
-def _human_inbox_sentinel_item(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    finding_id = _management_record_id(record, "id", "finding_id", "incident_id")
-    if not finding_id:
+def _human_inbox_incident_item(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    incident_id = _management_record_id(record, "id", "incident_id")
+    if not incident_id:
         return None
     status = str(record.get("status") or "open").strip().lower() or "open"
-    if status not in _HUMAN_INBOX_OPEN_SENTINEL_STATUSES:
+    if status not in _HUMAN_INBOX_OPEN_INCIDENT_STATUSES:
         return None
-    kind = str(record.get("kind") or "sentinel_finding").strip().lower() or "sentinel_finding"
+    kind = str(record.get("kind") or "incident").strip().lower() or "incident"
     risk_level = str(record.get("severity") or record.get("risk_level") or "high").strip().lower() or "high"
     priority = _human_inbox_priority(record.get("priority") or risk_level, fallback="high")
     created_at = record.get("triggered_at") or record.get("created_at") or record.get("opened_at")
@@ -446,18 +380,17 @@ def _human_inbox_sentinel_item(record: Dict[str, Any]) -> Optional[Dict[str, Any
     runtime_id = record.get("runtime_id") or record.get("target_id")
     persona_id = record.get("persona_id")
     target_type = "Persona" if persona_id else "Runtime" if runtime_id else record.get("target_type")
-    target_id = persona_id or runtime_id or record.get("target_id") or finding_id
-    route = f"/management/sentinel?finding={finding_id}"
-    action_state = _human_inbox_action_state(status, _HUMAN_INBOX_OPEN_SENTINEL_STATUSES)
+    target_id = persona_id or runtime_id or record.get("target_id") or incident_id
+    route = f"/management/incidents/{incident_id}"
+    action_state = _human_inbox_action_state(status, _HUMAN_INBOX_OPEN_INCIDENT_STATUSES)
     projected = {
-        "id": f"sentinel_finding:{finding_id}",
-        "inbox_id": f"sentinel_finding:{finding_id}",
-        "inboxType": "sentinel_finding",
-        "source_type": "sentinel_finding",
-        "source_id": finding_id,
-        "finding_id": finding_id,
-        "title": record.get("title") or f"Sentinel finding: {kind}",
-        "summary": record.get("summary") or record.get("description") or "Sentinel finding requires operator review.",
+        "id": f"incident:{incident_id}",
+        "inbox_id": f"incident:{incident_id}",
+        "inboxType": "incident",
+        "source_type": "incident",
+        "source_id": incident_id,
+        "title": record.get("title") or f"Incident: {kind}",
+        "summary": record.get("summary") or record.get("description") or "Incident requires operator review.",
         "priority": priority,
         "risk_level": risk_level,
         "status": status,
@@ -469,12 +402,11 @@ def _human_inbox_sentinel_item(record: Dict[str, Any]) -> Optional[Dict[str, Any
             "id": target_id,
         },
         "route": route,
-        "bff_detail_path": f"/bff/v5/sentinel/findings/{finding_id}",
-        "sentinel_context": {
+        "bff_detail_path": f"/bff/incidents/{incident_id}",
+        "incident_context": {
             "kind": kind,
             "runtime_id": runtime_id,
             "persona_id": persona_id,
-            "derived_from_incident_id": record.get("derived_from_incident_id"),
         },
         "allowedActions": _management_json_clone(record.get("allowedActions") or {
             "canReview": action_state == "pending",
@@ -483,8 +415,8 @@ def _human_inbox_sentinel_item(record: Dict[str, Any]) -> Optional[Dict[str, Any
     }
     return _human_inbox_attach_common_fields(
         projected,
-        inbox_type="sentinel_finding",
-        source_dataset="sentinel_findings",
+        inbox_type="incident",
+        source_dataset="incidents",
         risk_level=risk_level,
         created_at=created_at,
         updated_at=updated_at,
@@ -1058,8 +990,7 @@ def _human_inbox_project_items(
     snapshot_at: str,
     review_records: Sequence[Dict[str, Any]],
     approval_records: Sequence[Dict[str, Any]],
-    intervention_records: Sequence[Dict[str, Any]],
-    sentinel_records: Sequence[Dict[str, Any]],
+    incident_records: Sequence[Dict[str, Any]],
     persona_rows: Sequence[Dict[str, Any]],
     promotion_review_records: Sequence[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
@@ -1068,8 +999,7 @@ def _human_inbox_project_items(
     projectors: Sequence[tuple[Sequence[Dict[str, Any]], Callable[[Dict[str, Any]], Optional[Dict[str, Any]]]]] = (
         (review_records, _human_inbox_governance_review_item),
         (approval_records, _human_inbox_approval_item),
-        (intervention_records, _human_inbox_intervention_item),
-        (sentinel_records, _human_inbox_sentinel_item),
+        (incident_records, _human_inbox_incident_item),
         (
             persona_rows,
             lambda row: _human_inbox_persona_readiness_item(row, snapshot_at=snapshot_at),
@@ -1150,61 +1080,7 @@ def _human_inbox_approval_contributor(
     return records, surface
 
 
-def _human_inbox_intervention_contributor(
-    snapshot_at: str,
-    *,
-    v5_records: Optional[List[Dict[str, Any]]] = None,
-    v5_store: Optional[List[Dict[str, Any]]] = None,
-) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    if v5_records is None:
-        try:
-            from ..main import _v5_intervention_records
-            records = list(_v5_intervention_records())
-        except (ImportError, AttributeError):
-            records = []
-    else:
-        records = list(v5_records)
-
-    try:
-        from ..main import _dataset_source_after_read, _dataset_surface_status
-        surface = _dataset_surface_status(
-            "v5_interventions",
-            snapshot_at=snapshot_at,
-            has_data=bool(records),
-            missing_message="V5 interventions have no readable source records.",
-            source=_dataset_source_after_read("v5_interventions"),
-        )
-    except (ImportError, AttributeError):
-        surface = {"status": "ok" if records else "unavailable", "source": "read_store" if records else "missing"}
-
-    if v5_store is None:
-        try:
-            from ..main import _V5_INTERVENTIONS_STORE
-            store = _V5_INTERVENTIONS_STORE
-        except (ImportError, AttributeError):
-            store = []
-    else:
-        store = v5_store
-
-    local_ids = {
-        str(record.get("intervention_id") or record.get("id") or "")
-        for record in store
-        if isinstance(record, dict)
-    }
-    has_local_record = any(
-        str(record.get("intervention_id") or record.get("id") or "") in local_ids
-        for record in records
-    )
-    if has_local_record and surface.get("source") == "missing":
-        try:
-            from ..main import _surface_status
-            surface = {**_surface_status(), "source": "bff_local_registry"}
-        except (ImportError, AttributeError):
-            surface = {"status": "ok", "source": "bff_local_registry"}
-    return records, surface
-
-
-def _human_inbox_sentinel_contributor(
+def _human_inbox_incident_contributor(
     snapshot_at: str,
     *,
     read_store: Any = None,
@@ -1215,25 +1091,14 @@ def _human_inbox_sentinel_contributor(
             read_store = _main_read_store
         except (ImportError, AttributeError):
             read_store = None
-    if read_store and hasattr(read_store, "list_sentinel_findings"):
-        available, raw_records = read_store.list_sentinel_findings()
-    else:
-        available, raw_records = False, []
-    records = list(raw_records or [])
+    available = bool(read_store and hasattr(read_store, "list_incidents"))
+    records = list(read_store.list_incidents() or []) if available else []
     try:
-        from ..main import _dataset_source_after_read, _dataset_surface_status
-        incidents_source = _dataset_source_after_read("incidents")
-        if incidents_source != "missing":
-            surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
-        else:
-            surface = _dataset_surface_status(
-                "sentinel_findings",
-                snapshot_at=snapshot_at,
-                source=_dataset_source_after_read("sentinel_findings") if available else "missing",
-            )
+        from ..main import _dataset_surface_status
+        surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
     except (ImportError, AttributeError):
         surface = {"status": "ok" if available else "unavailable", "source": "read_store" if available else "missing"}
-    return (bool(available), records), surface
+    return (available, records), surface
 
 
 def _build_persona_readiness_items(
@@ -1413,9 +1278,8 @@ def _human_inbox_all_items(
     include_all = not source_types
     review_records: List[Dict[str, Any]] = []
     approval_records: List[Dict[str, Any]] = []
-    intervention_records: List[Dict[str, Any]] = []
-    sentinel_available = False
-    sentinel_records: List[Dict[str, Any]] = []
+    incident_available = False
+    incident_records: List[Dict[str, Any]] = []
     persona_rows: List[Dict[str, Any]] = []
     promotion_review_records: List[Dict[str, Any]] = []
     surfaces: Dict[str, Dict[str, Any]] = {}
@@ -1423,11 +1287,9 @@ def _human_inbox_all_items(
         review_records, surfaces["governance_review_queue"] = _human_inbox_governance_contributor(snapshot_at)
     if include_all or "approval" in source_types:
         approval_records, surfaces["approval_queue"] = _human_inbox_approval_contributor(snapshot_at)
-    if include_all or "intervention" in source_types:
-        intervention_records, surfaces["v5_interventions"] = _human_inbox_intervention_contributor(snapshot_at)
-    if include_all or "sentinel_finding" in source_types:
-        sentinel_result, surfaces["sentinel_findings"] = _human_inbox_sentinel_contributor(snapshot_at)
-        sentinel_available, sentinel_records = sentinel_result
+    if include_all or "incident" in source_types:
+        incident_result, surfaces["incidents"] = _human_inbox_incident_contributor(snapshot_at)
+        incident_available, incident_records = incident_result
     if include_all or "readiness_blocker" in source_types:
         persona_rows, surfaces["persona_readiness"] = _human_inbox_persona_contributor(snapshot_at)
     if identity is not None and (include_all or "promotion_review" in source_types):
@@ -1439,17 +1301,15 @@ def _human_inbox_all_items(
         snapshot_at=snapshot_at,
         review_records=review_records,
         approval_records=approval_records,
-        intervention_records=intervention_records,
-        sentinel_records=sentinel_records,
+        incident_records=incident_records,
         persona_rows=persona_rows,
         promotion_review_records=promotion_review_records,
     )
     return items, {
         "governance_review_records": review_records,
         "approval_records": approval_records,
-        "intervention_records": intervention_records,
-        "sentinel_available": sentinel_available,
-        "sentinel_records": sentinel_records,
+        "incident_available": incident_available,
+        "incident_records": incident_records,
         "persona_rows": persona_rows,
         "promotion_review_records": promotion_review_records,
         "surfaces": surfaces,
@@ -1505,8 +1365,7 @@ def _human_inbox_summary(items: List[Dict[str, Any]], returned_count: int) -> Di
         "highest_risk_level": highest_risk_level,
         "governance_review_count": len([item for item in items if item.get("source_type") == "governance_review"]),
         "approval_count": len([item for item in items if item.get("source_type") == "approval"]),
-        "intervention_count": len([item for item in items if item.get("source_type") == "intervention"]),
-        "sentinel_finding_count": len([item for item in items if item.get("source_type") == "sentinel_finding"]),
+        "incident_count": len([item for item in items if item.get("source_type") == "incident"]),
         "readiness_blocker_count": len([item for item in items if item.get("source_type") == "readiness_blocker"]),
         "critical_count": len([item for item in items if item.get("priority") == "critical"]),
         "high_count": len([item for item in items if item.get("priority") == "high"]),
@@ -1545,9 +1404,8 @@ def _human_inbox_surfaces(
     snapshot_at: str,
     governance_review_records: List[Dict[str, Any]],
     approval_records: List[Dict[str, Any]],
-    intervention_records: List[Dict[str, Any]],
-    sentinel_available: bool,
-    sentinel_records: List[Dict[str, Any]],
+    incident_available: bool,
+    incident_records: List[Dict[str, Any]],
     persona_rows: List[Dict[str, Any]],
     promotion_review_records: List[Dict[str, Any]],
     source_types: Optional[set[str]] = None,
@@ -1579,39 +1437,15 @@ def _human_inbox_surfaces(
             empty_is_unavailable=True,
             missing_message="Approval queue has no readable source records.",
         )
-    if include_all or "intervention" in source_types:
-        try:
-            from ..main import _V5_INTERVENTIONS_STORE
-            v5_store = _V5_INTERVENTIONS_STORE
-        except (ImportError, AttributeError):
-            v5_store = []
-        local_intervention_ids = {
-            str(record.get("intervention_id") or record.get("id") or "")
-            for record in v5_store
-            if isinstance(record, dict)
-        }
-        has_local_intervention = any(
-            str(record.get("intervention_id") or record.get("id") or "") in local_intervention_ids
-            for record in intervention_records
-        )
-        contributor_surfaces["v5_interventions"] = failures.get(
-            "v5_interventions"
-        ) or provenance.get("v5_interventions") or _human_inbox_loaded_surface(
+    if include_all or "incident" in source_types:
+        contributor_surfaces["incidents"] = failures.get(
+            "incidents"
+        ) or provenance.get("incidents") or _human_inbox_loaded_surface(
             snapshot_at=snapshot_at,
-            source="bff_local_registry" if has_local_intervention else "read_store",
-            has_data=bool(intervention_records),
-            empty_is_unavailable=True,
-            missing_message="V5 interventions have no readable source records.",
-        )
-    if include_all or "sentinel_finding" in source_types:
-        contributor_surfaces["sentinel_findings"] = failures.get(
-            "sentinel_findings"
-        ) or provenance.get("sentinel_findings") or _human_inbox_loaded_surface(
-            snapshot_at=snapshot_at,
-            source="read_store" if sentinel_available else "missing",
-            available=sentinel_available,
-            has_data=bool(sentinel_records),
-            missing_message="Sentinel findings have no readable source records.",
+            source="read_store" if incident_available else "missing",
+            available=incident_available,
+            has_data=bool(incident_records),
+            missing_message="Incidents have no readable source records.",
         )
     if include_all or "readiness_blocker" in source_types:
         contributor_surfaces["persona_readiness"] = failures.get(
@@ -1680,9 +1514,8 @@ def _human_inbox_payload_from_loaded(
         snapshot_at=snapshot_at,
         governance_review_records=sources["governance_review_records"],
         approval_records=sources["approval_records"],
-        intervention_records=sources["intervention_records"],
-        sentinel_available=bool(sources["sentinel_available"]),
-        sentinel_records=sources["sentinel_records"],
+        incident_available=bool(sources["incident_available"]),
+        incident_records=sources["incident_records"],
         persona_rows=sources["persona_rows"],
         promotion_review_records=sources["promotion_review_records"],
         source_types=source_types,

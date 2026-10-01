@@ -80,14 +80,12 @@ SSE_CHANNEL_CATALOG: Tuple[str, ...] = (
     "journal",
     "postmortem",
     "loop",
-    "sentinel",
-    "intervention",
     "audit",
     "system",
 )
 
 SSE_RESYNC_ROUTES: Dict[str, Tuple[str, ...]] = {
-    "approval": ("/bff/approvals", "/bff/v5/interventions"),
+    "approval": ("/bff/approvals",),
     "ask": (
         "/bff/management/ai/conversations",
         "/bff/management/ai/conversations/{id}",

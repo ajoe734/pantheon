@@ -95,18 +95,6 @@ _RUNTIME_REPAIR_TARGET_KEYS = {
     CommandType.PROBE_TELEMETRY_INGEST: "runtime_id",
 }
 
-_TWO_MAN_EVIDENCE_FIELDS = (
-    "twoManSignatureId",
-    "two_man_signature_id",
-    "twoManApprovalId",
-    "two_man_approval_id",
-    "secondOperatorId",
-    "second_operator_id",
-    "secondOperatorSignature",
-    "second_operator_signature",
-)
-
-
 def stored_command_params(
     cmd: OperatorCommand,
     identity: OperatorIdentity,
@@ -115,13 +103,6 @@ def stored_command_params(
     if cmd.command in _DRAWER_RUNTIME_COMMANDS:
         return dict(cmd.params)
     params = dict(cmd.params)
-    if cmd.command == CommandType.REMEDIATE_SENTINEL_INTERVENTION and raw_payload:
-        if not str(params.get("two_man_signature_id") or "").strip():
-            for alias in _TWO_MAN_EVIDENCE_FIELDS:
-                val = str(raw_payload.get(alias) or "").strip()
-                if val:
-                    params["two_man_signature_id"] = val
-                    break
     if cmd.command == CommandType.APPROVED_APPLY:
         params.pop("rebalanceId", None)
         params["rebalance_id"] = cmd.target.id

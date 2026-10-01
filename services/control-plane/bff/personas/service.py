@@ -70,10 +70,6 @@ from ..models import (
     DecisionJournalEntryDTO,
     ErrorCode,
     ErrorDetail,
-    InterventionKind,
-    InterventionListResponse,
-    InterventionRecord,
-    InterventionStatus,
     JournalEntryMergePatch,
     McpImportedTool,
     McpRejectedTool,
@@ -11021,7 +11017,6 @@ def _persona_fleet_runtime_matches(
 
 
 # --- _human_inbox_priority_helpers ---
-_HUMAN_INBOX_OPEN_SENTINEL_STATUSES = {"pending", "open", "active", "escalated"}
 _HUMAN_INBOX_PRIORITY_RANK = {
     "critical": 4,
     "high": 3,

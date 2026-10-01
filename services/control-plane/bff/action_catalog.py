@@ -456,22 +456,6 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         description="Record a committee sponsor decision (approved / rejected / conditional).",
     ),
     # ------------------------------------------------------------------ #
-    # HIQ Sentinel interventions (v5)
-    # ------------------------------------------------------------------ #
-    BffActionCatalogEntry(
-        action_id="RemediateSentinelIntervention",
-        entity_type="SentinelIntervention",
-        endpoint="/bff/v5/interventions/{intervention_id}/remediate",
-        risk_level=RiskLevel.CRITICAL,
-        requires_approval=True,
-        requires_confirm_token=True,
-        requires_two_man=True,
-        cooldown_seconds=60,
-        idempotency_required=True,
-        required_roles=["approver"],
-        description="Execute HIQ Sentinel remediation for a pending intervention; requires two-man authorization.",
-    ),
-    # ------------------------------------------------------------------ #
     # HumanGate and PM-12 governance advisory write admission (BFF-B5-001)
     # ------------------------------------------------------------------ #
     BffActionCatalogEntry(
@@ -1075,59 +1059,7 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         cooldown_seconds=30,
         idempotency_required=True,
         required_roles=["operator", "approver"],
-        description="Submit a v5 intervention lifecycle command receipt without bypassing governance preconditions.",
-    ),
-    BffActionCatalogEntry(
-        action_id="DecideV5Intervention",
-        entity_type="SentinelIntervention",
-        endpoint="/bff/v5/interventions/{intervention_id}/decide",
-        risk_level=RiskLevel.MEDIUM,
-        requires_approval=False,
-        requires_confirm_token=False,
-        requires_two_man=False,
-        cooldown_seconds=30,
-        idempotency_required=True,
-        required_roles=["operator", "approver"],
-        description="Record a v5 intervention decision through the canonical command admission receipt.",
-    ),
-    BffActionCatalogEntry(
-        action_id="SentinelFindingStatus",
-        entity_type="SentinelFinding",
-        endpoint="/bff/v5/sentinel/findings/{finding_id}/status",
-        risk_level=RiskLevel.MEDIUM,
-        requires_approval=False,
-        requires_confirm_token=False,
-        requires_two_man=False,
-        cooldown_seconds=10,
-        idempotency_required=True,
-        required_roles=["operator", "approver"],
-        description="Record a sentinel finding status command receipt backed by the BFF command store.",
-    ),
-    BffActionCatalogEntry(
-        action_id="SentinelRemediationBuild",
-        entity_type="SentinelRemediation",
-        endpoint="/bff/v5/sentinel/remediation/build",
-        risk_level=RiskLevel.MEDIUM,
-        requires_approval=False,
-        requires_confirm_token=False,
-        requires_two_man=False,
-        cooldown_seconds=10,
-        idempotency_required=True,
-        required_roles=["operator", "approver"],
-        description="Build a sentinel remediation command receipt without executing live remediation.",
-    ),
-    BffActionCatalogEntry(
-        action_id="SentinelRemediationExecute",
-        entity_type="SentinelRemediation",
-        endpoint="/bff/v5/sentinel/remediation/{actionId}/execute",
-        risk_level=RiskLevel.HIGH,
-        requires_approval=False,
-        requires_confirm_token=False,
-        requires_two_man=False,
-        cooldown_seconds=30,
-        idempotency_required=True,
-        required_roles=["operator", "approver"],
-        description="Submit a sentinel remediation execution command receipt without enabling live capital side effects.",
+        description="Record guarded-command two-man evidence through the canonical command admission receipt.",
     ),
     # ------------------------------------------------------------------ #
     # P0 lifecycle actions (BFF-WRITE-P0-LIFECYCLE)
