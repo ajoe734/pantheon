@@ -5,10 +5,10 @@
   "scope": "Delete dead Agora backend surfaces no longer used by the V6 trading desk (signals, feedback, signals SSE alias, watchlist, markets, notes, market-notes, training-examples, insights, memory, committee sessions, evidence-pack, persona-lab, skill-coaching, evaluation suites/runs, alerts triage, daily, sessions, messages, ask, inbox, incoming, handoffs, research-tasks, shadow router, dashboard-recipes, and widgets), preserving trading-room, workshops, interactions, proposals, candidate decisions, candidate-pools, performance, capabilities, operational-readiness, journal, postmortems, servant, research plans/runs, trading-intents, and me.",
   "owner": "Antigravity",
   "reviewer": "Codex",
-  "frozen_base": "0fcdec080e628697d08bf80eb0f4b66eeb0ae440",
+  "frozen_base": "3cde3a8983ff89c97fc4af6b2241bd7fb2923c90",
   "delivery_provenance": {
     "delivered_pr": 6031,
-    "frozen_dev_base": "0fcdec080e628697d08bf80eb0f4b66eeb0ae440",
+    "frozen_dev_base": "3cde3a8983ff89c97fc4af6b2241bd7fb2923c90",
     "primary_paired_comparison": {
       "base_sha": "d61575a5968874676744d8ae022b4affa2e6c33b",
       "interim_head_sha": "17a2b1a084c7e732eb8dffdfc7c770ccece33789",
@@ -22,11 +22,13 @@
       }
     },
     "intervening_dev_evolution": {
-      "range": "d61575a5968874676744d8ae022b4affa2e6c33b..0fcdec080e628697d08bf80eb0f4b66eeb0ae440",
-      "bff_files_changed": 26,
+      "range": "d61575a5968874676744d8ae022b4affa2e6c33b..3cde3a8983ff89c97fc4af6b2241bd7fb2923c90",
+      "bff_files_changed": 30,
       "intervening_test_files": [
+        "services/control-plane/bff/test_action_catalog.py",
         "services/control-plane/bff/test_aud_002_audit_action_write_engine.py",
         "services/control-plane/bff/test_bff_write_gap_2026_05_28.py",
+        "services/control-plane/bff/test_command_executor.py",
         "services/control-plane/bff/tests/test_agora_servant_production_write_owner.py",
         "services/control-plane/bff/tests/test_assistant_security.py",
         "services/control-plane/bff/tests/test_command_adapters_router.py",
@@ -34,10 +36,10 @@
         "services/control-plane/bff/tests/test_persona_create_owner_contract.py",
         "services/control-plane/bff/tests/test_persona_lifecycle_forward.py"
       ],
-      "verification": "All 26 intervening BFF files verified. In particular, test_persona_lifecycle_forward.py (24 tests / 192 parameterized cases) passes 192/192. Intervening test files pass with 1 baseline failure in test_command_adapters_router.py::test_zero_reverse_main_imports which is byte-identical between base 0fcdec080 and HEAD."
+      "verification": "All 30 intervening BFF files verified. In particular, test_persona_lifecycle_forward.py (24 tests / 192 parameterized cases) passes 192/192. Intervening test files pass with 1 baseline failure in test_command_adapters_router.py::test_zero_reverse_main_imports which is byte-identical between base 3cde3a898 and HEAD."
     },
     "current_head_suite": {
-      "frozen_base": "0fcdec080e628697d08bf80eb0f4b66eeb0ae440",
+      "frozen_base": "3cde3a8983ff89c97fc4af6b2241bd7fb2923c90",
       "total_collected": 5893,
       "collection_errors": 1,
       "batch_breakdown": {
@@ -55,9 +57,9 @@
   },
   "budget_summary": {
     "production": {
-      "additions": 610,
-      "deletions": 7341,
-      "net": -6731
+      "additions": 612,
+      "deletions": 7344,
+      "net": -6732
     },
     "test": {
       "additions": 344,
@@ -65,12 +67,12 @@
       "net": -4397
     },
     "docs_evidence": {
-      "additions": 191,
+      "additions": 249,
       "deletions": 24,
-      "net": 167
+      "net": 225
     },
     "requirement": "net production lines <= -3000",
-    "achieved": "net production lines = -6731"
+    "achieved": "net production lines = -6732"
   },
   "preserved_surfaces": [
     "/bff/agora/me",
@@ -123,9 +125,9 @@
   ],
   "validation": [
     {
-      "command": "python3 scripts/git/diff_budget.py --base 0fcdec080e628697d08bf80eb0f4b66eeb0ae440 --change-class simplify --budget -3000",
+      "command": "python3 scripts/git/diff_budget.py --base 3cde3a8983ff89c97fc4af6b2241bd7fb2923c90 --change-class simplify --budget -3000",
       "exit_code": 0,
-      "result": "Diff budget check passes with net production lines -6731 (added 610, deleted 7341), net test lines -4397 (added 344, deleted 4741), and net docs/evidence +167 (added 191, deleted 24), exceeding the -3000 net production line reduction requirement."
+      "result": "Diff budget check passes with net production lines -6732 (added 612, deleted 7344), net test lines -4397 (added 344, deleted 4741), and net docs/evidence +225 (added 249, deleted 24), exceeding the -3000 net production line reduction requirement."
     },
     {
       "command": ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
