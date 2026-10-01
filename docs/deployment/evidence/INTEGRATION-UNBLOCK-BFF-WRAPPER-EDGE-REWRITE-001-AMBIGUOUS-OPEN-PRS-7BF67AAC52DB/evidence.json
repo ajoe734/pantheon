@@ -1,0 +1,72 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-WRAPPER-EDGE-REWRITE-001-AMBIGUOUS-OPEN-PRS-7BF67AAC52DB",
+  "source_task_id": "BFF-WRAPPER-EDGE-REWRITE-001",
+  "observed_at": "2026-10-01T08:39:16Z",
+  "base_sha": "d61575a5968874676744d8ae022b4affa2e6c33b",
+  "root_cause": "The superseding v6 delivery was independently approved, but v5 PR #6067 remained open. auto_integrator.fetch_pr_for_task correctly found both versioned task branches and raised AmbiguousPullRequests rather than choosing an unbound head.",
+  "resolution": {
+    "action": "Closed superseded PR #6067 without deleting its branch or changing either head",
+    "command": "gh pr close 6067 --repo ajoe734/pantheon",
+    "exit_status": 0,
+    "closed_pr": {
+      "number": 6067,
+      "url": "https://github.com/ajoe734/pantheon/pull/6067",
+      "state": "CLOSED",
+      "closed_at": "2026-10-01T08:39:16Z",
+      "head_sha": "390e7ff00f07936853de1d7dc19dfb2018ab2e04"
+    },
+    "retained_pr": {
+      "number": 6068,
+      "url": "https://github.com/ajoe734/pantheon/pull/6068",
+      "state_at_verification": "OPEN",
+      "head_branch": "task/BFF-WRAPPER-EDGE-REWRITE-001-v6",
+      "head_sha": "a4bb3ee00a9150ffeabd3adc8972dfcea2c75bec",
+      "auto_merge": false,
+      "canonical_status": "review_approved",
+      "reviewer": "Codex2",
+      "manifest_blob_sha": "b1027c11d0123b77cc9348d37a31a34de28099e8"
+    },
+    "source_preservation": "v6 anchor 70bb4cc2e preserves v5 BFF source and evidence byte-for-byte and is an ancestor of the approved head. The final v5-to-v6 diff contains only command_adapters/contracts.py, tests/test_command_adapters_router.py and the original task evidence: malformed action/params rejection, ranking alias coverage and reviewer evidence.",
+    "owned_layer": "PR lifecycle reconciliation and this task's evidence",
+    "unchanged_layer": "Integrator fail-closed discovery, canonical review binding and product runtime source",
+    "composes_with": "Existing supervisor integration runner for approved original task PR #6068"
+  },
+  "validation": [
+    {
+      "command": "git diff --quiet 390e7ff00f07936853de1d7dc19dfb2018ab2e04 70bb4cc2e -- services/control-plane/bff docs/deployment/evidence/BFF-WRAPPER-EDGE-REWRITE-001/evidence.json",
+      "exit_status": 0,
+      "result": "No source/evidence difference at the v6 preservation anchor"
+    },
+    {
+      "command": "git merge-base --is-ancestor 70bb4cc2e a4bb3ee00a9150ffeabd3adc8972dfcea2c75bec",
+      "exit_status": 0
+    },
+    {
+      "command": "timeout 90s python3 /tmp/bff-unblock-discovery.py before",
+      "exit_status": 0,
+      "result": "Read-only call to production fetch_pr_for_task reproduced multiple open PRs #6067 and #6068"
+    },
+    {
+      "command": "timeout 90s python3 /tmp/bff-unblock-discovery.py after",
+      "exit_status": 0,
+      "result": "Same production discovery returned only #6068 at a4bb3ee00a9150ffeabd3adc8972dfcea2c75bec; validate_pr returned no error and autoMergeRequest was null",
+      "reproduction": "Import scripts/git/auto_integrator.py; construct TaskCandidate with task_id BFF-WRAPPER-EDGE-REWRITE-001, owner Codex, reviewer Codex2, branch task/BFF-WRAPPER-EDGE-REWRITE-001 and repository_root equal to the checkout; call fetch_pr_for_task(candidate, Settings(), CommandRunner(), root=checkout), then validate_pr. These calls only inspect GitHub."
+    },
+    {
+      "command": "timeout 120s .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_auto_integrator.py -k SupersedingVersionDiscoveryTests",
+      "exit_status": 0,
+      "result": "7 passed, 155 deselected in 1.62s"
+    }
+  ],
+  "required_checks_at_verification": {
+    "source": "GitHub dev branch protection and enriched PR #6068 statusCheckRollup",
+    "Commit trailers": "SUCCESS",
+    "Runtime mirror guard": "SUCCESS",
+    "Smoke acceptance": "SUCCESS"
+  },
+  "remaining_observations": [
+    "Nonrequired Pantheon canonical review gate still reports FAILURE from its earlier workflow, while canonical task state has Codex2 exact-head approval; Persona provisioning owner contracts is CANCELLED and nonrequired. No proof tags, statuses or approvals were fabricated or changed by this task.",
+    "The ambiguous-open-prs blocker is resolved. Original task integration and owner closeout remain under the existing supervisor; this evidence does not claim a merge or hosted deployment.",
+    "This evidence PR requires independent Codex2 review before supervisor integration and done."
+  ]
+}

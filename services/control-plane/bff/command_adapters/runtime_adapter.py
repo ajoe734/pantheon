@@ -18,7 +18,6 @@ from .base import (
     governance_approval_url,
     http_request_json,
     internal_url,
-    runtime_repair_url,
     utc_now,
 )
 
@@ -57,11 +56,6 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
     _HANDLED_COMMANDS = {
         "RuntimeAction",
         "StartRuntime",
-        "RestartPaperRuntime",
-        "RestartTelemetryBridge",
-        "TerminateStalePaperMonitoringSession",
-        "StartPaperMonitoringSession",
-        "ProbeTelemetryIngest",
         "PauseRuntime",
         "PauseExecution",
         "PausePaperRuntime",
@@ -110,32 +104,21 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
         action_id = command_type if command_type in {"PausePaperRuntime", "ResumePaperRuntime"} else str(params.get("action_id") or command_type or "").strip()
         entity_id = str(params.get("entity_id") or params.get("runtime_id") or params.get("binding_id") or params.get("runtime_binding_id") or "").strip()
 
-        if command_type in {"StartRuntime"} or action_id.lower() == "start":
+        if command_type == "StartRuntime":
             return self._execute_start(command_id, entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"PauseRuntime", "PauseExecution", "PausePaperRuntime"} or action_id.lower() in {"pause", "pauseruntime", "pauseexecution", "pausepaperruntime"}:
+        elif command_type in {"PauseRuntime", "PauseExecution", "PausePaperRuntime"}:
             return self._execute_pause(command_id, entity_id, "pause", params, auth_token=auth_token, mfa_token=mfa_token, command_type=command_type)
-        elif command_type in {"ResumePaperRuntime"} or action_id.lower() in {"resume", "unpause", "resumepaperruntime"}:
+        elif command_type == "ResumePaperRuntime":
             return self._execute_pause(command_id, entity_id, "resume", params, auth_token=auth_token, mfa_token=mfa_token, command_type=command_type)
-        elif command_type in {"RestartPaperRuntime"} or action_id.lower() == "restartpaperruntime":
-            return self._execute_repair_action(command_id, "RestartPaperRuntime", "/api/internal/v1/runtime-repair/paper-runtimes/{runtime_id}/restart", "runtime_id", entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"RestartTelemetryBridge"} or action_id.lower() == "restarttelemetrybridge":
-            return self._execute_repair_action(command_id, "RestartTelemetryBridge", "/api/internal/v1/runtime-repair/paper-runtimes/{runtime_id}/telemetry-bridge/restart", "runtime_id", entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"TerminateStalePaperMonitoringSession"} or action_id.lower() == "terminatestalepapermonitoringsession":
-            session_id = str(params.get("session_id") or entity_id)
-            return self._execute_repair_action(command_id, "TerminateStalePaperMonitoringSession", "/api/internal/v1/runtime-repair/monitoring-sessions/{session_id}/terminate-stale", "session_id", session_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"StartPaperMonitoringSession"} or action_id.lower() == "startpapermonitoringsession":
-            return self._execute_repair_action(command_id, "StartPaperMonitoringSession", "/api/internal/v1/runtime-repair/paper-runtimes/{runtime_id}/monitoring-sessions/start", "runtime_id", entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"ProbeTelemetryIngest"} or action_id.lower() == "probetelemetryingest":
-            return self._execute_repair_action(command_id, "ProbeTelemetryIngest", "/api/internal/v1/runtime-repair/paper-runtimes/{runtime_id}/telemetry-ingest/probe", "runtime_id", entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"IssueSafeMode"} or action_id.lower() == "issuesafemode":
+        elif command_type in {"IssueSafeMode"}:
             return self._execute_safe_mode(command_id, params)
-        elif command_type in {"ExecuteRollback", "HardRollback"} or action_id.lower() in {"executerollback", "hardrollback", "rollback"}:
+        elif command_type in {"ExecuteRollback", "HardRollback"}:
             return self._execute_rollback(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"ApproveRollback"} or action_id.lower() == "approverollback":
+        elif command_type in {"ApproveRollback"}:
             return self._execute_approve_rollback(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"RejectRollback"} or action_id.lower() == "rejectrollback":
+        elif command_type in {"RejectRollback"}:
             return self._execute_reject_rollback(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"ActivateKillSwitch", "IssueRiskOff"} or action_id.lower() in {"activatekillswitch", "issueriskoff", "killswitch"}:
+        elif command_type in {"ActivateKillSwitch", "IssueRiskOff"}:
             return self._execute_kill_switch(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
         else:
             raise ActionUnavailableError(
@@ -499,56 +482,6 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
                 "pause_action": pause_action,
                 "status_after": readback_status,
                 "downstream_verified": True,
-            },
-        )
-
-    def _execute_repair_action(
-        self,
-        command_id: str,
-        action_name: str,
-        path_template: str,
-        target_key: str,
-        target_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        actual_id = target_id or str(params.get(target_key) or "").strip()
-        if not actual_id:
-            raise ValueError(f"{action_name} requires {target_key}.")
-        confirm_token = str(params.get("confirm_token") or "repair-confirm-token").strip()
-
-        payload = {
-            "command_id": command_id,
-            "confirm_token": confirm_token,
-            "reason": params.get("reason") or f"Operator repair {action_name}",
-            "idempotency_key": params.get("idempotency_key") or command_id,
-            "trace_id": params.get("trace_id"),
-            "actor_id": params.get("actor_id") or "operator",
-            "stage": params.get("stage") or "paper",
-        }
-        if "staleness_evidence" in params:
-            payload["staleness_evidence"] = params["staleness_evidence"]
-
-        url = runtime_repair_url(path_template.format(**{target_key: quote(actual_id, safe="")}))
-        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
-
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="Runtime",
-            entity_id=actual_id,
-            action_id=action_name,
-            status=body.get("status", "accepted"),
-            dispatch_path=url,
-            domain_receipt=body,
-            authoritative_readback={
-                "target_id": actual_id,
-                "heartbeat_freshness": body.get("heartbeat_freshness"),
-                "telemetry_projection": body.get("telemetry_projection"),
-            },
-            extra={
-                "audit_id": body.get("audit_id"),
-                "heartbeat_freshness": body.get("heartbeat_freshness"),
             },
         )
 
