@@ -904,6 +904,7 @@ _ALIAS_PARAMS: Dict[str, Dict[str, Any]] = {
     "HumanGateRevoke": {"human_gate_item_id": "alias-target-1", "decision": "revoke", "source_type": "approval", "source_id": "alias-target-1"},
     "HumanGateExtendTtl": {"human_gate_item_id": "alias-target-1", "decision": "extend_ttl", "ttl_seconds": 3600},
     "EmergencyContainment": {"action": "freeze", "trigger": "forced_kill", "evidence_refs": ["ev-1"]},
+    "QuarterlyRankingRecommendationSubmit": {"quarter": "2026-Q4", "ranking_snapshot_id": "snapshot-alias-1"},
 }
 _ALIAS_TARGET_TYPES = {"HardRollback": ObjectType.RUNTIME, "ExecuteRollback": ObjectType.RUNTIME}
 
@@ -921,6 +922,19 @@ class _ApprovedDecisions:
     def get_runtime_binding_by_runtime_id(self, runtime_id: str):
         return {"runtime_id": runtime_id, "binding_id": "binding-1", "deployment_mode": "paper", "tenant_id": "tenant-alias"}
 
+    def get_ranking_snapshot(self, snapshot_id: str):
+        from services.control_plane.bff.pm12.service import _PM12_LEAGUE_FORMULA_VERSION, _stable_json_hash
+
+        content = {
+            "surface": "quarterly", "period": "2026-Q4", "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+            "items": [{"persona_id": "persona-alias", "score": 90, "stage": "paper"}],
+        }
+        return {
+            **content, "content_digest": _stable_json_hash(content),
+            "snapshot_id": snapshot_id, "period": "2026-Q4",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+
     def __getattr__(self, name: str):
         if name.startswith("get_"):
             return lambda *args, **kwargs: None
@@ -932,13 +946,15 @@ def _alias_target(canonical: str) -> Dict[str, str]:
 
     entity_type = get_catalog_entry(canonical).entity_type
     target_type = _ALIAS_TARGET_TYPES.get(canonical) or next((o for o in ObjectType if o.value == entity_type), ObjectType.RUNTIME)
-    return {"type": target_type.value, "id": "alias-target-1"}
+    target_id = "pm12-2026-q4-persona-alias-promote_to_canary_candidate" if canonical == "QuarterlyRankingRecommendationSubmit" else "alias-target-1"
+    return {"type": target_type.value, "id": target_id}
 
 
 _ALIAS_RECORDS: List[Dict[str, Any]] = []
+_DEFAULT_PARAMS = object()
 
 
-def _submit_alias(wrapper: str, verb: str, canonical: str, *, wrapped: bool, token_for: Optional[str]):
+def _submit_alias(wrapper: str, verb: str, canonical: str, *, wrapped: bool, token_for: Optional[str], params: Any = _DEFAULT_PARAMS):
     """Submit one alias (or its canonical command) to a mounted router.
 
     token_for: None sends no token; otherwise a real confirm token is issued bound
@@ -960,6 +976,8 @@ def _submit_alias(wrapper: str, verb: str, canonical: str, *, wrapped: bool, tok
     }
     if wrapped:
         body["action"] = verb
+    if params is not _DEFAULT_PARAMS:
+        body["params"] = params
     headers = {**HEADERS, "Authorization": "Bearer op-test:operator,approver,admin:mfa", "Idempotency-Key": "alias-key-1"}
     rebalance = canonical == CommandType.APPROVED_APPLY.value
     producer = "bff.rebalance-evidence.v1" if rebalance else "bff.v5-two-man-evidence.v1"
@@ -1047,6 +1065,26 @@ def test_every_alias_has_an_accepted_path_stored_as_canonical(wrapper, verb, can
     assert [row["type"] for row in stored if row["request_hash"]] == [canonical]
 
 
+@pytest.mark.parametrize("wrapper,verb,canonical", sorted((w, v, c) for (w, v), c in __import__("services.control_plane.bff.command_adapters.contracts", fromlist=["x"])._WRAPPER_VERB_ALIASES.items()))
+@pytest.mark.parametrize("params", [None, [], ["invalid"], "invalid", 0, False])
+def test_malformed_params_rejected_identically_for_every_alias(wrapper, verb, canonical, params) -> None:
+    wrapped = _submit_alias(wrapper, verb, canonical, wrapped=True, token_for=canonical, params=params)
+    direct = _submit_alias(wrapper, verb, canonical, wrapped=False, token_for=canonical, params=params)
+    assert wrapped == direct
+    assert wrapped[0] == 422
+    assert wrapped[2] == []
+
+
+@pytest.mark.parametrize("params,expected", [({}, 422), (_ALIAS_PARAMS["QuarterlyRankingRecommendationSubmit"], 202)])
+def test_ranking_adapter_existing_canonical_alias_parity(params, expected) -> None:
+    canonical = "QuarterlyRankingRecommendationSubmit"
+    wrapped = _submit_alias("RankingAction", canonical, canonical, wrapped=True, token_for=canonical, params=params)
+    direct = _submit_alias("RankingAction", canonical, canonical, wrapped=False, token_for=canonical, params=params)
+    assert wrapped == direct
+    assert wrapped[0] == expected
+    assert [row["type"] for row in wrapped[2]] == ([canonical] if expected == 202 else [])
+
+
 _DISPATCH_CASES = [
     ("RuntimeAction", "start", "StartRuntime", "/runtimes/alias-target-1/start"),
     ("PersonaAction", "advance_lifecycle", "AdvanceLifecycle", "/personas/alias-target-1/advance-lifecycle"),
@@ -1093,7 +1131,7 @@ def _mounted_service(td: str):
     return store, svc, TestClient(app)
 
 
-@pytest.mark.parametrize("command", ["NotACommandAction", "CapitalPoolAction"])
+@pytest.mark.parametrize("command", ["NotACommandAction", "CapitalPoolAction", [], {}, ["RuntimeAction"], {"name": "RuntimeAction"}, None, 0, False])
 def test_unmapped_wrapper_is_rejected_before_storage(command) -> None:
     with tempfile.TemporaryDirectory() as td:
         store, _svc, client = _mounted_service(td)

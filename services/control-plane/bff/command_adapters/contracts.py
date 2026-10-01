@@ -391,6 +391,7 @@ _WRAPPER_CANONICALS = {
     },
     "V5InterventionAction": {"RemediateSentinelIntervention": ("remediate",)},
     "RiskAlertAction": {"AlertAcknowledge": ("acknowledge", "ack")},
+    "RankingAction": {"QuarterlyRankingRecommendationSubmit": ()},
 }
 _WRAPPER_VERB_ALIASES = {
     (wrapper, re.sub(r"[^a-z0-9]", "", verb.lower())): canonical
@@ -402,17 +403,20 @@ _WRAPPER_VERB_ALIASES = {
 
 def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Replace a wrapper command by the canonical command its verb maps to."""
-    params = payload.get("params")
-    params = params if isinstance(params, dict) else {}
-    verb = payload.get("action") or params.get("action_id") or params.get("actionId")
+    command = payload.get("command")
+    if not isinstance(command, str):
+        return payload
+    params = payload.get("params", {})
+    action_params = params if isinstance(params, dict) else {}
+    verb = payload.get("action") or action_params.get("action_id") or action_params.get("actionId")
     verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())
-    canonical = _WRAPPER_VERB_ALIASES.get((payload.get("command"), verb))
+    canonical = _WRAPPER_VERB_ALIASES.get((command, verb))
     if canonical is None:
         return payload
     return {
         **{k: v for k, v in payload.items() if k != "action"},
         "command": canonical,
-        "params": {k: v for k, v in params.items() if k not in ("action_id", "actionId")},
+        "params": {k: v for k, v in params.items() if k not in ("action_id", "actionId")} if isinstance(params, dict) else params,
     }
 
 
