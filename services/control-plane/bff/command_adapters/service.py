@@ -72,6 +72,7 @@ from .contracts import (
     _FINAL_COMMAND_ROUTE,
     _HUMAN_GATE_DECISIONS_BY_COMMAND,
     build_foundation_command_context,
+    canonicalize_wrapped_payload,
     normalize_operator_command_payload,
     resolve_final_idempotency_key,
     serialize_foundation_context,
@@ -1405,6 +1406,7 @@ class CommandAdapterService:
         response_deprecation: Optional[Dict[str, Any]] = None,
     ) -> Any:
         identity = self.extract_identity(authorization, mfa_token=x_mfa_token)
+        payload = canonicalize_wrapped_payload(payload)
         cmd = normalize_operator_command_payload(payload)
 
         candidate_key = str(idempotency_key or x_idempotency_key or "").strip() or None
