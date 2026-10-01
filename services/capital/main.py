@@ -434,11 +434,7 @@ class CapitalBoundaryService:
             self.guard.authorize(
                 pool=pool, tenant_id=t, decision_id=body.approval_decision_id,
                 target_type="capital_binding_activation", target_id=binding_id,
-                expected={
-                    "target_version": binding_digest(binding), "subject.binding_id": binding_id,
-                    "subject.persona_id": binding.persona_id, "subject.capital_pool_id": pool.pool_id,
-                    "subject.risk_direction": "increase",
-                },
+                expected={"target_version": binding_digest(binding), "subject.binding_id": binding_id, "subject.persona_id": binding.persona_id, "subject.capital_pool_id": pool.pool_id, "subject.risk_direction": "increase"},
                 binding=binding, allocations=held, bindings=self.list_bindings(capital_pool_id=pool.pool_id),
             )
             try:
@@ -710,16 +706,14 @@ class CapitalBoundaryService:
         lines, pool_id = proposal.get("lines") or [], str(proposal.get("capital_pool_id") or "")
         held = self.allocation_store.list_allocations(capital_pool_id=pool_id, tenant_id=tenant)
         held_map = {a.get("allocation_id"): a for a in held}
-        if not any(self._line_increases_risk(line, held_map.get(line.get("allocation_id"))) for line in lines):
-            return
-        digest = plan_digest(proposal)
-        bindings = self.list_bindings(capital_pool_id=pool_id)
-        self.guard.authorize(
-            pool=self.get_pool(pool_id), tenant_id=tenant, decision_id=decision_id,
-            target_type="rebalance_apply", target_id=rebalance_id,
-            expected={"target_version": digest, "subject.plan_id": rebalance_id, "subject.plan_digest": digest, "subject.capital_pool_id": pool_id, "subject.risk_direction": "increase"},
-            allocations=held, proposal_lines=lines, bindings=bindings,
-        )
+        if any(self._line_increases_risk(line, held_map.get(line.get("allocation_id"))) for line in lines):
+            digest = plan_digest(proposal)
+            self.guard.authorize(
+                pool=self.get_pool(pool_id), tenant_id=tenant, decision_id=decision_id,
+                target_type="rebalance_apply", target_id=rebalance_id,
+                expected={"target_version": digest, "subject.plan_id": rebalance_id, "subject.plan_digest": digest, "subject.capital_pool_id": pool_id, "subject.risk_direction": "increase"},
+                allocations=held, proposal_lines=lines, bindings=self.list_bindings(capital_pool_id=pool_id),
+            )
 
     def apply_rebalance(
         self,
