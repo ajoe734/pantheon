@@ -629,17 +629,25 @@ def _is_rejection_note(message: Any) -> bool:
     return any(marker in text for marker in REVOCATION_NOTE_MARKERS)
 
 
+# Clock-step slack when reading only the activity since a PR head's commit.
+HEAD_ACTIVITY_SLACK_SECONDS = 3600
+
+
 def load_approval_record(
     task_id: str,
     *,
     status_root: Path | str | None = None,
     events: Iterable[Mapping[str, Any]] | None = None,
+    not_before: datetime | None = None,
 ) -> ApprovalRecord:
     """Find the newest approval for ``task_id`` and any later revocation.
 
     ``events`` lets fixtures inject an ordered audit slice; production callers
     read the bound status root's activity audit (active tail plus rotated
-    archives) so a rotation cannot silently erase an approval.
+    archives) so a rotation cannot silently erase an approval. With
+    ``not_before`` (the PR head's commit time; an older approval is rejected as
+    predating the head anyway) only activity since then is read, so the
+    integrator does not revalidate the whole audit history per candidate.
     """
 
     task_id = str(task_id or "").strip()
@@ -652,11 +660,17 @@ def load_approval_record(
         if not log_path.is_file():
             return ApprovalRecord(task_id=task_id, scan_error="activity audit is unavailable")
         try:
+            rows = (
+                orchestrator_common.stream_logical_activity(log_path)
+                if not_before is None
+                else orchestrator_common.recent_logical_activity(
+                    log_path,
+                    not_before=not_before.timestamp() - HEAD_ACTIVITY_SLACK_SECONDS,
+                )
+            )
             events = [
                 event
-                for event, _source, _line_number in orchestrator_common.stream_logical_activity(
-                    log_path
-                )
+                for event, _source, _line_number in rows
                 if str(event.get("task_id") or "").strip() == task_id
             ]
         except RuntimeError as exc:
@@ -1243,7 +1257,12 @@ def gate_for_task(
     contract = load_task_contract(task_id, status_root=status_root, state=state)
     approval = None
     if contract.policy == POLICY_REVIEW_BEFORE_MERGE:
-        approval = load_approval_record(task_id, status_root=status_root, events=events)
+        approval = load_approval_record(
+            task_id,
+            status_root=status_root,
+            events=events,
+            not_before=pr_head_committed_at(pr)[0] if pr else None,
+        )
     return evaluate_gate(
         contract,
         approval,

@@ -33,13 +33,12 @@ def test_strategy_reconstruction_from_basic_messages() -> None:
     assert result.workshop_id == workshop_id
     assert result.based_on_sequence_no == 2
 
-    # Check block statuses
-    assert result.strategy_map.universe.status != "missing"
-    assert result.strategy_map.signal_definition.status != "missing"
-    assert result.strategy_map.risk_controls.status != "missing"
-
-    # Check facts and Next Best Question
-    assert len(result.explicit_facts) > 0
+    # The validator does not interpret messages or invent semantic facts.
+    assert result.strategy_map.universe.status == "missing"
+    assert result.strategy_map.signal_definition.status == "missing"
+    assert result.strategy_map.risk_controls.status == "missing"
+    assert result.completeness.grade == "insufficient"
+    assert result.explicit_facts == []
     assert result.next_best_question is not None
     assert isinstance(result.next_best_question.text, str)
     assert len(result.next_best_question.resolves) > 0
@@ -59,7 +58,7 @@ def test_strategy_reconstruction_nbq_uniqueness_and_completeness_derivation() ->
     )
 
     assert result.completeness.grade == "insufficient"
-    assert "Missing core strategy hypothesis" in result.completeness.blockers
+    assert "Semantic reconstruction unavailable" in result.completeness.blockers
     assert result.next_best_question is not None
     # NBQ must resolve hypothesis
     assert "hypothesis.summary" in result.next_best_question.resolves
@@ -132,4 +131,15 @@ def test_reconstruct_endpoint_integration(monkeypatch: pytest.MonkeyPatch) -> No
     assert body["data"]["workshop_id"] == ws_id
     assert "strategy_map" in body["data"]
     assert "next_best_question" in body["data"]
+
+    from .semantic_provider import OpenClawOpsClient, OpenClawOpsClientError
+    def unavailable(*args, **kwargs):
+        raise OpenClawOpsClientError("private upstream error", status_code=503, error_code="UNAVAILABLE")
+    monkeypatch.setattr(OpenClawOpsClient, "_request", unavailable)
+    store.create_event({"workshop_id": ws_id, "event_type": "message", "actor_type": "operator",
+                        "redacted_summary": "I have not defined an entry rule"})
+    failed = client.post(f"/bff/agora/workshops/{ws_id}/reconstruct",
+                         headers={"Authorization": "Bearer user-test:tenant-test"})
+    assert failed.status_code == 503
+    assert "private upstream error" not in failed.text
 

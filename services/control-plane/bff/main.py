@@ -2623,36 +2623,12 @@ _READINESS_NO_REAL_CAPITAL_EVIDENCE = "support/evidence/MGMT-BROKER-003/no-real-
 _READINESS_BROKER_LIVE_DISABLED = (
     "docs/deployment/evidence/ep5-broker-tw-002/20260517T054748Z/sandbox-smoke/live-disabled.json"
 )
-def _repo_artifact_path(rel_path: str) -> str:
-    return os.path.join(_REPO_ROOT, rel_path)
-def _read_repo_json_artifact(rel_path: str) -> Optional[Dict[str, Any]]:
-    path = _repo_artifact_path(rel_path)
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-        return payload if isinstance(payload, dict) else None
-    except (OSError, json.JSONDecodeError):
-        return None
-def _read_repo_text_artifact(rel_path: str) -> str:
-    path = _repo_artifact_path(rel_path)
-    if not os.path.exists(path):
-        return ""
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            return handle.read()
-    except OSError:
-        return ""
-def _readiness_evidence_ref(rel_path: str, label: str) -> Dict[str, Any]:
-    exists = os.path.exists(_repo_artifact_path(rel_path))
-    return {
-        "id": re.sub(r"[^a-z0-9]+", "-", rel_path.lower()).strip("-"),
-        "label": label,
-        "path": rel_path,
-        "href": f"/{rel_path}",
-        "exists": exists,
-    }
+from .management_read_models.readiness_evidence import (
+    historical_reference as _readiness_evidence_ref,
+    historical_surface,
+    current_evidence_checks,
+)
+
 def _readiness_artifact_surface(
     surface_key: str,
     rel_path: str,
@@ -2660,18 +2636,7 @@ def _readiness_artifact_surface(
     snapshot_at: str,
     label: str,
 ) -> Dict[str, Any]:
-    exists = os.path.exists(_repo_artifact_path(rel_path))
-    surface = dict(_surface_status())
-    surface["source"] = "repo_artifact" if exists else "missing"
-    surface["artifact_path"] = rel_path
-    if not exists:
-        surface["status"] = "unavailable"
-        surface["message"] = f"{label} artifact is unavailable."
-        surface.setdefault(
-            "staleness",
-            {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        )
-    return surface
+    return historical_surface(rel_path, label)
 def _readiness_check(
     check_id: str,
     label: str,
@@ -2730,6 +2695,7 @@ def _readiness_response(
     details: Optional[Dict[str, Any]] = None,
     links: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
+    checks = current_evidence_checks(checks, evidence_refs, source_surfaces)
     summary = _readiness_summary(checks)
     surface_key = f"management_readiness_{readiness_id.replace('-', '_')}"
     aggregate_surface = _aggregate_group_surface(
@@ -2773,20 +2739,8 @@ def _readiness_response(
     }
 def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
     snapshot_at = utc_now()
-    audit = _read_repo_json_artifact(_READINESS_STRICT_PUBLISH_AUDIT) or {}
-    component_status = audit.get("component_status") if isinstance(audit.get("component_status"), dict) else {}
-    forbidden_scan = (
-        (audit.get("components") or {}).get("forbidden_path_scan")
-        if isinstance(audit.get("components"), dict)
-        else {}
-    )
-    forbidden_signals = (
-        forbidden_scan.get("forbidden_signals")
-        if isinstance(forbidden_scan, dict) and isinstance(forbidden_scan.get("forbidden_signals"), list)
-        else []
-    )
-    passed = bool(audit.get("passed"))
-    checked_at = audit.get("checked_at")
+    # No current deployment-bound audit owner is wired here. Never read an
+    # archived audit as the state of the hosted release.
     evidence_refs = [
         _readiness_evidence_ref(_READINESS_STRICT_PUBLISH_AUDIT, "Strict publish audit JSON"),
         _readiness_evidence_ref(_READINESS_STRICT_PUBLISH_REPORT, "Strict publish audit report"),
@@ -2801,7 +2755,7 @@ def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
         _readiness_check(
             "browser_probe",
             "Browser health and /bff/me probe",
-            "pass" if component_status.get("LSP-002-V2") is True else "fail",
+            "unknown",
             blocking=True,
             message="Hosted browser probe must pass before strict publish can proceed.",
             evidence_refs=[_READINESS_STRICT_PUBLISH_AUDIT],
@@ -2809,7 +2763,7 @@ def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
         _readiness_check(
             "bundle_hash_capture",
             "Hosted bundle hash capture",
-            "pass" if component_status.get("LSP-003-V2") is True else "fail",
+            "unknown",
             blocking=True,
             message="Hosted bundle hash capture must pass before strict publish can proceed.",
             evidence_refs=[_READINESS_STRICT_PUBLISH_AUDIT],
@@ -2817,11 +2771,11 @@ def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
         _readiness_check(
             "forbidden_path_scan",
             "Forbidden mock/seed runtime path scan",
-            "pass" if component_status.get("LSP-004-V2") is True else "fail",
+            "unknown",
             blocking=True,
             message="Strict publish remains blocked while deployed bundles contain forbidden mock/seed signals.",
             evidence_refs=[_READINESS_STRICT_PUBLISH_AUDIT],
-            details={"forbidden_signal_count": len(forbidden_signals)},
+            details={"forbidden_signal_count": None},
         ),
     ]
     return _readiness_response(
@@ -2832,11 +2786,12 @@ def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
         source_surfaces={"strict_publish_audit": audit_surface},
         snapshot_at=snapshot_at,
         details={
-            "passed": passed,
-            "checked_at": checked_at,
-            "deployment_url": audit.get("deployment_url"),
-            "browser_probe_base_url": audit.get("browser_probe_base_url"),
-            "errors": audit.get("errors") if isinstance(audit.get("errors"), list) else [],
+            "passed": None,
+            "checked_at": None,
+            "current_evidence_status": "unavailable",
+            "deployment_url": None,
+            "browser_probe_base_url": None,
+            "errors": [],
         },
         links={
             "self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/strict-publish",
@@ -2845,10 +2800,6 @@ def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
     )
 def _build_management_bff_ha_readiness_payload() -> Dict[str, Any]:
     snapshot_at = utc_now()
-    packet_text = _read_repo_text_artifact(_READINESS_BFF_HA_PACKET)
-    review_text = _read_repo_text_artifact(_READINESS_BFF_HA_REVIEW)
-    packet_exists = bool(packet_text)
-    review_approved = "Status: **approved**" in review_text or "Approved." in review_text
     evidence_refs = [
         _readiness_evidence_ref(_READINESS_BFF_HA_PACKET, "BFF HA failover demo packet"),
         _readiness_evidence_ref(_READINESS_BFF_HA_REVIEW, "BFF HA failover demo review"),
@@ -2863,7 +2814,7 @@ def _build_management_bff_ha_readiness_payload() -> Dict[str, Any]:
         _readiness_check(
             "dev_failover_demo_packet",
             "Dev failover demo packet recorded",
-            "pass" if packet_exists else "fail",
+            "unknown",
             blocking=True,
             message="The BFF HA readiness page requires the dev failover demo packet.",
             evidence_refs=[_READINESS_BFF_HA_PACKET],
@@ -2871,7 +2822,7 @@ def _build_management_bff_ha_readiness_payload() -> Dict[str, Any]:
         _readiness_check(
             "dev_failover_demo_review",
             "Dev failover demo review approved",
-            "pass" if review_approved else "fail",
+            "unknown",
             blocking=True,
             message="The dev failover demo must have reviewer approval.",
             evidence_refs=[_READINESS_BFF_HA_REVIEW],
@@ -2898,7 +2849,8 @@ def _build_management_bff_ha_readiness_payload() -> Dict[str, Any]:
         source_surfaces={"bff_ha_failover_demo": packet_surface},
         snapshot_at=snapshot_at,
         details={
-            "dev_demo_ready": packet_exists and review_approved,
+            "dev_demo_ready": None,
+            "current_evidence_status": "unavailable",
             "production_topology_ready": False,
         },
         links={
@@ -2912,7 +2864,7 @@ def _build_management_broker_live_readiness_payload() -> Dict[str, Any]:
     service_surface = (
         broker_surface.get("service_status")
         if isinstance(broker_surface.get("service_status"), dict)
-        else _composed_surface_status(snapshot_at=snapshot_at)
+        else {"status": "unavailable", "source": "broker_owner_unverified"}
     )
     live_gate_enabled = auth_policy.bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
     live_execution_enabled = bool(broker_surface.get("live_execution_enabled"))
@@ -2929,17 +2881,11 @@ def _build_management_broker_live_readiness_payload() -> Dict[str, Any]:
         ),
         _readiness_evidence_ref(_READINESS_BROKER_LIVE_DISABLED, "Broker live-disabled smoke"),
     ]
-    live_disabled_surface = _readiness_artifact_surface(
-        "broker_live_disabled_smoke",
-        _READINESS_BROKER_LIVE_DISABLED,
-        snapshot_at=snapshot_at,
-        label="Broker live-disabled smoke",
-    )
     checks = [
         _readiness_check(
             "openclaw_broker_readiness_surface",
             "OpenClaw broker readiness surface",
-            "pass" if broker_surface.get("overall_status") != "unavailable" else "fail",
+            "pass" if broker_surface.get("overall_status") in {"ok", "healthy", "ready"} else "unknown",
             blocking=True,
             message="Broker live readiness requires the OpenClaw broker readiness surface.",
             details={"overall_status": broker_surface.get("overall_status")},
@@ -2950,7 +2896,6 @@ def _build_management_broker_live_readiness_payload() -> Dict[str, Any]:
             "pass" if broker_live_ready else "blocked",
             blocking=True,
             message="Live broker execution is fail-closed until explicit live broker gates and adapter state are enabled.",
-            evidence_refs=[_READINESS_BROKER_LIVE_DISABLED],
             details={
                 "PANTHEON_LIVE_BROKER_ENABLED": live_gate_enabled,
                 "live_execution_enabled": live_execution_enabled,
@@ -2978,7 +2923,6 @@ def _build_management_broker_live_readiness_payload() -> Dict[str, Any]:
         evidence_refs=evidence_refs,
         source_surfaces={
             "openclaw_broker_adapter_readiness": service_surface,
-            "broker_live_disabled_smoke": live_disabled_surface,
         },
         snapshot_at=snapshot_at,
         details={
@@ -3016,12 +2960,6 @@ def _build_management_capital_binding_live_readiness_payload() -> Dict[str, Any]
     ]
     capital_surface = _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at)
     runtime_surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
-    no_real_capital_surface = _readiness_artifact_surface(
-        "no_real_capital_evidence",
-        _READINESS_NO_REAL_CAPITAL_EVIDENCE,
-        snapshot_at=snapshot_at,
-        label="No real capital evidence",
-    )
     checks = [
         _readiness_check(
             "capital_binding_live_gate",
@@ -3029,7 +2967,6 @@ def _build_management_capital_binding_live_readiness_payload() -> Dict[str, Any]
             "pass" if gate_enabled else "blocked",
             blocking=True,
             message="Live capital binding remains fail-closed until explicit capital-binding live gates are enabled.",
-            evidence_refs=[_READINESS_NO_REAL_CAPITAL_EVIDENCE],
             details={
                 "OPENCLAW_CAPITAL_BINDING_ENABLED": auth_policy.bool_from_env("OPENCLAW_CAPITAL_BINDING_ENABLED", default=False),
                 "PANTHEON_CAPITAL_BINDING_LIVE_ENABLED": auth_policy.bool_from_env(
@@ -3066,7 +3003,6 @@ def _build_management_capital_binding_live_readiness_payload() -> Dict[str, Any]
         source_surfaces={
             "persona_bindings": capital_surface,
             "runtime_bindings": runtime_surface,
-            "no_real_capital_evidence": no_real_capital_surface,
         },
         snapshot_at=snapshot_at,
         details={
@@ -3106,12 +3042,12 @@ def _build_management_ep5_readiness_payload() -> Dict[str, Any]:
         _readiness_check(
             "ep5_evidence_bundle",
             "EP5 prerequisite evidence bundle",
-            "pass" if all(ref.get("exists") for ref in evidence_refs) else "fail",
+            "unknown",
             blocking=True,
-            message="EP5 readiness requires the prerequisite evidence bundle to be present in repo.",
+            message="EP5 requires current owner evidence; repository bundles are historical references only.",
             evidence_refs=[ref["path"] for ref in evidence_refs],
             details={
-                "available_evidence_count": len([ref for ref in evidence_refs if ref.get("exists")]),
+                "available_evidence_count": None,
                 "required_evidence_count": len(evidence_refs),
             },
         )
