@@ -11,7 +11,8 @@
   "net_production_lines": "+156 / -2031 (net -1875) over services/control-plane/bff excluding tests, snapshots, docs",
   "validation": [
     "Full BFF suite run in 12+ bounded chunks against this tree and against base d18956ba9 extracted via git archive: failures are identical to baseline apart from deleted/renamed tests; two timing-sensitive tests failed only under parallel load and passed alone.",
-    "scripts release-gate/verify/probe tests: 123 passed, 1 failure that also fails on base (stage0 workflow dispatch)."
+    "scripts release-gate/verify/probe tests: 123 passed, 1 failure that also fails on base (stage0 workflow dispatch).",
+    "Review fix (Codex2 P2): ReadSurfacePorts.dataset_source('incidents') now delegates to the incident owner, so control-room incidents surface reports unavailable on owner outage/missing owner and ok on healthy-empty; regressions in tests/test_control_room_incident_owner_availability.py (3 passed, plus test_control_loops_router 10 passed)."
   ],
   "known_baseline_failures": [
     "test_action_catalog PromoteEvolutionCandidateLive two-man gating",

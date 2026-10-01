@@ -440,6 +440,10 @@ class ReadSurfacePorts:
             # consultation client/store or catalog backend surfaces as
             # unavailable rather than a false healthy default.
             return self.operations_consultation.dataset_source(dataset)
+        if dataset == "incidents":
+            # The incident owner can be down while list_incidents() swallows
+            # the outage and returns []; surface its real availability.
+            return self.lifecycle_telemetry_governance.dataset_source("incidents")
         if dataset in (
             "deployment_plans",
             "personas",
