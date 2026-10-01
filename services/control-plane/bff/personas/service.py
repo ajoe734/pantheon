@@ -5604,7 +5604,11 @@ def _pm12_quarterly_recommendations(
     result = evaluator_results.saved_evaluator_result(quarter_window["quarter"]) or {}
     recommendations: List[Dict[str, Any]] = []
     snapshots: Dict[str, Dict[str, Any]] = {}
+    # ranked_items is already tenant/persona-visibility filtered for the caller.
+    visible_persona_ids = {i.get("persona_id") for i in ranked_items if isinstance(i, dict)}
     for saved in result.get("items") or []:
+        if saved.get("persona_id") not in visible_persona_ids:
+            continue  # fail closed: caller cannot see this persona
         snapshot_id = str(saved.get("ranking_snapshot_id") or "")
         if snapshot_id not in snapshots:
             record = _get_ranking_write_owner().get_ranking_snapshot(snapshot_id)

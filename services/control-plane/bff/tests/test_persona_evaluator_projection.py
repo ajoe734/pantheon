@@ -93,3 +93,29 @@ def test_unresolvable_saved_snapshot_fails_closed(monkeypatch):
         }]}
         monkeypatch.setattr(evaluator_results, "saved_evaluator_result", lambda *a, **k: saved)
         assert _items(client) == []
+
+
+def test_saved_recommendations_are_limited_to_personas_visible_to_the_caller(monkeypatch):
+    with gov_test._isolated_client() as (client, _store, _commands):
+        items = _items(client)
+        personas = sorted({i["persona_id"] for i in items})
+        assert len(personas) >= 2
+        visible, hidden = personas[0], personas[1]
+        snap = items[0]["ranking_snapshot_id"]
+        saved = {"run_id": "r", "evaluated_at": "2026-01-01T00:00:00+00:00", "items": [{
+            "persona_id": p, "action_id": "promote_to_canary_candidate", "rationale": f"Provider {p}.",
+            "evidence_ref_ids": [], "ranking_snapshot_id": snap, "governance_request": None,
+            "recommendation_id": f"pm12-2026-q1-{p}-promote_to_canary_candidate",
+        } for p in (visible, hidden)]}
+        monkeypatch.setattr(evaluator_results, "saved_evaluator_result", lambda *a, **k: saved)
+        assert {i["persona_id"] for i in _items(client)} == {visible, hidden}  # same caller scope: stable
+        # Caller scope no longer includes `hidden`: saved evaluator output must not leak it.
+        real_filter = personas_service._pm12_filter_persona_items
+
+        def scoped(rows, **kwargs):
+            return [r for r in real_filter(rows, **kwargs) if r.get("persona_id") != hidden]
+
+        monkeypatch.setattr(personas_service, "_pm12_filter_persona_items", scoped)
+        assert {i["persona_id"] for i in _items(client)} == {visible}
+        reviews = client.get("/bff/management/promotion-reviews", headers=HEADERS, params={"quarter": "2026-Q1"})
+        assert {r["persona_id"] for r in reviews.json()["data"]["items"]} <= {visible}
