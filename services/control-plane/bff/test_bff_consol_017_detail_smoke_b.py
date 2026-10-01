@@ -236,16 +236,7 @@ def test_detail_smoke_b_pack_b_routes_resolve_acceptance_links() -> None:
         assert skeleton["two_man_rule_enforced"] is True
         assert skeleton["remediation_actions_available"]
 
-        session = _get(client, f"/bff/agora/sessions/{PACK_B['agora_session_id']}")
-        assert session.status_code == 200, session.text
-        session_record = _data(session.json())
-        assert session_record["topic"]
-        assert session_record["participants"]
-
-        messages = _get(client, f"/bff/agora/sessions/{PACK_B['agora_session_id']}/messages")
-        assert messages.status_code == 200, messages.text
-        messages_payload = messages.json()
-        assert messages_payload["data"]
+        # Agora sessions and messages detail routes retired per AGORA-DEAD-SURFACES-REMOVAL-001
 
         artifact = _get(client, f"/bff/artifacts/{PACK_B['artifact_id']}")
         assert artifact.status_code == 200, artifact.text

@@ -823,61 +823,6 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         description="Job lifecycle action (cancel, retry, archive); command admission returns the final envelope.",
     ),
     # ------------------------------------------------------------------ #
-    # Agora core actions (BFF-LUV-GAP-006)
-    # ------------------------------------------------------------------ #
-    BffActionCatalogEntry(
-        action_id="AgoraSignalFeedback",
-        entity_type="AgoraSignal",
-        endpoint="/bff/agora/signals/{signal_id}/feedback",
-        risk_level=RiskLevel.LOW,
-        requires_approval=False,
-        requires_confirm_token=False,
-        requires_two_man=False,
-        cooldown_seconds=0,
-        idempotency_required=True,
-        required_roles=["operator", "reviewer", "approver"],
-        description="Record operator feedback on an Agora signal and emit the corresponding audit record.",
-    ),
-    BffActionCatalogEntry(
-        action_id="AgoraMessageAction",
-        entity_type="AgoraMessage",
-        endpoint="/bff/agora/messages/{message_id}/actions/{action_id}",
-        risk_level=RiskLevel.LOW,
-        requires_approval=False,
-        requires_confirm_token=False,
-        requires_two_man=False,
-        cooldown_seconds=0,
-        idempotency_required=True,
-        required_roles=["operator", "reviewer", "approver"],
-        description="Generic Agora message action such as cite, annotate, pin, or create a handoff.",
-    ),
-    BffActionCatalogEntry(
-        action_id="AgoraInsightAction",
-        entity_type="AgoraInsight",
-        endpoint="/bff/agora/insights/{insight_id}/actions/{action_id}",
-        risk_level=RiskLevel.MEDIUM,
-        requires_approval=False,
-        requires_confirm_token=False,
-        requires_two_man=False,
-        cooldown_seconds=0,
-        idempotency_required=True,
-        required_roles=["operator", "reviewer", "approver"],
-        description="Generic Agora insight action such as attach strategy, dismiss, promote, or convert to training.",
-    ),
-    BffActionCatalogEntry(
-        action_id="AgoraMemoryAction",
-        entity_type="AgoraMemory",
-        endpoint="/bff/agora/memory/{memory_id}/actions/{action_id}",
-        risk_level=RiskLevel.MEDIUM,
-        requires_approval=False,
-        requires_confirm_token=False,
-        requires_two_man=False,
-        cooldown_seconds=0,
-        idempotency_required=True,
-        required_roles=["operator", "reviewer", "approver"],
-        description="Generic Agora memory action such as approve, reject, merge, or quarantine.",
-    ),
-    # ------------------------------------------------------------------ #
     # Execute-plans semantic command bridge (BFF-LUV-SEM-002)
     # ------------------------------------------------------------------ #
     BffActionCatalogEntry(

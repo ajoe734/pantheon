@@ -2,7 +2,7 @@
   "task_id": "BFF-TEST-ARCH-001",
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
-  "total_test_files": 390,
+  "total_test_files": 389,
   "migrated_in_task_count": 33,
   "composition_allowlist": [
     "auth/test_composition_root_smoke.py",
@@ -29,9 +29,6 @@
   ],
   "migrated_suites": [
     "agora/performance/test_performance.py",
-    "test_ask_001_sessions_contract.py",
-    "test_ask_003_committee_lifecycle.py",
-    "test_ask_004_memo_publish_contract.py",
     "test_bff_consol_008_fixture_pack_a.py",
     "test_bff_consol_009_fixture_pack_b.py",
     "test_bff_consol_010_fixture_pack_c.py",
@@ -96,11 +93,11 @@
     "tests/test_ppl_alloc_012_ranking_projection.py"
   ],
   "layer_summary": {
-    "adapter": 53,
-    "application": 190,
-    "router": 116,
+    "adapter": 52,
+    "application": 189,
     "composition": 19,
-    "hosted": 12
+    "hosted": 12,
+    "router": 117
   },
   "main_by_layer": {
     "composition": 14,
@@ -428,27 +425,7 @@
       "disposition": "DECOUPLED",
       "rationale": "Already decoupled from main composition globals"
     },
-    {
-      "file": "test_ask_001_sessions_contract.py",
-      "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Migrated suite: decoupled from main composition root and enforced by AST checks"
-    },
-    {
-      "file": "test_ask_003_committee_lifecycle.py",
-      "layer": "application",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Migrated suite: decoupled from main composition root and enforced by AST checks"
-    },
-    {
-      "file": "test_ask_004_memo_publish_contract.py",
-      "layer": "router",
-      "imports_main": false,
-      "disposition": "MIGRATED",
-      "rationale": "Migrated suite: decoupled from main composition root and enforced by AST checks"
-    },
+
     {
       "file": "test_aud_002_audit_action_write_engine.py",
       "layer": "application",
@@ -462,20 +439,6 @@
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "Decoupled in BFF-TEST-MIGRATION-CB04-GOVERNANCE-APPROVALS-AUDIT-001 (mounts real router factories on a standalone app)."
-    },
-    {
-      "file": "test_bff_agora_core_contract.py",
-      "layer": "router",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
-    },
-    {
-      "file": "test_bff_agora_extended_contract.py",
-      "layer": "router",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
     },
     {
       "file": "test_bff_approvals_decide_contract.py",
@@ -1633,13 +1596,6 @@
       "rationale": "Already decoupled from main composition globals"
     },
     {
-      "file": "tests/test_agora_dashboard_store.py",
-      "layer": "adapter",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
-    },
-    {
       "file": "tests/test_agora_dataset_handoff_integration.py",
       "layer": "application",
       "imports_main": false,
@@ -1767,13 +1723,6 @@
     },
     {
       "file": "tests/test_agora_write_authority.py",
-      "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
-    },
-    {
-      "file": "tests/test_assistant_agora_ask.py",
       "layer": "application",
       "imports_main": false,
       "disposition": "DECOUPLED",

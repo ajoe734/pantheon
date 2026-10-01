@@ -577,12 +577,6 @@ def _make_store(
     )
     store.get_research_experiment = lambda experiment_id: research_experiments.get(experiment_id)
     store.list_research_experiments = lambda **kw: list(research_experiments.values())
-    for method_name, key in (
-        ("list_agora_signals", "agora_signals"),
-        ("list_agora_sessions", "agora_sessions"),
-        ("list_agora_watchlist", "agora_watchlist"),
-    ):
-        setattr(store, method_name, lambda _key=key, **_kwargs: records(data.get(_key)))
     return store
 
 

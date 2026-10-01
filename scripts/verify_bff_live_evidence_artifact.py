@@ -72,21 +72,21 @@ BEARER_SHAPE_REQUIRED_SOURCES = (
     "approval_race:b",
 )
 MIN_BEARER_SHAPE_TOKEN_LENGTH = 12
-RBAC_READ_RESOURCES = ("bff-strategies", "bff-ranking-formulas", "bff-agora-signals")
-RBAC_WRITE_RESOURCES = ("strategy", "ranking-formula", "agora-note", "intervention-claim")
-RBAC_WRITE_READBACK_RESOURCES = {"strategy", "ranking-formula", "agora-note"}
+RBAC_READ_RESOURCES = ("bff-strategies", "bff-ranking-formulas", "bff-agora-journal")
+RBAC_WRITE_RESOURCES = ("strategy", "ranking-formula", "agora-journal", "intervention-claim")
+RBAC_WRITE_READBACK_RESOURCES = {"strategy", "ranking-formula", "agora-journal"}
 RBAC_READ_ALLOWED = {"viewer", "operator", "reviewer", "approver", "admin"}
 RBAC_WRITE_ALLOWED = {"operator", "reviewer", "approver", "admin"}
 RBAC_DENIED_ERROR_CODES = {"AUTH_REQUIRED", "FORBIDDEN", "INSUFFICIENT_ROLE", "PERMISSION_DENIED"}
 RBAC_READ_EXPECTATIONS = {
     "bff-strategies": {"method": "GET", "path": "/bff/strategies"},
     "bff-ranking-formulas": {"method": "GET", "path": "/bff/ranking-formulas"},
-    "bff-agora-signals": {"method": "GET", "path": "/bff/agora/signals"},
+    "bff-agora-journal": {"method": "GET", "path": "/bff/agora/journal"},
 }
 RBAC_WRITE_EXPECTATIONS = {
     "strategy": {"method": "POST", "path": "/bff/strategies"},
     "ranking-formula": {"method": "POST", "path": "/bff/ranking-formulas"},
-    "agora-note": {"method": "POST", "path": "/bff/agora/notes"},
+    "agora-journal": {"method": "POST", "path": "/bff/agora/journal"},
     "intervention-claim": {"method": "POST", "path": "/bff/v5/interventions/int-live-rbac-matrix/claim"},
 }
 APPROVAL_RACE_ACCEPTED_STATUSES = {200, 201, 202}
@@ -1177,7 +1177,7 @@ def rbac_detail_check(
                     if not isinstance(readback, dict):
                         readback = {}
                     readback_kind = str(readback.get("kind") or "")
-                    if resource == "agora-note":
+                    if resource == "agora-journal":
                         readback_ok = (
                             readback_kind == "list_readback_not_persisted"
                             and readback.get("ok") is True

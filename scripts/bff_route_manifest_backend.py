@@ -152,15 +152,9 @@ FAMILY_RULES: list[tuple[str, str]] = [
     ("/bff/command-confirmations", "governance-runtime-risk-audit"),
     ("/bff/confirm-tokens", "governance-runtime-risk-audit"),
     # ── agora extended (must precede generic /bff/agora) ─────────────────────
-    ("/bff/agora/committee", "agora-extended"),
-    ("/bff/agora/persona-lab", "agora-extended"),
-    ("/bff/agora/handoffs", "agora-extended"),
     ("/bff/agora/channels", "agora-extended"),
     # ── agora core ───────────────────────────────────────────────────────────
     ("/bff/agora", "agora-core"),
-    ("/bff/research/tasks", "agora-core"),
-    ("/bff/memory", "agora-core"),
-    ("/bff/insights", "agora-core"),
     # ── tools / MCP / skills ─────────────────────────────────────────────────
     ("/bff/tools", "tools-mcp-skills"),
     ("/bff/mcp", "tools-mcp-skills"),
@@ -170,7 +164,6 @@ FAMILY_RULES: list[tuple[str, str]] = [
     # ── SSE substrate (api/v1 streams) ───────────────────────────────────────
     ("/api/v1/stream", "sse-substrate"),
     ("/api/v1/approvals/stream", "sse-substrate"),
-    ("/api/v1/agora/ask/stream", "sse-substrate"),
     ("/api/v1/runtime", "sse-substrate"),
     ("/api/v1/incidents/stream", "sse-substrate"),
     ("/api/v1/kill-switch/updates", "sse-substrate"),
@@ -256,6 +249,8 @@ def app_route_index(app: object) -> list[dict]:
 def _load_bff_app() -> object:
     """Import and return the BFF FastAPI app object."""
     os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
+    os.environ.setdefault("RANKING_STORE_DSN", "postgresql://test:test@localhost:5432/test")
+    os.environ.setdefault("RANKING_STORE_BOOTSTRAP", "0")
     if str(BFF_DIR) not in sys.path:
         sys.path.insert(0, str(BFF_DIR))
     if str(REPO_ROOT) not in sys.path:

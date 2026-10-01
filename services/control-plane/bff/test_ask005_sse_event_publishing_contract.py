@@ -1,7 +1,6 @@
-"""ASK-005: approval / ask SSE event publishing contract tests.
+"""ASK-005: approval SSE event publishing contract tests.
 
 Covers:
-  - POST /bff/agora/ask/sessions       → publishes ask.session.started to ask channel
   - POST /bff/approvals/{id}/decide (approve)           → publishes approval.decided (outcome=approved)
   - POST /bff/approvals/{id}/decide (reject)            → publishes approval.decided (outcome=rejected)
   - POST /bff/approvals/{id}/decide (request_revision)  → publishes approval.stage.changed
@@ -27,7 +26,6 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff.agora.identity.router import create_identity_router
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.governance.router import create_governance_router
 from services.control_plane.bff.models import (
@@ -54,14 +52,11 @@ class _CommandStoreHolder:
 
 _holder = _CommandStoreHolder()
 _sse_buffers: dict[str, deque] = {
-    "ask": deque(maxlen=500),
     "approval": deque(maxlen=500),
 }
 _sse_subscribers: dict[str, list] = {
-    "ask": [],
     "approval": [],
 }
-_AGORA_CORE_BFF_IDEMPOTENCY: dict[str, Any] = {}
 
 
 def _publish_event(buffer: deque, subscribers: list, event_type: str, data: dict[str, Any]) -> str:
@@ -254,17 +249,6 @@ def _governance_publish_event(event_name: str, event_data: Dict[str, Any]) -> No
 
 app = FastAPI()
 app.include_router(
-    create_identity_router(
-        extract_identity=_extract_identity,
-        require_read_role=_require_read,
-        bff_error=_bff_error,
-        utc_now=_utc_now,
-        idempotency_store=_AGORA_CORE_BFF_IDEMPOTENCY,
-        sse_buffers=_sse_buffers,
-        sse_subscribers=_sse_subscribers,
-    )
-)
-app.include_router(
     create_governance_router(
         read_surface=_GovernanceStore(),
         extract_identity=_extract_identity,
@@ -283,66 +267,14 @@ def clear_sse_buffers():
     original_command_store = _holder.command_store
     with tempfile.TemporaryDirectory() as td:
         _holder.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        _sse_buffers["ask"].clear()
-        _sse_subscribers["ask"].clear()
         _sse_buffers["approval"].clear()
         _sse_subscribers["approval"].clear()
-        _AGORA_CORE_BFF_IDEMPOTENCY.clear()
         try:
             yield
         finally:
             _holder.command_store = original_command_store
-            _sse_buffers["ask"].clear()
-            _sse_subscribers["ask"].clear()
             _sse_buffers["approval"].clear()
             _sse_subscribers["approval"].clear()
-            _AGORA_CORE_BFF_IDEMPOTENCY.clear()
-
-
-# ---------------------------------------------------------------------------
-# ask.session.started
-# ---------------------------------------------------------------------------
-
-def test_create_ask_session_publishes_ask_session_started() -> None:
-    client = TestClient(app)
-    assert len(_sse_buffers["ask"]) == 0
-
-    resp = client.post(
-        "/bff/agora/ask/sessions",
-        json={"title": "Why did the signal fire?"},
-        headers={**OPERATOR_HEADERS, "Idempotency-Key": _idem()},
-    )
-    assert resp.status_code == 201, resp.text
-    session_id = resp.json()["data"]["id"]
-
-    assert len(_sse_buffers["ask"]) == 1
-    event_id, event = _sse_buffers["ask"][0]
-    assert event["type"] == "ask.session.started"
-    assert event["data"]["session_id"] == session_id
-    assert event["data"]["mode"] == "quick_ask"
-
-
-def test_create_ask_session_idempotency_replay_does_not_double_publish() -> None:
-    client = TestClient(app)
-    idem = _idem()
-
-    resp1 = client.post(
-        "/bff/agora/ask/sessions",
-        json={"title": "Replay test session"},
-        headers={**OPERATOR_HEADERS, "Idempotency-Key": idem},
-    )
-    assert resp1.status_code == 201, resp1.text
-
-    # replay with same idempotency key — should NOT publish a second event
-    resp2 = client.post(
-        "/bff/agora/ask/sessions",
-        json={"title": "Replay test session"},
-        headers={**OPERATOR_HEADERS, "Idempotency-Key": idem},
-    )
-    assert resp2.status_code == 201, resp2.text
-    assert resp1.json()["data"]["id"] == resp2.json()["data"]["id"]
-
-    assert len(_sse_buffers["ask"]) == 1
 
 
 # ---------------------------------------------------------------------------

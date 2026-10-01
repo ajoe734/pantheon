@@ -770,8 +770,6 @@ class TestEndpointLevelRetainedCallers(unittest.TestCase):
                 require_write_role=bff_main._require_operator_role,
                 require_operator_role=bff_main._require_operator_role,
                 require_journal_write_role=bff_main._require_journal_write_role,
-                require_agora_signal_write_role=bff_main._require_agora_signal_write_role,
-                require_agora_bulk_feedback_role=bff_main._require_agora_bulk_feedback_role,
                 bff_error=bff_main._bff_error,
                 utc_now=bff_main.utc_now,
                 get_read_store=lambda: self.ports,
@@ -818,27 +816,6 @@ class TestEndpointLevelRetainedCallers(unittest.TestCase):
     def tearDown(self) -> None:
         pass
 
-
-    def test_endpoint_list_committee_session_memos(self) -> None:
-        response = self.client.get(
-            "/bff/agora/committee/sessions/sess-comm-1/memos",
-            headers=self.auth_headers,
-        )
-        self.assertEqual(response.status_code, 200, response.text)
-        data = response.json()
-        self.assertIn("items", data)
-        self.assertEqual(len(data["items"]), 1)
-        self.assertEqual(data["items"][0]["memo_id"], "memo-comm-1")
-
-    def test_endpoint_get_committee_session_memo_detail(self) -> None:
-        response = self.client.get(
-            "/bff/agora/committee/sessions/sess-comm-1/memos/memo-comm-1",
-            headers=self.auth_headers,
-        )
-        self.assertEqual(response.status_code, 200, response.text)
-        data = response.json()
-        self.assertIn("data", data)
-        self.assertEqual(data["data"]["memo_id"], "memo-comm-1")
 
     def test_endpoint_deployment_plans_list(self) -> None:
         response = self.client.get(

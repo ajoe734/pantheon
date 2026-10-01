@@ -28,7 +28,6 @@ from .incident_adapter import IncidentCommandAdapter
 from .evolution_adapter import EvolutionCommandAdapter
 from .strategy_adapter import StrategyCommandAdapter
 from .capabilities_adapter import CapabilitiesCommandAdapter
-from .agora_adapter import AgoraCommandAdapter
 from .audit_adapter import AuditCommandAdapter
 from .registry import dispatch_domain_command, find_adapter
 from .service import CommandAdapterService
@@ -49,7 +48,6 @@ __all__ = [
     "EvolutionCommandAdapter",
     "StrategyCommandAdapter",
     "CapabilitiesCommandAdapter",
-    "AgoraCommandAdapter",
     "AuditCommandAdapter",
     "build_domain_receipt",
     "capital_url",

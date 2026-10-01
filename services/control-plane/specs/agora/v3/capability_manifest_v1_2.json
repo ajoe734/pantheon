@@ -92,23 +92,6 @@
         "WORKSHOP_VERSION_REQUIRED": 409,
         "CONCURRENT_MODIFICATION": 409
       }
-    },
-    {
-      "name": "agora.dashboard.v2",
-      "version": "2.0",
-      "inherited_from": "services/control-plane/specs/agora/v2/capability_manifest_v1_1.json",
-      "description": "Strategy-bound dynamic dashboard recipes, safe chart grammar and optimistic-concurrency mutations.",
-      "bff_path_prefixes": [
-        "/bff/agora/dashboard-recipes",
-        "/bff/agora/strategies",
-        "/bff/agora/widgets"
-      ],
-      "schemas": [
-        "v2/dashboard_recipe_v2.schema.json",
-        "v2/widget_spec_v2.schema.json",
-        "v2/chart_spec_v1.schema.json"
-      ],
-      "auth_level": "agora_user"
     }
   ],
   "schema_bundle_index": "services/control-plane/specs/agora/bundle_index.v1_2.json",

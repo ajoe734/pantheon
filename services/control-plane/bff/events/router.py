@@ -896,7 +896,6 @@ def create_events_router(
     _dep_cc_events = _make_channel_sub_dep("loop")
     _dep_alerts = _make_channel_sub_dep("sentinel")
     _dep_deployment = _make_channel_sub_dep("artifact")
-    _dep_signals = _make_channel_sub_dep("signal")
     _dep_reviews = _make_channel_sub_dep("approval")
 
     # Execute-plans compatibility subscriptions.  These aliases intentionally
@@ -1036,50 +1035,6 @@ def create_events_router(
         @router.get("/bff/sse/deployment/events", response_class=EventSourceResponse)
         async def bff_sse_deployment_events_alias(
             sub: _StreamSubscription = Depends(_dep_deployment),
-        ) -> AsyncGenerator[ServerSentEvent, None]:
-            async for event in _stream_events(sub):
-                yield event
-
-        @router.get("/bff/sse/agora/signals", response_class=EventSourceResponse)
-        async def bff_sse_agora_signals_alias(
-            sub: _StreamSubscription = Depends(_dep_signals),
-        ) -> AsyncGenerator[ServerSentEvent, None]:
-            async for event in _stream_events(sub):
-                yield event
-
-        async def _agora_session_sub_dep(
-            sessionId: str,
-            response: Response,
-            last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-            last_event_id_camel: Optional[str] = Query(default=None, alias="lastEventId"),
-            last_event_id_header: Optional[str] = Header(default=None, alias="Last-Event-ID"),
-            authorization: Optional[str] = Header(default=None),
-            x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
-            pantheon_session: Optional[str] = Cookie(default=None),
-            x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
-            x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
-            tenant_query: Optional[str] = Query(default=None, alias="tenant_id"),
-            tenant_camel_query: Optional[str] = Query(default=None, alias="tenantId"),
-            tenant_short_query: Optional[str] = Query(default=None, alias="tenant"),
-        ) -> _StreamSubscription:
-            return _validate_subscription(
-                response=response,
-                channel="ask",
-                last_event_id=last_event_id,
-                last_event_id_camel=last_event_id_camel,
-                last_event_id_header=last_event_id_header,
-                authorization=authorization,
-                x_mfa_token=x_mfa_token,
-                pantheon_session=pantheon_session,
-                x_tenant_id=x_tenant_id,
-                x_pantheon_tenant=x_pantheon_tenant,
-                tenant_query=_first_nonblank(tenant_query, tenant_camel_query, tenant_short_query),
-            )
-
-        @router.get("/bff/sse/agora/sessions/{sessionId}", response_class=EventSourceResponse)
-        async def bff_sse_agora_session_alias(
-            sessionId: str,
-            sub: _StreamSubscription = Depends(_agora_session_sub_dep),
         ) -> AsyncGenerator[ServerSentEvent, None]:
             async for event in _stream_events(sub):
                 yield event
