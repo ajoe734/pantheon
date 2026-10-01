@@ -132,9 +132,6 @@ class TestActionToOwnerMatrix(unittest.TestCase):
         adapter = find_adapter("RuntimeAction", "runtime", "pause")
         self.assertIsInstance(adapter, RuntimeCommandAdapter)
 
-        adapter2 = find_adapter("StartRuntime", "runtime", "start")
-        self.assertIsInstance(adapter2, RuntimeCommandAdapter)
-
         adapter3 = find_adapter("PausePaperRuntime", "runtime", "pause")
         self.assertIsInstance(adapter3, RuntimeCommandAdapter)
 

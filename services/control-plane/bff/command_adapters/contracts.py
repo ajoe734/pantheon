@@ -344,7 +344,6 @@ def normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorComma
 # wrapper -> {canonical command: extra short verbs}; the canonical name itself is always accepted.
 _WRAPPER_CANONICALS = {
     "RuntimeAction": {
-        "StartRuntime": ("start",),
         "PauseRuntime": ("pause",),
         "PauseExecution": (),
         "PausePaperRuntime": (),
@@ -356,11 +355,6 @@ _WRAPPER_CANONICALS = {
         "IssueSafeMode": (),
         "ApproveRollback": (),
         "RejectRollback": (),
-        "RestartPaperRuntime": (),
-        "RestartTelemetryBridge": (),
-        "TerminateStalePaperMonitoringSession": (),
-        "StartPaperMonitoringSession": (),
-        "ProbeTelemetryIngest": (),
     },
     "RebalanceAction": {"ApprovedApply": ("apply",), "RebalanceProposal": ("propose", "create"), "EmergencyContainment": ()},
     "CapitalPoolAction": {"ApprovePool": ("approve",)},

@@ -891,7 +891,6 @@ _ALIAS_PARAMS: Dict[str, Dict[str, Any]] = {
     "ApproveRollback": {"rollback_id": "rb-1"},
     "RejectRollback": {"rollback_id": "rb-1", "rejection_reason": "alias equivalence"},
     "AdvanceLifecycle": {"target_state": "paper_owner"},
-    "TerminateStalePaperMonitoringSession": {"staleness_evidence": {"heartbeat_age_seconds": 900}},
     "RequestReview": {"persona_id": "alias-target-1"},
     "ApproveDecision": {"decision_id": "alias-target-1"},
     "RejectDecision": {"decision_id": "alias-target-1", "rejection_reason": "alias equivalence"},
@@ -1110,14 +1109,8 @@ def test_ranking_adapter_existing_canonical_alias_parity(params, expected) -> No
 
 
 _DISPATCH_CASES = [
-    ("RuntimeAction", "start", "StartRuntime", "/runtimes/alias-target-1/start"),
     ("PersonaAction", "advance_lifecycle", "AdvanceLifecycle", "/personas/alias-target-1/advance-lifecycle"),
     ("V5InterventionAction", "remediate", "RemediateSentinelIntervention", "/sentinel/interventions/alias-target-1/remediate"),
-    ("RuntimeAction", "RestartPaperRuntime", "RestartPaperRuntime", "/paper-runtimes/alias-target-1/restart"),
-    ("RuntimeAction", "RestartTelemetryBridge", "RestartTelemetryBridge", "/paper-runtimes/alias-target-1/telemetry-bridge/restart"),
-    ("RuntimeAction", "TerminateStalePaperMonitoringSession", "TerminateStalePaperMonitoringSession", "/monitoring-sessions/alias-target-1/terminate-stale"),
-    ("RuntimeAction", "StartPaperMonitoringSession", "StartPaperMonitoringSession", "/paper-runtimes/alias-target-1/monitoring-sessions/start"),
-    ("RuntimeAction", "ProbeTelemetryIngest", "ProbeTelemetryIngest", "/paper-runtimes/alias-target-1/telemetry-ingest/probe"),
 ]
 
 
