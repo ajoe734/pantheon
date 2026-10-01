@@ -341,24 +341,33 @@ def normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorComma
         ) from exc
 
 
+# wrapper -> {canonical command: extra short verbs}; the canonical name itself is always accepted.
+_WRAPPER_CANONICALS = {
+    "RuntimeAction": {
+        "StartRuntime": ("start",),
+        "PauseRuntime": ("pause",),
+        "PauseExecution": (),
+        "PausePaperRuntime": (),
+        "ResumePaperRuntime": ("resume", "unpause"),
+        "ExecuteRollback": ("rollback",),
+        "HardRollback": (),
+        "ActivateKillSwitch": ("killswitch",),
+    },
+    "RebalanceAction": {"ApprovedApply": ("apply",)},
+    "CapitalPoolAction": {"ApprovePool": ("approve",)},
+    "DeploymentAction": {"ApproveDeployment": ("approve",), "EscalateDiff": ()},
+    "PersonaAction": {
+        "PromoteCandidate": ("promote",),
+        "AdvanceLifecycle": (),
+        "EmergencyContainment": (),
+    },
+    "RiskAlertAction": {"AlertAcknowledge": ("acknowledge", "ack")},
+}
 _WRAPPER_VERB_ALIASES = {
-    ("RuntimeAction", "start"): "StartRuntime",
-    ("RuntimeAction", "pause"): "PauseRuntime",
-    ("RuntimeAction", "resume"): "ResumePaperRuntime",
-    ("RuntimeAction", "unpause"): "ResumePaperRuntime",
-    ("RuntimeAction", "rollback"): "ExecuteRollback",
-    ("RuntimeAction", "killswitch"): "ActivateKillSwitch",
-    ("RebalanceAction", "apply"): "ApprovedApply",
-    ("CapitalPoolAction", "approve"): "ApprovePool",
-    ("DeploymentAction", "approve"): "ApproveDeployment",
-    ("DeploymentAction", "escalatediff"): "EscalateDiff",
-    ("PersonaAction", "promote"): "PromoteCandidate",
-    **{("RiskAlertAction", v): "AlertAcknowledge" for v in ("acknowledge", "ack")},
-    **{("EvolutionProgramAction", v.lower() + "program"): v + "EvolutionProgram" for v in ("Approve", "Pause", "Resume", "Complete", "Retire")},
-    ("EvolutionProgramAction", "stop"): "StopEvolutionProgram",
-    ("EvolutionProgramAction", "freezegeneration"): "FreezeEvolutionGeneration",
-    ("EvolutionProgramAction", "promotecandidatepaper"): "PromoteEvolutionCandidatePaper",
-    ("EvolutionProgramAction", "promotecandidatelive"): "PromoteEvolutionCandidateLive",
+    (wrapper, re.sub(r"[^a-z0-9]", "", verb.lower())): canonical
+    for wrapper, commands in _WRAPPER_CANONICALS.items()
+    for canonical, verbs in commands.items()
+    for verb in (canonical, *verbs)
 }
 
 

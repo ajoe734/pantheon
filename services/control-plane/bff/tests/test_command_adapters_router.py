@@ -865,54 +865,158 @@ def test_main_app_command_confirmation_degraded_read_surface_regression() -> Non
 
 
 
-_VOLATILE = {"id", "expected_completion_at", "tracking_url", "trackingUrl", "commandId", "receipt_id", "command_id", "accepted_at", "submitted_at", "timestamp", "created_at", "occurred_at", "trace_id", "correlation_id", "correlationId", "error_id", "action_id", "payload_checksum", "request_hash", "command_ref", "idempotency_key"}
+_VOLATILE = {"id", "expected_completion_at", "tracking_url", "trackingUrl", "commandId", "receipt_id", "command_id", "accepted_at", "submitted_at", "timestamp", "created_at", "occurred_at", "updated_at", "trace_id", "correlation_id", "correlationId", "error_id", "payload_checksum", "command_ref", "confirmation_id", "request_id"}
 
 
 def _scrub(value: Any) -> Any:
     if isinstance(value, dict):
-        return {k: _scrub(v) for k, v in value.items() if k not in _VOLATILE}
+        return {k: _scrub(v) for k, v in value.items() if k not in _VOLATILE and not k.endswith("_at") and not (k == "action_id" and str(v).startswith("audit-"))}
     if isinstance(value, list):
         return [_scrub(v) for v in value]
     return value
 
 
-def _submit_alias(wrapper: str, verb: str, canonical: str, *, wrapped: bool, token: Optional[str]):
+_ALIAS_PARAMS: Dict[str, Dict[str, Any]] = {
+    "PauseRuntime": {"runtime_binding_id": "alias-target-1", "pause_action": "pause"},
+    "PauseExecution": {"pause_new_entries": True, "cancel_open_orders": False},
+    "ExecuteRollback": {"rollback_target_type": "runtime", "target_id": "alias-target-1", "rollback_to_version": "v1"},
+    "HardRollback": {"rollback_target_type": "runtime", "target_id": "alias-target-1", "rollback_to_version": "v1", "target_artifact_id": "artifact-1"},
+    "ActivateKillSwitch": {"scope": "all", "activate": True},
+    "ApproveDeployment": {"deployment_plan_id": "alias-target-1", "approval_decision": "approve"},
+    "EscalateDiff": {"plan_id": "alias-target-1", "escalation_reason": "alias equivalence"},
+    "PromoteCandidate": {"persona_id": "alias-target-1"},
+    "AdvanceLifecycle": {"target_state": "paper_owner"},
+    "EmergencyContainment": {"action": "freeze", "trigger": "forced_kill", "evidence_refs": ["ev-1"]},
+}
+_ALIAS_TARGET_TYPES = {"HardRollback": ObjectType.RUNTIME, "ExecuteRollback": ObjectType.RUNTIME}
+
+
+class _ApprovedDecisions:
+    def __init__(self, canonical: str, target: Dict[str, Any]) -> None:
+        self._decision = {"outcome": "approved", "command": canonical, "target": target}
+
+    def get_approval_decision(self, decision_id: str):
+        return dict(self._decision)
+
+    def get_persona(self, persona_id: str):
+        return {"persona_id": persona_id}
+
+    def get_runtime_binding_by_runtime_id(self, runtime_id: str):
+        return {"runtime_id": runtime_id, "binding_id": "binding-1", "deployment_mode": "paper", "tenant_id": "tenant-alias"}
+
+    def __getattr__(self, name: str):
+        if name.startswith("get_"):
+            return lambda *args, **kwargs: None
+        raise AttributeError(name)
+
+
+def _alias_target(canonical: str) -> Dict[str, str]:
     from services.control_plane.bff.action_catalog import get_catalog_entry
 
     entity_type = get_catalog_entry(canonical).entity_type
-    target_type = next((o.value for o in ObjectType if o.value == entity_type), ObjectType.RUNTIME.value)
+    target_type = _ALIAS_TARGET_TYPES.get(canonical) or next((o for o in ObjectType if o.value == entity_type), ObjectType.RUNTIME)
+    return {"type": target_type.value, "id": "alias-target-1"}
+
+
+def _submit_alias(wrapper: str, verb: str, canonical: str, *, wrapped: bool, token_for: Optional[str]):
+    """Submit one alias (or its canonical command) to a mounted router.
+
+    token_for: None sends no token; otherwise a real confirm token is issued bound
+    to that canonical command (the same one, or another action's) and sent.
+    Approval and two-man evidence are seeded for the canonical command so the
+    only thing that can reject a request is the case under test.
+    """
+    target = _alias_target(canonical)
     body: Dict[str, Any] = {
         "command": wrapper if wrapped else canonical,
-        "target": {"type": target_type, "id": "alias-target-1"},
-        "params": {"reason": "alias equivalence"},
+        "target": target,
+        "params": {
+            "reason": "alias equivalence",
+            "approval_decision_id": "appr-alias-1",
+            "two_man_signature_id": "sig-alias-1",
+            **_ALIAS_PARAMS.get(canonical, {}),
+        },
         "audit_context": {"reason": "alias equivalence"},
     }
     if wrapped:
         body["action"] = verb
-    headers = {**HEADERS, "Idempotency-Key": "alias-key-1"}
-    if token:
-        headers["X-Confirm-Token"] = token
+    headers = {**HEADERS, "Authorization": "Bearer op-test:operator,approver,admin:mfa", "Idempotency-Key": "alias-key-1"}
+    rebalance = canonical == CommandType.APPROVED_APPLY.value
+    producer = "bff.rebalance-evidence.v1" if rebalance else "bff.v5-two-man-evidence.v1"
     with tempfile.TemporaryDirectory() as td:
         store = CommandStore(os.path.join(td, "commands.jsonl"))
-        svc = CommandAdapterService(command_store=store, read_surface=None, extract_identity=_test_extract_identity)
+        for seed_type, seed_params in (
+            (CommandType.REBALANCE_TWO_MAN_SIGN if rebalance else CommandType.V5_INTERVENTION_ACTION,
+             {"two_man_signature_id": "sig-alias-1", "signer_operator_ids": ["op-a", "op-b"]}),
+            *(((CommandType.REBALANCE_APPROVAL, {"approval_decision_id": "appr-alias-1", "outcome": "approved"}),) if rebalance else ()),
+        ):
+            store.submit_terminal_command(
+                f"cmd-seed-{seed_type.value}", seed_type, target, "2026-01-01T00:00:00Z",
+                {**seed_params, "command": canonical, "target": target},
+                {"trusted_evidence_producer": producer}, {"trusted_evidence_producer": producer},
+            )
+        svc = CommandAdapterService(
+            command_store=store,
+            read_surface=_ApprovedDecisions(canonical, target),
+            extract_identity=lambda *_a, **_k: OperatorIdentity(operator_id="op-test", roles=["operator", "approver", "admin"], mfa_verified=True, claims={"tenant_id": "tenant-alias"}),
+        )
         app = FastAPI()
         app.include_router(create_command_adapters_router(service=svc, submit_command_admission=svc.submit_command_admission))
         client = TestClient(app)
+        if token_for is not None:
+            issued = client.post(
+                "/bff/confirm-tokens",
+                headers={**headers, "Idempotency-Key": "alias-token-key-1"},
+                json={"tokenId": "ct-alias-1", "command": token_for, "target": target, "reason": "alias equivalence", "ttlSeconds": 300},
+            )
+            assert issued.status_code == 201, issued.text
+            headers["X-Confirm-Token"] = "ct-alias-1"
         resp = client.post("/bff/v1/commands", headers=headers, json=body)
         stored = [
-            {k: _scrub(r.get(k)) for k in ("command_type", "command", "target", "params", "status")}
+            {
+                **_scrub({k: r.get(k) for k in ("type", "target", "params", "status")}),
+                "request_hash": ((r.get("foundation") or {}).get("idempotency_record") or {}).get("request_hash")
+                if ((r.get("foundation") or {}).get("idempotency_record") or {}).get("idempotency_key") == "alias-key-1"
+                else None,
+            }
             for r in store._get_all_commands()
+            if not str(r.get("command_id")).startswith("cmd-seed-") and r.get("type") != CommandType.CONFIRM_TOKEN_CREATE.value
         ]
         return resp.status_code, _scrub(resp.json()), stored
 
 
-@pytest.mark.parametrize("token", [None, "ct-substituted-from-other-action"])
-@pytest.mark.parametrize("alias", sorted(__import__("services.control_plane.bff.command_adapters.contracts", fromlist=["x"])._WRAPPER_VERB_ALIASES.items()))
-def test_wrapped_alias_is_admitted_exactly_like_its_canonical_command(alias, token) -> None:
-    (wrapper, verb), canonical = alias
-    assert _submit_alias(wrapper, verb, canonical, wrapped=True, token=token) == _submit_alias(
-        wrapper, verb, canonical, wrapped=False, token=token
-    )
+def _alias_cases():
+    from services.control_plane.bff.command_adapters.contracts import _WRAPPER_VERB_ALIASES
+
+    canonicals = sorted(set(_WRAPPER_VERB_ALIASES.values()))
+    for (wrapper, verb), canonical in sorted(_WRAPPER_VERB_ALIASES.items()):
+        other = next(c for c in canonicals if c != canonical)
+        yield pytest.param(wrapper, verb, canonical, canonical, id=f"{wrapper}-{verb}-own-token")
+        yield pytest.param(wrapper, verb, canonical, other, id=f"{wrapper}-{verb}-cross-token")
+        yield pytest.param(wrapper, verb, canonical, None, id=f"{wrapper}-{verb}-no-token")
+
+
+@pytest.mark.parametrize("wrapper,verb,canonical,token_for", list(_alias_cases()))
+def test_wrapped_alias_is_admitted_exactly_like_its_canonical_command(wrapper, verb, canonical, token_for) -> None:
+    wrapped = _submit_alias(wrapper, verb, canonical, wrapped=True, token_for=token_for)
+    direct = _submit_alias(wrapper, verb, canonical, wrapped=False, token_for=token_for)
+    assert wrapped == direct
+    status, _body, stored = wrapped
+    if status == 202:
+        assert [row["type"] for row in stored if row["request_hash"]] == [canonical]
+    else:
+        assert stored == []
+    from services.control_plane.bff.action_catalog import get_catalog_entry
+
+    if get_catalog_entry(canonical).requires_confirm_token and token_for != canonical:
+        assert status == 428
+
+
+@pytest.mark.parametrize("wrapper,verb,canonical", sorted((w, v, c) for (w, v), c in __import__("services.control_plane.bff.command_adapters.contracts", fromlist=["x"])._WRAPPER_VERB_ALIASES.items()))
+def test_every_alias_has_an_accepted_path_stored_as_canonical(wrapper, verb, canonical) -> None:
+    status, _body, stored = _submit_alias(wrapper, verb, canonical, wrapped=True, token_for=canonical)
+    assert status == 202, (status, _body)
+    assert [row["type"] for row in stored if row["request_hash"]] == [canonical]
 
 
 def test_unmapped_wrapper_combinations_are_not_rewritten() -> None:
