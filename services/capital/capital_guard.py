@@ -15,9 +15,10 @@ _FACT_OF_LIMIT = {
     "max_strategy_family_concentration": "strategy_family_concentration",
     "max_target_overlap": "target_overlap", "max_signal_correlation": "signal_correlation",
     "max_canary_capital_scale_pct": "capital_scale_pct", "max_canary_gross_scale_pct": "gross_scale_pct",
-    "allowed_asset_classes": "asset_classes", "allowed_strategy_families": "strategy_family",
+    "allowed_asset_classes": "asset_classes", "forbidden_asset_classes": "asset_classes",
+    "allowed_strategy_families": "strategy_family", "forbidden_strategy_families": "strategy_family",
 }
-_STRING_LIMITS = frozenset({"allowed_stages", "allowed_asset_classes", "allowed_strategy_families"})
+_STRING_LIMITS = frozenset({"allowed_stages", "allowed_asset_classes", "forbidden_asset_classes", "allowed_strategy_families", "forbidden_strategy_families"})
 _RAW_LIMIT_KEYS = ("gross_limit", "net_limit", "max_single_name_weight", "max_single_weight", "max_leverage", "turnover_limit", "max_target_overlap", "max_signal_correlation", "max_pairwise_correlation", "max_canary_capital_scale_pct", "max_canary_gross_scale_pct")
 _RAW_MAP_KEYS = ("max_sector_exposure", "max_factor_exposure", "max_strategy_family_concentration", "drawdown_actions")
 _SCOPE_RANK = {"paper": 0, "canary": 1, "live": 2}
@@ -170,8 +171,7 @@ class CapitalGuard:
                 self._require_risk_policy(pool, target_type, target_id, contexts)
             return
         self._require_safe_mode(pool.pool_id)
-        if not (target_type == "capital_pool_activation" and not allocations):
-            self._require_risk_policy(pool, target_type, target_id, contexts)
+        self._require_risk_policy(pool, target_type, target_id, contexts)
         self._require_approval(decision_id, tenant, target_type, target_id, expected)
 
     def _require_safe_mode(self, pool_id: str) -> None:
@@ -190,8 +190,8 @@ class CapitalGuard:
             parsed = RiskPolicy.from_mapping(policy)
             for context in contexts:
                 for limit, fact in _FACT_OF_LIMIT.items():
-                    if (target_type == "capital_pool_activation" and limit in _STRING_LIMITS and fact not in context) or (
-                        limit in ("max_canary_capital_scale_pct", "max_canary_gross_scale_pct") and context.get("stage") != "canary"
+                    if (limit in ("max_canary_capital_scale_pct", "max_canary_gross_scale_pct") and context.get("stage") != "canary") or (
+                        target_type == "capital_pool_activation" and limit == "allowed_stages" and "stage" not in context
                     ):
                         continue
                     obs = context.get(fact)

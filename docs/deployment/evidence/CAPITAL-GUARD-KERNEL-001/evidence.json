@@ -7,7 +7,7 @@
   "target_repo": "ajoe734/pantheon",
   "task_class": "corrective",
   "delivery_state": "ready_for_independent_review",
-  "base_sha": "d61575a5968874676744d8ae022b4affa2e6c33b",
+  "base_sha": "d18956ba9ca239c6b6c2ea029bd3885eeb2166b9",
   "scope": {
     "owned": [
       "services/capital/capital_guard.py",
@@ -169,7 +169,17 @@
       "4": "Added route regressions in test_capital_guard_routes.py and unit tests in test_capital_guard.py asserting 403 and zero allocation state writes; compacted capital_guard.py to maintain net production lines <= 250"
     }
   },
-  "verification_run": "pytest services/capital + governance approval tests: 262 passed, 1 warning; reproduction scripts: 7 passed, 1 warning"
+  "review_rework_11": {
+    "head_reviewed": "2890f0b18331efc99a97531bc76f197217aca418",
+    "items": {
+      "1": "In services/capital/capital_guard.py authorize, always execute _require_risk_policy on capital pool activation without bypassing empty non-paper pools, validating configured policy, active status, raw limit bounds, and pool-level limits",
+      "2": "In services/capital/capital_guard.py _require_risk_policy, restrict empty-stage exception strictly to allowed_stages when stage is unobserved on pool activation, and fail closed for unobserved asset/family facts on held allocations",
+      "3": "In services/capital/capital_guard.py _FACT_OF_LIMIT and _STRING_LIMITS, add forbidden_asset_classes and forbidden_strategy_families, requiring observations for configured denylists and failing closed when unobserved",
+      "4": "Added unit tests in services/capital/test_capital_guard.py and route regressions in services/capital/test_capital_guard_routes.py asserting 403 and zero mutation on rejected paths for empty pool activation, nonempty reactivation allowlist, and rebalance denylist",
+      "5": "Shortened commit 3eb8175 subject line to <= 72 characters to satisfy Commit trailers CI check"
+    }
+  },
+  "verification_run": "pytest services/capital + governance approval tests: 265 passed, 1 skipped, 1 warning; reproduction scripts: 7 passed, 1 warning"
 }
 
 

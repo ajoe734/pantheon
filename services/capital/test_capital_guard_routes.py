@@ -311,19 +311,49 @@ def test_request_scale_claim_cannot_waive_zero_capital_limits(client, monkeypatc
     assert allocs["count"] == 0 and len(allocs["items"]) == 0
 
 
-@pytest.mark.parametrize("limits", [
-    {"gross_limit": "NaN"}, {"gross_limit": "Infinity"}, {"gross_limit": "invalid"},
-    {"allowed_asset_classes": ["crypto"]}, {"allowed_strategy_families": ["momentum"]},
-])
-def test_configured_constraints_cannot_silently_disappear(client, monkeypatch, limits):
+@pytest.mark.parametrize("policy", [None, {"status": "inactive"}, {"gross_limit": "NaN"}, {"gross_limit": "Infinity"}, {"gross_limit": "invalid"}])
+def test_empty_pool_must_validate_configured_policy(client, monkeypatch, policy):
     c, _ = client
-    _policy(monkeypatch, **limits)
+    def loader(ref):
+        if policy is None:
+            raise FileNotFoundError(ref)
+        return {"risk_policy_id": ref, **policy}
+    monkeypatch.setattr(sys.modules["services.capital.main"].capital_guard, "_policy_loader", loader)
+    response = c.post("/api/capital-pools", json=_pool_payload())
+    assert response.status_code == 403, response.text
+    assert c.get("/api/capital-pools/pool-001").status_code == 404
+
+
+@pytest.mark.parametrize("policy", [
+    {"allowed_asset_classes": ["crypto"]},
+    {"allowed_strategy_families": ["momentum"]},
+])
+def test_nonempty_pool_must_reject_unobserved_allowlist(client, monkeypatch, policy):
+    c, _ = client
     assert c.post("/api/capital-pools", json=_pool_payload()).status_code == 201
     assert c.post("/api/bindings", json=_binding_payload()).status_code == 201
-    created = c.post("/api/rebalances", json=_rebalance_payload())
-    assert created.status_code == 201, created.text
-    applied = c.post("/api/rebalances/rb-001/apply", json=_apply_payload())
-    assert applied.status_code == 403, applied.text
+    assert c.post("/api/rebalances", json=_rebalance_payload()).status_code == 201
+    assert c.post("/api/rebalances/rb-001/apply", json=_apply_payload()).status_code == 200
+    status = {"actor_id": "capital-admin-1", "actor_role": "capital.admin", "status": "suspended"}
+    assert c.patch("/api/capital-pools/pool-001/status", json=status).status_code == 200
+    monkeypatch.setattr(sys.modules["services.capital.main"].capital_guard, "_policy_loader", lambda ref: {"risk_policy_id": ref, **policy})
+    response = c.patch("/api/capital-pools/pool-001/status", json={**status, "status": "active", "approval_decision_id": "decision-1"})
+    assert response.status_code == 403, response.text
+    assert c.get("/api/capital-pools/pool-001").json()["status"] == "suspended"
+
+
+@pytest.mark.parametrize("policy", [
+    {"forbidden_asset_classes": ["crypto"]},
+    {"forbidden_strategy_families": ["momentum"]},
+])
+def test_rebalance_must_reject_unobserved_denylist(client, monkeypatch, policy):
+    c, _ = client
+    assert c.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    assert c.post("/api/bindings", json=_binding_payload()).status_code == 201
+    assert c.post("/api/rebalances", json=_rebalance_payload()).status_code == 201
+    monkeypatch.setattr(sys.modules["services.capital.main"].capital_guard, "_policy_loader", lambda ref: {"risk_policy_id": ref, **policy})
+    response = c.post("/api/rebalances/rb-001/apply", json=_apply_payload())
+    assert response.status_code == 403, response.text
     allocs = c.get("/api/allocations?capital_pool_id=pool-001").json()
     assert allocs["count"] == 0 and len(allocs["items"]) == 0
 

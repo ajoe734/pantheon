@@ -376,3 +376,11 @@ def test_require_risk_policy_rejects_missing_asset_or_strategy_observations():
     with pytest.raises(CapitalGuardError, match="strategy_family unavailable"):
         guard2.authorize(**{**KW, "contexts": [{"stage": "live", "gross_exposure": 0.5}]})
 
+    guard3 = _guard(policy=lambda ref: {"risk_policy_id": ref, "forbidden_asset_classes": ["crypto"]})
+    with pytest.raises(CapitalGuardError, match="asset_classes unavailable"):
+        guard3.authorize(**{**KW, "contexts": [{"stage": "live", "gross_exposure": 0.5}]})
+
+    guard4 = _guard(policy=lambda ref: {"risk_policy_id": ref, "forbidden_strategy_families": ["momentum"]})
+    with pytest.raises(CapitalGuardError, match="strategy_family unavailable"):
+        guard4.authorize(**{**KW, "contexts": [{"stage": "live", "gross_exposure": 0.5}]})
+
