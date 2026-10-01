@@ -5,7 +5,7 @@
   "production_delta": {
     "bff_recommendation_deletion_net": -75,
     "bff_files": {
-      "personas/service.py": "+47/-89",
+      "personas/service.py": "+51/-89",
       "pm12/service.py": "+21/-86",
       "personas/routes/lifecycle.py": "+2/-8",
       "main.py": "+0/-2",
