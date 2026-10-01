@@ -7,22 +7,22 @@
   "reviewer": "Codex",
   "budget_summary": {
     "production": {
-      "additions": 423,
-      "deletions": 7142,
-      "net": -6719
+      "additions": 453,
+      "deletions": 7255,
+      "net": -6802
     },
     "test": {
-      "additions": 77,
-      "deletions": 3033,
-      "net": -2956
+      "additions": 89,
+      "deletions": 5110,
+      "net": -5021
     },
     "docs_evidence": {
       "additions": 176,
-      "deletions": 38,
-      "net": 138
+      "deletions": 88,
+      "net": 88
     },
     "requirement": "net production lines <= -3000",
-    "achieved": "net production lines = -6719"
+    "achieved": "net production lines = -6802"
   },
   "preserved_surfaces": [
     "/bff/agora/me",
@@ -143,6 +143,11 @@
       "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_[a-k]*.py",
       "exit_code": 1,
       "result": "Bounded execution of root tests test_[a-k]*.py (852 passed, 3 skipped, 117 failed). Reconciled that all 117 failures are either (a) pre-existing baseline failures present on origin/dev (e.g. test_architecture_boundaries.py, test_bff_pm12_portfolio_book_contract.py, test_action_catalog.py) or (b) tests asserting deleted legacy surfaces (e.g. test_ask_003_dashboard_read_models.py, test_ask_004_signals_feed_contract.py, test_bff_write_gap_2026_05_28.py). No regressions introduced on preserved surfaces."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py",
+      "exit_code": 1,
+      "result": "Execution of test_execute_plans_final_live_wiring_contract.py: 5 passed, 2 skipped (client ts exports requiring separate execute-plans checkout), 2 failed (unchanged baseline dev failures in test_execute_plans_final_seeded_detail_paths_use_read_model_dtos and test_execute_plans_final_detail_missing_source_returns_degraded_dto unrelated to Agora). All 3 Agora-specific wiring tests (contract path registration, OpenAPI discovery, live probe catalog) pass cleanly with zero failures after retiring assertions for deleted Agora route families while preserving retained journal and postmortems wiring."
     }
   ]
 }
