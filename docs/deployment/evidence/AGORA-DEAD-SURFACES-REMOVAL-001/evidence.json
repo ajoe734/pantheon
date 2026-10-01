@@ -5,16 +5,17 @@
   "scope": "Delete dead Agora backend surfaces no longer used by the V6 trading desk (signals, feedback, signals SSE alias, watchlist, markets, notes, market-notes, training-examples, insights, memory, committee sessions, evidence-pack, persona-lab, skill-coaching, evaluation suites/runs, alerts triage, daily, sessions, messages, ask, inbox, incoming, handoffs, research-tasks, shadow router, dashboard-recipes, and widgets), preserving trading-room, workshops, interactions, proposals, candidate decisions, candidate-pools, performance, capabilities, operational-readiness, journal, postmortems, servant, research plans/runs, trading-intents, and me.",
   "owner": "Antigravity",
   "reviewer": "Codex",
+  "frozen_base": "ad76e3dee7c177ab4e053700c4372cafb9d15536",
   "budget_summary": {
     "production": {
-      "additions": 423,
-      "deletions": 7142,
-      "net": -6719
+      "additions": 474,
+      "deletions": 7148,
+      "net": -6674
     },
     "test": {
-      "additions": 83,
+      "additions": 289,
       "deletions": 4709,
-      "net": -4626
+      "net": -4420
     },
     "docs_evidence": {
       "additions": 181,
@@ -22,7 +23,7 @@
       "net": 143
     },
     "requirement": "net production lines <= -3000",
-    "achieved": "net production lines = -6719"
+    "achieved": "net production lines = -6674"
   },
   "preserved_surfaces": [
     "/bff/agora/me",
@@ -75,54 +76,9 @@
   ],
   "validation": [
     {
-      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD --change-class simplify --budget -3000",
+      "command": "python3 scripts/git/diff_budget.py --base ad76e3dee7c177ab4e053700c4372cafb9d15536",
       "exit_code": 0,
-      "result": "Diff budget check passes with net production lines -6719 (added 423, deleted 7142), net test lines -2956 (added 77, deleted 3033), and net docs/evidence +138 (added 176, deleted 38), exceeding the -3000 net production line reduction requirement."
-    },
-    {
-      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff --collect-only",
-      "exit_code": 0,
-      "result": "Full recursive BFF test suite collection across root and all 12 subdirectories: 394 test files collected with exit code 0 and zero collection/import errors (4907 tests collected total). Confirms zero dangling imports or broken syntax across the entire BFF test suite after removing dead Agora routes and modules."
-    },
-    {
-      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/agora services/control-plane/bff/assistant services/control-plane/bff/auth services/control-plane/bff/events services/control-plane/bff/evolution services/control-plane/bff/governance services/control-plane/bff/management_read_models services/control-plane/bff/migrations services/control-plane/bff/personas services/control-plane/bff/research services/control-plane/bff/strategies",
-      "exit_code": 0,
-      "result": "Execution of all 11 BFF subdirectories (agora, assistant, auth, events, evolution, governance, management_read_models, migrations, personas, research, strategies): 627 passed, 21 skipped in 552.86s (exit code 0)."
-    },
-    {
-      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_agora_journal_merge_patch.py services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_write_authority.py",
-      "exit_code": 0,
-      "result": "All 46 core preserved Agora router, journal patch, canonical alias, contract tests, and write authority suite pass in 56.22s (exit code 0). Validates preserved capability manifests, router endpoint exposure, and absence of dead agora.session.v1 / agora.personalization.v1 / agora.dashboard.v2 capabilities."
-    },
-    {
-      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_identity_scope.py services/control-plane/bff/tests/test_agora_candidate_decisions.py services/control-plane/bff/tests/test_agora_candidate_pool.py services/control-plane/bff/tests/test_agora_candidate_truth.py services/control-plane/bff/tests/test_agora_strategy_workshop.py services/control-plane/bff/tests/test_agora_governed_proposals.py services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py",
-      "exit_code": 0,
-      "result": "All 147 preserved workshop, candidate decision/pool, governance, identity, and performance test suites pass (147 passed, 1 skipped, exit code 0)."
-    },
-    {
-      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_persona_interactions.py services/control-plane/bff/tests/test_agora_servant_sessions.py services/control-plane/bff/tests/test_agora_servant_production_write_owner.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_agora_research_run_projection.py services/control-plane/bff/tests/test_agora_operational_readiness_live_binding.py services/control-plane/bff/tests/test_agora_dataset_handoff_integration.py services/control-plane/bff/tests/test_agora_route_ownership.py",
-      "exit_code": 0,
-      "result": "All 62 preserved servant, interaction, research projection, operational readiness, dataset extraction, and route ownership suites pass (62 passed, exit code 0)."
-    },
-    {
-      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py services/control-plane/bff/test_pkt005_sse_substrate_contract.py",
-      "exit_code": 0,
-      "result": "Preserved approvals SSE event publishing and substrate contract tests pass (30 passed, exit code 0); deleted obsolete ask001 sessions tests and cleaned dead agora identity imports."
-    },
-    {
-      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/events/test_router.py services/control-plane/bff/tests/test_events_router.py",
-      "exit_code": 0,
-      "result": "All 16 event router and ownership tests pass (exit code 0); verified deleted signals/sessions SSE aliases removed from events/router.py."
-    },
-    {
-      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/governance/test_decision_journal_write_owner.py",
-      "exit_code": 0,
-      "result": "Decision journal write owner tests pass (38 passed, exit code 0); retired obsolete daily assertions while retaining tenant-isolation journal integrity."
-    },
-    {
-      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py scripts/test_agora_bundle_digests.py",
-      "exit_code": 0,
-      "result": "All 48 architectural invariant and bundle digest tests pass (39 test architecture + 9 digest passed, exit code 0); inventory synchronized."
+      "result": "Diff budget check passes with net production lines -6674 (added 474, deleted 7148), net test lines -4420 (added 289, deleted 4709), and net docs/evidence +143 (added 181, deleted 38), exceeding the -3000 net production line reduction requirement."
     },
     {
       "command": ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
@@ -140,14 +96,63 @@
       "result": "Contract verification passes with zero diff against current generated backend contract artifacts (exit code 0)."
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_[a-k]*.py",
-      "exit_code": 1,
-      "result": "Bounded execution of root tests test_[a-k]*.py (852 passed, 3 skipped, 117 failed). Reconciled that all 117 failures are either (a) pre-existing baseline failures present on origin/dev (e.g. test_architecture_boundaries.py, test_bff_pm12_portfolio_book_contract.py, test_action_catalog.py) or (b) tests asserting deleted legacy surfaces (e.g. test_ask_003_dashboard_read_models.py, test_ask_004_signals_feed_contract.py, test_bff_write_gap_2026_05_28.py). No regressions introduced on preserved surfaces."
+      "command": "PYTHONPATH=. .venv-pantheon/bin/python3 /tmp/agora-persona-intent-domain-store-probe-151baf13.py",
+      "exit_code": 0,
+      "result": "Reviewer probe for GET /bff/management/persona-intent and ReadSurfacePorts/DomainConsultationPort passes with exit code 0; confirms tenant_id preservation and task_summary reading without dead list_agora_sessions."
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py",
+      "command": "PYTHONPATH=. .venv-pantheon/bin/pytest -q services/control-plane/bff/{agora,assistant,auth,events,evolution,governance,management_read_models,migrations,personas,research,strategies}",
+      "exit_code": 0,
+      "batch": "Batch 1: 11 Subdirectories",
+      "result": "Head: 40 files, 627 passed, 21 skipped in 552s (exit code 0). Base: 40 files, 627 passed, 21 skipped in 554s (exit code 0). Zero regressions, 100% parity."
+    },
+    {
+      "command": "PYTHONPATH=. .venv-pantheon/bin/pytest -q services/control-plane/bff/test_[a-c]*.py",
       "exit_code": 1,
-      "result": "Execution of test_execute_plans_final_live_wiring_contract.py: 5 passed, 2 skipped (client ts exports requiring separate execute-plans checkout), 2 failed (unchanged baseline dev failures in test_execute_plans_final_seeded_detail_paths_use_read_model_dtos and test_execute_plans_final_detail_missing_source_returns_degraded_dto unrelated to Agora). All 3 Agora-specific wiring tests (contract path registration, OpenAPI discovery, live probe catalog) pass cleanly with zero failures after retiring assertions for deleted Agora route families while preserving retained journal and postmortems wiring."
+      "batch": "Batch 2a: Root test_[a-c]*.py",
+      "result": "Head: 49 files, 750 tests -> 693 passed, 1 skipped, 56 failed in 897s. Base: 52 files, 752 tests -> 695 passed, 1 skipped, 56 failed in 898s. Identical 56 baseline failures match on Base (test_architecture_boundaries.py, test_bff_pm12_portfolio_book_contract.py, test_action_catalog.py::test_critical_actions_require_two_man). Obsolete action catalog assertions retired; 3 deleted test files removed on Head. Zero regressions."
+    },
+    {
+      "command": "PYTHONPATH=. .venv-pantheon/bin/pytest -q services/control-plane/bff/test_[d-k]*.py",
+      "exit_code": 1,
+      "batch": "Batch 2b: Root test_[d-k]*.py",
+      "result": "Head: 23 files, 155 tests -> 151 passed, 2 skipped, 2 failed in 117s. Base: 23 files, 155 tests -> 151 passed, 2 skipped, 2 failed in 118s. Identical 2 baseline failures in test_execute_plans_final_live_wiring_contract.py match Base. Retired obsolete route assertions in test_execute_plans_contract_registry.py. Zero regressions."
+    },
+    {
+      "command": "PYTHONPATH=. .venv-pantheon/bin/pytest -q services/control-plane/bff/test_[l-r]*.py",
+      "exit_code": 1,
+      "batch": "Batch 2c: Root test_[l-r]*.py",
+      "result": "Head: 67 files, 477 tests -> 463 passed, 2 skipped, 12 failed in 471s. Base: 67 files, 477 tests -> 463 passed, 2 skipped, 12 failed in 472s. Identical 12 baseline failures match Base (test_mgmt_load_002_shell_summary.py 3, test_mgmt_load_005_read_concurrency.py 2 transient load flukes passing on isolate, test_mgmt_ooda_005_control_room_card.py 5, test_no_undefined_call_symbols.py 1, test_pkt004_deployment_approval_drilldowns_contract.py 1). Zero regressions."
+    },
+    {
+      "command": "PYTHONPATH=. .venv-pantheon/bin/pytest -q services/control-plane/bff/test_[s-z]*.py",
+      "exit_code": 1,
+      "batch": "Batch 2d: Root test_[s-z]*.py",
+      "result": "Head: 26 files, 241 tests -> 239 passed, 2 failed in 100s. Base: 26 files, 241 tests -> 239 passed, 2 failed in 100s. Identical 2 baseline failures in test_staging_read_store_cutoff_contract.py. Zero regressions."
+    },
+    {
+      "command": "PYTHONPATH=. .venv-pantheon/bin/pytest -q services/control-plane/bff/tests/test_agora*.py",
+      "exit_code": 1,
+      "batch": "Batch 3a: bff/tests/test_agora*.py",
+      "result": "Head: 24 files, 362 tests -> 353 passed, 8 skipped, 1 failed in 425s. Base: 24 files, 362 tests -> 353 passed, 8 skipped, 1 failed in 425s. Identical 1 baseline 403 Forbidden failure in test_agora_candidate_truth.py::test_evidence_summaries_are_redacted_by_role_and_in_lists. All preserved V6 trading desk Agora suites pass cleanly."
+    },
+    {
+      "command": "PYTHONPATH=. .venv-pantheon/bin/pytest -q services/control-plane/bff/tests/test_bff_*.py",
+      "exit_code": 1,
+      "batch": "Batch 3b: bff/tests/test_bff_*.py",
+      "result": "Head: 45 files, 575 tests -> 537 passed, 38 failed in 387s. Base: 45 files, 575 tests -> 537 passed, 38 failed in 387s. Identical 38 baseline failures match Base (test_bff_main_composition.py 4, test_bff_rebalance_proposals.py 33, test_bff_persona_provisioning_baseline_500.py 1). Retired obsolete list_agora_sessions monkeypatch in test_bff_persona_provisioning_baseline_500.py. Zero regressions."
+    },
+    {
+      "command": "PYTHONPATH=. .venv-pantheon/bin/pytest -q <bff/tests/ remaining 1-59>",
+      "exit_code": 1,
+      "batch": "Batch 3c: bff/tests/ rem[0:59]",
+      "result": "Head: 59 files, 917 tests -> 912 passed, 5 failed in 639s. Base: 59 files, 917 tests -> 912 passed, 5 failed in 640s. Identical 5 baseline failures match Base (test_command_adapters_router.py 3, test_console_data_agora_projection.py 1, test_governance_router.py 1). Retired obsolete /bff/research/tasks assertions in test_console_research_projection.py. Zero regressions."
+    },
+    {
+      "command": "PYTHONPATH=. .venv-pantheon/bin/pytest -q --continue-on-collection-errors <bff/tests/ remaining 60-118>",
+      "exit_code": 1,
+      "batch": "Batch 3d: bff/tests/ rem[59:118]",
+      "result": "Head: 59 files, 838 tests -> 795 passed, 19 skipped, 23 failed, 1 collection error in 516s. Base: 59 files, 843 tests -> 800 passed, 19 skipped, 23 failed, 1 collection error in 513s. Identical 23 baseline failures in test_ppl_alloc_012_ranking_projection.py and identical 1 collection error in test_persona_paper_owner_lifecycle_contract.py (psycopg missing in test environment). Zero regressions."
     }
   ]
 }

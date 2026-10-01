@@ -1137,7 +1137,7 @@ def test_dev_paper_baseline_agora_persona_intent_route_excludes_other_tenant_con
     canary_id = _reserve_cross_tenant_persona(store)
     monkeypatch.setattr(
         read_store,
-        "list_agora_sessions",
+        "list_consult_requests",
         lambda **_kwargs: [{
             "sessionId": "agora-cross-tenant-session",
             "status": "active",

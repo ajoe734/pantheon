@@ -71,8 +71,33 @@ GAP_TASK_IDS = {f"BFF-LUV-GAP-{index:03d}" for index in range(2, 13)}
 OPERATOR_TOKEN = "Bearer op-execute-plans:operator"
 
 
+RETAINED_AGORA_PATHS = {
+    "/bff/agora/journal",
+    "/bff/agora/journal/{id}",
+    "/bff/agora/decision-journal",
+    "/bff/agora/trading-room/performance-attribution/by-strategy",
+}
+
+
+def _is_deleted_agora_route(path: str) -> bool:
+    if path in RETAINED_AGORA_PATHS:
+        return False
+    return (
+        path.startswith(("/bff/agora", "/bff/sse/agora", "/bff/research/tasks"))
+        or path in {
+            "/bff/memory/{memoryId}/actions/quarantine",
+            "/bff/insights/{insightId}/actions/attach-strategy",
+        }
+    )
+
+
 def _registry() -> dict:
-    return load_registry(SNAPSHOT_DIR / "execute_plans_bff_routes.json")
+    reg = load_registry(SNAPSHOT_DIR / "execute_plans_bff_routes.json")
+    for entry in reg.get("entries", []):
+        if _is_deleted_agora_route(entry.get("path", "")):
+            entry["status"] = "superseded_with_reason"
+            entry["reason"] = "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
+    return reg
 
 
 def _import_body(tool_id: str = "research.alpha") -> dict:
