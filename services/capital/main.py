@@ -201,17 +201,7 @@ class CapitalBoundaryService:
     _OWNER_CREATE_LOCK = RLock()
     _CAPITAL_STATE_APPLY_LOCK = RLock()
     _REBALANCE_BINDING_STATUSES = frozenset({"pending", "active"})
-    _STAGE_DEPLOYMENT_SCOPE = {
-        "paper": "paper",
-        "paper_candidate": "paper",
-        "paper_running": "paper",
-        "canary": "canary",
-        "canary_candidate": "canary",
-        "canary_running": "canary",
-        "live": "live",
-        "live_candidate": "live",
-        "live_running": "live",
-    }
+    _STAGE_DEPLOYMENT_SCOPE = {f"{s}{sfx}": s for s in ("paper", "canary", "live") for sfx in ("", "_candidate", "_running")}
 
     def __init__(
         self,
@@ -276,18 +266,12 @@ class CapitalBoundaryService:
     def _authorize_pool_activation(self, pool: CapitalPool, decision_id: str | None) -> None:
         facts = self._pool_facts(pool)
         held = self.allocation_store.list_allocations(capital_pool_id=pool.pool_id, tenant_id=_current_tenant())
-        contexts = [{
-            "stage": self._STAGE_DEPLOYMENT_SCOPE.get(
-                str(a.get("stage") or "").strip().lower(), str(a.get("stage") or "").strip().lower()
-            ) or None, **facts
-        } for a in held] or [facts]
+        contexts = [{"stage": self._STAGE_DEPLOYMENT_SCOPE.get(str(a.get("stage") or "").strip().lower()) or None, **facts} for a in held] or [facts]
         self.guard.authorize(
             pool=pool, tenant_id=_current_tenant(), decision_id=decision_id,
             target_type="capital_pool_activation", target_id=pool.pool_id,
-            expected={"target_version": pool_digest(pool), "subject.pool_id": pool.pool_id,
-                      "subject.risk_direction": "increase"},
-            contexts=contexts,
-            allocations=held,
+            expected={"target_version": pool_digest(pool), "subject.pool_id": pool.pool_id, "subject.risk_direction": "increase"},
+            contexts=contexts, allocations=held,
         )
 
     def _pool_facts(self, pool: CapitalPool, lines: List[Dict[str, Any]] = ()) -> Dict[str, Any]:
@@ -473,13 +457,11 @@ class CapitalBoundaryService:
             self.guard.authorize(
                 pool=pool, tenant_id=_current_tenant(), decision_id=body.approval_decision_id,
                 target_type="capital_binding_activation", target_id=binding_id,
-                expected={
-                    "target_version": binding_digest(binding), "subject.binding_id": binding_id, "subject.persona_id": binding.persona_id,
-                    "subject.capital_pool_id": pool.pool_id, "subject.risk_direction": "increase",
-                },
+                expected={"target_version": binding_digest(binding), "subject.binding_id": binding_id,
+                          "subject.persona_id": binding.persona_id, "subject.capital_pool_id": pool.pool_id,
+                          "subject.risk_direction": "increase"},
                 contexts=[{"stage": binding.allowed_deployment_scope, **self._pool_facts(pool)}],
-                binding=binding,
-                allocations=held,
+                binding=binding, allocations=held,
             )
             try:
                 updated = self.binding_store.activate(binding_id, body.approval_decision_id)
@@ -547,24 +529,17 @@ class CapitalBoundaryService:
 
     @classmethod
     def _line_increases_risk(cls, line: Any, existing: Any = None) -> bool:
-        if float(cls._line_value(line, "target_weight") or 0) > float(
-            cls._line_value(line, "current_weight") or 0
-        ):
+        if float(cls._line_value(line, "target_weight") or 0) > float(cls._line_value(line, "current_weight") or 0):
             return True
         return bool(existing and cls._line_is_paper_scope(existing) and not cls._line_is_paper_scope(line))
 
     @classmethod
     def _line_deployment_scope(cls, line: Any) -> str | None:
-        stage = str(cls._line_value(line, "stage") or "").strip().lower()
-        return cls._STAGE_DEPLOYMENT_SCOPE.get(stage)
+        return cls._STAGE_DEPLOYMENT_SCOPE.get(str(cls._line_value(line, "stage") or "").strip().lower())
 
     @classmethod
     def _line_is_paper_scope(cls, line: Any) -> bool:
-        return (
-            cls._line_deployment_scope(line) == "paper"
-            and str(cls._line_value(line, "capital_scope") or "").strip().lower()
-            == "paper_ledger"
-        )
+        return cls._line_deployment_scope(line) == "paper" and str(cls._line_value(line, "capital_scope") or "").strip().lower() == "paper_ledger"
 
     def _binding_is_rebalance_eligible(
         self,
@@ -774,29 +749,20 @@ class CapitalBoundaryService:
     def _guard_rebalance_apply(
         self, rebalance_id: str, proposal: Dict[str, Any], decision_id: str | None, tenant: str | None
     ) -> None:
-        lines = proposal.get("lines") or []
-        pool_id = str(proposal.get("capital_pool_id") or "")
+        lines, pool_id = proposal.get("lines") or [], str(proposal.get("capital_pool_id") or "")
         held = self.allocation_store.list_allocations(capital_pool_id=pool_id, tenant_id=tenant)
         held_map = {a.get("allocation_id"): a for a in held}
-        increasing = [
-            line for line in lines
-            if self._line_increases_risk(line, held_map.get(line.get("allocation_id")))
-        ]
+        increasing = [line for line in lines if self._line_increases_risk(line, held_map.get(line.get("allocation_id")))]
         if not increasing:
             return
-        digest = plan_digest(proposal)
-        pool = self.get_pool(pool_id)
-        plan_facts = self._pool_facts(pool, lines)
+        digest, pool = plan_digest(proposal), self.get_pool(pool_id)
         self.guard.authorize(
             pool=pool, tenant_id=tenant, decision_id=decision_id,
             target_type="rebalance_apply", target_id=rebalance_id,
-            expected={
-                "target_version": digest, "subject.plan_id": rebalance_id, "subject.plan_digest": digest,
-                "subject.capital_pool_id": pool_id, "subject.risk_direction": "increase",
-            },
-            contexts=[{"stage": self._line_deployment_scope(line), **plan_facts} for line in increasing],
-            allocations=held,
-            proposal_lines=lines,
+            expected={"target_version": digest, "subject.plan_id": rebalance_id, "subject.plan_digest": digest,
+                      "subject.capital_pool_id": pool_id, "subject.risk_direction": "increase"},
+            contexts=[{"stage": self._line_deployment_scope(line), **self._pool_facts(pool, lines)} for line in increasing],
+            allocations=held, proposal_lines=lines,
         )
 
     def apply_rebalance(
@@ -1153,14 +1119,12 @@ CAPITAL_HTTP_ERRORS = (
 
 def _pool_body(pool: CapitalPool, *, idempotent_replay: bool = False) -> CapitalPoolBody:
     tid = getattr(pool, "tenant_id", None) or (pool.metadata or {}).get("tenant_id")
-    return CapitalPoolBody(**pool.to_dict(), tenant_id=tid, idempotent_replay=idempotent_replay,
-                           approval_digest=pool_digest(pool))
+    return CapitalPoolBody(**pool.to_dict(), tenant_id=tid, idempotent_replay=idempotent_replay, approval_digest=pool_digest(pool))
 
 
 def _binding_body(binding: PersonaCapitalBinding, *, idempotent_replay: bool = False) -> PersonaCapitalBindingBody:
     tid = getattr(binding, "tenant_id", None) or (binding.metadata or {}).get("tenant_id")
-    return PersonaCapitalBindingBody(**binding.to_dict(), tenant_id=tid, idempotent_replay=idempotent_replay,
-                                     approval_digest=binding_digest(binding))
+    return PersonaCapitalBindingBody(**binding.to_dict(), tenant_id=tid, idempotent_replay=idempotent_replay, approval_digest=binding_digest(binding))
 
 
 def _rebalance_body(record: Dict[str, Any]) -> RebalanceBody:
