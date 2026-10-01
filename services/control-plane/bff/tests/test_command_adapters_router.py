@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
 import re
 import sys
@@ -36,6 +37,7 @@ from services.control_plane.bff.models import (
     CommandStatus,
     CommandType,
     ObjectType,
+    OperatorCommand,
     OperatorIdentity,
     TargetObject,
 )
@@ -861,3 +863,289 @@ def test_main_app_command_confirmation_degraded_read_surface_regression() -> Non
         else:
             os.environ["BFF_READ_SURFACE_STATE"] = orig_env
 
+
+
+_VOLATILE = {"id", "expected_completion_at", "tracking_url", "trackingUrl", "commandId", "receipt_id", "command_id", "accepted_at", "submitted_at", "timestamp", "created_at", "occurred_at", "updated_at", "trace_id", "correlation_id", "correlationId", "error_id", "payload_checksum", "command_ref", "confirmation_id", "request_id"}
+
+
+def _scrub(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _scrub(v) for k, v in value.items() if k not in _VOLATILE and not k.endswith("_at") and not (k == "action_id" and str(v).startswith("audit-"))}
+    if isinstance(value, list):
+        return [_scrub(v) for v in value]
+    return value
+
+
+_ALIAS_PARAMS: Dict[str, Dict[str, Any]] = {
+    "PauseRuntime": {"runtime_binding_id": "alias-target-1", "pause_action": "pause"},
+    "PauseExecution": {"pause_new_entries": True, "cancel_open_orders": False},
+    "ExecuteRollback": {"rollback_target_type": "runtime", "target_id": "alias-target-1", "rollback_to_version": "v1"},
+    "HardRollback": {"rollback_target_type": "runtime", "target_id": "alias-target-1", "rollback_to_version": "v1", "target_artifact_id": "artifact-1"},
+    "ActivateKillSwitch": {"scope": "all", "activate": True},
+    "ApproveDeployment": {"deployment_plan_id": "alias-target-1", "approval_decision": "approve"},
+    "EscalateDiff": {"plan_id": "alias-target-1", "escalation_reason": "alias equivalence"},
+    "PromoteCandidate": {"persona_id": "alias-target-1"},
+    "Demote": {"persona_id": "alias-target-1"},
+    "IssueRiskOff": {"reduce_exposure_pct": 10},
+    "IssueSafeMode": {"safe_mode_level": "soft"},
+    "ApproveRollback": {"rollback_id": "rb-1"},
+    "RejectRollback": {"rollback_id": "rb-1", "rejection_reason": "alias equivalence"},
+    "AdvanceLifecycle": {"target_state": "paper_owner"},
+    "EmergencyContainment": {"action": "freeze", "trigger": "forced_kill", "evidence_refs": ["ev-1"]},
+}
+_ALIAS_TARGET_TYPES = {"HardRollback": ObjectType.RUNTIME, "ExecuteRollback": ObjectType.RUNTIME}
+
+
+class _ApprovedDecisions:
+    def __init__(self, canonical: str, target: Dict[str, Any]) -> None:
+        self._decision = {"outcome": "approved", "command": canonical, "target": target}
+
+    def get_approval_decision(self, decision_id: str):
+        return dict(self._decision)
+
+    def get_persona(self, persona_id: str):
+        return {"persona_id": persona_id}
+
+    def get_runtime_binding_by_runtime_id(self, runtime_id: str):
+        return {"runtime_id": runtime_id, "binding_id": "binding-1", "deployment_mode": "paper", "tenant_id": "tenant-alias"}
+
+    def __getattr__(self, name: str):
+        if name.startswith("get_"):
+            return lambda *args, **kwargs: None
+        raise AttributeError(name)
+
+
+def _alias_target(canonical: str) -> Dict[str, str]:
+    from services.control_plane.bff.action_catalog import get_catalog_entry
+
+    entity_type = get_catalog_entry(canonical).entity_type
+    target_type = _ALIAS_TARGET_TYPES.get(canonical) or next((o for o in ObjectType if o.value == entity_type), ObjectType.RUNTIME)
+    return {"type": target_type.value, "id": "alias-target-1"}
+
+
+_ALIAS_RECORDS: List[Dict[str, Any]] = []
+
+
+def _submit_alias(wrapper: str, verb: str, canonical: str, *, wrapped: bool, token_for: Optional[str]):
+    """Submit one alias (or its canonical command) to a mounted router.
+
+    token_for: None sends no token; otherwise a real confirm token is issued bound
+    to that canonical command (the same one, or another action's) and sent.
+    Approval and two-man evidence are seeded for the canonical command so the
+    only thing that can reject a request is the case under test.
+    """
+    target = _alias_target(canonical)
+    body: Dict[str, Any] = {
+        "command": wrapper if wrapped else canonical,
+        "target": target,
+        "params": {
+            "reason": "alias equivalence",
+            "approval_decision_id": "appr-alias-1",
+            "two_man_signature_id": "sig-alias-1",
+            **_ALIAS_PARAMS.get(canonical, {}),
+        },
+        "audit_context": {"reason": "alias equivalence"},
+    }
+    if wrapped:
+        body["action"] = verb
+    headers = {**HEADERS, "Authorization": "Bearer op-test:operator,approver,admin:mfa", "Idempotency-Key": "alias-key-1"}
+    rebalance = canonical == CommandType.APPROVED_APPLY.value
+    producer = "bff.rebalance-evidence.v1" if rebalance else "bff.v5-two-man-evidence.v1"
+    with tempfile.TemporaryDirectory() as td:
+        store = CommandStore(os.path.join(td, "commands.jsonl"))
+        for seed_type, seed_params in (
+            (CommandType.REBALANCE_TWO_MAN_SIGN if rebalance else CommandType.V5_INTERVENTION_ACTION,
+             {"two_man_signature_id": "sig-alias-1", "signer_operator_ids": ["op-a", "op-b"]}),
+            *(((CommandType.REBALANCE_APPROVAL, {"approval_decision_id": "appr-alias-1", "outcome": "approved"}),) if rebalance else ()),
+        ):
+            store.submit_terminal_command(
+                f"cmd-seed-{seed_type.value}", seed_type, target, "2026-01-01T00:00:00Z",
+                {**seed_params, "command": canonical, "target": target},
+                {"trusted_evidence_producer": producer}, {"trusted_evidence_producer": producer},
+            )
+        svc = CommandAdapterService(
+            command_store=store,
+            read_surface=_ApprovedDecisions(canonical, target),
+            extract_identity=lambda *_a, **_k: OperatorIdentity(operator_id="op-test", roles=["operator", "approver", "admin"], mfa_verified=True, claims={"tenant_id": "tenant-alias"}),
+        )
+        app = FastAPI()
+        app.include_router(create_command_adapters_router(service=svc, submit_command_admission=svc.submit_command_admission))
+        client = TestClient(app)
+        if token_for is not None:
+            issued = client.post(
+                "/bff/confirm-tokens",
+                headers={**headers, "Idempotency-Key": "alias-token-key-1"},
+                json={"tokenId": "ct-alias-1", "command": token_for, "target": target, "reason": "alias equivalence", "ttlSeconds": 300},
+            )
+            assert issued.status_code == 201, issued.text
+            headers["X-Confirm-Token"] = "ct-alias-1"
+        resp = client.post("/bff/v1/commands", headers=headers, json=body)
+        _ALIAS_RECORDS[:] = [r for r in store._get_all_commands() if r.get("type") == canonical]
+        stored = [
+            {
+                **_scrub({k: r.get(k) for k in ("type", "target", "params", "status")}),
+                "request_hash": ((r.get("foundation") or {}).get("idempotency_record") or {}).get("request_hash")
+                if ((r.get("foundation") or {}).get("idempotency_record") or {}).get("idempotency_key") == "alias-key-1"
+                else None,
+            }
+            for r in store._get_all_commands()
+            if not str(r.get("command_id")).startswith("cmd-seed-") and r.get("type") != CommandType.CONFIRM_TOKEN_CREATE.value
+        ]
+        return resp.status_code, _scrub(resp.json()), stored
+
+
+def _alias_cases():
+    from services.control_plane.bff.command_adapters.contracts import _WRAPPER_VERB_ALIASES
+
+    canonicals = sorted(set(_WRAPPER_VERB_ALIASES.values()))
+    for (wrapper, verb), canonical in sorted(_WRAPPER_VERB_ALIASES.items()):
+        other = next(c for c in canonicals if c != canonical)
+        yield pytest.param(wrapper, verb, canonical, canonical, id=f"{wrapper}-{verb}-own-token")
+        yield pytest.param(wrapper, verb, canonical, other, id=f"{wrapper}-{verb}-cross-token")
+        yield pytest.param(wrapper, verb, canonical, None, id=f"{wrapper}-{verb}-no-token")
+
+
+@pytest.mark.parametrize("wrapper,verb,canonical,token_for", list(_alias_cases()))
+def test_wrapped_alias_is_admitted_exactly_like_its_canonical_command(wrapper, verb, canonical, token_for) -> None:
+    wrapped = _submit_alias(wrapper, verb, canonical, wrapped=True, token_for=token_for)
+    direct = _submit_alias(wrapper, verb, canonical, wrapped=False, token_for=token_for)
+    assert wrapped == direct
+    status, _body, stored = wrapped
+    if status == 202:
+        assert [row["type"] for row in stored if row["request_hash"]] == [canonical]
+    else:
+        assert stored == []
+    from services.control_plane.bff.action_catalog import get_catalog_entry
+
+    if get_catalog_entry(canonical).requires_confirm_token and token_for != canonical:
+        assert status == 428
+
+
+@pytest.mark.parametrize("wrapper,verb,canonical", sorted((w, v, c) for (w, v), c in __import__("services.control_plane.bff.command_adapters.contracts", fromlist=["x"])._WRAPPER_VERB_ALIASES.items()))
+def test_every_alias_has_an_accepted_path_stored_as_canonical(wrapper, verb, canonical) -> None:
+    status, _body, stored = _submit_alias(wrapper, verb, canonical, wrapped=True, token_for=canonical)
+    if canonical == "RebalanceProposal":  # canonical admission itself demands server-side allocation evidence
+        assert status == 422 and stored == []
+        return
+    assert status == 202, (status, _body)
+    assert [row["type"] for row in stored if row["request_hash"]] == [canonical]
+
+
+@pytest.mark.parametrize("wrapper,verb,canonical", [("RuntimeAction", "start", "StartRuntime"), ("PersonaAction", "advance_lifecycle", "AdvanceLifecycle")])
+def test_accepted_wrapped_alias_dispatches_successfully(monkeypatch, wrapper, verb, canonical) -> None:
+    from services.control_plane.bff import command_executor
+    from services.control_plane.bff.command_adapters.service import _resolve_execution_params_for_record
+
+    status, _body, _stored = _submit_alias(wrapper, verb, canonical, wrapped=True, token_for=canonical)
+    assert status == 202
+    posts: List[Any] = []
+    monkeypatch.setenv("PANTHEON_INTERNAL_API_URL", "http://owner.invalid")
+    monkeypatch.setattr(command_executor, "_post_json", lambda url, payload, **_kw: posts.append((url, payload)) or {})
+    params = _resolve_execution_params_for_record(_ALIAS_RECORDS[0])
+    outcome, _result, error = command_executor.execute_command_with_status("cmd-1", CommandType(canonical), params)
+    assert outcome.value == "executed", error
+    assert posts[0][0].endswith(("/runtimes/alias-target-1/start", "/personas/alias-target-1/advance-lifecycle"))
+    assert posts[0][1]["confirm_token"] == "ct-alias-1"
+
+
+def test_unmapped_wrapper_combinations_are_not_rewritten() -> None:
+    from services.control_plane.bff.command_adapters.contracts import canonicalize_wrapped_payload
+
+    for command, verb in (("IncidentAction", "acknowledge"), ("IncidentAction", "remediate"), ("NotACommandAction", "AlertAcknowledge"), ("CapitalPoolAction", "AlertAcknowledge")):
+        payload = {"command": command, "action": verb, "target": {"type": "Incident", "id": "x"}, "params": {}}
+        assert canonicalize_wrapped_payload(payload) == payload
+
+
+def _mounted_service(td: str):
+    store = CommandStore(os.path.join(td, "commands.jsonl"))
+    svc = CommandAdapterService(command_store=store, read_surface=None, extract_identity=_test_extract_identity)
+    app = FastAPI()
+    app.include_router(create_command_adapters_router(service=svc, submit_command_admission=svc.submit_command_admission))
+    return store, svc, TestClient(app)
+
+
+@pytest.mark.parametrize("command", ["NotACommandAction", "CapitalPoolAction"])
+def test_unmapped_wrapper_is_rejected_before_storage(command) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        store, _svc, client = _mounted_service(td)
+        resp = client.post("/bff/v1/commands", headers={**HEADERS, "Idempotency-Key": "unmapped-key-1"}, json={
+            "command": command, "action": "AlertAcknowledge", "target": {"type": "RiskAlert", "id": "alert-incident-inc-test"},
+            "params": {}, "audit_context": {"reason": "unmapped"},
+        })
+        assert resp.status_code == 422, resp.text
+        assert store._get_all_commands() == []
+
+
+@pytest.mark.parametrize("body", [
+    {"command": "PauseRuntime"},
+    {"command": "RuntimeAction", "action": "pause"},
+])
+def test_wrong_domain_target_is_rejected_before_store_and_token_use(body) -> None:
+    identity = OperatorIdentity(operator_id="op-test", roles=["operator", "approver"], mfa_verified=True)
+    params = {"runtime_binding_id": "rb-1", "pause_action": "pause"}
+    with tempfile.TemporaryDirectory() as td:
+        store, svc, client = _mounted_service(td)
+
+        def submit(target_type: str, key: str, token: str):
+            return client.post("/bff/v1/commands", headers={**HEADERS, "Idempotency-Key": key, "X-Confirm-Token": token}, json={
+                **body, "target": {"type": target_type, "id": "persona-123"}, "params": params, "audit_context": {"reason": "pause"},
+            })
+
+        res = svc.create_confirm_token(
+            payload={"action": "PauseRuntime", "command": "PauseRuntime", "target": {"type": "Persona", "id": "persona-123"}, "reason": "pause", "ttl_seconds": 60},
+            identity=identity, idempotency_key="wrong-target-token-1",
+        )
+        token = json.loads(res.body.decode("utf-8"))["data"]["tokenId"]
+        rejected = submit("Persona", "wrong-target-key-1", token)
+        assert rejected.status_code == 422, rejected.text
+        assert [c["type"] for c in store._get_all_commands()] == ["CreateConfirmToken"]
+        # the rejected submission must not have consumed the token
+        assert client.get(f"/bff/confirm-tokens/{token}", headers=HEADERS).json()["data"]["status"] == "created"
+
+
+def test_legitimate_runtime_binding_target_still_admitted_for_pause() -> None:
+    from services.control_plane.bff.command_adapters.preconditions import validate_final_command_target_type
+    for target_type in ("Runtime", "RuntimeBinding"):
+        validate_final_command_target_type(OperatorCommand.model_validate({
+            "command": "PauseRuntime", "target": {"type": target_type, "id": "rb-1"},
+            "params": {}, "audit_context": {"reason": "pause"},
+        }))
+
+
+def test_assistant_admission_uses_injected_service_and_returns_stored_command_id() -> None:
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from services.control_plane.bff.assistant import routes
+    from services.control_plane.bff.core.app_factory import mount_bff_routers
+
+    class _Captured(Exception):
+        pass
+
+    captured: Dict[str, Any] = {}
+    original = routes.create_assistant_router
+
+    def capture(**kw):
+        captured["router"] = original(**kw)
+        captured["submit"] = kw["submit_command_admission"]
+        raise _Captured()
+
+    identity = OperatorIdentity(operator_id="asst-probe", roles=["operator"], mfa_verified=True, claims={"tenant_id": "tenant-probe"})
+    with tempfile.TemporaryDirectory() as td:
+        store = CommandStore(os.path.join(td, "commands.jsonl"))
+        svc = CommandAdapterService(command_store=store, read_surface=None, extract_identity=lambda *a, **k: identity)
+        deps = SimpleNamespace(read_surface=MagicMock(), command_store=store)
+        routes.create_assistant_router = capture
+        try:
+            with pytest.raises(_Captured):
+                mount_bff_routers(FastAPI(), app_deps=deps, _command_adapter_service=svc, _extract_identity=lambda *a, **k: identity)
+        finally:
+            routes.create_assistant_router = original
+        assert captured["submit"].__self__ is svc
+        app = FastAPI()
+        app.include_router(captured["router"])
+        resp = TestClient(app).post("/bff/assistant/tools/execute", json={
+            "action_id": "AuditExport", "entity_type": "AuditExport", "entity_id": "audit-test", "params": {}, "reason": "probe",
+        })
+        assert resp.status_code == 201, resp.text
+        stored = [r["command_id"] for r in store._get_all_commands()]
+        assert stored and resp.json()["data"]["command_id"] in stored

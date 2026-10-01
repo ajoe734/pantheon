@@ -72,6 +72,7 @@ from .contracts import (
     _FINAL_COMMAND_ROUTE,
     _HUMAN_GATE_DECISIONS_BY_COMMAND,
     build_foundation_command_context,
+    canonicalize_wrapped_payload,
     normalize_operator_command_payload,
     resolve_final_idempotency_key,
     serialize_foundation_context,
@@ -1405,6 +1406,7 @@ class CommandAdapterService:
         response_deprecation: Optional[Dict[str, Any]] = None,
     ) -> Any:
         identity = self.extract_identity(authorization, mfa_token=x_mfa_token)
+        payload = canonicalize_wrapped_payload(payload)
         cmd = normalize_operator_command_payload(payload)
 
         candidate_key = str(idempotency_key or x_idempotency_key or "").strip() or None
@@ -1863,6 +1865,11 @@ def _resolve_execution_params_for_record(
                 params["entity_id"] = rt_id
                 params.pop("runtimeId", None)
                 params.pop("entityId", None)
+        elif command_type in {CommandType.START_RUNTIME, CommandType.ADVANCE_LIFECYCLE}:
+            evidence = (record.get("audit") or {}).get("precondition_evidence") or {}
+            params["confirm_token"] = str(evidence.get("confirm_token_id") or params.get("confirm_token_id") or "")
+            if command_type == CommandType.START_RUNTIME:
+                params["runtime_id"] = str((record.get("target") or {}).get("id") or "").strip()
         return params
 
     target = record.get("target") or {}
