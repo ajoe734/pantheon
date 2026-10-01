@@ -1,0 +1,21 @@
+{
+  "task_id": "BFF-SENTINEL-REMOVAL-001",
+  "change_class": "simplify",
+  "base_sha": "d18956ba9",
+  "changes": [
+    "Deleted GET /bff/v5/interventions (+detail), POST interventions remediate/decide/claim/escalate/release, /bff/v5/sentinel/findings (+detail, status), /bff/v5/sentinel/remediation/*, /bff/management/sentinel-pulse and /bff/management/intervention-stream, with their service methods, ports (InterventionsPort, list_sentinel_findings), _V5_INTERVENTIONS_STORE, executor handler, adapter branches, preconditions, action-catalog entries, command/object types, models and the wrapper alias.",
+    "Control room, management anomalies, human inbox, HIQ backlog now read incidents through list_incidents; control room returns `incidents`. SSE sentinel/intervention channels removed; /bff/sse/alerts subscribes to the system channel.",
+    "Probe, live-evidence verifier, release-gate aggregator and route probes no longer reference the deleted routes; verify_e2e_sentinel_integrity.py removed.",
+    "Deliberately retained: POST /bff/v5/interventions/{id}/two-man-sign, CommandType V5InterventionAction and ObjectType SentinelIntervention. They are the guarded-command two-man evidence path used by the live race gate, not a Sentinel producer."
+  ],
+  "net_production_lines": "+156 / -2031 (net -1875) over services/control-plane/bff excluding tests, snapshots, docs",
+  "validation": [
+    "Full BFF suite run in 12+ bounded chunks against this tree and against base d18956ba9 extracted via git archive: failures are identical to baseline apart from deleted/renamed tests; two timing-sensitive tests failed only under parallel load and passed alone.",
+    "scripts release-gate/verify/probe tests: 123 passed, 1 failure that also fails on base (stage0 workflow dispatch)."
+  ],
+  "known_baseline_failures": [
+    "test_action_catalog PromoteEvolutionCandidateLive two-man gating",
+    "test_command_adapters_router zero_reverse_main_imports / _publish_event",
+    "test_bff_management_delta_routes cost_attribution, persona_league, loop_throughput, governance_ledger (meta.surfaces)"
+  ]
+}

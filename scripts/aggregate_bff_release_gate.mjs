@@ -1231,14 +1231,11 @@ function buildGate3(routeProbe, authSmoke, sseSmoke, strictAuth, preflight) {
   ];
   const v5Paths = [
     "/bff/v5/loop-runs",
-    "/bff/v5/sentinel/findings",
-    "/bff/v5/interventions",
     "/bff/v5/execution/persona-health",
   ];
   const writePaths = [
     "/bff/v1/commands",
     "/bff/approvals/approval-dev/decide",
-    "/bff/v5/interventions/intervention-dev/decide",
   ];
   const routeStatus = (condition) => routeProbe.exists ? condition ? "pass" : "fail" : routeProbe.missingStatus;
   const routeOwner = (condition) => routeProbe.exists && condition ? "" : GATE_OWNERS[3];
