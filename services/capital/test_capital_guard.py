@@ -7,9 +7,12 @@ import pytest
 
 from services.capital.capital_guard import CapitalGuard, CapitalGuardError
 from services.capital.test_service import (  # noqa: F401  (client fixture)
-    _apply_payload, _create_default_pool_and_binding, _rebalance_payload, client,
+    _apply_payload, _binding_payload, _pool_payload, _create_default_pool_and_binding, _rebalance_payload, client,
 )
+from services.capital.conftest import VOTES
 from services.governance.approval_authority import ApprovalInvalid, ApprovalUnavailable
+from services.governance.models import ProposeApprovalRequest
+from services.governance.test_approval_authority import SnapshotApprovalReader, approval_snapshot
 
 POOL = SimpleNamespace(pool_id="pool-001", tenant_id="tenant-a", metadata={}, risk_policy_ref="risk-main")
 KW = dict(pool=POOL, tenant_id="tenant-a", decision_id="dec-1", target_type="rebalance_apply",
@@ -95,15 +98,16 @@ def test_routes_call_guard_for_pool_binding_and_rebalance(client, monkeypatch):
     assert test_client.post("/api/rebalances", json=_rebalance_payload()).status_code == 201
     assert test_client.post("/api/rebalances/rb-001/apply", json=_apply_payload()).status_code == 200
     assert "rebalance_apply" in calls
+    before = len(calls)
     suspend = {"actor_id": "capital-admin-1", "actor_role": "capital.admin", "status": "suspended"}
     assert test_client.patch("/api/capital-pools/pool-001/status", json=suspend).status_code == 200
-    assert "capital_pool_status" not in calls  # decreases never need the guard
+    assert len(calls) == before  # decreases never need the guard
     reactivate = {**suspend, "status": "active"}
     assert test_client.patch("/api/capital-pools/pool-001/status", json=reactivate).status_code == 403
     assert test_client.patch(
         "/api/capital-pools/pool-001/status", json={**reactivate, "approval_decision_id": "dec-9"}
     ).status_code == 200
-    assert calls[-1] == "capital_pool_status"
+    assert calls[-1] == "capital_pool_activation"
 
 
 def test_binding_activation_and_apply_blocked_by_safe_mode(client, monkeypatch):
@@ -119,3 +123,102 @@ def test_binding_activation_and_apply_blocked_by_safe_mode(client, monkeypatch):
         json={"actor_id": "a", "actor_role": "persona.admin", "approval_decision_id": "dec-1"},
     )
     assert activate.status_code == 403 and "safe mode" in activate.json()["detail"]
+
+
+# --- real ApprovalEvidence contracts through the mounted routes -------------------------------
+
+def _main():
+    return __import__("sys").modules["services.capital.main"]
+
+
+def _approve(monkeypatch, *, target_type, target_id, target_version, subject, policy=None):
+    reader = SnapshotApprovalReader(approval_snapshot(
+        decision_id="dec-real", tenant_id="tenant-test", target_type=target_type, target_id=target_id,
+        target_version=target_version, owner_user_id="proposer-1",
+        metadata={"subject": subject, "approvals": VOTES}))
+    monkeypatch.setattr(_main().capital_guard, "_approval_reader", reader)
+    if policy is not None:
+        monkeypatch.setattr(_main().capital_guard, "_policy_loader", lambda ref: {"risk_policy_id": ref, **policy})
+
+
+def test_active_pool_create_is_guarded_before_persistence(client, monkeypatch):
+    test_client, _ = client
+    monkeypatch.setattr(_main().capital_guard, "_safe_mode_reader", lambda pool_id: "risk_off")
+    denied = test_client.post("/api/capital-pools", json=_pool_payload())
+    assert denied.status_code == 403
+    assert test_client.get("/api/capital-pools/pool-001").status_code == 404
+    inactive = test_client.post("/api/capital-pools", json=_pool_payload(status="suspended"))
+    assert inactive.status_code == 201  # creating inactive is a decrease and needs no approval
+
+
+def test_pool_activation_proposal_and_exact_approval(client, monkeypatch):
+    test_client, _ = client
+    created = test_client.post("/api/capital-pools", json=_pool_payload(status="suspended")).json()
+    digest = created["approval_digest"]
+    proposal = ProposeApprovalRequest(
+        expected_version=0, target_type="capital_pool_activation", target_id="pool-001", target_version=digest,
+        tenant_id="tenant-test", owner_user_id="proposer-1",
+        subject={"pool_id": "pool-001", "risk_direction": "increase"})
+    assert proposal.target_type.value == "capital_pool_activation"
+    activate = {"actor_id": "capital-admin-1", "actor_role": "capital.admin", "status": "active",
+                "approval_decision_id": "dec-real"}
+    subject = {"pool_id": "pool-001", "risk_direction": "increase"}
+    _approve(monkeypatch, target_type="capital_pool_activation", target_id="pool-001",
+             target_version="stale", subject=subject)
+    assert test_client.patch("/api/capital-pools/pool-001/status", json=activate).status_code == 403
+    _approve(monkeypatch, target_type="capital_pool_activation", target_id="pool-001",
+             target_version=digest, subject=subject)
+    assert test_client.patch("/api/capital-pools/pool-001/status", json=activate).status_code == 200
+
+
+def test_binding_activation_binds_semantic_digest_and_policy_facts(client, monkeypatch):
+    test_client, _ = client
+    assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    binding = test_client.post("/api/bindings", json=_binding_payload(budget=900000)).json()
+    subject = {"binding_id": "binding-001", "persona_id": "persona-alpha",
+               "capital_pool_id": "pool-001", "risk_direction": "increase"}
+    activate = {"actor_id": "persona-admin-1", "actor_role": "persona.admin", "approval_decision_id": "dec-real"}
+    kw = dict(target_type="capital_binding_activation", target_id="binding-001", subject=subject)
+    _approve(monkeypatch, target_version="digest-of-another-binding", **kw)
+    assert test_client.post("/api/bindings/binding-001/activate", json=activate).status_code == 403
+    _approve(monkeypatch, target_version=binding["approval_digest"], policy={"allowed_stages": ["paper"]}, **kw)
+    blocked = test_client.post("/api/bindings/binding-001/activate", json=activate)
+    assert blocked.status_code == 403 and "Risk policy rejected" in blocked.json()["detail"]
+    _approve(monkeypatch, target_version=binding["approval_digest"], policy={"allowed_stages": ["live"]}, **kw)
+    assert test_client.post("/api/bindings/binding-001/activate", json=activate).status_code == 200
+
+
+def test_configured_limit_without_observation_fails_closed():
+    policy = lambda ref: {"risk_policy_id": ref, "gross_limit": 0.5}  # noqa: E731
+    with pytest.raises(CapitalGuardError, match="cannot be evaluated"):
+        _guard(policy=policy).authorize(**{**KW, "required": ("gross_exposure",)})
+    _guard(policy=policy).authorize(**{**KW, "required": ("gross_exposure",), "contexts": [{"gross_exposure": 0.4}]})
+    with pytest.raises(CapitalGuardError, match="Risk policy rejected"):
+        _guard(policy=policy).authorize(**{**KW, "required": ("gross_exposure",), "contexts": [{"gross_exposure": 0.9}]})
+
+
+def test_rebalance_approval_binds_owner_plan_digest_not_request_hash(client, monkeypatch):
+    test_client, _ = client
+    _create_default_pool_and_binding(test_client)
+    plan = test_client.post("/api/rebalances", json=_rebalance_payload(request_hash="any-user-string")).json()
+    subject = {"plan_id": "rb-001", "capital_pool_id": "pool-001", "risk_direction": "increase"}
+    kw = dict(target_type="rebalance_apply", target_id="rb-001")
+    assert plan["plan_digest"] and plan["plan_digest"] != "any-user-string"
+    _approve(monkeypatch, target_version=plan["plan_digest"],
+             subject={**subject, "plan_digest": "any-user-string"}, **kw)
+    assert test_client.post("/api/rebalances/rb-001/apply", json=_apply_payload(approval_ref="dec-real")).status_code == 403
+    _approve(monkeypatch, target_version=plan["plan_digest"],
+             subject={**subject, "plan_digest": plan["plan_digest"]}, **kw)
+    assert test_client.post("/api/rebalances/rb-001/apply", json=_apply_payload(approval_ref="dec-real")).status_code == 200
+
+
+def test_rebalance_with_unobservable_plan_limit_is_rejected_then_evaluated(client, monkeypatch):
+    test_client, _ = client
+    _create_default_pool_and_binding(test_client)
+    plan = test_client.post("/api/rebalances", json=_rebalance_payload()).json()
+    subject = {"plan_id": "rb-001", "plan_digest": plan["plan_digest"],
+               "capital_pool_id": "pool-001", "risk_direction": "increase"}
+    _approve(monkeypatch, target_type="rebalance_apply", target_id="rb-001",
+             target_version=plan["plan_digest"], subject=subject, policy={"gross_limit": 0.0001})
+    blocked = test_client.post("/api/rebalances/rb-001/apply", json=_apply_payload(approval_ref="dec-real"))
+    assert blocked.status_code == 403 and "Risk policy rejected" in blocked.json()["detail"]

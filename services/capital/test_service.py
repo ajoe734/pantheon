@@ -58,6 +58,7 @@ def _pool_payload(**overrides):
         "owner_id": "fund-001",
         "owner_type": "fund",
         "risk_policy_ref": "risk-main",
+        "approval_decision_id": "approval-pool-create",
     }
     payload.update(overrides)
     return payload

@@ -161,3 +161,8 @@ underlying JSON stores directly.
   `/api/allocations` (or the pool-scoped route) for authoritative readback.
 - BFF and other read surfaces load the canonical snapshots emitted by this service.
 - Persona session/bootstrap flows treat this service as the source of truth for pool/binding governance, while `RuntimeBinding` remains owned by runtime-manager.
+
+## Risk-increase guard inputs
+
+- `approval_digest` (pool, binding) and `plan_digest` (rebalance) are owner-computed and must be the approval's `target_version`; rebalance also sets `subject.plan_digest` to it. `request_hash` is idempotency only.
+- Risk policy files are read from `CAPITAL_RISK_POLICY_DIR` (default `services/capital/risk_policies/<risk_policy_ref>.json`); a missing policy, or a configured limit the owner cannot observe, rejects the increase.

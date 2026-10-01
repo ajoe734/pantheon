@@ -19,10 +19,15 @@ from services.governance.approval_authority import (
 )
 
 try:
-    from .risk_policy import RiskPolicyEvaluationContext, RiskPolicyEvaluator
+    from .risk_policy import RiskPolicy, RiskPolicyEvaluationContext, RiskPolicyEvaluator
 except ImportError:
-    from risk_policy import RiskPolicyEvaluationContext, RiskPolicyEvaluator  # type: ignore
+    from risk_policy import RiskPolicy, RiskPolicyEvaluationContext, RiskPolicyEvaluator  # type: ignore
 
+# Owner-side fact -> the RiskPolicy limit that needs it (the evaluator skips a missing fact).
+_LIMIT_OF_FACT = {
+    "stage": "allowed_stages", "target_weights": "max_single_name_weight", "gross_exposure": "gross_limit",
+    "net_exposure": "net_limit", "leverage": "max_leverage", "turnover": "turnover_limit",
+}
 SAFE_MODE_OK = frozenset({"normal", "normal_restored"})
 
 
@@ -47,8 +52,8 @@ def read_safe_mode(pool_id: str) -> str:
 
 def load_risk_policy(ref: str) -> Mapping[str, Any]:
     """Load ``<CAPITAL_RISK_POLICY_DIR>/<ref>.json``; raises if absent or unreadable."""
-    root = os.getenv("CAPITAL_RISK_POLICY_DIR", "").strip()
-    if not root or not ref or "/" in ref or ref.startswith("."):
+    root = os.getenv("CAPITAL_RISK_POLICY_DIR", "").strip() or str(Path(__file__).parent / "risk_policies")
+    if not ref or "/" in ref or ref.startswith("."):
         raise RuntimeError("risk policy source is not configured for this reference")
     return json.loads((Path(root) / f"{ref}.json").read_text(encoding="utf-8"))
 
@@ -79,13 +84,14 @@ class CapitalGuard:
         target_id: str,
         expected: Mapping[str, Any],
         contexts: Sequence[Mapping[str, Any]],
+        required: Sequence[str] = (),
     ) -> None:
         """Raise CapitalGuardError unless this exact risk increase is allowed now."""
         tenant = str(tenant_id or "").strip()
         if not tenant or _tenant_of(pool) != tenant:
             raise CapitalGuardError("Capital pool does not belong to the calling tenant")
         self._require_safe_mode(pool.pool_id)
-        self._require_risk_policy(pool, target_type, target_id, contexts)
+        self._require_risk_policy(pool, target_type, target_id, contexts, required)
         self._require_approval(decision_id, tenant, target_type, target_id, expected)
 
     def _require_safe_mode(self, pool_id: str) -> None:
@@ -96,12 +102,17 @@ class CapitalGuard:
         if state not in SAFE_MODE_OK:
             raise CapitalGuardError(f"Risk increase blocked while safe mode is {state!r}")
 
-    def _require_risk_policy(self, pool: Any, target_type: str, target_id: str, contexts: Sequence[Mapping[str, Any]]) -> None:
+    def _require_risk_policy(self, pool: Any, target_type: str, target_id: str, contexts: Sequence[Mapping[str, Any]], required: Sequence[str]) -> None:
         ref = str(pool.risk_policy_ref or "").strip()
         try:
             policy = self._policy_loader(ref)
             evaluator = RiskPolicyEvaluator()
+            parsed = RiskPolicy.from_mapping(policy)
             for context in contexts:
+                # A configured limit that the owner cannot observe is not a pass.
+                for fact in required:
+                    if getattr(parsed, _LIMIT_OF_FACT[fact]) and context.get(fact) in (None, "", {}):
+                        raise CapitalGuardError(f"Risk policy limit {_LIMIT_OF_FACT[fact]} cannot be evaluated: {fact} unavailable")
                 evaluation = evaluator.evaluate(policy, RiskPolicyEvaluationContext.from_mapping({
                     "target_type": target_type, "target_id": target_id,
                     "capital_pool_id": pool.pool_id, "risk_policy_ref": ref, **context,

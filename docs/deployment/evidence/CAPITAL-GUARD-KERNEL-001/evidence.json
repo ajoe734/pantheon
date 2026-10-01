@@ -18,13 +18,15 @@
       "services/capital/test_capital_guard.py",
       "services/capital/test_service.py",
       "services/capital/test_tenant_scoping.py",
-      "docs/deployment/evidence/CAPITAL-GUARD-KERNEL-001/evidence.json"
+      "docs/deployment/evidence/CAPITAL-GUARD-KERNEL-001/evidence.json",
+      "services/governance/models.py",
+      "services/governance/approval_targets.py",
+      "services/control-plane/governance/approval_decision.py",
+      "services/control-plane/governance/approval_decision.schema.json"
     ],
     "not_changing": [
-      "services/governance/",
       "services/runtime-manager/",
-      "services/runtime_manager/",
-      "services/control-plane/"
+      "docker-compose.yml (owned by BFF-APPROVALS-FORWARD-001)"
     ],
     "composes_with": [
       "GOV-APPROVAL-TARGETS-001 action-bound approval targets",
@@ -81,5 +83,17 @@
         "result": "93 passed, 1 warning"
       }
     ]
-  }
+  },
+  "review_rework": {
+    "head_reviewed": "7bc4938e3",
+    "items": {
+      "1": "create_pool authorizes active creation via _authorize_pool_activation before persistence; CreateCapitalPoolRequest.approval_decision_id; test_active_pool_create_is_guarded_before_persistence",
+      "2": "Governance target capital_pool_activation (models, approval_decision.py, schema, approval_targets subject + 2 deciders); test_pool_activation_proposal_and_exact_approval builds a real ProposeApprovalRequest",
+      "3": "target_version = owner-computed pool_digest/binding_digest, exposed as approval_digest on the pool/binding bodies; test_binding_activation_binds_semantic_digest_and_policy_facts",
+      "4": "guard contexts carry binding scope as stage and rebalance plan facts (weights, gross, net, leverage, turnover); a configured limit with no observation is rejected; test_configured_limit_without_observation_fails_closed",
+      "5": "plan_digest is computed from stored normalized lines (allocation_line_digest), exposed on RebalanceBody and compared at apply; request_hash only keeps idempotency; test_rebalance_approval_binds_owner_plan_digest_not_request_hash",
+      "6": "CAPITAL_RISK_POLICY_DIR now defaults to services/capital/risk_policies; Compose reader/runtime-manager wiring deliberately left to BFF-APPROVALS-FORWARD-001 per task note (hosted acceptance is paired delivery); conftest seam now validates a real ApprovalEvidence"
+    }
+  },
+  "verification_run": "pytest services/capital services/governance/test_approval_targets.py services/control-plane/governance/test_approval_decision.py: 215 passed"
 }

@@ -59,6 +59,7 @@ try:
         AllocationAuthorityError,
         AllocationAuthorityNotFound,
         AllocationAuthorityStore,
+        allocation_line_digest,
         stable_payload_hash,
     )
     from .pg_store import (
@@ -103,6 +104,7 @@ except ImportError:
         AllocationAuthorityError,
         AllocationAuthorityNotFound,
         AllocationAuthorityStore,
+        allocation_line_digest,
         stable_payload_hash,
     )
     from pg_store import (  # type: ignore
@@ -124,6 +126,27 @@ except ImportError:
     )
 
 log = logging.getLogger(__name__)
+
+
+def pool_digest(pool: Any) -> str:
+    """Owner-computed digest of the pool semantics an activation approval binds (target_version)."""
+    return stable_payload_hash({f: getattr(pool, f, None) for f in (
+        "pool_id", "owner_id", "owner_type", "currency", "budget", "risk_policy_ref", "single_runtime_enforced")})
+
+
+def binding_digest(binding: Any) -> str:
+    return stable_payload_hash({f: getattr(binding, f, None) for f in (
+        "binding_id", "persona_id", "capital_pool_id", "capital_sleeve_id", "role",
+        "allowed_deployment_scope", "budget", "effective_from", "effective_to")})
+
+
+def plan_digest(proposal: Dict[str, Any]) -> str:
+    """Digest of the stored normalized plan; unlike request_hash it is never caller input."""
+    return stable_payload_hash({
+        "capital_pool_id": proposal.get("capital_pool_id"),
+        "allocation_policy_version": proposal.get("allocation_policy_version"),
+        "lines": [allocation_line_digest(line) for line in proposal.get("lines") or []],
+    })
 
 
 def _current_tenant() -> Optional[str]:
@@ -250,6 +273,15 @@ class CapitalBoundaryService:
         except Exception:
             log.exception("Unable to mark %s idempotency reservation complete", scope)
 
+    def _authorize_pool_activation(self, pool: CapitalPool, decision_id: str | None) -> None:
+        self.guard.authorize(
+            pool=pool, tenant_id=_current_tenant(), decision_id=decision_id,
+            target_type="capital_pool_activation", target_id=pool.pool_id,
+            expected={"target_version": pool_digest(pool), "subject.pool_id": pool.pool_id,
+                      "subject.risk_direction": "increase"},
+            contexts=[{}],
+        )
+
     def create_pool(self, body: CreateCapitalPoolRequest) -> tuple[CapitalPool, bool]:
         self._authorize("CapitalPool", "create", body.actor_role)
         tenant = _current_tenant()
@@ -285,6 +317,8 @@ class CapitalBoundaryService:
             )
             if tenant:
                 object.__setattr__(pool, "tenant_id", tenant)
+            if pool.status == "active":
+                self._authorize_pool_activation(pool, body.approval_decision_id)
             created = self.pool_store.create(pool)
             self._complete_create_idempotency(scope="capital_pool.create", actor_scope=body.actor_id, key=idempotency_key)
         self._emit_nonfatal(
@@ -317,11 +351,7 @@ class CapitalBoundaryService:
         pool = self.get_pool(pool_id)
         with self._CAPITAL_STATE_APPLY_LOCK:
             if body.status == "active" and pool.status != "active":
-                self.guard.authorize(
-                    pool=pool, tenant_id=_current_tenant(), decision_id=body.approval_decision_id,
-                    target_type="capital_pool_status", target_id=pool_id,
-                    expected={"target_version": body.status}, contexts=[{}],
-                )
+                self._authorize_pool_activation(pool, body.approval_decision_id)
             updated = self.pool_store.update_status(pool_id, body.status)
         self._emit(
             event_type="capital_pool_status_updated",
@@ -423,10 +453,10 @@ class CapitalBoundaryService:
                 pool=pool, tenant_id=_current_tenant(), decision_id=body.approval_decision_id,
                 target_type="capital_binding_activation", target_id=binding_id,
                 expected={
-                    "subject.binding_id": binding_id, "subject.persona_id": binding.persona_id,
+                    "target_version": binding_digest(binding), "subject.binding_id": binding_id, "subject.persona_id": binding.persona_id,
                     "subject.capital_pool_id": pool.pool_id, "subject.risk_direction": "increase",
                 },
-                contexts=[{}],
+                contexts=[{"stage": binding.allowed_deployment_scope}], required=("stage",),
             )
             try:
                 updated = self.binding_store.activate(binding_id, body.approval_decision_id)
@@ -723,17 +753,28 @@ class CapitalBoundaryService:
         if not increasing:
             return
         pool_id = str(proposal.get("capital_pool_id") or "")
+        digest = plan_digest(proposal)
+        lines = proposal.get("lines") or []
+        weights: Dict[str, float] = {}
+        for line in lines:
+            persona = str(line.get("persona_id"))
+            weights[persona] = weights.get(persona, 0.0) + float(line.get("target_weight") or 0)
+        plan_facts = {
+            "target_weights": weights,
+            "gross_exposure": sum(abs(w) for w in weights.values()),
+            "net_exposure": sum(weights.values()),
+            "leverage": sum(abs(w) for w in weights.values()),
+            "turnover": sum(abs(float(line.get("delta") or 0)) for line in lines),
+        }
         self.guard.authorize(
             pool=self.get_pool(pool_id), tenant_id=tenant, decision_id=decision_id,
             target_type="rebalance_apply", target_id=rebalance_id,
             expected={
-                "subject.plan_id": rebalance_id, "subject.plan_digest": proposal.get("request_hash"),
+                "target_version": digest, "subject.plan_id": rebalance_id, "subject.plan_digest": digest,
                 "subject.capital_pool_id": pool_id, "subject.risk_direction": "increase",
             },
-            contexts=[
-                {"stage": line.get("stage"), "target_weights": {str(line.get("persona_id")): line.get("target_weight")}}
-                for line in increasing
-            ],
+            contexts=[{"stage": line.get("stage"), **plan_facts} for line in increasing],
+            required=("stage", *plan_facts),
         )
 
     def apply_rebalance(
@@ -1090,12 +1131,18 @@ CAPITAL_HTTP_ERRORS = (
 
 def _pool_body(pool: CapitalPool, *, idempotent_replay: bool = False) -> CapitalPoolBody:
     tid = getattr(pool, "tenant_id", None) or (pool.metadata or {}).get("tenant_id")
-    return CapitalPoolBody(**pool.to_dict(), tenant_id=tid, idempotent_replay=idempotent_replay)
+    return CapitalPoolBody(**pool.to_dict(), tenant_id=tid, idempotent_replay=idempotent_replay,
+                           approval_digest=pool_digest(pool))
 
 
 def _binding_body(binding: PersonaCapitalBinding, *, idempotent_replay: bool = False) -> PersonaCapitalBindingBody:
     tid = getattr(binding, "tenant_id", None) or (binding.metadata or {}).get("tenant_id")
-    return PersonaCapitalBindingBody(**binding.to_dict(), tenant_id=tid, idempotent_replay=idempotent_replay)
+    return PersonaCapitalBindingBody(**binding.to_dict(), tenant_id=tid, idempotent_replay=idempotent_replay,
+                                     approval_digest=binding_digest(binding))
+
+
+def _rebalance_body(record: Dict[str, Any]) -> RebalanceBody:
+    return RebalanceBody(**record, plan_digest=plan_digest(record))
 
 
 @app.post("/api/capital-pools", response_model=CapitalPoolBody, status_code=201)
@@ -1242,7 +1289,7 @@ def _allocation_list_response(records: List[Dict[str, Any]]) -> AllocationListRe
 def create_rebalance(body: CreateRebalanceRequest) -> RebalanceBody:
     try:
         body = bind_capital_mutation(body)
-        return RebalanceBody(**get_capital_service().create_rebalance(body))
+        return _rebalance_body(get_capital_service().create_rebalance(body))
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 
@@ -1256,13 +1303,13 @@ def list_rebalances(
         capital_pool_id=capital_pool_id,
         status=status,
     )
-    return [RebalanceBody(**record) for record in records]
+    return [_rebalance_body(record) for record in records]
 
 
 @app.get("/api/rebalances/{rebalance_id}", response_model=RebalanceBody)
 def get_rebalance(rebalance_id: str) -> RebalanceBody:
     try:
-        return RebalanceBody(**get_capital_service().get_rebalance(rebalance_id))
+        return _rebalance_body(get_capital_service().get_rebalance(rebalance_id))
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 
