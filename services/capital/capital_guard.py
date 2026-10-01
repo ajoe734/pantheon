@@ -1,22 +1,12 @@
-"""The single authority for risk-increasing capital actions.
-
-Pool activation, binding activation and rebalance apply all pass through
-``CapitalGuard.authorize``: tenant check, kill switch / safe mode, risk_policy
-limits, then an exact-action governance approval. Every unreadable input fails
-closed. Risk-decreasing work never needs this guard.
-"""
+"""Single deterministic capital guard for every risk-increasing action."""
 from __future__ import annotations
 
-import json, os, urllib.request
+import json, math, os, urllib.request
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from services.governance.approval_authority import ApprovalInvalid, configured_approval_reader
-
-try:
-    from .risk_policy import RiskPolicy, RiskPolicyEvaluationContext, RiskPolicyEvaluator
-except ImportError:
-    from risk_policy import RiskPolicy, RiskPolicyEvaluationContext, RiskPolicyEvaluator  # type: ignore
+from services.capital.risk_policy import RiskPolicy, RiskPolicyEvaluationContext, RiskPolicyEvaluator
 
 _FACT_OF_LIMIT = {
     "allowed_stages": "stage", "max_single_name_weight": "target_weights", "gross_limit": "gross_exposure",
@@ -61,7 +51,21 @@ def line_increases_risk(line: Any, existing: Any = None) -> bool:
     return False
 
 
+def _finite_scale(v: Any, name: str) -> float:
+    try:
+        f = float(v)
+        if isinstance(v, bool) or not math.isfinite(f):
+            raise ValueError
+        return f
+    except (TypeError, ValueError) as exc:
+        raise CapitalGuardError(f"Invalid {name}: {v!r} must be a finite number") from exc
+
+
 def project_contexts(*, allocations: Sequence[Any] = (), lines: Sequence[Any] = (), stage: Optional[str] = None) -> list[dict[str, Any]]:
+    for l in lines:
+        for k in ("capital_scale_pct", "gross_scale_pct"):
+            if _val(l, k) is not None:
+                _finite_scale(_val(l, k), k)
     res = {str(_val(a, "allocation_id")): dict(a) if isinstance(a, Mapping) else a.__dict__.copy() for a in allocations if _val(a, "allocation_id")}
     for l in lines:
         aid = _val(l, "allocation_id")
@@ -93,7 +97,7 @@ def project_contexts(*, allocations: Sequence[Any] = (), lines: Sequence[Any] = 
     stages = sorted(({line_deployment_scope(a) for a in res.values()} - {None}) | ({s} if s else set()), key=lambda x: str(x or ""))
     canary_lines = [l for l in lines if (line_deployment_scope(l) or (line_deployment_scope(res.get(str(_val(l, "allocation_id")))) if _val(l, "allocation_id") else None) or s) == "canary"]
     contexts = [
-        {"stage": st, **facts, **({k: float(_val(l, k)) for k in ("capital_scale_pct", "gross_scale_pct") if _val(l, k) is not None} if l else {})}
+        {"stage": st, **facts, **({k: _finite_scale(_val(l, k), k) for k in ("capital_scale_pct", "gross_scale_pct") if _val(l, k) is not None} if l else {})}
         for st in stages for l in (canary_lines if st == "canary" and canary_lines else [None])
     ]
     return contexts or [facts]
@@ -102,11 +106,9 @@ def project_contexts(*, allocations: Sequence[Any] = (), lines: Sequence[Any] = 
 def is_paper_operation(*, pool: Any, target_type: str, binding: Any = None, allocations: Sequence[Any] = (), proposal_lines: Sequence[Any] = ()) -> bool:
     if (_val(pool, "metadata") or {}).get("execution_context") != "paper" or not all(is_paper_line(a) for a in allocations):
         return False
-    if target_type == "capital_pool_activation":
-        return True
-    if target_type == "capital_binding_activation":
-        return bool(binding and _val(binding, "role") == "paper_owner" and _val(binding, "allowed_deployment_scope") == "paper")
-    return bool(target_type == "rebalance_apply" and proposal_lines and all(is_paper_line(l) for l in proposal_lines))
+    return target_type == "capital_pool_activation" or (
+        target_type == "capital_binding_activation" and bool(binding and _val(binding, "role") == "paper_owner" and _val(binding, "allowed_deployment_scope") == "paper")
+    ) or (target_type == "rebalance_apply" and bool(proposal_lines and all(is_paper_line(l) for l in proposal_lines)))
 
 
 class CapitalGuardError(PermissionError):
@@ -135,20 +137,12 @@ def _tenant_of(obj: Any) -> Optional[str]:
 
 
 class CapitalGuard:
-    def __init__(
-        self, *, approval_reader: Any = None,
-        safe_mode_reader: Callable[[str], str] | None = None,
-        policy_loader: Callable[[str], Mapping[str, Any]] | None = None,
-    ) -> None:
-        self._approval_reader = approval_reader
-        self._safe_mode_reader = safe_mode_reader or read_safe_mode
-        self._policy_loader = policy_loader or load_risk_policy
+    def __init__(self, *, approval_reader: Any = None, safe_mode_reader: Callable[[str], str] | None = None, policy_loader: Callable[[str], Mapping[str, Any]] | None = None) -> None:
+        self._approval_reader, self._safe_mode_reader, self._policy_loader = approval_reader, safe_mode_reader or read_safe_mode, policy_loader or load_risk_policy
 
     def authorize(
-        self, *, pool: Any, tenant_id: Optional[str], decision_id: Optional[str],
-        target_type: str, target_id: str, expected: Mapping[str, Any],
-        contexts: Sequence[Mapping[str, Any]] = (), binding: Any = None,
-        allocations: Sequence[Any] = (), proposal_lines: Sequence[Any] = (),
+        self, *, pool: Any, tenant_id: Optional[str], decision_id: Optional[str], target_type: str, target_id: str,
+        expected: Mapping[str, Any], contexts: Sequence[Mapping[str, Any]] = (), binding: Any = None, allocations: Sequence[Any] = (), proposal_lines: Sequence[Any] = (),
     ) -> None:
         tenant = str(tenant_id or "").strip()
         if not tenant or _tenant_of(pool) != tenant:
@@ -183,8 +177,16 @@ class CapitalGuard:
                         limit in ("max_canary_capital_scale_pct", "max_canary_gross_scale_pct") and context.get("stage") != "canary"
                     ):
                         continue
-                    if getattr(parsed, limit, None) not in (None, ()) and context.get(fact) in (None, ""):
-                        raise CapitalGuardError(f"Risk policy limit {limit} cannot be evaluated: {fact} unavailable")
+                    obs = context.get(fact)
+                    if getattr(parsed, limit, None) not in (None, ()):
+                        try:
+                            if obs in (None, ""):
+                                raise ValueError
+                            vals = list(obs.values()) if isinstance(obs, Mapping) else ([obs] if limit != "allowed_stages" else [])
+                            if any(isinstance(v, bool) or not math.isfinite(float(v)) for v in vals):
+                                raise ValueError
+                        except (TypeError, ValueError):
+                            raise CapitalGuardError(f"Risk policy limit {limit} cannot be evaluated: {fact} unavailable")
                 eval = RiskPolicyEvaluator().evaluate(policy, RiskPolicyEvaluationContext.from_mapping({
                     "target_type": target_type, "target_id": target_id, "capital_pool_id": pool.pool_id, "risk_policy_ref": ref, **context,
                 }))

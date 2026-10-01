@@ -168,6 +168,38 @@ def test_canary_scale_with_observation_enforces_limits(client, monkeypatch):
     assert resp.status_code == 403, resp.text
 
 
+@pytest.mark.parametrize("field", ["capital_scale_pct", "gross_scale_pct"])
+@pytest.mark.parametrize("bad_val", ["NaN", "Infinity", "-Infinity", "malformed", True])
+def test_nonfinite_and_malformed_scale_fail_closed_without_allocation_write(client, monkeypatch, field, bad_val):
+    c, _ = client
+    _policy(monkeypatch, max_canary_capital_scale_pct=5.0, max_canary_gross_scale_pct=25.0)
+    assert c.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    assert c.post("/api/bindings", json=_binding_payload()).status_code == 201
+    line = {**_rebalance_payload()["lines"][0], "stage": "canary_running", "capital_scale_pct": 2.0, "gross_scale_pct": 10.0, field: bad_val}
+    created = c.post("/api/rebalances", json=_rebalance_payload(lines=[line]))
+    assert created.status_code == 201, created.text
+    applied = c.post("/api/rebalances/rb-001/apply", json=_apply_payload())
+    assert applied.status_code == 403, applied.text
+    allocs = c.get("/api/allocations?capital_pool_id=pool-001").json()
+    assert allocs["count"] == 0 and len(allocs["items"]) == 0
+
+
+@pytest.mark.parametrize("field", ["capital_scale_pct", "gross_scale_pct"])
+def test_valid_finite_canary_scales_enforce_policy_limits(client, monkeypatch, field):
+    c, _ = client
+    _policy(monkeypatch, max_canary_capital_scale_pct=5.0, max_canary_gross_scale_pct=25.0)
+    assert c.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    assert c.post("/api/bindings", json=_binding_payload()).status_code == 201
+    line_ok = {**_rebalance_payload()["lines"][0], "stage": "canary_running", "capital_scale_pct": 2.0, "gross_scale_pct": 10.0}
+    assert c.post("/api/rebalances", json=_rebalance_payload(lines=[line_ok])).status_code == 201
+    assert c.post("/api/rebalances/rb-001/apply", json=_apply_payload()).status_code == 200
+    excessive_val = 10.0 if field == "capital_scale_pct" else 30.0
+    line_exceed = {**line_ok, "current_weight": 0.12, "target_weight": 0.18, "delta": 0.06, field: excessive_val}
+    assert c.post("/api/rebalances", json=_rebalance_payload(rebalance_id="rb-exc", lines=[line_exceed])).status_code == 201
+    resp = c.post("/api/rebalances/rb-exc/apply", json=_apply_payload(rebalance_id="rb-exc", command_id="cmd-exc"))
+    assert resp.status_code == 403, resp.text
+
+
 def test_binding_activation_keeps_existing_live_stage(client, monkeypatch):
     c, _ = client
     _seed(c)

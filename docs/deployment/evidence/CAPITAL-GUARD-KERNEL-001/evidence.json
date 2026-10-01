@@ -151,7 +151,16 @@
       "2": "In services/capital/main.py update_pool_status, re-read authoritative pool state under _CAPITAL_STATE_APPLY_LOCK before determining if activation requires capital_guard authorization, preventing concurrent suspension/reactivation race conditions",
       "3": "Added regressions in services/capital/test_capital_guard_routes.py: test_canary_limit_checks_every_line_order_invariant, test_canary_missing_observation_rejected_independently, and test_pool_reactivation_reads_status_under_apply_lock"
     }
-  }
+  },
+  "review_rework_9": {
+    "head_reviewed": "344935c901c7ec8aab7aaff13ad9a2714ec08648",
+    "items": {
+      "1": "In services/capital/capital_guard.py, validate scale inputs with _finite_scale, rejecting non-finite (NaN, Infinity, -Infinity) and malformed values with CapitalGuardError before any allocation write occurs",
+      "2": "In services/capital/capital_guard.py _require_risk_policy, require finite valid observations for all configured limits before evaluation, failing closed when observations are non-finite, missing, or malformed",
+      "3": "Added route regressions in services/capital/test_capital_guard_routes.py covering both capital_scale_pct and gross_scale_pct for non-finite and malformed values (confirming 403 status and zero allocation state writes) and valid finite cases enforcing policy limits; added unit tests in services/capital/test_capital_guard.py"
+    }
+  },
+  "verification_run": "pytest services/capital + governance approval tests: 252 passed, 1 skipped; reproduction script: 3 passed"
 }
 
 

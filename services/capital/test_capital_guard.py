@@ -341,3 +341,22 @@ def test_canary_live_mixed_and_sameweight_upgrade_deny_unapproved_money_effect(c
     )).status_code == 201
     denied_mixed = test_client.post("/api/rebalances/rb-mixed/apply", json=_apply_payload(rebalance_id="rb-mixed", approval_ref="dec-none"))
     assert denied_mixed.status_code == 403
+
+
+def test_finite_scale_helper():
+    from services.capital.capital_guard import _finite_scale
+    assert _finite_scale(1.5, "capital_scale_pct") == 1.5
+    assert _finite_scale("2.5", "gross_scale_pct") == 2.5
+    assert _finite_scale(0, "capital_scale_pct") == 0.0
+    for bad in ["NaN", "Infinity", "-Infinity", float("nan"), float("inf"), -float("inf"), "abc", True, False]:
+        with pytest.raises(CapitalGuardError, match="must be a finite number"):
+            _finite_scale(bad, "capital_scale_pct")
+
+
+def test_require_risk_policy_rejects_nonfinite_observations():
+    guard = _guard(policy=lambda ref: {"risk_policy_id": ref, "gross_limit": 1.0, "max_canary_capital_scale_pct": 5.0})
+    with pytest.raises(CapitalGuardError, match="cannot be evaluated"):
+        guard.authorize(**{**KW, "contexts": [{"stage": "canary", "gross_exposure": 0.5, "capital_scale_pct": float("nan")}]})
+    with pytest.raises(CapitalGuardError, match="cannot be evaluated"):
+        guard.authorize(**{**KW, "contexts": [{"stage": "canary", "gross_exposure": float("inf"), "capital_scale_pct": 2.0}]})
+
