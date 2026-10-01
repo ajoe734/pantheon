@@ -237,7 +237,11 @@ def normalize_b5_command_payload(cmd: OperatorCommand) -> OperatorCommand:
                 422, ErrorCode.VALIDATION_FAILED, "Invalid lifecycle target",
                 "Provide an explicit target_state and matching Persona target",
             )
-        params.update(persona_id=cmd.target.id, target_state=target_state.strip())
+        params.update(
+            persona_id=cmd.target.id, target_state=target_state.strip(),
+            entity_type="Persona", action_id="AdvanceLifecycle", actionId="AdvanceLifecycle",
+        )
+        cmd.action = "AdvanceLifecycle"
         cmd.params = params
     return normalize_quarterly_recommendation_command(
         normalize_human_gate_command(cmd)

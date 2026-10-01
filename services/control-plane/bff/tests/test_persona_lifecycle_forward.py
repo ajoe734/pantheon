@@ -388,6 +388,19 @@ def test_mounted_existing_decision_references_are_forwarded_not_trusted(mounted,
 
 
 @pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_mounted_caller_cannot_redirect_lifecycle_to_another_adapter(mounted, entry):
+    response = submit(mounted, entry, confirmation=token(mounted),
+                      params={"entity_type": "CapitalPool", "action_id": "create"})
+    assert response.status_code == 202, response.text
+    record = mounted.store.get_command(response.json()["data"]["command_id"])
+    assert record["status"] == "executed", record.get("error")
+    assert record["params"]["entity_type"] == "Persona"
+    assert record["params"]["action_id"] == "AdvanceLifecycle"
+    assert len(mounted.boundary.calls) == 1
+    assert mounted.boundary.calls[0]["method"] == "PATCH"
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
 def test_mounted_conflicting_decision_references_are_rejected(mounted, entry):
     response = submit(mounted, entry, confirmation=token(mounted), params={"approvalId": "different"})
     assert response.status_code == 422, response.text
