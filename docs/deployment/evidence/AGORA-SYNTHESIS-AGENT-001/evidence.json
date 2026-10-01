@@ -1,0 +1,14 @@
+{
+  "task_id": "AGORA-SYNTHESIS-AGENT-001",
+  "summary": "runner._synthesize heuristic replaced by one structured OpenClaw provider call (OpenClawOpsClient.invoke_structured_extraction, shared with servant research_proposal); result persisted via existing InteractionLifecycleStore.finalize.",
+  "validation": {
+    "membership_checks": "opinion_ids subset of supplied opinions; evidence_refs subset of supplied opinion evidence",
+    "failure_mode": "provider/malformed failure -> status unavailable, opinions preserved, retried on next run; saved non-unavailable synthesis with same synthesis_id adopted without a provider call"
+  },
+  "tests": {
+    "command": "pytest services/control-plane/bff/agora/interaction services/control-plane/bff/agora/servant",
+    "result": "interaction + servant suites pass; new tests cover provider-sourced synthesis, failure/malformed/unsupplied evidence, saved-result adoption"
+  },
+  "not_run": "Real dev acceptance (criterion 7: live two-persona workshop interaction with real provider, refresh readback, one failed synthesis call) was not run in this worker environment; must be performed by reviewer/deploy.",
+  "production_net_lines": 23
+}

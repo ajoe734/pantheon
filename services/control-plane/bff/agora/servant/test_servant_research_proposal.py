@@ -12,6 +12,7 @@ from services.control_plane.bff.agora.research.dispatcher import AdapterRegistry
 from services.control_plane.bff.agora.research.router import create_research_router
 from services.control_plane.bff.agora.research.store import MemoryResearchPlanStore
 from services.control_plane.bff.agora.servant import research_proposal
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient
 from services.control_plane.bff.agora.strategy_workshop.store import MemoryWorkshopStore
 from services.control_plane.bff.personas.service import _bff_error, _require_operator_role, _require_read_role
 
@@ -26,6 +27,8 @@ _VALID = {
 
 
 class _FakeClient:
+    invoke_structured_extraction = OpenClawOpsClient.invoke_structured_extraction
+
     draft: Any = _VALID
     calls: list[dict] = []
     plain_invokes = 0

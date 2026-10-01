@@ -42,26 +42,14 @@ def research_plan_extraction_schema() -> Dict[str, Any]:
     }
 
 
-def _invoke_structured(client: OpenClawOpsClient, *, prompt: str, operator_id: str, trace_id: Optional[str]) -> Dict[str, Any]:
-    """Data-only turn: the adapter pins the single `emit_extraction` tool and rejects any other."""
-    headers = {"X-Operator-Id": operator_id}
-    if trace_id:
-        headers["X-Trace-Id"] = trace_id
-    return client._request(
-        "POST",
-        "/api/openclaw-adapter/assistant/providers/openclaw/structured",
-        body={"mode": "user", "prompt": prompt, "extraction_schema": research_plan_extraction_schema()},
-        headers=headers,
-        expected_status={200},
-        timeout_seconds=client._assistant_timeout_seconds(),
-    )
-
-
 def draft_research_plan(prompt: str, *, operator_id: str, trace_id: Optional[str] = None) -> Dict[str, Any]:
     """Return the raw, unvalidated draft; the caller validates it against the create contract."""
     try:
-        raw = _invoke_structured(
-            OpenClawOpsClient(), prompt=_INSTRUCTION + prompt, operator_id=operator_id, trace_id=trace_id
+        raw = OpenClawOpsClient().invoke_structured_extraction(
+            prompt=_INSTRUCTION + prompt,
+            extraction_schema=research_plan_extraction_schema(),
+            operator_id=operator_id,
+            trace_id=trace_id,
         )
     except OpenClawOpsClientError as exc:
         raise ServantDraftError(exc.message, exc.status_code if exc.status_code in {422, 503, 504} else 502) from exc

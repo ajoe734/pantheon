@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import uuid
 from typing import Any, Callable, Dict, List, Optional
 
@@ -133,66 +134,80 @@ def _raise_transient_provider_degraded(provider_payload: Dict[str, Any]) -> None
     raise OpenClawOpsClientError(message, status_code=status_code, error_code=reason)
 
 
-def _synthesize(opinions: List[Dict[str, Any]], failed_persona_ids: List[str], created_at: str) -> Optional[Dict[str, Any]]:
+_SYNTHESIS_STATUSES = ["recommendation", "options", "no_consensus", "more_research_required"]
+_SYNTHESIS_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["status", "summary", "agreements", "disagreements", "evidence_refs"],
+    "properties": {
+        "status": {"type": "string", "enum": _SYNTHESIS_STATUSES},
+        "summary": {"type": "string", "minLength": 1},
+        "agreements": {"type": "array", "items": {"type": "object", "required": ["statement", "opinion_ids", "rationale"]}},
+        "disagreements": {"type": "array", "items": {"type": "object", "required": ["detail", "opinion_ids", "rationale"]}},
+        "evidence_refs": {"type": "array", "items": {"type": "object", "required": ["ref_type", "ref_id"]}},
+    },
+}
+
+
+def _synthesize(
+    client: Any,
+    opinions: List[Dict[str, Any]],
+    failed_persona_ids: List[str],
+    created_at: str,
+    *,
+    operator_id: str,
+    trace_id: str,
+    prior: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """One structured provider judgment over the persisted opinions; never assembled locally."""
     if not opinions:
         return None
-    conclusions = [str(opinion["conclusion"]) for opinion in opinions]
-    unique = set(conclusions)
-    status = "recommendation"
-    if failed_persona_ids:
-        status = "degraded"
-    elif "insufficient_evidence" in unique:
-        status = "more_research_required"
-    elif len(unique) > 1:
-        status = "no_consensus"
-    elif unique & {"conditional", "abstain"}:
-        status = "options"
-
-    disagreements: List[Dict[str, Any]] = []
-    if len(opinions) >= 2:
-        anchor = opinions[0]
-        for other in opinions[1:]:
-            if other["conclusion"] != anchor["conclusion"]:
-                disagreements.append({
-                    "opinion_ids": [anchor["opinion_id"], other["opinion_id"]],
-                    "cause": "independent_persona_conclusions_differ",
-                    "detail": (
-                        f"{anchor['participant']['persona_id']} ({anchor['conclusion']}): "
-                        f"{anchor['rationale']} || "
-                        f"{other['participant']['persona_id']} ({other['conclusion']}): "
-                        f"{other['rationale']}"
-                    ),
-                })
-
-    evidence: Dict[tuple[str, str], Dict[str, Any]] = {}
-    for opinion in opinions:
-        for ref in opinion.get("evidence_refs") or []:
-            evidence[(str(ref.get("ref_type")), str(ref.get("ref_id")))] = ref
-    summary = " | ".join(
-        f"{opinion['participant']['display_name']}: {opinion['rationale']}"
-        for opinion in opinions
-    )
-    if failed_persona_ids:
-        summary += " | Missing provider results: " + ", ".join(failed_persona_ids)
-    return {
-        "synthesis_id": "syn-" + hashlib.sha256(
-            "\0".join(opinion["opinion_id"] for opinion in opinions).encode("utf-8")
-        ).hexdigest()[:20],
-        "status": status,
-        "opinion_ids": [opinion["opinion_id"] for opinion in opinions],
-        "summary": summary,
-        "agreements": sorted(unique) if len(unique) == 1 else [],
-        "disagreements": disagreements,
+    ids = [opinion["opinion_id"] for opinion in opinions]
+    synthesis_id = "syn-" + hashlib.sha256("\0".join(ids).encode("utf-8")).hexdigest()[:20]
+    saved = (prior or {}).get("synthesis")
+    if isinstance(saved, dict) and saved.get("synthesis_id") == synthesis_id and saved.get("status") != "unavailable":
+        return saved  # retry / restart adopts the saved result and its provider correlation
+    base = {
+        "synthesis_id": synthesis_id,
+        "opinion_ids": ids,
+        "missing_participant_ids": list(failed_persona_ids),
+        "degraded": bool(failed_persona_ids),
         "risk_notes": [risk for opinion in opinions for risk in opinion.get("risks") or []],
-        "conditions": [
-            condition
-            for opinion in opinions
-            for condition in opinion.get("invalidation_conditions") or []
-        ],
-        "evidence_refs": list(evidence.values()),
+        "conditions": [c for opinion in opinions for c in opinion.get("invalidation_conditions") or []],
         "created_at": created_at,
         "authority": authority_boundary(),
     }
+    correlation_id = f"{trace_id}:{synthesis_id}"
+    prompt = (
+        "Synthesize the independent Persona opinions below into one judgment: recommendation, options, "
+        "no_consensus or more_research_required, with a summary and agreements/disagreements, each with "
+        "rationale and the opinion_ids it rests on. Judge by the reasons, not the conclusion labels. "
+        "Reference only evidence supplied in the opinions. Return only through emit_extraction.\n\n"
+        + json.dumps(opinions, sort_keys=True, default=str)
+    )
+    try:
+        raw = client.invoke_structured_extraction(
+            prompt=prompt, extraction_schema=_SYNTHESIS_SCHEMA, operator_id=operator_id, trace_id=correlation_id
+        )
+        data = raw.get("data") if isinstance(raw.get("data"), dict) else raw
+        output = data.get("output") if isinstance(data.get("output"), dict) else {}
+        result = output.get("structured_data")
+        if not isinstance(result, dict) or result.get("status") not in _SYNTHESIS_STATUSES or not str(result.get("summary") or "").strip():
+            raise ValueError("synthesis response is malformed")
+        supplied = {(str(r.get("ref_type")), str(r.get("ref_id"))) for o in opinions for r in o.get("evidence_refs") or []}
+        items = list(result.get("agreements") or []) + list(result.get("disagreements") or [])
+        if any(not isinstance(i, dict) or not set(i.get("opinion_ids") or []) <= set(ids) for i in items):
+            raise ValueError("synthesis references an unknown opinion")
+        refs = result.get("evidence_refs") or []
+        if any(not isinstance(r, dict) or (str(r.get("ref_type")), str(r.get("ref_id"))) not in supplied for r in refs):
+            raise ValueError("synthesis references unsupplied evidence")
+    except Exception as exc:  # noqa: BLE001 - opinions stay readable; no fabricated synthesis
+        return {**base, "status": "unavailable", "summary": "Synthesis unavailable.", "agreements": [],
+                "disagreements": [], "evidence_refs": [], "error": _provider_error(exc),
+                "provider_correlation_id": correlation_id}
+    return {**base, "status": result["status"], "summary": result["summary"],
+            "agreements": result.get("agreements") or [], "disagreements": result.get("disagreements") or [],
+            "evidence_refs": refs, "provider_correlation_id": correlation_id}
 
 
 def run_selected_persona_interaction(
@@ -563,7 +578,11 @@ def run_selected_persona_interaction(
             "in_progress_participant_ids": in_progress_persona_ids,
         }
 
-    synthesis = _synthesize(opinions, failed_persona_ids, occurred_at)
+    prior_record = lifecycle_store.get(interaction_id, tenant_id, user_id) if lifecycle_store is not None else None
+    synthesis = _synthesize(
+        client, opinions, failed_persona_ids, occurred_at,
+        operator_id=operator_id, trace_id=trace_id, prior=prior_record,
+    )
     final_status = "completed" if opinions and not failed_persona_ids else ("degraded" if opinions else "failed")
     closed_event_id = _event_id(tenant_id, user_id, interaction_id, attempt_event("closed"))
     closed_event = {
