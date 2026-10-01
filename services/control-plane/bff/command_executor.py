@@ -1454,23 +1454,11 @@ def execute_command(
         any(re.sub(r"[^a-z0-9]", "", str(v or "").lower()) in {"requestrevision", "requestapprovalrevision", "requestchanges", "requestchange"} for v in raw_vals if v)
         or bool(params.get("revision_notes") or params.get("revisionNotes"))
     ):
-        raise HTTPException(
-            status_code=410,
-            detail={
-                "error": {
-                    "code": "VALIDATION_FAILED",
-                    "message": "RequestApprovalRevision is retired",
-                    "reason": "Use RejectDecision with notes",
-                }
-            },
-        )
-    if any(params.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
-        norm_cmd = re.sub(r"[^a-z0-9]", "", getattr(command_type, "value", str(command_type)).lower())
-        if norm_cmd in {"approvedecision", "rejectdecision", "reviewaction"}:
-            raise HTTPException(
-                status_code=501,
-                detail={"error": {"code": "NOT_IMPLEMENTED", "message": "named stage approvals are unsupported", "reason": "Unsupported approval action"}},
-            )
+        raise HTTPException(status_code=410, detail={"error": {"code": "VALIDATION_FAILED", "message": "RequestApprovalRevision is retired", "reason": "Use RejectDecision with notes"}})
+    norm_cmd = re.sub(r"[^a-z0-9]", "", getattr(command_type, "value", str(command_type)).lower())
+    if norm_cmd in {"approvedecision", "rejectdecision", "reviewaction"}:
+        if any(params.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")) or any(re.sub(r"[^a-z0-9]", "", str(v or "").lower()) in {"stage", "freeze", "escalate"} for v in raw_vals[1:] if v):
+            raise HTTPException(status_code=501, detail={"error": {"code": "NOT_IMPLEMENTED", "message": "unsupported approval action", "reason": "Unsupported approval action"}})
     executor = _EXECUTORS.get(command_type)
     if executor is not None:
         return executor(command_id, params, auth_token=auth_token, mfa_token=mfa_token)

@@ -101,12 +101,13 @@ def propose(authorization: Optional[str], payload: Mapping[str, Any], idempotenc
 def decide(authorization: Optional[str], decision_id: str, params: Mapping[str, Any], idempotency_key: str) -> Dict[str, Any]:
     if any(params.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
         raise UnsupportedApprovalAction("named stage approvals are unsupported; votes must target whole approval")
-    retired_vals = [str(params.get(k) or "").strip().lower() for k in ("outcome", "decision", "action", "verb", "action_id", "actionId")]
-    if any(re.sub(r"[^a-z0-9]", "", v) in {"requestrevision", "requestapprovalrevision", "requestchanges", "requestchange"} for v in retired_vals if v) or params.get("revision_notes") or params.get("revisionNotes"):
+    raw_v = [re.sub(r"[^a-z0-9]", "", str(params.get(k) or "").lower()) for k in ("outcome", "decision", "action", "verb", "action_id", "actionId")]
+    if any(v in {"requestrevision", "requestapprovalrevision", "requestchanges", "requestchange"} for v in raw_v if v) or params.get("revision_notes") or params.get("revisionNotes"):
         raise RetiredApprovalAction("RequestApprovalRevision is retired; use RejectDecision with notes")
-    decision_vals = [str(params.get(k) or "").strip().lower() for k in ("outcome", "decision", "action", "verb")]
-    known_verbs = {_OUTCOMES[v] for v in decision_vals if v in _OUTCOMES}
-    unknown_verbs = {v for v in decision_vals if v and v not in _OUTCOMES}
+    if any(v in {"stage", "freeze", "escalate"} for v in raw_v):
+        raise UnsupportedApprovalAction("unsupported approval action")
+    known_verbs = {_OUTCOMES[v] for v in raw_v if v in _OUTCOMES}
+    unknown_verbs = {v for v in raw_v if v and v not in _OUTCOMES}
     if len(known_verbs) > 1:
         raise InvalidApprovalRequest("outcome")
     verb = next(iter(known_verbs), None) or next(iter(unknown_verbs), None) or ("rejected" if params.get("rejection_reason") else "approved")

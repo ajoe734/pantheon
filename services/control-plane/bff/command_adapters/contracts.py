@@ -447,14 +447,15 @@ def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         or bool(action_params.get("revision_notes") or action_params.get("revisionNotes") or payload.get("revision_notes") or payload.get("revisionNotes"))
     ):
         raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
-    if any(action_params.get(k) not in (None, "") or payload.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
-        norm_c = re.sub(r"[^a-z0-9]", "", command.lower())
-        if norm_c in {"reviewaction", "approvedecision", "rejectdecision", "requestreview"} or any(
-            re.sub(r"[^a-z0-9]", "", str(v or "").lower()) in {"approve", "reject", "stage"} for v in raw_candidates[1:] if isinstance(v, str)
-        ):
-            raise _bff_error(501, ErrorCode.NOT_IMPLEMENTED, "named stage approvals are unsupported", "Unsupported approval action")
     raw_verbs = [re.sub(r"[^a-z0-9]", "", str(v).lower()) for v in raw_candidates[1:] if isinstance(v, str) and v.strip()]
     norm_c = re.sub(r"[^a-z0-9]", "", str(command or "").lower())
+    target = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+    target_type = re.sub(r"[^a-z0-9]", "", str(target.get("type") or action_params.get("entity_type") or "").lower())
+    is_hg = norm_c.startswith("humangate") or target_type in {"humangateitem", "humangate"} or bool(action_params.get("human_gate_item_id") or action_params.get("humanGateItemId"))
+    is_gov = not is_hg and (norm_c in {"reviewaction", "approvedecision", "rejectdecision", "requestreview"} or target_type in {"approvaldecision", "approval", "review"})
+    has_stage = any(action_params.get(k) not in (None, "") or payload.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage"))
+    if is_gov and (has_stage or any(v in {"stage", "freeze", "escalate"} for v in raw_verbs)):
+        raise _bff_error(501, ErrorCode.NOT_IMPLEMENTED, "named stage or unsupported approval actions are unsupported", "Unsupported approval action")
     has_app = any(v in {"approve", "approved"} for v in raw_verbs)
     has_rej = any(v in {"reject", "rejected"} for v in raw_verbs)
     if (norm_c == "approvedecision" and has_rej) or (norm_c == "rejectdecision" and has_app) or (has_app and has_rej):

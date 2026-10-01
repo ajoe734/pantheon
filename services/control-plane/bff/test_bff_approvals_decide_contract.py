@@ -481,3 +481,28 @@ def test_non_governance_role_remains_derived_from_verified_identity(command):
     params = stored_command_params(cmd, identity)
     assert params["actor_id"] == "original-operator"
     assert params["actor_role"] == "operator"
+
+
+@pytest.mark.parametrize("field", ["action_id", "actionId", "verb"])
+@pytest.mark.parametrize("unsupported", ["stage", "freeze", "escalate"])
+def test_supported_vote_cannot_mask_unsupported_raw_intent(command_client, owner, field, unsupported):
+    response = command_client.post(
+        "/bff/v1/commands",
+        headers={
+            "Authorization": "Bearer " + jwt("rev-1", "tenant-a", "operator", "governance_reviewer"),
+            "Idempotency-Key": f"masked-unsupported-{field}-{unsupported}",
+        },
+        json={
+            "command": "ReviewAction",
+            "action": "approve",
+            "target": {"type": "ApprovalDecision", "id": "a1"},
+            "params": {
+                "decision_id": "a1", "expected_version": 1,
+                "approval_notes": "reviewed", field: unsupported,
+            },
+            "audit_context": {"reason": "review"},
+        },
+    )
+    assert response.status_code in (422, 501), (response.status_code, owner.calls)
+    assert not owner.calls
+    assert owner.rows["a1"]["version"] == 1
