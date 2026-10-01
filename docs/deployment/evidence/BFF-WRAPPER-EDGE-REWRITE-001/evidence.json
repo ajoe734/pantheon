@@ -1,0 +1,75 @@
+{
+  "task_id": "BFF-WRAPPER-EDGE-REWRITE-001",
+  "change_class": "corrective",
+  "base_sha": "d61575a5968874676744d8ae022b4affa2e6c33b",
+  "validated_source_head": "8b28affb0442ff341a301ecdd3eae573f88141b5",
+  "delivery_branch": "task/BFF-WRAPPER-EDGE-REWRITE-001-v6",
+  "changes": [
+    "Mapped wrappers are replaced at command admission; token binding, approval/two-man gates, validation, target checks, storage and execution use the canonical command.",
+    "One mapping table preserves existing mapped aliases; unmapped wrapper verbs retain their adapter path. Unreachable adapter branches and default credentials were deleted.",
+    "Assistant governed tools use the injected shared admission service and return its stored command id; accepted runtime/persona repair commands retain admitted tokens and trusted targets.",
+    "Preserve malformed params for schema rejection and guard non-string command lookup so malformed submissions return 422 without storage.",
+    "Map the existing RankingAction/QuarterlyRankingRecommendationSubmit alias; keep the quarterly validator and domain semantics unchanged.",
+    "Preserve invalid top-level action types for OperatorCommand schema rejection before alias fallback or string coercion; valid string/null action fallback remains supported."
+  ],
+  "coverage": "Mounted table covers every mapping: accepted/rejected response and persisted record/hash parity, own/cross-action/absent confirm tokens, and six malformed params shapes. Independent literal RankingAction cases prove both 202 acceptance with a digest-verified snapshot and 422 rejection for missing params. Non-string commands reject before storage. Mounted malformed-action matrix covers eight invalid scalar/container values with absent fallback, action_id, and actionId (24 cases); six valid fallback cases remain accepted with canonical response/storage parity.",
+  "validation": [
+    {
+      "command": "timeout 600s /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/e009b127da2c8000/bin/python -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/test_aud_002_audit_action_write_engine.py services/control-plane/bff/tests/test_evolution_program_action_receipts.py services/control-plane/bff/tests/test_management_domain_actions.py services/control-plane/bff/tests/test_assistant_security.py services/control-plane/bff/test_command_executor.py",
+      "exit_status": 1,
+      "result": "840 passed, 3 failed, 2 subtests passed in 517.27s",
+      "log": "/tmp/bff-wrapper-v6-scoped.log",
+      "sha256": "ea6871141616b051e8ac5f6ea61fa0bac2f2c0350d79113319f45520e9cb09b7"
+    },
+    {
+      "command": "timeout 180s /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/e009b127da2c8000/bin/python -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py -k 'ranking_adapter or QuarterlyRanking or unmapped_wrapper_is_rejected or (malformed_params and RiskAlertAction)'",
+      "exit_status": 0,
+      "result": "39 passed, 659 deselected in 26.34s",
+      "log": "/tmp/bff-wrapper-v6-regressions.log",
+      "sha256": "1a5912e34e945ac1c5c4d6c25de8db2f162dd4f578cb0e7c59a110cb8079e384"
+    },
+    {
+      "command": "timeout 180s /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/e009b127da2c8000/bin/python -m pytest -q /tmp/test_bff_wrapper_edge_review.py",
+      "exit_status": 0,
+      "result": "3 passed in 13.60s; PYTHONPATH=task worktree, PANTHEON_BFF_AUTH_STUB=true, PANTHEON_BFF_AUTH_MODE=permissive",
+      "log": "/tmp/bff-wrapper-v6-reviewer-reproducer.log",
+      "sha256": "85a02ba29caca5489a9bc58ad40110e3fa64d7196f5937593c650420f1ec5a1a"
+    },
+    {
+      "command": "timeout 180s /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/e009b127da2c8000/bin/python -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py -k 'zero_reverse_main_imports or command_confirmations_lifecycle or confirm_command_by_token_contract_and_regressions'",
+      "exit_status": 1,
+      "result": "3 failed, 11 deselected in 8.98s; clean git archive d61575a5968874676744d8ae022b4affa2e6c33b",
+      "log": "/tmp/bff-wrapper-v6-base.log",
+      "sha256": "f6ca9ac20b714c6e0093bb0baf0f77ee7c6bc1d2c2833803d652392594158400"
+    },
+    {
+      "command": "timeout 420s /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/e009b127da2c8000/bin/python -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/tests/test_assistant_security.py services/control-plane/bff/test_command_executor.py -k 'not malformed_params and not zero_reverse_main_imports and not command_confirmations_lifecycle and not confirm_command_by_token_contract_and_regressions'",
+      "exit_status": 0,
+      "result": "411 passed, 399 deselected in 229.17s; excludes previously verified malformed-params matrix and three known baseline failures",
+      "log": "/tmp/bff-wrapper-action-validation.log",
+      "sha256": "9aad8c6d63b7cf73054d683506e3dee8bddbcb3ad203351ec8f9d73d160f6d8c"
+    },
+    {
+      "command": "PYTHONPATH=\"$PWD\" PANTHEON_BFF_AUTH_STUB=true PANTHEON_BFF_AUTH_MODE=permissive timeout 90s /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/e009b127da2c8000/bin/python -m pytest -q /tmp/test_bff_wrapper_malformed_action_codex2.py",
+      "exit_status": 0,
+      "result": "5 passed in 8.63s; original independent reviewer reproducer",
+      "log": "/tmp/bff-wrapper-action-reviewer.log",
+      "sha256": "381f41ab52355cd523c800fc9c591c4214f600b73d9804668287841160e95ae6"
+    }
+  ],
+  "known_baseline_failures": [
+    "test_zero_reverse_main_imports (pre-existing reverse main lookups)",
+    "test_command_confirmations_lifecycle (missing _publish_event)",
+    "test_confirm_command_by_token_contract_and_regressions (missing _publish_event)"
+  ],
+  "diff_budget": {
+    "production_added": 186,
+    "production_deleted": 384,
+    "production_net": -198,
+    "test_net": 284,
+    "limit": 0
+  },
+  "checks": "git diff --check origin/dev..HEAD and python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD passed. python3 scripts/git/diff_budget.py --base origin/dev --head HEAD --change-class corrective --budget 0 passed.",
+  "provenance": "Unused -v6 continuation starts at current dev d61575a59. Anchor 70bb4cc2e carries all 17 files byte-identical to published 390e7ff00 (PR #6067); prior branches/PRs/history preserved. Source fix 524df3d99 has compliant subject/trailers; no force push or budget/baseline change. Rejection fix 8b28affb0 retains PR #6068 on its existing v6 continuation via fast-forward; task_start restored the expected local branch, while the original remote task branch belongs to closed PR #6056 and is divergent.",
+  "limits": "No hosted deployment claim. This round: 411 focused tests and all five reviewer reproducer cases passed; prior six-file suite still records three independently reproduced baseline failures. Independent Codex2 review is pending."
+}

@@ -4,7 +4,7 @@ import os
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
-from fastapi import APIRouter, Body, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException
 
 from ..models import ErrorCode
 
@@ -89,6 +89,7 @@ def create_assistant_router(
     provider_reauth: Optional[ProviderReauth] = None,
     provider_reauth_status: Optional[ProviderReauthStatus] = None,
     provider_reauth_code: Optional[ProviderReauthCode] = None,
+    submit_command_admission: Optional[Callable[..., Any]] = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/bff/assistant", tags=["assistant"])
 
@@ -795,12 +796,13 @@ def create_assistant_router(
 
     @router.post("/tools/execute", status_code=201)
     async def execute_assistant_tool(
+        background_tasks: BackgroundTasks,
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
     ) -> dict[str, Any]:
         """Execute a governed tool and return an audit receipt.
 
-        Routes through action_catalog + command_executor. Never calls shell or
+        Submits through the shared command admission. Never calls shell or
         submits hidden DOM actions.
         """
         identity = extract_identity(authorization)
@@ -833,7 +835,10 @@ def create_assistant_router(
                 confirmed=confirmed,
                 confirm_token=confirm_token,
                 trace_id=trace_id,
-                auth_token=authorization,
+                submit_command=submit_command_admission and (lambda body, command_id, token: submit_command_admission(
+                    background_tasks=background_tasks, payload=body, authorization=authorization, x_confirm_token=token,
+                    idempotency_key=command_id, source_route="POST /bff/assistant/tools/execute",
+                )),
             )
         except ToolNotAllowedError as exc:
             _raise_error(
