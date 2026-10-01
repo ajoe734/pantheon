@@ -164,7 +164,7 @@ def _validated_synthesis(result: Any, ids: List[str], opinions: List[Dict[str, A
     ok = ok and isinstance(agreements, list) and all(text(a) for a in agreements)
     ok = ok and isinstance(disagreements, list) and all(
         isinstance(r, dict) and text(r.get("cause")) and text(r.get("detail"))
-        and isinstance(r.get("opinion_ids"), list) and len(set(r["opinion_ids"])) >= 2 and set(r["opinion_ids"]) <= set(ids)
+        and isinstance(r.get("opinion_ids"), list) and len(set(r["opinion_ids"])) == len(r["opinion_ids"]) >= 2 and set(r["opinion_ids"]) <= set(ids)
         for r in disagreements)
     ok = ok and isinstance(refs, list) and all(
         isinstance(r, dict) and text(r.get("ref_type")) and text(r.get("ref_id"))

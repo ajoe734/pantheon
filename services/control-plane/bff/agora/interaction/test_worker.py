@@ -984,19 +984,62 @@ def _run_synthesis(bff_client, synthesis_fn, return_values=None):
 
 
 def test_synthesis_comes_from_provider_not_labels(bff_client):
-    # identical labels (all "support"), provider judges the reasons conflict
+    # identical labels (all "support") but genuinely conflicting reasons; provider judges the reasons
+    reasons = iter(["valid because volatility is mean-reverting", "invalid because volatility is trending"])
+    def persona(prompt, **kw):
+        return {"status": "completed", "output": {
+            "request_id": f"r-{uuid.uuid4().hex[:6]}", "agent_id": str(kw.get("agent_id")),
+            "json_events": [{"item": {"text": json.dumps({
+                "conclusion": "support", "rationale": next(reasons), "confidence": 0.7,
+                "uncertainty": [], "risks": [], "invalidation_conditions": [],
+                "evidence_refs": [], "recommended_measures": []})}}]}}
+    seen = []
     def conflicting(opinions):
+        seen.extend(o["rationale"] for o in opinions)
         ids = [o["opinion_id"] for o in opinions]
         return {"data": {"output": {"structured_data": {
             "status": "no_consensus", "summary": "reasons conflict",
             "agreements": [], "evidence_refs": [],
             "disagreements": [{"cause": "c", "detail": "d", "opinion_ids": ids}]}}}}
-    interaction_id, calls, client_factory = _run_synthesis(bff_client, conflicting)
+    factory, _ = _make_mock_client(invoke_fn=persona, synthesis_fn=conflicting)
+    submit_resp, _ = _submit_interaction(bff_client, personas=("risk-analyst", "macro-quant"))
+    interaction_id = submit_resp.json()["data"]["interaction_id"]
+    AgoraInteractionWorker(lifecycle_store=interaction_lifecycle, workshop_store=workshop_store,
+                           read_store=read_store, client_factory=factory).run_once()
     detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert {o["conclusion"] for o in detail["opinions"]} == {"support"}
+    assert any("mean-reverting" in r for r in seen) and any("trending" in r for r in seen)
     assert detail["synthesis"]["status"] == "no_consensus"
     assert detail["synthesis"]["summary"] == "reasons conflict"
     assert len(detail["opinions"]) == 2
-    assert len(client_factory.synthesis_log) == 1
+    assert len(factory.synthesis_log) == 1
+
+
+def test_duplicate_opinion_ids_rejected_by_adapter_and_runner(bff_client):
+    jsonschema = pytest.importorskip("jsonschema")
+    import pathlib
+    from services.control_plane.bff.agora.interaction.runner import _SYNTHESIS_SCHEMA
+    adapter_dir = str(pathlib.Path(__file__).resolve().parents[4] / "openclaw-gateway-adapter")
+    sys.path.insert(0, adapter_dir)
+    try:
+        import assistant_openclaw_provider as adapter
+    finally:
+        sys.path.remove(adapter_dir)
+    def dup(opinions):
+        a, b = (o["opinion_id"] for o in opinions)
+        result = {"status": "no_consensus", "summary": "s", "agreements": [], "evidence_refs": [],
+                  "disagreements": [{"cause": "c", "detail": "d", "opinion_ids": [a, b, a]}]}
+        try:
+            adapter._validate_extraction_arguments(result, _SYNTHESIS_SCHEMA)
+        except Exception:  # noqa: BLE001 - adapter may or may not reject; runner must
+            pass
+        return {"data": {"output": {"structured_data": result}}}
+    interaction_id, _, _ = _run_synthesis(bff_client, dup)
+    detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert detail["synthesis"]["status"] == "degraded"
+    root = pathlib.Path(__file__).resolve().parents[3] / "specs/agora/v10/persona_interaction_daily.schema.json"
+    schema = json.loads(root.read_text())
+    jsonschema.validate(detail["synthesis"], {"$ref": "#/definitions/InteractionSynthesis", "definitions": schema["definitions"]})
 
 
 def test_synthesis_failure_keeps_opinions_and_retry_reuses_saved(bff_client):
