@@ -590,17 +590,6 @@ class AllocationAuthorityStore:
                 raise AllocationAuthorityConflict(f"Rebalance {rebalance_id!r} is in failed terminal state")
             if proposal.get("applied"):
                 raise AllocationAuthorityConflict(f"Rebalance {rebalance_id!r} was already applied")
-            increases_live = any(
-                str(line.get("stage") or "").strip().lower()
-                in {"live", "live_candidate", "live_running"}
-                and float(line.get("target_weight") or 0) > float(line.get("current_weight") or 0)
-                for line in proposal.get("lines") or []
-            )
-            if increases_live and not approval_ref:
-                raise AllocationAuthorityConflict(
-                    "A human approval reference is required before applying a live capital increase"
-                )
-
             allocations = self._data["allocations"]
             stale: list[Dict[str, Any]] = []
             for line in proposal.get("lines") or []:
@@ -1000,8 +989,6 @@ class AllocationAuthorityStore:
                 "current_weight": current_weight,
                 "target_weight": target_weight,
                 "command_id": command_id,
-                "approval_ref": payload.get("approval_ref"),
-                "two_man_signature_id": payload.get("two_man_signature_id"),
                 "receipt_ref": receipt_ref,
                 "audit_ref": audit_ref,
                 "request_hash": request_hash,

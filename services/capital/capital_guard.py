@@ -1,0 +1,230 @@
+"""Single deterministic capital guard for every risk-increasing action."""
+from __future__ import annotations
+
+import json, math, os, urllib.request
+from pathlib import Path
+from typing import Any, Callable, Mapping, Optional, Sequence
+
+from services.governance.approval_authority import ApprovalInvalid, configured_approval_reader
+from services.capital.risk_policy import RiskPolicy, RiskPolicyEvaluationContext, RiskPolicyEvaluator
+
+_FACT_OF_LIMIT = {
+    "allowed_stages": "stage", "max_single_name_weight": "target_weights", "gross_limit": "gross_exposure", "net_limit": "net_exposure",
+    "max_leverage": "leverage", "turnover_limit": "turnover", "max_sector_exposure": "sector_exposures", "max_factor_exposure": "factor_exposures",
+    "max_strategy_family_concentration": "strategy_family_concentration", "max_target_overlap": "target_overlap", "max_signal_correlation": "signal_correlation",
+    "max_canary_capital_scale_pct": "capital_scale_pct", "max_canary_gross_scale_pct": "gross_scale_pct", "allowed_asset_classes": "asset_classes",
+    "forbidden_asset_classes": "asset_classes", "allowed_strategy_families": "strategy_family", "forbidden_strategy_families": "strategy_family",
+    "liquidity_constraints": "liquidity", "drawdown_actions": "drawdown_pct",
+}
+_STRING_LIMITS = frozenset({"allowed_stages", "allowed_asset_classes", "forbidden_asset_classes", "allowed_strategy_families", "forbidden_strategy_families"})
+_ALLOCATION_LIMITS = frozenset(_STRING_LIMITS | {"liquidity_constraints", "drawdown_actions", "max_canary_capital_scale_pct", "max_canary_gross_scale_pct"})
+_RAW_LIMIT_KEYS = ("gross_limit", "net_limit", "max_single_name_weight", "max_single_weight", "max_leverage", "turnover_limit", "max_target_overlap", "max_signal_correlation", "max_pairwise_correlation", "max_canary_capital_scale_pct", "max_canary_gross_scale_pct")
+_RAW_LIST_KEYS = ("allowed_stages", "allowed_asset_classes", "forbidden_asset_classes", "allowed_strategy_families", "forbidden_strategy_families", "allowed_order_types", "allowed_time_in_force", "kill_switch_triggers")
+_RAW_FLEX_MAP_KEYS = ("max_sector_exposure", "max_factor_exposure", "max_strategy_family_concentration")
+_RAW_MAP_KEYS = ("drawdown_actions", "liquidity_constraints", "pause_rules", "liquidation_rules")
+_SCOPE_RANK = {"paper": 0, "canary": 1, "live": 2}
+SAFE_MODE_OK = frozenset({"normal", "normal_restored"})
+STAGE_DEPLOYMENT_SCOPE = {f"{k}{s}": k for k in ("paper", "canary", "live") for s in ("", "_candidate", "_running")}
+
+
+def _val(obj: Any, key: str, default: Any = None) -> Any: return obj.get(key, default) if isinstance(obj, Mapping) else getattr(obj, key, default)
+def line_deployment_scope(line: Any) -> Optional[str]: return STAGE_DEPLOYMENT_SCOPE.get(str(_val(line, "stage") or _val(line, "allowed_deployment_scope") or "").strip().lower())
+def line_is_paper_scope(line: Any) -> bool: return line_deployment_scope(line) == "paper" and str(_val(line, "capital_scope") or "").strip().lower() == "paper_ledger"
+is_paper_line = line_is_paper_scope
+
+
+def line_increases_risk(line: Any, existing: Any = None) -> bool:
+    if float(_val(line, "target_weight", 0) or 0) > float(_val(line, "current_weight", 0) or 0): return True
+    if not existing: return False
+    if line_is_paper_scope(existing) and not line_is_paper_scope(line): return True
+    ls, es = line_deployment_scope(line), line_deployment_scope(existing)
+    return bool(ls and es and _SCOPE_RANK.get(ls, 0) > _SCOPE_RANK.get(es, 0))
+
+
+def _is_finite_num(val: Any) -> bool:
+    try: return not isinstance(val, bool) and math.isfinite(float(val))
+    except (TypeError, ValueError): return False
+
+
+def _finite_scale(v: Any, name: str) -> float:
+    if _is_finite_num(v) and float(v) > 0: return float(v)
+    raise CapitalGuardError(f"Invalid {name}: {v!r} must be a positive finite number")
+
+
+def _validate_raw_policy(policy: Mapping[str, Any]) -> None:
+    if not isinstance(policy, Mapping): raise CapitalGuardError(f"Malformed risk policy: {policy!r}")
+    for k in _RAW_LIMIT_KEYS:
+        if policy.get(k) is not None and not _is_finite_num(policy[k]): raise CapitalGuardError(f"Malformed risk policy limit {k}: {policy[k]!r}")
+    for k in _RAW_LIST_KEYS:
+        v = policy.get(k)
+        if v is not None and (not isinstance(v, (list, tuple)) or isinstance(v, (str, bytes, bool)) or any(not isinstance(i, str) or isinstance(i, bool) for i in v)):
+            raise CapitalGuardError(f"Malformed risk policy limit {k}: {v!r}")
+    for k in _RAW_FLEX_MAP_KEYS + _RAW_MAP_KEYS:
+        v = policy.get(k)
+        if v is not None:
+            is_m = isinstance(v, Mapping)
+            if (k in _RAW_MAP_KEYS and not is_m) or (any(not _is_finite_num(i) for i in v.values()) if is_m else not _is_finite_num(v)):
+                raise CapitalGuardError(f"Malformed risk policy limit {k}: {v!r}")
+
+
+def _is_obs_missing(limit: str, val: Any, obs: Any) -> bool:
+    if obs in (None, "", (), [], {}): return True
+    if limit == "liquidity_constraints":
+        pairs = (("min_avg_daily_volume", "avg_daily_volume"), ("max_order_pct_adv", "order_pct_adv"))
+        return not isinstance(obs, Mapping) or any(not _is_finite_num(obs.get(o)) for k, o in pairs if k in val) or any(not _is_finite_num(v) for v in obs.values())
+    return False if limit in _STRING_LIMITS else any(not _is_finite_num(v) for v in (obs.values() if isinstance(obs, Mapping) else [obs]))
+
+
+def _enrich_context_from_meta(ctx: dict[str, Any], meta: Mapping[str, Any], stage: Optional[str] = None) -> None:
+    acs, fam = meta.get("asset_classes"), str(meta.get("strategy_family") or "").strip()
+    if acs not in (None, "", (), [], {}): ctx["asset_classes"] = tuple(sorted(str(x) for x in acs if x)) if isinstance(acs, (list, tuple, set)) else (str(acs),)
+    if fam: ctx["strategy_family"] = fam
+    for k in ("liquidity", "drawdown_pct"):
+        if meta.get(k) is not None: ctx[k] = float(meta[k]) if k == "drawdown_pct" else meta[k]
+    if stage == "canary":
+        for k in ("capital_scale_pct", "gross_scale_pct"):
+            if meta.get(k) is not None: ctx[k] = _finite_scale(meta[k], k)
+
+
+def project_contexts(
+    *, allocations: Sequence[Any] = (), lines: Sequence[Any] = (), stage: Optional[str] = None,
+    binding: Any = None, bindings: Sequence[Any] = (), pool: Any = None,
+) -> list[dict[str, Any]]:
+    for l in lines:
+        for k in ("capital_scale_pct", "gross_scale_pct"):
+            if _val(l, k) is not None: _finite_scale(_val(l, k), k)
+    res = {str(_val(a, "allocation_id")): {"allocation_id": str(_val(a, "allocation_id")), "persona_id": _val(a, "persona_id"), "capital_sleeve_id": _val(a, "capital_sleeve_id"), "binding_id": _val(a, "binding_id"), "stage": _val(a, "stage"), "target_weight": _val(a, "target_weight"), "current_weight": _val(a, "current_weight", 0)} for a in allocations if _val(a, "allocation_id")}
+    for l in lines:
+        aid = str(_val(l, "allocation_id") or _val(l, "capital_sleeve_id") or _val(l, "persona_id") or id(l))
+        cur, tw = res.get(aid), _val(l, "target_weight")
+        if cur:
+            l_st, cur_st = _val(l, "stage"), cur.get("stage")
+            if l_st and cur_st and (line_deployment_scope(l) != line_deployment_scope(cur) or str(l_st).strip().lower() != str(cur_st).strip().lower()):
+                raise CapitalGuardError(f"Incompatible stage claim for allocation {aid}: proposal stage {l_st!r} does not match persisted {cur_st!r}")
+            target = cur
+        else:
+            target = res[aid] = {"allocation_id": aid, "stage": _val(l, "stage")}
+        if tw is not None: target["current_weight"] = target["target_weight"] = float(tw)
+        target.update({f: _val(l, f) for f in ("persona_id", "capital_sleeve_id", "binding_id") if _val(l, f)})
+
+    weights: dict[str, float] = {}
+    for a in res.values():
+        p = str(a.get("persona_id") or "")
+        weights[p] = weights.get(p, 0.0) + float(a.get("target_weight") if a.get("target_weight") is not None else (a.get("current_weight") or 0))
+    gross = sum(abs(w) for w in weights.values())
+    facts = {"target_weights": weights, "gross_exposure": gross, "net_exposure": sum(weights.values()), "leverage": gross, "turnover": sum(abs(float(_val(l, "delta", 0) or 0)) for l in lines)}
+    s = STAGE_DEPLOYMENT_SCOPE.get(str(stage).strip().lower(), stage) if stage else None
+    all_b = ([binding] if binding else []) + list(bindings)
+    b_map = {_val(b, "binding_id"): b for b in all_b if _val(b, "binding_id")}
+    b_map.update({(_val(b, "persona_id"), _val(b, "capital_sleeve_id")): b for b in all_b if _val(b, "persona_id") and _val(b, "capital_sleeve_id")})
+    p_meta = dict(_val(pool, "metadata") or {}) if pool else {}
+
+    seen = {id(binding), _val(binding, "binding_id")} - {None} if binding else set()
+    contexts: list[dict[str, Any]] = []
+    for a in res.values():
+        b = b_map.get(_val(a, "binding_id")) or b_map.get((_val(a, "persona_id"), _val(a, "capital_sleeve_id")))
+        meta, st = {**p_meta, **(dict(_val(b, "metadata") or {}) if b else {})}, line_deployment_scope(a) or (line_deployment_scope(b) if b else None) or (s if not binding else None)
+        ctx = {**facts, "stage": st} if st else dict(facts)
+        _enrich_context_from_meta(ctx, meta, st)
+        contexts.append(ctx)
+
+    def _add_b(b: Any, st_override: Optional[str] = None) -> None:
+        st = line_deployment_scope(b) or st_override
+        ctx = {**facts, "stage": st} if st else dict(facts)
+        _enrich_context_from_meta(ctx, {**p_meta, **dict(_val(b, "metadata") or {})}, st)
+        contexts.append(ctx)
+
+    if binding: _add_b(binding, s)
+    for b in bindings:
+        bid = _val(b, "binding_id")
+        if _val(b, "status") == "active" and id(b) not in seen and (not bid or bid not in seen):
+            seen.update((id(b), bid)); _add_b(b)
+    if not contexts:
+        ctx = {"stage": s, **facts} if s else dict(facts)
+        _enrich_context_from_meta(ctx, p_meta, s)
+        contexts.append(ctx)
+    return contexts
+
+
+def is_paper_operation(*, pool: Any, target_type: str, binding: Any = None, allocations: Sequence[Any] = (), proposal_lines: Sequence[Any] = (), bindings: Sequence[Any] = ()) -> bool:
+    if (_val(pool, "metadata") or {}).get("execution_context") != "paper" or not all(is_paper_line(a) for a in allocations): return False
+    return (target_type == "capital_pool_activation" and not any(_val(b, "status") == "active" and line_deployment_scope(b) in ("live", "canary") for b in bindings)) or (
+        target_type == "capital_binding_activation" and bool(binding and _val(binding, "role") == "paper_owner" and _val(binding, "allowed_deployment_scope") == "paper")
+    ) or (target_type == "rebalance_apply" and bool(proposal_lines and all(is_paper_line(l) for l in proposal_lines)))
+
+
+class CapitalGuardError(PermissionError): pass
+
+
+def read_safe_mode(pool_id: str) -> str:
+    from services.runtime_auth import resolve_runtime_manager_auth
+    base = os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip().rstrip("/")
+    if not base: raise RuntimeError("PANTHEON_RUNTIME_MANAGER_URL is not configured")
+    req = urllib.request.Request(f"{base}/api/kill-switch/{pool_id}/safe-mode", headers={"Accept": "application/json", **resolve_runtime_manager_auth(token=None).headers()})
+    with urllib.request.urlopen(req, timeout=5) as resp: return str(json.loads(resp.read().decode("utf-8"))["safe_mode_state"])
+
+
+def load_risk_policy(ref: str) -> Mapping[str, Any]:
+    root = os.getenv("CAPITAL_RISK_POLICY_DIR", "").strip() or str(Path(__file__).parent / "risk_policies")
+    if not ref or "/" in ref or ref.startswith("."): raise RuntimeError("risk policy source is not configured for this reference")
+    return json.loads((Path(root) / f"{ref}.json").read_text(encoding="utf-8"))
+
+
+def _tenant_of(obj: Any) -> Optional[str]: return getattr(obj, "tenant_id", None) or (getattr(obj, "metadata", None) or {}).get("tenant_id")
+
+
+class CapitalGuard:
+    def __init__(self, *, approval_reader: Any = None, safe_mode_reader: Callable[[str], str] | None = None, policy_loader: Callable[[str], Mapping[str, Any]] | None = None) -> None:
+        self._approval_reader, self._safe_mode_reader, self._policy_loader = approval_reader, safe_mode_reader or read_safe_mode, policy_loader or load_risk_policy
+
+    def authorize(
+        self, *, pool: Any, tenant_id: Optional[str], decision_id: Optional[str], target_type: str, target_id: str,
+        expected: Mapping[str, Any], contexts: Sequence[Mapping[str, Any]] = (), binding: Any = None,
+        allocations: Sequence[Any] = (), proposal_lines: Sequence[Any] = (), bindings: Sequence[Any] = (),
+    ) -> None:
+        tenant = str(tenant_id or "").strip()
+        if not tenant or _tenant_of(pool) != tenant: raise CapitalGuardError("Capital pool does not belong to the calling tenant")
+        if not contexts:
+            contexts = project_contexts(
+                allocations=allocations, lines=proposal_lines,
+                stage=getattr(binding, "allowed_deployment_scope", None) if binding else None,
+                binding=binding, bindings=bindings, pool=pool,
+            )
+        if is_paper_operation(pool=pool, target_type=target_type, binding=binding, allocations=allocations, proposal_lines=proposal_lines, bindings=bindings):
+            if str(getattr(pool, "risk_policy_ref", None) or "").strip():
+                self._require_risk_policy(pool, target_type, target_id, contexts)
+            return
+        self._require_safe_mode(pool.pool_id)
+        self._require_risk_policy(pool, target_type, target_id, contexts)
+        self._require_approval(decision_id, tenant, target_type, target_id, expected)
+
+    def _require_safe_mode(self, pool_id: str) -> None:
+        try: state = str(self._safe_mode_reader(pool_id)).strip().lower()
+        except Exception as exc: raise CapitalGuardError(f"Kill switch / safe mode state unreadable: {exc}") from exc
+        if state not in SAFE_MODE_OK: raise CapitalGuardError(f"Risk increase blocked while safe mode is {state!r}")
+
+    def _require_risk_policy(self, pool: Any, target_type: str, target_id: str, contexts: Sequence[Mapping[str, Any]]) -> None:
+        ref = str(getattr(pool, "risk_policy_ref", None) or "").strip()
+        try:
+            policy = self._policy_loader(ref)
+            _validate_raw_policy(policy)
+            parsed = RiskPolicy.from_mapping(policy)
+            for context in contexts:
+                for limit, fact in _FACT_OF_LIMIT.items():
+                    if (limit in ("max_canary_capital_scale_pct", "max_canary_gross_scale_pct") and context.get("stage") != "canary") or (
+                        target_type == "capital_pool_activation" and "stage" not in context and limit in _ALLOCATION_LIMITS
+                    ): continue
+                    val = getattr(parsed, limit, None)
+                    if val not in (None, (), {}) and _is_obs_missing(limit, val, context.get(fact)):
+                        raise CapitalGuardError(f"Risk policy limit {limit} cannot be evaluated: {fact} unavailable")
+                eval = RiskPolicyEvaluator().evaluate(policy, RiskPolicyEvaluationContext.from_mapping({
+                    "target_type": target_type, "target_id": target_id, "capital_pool_id": pool.pool_id, "risk_policy_ref": ref, **context,
+                }))
+                if eval.rejected: raise CapitalGuardError("Risk policy rejected: " + "; ".join(eval.blocking_reasons))
+        except CapitalGuardError: raise
+        except Exception as exc: raise CapitalGuardError(f"Risk policy unavailable: {exc}") from exc
+
+    def _require_approval(self, decision_id: Optional[str], tenant: str, target_type: str, target_id: str, expected: Mapping[str, Any]) -> None:
+        try: (self._approval_reader or configured_approval_reader("capital")).get(str(decision_id or "")).require_valid(expected={"tenant_id": tenant, "target_type": target_type, "target_id": target_id, **expected})
+        except ApprovalInvalid as exc: raise CapitalGuardError(f"Governance approval rejected: {exc}") from exc
+        except Exception as exc: raise CapitalGuardError(f"Governance approval unavailable: {exc}") from exc

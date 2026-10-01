@@ -120,6 +120,7 @@ def test_23_routes_same_tenant_and_cross_tenant_isolation(capital_test_env):
             "name": "Alpha Pool",
             "owner_id": "fund-alpha",
             "owner_type": "fund",
+            "approval_decision_id": "approval-pool-create",
             "risk_policy_ref": "risk-main",
         },
         headers=headers_a,
@@ -139,6 +140,7 @@ def test_23_routes_same_tenant_and_cross_tenant_isolation(capital_test_env):
             "name": "Beta Pool",
             "owner_id": "fund-beta",
             "owner_type": "fund",
+            "approval_decision_id": "approval-pool-create",
             "risk_policy_ref": "risk-main",
         },
         headers=headers_b,
@@ -192,7 +194,7 @@ def test_23_routes_same_tenant_and_cross_tenant_isolation(capital_test_env):
     # Transition back to active
     client.patch(
         "/api/capital-pools/pool-alpha-1/status",
-        json={"actor_id": "admin-alpha", "actor_role": "capital.admin", "status": "active"},
+        json={"actor_id": "admin-alpha", "actor_role": "capital.admin", "status": "active", "approval_decision_id": "approval-pool-1"},
         headers=headers_a,
     )
 
@@ -277,7 +279,7 @@ def test_23_routes_same_tenant_and_cross_tenant_isolation(capital_test_env):
         json={"actor_id": "admin-alpha", "actor_role": "persona.admin", "approval_decision_id": "app-001"},
         headers=headers_a,
     )
-    assert res.status_code == 200
+    assert res.status_code == 200, res.text
     assert res.json()["status"] == "active"
 
     # 10. PATCH /api/bindings/{binding_id}/status
@@ -524,6 +526,7 @@ def test_untenanted_rows_visible_to_no_caller(capital_test_env):
         "name": "Untenanted Pool",
         "owner_id": "fund-untenanted",
         "owner_type": "fund",
+        "approval_decision_id": "approval-pool-create",
         "status": "active",
         "created_at": "2026-01-01T00:00:00Z",
         "metadata": {},  # No tenant_id
@@ -653,6 +656,7 @@ def test_cross_tenant_pool_idempotency(capital_test_env):
         "name": "Private alpha pool",
         "owner_id": "fund",
         "owner_type": "fund",
+        "approval_decision_id": "approval-pool-create",
         "idempotency_key": "same-key",
         "request_hash": "same-hash",
     }
@@ -716,6 +720,7 @@ def test_rebalance_idempotent_replay_tenant_scoping(capital_test_env):
         "name": "Pool Replay Test",
         "owner_id": "fund-1",
         "owner_type": "fund",
+        "approval_decision_id": "approval-pool-create",
     }, headers=headers_a)
     client.post("/api/bindings", json={
         "actor_id": "admin-alpha",
@@ -816,7 +821,7 @@ def test_rebalance_idempotent_replay_tenant_scoping(capital_test_env):
 def test_untenanted_live_owner_hidden(capital_test_env):
     client, module, tempdir = capital_test_env
     headers = _auth_headers("tenant-alpha", actor_id="admin-alpha")
-    created = client.post("/api/capital-pools", json={"actor_id": "admin-alpha", "actor_role": "capital.admin", "pool_id": "pool-a", "name": "A", "owner_id": "fund", "owner_type": "fund"}, headers=headers)
+    created = client.post("/api/capital-pools", json={"actor_id": "admin-alpha", "actor_role": "capital.admin", "pool_id": "pool-a", "name": "A", "owner_id": "fund", "owner_type": "fund", "approval_decision_id": "approval-pool-create"}, headers=headers)
     assert created.status_code == 201, created.text
     binding = {"binding_id": "legacy-untenanted", "persona_id": "legacy-persona", "capital_pool_id": "pool-a", "role": "live_owner", "allowed_deployment_scope": "live", "status": "active", "approval_decision_id": "app", "created_at": "2026-01-01T00:00:00Z", "metadata": {}}
     (tempdir / "persona_capital_bindings.json").write_text(json.dumps([binding]))
@@ -879,7 +884,7 @@ def test_foreign_and_same_tenant_binding_conflict_redaction(capital_test_env):
 
     created_a = client.post(
         "/api/capital-pools",
-        json={"actor_id": "admin-alpha", "actor_role": "capital.admin", "pool_id": "pool-x", "name": "X", "owner_id": "fund-x", "owner_type": "fund"},
+        json={"actor_id": "admin-alpha", "actor_role": "capital.admin", "pool_id": "pool-x", "name": "X", "owner_id": "fund-x", "owner_type": "fund", "approval_decision_id": "approval-pool-create"},
         headers=headers_a,
     )
     assert created_a.status_code == 201
@@ -1239,6 +1244,7 @@ def test_apply_rebalance_rejects_foreign_and_untenanted_allocations(capital_test
             "name": "Guard Pool",
             "owner_id": "fund",
             "owner_type": "fund",
+            "approval_decision_id": "approval-pool-create",
         },
         headers=headers_a,
     )
