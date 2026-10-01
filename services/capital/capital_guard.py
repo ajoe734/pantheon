@@ -9,14 +9,11 @@ from services.governance.approval_authority import ApprovalInvalid, configured_a
 from services.capital.risk_policy import RiskPolicy, RiskPolicyEvaluationContext, RiskPolicyEvaluator
 
 _FACT_OF_LIMIT = {
-    "allowed_stages": "stage", "max_single_name_weight": "target_weights", "gross_limit": "gross_exposure",
-    "net_limit": "net_exposure", "max_leverage": "leverage", "turnover_limit": "turnover",
-    "max_sector_exposure": "sector_exposures", "max_factor_exposure": "factor_exposures",
-    "max_strategy_family_concentration": "strategy_family_concentration",
-    "max_target_overlap": "target_overlap", "max_signal_correlation": "signal_correlation",
-    "max_canary_capital_scale_pct": "capital_scale_pct", "max_canary_gross_scale_pct": "gross_scale_pct",
-    "allowed_asset_classes": "asset_classes", "forbidden_asset_classes": "asset_classes",
-    "allowed_strategy_families": "strategy_family", "forbidden_strategy_families": "strategy_family",
+    "allowed_stages": "stage", "max_single_name_weight": "target_weights", "gross_limit": "gross_exposure", "net_limit": "net_exposure",
+    "max_leverage": "leverage", "turnover_limit": "turnover", "max_sector_exposure": "sector_exposures", "max_factor_exposure": "factor_exposures",
+    "max_strategy_family_concentration": "strategy_family_concentration", "max_target_overlap": "target_overlap", "max_signal_correlation": "signal_correlation",
+    "max_canary_capital_scale_pct": "capital_scale_pct", "max_canary_gross_scale_pct": "gross_scale_pct", "allowed_asset_classes": "asset_classes",
+    "forbidden_asset_classes": "asset_classes", "allowed_strategy_families": "strategy_family", "forbidden_strategy_families": "strategy_family",
     "liquidity_constraints": "liquidity", "drawdown_actions": "drawdown_pct",
 }
 _STRING_LIMITS = frozenset({"allowed_stages", "allowed_asset_classes", "forbidden_asset_classes", "allowed_strategy_families", "forbidden_strategy_families"})
@@ -31,7 +28,7 @@ STAGE_DEPLOYMENT_SCOPE = {f"{k}{s}": k for k in ("paper", "canary", "live") for 
 
 
 def _val(obj: Any, key: str, default: Any = None) -> Any: return obj.get(key, default) if isinstance(obj, Mapping) else getattr(obj, key, default)
-def line_deployment_scope(line: Any) -> Optional[str]: return STAGE_DEPLOYMENT_SCOPE.get(str(_val(line, "stage") or "").strip().lower())
+def line_deployment_scope(line: Any) -> Optional[str]: return STAGE_DEPLOYMENT_SCOPE.get(str(_val(line, "stage") or _val(line, "allowed_deployment_scope") or "").strip().lower())
 def line_is_paper_scope(line: Any) -> bool: return line_deployment_scope(line) == "paper" and str(_val(line, "capital_scope") or "").strip().lower() == "paper_ledger"
 is_paper_line = line_is_paper_scope
 
@@ -79,10 +76,8 @@ def _is_obs_missing(limit: str, val: Any, obs: Any) -> bool:
 
 
 def _enrich_context_from_meta(ctx: dict[str, Any], meta: Mapping[str, Any], stage: Optional[str] = None) -> None:
-    acs = meta.get("asset_classes")
-    if acs not in (None, "", (), [], {}):
-        ctx["asset_classes"] = tuple(sorted(str(x) for x in acs if x)) if isinstance(acs, (list, tuple, set)) else (str(acs),)
-    fam = str(meta.get("strategy_family") or "").strip()
+    acs, fam = meta.get("asset_classes"), str(meta.get("strategy_family") or "").strip()
+    if acs not in (None, "", (), [], {}): ctx["asset_classes"] = tuple(sorted(str(x) for x in acs if x)) if isinstance(acs, (list, tuple, set)) else (str(acs),)
     if fam: ctx["strategy_family"] = fam
     for k in ("liquidity", "drawdown_pct"):
         if meta.get(k) is not None: ctx[k] = float(meta[k]) if k == "drawdown_pct" else meta[k]
@@ -124,29 +119,36 @@ def project_contexts(
     b_map.update({(_val(b, "persona_id"), _val(b, "capital_sleeve_id")): b for b in all_b if _val(b, "persona_id") and _val(b, "capital_sleeve_id")})
     p_meta = dict(_val(pool, "metadata") or {}) if pool else {}
 
+    seen = {id(binding)} if binding else set()
     contexts: list[dict[str, Any]] = []
     for a in res.values():
         b = b_map.get(_val(a, "binding_id")) or b_map.get((_val(a, "persona_id"), _val(a, "capital_sleeve_id")))
+        if b: seen.update((id(b), _val(b, "binding_id"), (_val(b, "persona_id"), _val(b, "capital_sleeve_id"))))
         meta, st = {**p_meta, **(dict(_val(b, "metadata") or {}) if b else {})}, line_deployment_scope(a) or (line_deployment_scope(b) if b else None) or (s if not binding else None)
         ctx = {**facts, "stage": st} if st else dict(facts)
         _enrich_context_from_meta(ctx, meta, st)
         contexts.append(ctx)
 
-    if binding:
-        b_st = line_deployment_scope(binding) or s
-        b_ctx = {**facts, "stage": b_st} if b_st else dict(facts)
-        _enrich_context_from_meta(b_ctx, {**p_meta, **dict(_val(binding, "metadata") or {})}, b_st)
-        contexts.append(b_ctx)
-    elif not contexts:
+    def _add_b(b: Any, st_override: Optional[str] = None) -> None:
+        st = line_deployment_scope(b) or st_override
+        ctx = {**facts, "stage": st} if st else dict(facts)
+        _enrich_context_from_meta(ctx, {**p_meta, **dict(_val(b, "metadata") or {})}, st)
+        contexts.append(ctx)
+
+    if binding: _add_b(binding, s)
+    for b in bindings:
+        if _val(b, "status") == "active" and not ({id(b), _val(b, "binding_id"), (_val(b, "persona_id"), _val(b, "capital_sleeve_id"))} & seen):
+            _add_b(b)
+    if not contexts:
         ctx = {"stage": s, **facts} if s else dict(facts)
         _enrich_context_from_meta(ctx, p_meta, s)
         contexts.append(ctx)
     return contexts
 
 
-def is_paper_operation(*, pool: Any, target_type: str, binding: Any = None, allocations: Sequence[Any] = (), proposal_lines: Sequence[Any] = ()) -> bool:
+def is_paper_operation(*, pool: Any, target_type: str, binding: Any = None, allocations: Sequence[Any] = (), proposal_lines: Sequence[Any] = (), bindings: Sequence[Any] = ()) -> bool:
     if (_val(pool, "metadata") or {}).get("execution_context") != "paper" or not all(is_paper_line(a) for a in allocations): return False
-    return target_type == "capital_pool_activation" or (
+    return (target_type == "capital_pool_activation" and not any(_val(b, "status") == "active" and line_deployment_scope(b) in ("live", "canary") for b in bindings)) or (
         target_type == "capital_binding_activation" and bool(binding and _val(binding, "role") == "paper_owner" and _val(binding, "allowed_deployment_scope") == "paper")
     ) or (target_type == "rebalance_apply" and bool(proposal_lines and all(is_paper_line(l) for l in proposal_lines)))
 
@@ -159,8 +161,7 @@ def read_safe_mode(pool_id: str) -> str:
     base = os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip().rstrip("/")
     if not base: raise RuntimeError("PANTHEON_RUNTIME_MANAGER_URL is not configured")
     req = urllib.request.Request(f"{base}/api/kill-switch/{pool_id}/safe-mode", headers={"Accept": "application/json", **resolve_runtime_manager_auth(token=None).headers()})
-    with urllib.request.urlopen(req, timeout=5) as resp:
-        return str(json.loads(resp.read().decode("utf-8"))["safe_mode_state"])
+    with urllib.request.urlopen(req, timeout=5) as resp: return str(json.loads(resp.read().decode("utf-8"))["safe_mode_state"])
 
 
 def load_risk_policy(ref: str) -> Mapping[str, Any]:
@@ -189,7 +190,7 @@ class CapitalGuard:
                 stage=getattr(binding, "allowed_deployment_scope", None) if binding else None,
                 binding=binding, bindings=bindings, pool=pool,
             )
-        if is_paper_operation(pool=pool, target_type=target_type, binding=binding, allocations=allocations, proposal_lines=proposal_lines):
+        if is_paper_operation(pool=pool, target_type=target_type, binding=binding, allocations=allocations, proposal_lines=proposal_lines, bindings=bindings):
             if str(getattr(pool, "risk_policy_ref", None) or "").strip():
                 self._require_risk_policy(pool, target_type, target_id, contexts)
             return
@@ -224,8 +225,6 @@ class CapitalGuard:
         except Exception as exc: raise CapitalGuardError(f"Risk policy unavailable: {exc}") from exc
 
     def _require_approval(self, decision_id: Optional[str], tenant: str, target_type: str, target_id: str, expected: Mapping[str, Any]) -> None:
-        try:
-            reader = self._approval_reader or configured_approval_reader("capital")
-            reader.get(str(decision_id or "")).require_valid(expected={"tenant_id": tenant, "target_type": target_type, "target_id": target_id, **expected})
+        try: (self._approval_reader or configured_approval_reader("capital")).get(str(decision_id or "")).require_valid(expected={"tenant_id": tenant, "target_type": target_type, "target_id": target_id, **expected})
         except ApprovalInvalid as exc: raise CapitalGuardError(f"Governance approval rejected: {exc}") from exc
         except Exception as exc: raise CapitalGuardError(f"Governance approval unavailable: {exc}") from exc

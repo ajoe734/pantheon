@@ -218,5 +218,15 @@
       "4": "Maintained net production lines <= 250 (net +244 vs origin/dev)"
     }
   },
-  "verification_run": "pytest services/capital + governance approval tests + route regressions: 301 passed, 1 skipped, 1 warning"
+  "review_rework_16": {
+    "head_reviewed": "f633a54edbdc9658f5c97befe079976249b087f0",
+    "items": {
+      "1": "In services/capital/capital_guard.py line_deployment_scope, check both stage and allowed_deployment_scope so binding deployment scope is evaluated",
+      "2": "In services/capital/capital_guard.py project_contexts, include all active bindings on the pool in policy contexts even without allocations, evaluating active scopes and trusted metadata against pool risk policy",
+      "3": "In services/capital/capital_guard.py is_paper_operation, exclude pool activation from paper exemption if any active binding on the pool has a live or canary scope, while preserving truly empty and paper-only pool behavior",
+      "4": "Added permanent route regressions in services/capital/test_capital_guard_routes.py: test_reactivation_checks_active_binding_without_allocations and test_paper_label_does_not_exempt_live_binding_on_pool_reactivation proving rejection before pool write and live admissibility remains false",
+      "5": "Maintained net production lines <= 250 (net +243 vs origin/dev)"
+    }
+  },
+  "verification_run": "pytest services/capital + governance approval tests + route regressions: 303 passed, 1 skipped, 1 warning"
 }

@@ -515,3 +515,32 @@ def test_nonempty_pool_cannot_activate_forbidden_new_binding_stage(client, monke
     monkeypatch.setattr(guard, '_policy_loader', lambda ref: {'risk_policy_id': ref, 'allowed_stages': ['paper']})
     response = c.post('/api/bindings/live-new/activate', json={'actor_id': 'persona-admin-1', 'actor_role': 'persona.admin', 'approval_decision_id': 'dec-live'})
     assert response.status_code == 403, response.text
+
+
+def test_reactivation_checks_active_binding_without_allocations(client, monkeypatch):
+    c, _ = client
+    assert c.post('/api/capital-pools', json=_pool_payload()).status_code == 201
+    assert c.post('/api/bindings', json=_binding_payload()).status_code == 201
+    assert c.post('/api/bindings/binding-001/activate', json=_BIND).status_code == 200
+    assert c.patch('/api/capital-pools/pool-001/status', json={**_ACT, 'status': 'suspended'}).status_code == 200
+    _policy(monkeypatch, allowed_stages=['paper'])
+    assert c.get('/api/allocations?capital_pool_id=pool-001').json()['count'] == 0
+    response = c.patch('/api/capital-pools/pool-001/status', json=_ACT)
+    admission = c.get('/api/bindings/admissibility', params={'persona_id': 'persona-alpha', 'capital_pool_id': 'pool-001', 'target_stage': 'live'}).json()
+    assert (response.status_code, admission['permitted']) == (403, False), (response.text, admission)
+    assert c.get('/api/capital-pools/pool-001').json()['status'] == 'suspended'
+
+
+def test_paper_label_does_not_exempt_live_binding_on_pool_reactivation(client, monkeypatch):
+    c, _ = client
+    assert c.post('/api/capital-pools', json=_pool_payload(metadata={'execution_context': 'paper'})).status_code == 201
+    assert c.post('/api/bindings', json=_binding_payload()).status_code == 201
+    assert c.post('/api/bindings/binding-001/activate', json=_BIND).status_code == 200
+    status = {'actor_id': 'capital-admin-1', 'actor_role': 'capital.admin', 'status': 'suspended'}
+    assert c.patch('/api/capital-pools/pool-001/status', json=status).status_code == 200
+    guard = sys.modules['services.capital.main'].capital_guard
+    monkeypatch.setattr(guard, '_safe_mode_reader', lambda _: 'risk_off')
+    response = c.patch('/api/capital-pools/pool-001/status', json={**status, 'status': 'active'})
+    admission = c.get('/api/bindings/admissibility', params={'persona_id': 'persona-alpha', 'capital_pool_id': 'pool-001', 'target_stage': 'live'}).json()
+    assert (response.status_code, admission['permitted']) == (403, False), (response.text, admission)
+    assert c.get('/api/capital-pools/pool-001').json()['status'] == 'suspended'
