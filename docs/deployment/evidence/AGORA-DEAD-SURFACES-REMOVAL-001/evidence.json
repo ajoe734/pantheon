@@ -3,31 +3,31 @@
   "change_class": "simplify",
   "net_prod_line_budget": -3000,
   "scope": "Delete dead Agora backend surfaces no longer used by the V6 trading desk (signals, feedback, signals SSE alias, watchlist, markets, notes, market-notes, training-examples, insights, memory, committee sessions, evidence-pack, persona-lab, skill-coaching, evaluation suites/runs, alerts triage, daily, sessions, messages, ask, inbox, incoming, handoffs, research-tasks, shadow router, dashboard-recipes, and widgets), preserving trading-room, workshops, interactions, proposals, candidate decisions, candidate-pools, performance, capabilities, operational-readiness, journal, postmortems, servant, research plans/runs, trading-intents, and me.",
-  "owner": "Antigravity2",
+  "owner": "Antigravity",
   "reviewer": "Codex",
-  "frozen_base": "d61575a5968874676744d8ae022b4affa2e6c33b",
+  "frozen_base": "d18956ba9ca239c6b6c2ea029bd3885eeb2166b9",
   "paired_execution_logs": {
     "directory": "/tmp/agora-paired-runs-d61575a-17a2b1a",
     "summary_json": "/tmp/agora-paired-runs-d61575a-17a2b1a/batches_summary.json"
   },
   "budget_summary": {
     "production": {
-      "additions": 506,
-      "deletions": 7242,
-      "net": -6736
+      "additions": 507,
+      "deletions": 7259,
+      "net": -6752
     },
     "test": {
-      "additions": 328,
-      "deletions": 4728,
-      "net": -4400
+      "additions": 370,
+      "deletions": 4742,
+      "net": -4372
     },
     "docs_evidence": {
-      "additions": 190,
+      "additions": 195,
       "deletions": 38,
-      "net": 152
+      "net": 157
     },
     "requirement": "net production lines <= -3000",
-    "achieved": "net production lines = -6736"
+    "achieved": "net production lines = -6752"
   },
   "preserved_surfaces": [
     "/bff/agora/me",
@@ -80,9 +80,9 @@
   ],
   "validation": [
     {
-      "command": "python3 scripts/git/diff_budget.py --base d61575a5968874676744d8ae022b4affa2e6c33b",
+      "command": "python3 scripts/git/diff_budget.py --base d18956ba9ca239c6b6c2ea029bd3885eeb2166b9 --change-class simplify --budget -3000",
       "exit_code": 0,
-      "result": "Diff budget check passes with net production lines -6736 (added 506, deleted 7242), net test lines -4400 (added 328, deleted 4728), and net docs/evidence +152 (added 190, deleted 38), exceeding the -3000 net production line reduction requirement."
+      "result": "Diff budget check passes with net production lines -6752 (added 507, deleted 7259), net test lines -4372 (added 370, deleted 4742), and net docs/evidence +157 (added 195, deleted 38), exceeding the -3000 net production line reduction requirement."
     },
     {
       "command": ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
