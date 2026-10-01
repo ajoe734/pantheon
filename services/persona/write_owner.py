@@ -472,14 +472,8 @@ def _require_lifecycle_authority(
         raise PersonaOwnerError(
             f"invalid lifecycle transition {source_state!r} -> {target_state!r}"
         )
-    if authority.token_kind == "jwt" and (
-        not tenant_id or authority.tenant_id != tenant_id
-    ):
-        raise PersonaAuthorityError(
-            "LIFECYCLE_TENANT_MISMATCH",
-            "Lifecycle transition requires an exact authenticated tenant match",
-            403,
-        )
+    if authority.token_kind == "jwt" and (not tenant_id or authority.tenant_id != tenant_id):
+        raise PersonaAuthorityError("LIFECYCLE_TENANT_MISMATCH", "Exact tenant match required", 403)
     if not authority.roles.isdisjoint(policy_roles):
         return
 
@@ -840,9 +834,7 @@ class PersistentPersonaOwner:
             if current is None:
                 raise PersonaNotFound(f"Persona {persona_id!r} not found")
             if str(current.get("lifecycle_state") or "") != expected_from_state:
-                raise PersonaConcurrentUpdate(
-                    f"Persona {persona_id!r} lifecycle changed during approval verification"
-                )
+                raise PersonaConcurrentUpdate(f"Persona {persona_id!r} lifecycle changed during approval verification")
             updated = self._patched_record(
                 current,
                 lifecycle_patch,
