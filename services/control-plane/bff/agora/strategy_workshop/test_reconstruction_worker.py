@@ -187,6 +187,8 @@ def test_worker_creates_registry_draft_when_active_spec_and_grade_allow(semantic
         name: {"status": "confirmed", "summary": name, "details": {"message_numbers": [1, 2]}}
         for name in StrategyMap.model_fields
     }
+    semantic_response["strategy_map"]["universe"]["details"].update(proposal["market_scope"])
+    semantic_response["strategy_map"]["exit_rules"]["details"]["rebalance_cadence"] = proposal["execution_profile"].get("rebalance_cadence")
     store = MemoryWorkshopStore()
     base_entry = {
         "registry_id": "reg-base-1",

@@ -6,6 +6,7 @@ here. The agent's interpretation is a proposal, never financial authority.
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
@@ -91,6 +92,16 @@ class StrategyReconstructionResult(BaseModel):
     created_at: str = Field(default_factory=_utc_now)
 
 
+def validate_semantic_citations(draft: SemanticReconstructionDraft, message_count: int) -> None:
+    for name in StrategyMap.model_fields:
+        block = getattr(draft.strategy_map, name)
+        if block.status == "confirmed":
+            citations = block.details.get("message_numbers")
+            if (not block.summary or not block.summary.strip() or not isinstance(citations, list)
+                    or not citations or any(type(n) is not int or not 1 <= n <= message_count for n in citations)):
+                raise ValueError("confirmed claim lacks conversation support")
+
+
 def reconstruct_strategy_from_events(
     *, workshop_id: str, sequence_no: int, events: List[Dict[str, Any]],
     messages_content: List[str], provider_lineage: Optional[Dict[str, Any]] = None,
@@ -109,6 +120,11 @@ def reconstruct_strategy_from_events(
     blockers: List[str] = []
     if semantic_draft is None:
         blockers.append("Semantic reconstruction unavailable")
+    else:
+        try:
+            validate_semantic_citations(semantic_draft, len(messages_content))
+        except ValueError as exc:
+            blockers.append(str(exc))
     if unconfirmed:
         blockers.append("Unconfirmed strategy dimensions: " + ", ".join(unconfirmed))
     if semantic_draft and (semantic_draft.contradictions or semantic_draft.assumptions):
@@ -127,13 +143,24 @@ def reconstruct_strategy_from_events(
                 raise ValueError("reconstruction can only propose a draft")
             if document.get("governance", {}).get("approval_required") is not True:
                 raise ValueError("reconstruction cannot waive approval")
+            if semantic_draft:
+                universe = semantic_draft.strategy_map.universe.details
+                cadence = semantic_draft.strategy_map.exit_rules.details.get("rebalance_cadence")
+                if (universe.get("symbols") != document["market_scope"]["symbols"]
+                        or universe.get("frequency") != document["market_scope"]["frequency"]
+                        or cadence != document["execution_profile"].get("rebalance_cadence")):
+                    raise ValueError("StrategySpec disagrees with the semantic map's universe or cadence")
         except (ValueError, TypeError, KeyError) as exc:
             document = None
             blockers.append(f"StrategySpec validation failed: {exc}")
     if document is None:
         blockers.append("No valid executable StrategySpec provided or reconstructed")
     ready_to_draft = document is not None and not blockers
-    digest = hashlib.sha256(f"semantic-v2:{workshop_id}:{sequence_no}".encode()).hexdigest()[:20]
+    proposal_identity = json.dumps(
+        {"draft": semantic_draft.model_dump(mode="json") if semantic_draft else None,
+         "strategy_spec": document}, sort_keys=True, separators=(",", ":"),
+    )
+    digest = hashlib.sha256(f"semantic-v2:{workshop_id}:{sequence_no}:{proposal_identity}".encode()).hexdigest()[:20]
     return StrategyReconstructionResult(
         reconstruction_id=f"recon-{digest}", workshop_id=workshop_id,
         based_on_sequence_no=sequence_no, strategy_map=strategy_map,

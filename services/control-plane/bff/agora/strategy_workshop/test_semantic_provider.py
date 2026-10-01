@@ -96,16 +96,25 @@ def test_provider_timeout_is_failed_card_and_retry_is_not_stale_success(monkeypa
         run_reconstruction_worker(**(kwargs | {"tenant_id": "other"}))
 
 
-@pytest.mark.parametrize("mutation", ["invalid", "approved", "waive", "contradiction", "assumption", "valid"])
+@pytest.mark.parametrize("mutation", ["invalid", "approved", "waive", "contradiction", "assumption", "uncited", "universe_mismatch", "cadence_mismatch", "valid"])
 def test_only_valid_consistent_semantics_can_propose_a_draft_never_trade_ready(mutation):
     payload = draft()
-    payload["strategy_map"] = {name: {"status": "confirmed", "summary": name}
+    payload["strategy_map"] = {name: {"status": "confirmed", "summary": name,
+                                       "details": {"message_numbers": [1]}}
                                for name in StrategyMap.model_fields}
     spec = deepcopy(_strategy_spec_payload())
     spec["lifecycle_state"] = "draft"
     spec["governance"]["approval_required"] = True
     payload["strategy_spec"] = spec
-    if mutation == "invalid":
+    payload["strategy_map"]["universe"]["details"].update(deepcopy(spec["market_scope"]))
+    payload["strategy_map"]["exit_rules"]["details"]["rebalance_cadence"] = spec["execution_profile"].get("rebalance_cadence")
+    if mutation == "uncited":
+        payload["strategy_map"]["hypothesis"]["details"] = {}
+    elif mutation == "universe_mismatch":
+        payload["strategy_map"]["universe"]["details"]["symbols"] = ["DIFFERENT"]
+    elif mutation == "cadence_mismatch":
+        payload["strategy_map"]["exit_rules"]["details"]["rebalance_cadence"] = "different"
+    elif mutation == "invalid":
         spec.pop("market_scope")
     elif mutation == "approved":
         spec["lifecycle_state"] = "active"
@@ -116,11 +125,55 @@ def test_only_valid_consistent_semantics_can_propose_a_draft_never_trade_ready(m
     elif mutation == "assumption":
         payload["assumptions"] = ["assume 2% risk"]
     result = reconstruct_strategy_from_events(
-        workshop_id="ws", sequence_no=1, events=[], messages_content=[],
+        workshop_id="ws", sequence_no=1, events=[], messages_content=["fixture conversation"],
         semantic_draft=SemanticReconstructionDraft.model_validate(payload),
     )
     assert result.completeness.grade == ("draftable" if mutation == "valid" else "insufficient")
     assert (result.draft_proposal is not None) == (mutation == "valid")
+
+
+@pytest.mark.parametrize("error,status", [(TimeoutError("private detail"), 504),
+                                          (ValueError("private JSON failure"), 502),
+                                          (ConnectionError("private connection failure"), 502)])
+def test_unexpected_transport_errors_are_sanitized(monkeypatch, error, status):
+    def fail(*a, **kw):
+        raise error
+    monkeypatch.setattr(provider.OpenClawOpsClient, "_request", fail)
+    with pytest.raises(provider.ReconstructionProviderError) as exc:
+        invoke()
+    assert exc.value.status_code == status
+    assert "private" not in str(exc.value)
+
+
+def test_composed_schema_validates_real_specs_and_namespaces_refs(monkeypatch):
+    from jsonschema import Draft202012Validator
+    schema = provider.reconstruction_extraction_schema()
+    Draft202012Validator.check_schema(schema)
+    payload = draft() | {"strategy_spec": _strategy_spec_payload()}
+    validator = Draft202012Validator(schema)
+    validator.validate(payload)
+    payload["strategy_spec"].pop("market_scope")
+    assert list(validator.iter_errors(payload))
+
+    # A future canonical schema may introduce local refs with names that also
+    # appear in the reconstruction schema. Keep them in a separate namespace.
+    monkeypatch.setattr(provider, "load_strategy_spec_schema", lambda: {
+        "$id": "https://example.invalid/spec", "$schema": "http://json-schema.org/draft-07/schema#",
+        "$defs": {"StrategyMap": {"type": "string", "const": "scoped"}},
+        "type": "object", "required": ["value"],
+        "properties": {"value": {"$ref": "#/$defs/StrategyMap"}},
+    })
+    validator = Draft202012Validator(provider.reconstruction_extraction_schema())
+    validator.validate(draft() | {"strategy_spec": {"value": "scoped"}})
+    assert list(validator.iter_errors(draft() | {"strategy_spec": {"value": "wrong"}}))
+
+
+def test_content_changes_have_distinct_reconstruction_identity():
+    kwargs = dict(workshop_id="ws", sequence_no=1, events=[], messages_content=["conversation"])
+    first = reconstruct_strategy_from_events(**kwargs, semantic_draft=SemanticReconstructionDraft.model_validate(draft()))
+    second_draft = draft() | {"inferences": ["Different interpretation"]}
+    second = reconstruct_strategy_from_events(**kwargs, semantic_draft=SemanticReconstructionDraft.model_validate(second_draft))
+    assert first.reconstruction_id != second.reconstruction_id
 
 
 def test_input_bound_fails_before_provider_call(monkeypatch):
