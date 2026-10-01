@@ -1007,6 +1007,7 @@ def _submit_alias(wrapper: str, verb: str, canonical: str, *, wrapped: bool, tok
                 json={"tokenId": "ct-alias-1", "command": token_for, "target": target, "reason": "alias equivalence", "ttlSeconds": 300},
             )
             assert issued.status_code == 201, issued.text
+            headers["X-Confirm-Token"] = "ct-alias-1"
         rec = {
             "recommendation_id": "pm12-2026-q4-persona-alias-promote_to_canary_candidate",
             "ranking_snapshot_id": "snapshot-alias-1",

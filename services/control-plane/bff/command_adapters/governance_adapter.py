@@ -109,11 +109,6 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         target_id = decision_id or str(params.get("decision_id") or "").strip()
         if not target_id:
             raise ValueError(f"ApprovalDecision action {verb} requires decision_id.")
-        raw_v = [re.sub(r"[^a-z0-9]", "", str(params.get(k) or "").lower()) for k in ("decision", "outcome", "action", "verb", "action_id", "actionId")]
-        if (verb == "approve" and any(v in {"reject", "rejected"} for v in raw_v)) or (verb == "reject" and any(v in {"approve", "approved", "approvedwithconditions", "approvewithconditions"} for v in raw_v)):
-            raise approval_owner.InvalidApprovalRequest(f"Conflicting decision in params: {verb}")
-        if any(v in {"stage", "freeze", "escalate"} for v in raw_v) or any(params.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
-            raise approval_owner.UnsupportedApprovalAction("Unsupported approval action")
         decision = approval_owner.decide(auth_token, target_id, {"decision": verb, **params}, command_id)
         return build_domain_receipt(
             command_id=command_id,
@@ -216,8 +211,8 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         if any(re.sub(r"[^a-z0-9]", "", v.lower()) in {"requestrevision", "requestapprovalrevision", "requestchanges", "requestchange"} for v in raw_candidates if v) or params.get("revision_notes") or params.get("revisionNotes"):
             raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
         verbs = {re.sub(r"[^a-z0-9]", "", v.lower()) for v in raw_candidates if v and v.strip()}
-        has_app = any(v in {"approve", "approved"} for v in verbs)
-        has_rej = any(v in {"reject", "rejected"} for v in verbs)
+        has_app = any(v in {"approve", "approved", "approvedecision"} for v in verbs)
+        has_rej = any(v in {"reject", "rejected", "rejectdecision"} for v in verbs)
         if has_app and has_rej:
             raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Conflicting action and decision", "ReviewAction carriers contain conflicting verbs")
         norm_verb = "approve" if has_app else ("reject" if has_rej else "")

@@ -614,3 +614,45 @@ def test_review_create_cannot_admit_retired_intent(review_client, owner, carrier
     assert len(store._get_all_commands()) == 0
     assert not owner.calls
 
+
+def _submit_intent(command_client, params):
+    return command_client.post(
+        "/bff/v1/commands",
+        headers={
+            "Authorization": "Bearer " + jwt("rev-1", "tenant-a", "operator", "governance_reviewer"),
+            "Idempotency-Key": "synthetic-intent-classification",
+        },
+        json={
+            "command": "ReviewAction", "action": "approve",
+            "target": {"type": "ApprovalDecision", "id": "a1"},
+            "params": {"decision_id": "a1", "expected_version": 1, "approval_notes": "reviewed", **params},
+            "audit_context": {"reason": "review"},
+        },
+    )
+
+
+@pytest.mark.parametrize("marker", ["human_gate_item_id", "humanGateItemId"])
+def test_unrelated_marker_cannot_reclassify_an_approval_vote(command_client, owner, marker):
+    response = _submit_intent(command_client, {"action_id": "stage", marker: "irrelevant-marker"})
+    assert response.status_code in (422, 501), (response.status_code, owner.calls)
+    assert not owner.calls
+    assert owner.rows["a1"]["version"] == 1
+
+
+def test_unknown_raw_intent_cannot_be_silently_overwritten(command_client, owner):
+    response = _submit_intent(command_client, {"action_id": "not-a-supported-vote"})
+    assert response.status_code in (422, 501), (response.status_code, owner.calls)
+    assert not owner.calls
+
+
+def test_previously_supported_conditional_vote_remains_supported(client, owner):
+    response = client.post(
+        "/bff/approvals/a1/decide",
+        headers=headers(key="synthetic-conditional"),
+        json=vote(decision="approved_with_conditions"),
+    )
+    assert response.status_code == 202, response.text
+    assert len(owner.calls) == 1
+    assert owner.calls[0][2]["outcome"] == "approved_with_conditions"
+
+

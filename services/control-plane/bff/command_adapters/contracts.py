@@ -451,17 +451,34 @@ def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     norm_c = re.sub(r"[^a-z0-9]", "", str(command or "").lower())
     target = payload.get("target") if isinstance(payload.get("target"), dict) else {}
     target_type = re.sub(r"[^a-z0-9]", "", str(target.get("type") or action_params.get("entity_type") or "").lower())
-    is_hg = norm_c.startswith("humangate") or target_type in {"humangateitem", "humangate"} or bool(action_params.get("human_gate_item_id") or action_params.get("humanGateItemId"))
-    is_gov = not is_hg and (norm_c in {"reviewaction", "approvedecision", "rejectdecision", "requestreview"} or target_type in {"approvaldecision", "approval", "review"})
-    has_stage = any(action_params.get(k) not in (None, "") or payload.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage"))
-    if is_gov and (has_stage or any(v in {"stage", "freeze", "escalate"} for v in raw_verbs)):
-        raise _bff_error(501, ErrorCode.NOT_IMPLEMENTED, "named stage or unsupported approval actions are unsupported", "Unsupported approval action")
-    has_app = any(v in {"approve", "approved", "approvedwithconditions", "approvewithconditions"} for v in raw_verbs)
-    has_rej = any(v in {"reject", "rejected"} for v in raw_verbs)
-    if (norm_c == "approvedecision" and has_rej) or (norm_c == "rejectdecision" and has_app) or (has_app and has_rej):
-        raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Conflicting action and decision", f"{command} carriers contain conflicting verbs")
-    verb = action or action_params.get("action_id") or action_params.get("actionId") or next((v for v in raw_verbs if v), None)
-    verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())
+    is_appr_target = target_type in {"approvaldecision", "approval"}
+    is_appr_cmd = norm_c in {"approvedecision", "rejectdecision"}
+    is_hg = (norm_c.startswith("humangate") or target_type in {"humangateitem", "humangate"}) and not is_appr_target
+    is_gov = not is_hg and (is_appr_target or is_appr_cmd or (norm_c == "reviewaction" and not any(
+        v.startswith("humangate") or v in {"requestreview", "review", "recordsponsordecision", "sponsordecision"} for v in raw_verbs
+    )))
+    if is_gov:
+        if any(action_params.get(k) or payload.get(k) for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
+            raise _bff_error(501, ErrorCode.NOT_IMPLEMENTED, "named stage approvals are unsupported", "Unsupported approval action")
+        has_app, has_cond, has_rej = (norm_c == "approvedecision"), False, (norm_c == "rejectdecision")
+        for v in (v for v in raw_candidates[1:] if isinstance(v, str) and v.strip()):
+            nv = re.sub(r"[^a-z0-9]", "", v.lower())
+            if nv in {"stage", "freeze", "escalate"}:
+                raise _bff_error(501, ErrorCode.NOT_IMPLEMENTED, f"unsupported approval action: {v}", "Unsupported approval action")
+            if nv in {"approve", "approved", "approvedecision"}:
+                has_app = True
+            elif nv in {"approvedwithconditions", "approvewithconditions", "conditional"}:
+                has_cond = True
+            elif nv in {"reject", "rejected", "rejectdecision"}:
+                has_rej = True
+            else:
+                raise _bff_error(422, ErrorCode.VALIDATION_FAILED, f"Unknown approval action: {v}", f"Carrier contains unsupported or unknown action: {v}")
+        if (has_app or has_cond) and has_rej:
+            raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Conflicting action and decision", f"{command} carriers contain conflicting verbs")
+        verb = re.sub(r"[^a-z0-9]", "", str("approved_with_conditions" if has_cond else ("approve" if has_app else ("reject" if has_rej else action))).lower())
+    else:
+        verb = action or action_params.get("action_id") or action_params.get("actionId") or next((v for v in raw_verbs if v), None)
+        verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())
     if command == "Observe" or (command == "PersonaAction" and verb == "observe"):
         raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "Observe is retired", "Use Persona read routes")
     canonical = "AdvanceLifecycle" if command in {"PromoteCandidate", "Demote"} else _WRAPPER_VERB_ALIASES.get((command, verb))
