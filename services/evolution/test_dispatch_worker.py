@@ -96,7 +96,7 @@ def isolated_state(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def scripted_downstream():
+def scripted_downstream(execution_approvals):
     """Install a downstream the test controls, across every plane."""
     original = dict(evo_main.receipt_registry)
     adapter = install_scripted_adapter(evo_main.receipt_registry, *ALL_PLANES)
@@ -870,3 +870,158 @@ def test_healthcheck_rejects_health_state_with_no_completed_tick(tmp_path, monke
     health_file.write_text('{"status": "ok", "ticks": 0}', encoding="utf-8")
     monkeypatch.setenv("EVOLUTION_DISPATCH_HEALTH_FILE", str(health_file))
     assert dispatch_worker.healthcheck() == 1
+
+
+@pytest.mark.parametrize("invalid", [
+    "missing", "unavailable", "wrong_id", "tenant_id", "target_type", "target_id",
+    "target_version", "risk_level", "proposal_id", "proposal_content_digest",
+    "expired", "revoked", "superseded", "conditional", "undecided", "changed_proposal",
+])
+def test_worker_rejects_approval_before_any_downstream_call(
+    isolated_state, scripted_downstream, monkeypatch, invalid,
+):
+    from unittest.mock import Mock
+    from services.evolution import dispatch_outbox as approval_gate
+    from services.governance.approval_authority import ApprovalInvalid, ApprovalUnavailable
+    from services.governance.test_approval_authority import SnapshotApprovalReader
+
+    reader = approval_gate.configured_approval_reader("evolution")
+    reads = Mock(wraps=reader.get)
+    monkeypatch.setattr(approval_gate, "configured_approval_reader", lambda domain: Mock(get=reads))
+    decision = approve_research_decision()
+    reads.assert_not_called()  # Evolution /approve is not a Governance human vote.
+    did = decision["decision_id"]
+    snapshot = reader.get(decision["approval_decision_id"]).model_dump()
+    if invalid == "changed_proposal":
+        current = evo_main.store.get(did)
+        current.rationale = "Changed after the governance vote"
+        evo_main.store.put(current)
+    elif invalid in {"proposal_id", "proposal_content_digest"}:
+        snapshot["metadata"]["subject"][invalid] = "other"
+    else:
+        changes = {
+            "wrong_id": {"decision_id": "other"},
+            "expired": {"expires_at": "2000-01-01T00:00:00Z"},
+            "revoked": {"revoked_at": "2026-01-02T00:00:00Z"},
+            "superseded": {"superseded_by": "other"},
+            "conditional": {"conditions": ["pending review"]},
+            "undecided": {"decision_state": "proposed"},
+        }
+        snapshot.update(changes.get(invalid, {invalid: "other"}))
+    rejecting = SnapshotApprovalReader(snapshot)
+    if invalid in {"missing", "unavailable"}:
+        error = ApprovalUnavailable if invalid == "unavailable" else ApprovalInvalid
+        rejecting = Mock(get=Mock(side_effect=error("Governance read rejected")))
+    monkeypatch.setattr(approval_gate, "configured_approval_reader", lambda domain: rejecting)
+    monkeypatch.setattr("socket.create_connection", Mock(side_effect=AssertionError("no network")))
+    convergence = Mock(side_effect=AssertionError("must not converge"))
+    monkeypatch.setattr(dispatch_worker, "execute_with_receipt", convergence)
+    before = evo_main.store.get(did).to_dict()
+    scripted_downstream.set_succeeded(did)
+    result = run_tick(isolated_state)
+    assert result["executed"] == result["compensated"] == 0
+    assert result["retried"] == 1
+    assert result["errors"]
+    assert scripted_downstream.submissions == scripted_downstream.readbacks == []
+    convergence.assert_not_called()
+    assert isolated_state["compensations"].get(RESEARCH_TENANT, did) is None
+    assert evo_main.store.get(did).to_dict() == before
+
+
+@pytest.mark.parametrize("field", [
+    "decision_id", "tenant_id", "target_type", "target_id", "target_version",
+    "target_stage", "action_type", "approval_decision_id", "execution_plane",
+    "boundary_key", "command_id",
+])
+def test_worker_rejects_stale_outbox_intent(isolated_state, scripted_downstream, monkeypatch, field):
+    from dataclasses import replace
+
+    decision = approve_research_decision()
+    original = evo_main.dispatch_outbox.claim_due
+
+    def stale_claim(**kwargs):
+        records = original(**kwargs)
+        return [replace(record, record=replace(record.record, event=replace(
+            record.event, payload={**record.event.payload, field: "other"},
+        ))) for record in records]
+
+    monkeypatch.setattr(evo_main.dispatch_outbox, "claim_due", stale_claim)
+    result = run_tick(isolated_state)
+    assert result["claimed"] == 1
+    assert result["executed"] == result["compensated"] == 0
+    assert scripted_downstream.submissions == scripted_downstream.readbacks == []
+    assert isolated_state["compensations"].get(RESEARCH_TENANT, decision["decision_id"]) is None
+    assert decision_state(decision["decision_id"]) == "approved"
+
+
+def test_worker_rechecks_revocation_on_inflight_retry(isolated_state, scripted_downstream, monkeypatch):
+    from services.evolution import dispatch_outbox as approval_gate
+    from services.governance.test_approval_authority import SnapshotApprovalReader
+
+    decision = approve_research_decision()
+    now = datetime.now(timezone.utc)
+    assert run_tick(isolated_state, now=now)["pending"] == 1
+    snapshot = approval_gate.configured_approval_reader("evolution").get(
+        decision["approval_decision_id"],
+    ).model_dump()
+    snapshot["revoked_at"] = now.isoformat()
+    monkeypatch.setattr(approval_gate, "configured_approval_reader",
+                        lambda domain: SnapshotApprovalReader(snapshot))
+    scripted_downstream.submissions.clear()
+    scripted_downstream.readbacks.clear()
+    assert run_tick(isolated_state, now=now + timedelta(minutes=2))["retried"] == 1
+    assert scripted_downstream.submissions == scripted_downstream.readbacks == []
+
+
+@pytest.mark.parametrize("governance_status", [200, 403, 503])
+def test_worker_uses_configured_http_reader_before_submit(
+    isolated_state, scripted_downstream, monkeypatch, governance_status,
+):
+    import json
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+    from services.evolution import dispatch_outbox as approval_gate
+    from services.governance.approval_authority import configured_approval_reader
+
+    decision = approve_research_decision()
+    did = decision["decision_id"]
+    snapshot = approval_gate.configured_approval_reader("evolution").get(
+        decision["approval_decision_id"],
+    ).model_dump()
+    reads = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            reads.append((self.path, self.headers.get("Authorization"), len(scripted_downstream.submissions)))
+            self.send_response(governance_status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(snapshot).encode())
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever)
+    thread.start()
+    monkeypatch.setenv("EVOLUTION_GOVERNANCE_BASE_URL", f"http://127.0.0.1:{server.server_port}")
+    monkeypatch.setenv("EVOLUTION_GOVERNANCE_SERVICE_TOKEN", "synthetic-worker-test-token")
+    monkeypatch.delenv("EVOLUTION_GOVERNANCE_SERVICE_TOKEN_FILE", raising=False)
+    monkeypatch.setattr(approval_gate, "configured_approval_reader", configured_approval_reader)
+    scripted_downstream.set_succeeded(did)
+    try:
+        result = run_tick(isolated_state)
+        assert reads[0] == (f"/api/governance/approvals/{decision['approval_decision_id']}",
+                            "Bearer synthetic-worker-test-token", 0)
+        if governance_status == 200:
+            assert result["executed"] == 1
+            assert len(scripted_downstream.submissions) == 1
+            assert len(reads) == 2  # Submit gate and HTTP convergence independently re-read.
+        else:
+            assert result["retried"] == 1
+            assert result["compensated"] == result["executed"] == 0
+            assert scripted_downstream.submissions == scripted_downstream.readbacks == []
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()

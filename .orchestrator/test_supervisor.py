@@ -2441,6 +2441,30 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self.assertEqual(len(list(receipts.glob("*.json"))), 1)
         self.assertEqual(len(list(archives.glob("*.json"))), 1)
 
+    def test_queued_child_repair_is_rejected_without_mutating_source(self) -> None:
+        for provenance in (
+            {"unblock_request": {"source_task_id": "parent"}},
+            {"auto_created_by": "auto_integrator"},
+            {"auto_created_by": "supervisor:auto_integrator_unblock_request"},
+            {"id": "INTEGRATION-UNBLOCK-legacy"},
+        ):
+            with self.subTest(provenance=provenance):
+                state = supervisor.load_status(self.config)
+                repair = dict(self.source, **provenance)
+                state["tasks"] = [t for t in state["tasks"] if t["id"] != repair["id"]] + [repair]
+                supervisor.write_status(self.config, state, source="test-repair-seed")
+                task_id = repair["id"]
+                request = self._publish(
+                    source_task_id=task_id,
+                    unblock_task_id=self._task_id(source_task_id=task_id),
+                )
+                before = supervisor.load_status(self.config)
+                self.assertFalse(self._materialize())
+                self.assertEqual(supervisor.load_status(self.config), before)
+                receipt = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "rejected" / request.name
+                self.assertIn("depth limit (1)", json.loads(receipt.read_text())["detail"])
+                self.assertFalse(request.exists())
+
     def test_same_delivery_different_reason_coalesces_without_mutating_original(self) -> None:
         self._publish()
         self.assertTrue(self._materialize())
