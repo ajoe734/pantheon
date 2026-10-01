@@ -7,7 +7,7 @@
   "target_repo": "ajoe734/pantheon",
   "task_class": "corrective",
   "delivery_state": "ready_for_independent_review",
-  "base_sha": "ebf3ad0f4ee97912244960945ba1339b84416bed",
+  "base_sha": "51adc8c34086f92f895dc993ff249549ef9798f5",
   "scope": {
     "owned": [
       "services/capital/capital_guard.py",
