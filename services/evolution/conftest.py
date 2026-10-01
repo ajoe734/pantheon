@@ -1,3 +1,4 @@
+from services.evolution import dispatch_outbox as approval_gate
 """Explicit governance transport fixture for lifecycle/receipt regression suites."""
 import pytest
 
@@ -28,4 +29,4 @@ def execution_approvals(monkeypatch):
                 },
             )).get(decision_id)
 
-    monkeypatch.setattr(main, "configured_approval_reader", lambda domain: Reader())
+    monkeypatch.setattr(approval_gate, "configured_approval_reader", lambda domain: Reader())
