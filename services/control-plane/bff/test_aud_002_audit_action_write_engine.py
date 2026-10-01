@@ -199,9 +199,9 @@ def test_runtime_action_writes_audit_action_visible_in_bff_audit() -> None:
             json={
                 "command": "RuntimeAction",
                 "target": {"type": "Runtime", "id": "runtime-042"},
-                "action": "pause",
+                "action": "inspect",
                 "params": {
-                    "action_id": "pause",
+                    "action_id": "inspect",
                     "entity_type": "runtime",
                     "entity_id": "runtime-042",
                     "reason": "AUD-002 runtime audit write proof",
