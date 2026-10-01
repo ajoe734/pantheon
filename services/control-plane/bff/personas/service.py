@@ -95,6 +95,8 @@ from ..models import (
     utc_now,
 )
 
+from ..pm12 import evaluator_results
+
 try:
     from ..capital.service import _pm12_semantic_values_match
 except (ImportError, ValueError):
@@ -5599,17 +5601,36 @@ def _pm12_quarterly_recommendations(
     quarter_window: Dict[str, Any],
     evidence_refs: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
+    result = evaluator_results.saved_evaluator_result(quarter_window["quarter"]) or {}
     recommendations: List[Dict[str, Any]] = []
-    for item in ranked_items:
-        for action_id in _pm12_recommendation_action_ids(item):
-            recommendations.append(
-                _pm12_quarterly_recommendation_item(
-                    item,
-                    action_id=action_id,
-                    quarter_window=quarter_window,
-                    evidence_refs=evidence_refs,
-                )
+    snapshots: Dict[str, Dict[str, Any]] = {}
+    # ranked_items is already tenant/persona-visibility filtered for the caller.
+    visible_persona_ids = {i.get("persona_id") for i in ranked_items if isinstance(i, dict)}
+    for saved in result.get("items") or []:
+        if saved.get("persona_id") not in visible_persona_ids:
+            continue  # fail closed: caller cannot see this persona
+        snapshot_id = str(saved.get("ranking_snapshot_id") or "")
+        if snapshot_id not in snapshots:
+            record = _get_ranking_write_owner().get_ranking_snapshot(snapshot_id)
+            snapshots[snapshot_id] = record if isinstance(record, dict) else {}
+        item = next(
+            (
+                i for i in snapshots[snapshot_id].get("items") or []
+                if isinstance(i, dict) and i.get("persona_id") == saved.get("persona_id")
+            ),
+            None,
+        )
+        if item is None:
+            continue  # fail closed: evaluated snapshot cannot be resolved
+        recommendations.append(
+            _pm12_quarterly_recommendation_item(
+                {**json.loads(json.dumps(item)), "ranking_snapshot_id": snapshot_id, "evidence_refs": []},
+                action_id=saved["action_id"],
+                quarter_window=quarter_window,
+                evidence_refs=[],
+                saved={**saved, "evaluator_run_id": result.get("run_id"), "evaluated_at": result.get("evaluated_at")},
             )
+        )
     recommendations.sort(
         key=lambda entry: (
             _HUMAN_INBOX_PRIORITY_RANK.get(str(entry.get("priority") or "unknown"), 0),
@@ -9212,28 +9233,23 @@ def _pm12_resolve_quarterly_recommendation_submit_params(
             precondition_failed="quarter",
         )
 
-    matched_item: Optional[Dict[str, Any]] = None
-    matched_action_id = ""
-    for item in snapshot.get("items") or []:
-        if not isinstance(item, dict):
-            continue
-        persona_id = str(item.get("persona_id") or "").strip()
-        for action_id in _pm12_recommendation_action_ids(item):
-            expected_id = f"pm12-{quarter.lower()}-{persona_id}-{action_id}"
-            if expected_id == recommendation_id:
-                matched_item = item
-                matched_action_id = action_id
-                break
-        if matched_item is not None:
-            break
-    if matched_item is None:
+    saved = evaluator_results.saved_recommendation(quarter, snapshot_id, recommendation_id)
+    matched_item = next(
+        (
+            i for i in snapshot.get("items") or []
+            if isinstance(i, dict) and str(i.get("persona_id") or "").strip() == (saved or {}).get("persona_id")
+        ),
+        None,
+    )
+    if saved is None or saved.get("ranking_snapshot_id") != snapshot_id or matched_item is None:
         raise _bff_error(
             422,
             ErrorCode.VALIDATION_FAILED,
             "recommendation is not in the admitted ranking snapshot",
-            "The recommendation id/action/persona tuple was not materialized by the snapshot.",
+            "The recommendation was not saved by the persona evaluator for this snapshot.",
             precondition_failed="recommendation_id",
         )
+    matched_action_id = saved["action_id"]
     review_revision_id = _promotion_review_revision_id(
         recommendation_id,
         snapshot_id,
@@ -9278,6 +9294,7 @@ def _pm12_resolve_quarterly_recommendation_submit_params(
         action_id=matched_action_id,
         quarter_window=quarter_window,
         evidence_refs=[],
+        saved=saved,
     )
     source_recommendation["human_review_state"] = {
         "status": "recommended_not_submitted",
@@ -11587,56 +11604,48 @@ _PM12_QUARTERLY_RECOMMENDATION_ACTIONS = {
         "priority": "high",
         "riskLevel": "medium",
         "risk_level": "medium",
-        "rationale": "Quarterly score and risk posture support canary-review consideration.",
     },
     "increase_research_budget": {
         "label": "Increase research budget",
         "priority": "medium",
         "riskLevel": "low",
         "risk_level": "low",
-        "rationale": "Quarterly score supports additional research-only budget.",
     },
     "grant_tool_access": {
         "label": "Grant tool access",
         "priority": "medium",
         "riskLevel": "low",
         "risk_level": "low",
-        "rationale": "Quarterly score and execution posture support expanded tool access review.",
     },
     "reduce_capital_access": {
         "label": "Reduce capital access",
         "priority": "high",
         "riskLevel": "high",
         "risk_level": "high",
-        "rationale": "Risk or overall score calls for capital-access reduction review.",
     },
     "require_retraining": {
         "label": "Require retraining",
         "priority": "medium",
         "riskLevel": "medium",
         "risk_level": "medium",
-        "rationale": "Quarterly component scores indicate retraining should be reviewed.",
     },
     "freeze_persona": {
         "label": "Freeze persona",
         "priority": "critical",
         "riskLevel": "critical",
         "risk_level": "critical",
-        "rationale": "Quarterly score is below the freeze-review threshold.",
     },
     "suspend_persona": {
         "label": "Suspend persona",
         "priority": "critical",
         "riskLevel": "critical",
         "risk_level": "critical",
-        "rationale": "Quarterly score is below the suspension-review threshold.",
     },
     "retire_persona": {
         "label": "Retire persona",
         "priority": "critical",
         "riskLevel": "critical",
         "risk_level": "critical",
-        "rationale": "Quarterly score is below the retirement-review threshold.",
     },
 }
 _PM12_LEAGUE_TIER_DEFINITIONS = [
@@ -12400,56 +12409,6 @@ def _pm12_quarter_window(quarter: Optional[str], snapshot_at: str) -> Dict[str, 
     }
 
 
-# --- _pm12_add_recommendation_action ---
-def _pm12_add_recommendation_action(action_ids: List[str], action_id: str) -> None:
-    if action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTIONS and action_id not in action_ids:
-        action_ids.append(action_id)
-
-
-# --- _pm12_recommendation_action_ids ---
-def _pm12_recommendation_action_ids(item: Dict[str, Any]) -> List[str]:
-    components = item.get("components") if isinstance(item.get("components"), dict) else {}
-    overall = _management_number(item.get("score")) or _management_number(item.get("overall_score")) or 0.0
-    risk_score = _management_number(components.get("risk_score"))
-    execution_score = _management_number(components.get("execution_score"))
-    activity_score = _management_number(components.get("activity_score"))
-    action_ids: List[str] = []
-
-    if overall >= 85.0 and (risk_score is None or risk_score >= 70.0) and (
-        execution_score is None or execution_score >= 65.0
-    ):
-        _pm12_add_recommendation_action(action_ids, "promote_to_canary_candidate")
-        _pm12_add_recommendation_action(action_ids, "increase_research_budget")
-        _pm12_add_recommendation_action(action_ids, "grant_tool_access")
-    elif overall >= 70.0 and (risk_score is None or risk_score >= 60.0):
-        _pm12_add_recommendation_action(action_ids, "increase_research_budget")
-        _pm12_add_recommendation_action(action_ids, "grant_tool_access")
-
-    if risk_score is not None and risk_score < 55.0:
-        _pm12_add_recommendation_action(action_ids, "reduce_capital_access")
-    if (execution_score is not None and execution_score < 55.0) or (
-        activity_score is not None and activity_score < 45.0
-    ):
-        _pm12_add_recommendation_action(action_ids, "require_retraining")
-    if overall < 55.0:
-        _pm12_add_recommendation_action(action_ids, "require_retraining")
-        _pm12_add_recommendation_action(action_ids, "reduce_capital_access")
-    if overall < 45.0:
-        _pm12_add_recommendation_action(action_ids, "freeze_persona")
-    if overall < 35.0:
-        _pm12_add_recommendation_action(action_ids, "suspend_persona")
-    if overall < 25.0:
-        _pm12_add_recommendation_action(action_ids, "retire_persona")
-
-    if not action_ids:
-        _pm12_add_recommendation_action(action_ids, "require_retraining")
-    return [
-        action_id
-        for action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
-        if action_id in action_ids
-    ]
-
-
 # --- _pm12_record_lifecycle_is_active ---
 def _pm12_record_lifecycle_is_active(
     record: Dict[str, Any],
@@ -12943,16 +12902,13 @@ def _pm12_quarterly_recommendation_item(
     action_id: str,
     quarter_window: Dict[str, Any],
     evidence_refs: List[Dict[str, Any]],
+    saved: Dict[str, Any],
 ) -> Dict[str, Any]:
     action = _PM12_QUARTERLY_RECOMMENDATION_ACTIONS[action_id]
     persona_id = str(item.get("persona_id") or item.get("personaId") or item.get("id") or "")
     score = _management_number(item.get("score")) or _management_number(item.get("overall_score")) or 0.0
     evidence_sample = list(item.get("evidence_refs") or [])[:5]
-    evidence_ref_ids = [
-        str(ref.get("refId") or ref.get("ref_id") or ref.get("id"))
-        for ref in evidence_sample
-        if ref.get("refId") or ref.get("ref_id") or ref.get("id")
-    ]
+    evidence_ref_ids = list(saved.get("evidence_ref_ids") or [])
     recommendation_id = f"pm12-{quarter_window['quarter'].lower()}-{persona_id}-{action_id}"
     review_id = _promotion_review_revision_id(
         recommendation_id,
@@ -13055,7 +13011,11 @@ def _pm12_quarterly_recommendation_item(
         "priority": action["priority"],
         "risk_level": action["risk_level"],
         "target": {"type": "persona", "id": persona_id},
-        "rationale": f"{action['rationale']} Score={score:.2f}; tier={item.get('tier') or 'unknown'}.",
+        "rationale": saved["rationale"],
+        "recommendation_source": "persona_evaluator_agent",
+        "evaluator_run_id": saved.get("evaluator_run_id"),
+        "evaluated_at": saved.get("evaluated_at"),
+        "governance_request": saved.get("governance_request"),
         "rationale_codes": [
             f"tier:{item.get('tier') or 'unknown'}",
             f"action:{action_id}",

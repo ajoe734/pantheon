@@ -1,0 +1,32 @@
+{
+  "task_id": "PERSONA-EVALUATOR-AGENT-002",
+  "change_class": "corrective",
+  "net_prod_line_budget": 400,
+  "production_delta": {
+    "bff_recommendation_deletion_net": -81,
+    "bff_files": {
+      "personas/service.py": "+45/-89",
+      "pm12/service.py": "+21/-86",
+      "personas/routes/lifecycle.py": "+2/-8",
+      "main.py": "+0/-2",
+      "pm12/evaluator_results.py": "+36/-0"
+    },
+    "owner_additions": {
+      "services/persona-evaluator-agent/persona_evaluator_agent.py": 374,
+      "services/persona-evaluator-agent/Dockerfile": 11,
+      "docker-compose.yml": 27
+    },
+    "overall_net": 331
+  },
+  "verification": {
+    "agent_unit_tests": "services/persona-evaluator-agent: 14 passed (adds unavailable-evidence degraded, unknown-outcome per-run limit, pending-identity replay across snapshots)",
+    "bff": "tests/test_persona_evaluator_projection.py: 5 tests; affected BFF suites show no new failures vs frozen base (24 + 2 pre-existing environment failures unchanged)"
+  },
+  "not_verified": [
+    "real dev acceptance with the configured openclaw provider and UI refresh",
+    "human approval and lifecycle application by owner tasks"
+  ],
+  "continuation": "task/PERSONA-EVALUATOR-AGENT-002-v2 from dev 66e162977 carries the reviewed 6377295aa..561aa5d44 task diff with compliant trailers; earlier figures above are refreshed to measured deltas; v1 history kept as-is",
+  "continuation_tests": "agent+projection+promotion governance 46 passed; humangate+composition+pm12 eligibility+ppl_alloc_009 71 passed",
+  "tenant_isolation_repair": "_pm12_quarterly_recommendations projects saved evaluator items only for personas in the caller tenant-filtered ranked_items (fail closed); regression test test_saved_recommendations_are_limited_to_personas_visible_to_the_caller. Snapshot values stay immutable. projection+promotion governance 33 passed (1 load-timing flake in slow_contributor passed in isolation); test_ppl_alloc_012 24 failures are identical at baseline (HTTP 403 env)."
+}
