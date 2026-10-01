@@ -1473,6 +1473,8 @@ services:
       PERSONA_URL: ${PERSONA_URL:-http://persona:8002}
       PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}
       PANTHEON_PERSONA_SERVICE_ACTOR_ID: operator-bff
+      PERSONA_EVALUATOR_URL: http://persona-evaluator-agent:8105
+      PERSONA_EVALUATOR_READ_TOKEN: ${PERSONA_EVALUATOR_READ_TOKEN:-persona-evaluator-read-internal}
       PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
       PANTHEON_SOURCE_INGEST_API_URL: http://source-ingest:8097
       # DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001: the dev paper bootstrap
@@ -3009,6 +3011,30 @@ services:
       openclaw-gateway-adapter:
         condition: service_started
 
+  persona-evaluator-agent:
+    build:
+      context: .
+      dockerfile: services/persona-evaluator-agent/Dockerfile
+    restart: unless-stopped
+    environment:
+      PERSONA_EVALUATOR_BFF_URL: http://operator-bff:8001
+      PERSONA_EVALUATOR_BFF_TOKEN: ${PERSONA_EVALUATOR_BFF_TOKEN:-}
+      PANTHEON_GOVERNANCE_API_URL: http://governance:8082
+      PERSONA_EVALUATOR_GOVERNANCE_TOKEN: ${PERSONA_EVALUATOR_GOVERNANCE_TOKEN:-}
+      PERSONA_EVALUATOR_READ_TOKEN: ${PERSONA_EVALUATOR_READ_TOKEN:-persona-evaluator-read-internal}
+      PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      PERSONA_EVALUATOR_INTERVAL_SECONDS: ${PERSONA_EVALUATOR_INTERVAL_SECONDS:-900}
+      PERSONA_EVALUATOR_STATE_PATH: /data/persona-evaluator-agent/state.json
+    volumes:
+      - persona-evaluator-agent-data:/data/persona-evaluator-agent
+    depends_on:
+      governance:
+        condition: service_healthy
+      openclaw-gateway-adapter:
+        condition: service_started
+
 volumes:
   dev-paper-deployment-tokens:
   dev-paper-registry-tokens:
@@ -3034,6 +3060,7 @@ volumes:
   nats-data:
   openclaw-data:
   openclaw-adapter-data:
+  persona-evaluator-agent-data:
   policy-learning-data:
   postgres-data:
   promotion-data:

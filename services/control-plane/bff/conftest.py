@@ -36,3 +36,26 @@ def _bff_stub_auth_default(monkeypatch):
                 ]
             ),
         )
+
+
+@pytest.fixture(autouse=True)
+def _saved_evaluator_result_stub(monkeypatch):
+    """The BFF only projects the persona evaluator's saved result; stub that boundary."""
+    from services.control_plane.bff.pm12 import evaluator_results
+    from services.control_plane.bff.personas import service as personas_service
+    from services.control_plane.bff.tests.evaluator_saved_result_stub import SavedEvaluator
+
+    stub = SavedEvaluator()
+    attach = personas_service._pm12_attach_ranking_snapshot
+
+    def recording_attach(items, **kwargs):
+        result = attach(items, **kwargs)
+        record = personas_service._get_ranking_write_owner().get_ranking_snapshot(result[1])
+        if record is not None:
+            stub.record(record)
+        return result
+
+    monkeypatch.setattr(personas_service, "_pm12_attach_ranking_snapshot", recording_attach)
+    monkeypatch.setattr(evaluator_results, "saved_evaluator_result", stub.result)
+    monkeypatch.setattr(evaluator_results, "saved_recommendation", stub.recommendation)
+    return stub
