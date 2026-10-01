@@ -88,11 +88,15 @@ def project_contexts(*, allocations: Sequence[Any] = (), lines: Sequence[Any] = 
     facts: dict[str, Any] = {
         "target_weights": weights, "gross_exposure": gross, "net_exposure": sum(weights.values()),
         "leverage": gross, "turnover": sum(abs(float(_val(l, "delta", 0) or 0)) for l in lines),
-        **{k: float(_val(l, k)) for l in lines for k in ("capital_scale_pct", "gross_scale_pct") if _val(l, k) is not None},
     }
     s = STAGE_DEPLOYMENT_SCOPE.get(str(stage).strip().lower(), stage) if stage else None
     stages = sorted(({line_deployment_scope(a) for a in res.values()} - {None}) | ({s} if s else set()), key=lambda x: str(x or ""))
-    return [{"stage": st, **facts} for st in stages] or [facts]
+    canary_lines = [l for l in lines if (line_deployment_scope(l) or (line_deployment_scope(res.get(str(_val(l, "allocation_id")))) if _val(l, "allocation_id") else None) or s) == "canary"]
+    contexts = [
+        {"stage": st, **facts, **({k: float(_val(l, k)) for k in ("capital_scale_pct", "gross_scale_pct") if _val(l, k) is not None} if l else {})}
+        for st in stages for l in (canary_lines if st == "canary" and canary_lines else [None])
+    ]
+    return contexts or [facts]
 
 
 def is_paper_operation(*, pool: Any, target_type: str, binding: Any = None, allocations: Sequence[Any] = (), proposal_lines: Sequence[Any] = ()) -> bool:

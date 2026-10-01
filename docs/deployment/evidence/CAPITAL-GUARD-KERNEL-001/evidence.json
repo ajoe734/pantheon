@@ -95,7 +95,7 @@
       "6": "CAPITAL_RISK_POLICY_DIR now defaults to services/capital/risk_policies; Compose reader/runtime-manager wiring deliberately left to BFF-APPROVALS-FORWARD-001 per task note (hosted acceptance is paired delivery); conftest seam now validates a real ApprovalEvidence"
     }
   },
-  "verification_run": "pytest services/capital + governance approval tests: 233 passed, 1 skipped",
+  "verification_run": "pytest services/capital + governance approval tests: 238 passed, 1 skipped",
   "review_rework_2": {
     "head_reviewed": "2c23d05ad",
     "items": {
@@ -142,6 +142,14 @@
       "1": "In services/capital/capital_guard.py project_contexts, compute policy contexts from authoritative persisted state, preserving existing allocation stages on rebalance, rejecting incompatible proposal stage claims with CapitalGuardError, and unioning held stages with binding deployment scope so existing live stages are retained on binding activation",
       "2": "In services/capital/capital_guard.py, added max_canary_capital_scale_pct and max_canary_gross_scale_pct to required observations for canary stage contexts, failing closed when unobserved and evaluating supplied line scale observations",
       "3": "Added regression tests in services/capital/test_capital_guard_routes.py covering equal-weight canary-to-live promotion guard, unobserved canary scale fail-closed, observed canary scale limit enforcement, binding activation live stage retention, and rebalance stage masking rejection"
+    }
+  },
+  "review_rework_8": {
+    "head_reviewed": "04dd215694a7378294004df144c76761ceac83a4",
+    "items": {
+      "1": "In services/capital/capital_guard.py project_contexts, evaluate every applicable canary line independently, preventing last-write-wins collapse of canary scale observations and rejecting missing observations independently regardless of proposal line order",
+      "2": "In services/capital/main.py update_pool_status, re-read authoritative pool state under _CAPITAL_STATE_APPLY_LOCK before determining if activation requires capital_guard authorization, preventing concurrent suspension/reactivation race conditions",
+      "3": "Added regressions in services/capital/test_capital_guard_routes.py: test_canary_limit_checks_every_line_order_invariant, test_canary_missing_observation_rejected_independently, and test_pool_reactivation_reads_status_under_apply_lock"
     }
   }
 }

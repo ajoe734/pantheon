@@ -1,5 +1,6 @@
 """Route regressions: limits are evaluated on the complete resulting pool with every configured limit observed."""
 import sys
+import pytest
 
 from services.capital.conftest import _healthy_guard_collaborators  # noqa: F401  (autouse collaborators)
 from services.capital.test_service import _apply_payload, _binding_payload, _pool_payload, _rebalance_payload, client  # noqa: F401
@@ -193,4 +194,73 @@ def test_rebalance_cannot_hide_persisted_live_stage(client, monkeypatch):
     assert c.post("/api/rebalances", json=_rebalance_payload(rebalance_id="rb-masked", lines=[claimed_paper])).status_code == 201
     response = c.post("/api/rebalances/rb-masked/apply", json=_apply_payload(rebalance_id="rb-masked", command_id="cmd-masked"))
     assert response.status_code == 403, response.text
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_canary_limit_checks_every_line_order_invariant(client, monkeypatch, reverse):
+    c, _ = client
+    _policy(monkeypatch, max_canary_capital_scale_pct=5.0, max_canary_gross_scale_pct=25.0)
+    assert c.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    assert c.post("/api/bindings", json=_binding_payload()).status_code == 201
+    assert c.post("/api/bindings", json=_binding_payload(binding_id="binding-beta", persona_id="persona-beta", capital_sleeve_id="sleeve-beta")).status_code == 201
+    base = _rebalance_payload()["lines"][0]
+    excessive = {**base, "stage": "canary_running", "capital_scale_pct": 10.0, "gross_scale_pct": 10.0}
+    low = {**base, "persona_id": "persona-beta", "capital_sleeve_id": "sleeve-beta", "stage": "canary_running", "capital_scale_pct": 2.0, "gross_scale_pct": 10.0}
+    lines = [low, excessive] if reverse else [excessive, low]
+    created = c.post("/api/rebalances", json=_rebalance_payload(lines=lines))
+    assert created.status_code == 201, created.text
+    response = c.post("/api/rebalances/rb-001/apply", json=_apply_payload())
+    assert response.status_code == 403, response.text
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_canary_missing_observation_rejected_independently(client, monkeypatch, reverse):
+    c, _ = client
+    _policy(monkeypatch, max_canary_capital_scale_pct=5.0, max_canary_gross_scale_pct=25.0)
+    assert c.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    assert c.post("/api/bindings", json=_binding_payload()).status_code == 201
+    assert c.post("/api/bindings", json=_binding_payload(binding_id="binding-beta", persona_id="persona-beta", capital_sleeve_id="sleeve-beta")).status_code == 201
+    base = _rebalance_payload()["lines"][0]
+    valid = {**base, "stage": "canary_running", "capital_scale_pct": 2.0, "gross_scale_pct": 10.0}
+    missing = {**base, "persona_id": "persona-beta", "capital_sleeve_id": "sleeve-beta", "stage": "canary_running"}
+    lines = [missing, valid] if reverse else [valid, missing]
+    created = c.post("/api/rebalances", json=_rebalance_payload(lines=lines))
+    assert created.status_code == 201, created.text
+    response = c.post("/api/rebalances/rb-001/apply", json=_apply_payload())
+    assert response.status_code == 403, response.text
+
+
+def test_pool_reactivation_reads_status_under_apply_lock(client, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    c, _ = client
+    module = sys.modules["services.capital.main"]
+    assert c.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    monkeypatch.setattr(module.capital_guard, "_safe_mode_reader", lambda _: "risk_off")
+    read_active, suspended = threading.Event(), threading.Event()
+    real_get = module.CapitalBoundaryService.get_pool
+    first = True
+
+    def delayed_get(service, pool_id):
+        nonlocal first
+        pool = real_get(service, pool_id)
+        if first:
+            first = False
+            read_active.set()
+            assert suspended.wait(10), "suspension did not complete"
+        return pool
+
+    monkeypatch.setattr(module.CapitalBoundaryService, "get_pool", delayed_get)
+    payload = {"actor_id": "capital-admin-1", "actor_role": "capital.admin", "status": "active"}
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(c.patch, "/api/capital-pools/pool-001/status", json=payload)
+        try:
+            assert read_active.wait(10), "active snapshot was not read"
+            response = c.patch("/api/capital-pools/pool-001/status", json={**payload, "status": "suspended"})
+            assert response.status_code == 200, response.text
+        finally:
+            suspended.set()
+        result = future.result(timeout=10)
+    assert result.status_code == 403, result.text
+
 

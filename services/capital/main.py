@@ -330,8 +330,9 @@ class CapitalBoundaryService:
 
     def update_pool_status(self, pool_id: str, body: UpdateCapitalPoolStatusRequest) -> CapitalPool:
         self._authorize("CapitalPool", "update_status", body.actor_role)
-        pool = self.get_pool(pool_id)
+        self.get_pool(pool_id)
         with self._CAPITAL_STATE_APPLY_LOCK:
+            pool = self.get_pool(pool_id)
             if body.status == "active" and pool.status != "active":
                 self._authorize_pool_activation(pool, body.approval_decision_id)
             updated = self.pool_store.update_status(pool_id, body.status)
