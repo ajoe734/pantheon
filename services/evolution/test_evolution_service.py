@@ -18,6 +18,8 @@ Run:
 """
 from __future__ import annotations
 
+from services.evolution import dispatch_outbox as approval_gate
+
 import os
 import sys
 import tempfile
@@ -261,7 +263,7 @@ def advance_to_reviewed(decision_id: str, apv_id: str = "apv-001") -> dict:
 
 
 @pytest.fixture(autouse=True)
-def scripted_receipts():
+def scripted_receipts(execution_approvals):
     """Give /execute a downstream it can really read back.
 
     An EvolutionDecision now only reaches ``executed`` on a terminal receipt the
@@ -589,7 +591,7 @@ def test_approve_wrong_role_rejected():
     assert r.status_code == 422
 
 
-def test_execute_wrong_role_rejected():
+def test_execute_uses_governance_authority_not_body_role():
     d = propose()
     advance_to_reviewed(d["decision_id"])
     advance_to_approved(d["decision_id"])
@@ -598,7 +600,8 @@ def test_execute_wrong_role_rejected():
         "actor_role": "reviewer_on_duty",  # not a valid execution role
         "actor_id": "actor-003",
     })
-    assert r.status_code == 422
+    assert r.status_code == 200, r.text
+    assert r.json()["review_chain"][-1]["actor_role"] == "evolution_controller"
 
 
 def test_medium_risk_operator_cannot_approve_without_risk_owner():
@@ -2305,3 +2308,104 @@ def test_learn_feedback_writeback_success():
     assert data["summary"] == "Sharpe degraded; retrain requested."
     assert any(ref["ref_id"] == d_id for ref in data["evidence_refs"])
 
+
+@pytest.mark.parametrize("route", ["execute", "rollback-followthrough"])
+@pytest.mark.parametrize("invalid", [
+    "missing", "wrong_id", "tenant_id", "target_type", "target_id", "risk_level",
+    "target_version", "proposal_id", "proposal_content_digest", "changed_proposal",
+    "expired", "revoked", "superseded", "conditional", "undecided", "unavailable",
+])
+def test_execution_rejects_invalid_approval_before_effects(
+    monkeypatch, scripted_receipts, route, invalid,
+):
+    from copy import deepcopy
+    from unittest.mock import Mock
+    from services.governance.approval_authority import ApprovalInvalid, ApprovalUnavailable
+    from services.governance.test_approval_authority import SnapshotApprovalReader
+
+    proposed = propose()
+    did = proposed["decision_id"]
+    advance_to_reviewed(did)
+    advance_to_approved(did)
+    decision = evo_main.store.get(did)
+    snapshot = approval_gate.configured_approval_reader("evolution").get(
+        decision.approval_decision_id
+    ).model_dump()
+    if invalid == "changed_proposal":
+        decision.rationale = "Changed after governance approved the proposal"
+        evo_main.store.put(decision)
+    elif invalid in {"proposal_id", "proposal_content_digest"}:
+        snapshot["metadata"]["subject"][invalid] = "other"
+    else:
+        changes = {
+            "wrong_id": {"decision_id": "other"},
+            "expired": {"expires_at": "2000-01-01T00:00:00Z"},
+            "revoked": {"revoked_at": "2026-01-02T00:00:00Z"},
+            "superseded": {"superseded_by": "other"},
+            "conditional": {"conditions": ["must pass review"]},
+            "undecided": {"decision_state": "proposed"},
+        }
+        snapshot.update(changes.get(invalid, {invalid: "other"}))
+    reader = SnapshotApprovalReader(snapshot)
+    if invalid in {"missing", "unavailable"}:
+        error = ApprovalUnavailable if invalid == "unavailable" else ApprovalInvalid
+        reader = Mock(get=Mock(side_effect=error("Governance read rejected")))
+    monkeypatch.setattr(approval_gate, "configured_approval_reader", lambda domain: reader)
+    dispatch = Mock(side_effect=AssertionError("must not dispatch without approval"))
+    monkeypatch.setattr(evo_main.controller, "dispatch_approved", dispatch)
+    before = deepcopy(evo_main.store.get(did).to_dict())
+    response = client.post(f"/api/evolution/proposals/{did}/{route}", json={
+        "actor_role": "evolution_controller",  # forged role cannot grant authority
+        "actor_id": "forged-controller",
+        "active_binding_id": "binding-test",
+        "execution_receipt": receipt_body(did),
+    })
+    assert response.status_code == (503 if invalid == "unavailable" else 403), response.text
+    dispatch.assert_not_called()
+    assert scripted_receipts.readbacks == []
+    assert evo_main.store.get(did).to_dict() == before
+
+
+@pytest.mark.parametrize("body_role", ["evolution_controller", "operator", "made-up-admin"])
+def test_execution_validates_approval_via_real_http_reader(monkeypatch, body_role):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+    from services.governance.approval_authority import configured_approval_reader
+
+    did = propose()["decision_id"]
+    advance_to_reviewed(did, apv_id="approval-http-exact")
+    advance_to_approved(did)
+    snapshot = approval_gate.configured_approval_reader("evolution").get("approval-http-exact").model_dump()
+    reads = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            reads.append((self.path, self.headers.get("Authorization")))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(snapshot).encode())
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever)
+    thread.start()
+    monkeypatch.setenv("EVOLUTION_GOVERNANCE_BASE_URL", f"http://127.0.0.1:{server.server_port}")
+    monkeypatch.setenv("EVOLUTION_GOVERNANCE_SERVICE_TOKEN", "synthetic-unit-token")
+    monkeypatch.delenv("EVOLUTION_GOVERNANCE_SERVICE_TOKEN_FILE", raising=False)
+    monkeypatch.setattr(approval_gate, "configured_approval_reader", configured_approval_reader)
+    try:
+        response = client.post(f"/api/evolution/proposals/{did}/execute", json={
+            "actor_role": body_role, "actor_id": "caller",
+            "execution_receipt": receipt_body(did),
+        })
+        assert response.status_code == 200, response.text
+        assert response.json()["decision_state"] == "executed"
+        assert response.json()["review_chain"][-1]["actor_role"] == "evolution_controller"
+        assert reads == [("/api/governance/approvals/approval-http-exact", "Bearer synthetic-unit-token")]
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()

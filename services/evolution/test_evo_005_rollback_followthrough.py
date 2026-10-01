@@ -47,7 +47,7 @@ from services.evolution.testing_receipts import (  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def scripted_receipts():
+def scripted_receipts(execution_approvals):
     """Give rollback-followthrough a runtime record it can really read back.
 
     Runtime mitigation is carried out by the Rollback Controller / Runtime

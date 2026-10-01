@@ -42,6 +42,7 @@ from services.evolution.dispatch_outbox import (
     EvolutionDispatchOutbox,
     build_dispatch_outbox_store,
     reconcile_dispatch_outbox,
+    require_execution_approval,
 )
 from services.evolution.dispatch_receipts import (
     OUTCOME_FAILED,
@@ -439,6 +440,19 @@ def _deliver_one(
         )
         return
 
+    # Bind the durable intent to the current owner record before any downstream effect.
+    bound_fields = ("decision_id", "tenant_id", "target_type", "target_id", "target_version",
+                    "target_stage", "action_type", "approval_decision_id")
+    if any(payload.get(key) != decision.get(key) for key in bound_fields):
+        raise ValueError("dispatch intent no longer matches the current proposal")
+    boundary = _http_get(
+        api_url.rstrip("/") + f"/api/evolution/proposals/{decision_id}/boundary",
+        timeout_seconds, tenant_id=tenant_id, auth_token=auth_token,
+    )
+    if (any(payload.get(key) != boundary.get(key) for key in ("execution_plane", "boundary_key"))
+            or payload.get("command_id") != f"dispatch-{decision_id}"):
+        raise ValueError("dispatch intent no longer matches the current routing boundary")
+    require_execution_approval(decision)
     submission = adapter.submit(payload)
     if submission.outcome == OUTCOME_UNSUPPORTED:
         result["unsupported"] += 1
