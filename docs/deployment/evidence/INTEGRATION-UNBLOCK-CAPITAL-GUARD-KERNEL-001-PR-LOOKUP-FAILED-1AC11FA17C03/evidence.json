@@ -1,0 +1,65 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-CAPITAL-GUARD-KERNEL-001-PR-LOOKUP-FAILED-1AC11FA17C03",
+  "source_task_id": "CAPITAL-GUARD-KERNEL-001",
+  "observed_at": "2026-10-01T15:27:52Z",
+  "base_sha": "66e162977966ed255def1150727061ae88047ea3",
+  "root_cause": "The auto-integrator attempted to reconcile CAPITAL-GUARD-KERNEL-001 after PR #6078 merged into dev at 2026-10-01T15:20:45Z (merge commit 6377295aafe0b6250e5e2b00a6327b9b7d81e045). However, fetch_pr_for_task queried candidate.branch ('task/CAPITAL-GUARD-KERNEL-001') rather than the canonical delivery/review bound head branch ('task/CAPITAL-GUARD-KERNEL-001-v3'). Finding no PRs on the unversioned branch, it queried superseding versions v2..v20 with state='merged', discovering both historical merged PR #6059 (v2, landed in generation 8) and current merged PR #6078 (v3, landed in generation 13). Because multiple merged versioned PRs were returned, fetch_pr_for_task raised AmbiguousPullRequests, leading to the pr-lookup-failed unblock task.",
+  "resolution": {
+    "action": "Updated scripts/git/auto_integrator.py fetch_pr_for_task to query resolve_authoritative_head_branch(candidate) before falling back to candidate.branch and superseding versions. When a task specifies a bound head branch in delivery_binding or review_binding (such as task/CAPITAL-GUARD-KERNEL-001-v3), fetch_pr_for_task discovers the exact intended PR directly without triggering ambiguous multi-version lookups across previous lifecycle PRs.",
+    "original_pr": {
+      "number": 6078,
+      "url": "https://github.com/ajoe734/pantheon/pull/6078",
+      "state": "MERGED",
+      "merged_at": "2026-10-01T15:20:45Z",
+      "merge_commit_sha": "6377295aafe0b6250e5e2b00a6327b9b7d81e045",
+      "head_branch": "task/CAPITAL-GUARD-KERNEL-001-v3",
+      "head_sha": "6ab61d61e34a9f08a905779a7db1b0990bc38f12",
+      "canonical_status": "review_approved",
+      "reviewer": "Codex"
+    },
+    "historical_pr": {
+      "number": 6059,
+      "url": "https://github.com/ajoe734/pantheon/pull/6059",
+      "state": "MERGED",
+      "merged_at": "2026-10-01T13:20:56Z",
+      "merge_commit_sha": "33dc57e0f9909504c4629714523ca84622ebd0d7",
+      "head_branch": "task/CAPITAL-GUARD-KERNEL-001-v2",
+      "head_sha": "fb5e2ace9755cb4ee3a14d1e2670cbcb4932fb7f",
+      "task_generation": 8
+    },
+    "owned_layer": "auto_integrator PR discovery alignment with authoritative delivery head branch, and unblock evidence",
+    "unchanged_layer": "Integrator merge gate, review proof verification, canonical delivery binding, and product runtime source",
+    "composes_with": "Supervisor auto-integrator reconciling CAPITAL-GUARD-KERNEL-001 against PR #6078 without ambiguous PR lookup failure"
+  },
+  "validation": [
+    {
+      "command": "python3 -m unittest scripts/git/test_auto_integrator.py",
+      "exit_status": 0,
+      "result": "Ran 162 tests in 3.742s, OK"
+    },
+    {
+      "command": "python3 -m py_compile scripts/git/auto_integrator.py",
+      "exit_status": 0,
+      "result": "Clean compilation without errors"
+    },
+    {
+      "command": "git diff --check",
+      "exit_status": 0,
+      "result": "Clean git diff check without whitespace issues"
+    },
+    {
+      "command": "gh pr list --head task/CAPITAL-GUARD-KERNEL-001-v3 --base dev --state merged --json number",
+      "exit_status": 0,
+      "result": "Returns exactly PR #6078 ([{\"number\": 6078}])"
+    },
+    {
+      "command": "git merge-base --is-ancestor 6377295aafe0b6250e5e2b00a6327b9b7d81e045 origin/dev",
+      "exit_status": 0,
+      "result": "PR #6078 merge commit 6377295aafe0b6250e5e2b00a6327b9b7d81e045 is confirmed in origin/dev"
+    }
+  ],
+  "remaining_observations": [
+    "The pr-lookup-failed blocker is resolved. PR #6078 is merged into dev and no longer stranded. When this unblock fix lands, auto-integrator will reconcile CAPITAL-GUARD-KERNEL-001 to update its canonical integration receipt to generation 13.",
+    "This evidence PR requires independent Codex review before supervisor integration and done."
+  ]
+}
