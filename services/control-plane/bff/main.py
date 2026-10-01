@@ -4730,12 +4730,10 @@ from .pm12.service import (
     _PM12_QUARTER_PATTERN,
     _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER,
     _PM12_QUARTERLY_RECOMMENDATION_ACTIONS,
-    _pm12_add_recommendation_action,
     _pm12_current_quarter_id,
     _pm12_iso_z,
     _pm12_quarter_window,
     _pm12_quarterly_recommendation_item,
-    _pm12_recommendation_action_ids,
 )
 from .governance.promotion_review import (
     _PROMOTION_REVIEW_DECISIONS,
