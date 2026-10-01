@@ -917,6 +917,7 @@ def mount_bff_routers(
             provider_reauth=_dep("_assistant_provider_reauth", lambda: _assistant_provider_reauth),
             provider_reauth_status=_dep("_assistant_provider_reauth_status", lambda: _assistant_provider_reauth_status),
             provider_reauth_code=_dep("_assistant_provider_reauth_code", lambda: _assistant_provider_reauth_code),
+            submit_command_admission=_dep("_submit_final_command_admission"),
         )
     )
 

@@ -861,3 +861,53 @@ def test_main_app_command_confirmation_degraded_read_surface_regression() -> Non
         else:
             os.environ["BFF_READ_SURFACE_STATE"] = orig_env
 
+
+
+_VOLATILE = {"id", "expected_completion_at", "tracking_url", "trackingUrl", "commandId", "receipt_id", "command_id", "accepted_at", "submitted_at", "timestamp", "created_at", "occurred_at", "trace_id", "correlation_id", "correlationId", "error_id", "action_id", "payload_checksum", "request_hash", "command_ref", "idempotency_key"}
+
+
+def _scrub(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _scrub(v) for k, v in value.items() if k not in _VOLATILE}
+    if isinstance(value, list):
+        return [_scrub(v) for v in value]
+    return value
+
+
+def _submit_alias(wrapper: str, verb: str, canonical: str, *, wrapped: bool, token: Optional[str]):
+    from services.control_plane.bff.action_catalog import get_catalog_entry
+
+    entity_type = get_catalog_entry(canonical).entity_type
+    target_type = next((o.value for o in ObjectType if o.value == entity_type), ObjectType.RUNTIME.value)
+    body: Dict[str, Any] = {
+        "command": wrapper if wrapped else canonical,
+        "target": {"type": target_type, "id": "alias-target-1"},
+        "params": {"reason": "alias equivalence"},
+        "audit_context": {"reason": "alias equivalence"},
+    }
+    if wrapped:
+        body["action"] = verb
+    headers = {**HEADERS, "Idempotency-Key": "alias-key-1"}
+    if token:
+        headers["X-Confirm-Token"] = token
+    with tempfile.TemporaryDirectory() as td:
+        store = CommandStore(os.path.join(td, "commands.jsonl"))
+        svc = CommandAdapterService(command_store=store, read_surface=None, extract_identity=_test_extract_identity)
+        app = FastAPI()
+        app.include_router(create_command_adapters_router(service=svc, submit_command_admission=svc.submit_command_admission))
+        client = TestClient(app)
+        resp = client.post("/bff/v1/commands", headers=headers, json=body)
+        stored = [
+            {k: _scrub(r.get(k)) for k in ("command_type", "command", "target", "params", "status")}
+            for r in store._get_all_commands()
+        ]
+        return resp.status_code, _scrub(resp.json()), stored
+
+
+@pytest.mark.parametrize("token", [None, "ct-substituted-from-other-action"])
+@pytest.mark.parametrize("alias", sorted(__import__("services.control_plane.bff.command_adapters.contracts", fromlist=["x"])._WRAPPER_VERB_ALIASES.items()))
+def test_wrapped_alias_is_admitted_exactly_like_its_canonical_command(alias, token) -> None:
+    (wrapper, verb), canonical = alias
+    assert _submit_alias(wrapper, verb, canonical, wrapped=True, token=token) == _submit_alias(
+        wrapper, verb, canonical, wrapped=False, token=token
+    )

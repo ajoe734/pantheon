@@ -73,7 +73,7 @@ class IncidentCommandAdapter(DomainCommandAdapter):
             return self._execute_incident_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type in {"RiskAlertAction", "AlertAcknowledge"}:
             return self._execute_alert_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "RemediateSentinelIntervention" or action_id.lower() in {"remediatesentinelintervention", "remediate"}:
+        elif command_type == "RemediateSentinelIntervention":
             return self._execute_remediate_sentinel(command_id, entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif action_id.lower() in {"acknowledge", "alertacknowledge"}:
             return self._execute_alert_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
@@ -99,7 +99,7 @@ class IncidentCommandAdapter(DomainCommandAdapter):
         target_id = intervention_id or str(params.get("intervention_id") or "").strip()
         if not target_id:
             raise ValueError("RemediateSentinelIntervention requires intervention_id.")
-        two_man_signature_id = str(params.get("twoManSignatureId") or params.get("two_man_signature_id") or "sig-sentinel-remed").strip()
+        two_man_signature_id = params["two_man_signature_id"]
 
         payload = {
             "intervention_id": target_id,

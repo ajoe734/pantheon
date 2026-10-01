@@ -3,7 +3,7 @@
 Flow for every assistant tool invocation:
   preview → validate → [confirm in UI] → execute → receipt
 
-All mutations route through action_catalog + command_executor.
+All mutations are submitted through the shared BFF command admission.
 The assistant never submits hidden DOM actions or calls shell directly.
 """
 from __future__ import annotations
@@ -11,7 +11,9 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
+
+from fastapi import HTTPException
 
 from ..models import RiskLevel
 
@@ -265,7 +267,7 @@ def execute_governed_tool(
     confirmed: bool = False,
     confirm_token: Optional[str] = None,
     trace_id: Optional[str] = None,
-    auth_token: Optional[str] = None,
+    submit_command: Optional[Callable[[Dict[str, Any]], Any]] = None,
 ) -> ToolReceipt:
     """Execute a governed tool through the BFF action catalog and command executor.
 
@@ -278,7 +280,6 @@ def execute_governed_tool(
     - ToolValidationError   (missing reason or confirm_token)
     """
     from services.control_plane.bff.action_catalog import get_catalog_entry
-    from services.control_plane.bff.command_executor import execute_command_with_status
     from services.control_plane.bff.models import CommandType
 
     _trace_id = trace_id or f"asst-tool-{uuid.uuid4().hex[:12]}"
@@ -319,36 +320,29 @@ def execute_governed_tool(
             field_name="confirm_token",
         )
 
-    # 4. Build execution params
-    exec_params: Dict[str, Any] = {
-        **params,
-        "action_id": action_id,
-        "entity_type": entity_type,
-        "entity_id": entity_id,
-        "trace_id": _trace_id,
-        "command_id": _command_id,
-        "actor_id": actor_id,
-        "source": "assistant_tool_contract",
-    }
-    if reason:
-        exec_params["reason"] = reason
-    if confirm_token:
-        exec_params["confirm_token"] = confirm_token
-
-    # 5. Route through command_executor
+    # 4. Submit through the shared command admission
     try:
         command_type = CommandType(action_id)
     except ValueError:
         command_type = None
 
     if command_type is not None:
-        cmd_status, result, error = execute_command_with_status(
-            _command_id,
-            command_type,
-            exec_params,
-            auth_token=auth_token,
-        )
-        status = cmd_status.value
+        if submit_command is None:
+            raise ToolValidationError("Command admission is unavailable for assistant tools.")
+        try:
+            response = submit_command({
+                "command": action_id,
+                "target": {"type": entity_type, "id": entity_id},
+                "action": params.get("action_id"),
+                "params": {**params, "trace_id": _trace_id, "source": "assistant_tool_contract"},
+                "audit_context": {"reason": reason or ""},
+            }, _command_id, confirm_token)
+        except HTTPException as exc:
+            detail = exc.detail.get("error", {}) if isinstance(exc.detail, dict) else {}
+            raise ToolValidationError(str(detail.get("message") or exc.detail), field_name=(detail.get("details") or {}).get("precondition_failed")) from exc
+        result = {"command_id": _command_id, "source": "assistant_tool_contract", "receipt": getattr(response, "model_dump", lambda **_: response)(mode="json")}
+        error = None
+        status = "admitted"
     else:
         # action_id is in the allowlist and catalog but not a named CommandType;
         # fall back to the BFF action adapter path.

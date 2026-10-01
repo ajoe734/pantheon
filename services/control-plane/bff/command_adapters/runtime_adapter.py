@@ -110,11 +110,11 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
         action_id = command_type if command_type in {"PausePaperRuntime", "ResumePaperRuntime"} else str(params.get("action_id") or command_type or "").strip()
         entity_id = str(params.get("entity_id") or params.get("runtime_id") or params.get("binding_id") or params.get("runtime_binding_id") or "").strip()
 
-        if command_type in {"StartRuntime"} or action_id.lower() == "start":
+        if command_type == "StartRuntime":
             return self._execute_start(command_id, entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"PauseRuntime", "PauseExecution", "PausePaperRuntime"} or action_id.lower() in {"pause", "pauseruntime", "pauseexecution", "pausepaperruntime"}:
+        elif command_type in {"PauseRuntime", "PauseExecution", "PausePaperRuntime"} or action_id.lower() in {"pauseruntime", "pauseexecution", "pausepaperruntime"}:
             return self._execute_pause(command_id, entity_id, "pause", params, auth_token=auth_token, mfa_token=mfa_token, command_type=command_type)
-        elif command_type in {"ResumePaperRuntime"} or action_id.lower() in {"resume", "unpause", "resumepaperruntime"}:
+        elif command_type == "ResumePaperRuntime" or action_id.lower() == "resumepaperruntime":
             return self._execute_pause(command_id, entity_id, "resume", params, auth_token=auth_token, mfa_token=mfa_token, command_type=command_type)
         elif command_type in {"RestartPaperRuntime"} or action_id.lower() == "restartpaperruntime":
             return self._execute_repair_action(command_id, "RestartPaperRuntime", "/api/internal/v1/runtime-repair/paper-runtimes/{runtime_id}/restart", "runtime_id", entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
@@ -129,13 +129,13 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
             return self._execute_repair_action(command_id, "ProbeTelemetryIngest", "/api/internal/v1/runtime-repair/paper-runtimes/{runtime_id}/telemetry-ingest/probe", "runtime_id", entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type in {"IssueSafeMode"} or action_id.lower() == "issuesafemode":
             return self._execute_safe_mode(command_id, params)
-        elif command_type in {"ExecuteRollback", "HardRollback"} or action_id.lower() in {"executerollback", "hardrollback", "rollback"}:
+        elif command_type in {"ExecuteRollback", "HardRollback"} or action_id.lower() in {"executerollback", "hardrollback"}:
             return self._execute_rollback(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type in {"ApproveRollback"} or action_id.lower() == "approverollback":
             return self._execute_approve_rollback(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type in {"RejectRollback"} or action_id.lower() == "rejectrollback":
             return self._execute_reject_rollback(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"ActivateKillSwitch", "IssueRiskOff"} or action_id.lower() in {"activatekillswitch", "issueriskoff", "killswitch"}:
+        elif command_type in {"ActivateKillSwitch", "IssueRiskOff"} or action_id.lower() in {"activatekillswitch", "issueriskoff"}:
             return self._execute_kill_switch(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
         else:
             raise ActionUnavailableError(

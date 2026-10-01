@@ -341,6 +341,46 @@ def normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorComma
         ) from exc
 
 
+_WRAPPER_VERB_ALIASES = {
+    ("RuntimeAction", "start"): "StartRuntime",
+    ("RuntimeAction", "pause"): "PauseRuntime",
+    ("RuntimeAction", "resume"): "ResumePaperRuntime",
+    ("RuntimeAction", "unpause"): "ResumePaperRuntime",
+    ("RuntimeAction", "rollback"): "ExecuteRollback",
+    ("RuntimeAction", "killswitch"): "ActivateKillSwitch",
+    ("RebalanceAction", "apply"): "ApprovedApply",
+    ("CapitalPoolAction", "approve"): "ApprovePool",
+    ("DeploymentAction", "approve"): "ApproveDeployment",
+    ("DeploymentAction", "escalatediff"): "EscalateDiff",
+    ("PersonaAction", "promote"): "PromoteCandidate",
+    **{(w, v): "AlertAcknowledge" for w in ("RiskAlertAction", "IncidentAction") for v in ("acknowledge", "ack")},
+    ("IncidentAction", "remediate"): "RemediateSentinelIntervention",
+    **{("EvolutionProgramAction", v.lower() + "program"): v + "EvolutionProgram" for v in ("Approve", "Pause", "Resume", "Complete", "Retire")},
+    ("EvolutionProgramAction", "stop"): "StopEvolutionProgram",
+    ("EvolutionProgramAction", "freezegeneration"): "FreezeEvolutionGeneration",
+    ("EvolutionProgramAction", "promotecandidatepaper"): "PromoteEvolutionCandidatePaper",
+    ("EvolutionProgramAction", "promotecandidatelive"): "PromoteEvolutionCandidateLive",
+}
+
+
+def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Replace a wrapper command by the canonical command its verb maps to."""
+    params = payload.get("params")
+    params = params if isinstance(params, dict) else {}
+    verb = payload.get("action") or params.get("action_id") or params.get("actionId")
+    verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())
+    canonical = _WRAPPER_VERB_ALIASES.get((payload.get("command"), verb))
+    if canonical is None and str(payload.get("command")).endswith("Action"):
+        canonical = next((c.value for c in CommandType if c.value.lower() == verb and not c.value.endswith("Action")), None)
+    if canonical is None:
+        return payload
+    return {
+        **{k: v for k, v in payload.items() if k != "action"},
+        "command": canonical,
+        "params": {k: v for k, v in params.items() if k not in ("action_id", "actionId")},
+    }
+
+
 def foundation_environment_scope() -> EnvironmentScope:
     raw = os.getenv("PANTHEON_ENV", "dev").strip().lower()
     if "live" in raw:
