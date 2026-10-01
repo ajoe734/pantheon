@@ -361,9 +361,14 @@ def test_require_risk_policy_rejects_nonfinite_observations():
 
 
 def test_require_risk_policy_rejects_malformed_configured_limits():
-    for bad_limit in [{"gross_limit": "NaN"}, {"gross_limit": "Infinity"}, {"gross_limit": "invalid"}, {"max_single_weight": "NaN"}, {"max_sector_exposure": {"tech": "NaN"}}]:
+    for bad_limit in [
+        {"gross_limit": "NaN"}, {"gross_limit": "Infinity"}, {"gross_limit": "invalid"},
+        {"max_single_weight": "NaN"}, {"max_sector_exposure": {"tech": "NaN"}},
+        {"allowed_stages": False}, {"forbidden_asset_classes": 123},
+        {"drawdown_actions": 0.05}, {"liquidity_constraints": "invalid"},
+    ]:
         guard = _guard(policy=lambda ref, b=bad_limit: {"risk_policy_id": ref, **b})
-        with pytest.raises(CapitalGuardError, match="Malformed risk policy limit"):
+        with pytest.raises(CapitalGuardError, match="Malformed risk policy"):
             guard.authorize(**{**KW, "contexts": [{"stage": "live", "gross_exposure": 0.5}]})
 
 
@@ -383,4 +388,30 @@ def test_require_risk_policy_rejects_missing_asset_or_strategy_observations():
     guard4 = _guard(policy=lambda ref: {"risk_policy_id": ref, "forbidden_strategy_families": ["momentum"]})
     with pytest.raises(CapitalGuardError, match="strategy_family unavailable"):
         guard4.authorize(**{**KW, "contexts": [{"stage": "live", "gross_exposure": 0.5}]})
+
+
+def test_require_risk_policy_rejects_missing_liquidity_or_drawdown_observations():
+    guard = _guard(policy=lambda ref: {"risk_policy_id": ref, "liquidity_constraints": {"min_avg_daily_volume": 1000000}})
+    with pytest.raises(CapitalGuardError, match="liquidity unavailable"):
+        guard.authorize(**{**KW, "contexts": [{"stage": "live", "gross_exposure": 0.5}]})
+
+    guard2 = _guard(policy=lambda ref: {"risk_policy_id": ref, "drawdown_actions": {"risk_off": 0.05}})
+    with pytest.raises(CapitalGuardError, match="drawdown_pct unavailable"):
+        guard2.authorize(**{**KW, "contexts": [{"stage": "live", "gross_exposure": 0.5}]})
+
+
+def test_require_risk_policy_allows_with_valid_observed_liquidity_and_drawdown():
+    policy = {
+        "risk_policy_id": "risk-main",
+        "liquidity_constraints": {"min_avg_daily_volume": 1000000},
+        "drawdown_actions": {"risk_off": 0.05},
+    }
+    context = {
+        "stage": "live",
+        "gross_exposure": 0.5,
+        "liquidity": {"avg_daily_volume": 2000000},
+        "drawdown_pct": 0.02,
+    }
+    _guard(policy=lambda ref: policy).authorize(**{**KW, "contexts": [context]})
+
 

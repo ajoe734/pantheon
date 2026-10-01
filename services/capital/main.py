@@ -130,12 +130,8 @@ log = logging.getLogger(__name__)
 
 def pool_digest(pool: Any) -> str:
     return stable_payload_hash({f: getattr(pool, f, None) for f in ("pool_id", "owner_id", "owner_type", "currency", "budget", "risk_policy_ref", "single_runtime_enforced")})
-
-
 def binding_digest(binding: Any) -> str:
     return stable_payload_hash({f: getattr(binding, f, None) for f in ("binding_id", "persona_id", "capital_pool_id", "capital_sleeve_id", "role", "allowed_deployment_scope", "budget", "effective_from", "effective_to")})
-
-
 def plan_digest(proposal: Dict[str, Any]) -> str:
     return stable_payload_hash({"capital_pool_id": proposal.get("capital_pool_id"), "allocation_policy_version": proposal.get("allocation_policy_version"), "lines": [allocation_line_digest(l) for l in proposal.get("lines") or []]})
 
@@ -1076,15 +1072,9 @@ CAPITAL_HTTP_ERRORS = (
 
 
 def _pool_body(pool: CapitalPool, *, idempotent_replay: bool = False) -> CapitalPoolBody:
-    tid = getattr(pool, "tenant_id", None) or (pool.metadata or {}).get("tenant_id")
-    return CapitalPoolBody(**pool.to_dict(), tenant_id=tid, idempotent_replay=idempotent_replay, approval_digest=pool_digest(pool))
-
-
+    return CapitalPoolBody(**pool.to_dict(), tenant_id=getattr(pool, "tenant_id", None) or (pool.metadata or {}).get("tenant_id"), idempotent_replay=idempotent_replay, approval_digest=pool_digest(pool))
 def _binding_body(binding: PersonaCapitalBinding, *, idempotent_replay: bool = False) -> PersonaCapitalBindingBody:
-    tid = getattr(binding, "tenant_id", None) or (binding.metadata or {}).get("tenant_id")
-    return PersonaCapitalBindingBody(**binding.to_dict(), tenant_id=tid, idempotent_replay=idempotent_replay, approval_digest=binding_digest(binding))
-
-
+    return PersonaCapitalBindingBody(**binding.to_dict(), tenant_id=getattr(binding, "tenant_id", None) or (binding.metadata or {}).get("tenant_id"), idempotent_replay=idempotent_replay, approval_digest=binding_digest(binding))
 def _rebalance_body(record: Dict[str, Any]) -> RebalanceBody:
     return RebalanceBody(**record, plan_digest=plan_digest(record))
 

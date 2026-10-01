@@ -179,7 +179,17 @@
       "5": "Shortened commit 3eb8175 subject line to <= 72 characters to satisfy Commit trailers CI check"
     }
   },
-  "verification_run": "pytest services/capital + governance approval tests: 265 passed, 1 skipped, 1 warning; reproduction scripts: 7 passed, 1 warning"
+  "review_rework_12": {
+    "head_reviewed": "34e557344965d92883e7f198215e0646a01eab44",
+    "items": {
+      "1": "In services/capital/capital_guard.py _validate_raw_policy, validate raw list and mapping shapes (allowed_stages, forbidden_asset_classes, liquidity_constraints, drawdown_actions) before lossy parsing, rejecting malformed types before writes",
+      "2": "In services/capital/capital_guard.py _FACT_OF_LIMIT, map liquidity_constraints to liquidity and drawdown_actions to drawdown_pct, and check presence and finiteness in _is_obs_missing, failing closed with 403 and zero allocation writes when unobserved",
+      "3": "In services/capital/capital_guard.py project_contexts, extract liquidity and drawdown_pct observations from allocation lines and contexts, allowing valid configured policies to pass",
+      "4": "Added unit tests in test_capital_guard.py and permanent route regressions in test_capital_guard_routes.py asserting (403, 0) for malformed and unobserved policies, and 200 for valid positive observed policies",
+      "5": "Maintained net production lines <= 250 (diff budget checked against d18956ba9ca239c6b6c2ea029bd3885eeb2166b9)"
+    }
+  },
+  "verification_run": "pytest services/capital + governance approval tests + route regressions: 276 passed, 1 skipped, 1 warning"
 }
 
 

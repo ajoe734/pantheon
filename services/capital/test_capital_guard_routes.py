@@ -343,10 +343,14 @@ def test_nonempty_pool_must_reject_unobserved_allowlist(client, monkeypatch, pol
 
 
 @pytest.mark.parametrize("policy", [
+    {"allowed_stages": False},
+    {"forbidden_asset_classes": 123},
+    {"liquidity_constraints": {"min_avg_daily_volume": 1000000}},
+    {"drawdown_actions": {"risk_off": 0.05}},
     {"forbidden_asset_classes": ["crypto"]},
     {"forbidden_strategy_families": ["momentum"]},
 ])
-def test_rebalance_must_reject_unobserved_denylist(client, monkeypatch, policy):
+def test_rebalance_must_reject_unobserved_or_malformed_policy(client, monkeypatch, policy):
     c, _ = client
     assert c.post("/api/capital-pools", json=_pool_payload()).status_code == 201
     assert c.post("/api/bindings", json=_binding_payload()).status_code == 201
@@ -355,6 +359,25 @@ def test_rebalance_must_reject_unobserved_denylist(client, monkeypatch, policy):
     response = c.post("/api/rebalances/rb-001/apply", json=_apply_payload())
     assert response.status_code == 403, response.text
     allocs = c.get("/api/allocations?capital_pool_id=pool-001").json()
-    assert allocs["count"] == 0 and len(allocs["items"]) == 0
+    assert (response.status_code, allocs["count"]) == (403, 0)
+
+
+def test_rebalance_applies_with_valid_observed_policy(client, monkeypatch):
+    c, _ = client
+    line = {
+        **_rebalance_payload()["lines"][0],
+        "liquidity": {"avg_daily_volume": 2000000},
+        "drawdown_pct": 0.02,
+        "asset_classes": ["equity"],
+    }
+    assert c.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    assert c.post("/api/bindings", json=_binding_payload()).status_code == 201
+    assert c.post("/api/rebalances", json=_rebalance_payload(lines=[line])).status_code == 201
+    _policy(monkeypatch, liquidity_constraints={"min_avg_daily_volume": 1000000}, drawdown_actions={"risk_off": 0.05}, forbidden_asset_classes=["crypto"])
+    response = c.post("/api/rebalances/rb-001/apply", json=_apply_payload())
+    assert response.status_code == 200, response.text
+    allocs = c.get("/api/allocations?capital_pool_id=pool-001").json()
+    assert allocs["count"] == 1
+
 
 
