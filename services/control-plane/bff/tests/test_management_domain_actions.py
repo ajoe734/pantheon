@@ -161,7 +161,7 @@ class TestActionToOwnerMatrix(unittest.TestCase):
         self.assertIsInstance(adapter2, PersonaCommandAdapter)
 
         adapter3 = find_adapter("Observe", "persona", "observe")
-        self.assertIsInstance(adapter3, PersonaCommandAdapter)
+        self.assertIsNone(adapter3)  # retired Observe must have no write adapter
 
     def test_governance_adapter_mapping(self):
         adapter = find_adapter("ApproveDecision", "approvaldecision", "approve")
