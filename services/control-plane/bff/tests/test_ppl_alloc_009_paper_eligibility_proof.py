@@ -669,9 +669,7 @@ def test_route_emits_to_owner_and_returns_governed_response_schema(
     assert len(emitted) == 1
     assert emitted[0]["metrics"] == benchmark["metrics"]
     assert body["owner_receipt"]["status"] == "accepted"
-    assert body["ranking"]["recommendation_action_ids"][0] == (
-        "promote_to_canary_candidate"
-    )
+    assert "recommendation_action_ids" not in body["ranking"]
     assert body["owner_receipt"] == {
         "service": "telemetry",
         "status": "accepted",

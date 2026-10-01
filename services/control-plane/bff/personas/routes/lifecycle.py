@@ -344,7 +344,6 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
                     "eligible": refreshed["eligible"],
                     "overall_score": refreshed["overall_score"],
                     "components": refreshed["components"],
-                    "recommendation_action_ids": actions,
                 },
                 "owner_receipt": {
                     "service": "telemetry",
