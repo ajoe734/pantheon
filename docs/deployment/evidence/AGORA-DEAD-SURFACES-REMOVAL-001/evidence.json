@@ -5,15 +5,15 @@
   "scope": "Delete dead Agora backend surfaces no longer used by the V6 trading desk (signals, feedback, signals SSE alias, watchlist, markets, notes, market-notes, training-examples, insights, memory, committee sessions, evidence-pack, persona-lab, skill-coaching, evaluation suites/runs, alerts triage, daily, sessions, messages, ask, inbox, incoming, handoffs, research-tasks, shadow router, dashboard-recipes, and widgets), preserving trading-room, workshops, interactions, proposals, candidate decisions, candidate-pools, performance, capabilities, operational-readiness, journal, postmortems, servant, research plans/runs, trading-intents, and me.",
   "owner": "Antigravity",
   "reviewer": "Codex",
-  "frozen_base": "4d7ad6272dc381055e6224f8b03422e7379c3ac6",
+  "frozen_base": "0fcdec080e628697d08bf80eb0f4b66eeb0ae440",
   "paired_execution_logs": {
     "directory": "/tmp/agora-paired-runs-d61575a-17a2b1a",
     "summary_json": "/tmp/agora-paired-runs-d61575a-17a2b1a/batches_summary.json"
   },
   "budget_summary": {
     "production": {
-      "additions": 596,
-      "deletions": 7327,
+      "additions": 610,
+      "deletions": 7341,
       "net": -6731
     },
     "test": {
@@ -80,9 +80,9 @@
   ],
   "validation": [
     {
-      "command": "python3 scripts/git/diff_budget.py --base 4d7ad6272dc381055e6224f8b03422e7379c3ac6 --change-class simplify --budget -3000",
+      "command": "python3 scripts/git/diff_budget.py --base 0fcdec080e628697d08bf80eb0f4b66eeb0ae440 --change-class simplify --budget -3000",
       "exit_code": 0,
-      "result": "Diff budget check passes with net production lines -6731 (added 596, deleted 7327), net test lines -4397 (added 344, deleted 4741), and net docs/evidence +167 (added 191, deleted 24), exceeding the -3000 net production line reduction requirement."
+      "result": "Diff budget check passes with net production lines -6731 (added 610, deleted 7341), net test lines -4397 (added 344, deleted 4741), and net docs/evidence +167 (added 191, deleted 24), exceeding the -3000 net production line reduction requirement."
     },
     {
       "command": ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
