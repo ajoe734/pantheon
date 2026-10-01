@@ -149,7 +149,7 @@ def collect_evidence(
         if raw.get("source_confidence") == "unavailable" or raw.get("telemetry_resolution") == "missing" or not refs:
             raise Degraded(f"evidence unavailable for persona {raw['persona_id']}")
         items.append({
-            "persona_id": str(raw["persona_id"]), "name": raw.get("name"), "state": raw.get("state"),
+            "persona_id": str(raw["persona_id"]), "name": raw.get("name"), "state": raw.get("owner_lifecycle_state"),
             "stage": raw.get("stage"), "score": raw.get("score"), "tier": raw.get("tier"),
             "eligible": raw.get("eligible"), "exclusion_codes": raw.get("exclusion_codes"),
             "components": raw.get("components"), "evidence_ref_ids": refs[:10],

@@ -14,7 +14,7 @@ QUARTER = pea.quarter_of(pea.datetime.fromtimestamp(NOW, pea.timezone.utc))
 
 
 def _item(pid, state="paper_owner", score=20.0):
-    return {"persona_id": pid, "name": pid, "state": state, "stage": "paper_running", "score": score,
+    return {"persona_id": pid, "name": pid, "owner_lifecycle_state": state, "stage": "paper_running", "score": score,
             "tier": "tier-4", "eligible": True, "components": {"risk_score": 30},
             "evidence_refs": [{"refId": f"ev-{pid}"}]}
 
