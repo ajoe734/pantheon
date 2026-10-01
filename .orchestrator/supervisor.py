@@ -55,6 +55,7 @@ from common import (
     first_symlink_component,
     normalize_agent_id,
     normalize_github_repo_slug,
+    task_branch_matches,
     is_github_cli_auth_failure,
     resolved_coordinator_status_root,
     config_status_root,
@@ -9849,7 +9850,9 @@ def persist_worker_recovery_workspace(
             repository_id = validate_task_repository_scope(config, task)
         except (RuntimeError, ValueError):
             return False
-        if facts["repository_id"] != repository_id or facts["branch"] != worker_task_branch(config, task_id):
+        if facts["repository_id"] != repository_id or not task_branch_matches(
+            facts["branch"], worker_task_branch(config, task_id)
+        ):
             return False
         receipt = _canonical_worker_recovery_receipt(status, task)
         replacement = receipt.get("replacement") if receipt else None
