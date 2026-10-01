@@ -1,8 +1,9 @@
 """Typed HTTP port for the Persona service's durable write owner.
 
 The BFF never imports Persona application stores or opens Persona-owned tables.
-Both writes and their read-after-write projections cross the deployed Persona
-service boundary with a bounded timeout and a dedicated service credential.
+Writes and read projections cross the Persona service boundary with a bounded
+timeout. Provisioning uses its service credential; human lifecycle operations
+forward the original authenticated caller without borrowing provisioning roles.
 """
 from __future__ import annotations
 
@@ -165,8 +166,9 @@ class PersonaRegistryHttpWritePort:
         body: Mapping[str, Any] | None = None,
         params: Mapping[str, Any] | None = None,
         write: bool = False,
+        authorization: str | None = None,
     ) -> Any:
-        self._require_configuration(dependency, write=write)
+        self._require_configuration(dependency, write=write and authorization is None)
         url = f"{self._base_url}{path}"
         if params:
             clean_params = {
@@ -181,7 +183,9 @@ class PersonaRegistryHttpWritePort:
         if body is not None:
             encoded = json.dumps(dict(body), separators=(",", ":")).encode("utf-8")
             headers["Content-Type"] = "application/json"
-        if self._service_token:
+        if authorization is not None:
+            headers["Authorization"] = authorization
+        elif self._service_token:
             headers["Authorization"] = f"Bearer {self._service_token}"
         request = urllib.request.Request(
             url,
@@ -263,6 +267,8 @@ class PersonaRegistryHttpWritePort:
             "lifecycle_state": owner_lifecycle,
             "strategy_family": strategy_family or archetype,
             "owner": actor_id,
+            # Existing callers derive this metadata from authenticated tenant scope.
+            "tenant_id": owner_metadata.get("tenant_id"),
             "required_data_sources": list(required_data_sources or []),
             "metadata": owner_metadata,
         }
@@ -300,6 +306,55 @@ class PersonaRegistryHttpWritePort:
                 "Persona service returned an invalid create response",
             )
         return self._persona_payload(created)
+
+    def advance_lifecycle(
+        self,
+        persona_id: str,
+        *,
+        actor_id: str,
+        target_state: str,
+        governance_decision_id: str | None,
+        authorization: str,
+        expected_tenant_id: str,
+    ) -> Dict[str, Any]:
+        """Forward a human lifecycle request, never the provisioning credential.
+
+        Owner HTTP rejections retain their status; callers must not turn denied
+        authority or a concurrent transition into dependency unavailability.
+        """
+        if not authorization or not authorization.startswith("Bearer "):
+            raise _PersonaHttpResponseError(401, "Original caller bearer token is required")
+        if not expected_tenant_id:
+            raise _PersonaHttpResponseError(403, "Authenticated caller tenant is required")
+        value = self._request(
+            "PATCH",
+            f"/api/personas/{urllib.parse.quote(persona_id, safe='')}/lifecycle",
+            dependency="persona_lifecycle_owner",
+            body={
+                "actor_id": actor_id,
+                "target_state": target_state,
+                "governance_decision_id": governance_decision_id,
+            },
+            write=True,
+            authorization=authorization,
+        )
+        metadata = value.get("metadata") if isinstance(value, dict) else None
+        if (
+            not isinstance(value, dict)
+            or not isinstance(metadata, dict)
+            or value.get("persona_id") != persona_id
+            or value.get("tenant_id") != expected_tenant_id
+            or value.get("lifecycle_state") != target_state
+            or value.get("updated_by") != actor_id
+            or (
+                governance_decision_id
+                and metadata.get("last_lifecycle_governance_decision_id") != governance_decision_id
+            )
+        ):
+            raise PersonaWriteOwnerUnavailable(
+                "persona_lifecycle_owner", "Persona lifecycle owner returned invalid readback"
+            )
+        return value
 
     def update_persona(
         self,

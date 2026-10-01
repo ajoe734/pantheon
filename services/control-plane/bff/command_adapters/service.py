@@ -364,6 +364,7 @@ class CommandAdapterService:
         fallback_utc_now = globals()["utc_now"]
         self._utc_now = utc_now or utc_now_fn or fallback_utc_now
         self._dispatch_command = dispatch_command_fn or dispatch_domain_command
+        self._publish_event = publish_event
         self._check_read_surface_state = check_read_surface_state
         if validators is not None:
             self._validators = validators
@@ -498,6 +499,10 @@ class CommandAdapterService:
         record = store.get_command(clean_id)
         if not record:
             raise HTTPException(status_code=404, detail=f"Command {clean_id} not found")
+        if record["type"] == CommandType.ADVANCE_LIFECYCLE.value:
+            tenant = ((record.get("foundation") or {}).get("command_envelope") or {}).get("payload", {}).get("tenant_id")
+            if not identity or not tenant or tenant != identity.claims.get("tenant_id"):
+                raise HTTPException(status_code=404, detail="Command not found")
         return CommandStatusResponse(
             command_id=record["command_id"],
             type=record["type"],
@@ -1033,6 +1038,8 @@ class CommandAdapterService:
         x_idempotency_key: Optional[str] = None,
     ) -> JSONResponse:
         self.check_read_role(identity)
+        if payload.get("command") in ("PromoteCandidate", "Demote"):
+            payload = {**payload, "command": "AdvanceLifecycle"}
         client_provided_id = str(payload.get("tokenId") or payload.get("token_id") or "").strip()
         token_id = client_provided_id or f"ct-{uuid.uuid4().hex[:12]}"
         server_generated = not bool(client_provided_id)

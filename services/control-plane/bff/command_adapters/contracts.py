@@ -222,12 +222,51 @@ def normalize_quarterly_recommendation_command(cmd: OperatorCommand) -> Operator
 
 
 def normalize_b5_command_payload(cmd: OperatorCommand) -> OperatorCommand:
+    if cmd.command == CommandType.ADVANCE_LIFECYCLE:
+        params = dict(cmd.params)
+        target_state = params.get("target_state")
+        target_aliases = ("persona_id", "personaId", "entity_id", "entityId")
+        if (
+            cmd.target.type != ObjectType.PERSONA
+            or not cmd.target.id.strip()
+            or not isinstance(target_state, str)
+            or not target_state.strip()
+            or any(str(params[key]) != cmd.target.id for key in target_aliases if key in params)
+        ):
+            raise _bff_error(
+                422, ErrorCode.VALIDATION_FAILED, "Invalid lifecycle target",
+                "Provide an explicit target_state and matching Persona target",
+            )
+        params.update(
+            persona_id=cmd.target.id, target_state=target_state.strip(),
+            entity_type="Persona", action_id="AdvanceLifecycle", actionId="AdvanceLifecycle",
+        )
+        cmd.action = "AdvanceLifecycle"
+        cmd.params = params
     return normalize_quarterly_recommendation_command(
         normalize_human_gate_command(cmd)
     )
 
 
 def normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorCommand:
+    if payload.get("command") == "AdvanceLifecycle" and isinstance(payload.get("params", {}), dict):
+        params = dict(payload.get("params", {}))
+        decision_fields = (
+            "governance_decision_id", "approval_id", "approvalId",
+            "approval_decision_id", "approvalDecisionId",
+        )
+        refs = [
+            source[key] for source in (payload, params) for key in decision_fields
+            if key in source and source[key] is not None
+        ]
+        if any(not isinstance(ref, str) or not ref.strip() for ref in refs) or len(set(refs)) > 1:
+            raise _bff_error(
+                422, ErrorCode.VALIDATION_FAILED, "Invalid governance decision reference",
+                "Provide one consistent decision id; Persona verifies its authority",
+            )
+        if refs:
+            params["governance_decision_id"] = refs[0]
+        payload = {**payload, "params": params}
     command_type = payload.get("command_type")
     if command_type:
         try:
@@ -365,11 +404,8 @@ _WRAPPER_CANONICALS = {
         "PatchDeployment": ("patch", "update"),
     },
     "PersonaAction": {
-        "PromoteCandidate": ("promote",),
-        "AdvanceLifecycle": (),
+        "AdvanceLifecycle": ("promote", "PromoteCandidate", "demote"),
         "EmergencyContainment": (),
-        "Observe": (),
-        "Demote": (),
     },
     "ReviewAction": {
         "RequestReview": ("review",),
@@ -406,7 +442,10 @@ def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     action_params = params if isinstance(params, dict) else {}
     verb = action or action_params.get("action_id") or action_params.get("actionId")
     verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())
-    canonical = _WRAPPER_VERB_ALIASES.get((command, verb))
+    if command == "Observe" or (command == "PersonaAction" and verb == "observe"):
+        raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "Observe is retired", "Use Persona read routes")
+    canonical = ("AdvanceLifecycle" if command in {"PromoteCandidate", "Demote"}
+                 else _WRAPPER_VERB_ALIASES.get((command, verb)))
     if canonical is None:
         return payload
     return {
@@ -538,12 +577,23 @@ def build_foundation_command_context(
         runtime_id=cmd.target.id if cmd.target.type == ObjectType.RUNTIME else None,
         attributes=route_metadata,
     )
+    tenant_id = None
+    if cmd.command == CommandType.ADVANCE_LIFECYCLE:
+        tenant_id = str(identity.claims.get("tenant_id") or "").strip()
+        if not tenant_id:
+            raise _bff_error(
+                403, ErrorCode.FORBIDDEN, "Authenticated tenant required",
+                "Persona lifecycle requires the caller's tenant claim",
+            )
+        cmd.params["actor_id"] = identity.operator_id
     req_payload = foundation_request_payload(
         cmd,
         raw_payload,
         route=route,
         source_route=source_route,
     )
+    if tenant_id:
+        req_payload["tenant_id"] = tenant_id
     trace = build_foundation_trace(
         environment=environment,
         actor_ref=actor_ref,

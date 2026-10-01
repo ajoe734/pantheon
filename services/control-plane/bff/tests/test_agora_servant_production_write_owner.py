@@ -243,6 +243,9 @@ def test_production_router_uses_authenticated_http_owner_and_read_only_surface(
         assert created.json()["data"]["status"] == "paper_only"
         assert created.json()["data"]["policy"]["execution_authority"] == "none"
         assert len(write_owner.list_personas()) == 1
+        # Inspect the real owner, not the port's metadata-based read projection.
+        durable = PersistentPersonaOwner.from_json_path(tmp_path / "personas.json").get(persona_id)
+        assert durable.tenant_id == "tenant-alpha"
 
         stored = read_ports.get_persona(persona_id)
         assert stored is not None

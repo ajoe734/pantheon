@@ -83,12 +83,9 @@ class CommandType(str, Enum):
     # BFF-WRITE-P0-LIFECYCLE: P0-1/2/3 lifecycle action types
     ADVANCE_LIFECYCLE = "AdvanceLifecycle"
     APPROVE_POOL = "ApprovePool"
-    OBSERVE = "Observe"
     REQUEST_REVIEW = "RequestReview"
     PAUSE_PAPER_RUNTIME = "PausePaperRuntime"
     RESUME_PAPER_RUNTIME = "ResumePaperRuntime"
-    DEMOTE = "Demote"
-    PROMOTE_CANDIDATE = "PromoteCandidate"
     REBALANCE_PROPOSAL = "RebalanceProposal"
     REBALANCE_APPROVAL = "RebalanceApproval"
     REBALANCE_TWO_MAN_SIGN = "RebalanceTwoManSign"
