@@ -97,6 +97,14 @@ def _require_replay_tenant(target: Optional[Dict[str, Any]], caller_tenant: Opti
         raise exc
 
 
+def _update_audit_delivery_status(record: Dict[str, Any], event_id: Optional[str], error: Optional[str]) -> None:
+    record["audit_delivery_attempts"] = int(record.get("audit_delivery_attempts") or 0) + 1
+    if event_id:
+        record.update({"audit_delivery_status": "delivered", "audit_delivery_error": None, "audit_event_id": event_id, "audit_delivered_at": utc_now()})
+    else:
+        record.update({"audit_delivery_status": "pending", "audit_delivery_error": str(error or "audit append failed")})
+
+
 class AllocationAuthorityStore:
     """Single-writer aggregate for rebalance and containment state."""
 
@@ -802,25 +810,7 @@ class AllocationAuthorityStore:
                 )
             if receipt.get("audit_delivery_status") == "delivered":
                 return _deepcopy(receipt)
-            receipt["audit_delivery_attempts"] = int(
-                receipt.get("audit_delivery_attempts") or 0
-            ) + 1
-            if event_id:
-                receipt.update(
-                    {
-                        "audit_delivery_status": "delivered",
-                        "audit_delivery_error": None,
-                        "audit_event_id": event_id,
-                        "audit_delivered_at": utc_now(),
-                    }
-                )
-            else:
-                receipt.update(
-                    {
-                        "audit_delivery_status": "pending",
-                        "audit_delivery_error": str(error or "audit append failed"),
-                    }
-                )
+            _update_audit_delivery_status(receipt, event_id, error)
             rebalance_id = str(receipt.get("rebalance_id") or "")
             proposal = self._data["rebalances"].get(rebalance_id)
             if proposal is not None:
@@ -1059,25 +1049,7 @@ class AllocationAuthorityStore:
                 )
             if record.get("audit_delivery_status") == "delivered":
                 return _deepcopy(record)
-            record["audit_delivery_attempts"] = int(
-                record.get("audit_delivery_attempts") or 0
-            ) + 1
-            if event_id:
-                record.update(
-                    {
-                        "audit_delivery_status": "delivered",
-                        "audit_delivery_error": None,
-                        "audit_event_id": event_id,
-                        "audit_delivered_at": utc_now(),
-                    }
-                )
-            else:
-                record.update(
-                    {
-                        "audit_delivery_status": "pending",
-                        "audit_delivery_error": str(error or "audit append failed"),
-                    }
-                )
+            _update_audit_delivery_status(record, event_id, error)
             self._persist_locked()
             return _deepcopy(record)
 

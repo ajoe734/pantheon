@@ -238,5 +238,25 @@
       "5": "Added permanent regression tests covering paper/canary allocations masking active live/canary bindings in test_capital_guard.py and test_capital_guard_routes.py (test_active_live_binding_is_not_hidden_by_its_paper_allocation, test_active_live_binding_is_not_hidden_by_its_canary_allocation, test_active_canary_binding_is_not_hidden_by_its_paper_allocation, and unit tests)"
     }
   },
-  "verification_run": "pytest services/capital + governance approval tests + route regressions: 310 passed, 1 skipped, 1 warning in 100.23s"
+  "review_rework_18": {
+    "head_reviewed": "33dc57e0f9909504c4629714523ca84622ebd0d7",
+    "items": {
+      "1": "In services/capital/capital_guard.py, removed _enrich_context_from_meta: caller-writable HTTP metadata on pools and bindings is no longer trusted as measured financial facts (capital_scale_pct, gross_scale_pct, liquidity, drawdown_pct, asset_classes, strategy_family). Unmeasured dimensions fail closed with 403 and zero allocations",
+      "2": "Authoritatively measured owner facts (target_weights, gross_exposure, net_exposure, leverage, turnover, stage) remain verified; positive route tests in services/capital/test_capital_guard_routes.py updated to test measurable limits (gross_limit, net_limit, max_leverage, max_single_name_weight, allowed_stages) without metadata bypasses",
+      "3": "All 12 metadata injection test cases in /tmp/test_capital_metadata_claim_followup_20261001.py pass (reject with 403 and 0 allocations), plus all 23 prior external regression cases pass (35/35 total)",
+      "4": "Full route test suite (78 passed) and governance test suite (116 passed) verified clean",
+      "5": "Maintained cumulative net production lines <= 250 (net +229 vs 3cde3a898 base)"
+    }
+  },
+  "review_rework_19": {
+    "head_reviewed": "4d25fe3c90d7cc1424b43d270ae682f9820edb48",
+    "items": {
+      "1": "Satisfy operator explicit no-minification requirement on services/capital/capital_guard.py: eliminate all one-line def/if/try/except bodies, expand compressed import lists into standard multi-line imports, break ~370-char nested allocation projection into readable named projections (_allocation_record, _merge_line, _plan_facts, _context), and reformat dense multi-branch paper predicate (is_paper_operation) into ordinary control-flow blocks",
+      "2": "Preserve exact verified provenance fix from 4d25fe3c9, failing closed on unmeasured observations and keeping all negative and valid paper/derived-fact cases intact",
+      "3": "Delete real redundancy across scoped production artifacts: remove 3 dead unreferenced wire models in services/capital/models.py (RiskPolicyBody, RiskPolicyEvaluationContextBody, RiskPolicyEvaluationResponse, -76 lines), deduplicate audit delivery updates in services/capital/allocation_store.py (-28 lines), and remove dead _STAGE_DEPLOYMENT_SCOPE and duplicate _is_binding_authorized and _binding_matches_rebalance_line identity comparisons in services/capital/main.py (-12 lines)",
+      "4": "Full test suite verified clean: 310 passed, 1 skipped in ~105s across services/capital and governance",
+      "5": "Cumulative production net line accounting: original PR #6059 landed with +243 lines; PR #6078 corrective net is +1 line (+283 additions / -282 deletions across capital_guard.py, models.py, allocation_store.py, main.py). Whole-task cumulative production net is +244 lines, strictly <= 250 budget"
+    }
+  },
+  "verification_run": "pytest services/capital + governance approval tests: 310 passed, 1 skipped"
 }
