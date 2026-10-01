@@ -1036,6 +1036,13 @@ def git_toplevel(path: Path) -> Path | None:
     return Path(top).resolve() if top else None
 
 
+def task_branch_matches(candidate: str, canonical_branch: str) -> bool:
+    """Match one task's branch and its numbered replacement branches."""
+    return bool(canonical_branch) and re.fullmatch(
+        re.escape(canonical_branch) + r"(?:-v[0-9]+)?", candidate
+    ) is not None
+
+
 def normalize_github_repo_slug(value: str | None) -> str:
     candidate = str(value or "").strip()
     if not candidate:
