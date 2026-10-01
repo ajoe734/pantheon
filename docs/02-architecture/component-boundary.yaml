@@ -126,6 +126,7 @@ components:
       - services/consultation/
       - services/evolution/
       - services/monitor-agent/
+      - services/persona-evaluator-agent/
       - services/policy-learning/
       - services/research/
       - services/source_ingestion/
