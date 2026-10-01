@@ -69,6 +69,7 @@ const gateTitles = {
 const REQUIRED_RBAC_LABELS = ["anonymous", "viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"];
 const REQUIRED_RBAC_READ_ALLOWED_LABELS = ["viewer", "operator", "reviewer", "approver", "admin"];
 const REQUIRED_RBAC_READ_FAMILIES = ["bff-strategies", "bff-ranking-formulas", "bff-agora-journal"];
+const REQUIRED_RBAC_WRITE_FAMILIES = ["strategy", "ranking-formula", "agora-journal"];
 const REQUIRED_RBAC_WRITE_READBACK_FAMILIES = ["strategy", "ranking-formula", "agora-journal"];
 const REQUIRED_RBAC_WRITE_ALLOWED_LABELS = ["operator", "reviewer", "approver", "admin"];
 const REQUIRED_RBAC_READ_PATHS = {

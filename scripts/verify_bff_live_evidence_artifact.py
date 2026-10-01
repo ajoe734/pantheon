@@ -73,6 +73,7 @@ BEARER_SHAPE_REQUIRED_SOURCES = (
 )
 MIN_BEARER_SHAPE_TOKEN_LENGTH = 12
 RBAC_READ_RESOURCES = ("bff-strategies", "bff-ranking-formulas", "bff-agora-journal")
+RBAC_WRITE_RESOURCES = ("strategy", "ranking-formula", "agora-journal")
 RBAC_WRITE_READBACK_RESOURCES = {"strategy", "ranking-formula", "agora-journal"}
 RBAC_READ_ALLOWED = {"viewer", "operator", "reviewer", "approver", "admin"}
 RBAC_WRITE_ALLOWED = {"operator", "reviewer", "approver", "admin"}
