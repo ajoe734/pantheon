@@ -1,10 +1,13 @@
 import glob,sys,os,json,collections,xml.etree.ElementTree as ET
 S=sys.argv[1]
 def load(side):
-    d={};files={}
-    xs=glob.glob(f"{S}/res/{side}/*.xml")+(glob.glob(f"{S}/res/base_shards/*.xml") if side=="base" else [])
-    if side=="base":
-        xs=[x for x in xs if not x.endswith("test_command_adapters_router.py.xml")]
+    d={}
+    tag=side+"_"
+    sharded={os.path.basename(x)[len(tag):].split(".in.")[0] for x in glob.glob(f"{S}/res/shards/{tag}*.exit")}
+    skip={"router":"test_command_adapters_router.py","plf":"test_persona_lifecycle_forward.py"}
+    skipf={skip[k] for k in sharded}
+    xs=[x for x in glob.glob(f"{S}/res/{side}/*.xml") if not any(x.endswith(sf+".xml") for sf in skipf)]
+    xs+=glob.glob(f"{S}/res/shards/{tag}*.xml")
     for x in xs:
         for tc in ET.parse(x).getroot().iter("testcase"):
             cn=tc.get("classname","");nm=tc.get("name")
