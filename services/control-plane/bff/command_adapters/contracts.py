@@ -404,11 +404,13 @@ _WRAPPER_VERB_ALIASES = {
 def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Replace a wrapper command by the canonical command its verb maps to."""
     command = payload.get("command")
-    if not isinstance(command, str):
+    action = payload.get("action")
+    # Leave invalid action types intact for OperatorCommand's schema rejection.
+    if not isinstance(command, str) or (action is not None and not isinstance(action, str)):
         return payload
     params = payload.get("params", {})
     action_params = params if isinstance(params, dict) else {}
-    verb = payload.get("action") or action_params.get("action_id") or action_params.get("actionId")
+    verb = action or action_params.get("action_id") or action_params.get("actionId")
     verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())
     canonical = _WRAPPER_VERB_ALIASES.get((command, verb))
     if canonical is None:

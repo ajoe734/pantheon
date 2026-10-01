@@ -954,7 +954,7 @@ _ALIAS_RECORDS: List[Dict[str, Any]] = []
 _DEFAULT_PARAMS = object()
 
 
-def _submit_alias(wrapper: str, verb: str, canonical: str, *, wrapped: bool, token_for: Optional[str], params: Any = _DEFAULT_PARAMS):
+def _submit_alias(wrapper: str, verb: str, canonical: str, *, wrapped: bool, token_for: Optional[str], params: Any = _DEFAULT_PARAMS, action: Any = _DEFAULT_PARAMS):
     """Submit one alias (or its canonical command) to a mounted router.
 
     token_for: None sends no token; otherwise a real confirm token is issued bound
@@ -976,6 +976,8 @@ def _submit_alias(wrapper: str, verb: str, canonical: str, *, wrapped: bool, tok
     }
     if wrapped:
         body["action"] = verb
+    if action is not _DEFAULT_PARAMS:
+        body["action"] = action
     if params is not _DEFAULT_PARAMS:
         body["params"] = params
     headers = {**HEADERS, "Authorization": "Bearer op-test:operator,approver,admin:mfa", "Idempotency-Key": "alias-key-1"}
@@ -1073,6 +1075,28 @@ def test_malformed_params_rejected_identically_for_every_alias(wrapper, verb, ca
     assert wrapped == direct
     assert wrapped[0] == 422
     assert wrapped[2] == []
+
+
+@pytest.mark.parametrize("action", [[], {}, 0, False, ["ack"], {"ack": ""}, 1, True])
+@pytest.mark.parametrize("params", [{}, {"action_id": "ack"}, {"actionId": "ack"}])
+def test_malformed_action_rejected_identically_with_alias_fallback(action, params) -> None:
+    args = ("RiskAlertAction", "ack", "AlertAcknowledge")
+    wrapped = _submit_alias(*args, wrapped=True, token_for=None, params=params, action=action)
+    direct = _submit_alias(*args, wrapped=False, token_for=None, params=params, action=action)
+    assert wrapped == direct
+    assert wrapped[0] == 422
+    assert wrapped[2] == []
+
+
+@pytest.mark.parametrize("key", ["action_id", "actionId"])
+@pytest.mark.parametrize("action", [None, "", "ACK"])
+def test_valid_action_and_alias_fallback_keep_canonical_admission(key, action) -> None:
+    args = ("RiskAlertAction", "ack", "AlertAcknowledge")
+    wrapped = _submit_alias(*args, wrapped=True, token_for=None, params={key: "ack"}, action=action)
+    direct = _submit_alias(*args, wrapped=False, token_for=None, params={})
+    assert wrapped == direct
+    assert wrapped[0] == 202
+    assert [row["type"] for row in wrapped[2]] == ["AlertAcknowledge"]
 
 
 @pytest.mark.parametrize("params,expected", [({}, 422), (_ALIAS_PARAMS["QuarterlyRankingRecommendationSubmit"], 202)])
