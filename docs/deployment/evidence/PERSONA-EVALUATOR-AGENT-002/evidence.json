@@ -27,5 +27,6 @@
     "human approval and lifecycle application by owner tasks"
   ],
   "continuation": "task/PERSONA-EVALUATOR-AGENT-002-v2 from dev 66e162977 carries the reviewed 6377295aa..561aa5d44 task diff with compliant trailers; earlier figures above are refreshed to measured deltas; v1 history kept as-is",
-  "continuation_tests": "agent+projection+promotion governance 46 passed; humangate+composition+pm12 eligibility+ppl_alloc_009 71 passed"
+  "continuation_tests": "agent+projection+promotion governance 46 passed; humangate+composition+pm12 eligibility+ppl_alloc_009 71 passed",
+  "tenant_isolation_repair": "_pm12_quarterly_recommendations projects saved evaluator items only for personas in the caller tenant-filtered ranked_items (fail closed); regression test test_saved_recommendations_are_limited_to_personas_visible_to_the_caller. Snapshot values stay immutable. projection+promotion governance 33 passed (1 load-timing flake in slow_contributor passed in isolation); test_ppl_alloc_012 24 failures are identical at baseline (HTTP 403 env)."
 }
