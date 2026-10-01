@@ -228,5 +228,15 @@
       "5": "Maintained net production lines <= 250 (net +243 vs origin/dev)"
     }
   },
-  "verification_run": "pytest services/capital + governance approval tests + route regressions: 303 passed, 1 skipped, 1 warning"
+  "review_rework_17": {
+    "head_reviewed": "7325c906f6d754f7249cb2dd3945c2f1ce046387",
+    "items": {
+      "1": "In services/capital/capital_guard.py project_contexts, preserve and independently evaluate every active binding's own scope and metadata even when a lower-stage allocation references it, preventing paper or canary allocations from masking active live or canary bindings",
+      "2": "Retained empty pool and paper-only pool behavior on creation and reactivation without stage distortion",
+      "3": "Removed extra blank lines at EOF in services/capital/test_capital_guard.py resolving git diff --check exit 2",
+      "4": "Removed redundant importlib.reload call in services/capital/test_service.py client fixture, bringing full test suite execution time to ~100s, well within the 180s timeout",
+      "5": "Added permanent regression tests covering paper/canary allocations masking active live/canary bindings in test_capital_guard.py and test_capital_guard_routes.py (test_active_live_binding_is_not_hidden_by_its_paper_allocation, test_active_live_binding_is_not_hidden_by_its_canary_allocation, test_active_canary_binding_is_not_hidden_by_its_paper_allocation, and unit tests)"
+    }
+  },
+  "verification_run": "pytest services/capital + governance approval tests + route regressions: 310 passed, 1 skipped, 1 warning in 100.23s"
 }

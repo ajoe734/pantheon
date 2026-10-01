@@ -119,11 +119,10 @@ def project_contexts(
     b_map.update({(_val(b, "persona_id"), _val(b, "capital_sleeve_id")): b for b in all_b if _val(b, "persona_id") and _val(b, "capital_sleeve_id")})
     p_meta = dict(_val(pool, "metadata") or {}) if pool else {}
 
-    seen = {id(binding)} if binding else set()
+    seen = {id(binding), _val(binding, "binding_id")} - {None} if binding else set()
     contexts: list[dict[str, Any]] = []
     for a in res.values():
         b = b_map.get(_val(a, "binding_id")) or b_map.get((_val(a, "persona_id"), _val(a, "capital_sleeve_id")))
-        if b: seen.update((id(b), _val(b, "binding_id"), (_val(b, "persona_id"), _val(b, "capital_sleeve_id"))))
         meta, st = {**p_meta, **(dict(_val(b, "metadata") or {}) if b else {})}, line_deployment_scope(a) or (line_deployment_scope(b) if b else None) or (s if not binding else None)
         ctx = {**facts, "stage": st} if st else dict(facts)
         _enrich_context_from_meta(ctx, meta, st)
@@ -137,8 +136,9 @@ def project_contexts(
 
     if binding: _add_b(binding, s)
     for b in bindings:
-        if _val(b, "status") == "active" and not ({id(b), _val(b, "binding_id"), (_val(b, "persona_id"), _val(b, "capital_sleeve_id"))} & seen):
-            _add_b(b)
+        bid = _val(b, "binding_id")
+        if _val(b, "status") == "active" and id(b) not in seen and (not bid or bid not in seen):
+            seen.update((id(b), bid)); _add_b(b)
     if not contexts:
         ctx = {"stage": s, **facts} if s else dict(facts)
         _enrich_context_from_meta(ctx, p_meta, s)

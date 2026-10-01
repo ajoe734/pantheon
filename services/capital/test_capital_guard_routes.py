@@ -544,3 +544,60 @@ def test_paper_label_does_not_exempt_live_binding_on_pool_reactivation(client, m
     admission = c.get('/api/bindings/admissibility', params={'persona_id': 'persona-alpha', 'capital_pool_id': 'pool-001', 'target_stage': 'live'}).json()
     assert (response.status_code, admission['permitted']) == (403, False), (response.text, admission)
     assert c.get('/api/capital-pools/pool-001').json()['status'] == 'suspended'
+
+
+def test_active_live_binding_is_not_hidden_by_its_paper_allocation(client, monkeypatch):
+    c, _ = client
+    assert c.post('/api/capital-pools', json=_pool_payload()).status_code == 201
+    assert c.post('/api/bindings', json=_binding_payload()).status_code == 201
+    activate = {'actor_id': 'persona-admin-1', 'actor_role': 'persona.admin', 'approval_decision_id': 'decision-1'}
+    assert c.post('/api/bindings/binding-001/activate', json=activate).status_code == 200
+    line = {**_rebalance_payload()['lines'][0], 'stage': 'paper_running', 'capital_scope': 'paper_ledger'}
+    assert c.post('/api/rebalances', json=_rebalance_payload(lines=[line])).status_code == 201
+    assert c.post('/api/rebalances/rb-001/apply', json=_apply_payload()).status_code == 200
+    status = {'actor_id': 'capital-admin-1', 'actor_role': 'capital.admin', 'status': 'suspended'}
+    assert c.patch('/api/capital-pools/pool-001/status', json=status).status_code == 200
+    guard = sys.modules['services.capital.main'].capital_guard
+    monkeypatch.setattr(guard, '_policy_loader', lambda ref: {'risk_policy_id': ref, 'allowed_stages': ['paper']})
+    response = c.patch('/api/capital-pools/pool-001/status', json={**status, 'status': 'active', 'approval_decision_id': 'decision-1'})
+    admission = c.get('/api/bindings/admissibility', params={'persona_id': 'persona-alpha', 'capital_pool_id': 'pool-001', 'target_stage': 'live'}).json()
+    actual_status = c.get('/api/capital-pools/pool-001').json()['status']
+    assert (response.status_code, actual_status, admission['permitted']) == (403, 'suspended', False), (response.status_code, actual_status, admission)
+
+
+def test_active_live_binding_is_not_hidden_by_its_canary_allocation(client, monkeypatch):
+    c, _ = client
+    assert c.post('/api/capital-pools', json=_pool_payload()).status_code == 201
+    assert c.post('/api/bindings', json=_binding_payload()).status_code == 201
+    activate = {'actor_id': 'persona-admin-1', 'actor_role': 'persona.admin', 'approval_decision_id': 'decision-1'}
+    assert c.post('/api/bindings/binding-001/activate', json=activate).status_code == 200
+    line = {**_rebalance_payload()['lines'][0], 'stage': 'canary_running'}
+    assert c.post('/api/rebalances', json=_rebalance_payload(lines=[line])).status_code == 201
+    assert c.post('/api/rebalances/rb-001/apply', json=_apply_payload()).status_code == 200
+    status = {'actor_id': 'capital-admin-1', 'actor_role': 'capital.admin', 'status': 'suspended'}
+    assert c.patch('/api/capital-pools/pool-001/status', json=status).status_code == 200
+    guard = sys.modules['services.capital.main'].capital_guard
+    monkeypatch.setattr(guard, '_policy_loader', lambda ref: {'risk_policy_id': ref, 'allowed_stages': ['canary']})
+    response = c.patch('/api/capital-pools/pool-001/status', json={**status, 'status': 'active', 'approval_decision_id': 'decision-1'})
+    admission = c.get('/api/bindings/admissibility', params={'persona_id': 'persona-alpha', 'capital_pool_id': 'pool-001', 'target_stage': 'live'}).json()
+    actual_status = c.get('/api/capital-pools/pool-001').json()['status']
+    assert (response.status_code, actual_status, admission['permitted']) == (403, 'suspended', False), (response.status_code, actual_status, admission)
+
+
+def test_active_canary_binding_is_not_hidden_by_its_paper_allocation(client, monkeypatch):
+    c, _ = client
+    assert c.post('/api/capital-pools', json=_pool_payload()).status_code == 201
+    assert c.post('/api/bindings', json=_binding_payload(allowed_deployment_scope='canary')).status_code == 201
+    activate = {'actor_id': 'persona-admin-1', 'actor_role': 'persona.admin', 'approval_decision_id': 'decision-1'}
+    assert c.post('/api/bindings/binding-001/activate', json=activate).status_code == 200
+    line = {**_rebalance_payload()['lines'][0], 'stage': 'paper_running', 'capital_scope': 'paper_ledger'}
+    assert c.post('/api/rebalances', json=_rebalance_payload(lines=[line])).status_code == 201
+    assert c.post('/api/rebalances/rb-001/apply', json=_apply_payload()).status_code == 200
+    status = {'actor_id': 'capital-admin-1', 'actor_role': 'capital.admin', 'status': 'suspended'}
+    assert c.patch('/api/capital-pools/pool-001/status', json=status).status_code == 200
+    guard = sys.modules['services.capital.main'].capital_guard
+    monkeypatch.setattr(guard, '_policy_loader', lambda ref: {'risk_policy_id': ref, 'allowed_stages': ['paper']})
+    response = c.patch('/api/capital-pools/pool-001/status', json={**status, 'status': 'active', 'approval_decision_id': 'decision-1'})
+    admission = c.get('/api/bindings/admissibility', params={'persona_id': 'persona-alpha', 'capital_pool_id': 'pool-001', 'target_stage': 'canary'}).json()
+    actual_status = c.get('/api/capital-pools/pool-001').json()['status']
+    assert (response.status_code, actual_status, admission['permitted']) == (403, 'suspended', False), (response.status_code, actual_status, admission)

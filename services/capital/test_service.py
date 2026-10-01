@@ -37,7 +37,6 @@ def client():
 
     sys.modules.pop("services.capital.main", None)
     module = importlib.import_module("services.capital.main")
-    module = importlib.reload(module)
 
     try:
         yield TestClient(module.app), Path(tempdir)

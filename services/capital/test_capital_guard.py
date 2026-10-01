@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from services.capital.capital_guard import CapitalGuard, CapitalGuardError
+from services.capital.capital_guard import CapitalGuard, CapitalGuardError, project_contexts
 from services.capital.test_service import (  # noqa: F401  (client fixture)
     _apply_payload, _binding_payload, _pool_payload, _create_default_pool_and_binding, _rebalance_payload, client,
 )
@@ -444,4 +444,34 @@ def test_require_risk_policy_missing_fact_on_any_context_fails_closed(reverse):
         _guard(policy=lambda ref: policy).authorize(**{**KW, "contexts": contexts})
 
 
+def test_project_contexts_preserves_active_live_binding_when_allocation_is_paper():
+    binding = {"binding_id": "b-1", "persona_id": "p-1", "capital_sleeve_id": "s-1", "status": "active", "allowed_deployment_scope": "live"}
+    alloc = {"allocation_id": "a-1", "binding_id": "b-1", "persona_id": "p-1", "capital_sleeve_id": "s-1", "stage": "paper_running", "target_weight": 0.1}
+    ctxs = project_contexts(allocations=[alloc], bindings=[binding])
+    stages = [c.get("stage") for c in ctxs]
+    assert "paper" in stages and "live" in stages
 
+
+def test_project_contexts_preserves_active_live_binding_when_allocation_is_canary():
+    binding = {"binding_id": "b-1", "persona_id": "p-1", "capital_sleeve_id": "s-1", "status": "active", "allowed_deployment_scope": "live"}
+    alloc = {"allocation_id": "a-1", "binding_id": "b-1", "persona_id": "p-1", "capital_sleeve_id": "s-1", "stage": "canary_running", "target_weight": 0.1}
+    ctxs = project_contexts(allocations=[alloc], bindings=[binding])
+    stages = [c.get("stage") for c in ctxs]
+    assert "canary" in stages and "live" in stages
+
+
+def test_project_contexts_preserves_active_canary_binding_when_allocation_is_paper():
+    binding = {"binding_id": "b-1", "persona_id": "p-1", "capital_sleeve_id": "s-1", "status": "active", "allowed_deployment_scope": "canary"}
+    alloc = {"allocation_id": "a-1", "binding_id": "b-1", "persona_id": "p-1", "capital_sleeve_id": "s-1", "stage": "paper_running", "target_weight": 0.1}
+    ctxs = project_contexts(allocations=[alloc], bindings=[binding])
+    stages = [c.get("stage") for c in ctxs]
+    assert "paper" in stages and "canary" in stages
+
+
+def test_project_contexts_empty_pool_and_paper_only_retention():
+    empty_ctxs = project_contexts(allocations=[], bindings=[])
+    assert len(empty_ctxs) == 1 and "stage" not in empty_ctxs[0]
+    paper_b = {"binding_id": "b-p", "status": "active", "allowed_deployment_scope": "paper"}
+    paper_a = {"allocation_id": "a-p", "binding_id": "b-p", "stage": "paper_running", "target_weight": 0.1}
+    paper_ctxs = project_contexts(allocations=[paper_a], bindings=[paper_b])
+    assert all(c.get("stage") == "paper" for c in paper_ctxs)
