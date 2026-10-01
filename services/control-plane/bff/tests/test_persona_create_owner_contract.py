@@ -91,9 +91,8 @@ def test_create_uses_real_owner_draft_and_preserves_provisioning_metadata(owner_
     reloaded = PersistentPersonaOwner.from_json_path(path).get("persona-contract")
     assert reloaded.lifecycle_state == "draft"
     assert reloaded.metadata["tenant_id"] == "tenant-contract"
-    # Metadata preservation must not be mislabeled as new governed tenant
-    # authority: that separate, pre-existing adapter gap is not this hotfix.
-    assert reloaded.tenant_id is None
+    assert reloaded.tenant_id == "tenant-contract"
+    assert calls[0][2]["tenant_id"] == "tenant-contract"
 
 
 @pytest.mark.parametrize("state", ["research_only", "consultable", "paper_owner", "live_owner", "typo"])
@@ -206,7 +205,9 @@ def test_real_create_and_pending_reload_remain_controller_eligible(projection_bo
     projected = project(record, mutate=True)
     assert projected["lifecycle_state"] == "provisioning"
     assert projected["owner_lifecycle_state"] == "draft"
-    assert PersistentPersonaOwner.from_json_path(path).get(record.persona_id).lifecycle_state == "draft"
+    durable = PersistentPersonaOwner.from_json_path(path).get(record.persona_id)
+    assert durable.lifecycle_state == "draft"
+    assert durable.tenant_id == record.tenant_id
     # A fresh ledger adapter reads the same backend. The owner independently
     # reloads actual JSON; this is not a claim of Postgres process restart.
     fresh = MemoryPersonaProvisioningStore(backend=store.backend)
