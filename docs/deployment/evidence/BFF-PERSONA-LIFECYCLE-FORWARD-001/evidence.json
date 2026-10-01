@@ -1,49 +1,89 @@
 {
   "task_id": "BFF-PERSONA-LIFECYCLE-FORWARD-001",
-  "status": "partial_draft_blocked_on_dependency",
-  "ready_for_review": false,
-  "base_sha": "51adc8c34086f92f895dc993ff249549ef9798f5",
-  "changes_so_far": [
-    "Persona HTTP create forwards the server-derived tenant into the owner's formal tenant field, not only metadata.",
-    "Lifecycle HTTP transport supports the original caller bearer without provisioning-token fallback; preserves owner rejection statuses and checks the actual returned identity, state, actor and decision reference.",
-    "No shared command/admission/adapter or REST lifecycle implementation is changed in this partial draft."
+  "status": "implementation_validated_pending_independent_review",
+  "ready_for_review": true,
+  "base_sha": "d18956ba9ca239c6b6c2ea029bd3885eeb2166b9",
+  "validated_source_sha": "ade4fd0885e260f40279c378930689132a5083e2",
+  "dependency": "Wrapper PR6068 independently approved, required checks passed after an exact-head retry, merged as d18956ba9. Original Persona authority PR6057 remains merged.",
+  "changes": [
+    "Canonical command, mapped PersonaAction wrappers and REST lifecycle routes share admission, confirmation, audit, idempotency and stored-record execution.",
+    "PromoteCandidate and Demote normalize to AdvanceLifecycle with an explicit caller-proposed target state; confirmation issuance normalizes those legacy command names too. Observe is retired. No lifecycle state judgment remains in the BFF.",
+    "PersonaCommandAdapter forwards the original JWT, derives actor_id from its authenticated subject and checks formal tenant readback. Persona owns transition/role/approval/concurrency decisions. The provisioning credential is never substituted.",
+    "The internal advance-lifecycle dispatch, old transition table and fabricated Observe/Promote/Demote receipts are removed. Governance references are forwarded to the real owner, not accepted as BFF approval proof.",
+    "Command idempotency includes the authenticated tenant; lifecycle status reads cannot return another tenant's receipt. Formally unbound Persona records remain denied. Create supplies the authenticated tenant as a formal owner field.",
+    "The injected confirmation audit publisher is retained on CommandAdapterService, fixing two shared confirmation tests and the corresponding root audit-publication regression. Seven old local lifecycle judgment tests and one fake internal-dispatch case are replaced by real mounted owner coverage. Unrelated tests are preserved."
   ],
   "validated_source_git_blobs": {
-    "services/control-plane/bff/ports/persona_write_owner.py": "f8d82ac7939759af35d2ef27fb583c087ca5790f",
-    "services/control-plane/bff/tests/test_persona_lifecycle_forward.py": "1c3cf45fdb984d105aff2949c67f2d9f9fd9d548",
+    "services/control-plane/bff/action_catalog.py": "a0593988b44fdac5e89c49bd7519aab594bfe17d",
+    "services/control-plane/bff/command_adapters/contracts.py": "10294363f92d8b6f5c269213d7a15bc30c42c50a",
+    "services/control-plane/bff/command_adapters/persona_adapter.py": "e3ff6dd287bd24b09213281ae53177ae871e4ad5",
+    "services/control-plane/bff/command_adapters/preconditions.py": "cb6086a6fe80fe75859b129f59c291011f3cb8e3",
+    "services/control-plane/bff/command_adapters/service.py": "2ec9d858be30481a27dff70c6dbc43533911f54a",
+    "services/control-plane/bff/command_executor.py": "940c296ba334c4f6287d17ea1815a88df72ff763",
+    "services/control-plane/bff/main.py": "055d2f8aebfb44e03d24b3ce0b02bac2e5f276fd",
+    "services/control-plane/bff/models.py": "09b4dbc51523133b57596a9096bd2c4ba47d8757",
+    "services/control-plane/bff/personas/routes/lifecycle.py": "d1a0444d80d23e3d02476f684d8c8c2ea5b19b4d",
+    "services/control-plane/bff/ports/persona_write_owner.py": "79474dcefccc126fe4ffa601d1cbafbd6e70937e",
+    "services/control-plane/bff/test_bff_write_gap_2026_05_28.py": "64a5cd5f9cc8f41cdaa9e82df8b7362beb9705c6",
+    "services/control-plane/bff/tests/test_agora_servant_production_write_owner.py": "138c83c3760f59a0b40dad1874e05de710bbfbf3",
+    "services/control-plane/bff/tests/test_command_adapters_router.py": "584a5fed50455a0f7f8cbc457be544e5e29753c2",
+    "services/control-plane/bff/tests/test_management_domain_actions.py": "658125840ebd219ea0382c20231967abbd94b593",
     "services/control-plane/bff/tests/test_persona_create_owner_contract.py": "4ec08f2e770c3393a6b689e7f8e94f97b869f154",
-    "services/control-plane/bff/tests/test_agora_servant_production_write_owner.py": "138c83c3760f59a0b40dad1874e05de710bbfbf3"
+    "services/control-plane/bff/tests/test_persona_lifecycle_forward.py": "77c97101a150d8aada6b3cd12bbce5e62fa7c3a6"
   },
-  "validation": {
-    "command": "/tmp/clean-bff-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_lifecycle_forward.py services/control-plane/bff/tests/test_persona_create_owner_contract.py services/control-plane/bff/tests/test_agora_servant_production_write_owner.py services/control-plane/bff/tests/test_persona_owner_transport_contract.py services/control-plane/bff/tests/test_persona_governance_caller_contract.py",
-    "result": "98 passed, 3 warnings in 48.53s; no deselected or skipped tests",
-    "log": "/tmp/persona-forward-transport-final-tests.log",
-    "log_sha256": "8742ef38c45b9d1b39e0f1e13f06d51760531ec344558309b3feb90e251f6841",
-    "diff_check": "git diff --check passed",
-    "boundary": "Socket transport replaced by TestClient against the real Persona owner, strict JWT authentication and temporary durable JSON store. Governance decision reads use explicit fixture evidence with the real verifier. Ordinary-create route test executes only the Persona creation step and deliberately returns 503 because other provisioning owners are not mounted. Not hosted, Postgres or completed-onboarding evidence."
+  "validation": [
+    {
+      "command": "/tmp/clean-bff-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_lifecycle_forward.py services/control-plane/bff/tests/test_persona_create_owner_contract.py services/control-plane/bff/tests/test_agora_servant_production_write_owner.py services/control-plane/bff/tests/test_persona_owner_transport_contract.py services/control-plane/bff/tests/test_persona_governance_caller_contract.py",
+      "result": "262 passed, 3 warnings in 182.36s; no skipped/deselected tests",
+      "exit_code": 0,
+      "log": "/tmp/persona-forward-owner-exact-source-validation.log",
+      "log_sha256": "1106d16d480ee54158dda1c8978e9bdc8358cb8936d3ea64b50c30e116c7a595"
+    },
+    {
+      "command": "/tmp/clean-bff-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/tests/test_management_domain_actions.py services/control-plane/bff/tests/test_assistant_security.py services/control-plane/bff/tests/test_legacy_command_write_retirement.py",
+      "result": "832 passed, 1 failed, 2 subtests passed, 3 warnings in 528.29s",
+      "exit_code": 1,
+      "failures": ["test_zero_reverse_main_imports"],
+      "log": "/tmp/persona-forward-shared-delivery-validation.log",
+      "log_sha256": "8bcb75d4a19e4093731ab127dd48e82dcfda9bb95811df5d5bd9514d0031d3bb"
+    },
+    {
+      "command": "/tmp/clean-bff-venv/bin/python -m pytest -q services/control-plane/bff/test_action_catalog.py services/control-plane/bff/test_execute_plans_contract_registry.py services/control-plane/bff/test_bff_write_gap_2026_05_28.py",
+      "result": "74 passed, 1 failed, 191 warnings in 43.71s",
+      "exit_code": 1,
+      "failures": ["test_critical_actions_require_two_man (PromoteEvolutionCandidateLive)"],
+      "log": "/tmp/persona-forward-root-exact-source-validation.log",
+      "log_sha256": "d230ad66bccfda4eb823e8d146d41da5f93de738c45be56e33d4f6174060837a"
+    }
+  ],
+  "paired_baseline": {
+    "worktree": "/tmp/pantheon-persona-forward-base-20261001",
+    "sha": "d18956ba9ca239c6b6c2ea029bd3885eeb2166b9",
+    "shared_command": "/tmp/clean-bff-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py -k 'zero_reverse_main_imports or command_confirmations_lifecycle or confirm_command_by_token_contract_and_regressions'",
+    "shared_result": "3 failed, 725 deselected, 3 warnings in 7.18s; exit1. Reverse-main-import violation independently reproduced. Both missing-_publish_event failures now pass on candidate.",
+    "shared_log": "/tmp/persona-forward-d189-shared-baseline.log",
+    "shared_log_sha256": "0bb181566d96c9ab6a8d23c38f91e08675a450bf99c7bcb6f867c7fb673ea0be",
+    "root_command": "Same three-file root contract command listed in validation, from the clean frozen-base worktree",
+    "root_result": "80 passed, 2 failed, 191 warnings in 94.92s; exit1. Critical Evolution two-man assertion independently reproduced; confirmation audit publication failure fixed. Seven old lifecycle tests removed and replaced by mounted authoritative-owner cases.",
+    "root_log": "/tmp/persona-forward-d189-root-baseline.log",
+    "root_log_sha256": "0c7bbc4b214559913af0d32c186f2c7bf426a33fb8df22aae0a0a4f24c0d8b26"
   },
-  "baseline_command_suite": {
-    "result": "120 passed, 3 failed, 2 subtests passed before shared command changes; shared command source remains unchanged",
-    "failures": [
-      "test_zero_reverse_main_imports",
-      "test_command_confirmations_lifecycle",
-      "test_confirm_command_by_token_contract_and_regressions"
-    ],
-    "log": "/tmp/persona-forward-command-baseline.log",
-    "log_sha256": "2c158326ba222e6613c4290e975b0ddf5587818286ef41ad1ab1d8ab17d7cc43"
-  },
-  "remaining": [
-    "Wait for corrected wrapper task BFF-WRAPPER-EDGE-REWRITE-001 / PR 6058 to pass independent review, required checks and merge.",
-    "Rebase onto current dev; integrate canonical command, wrapper and REST lifecycle forwarding while preserving confirmation, tenant, audit and idempotency boundaries.",
-    "Remove obsolete internal lifecycle execution and fabricated Observe/promote/demote receipts; bind authenticated actor and tenant, never client-provided authority.",
-    "Run the complete mounted lifecycle/alias/negative matrix and relevant regressions, then independent review, checks, merge and canonical closeout."
+  "execution_history": [
+    "Initial mounted run stopped at3 failures/83passes: direct Observe retirement status and lifecycle status-read tenant lookup corrected.",
+    "Next five-file run217passed/3failed: demotion fixture had replaced metadata and lost approval actors; preserving real approval metadata corrected the fixture, not Governance code.",
+    "Five-file intermediate run247passed; subsequent new decision-reference cases added.",
+    "Concurrent five-file attempt timed out at320seconds before a terminal summary (/tmp/persona-forward-owner-delivery-validation.log). It is incomplete, not passed. The complete frozen-source rerun is262passed above.",
+    "The first shared invocation named a nonexistent tests/test_command_executor.py and exited4; corrected to bff/test_command_executor.py. First corrected shared run825passed/3failed; two obsolete Persona-only fixtures were migrated to actual owner/retirement expectations, leaving only the independently reproduced baseline failure."
   ],
   "whole_task_line_budget": {
-    "base_sha": "51adc8c34086f92f895dc993ff249549ef9798f5",
-    "current_production_added": 55,
-    "current_production_deleted": 4,
-    "current_production_net": 51,
-    "compliance": "NOT YET MET: this is partial transport preparation; required net-negative legacy removal remains outstanding. No budget tooling or baseline substitution."
+    "command": "python3 scripts/git/diff_budget.py --base d18956ba9ca239c6b6c2ea029bd3885eeb2166b9 --head ade4fd0885e260f40279c378930689132a5083e2 --change-class simplify --budget -100",
+    "production_added": 189,
+    "production_deleted": 382,
+    "production_net": -193,
+    "required_maximum": -100,
+    "exit_code": 0,
+    "boundary": "Complete task versus integrated current dev, including original transport/create work. Wrapper changes are already merged in the base; no task changes hidden or reclassified."
   },
-  "authority_limits": "No deployment, live/capital mutation, canonical approval, reviewer attestation, completed task, or end-to-end operational acceptance is claimed."
+  "delivery_validation": "git diff --check and full origin/dev..HEAD commit trailer check passed. Independent review, required PR checks, merge and canonical closeout remain mandatory.",
+  "authority_limits": "Real mounted Persona routing/authentication, durable temporary JSON and real Governance verifier with explicit fixture decision reads; only socket transport substituted by TestClient. No hosted deployment, Postgres validation, live capital effects, completed onboarding, reviewer attestation or operational acceptance claimed."
 }
