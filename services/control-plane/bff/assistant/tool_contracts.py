@@ -30,8 +30,6 @@ ASSISTANT_TOOL_ALLOWLIST: frozenset[str] = frozenset({
     "HumanGateExtendTtl",
     "RankingFormulaAction",
     "RankingAction",
-    "AgoraSignalFeedback",
-    "AgoraMessageAction",
     # Medium-risk governed resource actions
     "PersonaAction",
     "StrategyAction",
@@ -42,8 +40,6 @@ ASSISTANT_TOOL_ALLOWLIST: frozenset[str] = frozenset({
     "ReviewAction",
     "ExperimentAction",
     "JobAction",
-    "AgoraInsightAction",
-    "AgoraMemoryAction",
 })
 
 _RISK_REQUIRES_REASON: frozenset[RiskLevel] = frozenset({
