@@ -785,5 +785,68 @@ def test_unconditional_approval_with_conditions_rejected_by_owner(client, owner)
     assert owner.rows["a1"].get("votes") is None or len(owner.rows["a1"].get("votes", [])) == 0
 
 
+@pytest.mark.parametrize("command,carrier", [("ApproveDecision", "reject"), ("RejectDecision", "approve"), ("ApproveDecision", "stage")])
+@pytest.mark.parametrize("target_type", ["HumanGateItem", "HumanGate"])
+def test_explicit_approval_target_conflict_retains_governance_validation(command_client, owner, command, carrier, target_type):
+    response = command_client.post("/bff/v1/commands", headers={
+        "Authorization": "Bearer " + jwt("rev-1", "tenant-a", "operator", "governance_reviewer"),
+        "Idempotency-Key": f"target-conflict-{command}-{carrier}-{target_type}",
+    }, json={
+        "command": command, "action": carrier,
+        "target": {"type": target_type, "id": "a1"},
+        "params": {"decision_id": "a1", "expected_version": 1, "approval_notes": "reviewed", "rejection_reason": "reviewed"},
+        "audit_context": {"reason": "independent review"},
+    })
+    assert response.status_code in (400, 422, 501), response.text
+    assert not owner.calls, (response.status_code, owner.calls)
+    assert owner.rows["a1"]["version"] == 1
+    assert owner.rows["a1"].get("votes") is None or len(owner.rows["a1"].get("votes", [])) == 0
+    assert owner.rows["a1"]["decision"] is None
 
 
+@pytest.mark.parametrize("carrier_key", ["action", "action_id", "actionId"])
+@pytest.mark.parametrize("command,carrier_val", [
+    ("ApproveDecision", "reject"),
+    ("RejectDecision", "approve"),
+    ("ApproveDecision", "stage"),
+    ("ApproveDecision", "freeze"),
+    ("ApproveDecision", "escalate"),
+])
+def test_explicit_approval_carrier_conflicts_and_unsupported_intents_zero_votes(command_client, owner, carrier_key, command, carrier_val):
+    body = {
+        "command": command,
+        "target": {"type": "ApprovalDecision", "id": "a1"},
+        "params": {"decision_id": "a1", "expected_version": 1, "approval_notes": "reviewed", "rejection_reason": "reviewed"},
+        "audit_context": {"reason": "conflict regression"},
+    }
+    if carrier_key == "action":
+        body["action"] = carrier_val
+    else:
+        body["params"][carrier_key] = carrier_val
+    response = command_client.post("/bff/v1/commands", headers={
+        "Authorization": "Bearer " + jwt("rev-1", "tenant-a", "operator", "governance_reviewer"),
+        "Idempotency-Key": f"carrier-conflict-{carrier_key}-{command}-{carrier_val}",
+    }, json=body)
+    assert response.status_code in (400, 422, 501), response.text
+    assert not owner.calls, (response.status_code, owner.calls)
+    assert owner.rows["a1"]["version"] == 1
+    assert owner.rows["a1"].get("votes") is None or len(owner.rows["a1"].get("votes", [])) == 0
+    assert owner.rows["a1"]["decision"] is None
+
+
+@pytest.mark.parametrize("command", ["ApproveDecision", "RejectDecision"])
+@pytest.mark.parametrize("bad_target", ["HumanGateItem", "HumanGate", "Persona", "DeploymentPlan"])
+def test_incompatible_target_command_combination_rejected(command_client, owner, command, bad_target):
+    response = command_client.post("/bff/v1/commands", headers={
+        "Authorization": "Bearer " + jwt("rev-1", "tenant-a", "operator", "governance_reviewer"),
+        "Idempotency-Key": f"incompatible-target-{command}-{bad_target}",
+    }, json={
+        "command": command,
+        "target": {"type": bad_target, "id": "a1"},
+        "params": {"decision_id": "a1", "expected_version": 1, "approval_notes": "reviewed"},
+        "audit_context": {"reason": "target compatibility"},
+    })
+    assert response.status_code in (400, 422), response.text
+    assert not owner.calls, (response.status_code, owner.calls)
+    assert owner.rows["a1"]["version"] == 1
+    assert owner.rows["a1"].get("votes") is None or len(owner.rows["a1"].get("votes", [])) == 0
