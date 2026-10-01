@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "snapshot_date": "2026-09-30",
+    "snapshot_date": "2026-10-01",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
     "total_routes": 635,
