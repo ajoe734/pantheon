@@ -8,12 +8,10 @@ from urllib import error as urllib_error
 from typing import Any, Dict, List, Optional
 import uuid
 
-from fastapi import APIRouter, Body, Header, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException, Query, Request
 
-from services.control_plane.bff.models import CommandType, ErrorCode, ObjectType
+from services.control_plane.bff.models import ErrorCode, ObjectType
 from ..service import (
-    _ADVANCE_LIFECYCLE_LIVE_ROLES,
-    _ADVANCE_LIFECYCLE_VALID_TARGETS,
     _PPL_ALLOC_009_ELIGIBILITY_BENCHMARK_VERSION,
     _PPL_ALLOC_009_ELIGIBILITY_IDEMPOTENCY_KEY,
     _PPL_ALLOC_009_ELIGIBILITY_RUN_KEY,
@@ -38,7 +36,6 @@ from ..service import (
     _ppl_alloc_009_wait_for_telemetry_readback,
     _stable_json_hash,
     _strategy_discovery_page_size,
-    _strategy_persona_action_command,
     _strategy_persona_idempotency_check,
 )
 from .common import PersonaRouteContext, make_context_dependency
@@ -480,68 +477,43 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
     async def bff_persona_action(
         persona_id: str,
         action_id: str,
+        request: Request,
+        background_tasks: BackgroundTasks,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
+        x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+        x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
-        """BFF: persona action — routes through command/precondition machinery.
-
-        AdvanceLifecycle is registered (P0-1) and returns 202. All other action_ids
-        still return 410 until individually registered.
-        """
-        # P0-1: AdvanceLifecycle registered and active
-        if action_id == "AdvanceLifecycle":
-            identity = _extract_identity(authorization)
-            _require_operator_role(identity)
-            _reject_body_idempotency_key(payload)
-            resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-
-            target_state = str(payload.get("target_state") or "").strip()
-            if target_state not in _ADVANCE_LIFECYCLE_VALID_TARGETS:
-                raise _bff_error(
-                    422,
-                    ErrorCode.VALIDATION_FAILED,
-                    "target_state is required and must be paper_owner, live_owner, or retired",
-                    f"Got {target_state!r}; allowed: {sorted(_ADVANCE_LIFECYCLE_VALID_TARGETS)}",
-                    precondition_failed="target_state",
-                )
-
-            if target_state == "live_owner" and not _ADVANCE_LIFECYCLE_LIVE_ROLES.intersection(identity.roles):
-                raise _bff_error(
-                    403,
-                    ErrorCode.FORBIDDEN,
-                    "Advancing to live_owner requires approver or admin role",
-                    "Operator does not hold live_owner_approver role",
-                    precondition_failed="role_check",
-                )
-
-            confirm_token = str(payload.get("confirm_token") or "").strip()
-            if not confirm_token:
-                raise _bff_error(
-                    422,
-                    ErrorCode.VALIDATION_FAILED,
-                    "confirm_token is required for AdvanceLifecycle",
-                    "Provide a valid confirm_token in the request body",
-                    precondition_failed="confirm_token",
-                )
-
-            _ensure_persona_exists(persona_id)
-
-            enriched_payload = {**payload, "persona_id": persona_id}
-            return _strategy_persona_action_command(
-                entity_type=ObjectType.PERSONA,
-                entity_id=persona_id,
-                action_id=action_id,
-                resolved_key=resolved_key,
-                identity=identity,
-                payload=enriched_payload,
-                command_type=CommandType.ADVANCE_LIFECYCLE,
+        """Forward lifecycle aliases through the same authenticated command admission."""
+        if action_id.lower().replace("_", "").replace("-", "") not in {
+            "advancelifecycle", "promote", "promotecandidate", "demote",
+        }:
+            return _deprecated_bff_path_response(
+                route="/bff/personas/{persona_id}/actions/{action_id}",
+                replacement="/bff/v1/commands",
             )
-
-        return _deprecated_bff_path_response(
-            route="/bff/personas/{persona_id}/actions/{action_id}",
-            replacement="/bff/v1/commands",
+        _reject_body_idempotency_key(payload)
+        admission = getattr(request.app.state, "command_adapter_service", None)
+        if admission is None:
+            raise HTTPException(status_code=503, detail="Command admission is unavailable")
+        return admission.submit_command_admission(
+            background_tasks=background_tasks,
+            payload={
+                "command": "PersonaAction", "action": action_id,
+                "target": {"type": "Persona", "id": persona_id},
+                "params": {k: v for k, v in payload.items() if k not in {"audit_context", "reason"}},
+                "audit_context": payload["audit_context"] if "audit_context" in payload else {"reason": payload.get("reason")},
+            },
+            authorization=authorization, x_mfa_token=x_mfa_token,
+            x_confirm_token=x_confirm_token,
+            x_trace_id=request.headers.get("X-Trace-Id"),
+            x_correlation_id=request.headers.get("X-Correlation-Id"),
+            x_request_id=request.headers.get("X-Request-Id"),
+            idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key,
+            source_route="POST /bff/personas/{persona_id}/actions/{action_id}",
+            include_durable_meta=True,
         )
 
 

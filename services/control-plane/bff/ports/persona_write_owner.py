@@ -315,6 +315,7 @@ class PersonaRegistryHttpWritePort:
         target_state: str,
         governance_decision_id: str | None,
         authorization: str,
+        expected_tenant_id: str,
     ) -> Dict[str, Any]:
         """Forward a human lifecycle request, never the provisioning credential.
 
@@ -323,6 +324,8 @@ class PersonaRegistryHttpWritePort:
         """
         if not authorization or not authorization.startswith("Bearer "):
             raise _PersonaHttpResponseError(401, "Original caller bearer token is required")
+        if not expected_tenant_id:
+            raise _PersonaHttpResponseError(403, "Authenticated caller tenant is required")
         value = self._request(
             "PATCH",
             f"/api/personas/{urllib.parse.quote(persona_id, safe='')}/lifecycle",
@@ -340,6 +343,7 @@ class PersonaRegistryHttpWritePort:
             not isinstance(value, dict)
             or not isinstance(metadata, dict)
             or value.get("persona_id") != persona_id
+            or value.get("tenant_id") != expected_tenant_id
             or value.get("lifecycle_state") != target_state
             or value.get("updated_by") != actor_id
             or (
