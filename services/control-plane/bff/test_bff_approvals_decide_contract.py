@@ -222,3 +222,33 @@ def test_command_entry_points_forward_the_original_jwt(owner):
         adapter.execute("cmd-6", "RequestApprovalRevision", {"decision_id": "a1"}, auth_token=token)
     adapter.execute("cmd-7", "ApproveDecision", {"decision_id": "a1", "expected_version": 3, "approval_notes": "ok"}, auth_token=token)
     assert owner.calls[-1][1].endswith("/a1/decide")
+
+
+@pytest.mark.parametrize("command,conflict", [("RejectDecision", "approved"), ("ApproveDecision", "rejected"),
+                                              ("RequestApprovalRevision", "approved")])
+def test_command_verb_never_conflicts_with_outcome_param(owner, command, conflict):
+    calls = len(owner.calls)
+    with pytest.raises(ValueError):
+        GovernanceCommandAdapter().execute("cmd-x", command, {"decision_id": "a1", "expected_version": 1, "outcome": conflict,
+                                                              "approval_notes": "n", "rejection_reason": "n"},
+                                           auth_token=headers()["Authorization"])
+    assert len(owner.calls) == calls and owner.rows["a1"]["version"] == 1
+
+
+def test_conflicting_outcome_and_decision_on_rest_is_rejected_before_owner(client, owner):
+    calls = len(owner.calls)
+    response = client.post("/bff/approvals/a1/decide", json=vote(outcome="rejected"), headers=headers())
+    assert response.status_code == 422 and len(owner.calls) == calls
+
+
+def test_dry_run_create_is_rejected_without_owner_mutation(client, owner):
+    proposal = {"target_type": "registry_entry", "target_id": "art-1", "tenant_id": "tenant-a", "owner_user_id": "op-1"}
+    before = len(owner.rows)
+    response = client.post("/api/v1/approval-decisions", json=proposal, headers={**headers(sub="op-1", role="operator"), "X-Dry-Run": "true"})
+    assert response.status_code == 501 and len(owner.rows) == before and not [c for c in owner.calls if c[0] == "POST"]
+
+
+def test_batch_decide_returns_owner_result_unrewritten(client, owner):
+    response = client.post("/bff/approvals/batch-decide", headers=headers(key="batch2"), json={"decisions": [{"id": "a1", **vote()}]})
+    result = response.json()["results"][0]["result"]
+    assert result["version"] == 2 and result["decision_state"] == "under_review"

@@ -80,11 +80,11 @@ def project(decision: Mapping[str, Any]) -> Dict[str, Any]:
     """Thin FE aliases over the owner DTO; first vote (under_review) reads as pending."""
     state = str(decision.get("decision_state") or "")
     return {
-        **decision,
         "id": decision.get("decision_id"),
         "outcome": decision.get("decision"),
         "status": "pending" if state in _PENDING else state,
         "state": "pending" if state in _PENDING else state,
+        **decision,
     }
 
 
@@ -113,12 +113,11 @@ def propose(authorization: Optional[str], payload: Mapping[str, Any], idempotenc
 
 def decide(authorization: Optional[str], decision_id: str, params: Mapping[str, Any], idempotency_key: str) -> Dict[str, Any]:
     """Forward one human vote; the owner moves PROPOSED→UNDER_REVIEW→DECIDED inside one CAS."""
-    verb = str(params.get("outcome") or params.get("decision") or "").strip().lower()
-    if not verb and params.get("rejection_reason"):
-        verb = "reject"
-    elif not verb:
-        verb = "approve"
-    if verb not in _OUTCOMES:
+    verbs = {_OUTCOMES.get(v, v) for v in (str(params.get(k) or "").strip().lower() for k in ("outcome", "decision")) if v}
+    if len(verbs) > 1:
+        raise InvalidApprovalRequest("outcome")
+    verb = next(iter(verbs), "rejected" if params.get("rejection_reason") else "approved")
+    if verb not in _OUTCOMES.values():
         raise UnsupportedApprovalAction(f"approval action {verb!r} has no Governance owner transition")
     version = params.get("expected_version", params.get("expectedVersion"))
     if isinstance(version, bool) or not isinstance(version, int) or version < 0:
@@ -135,7 +134,7 @@ def decide(authorization: Optional[str], decision_id: str, params: Mapping[str, 
         raise InvalidApprovalRequest("actor_role")
     body = {
         "expected_version": version, "actor_role": role, "actor_id": claims.get("sub"),
-        "outcome": _OUTCOMES[verb], "rationale": rationale,
+        "outcome": verb, "rationale": rationale,
     }
     body.update({key: params[key] for key in ("conditions", "evidence_refs", "session_id", "candidate_digest",
                                               "proof_digest", "expires_at") if params.get(key) is not None})

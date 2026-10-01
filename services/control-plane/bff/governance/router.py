@@ -387,8 +387,11 @@ def create_governance_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
     ) -> Any:
         _extract(authorization)
+        if str(x_dry_run or "").strip().lower() in {"1", "true", "yes"}:
+            _fail(501, "NOT_IMPLEMENTED", "Dry-run is not supported by the Governance owner", "Unsupported approval action", precondition_failed="unsupported_action")
         key = _idempotency_key(idempotency_key, x_idempotency_key, required=True)
         return await _forward(approval_owner.propose, authorization, payload, key)
 
@@ -1220,8 +1223,8 @@ def create_governance_router(
                 continue
             item_id = str(item["id"]).strip()
             try:
-                await _forward(approval_owner.decide, authorization, item_id, item, f"{batch_key}::{index}::{item_id}")
-                results.append({"index": index, "id": item_id, "status": "accepted"})
+                owner = await _forward(approval_owner.decide, authorization, item_id, item, f"{batch_key}::{index}::{item_id}")
+                results.append({"index": index, "id": item_id, "status": "accepted", "result": owner})
             except HTTPException as exc:
                 detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
                 results.append({"index": index, "id": item_id, "status": "failed", "http_status": exc.status_code, "error": detail.get("error", detail)})
