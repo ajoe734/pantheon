@@ -1,0 +1,58 @@
+{
+  "task_id": "ARCH-TRUTH-AGENT-BOUNDS-001",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "repository": "ajoe734/pantheon",
+  "pull_request": 6053,
+  "delivery_base": "dev",
+  "validated_base_sha": "ad76e3dee7c177ab4e053700c4372cafb9d15536",
+  "validated_product_head": "fd7a94df5c10272930359c0ff856d956d1781d38",
+  "operator_scope": "Directly implement, validate and merge historical-readiness and workshop-agent reconstruction corrections. Operator explicitly reiterated that merge blockers must be resolved before delivery is complete.",
+  "review_intake": "Implementation is already complete in PR #6053. Canonical registration is for exact-head independent review and delivery only, not a second implementation dispatch. The review admission binds the final PR head and this manifest blob via live GitHub validation.",
+  "acceptance": [
+    "Historical repository files and approval strings cannot establish current readiness. Missing or degraded current owner evidence blocks readiness; historical links carry no observation timestamp or readiness authority.",
+    "Workshop semantic interpretation uses the existing restricted OpenClaw structured data endpoint, without keyword reconstruction, invented StrategySpecs, arbitrary tools or fake provider-success fallback.",
+    "Deterministic validation checks schema, citations, map/spec agreement, draft lifecycle, required approval and exact Registry readback. Even complete agent output is at most draftable, never trading authorization.",
+    "Scoped private content, engine-versioned durable replay, failed-card retry and sanitized dependency errors remain intact.",
+    "No production deployment, real orders, capital activation or canonical reviewer approval is claimed by this evidence manifest."
+  ],
+  "validation": [
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 /tmp/clean-bff-venv/bin/python -m pytest -q -p no:cacheprovider services/control-plane/bff/agora/strategy_workshop services/control-plane/bff/tests/test_bff_b3_readiness.py services/control-plane/bff/tests/test_agora_strategy_workshop.py services/control-plane/bff/tests/test_agora_route_ownership.py services/control-plane/bff/tests/test_remaining_main_seam_composition.py services/registry/test_registry_positives.py::test_metadata_patch_still_allows_non_reserved_metadata_updates services/registry/test_registry_positives.py::test_register_strategy_spec_accepts_correct_checksum",
+      "exit_code": 0,
+      "result": "179 passed, 3 skipped, 3 warnings in 121.92s",
+      "environment": "Isolated local Python environment; test doubles and local Registry service/store tests, not live provider or hosted acceptance."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "No whitespace errors"
+    }
+  ],
+  "prior_independent_code_review": {
+    "agent": "Claude",
+    "entrypoint": ".orchestrator/bin/claude using its authenticated configured profile",
+    "scope": "Read-only diff review; not a canonical approval or review-proof",
+    "followups_addressed": [
+      "Namespace canonical schema references and test valid, invalid and colliding local references.",
+      "Normalize unexpected provider exceptions and retain failed-card retry.",
+      "Share citation validation with the deterministic evaluator and reject universe/cadence disagreement.",
+      "Bind reconstruction IDs to content and verify exact Registry draft readback."
+    ],
+    "verification_questions_resolved": [
+      "Message admission already isolates reconstruction failure after durable message acceptance in routes/session.py.",
+      "Both Memory and Postgres workshop sessions use tenant_id/user_id; routes require the scoped owner.",
+      "Registry service intentionally preserves the exact checksummed StrategySpec in metadata.strategy_spec; the local Registry tests cover this round trip."
+    ]
+  },
+  "limitations": [
+    "Current deployment-bound readiness evidence is not connected for historical-only surfaces, which remain unknown/blocked rather than artificially ready.",
+    "Live model semantic quality and external frontend compatibility were not certified by local tests.",
+    "Provider turns are at-least-once across process failure/concurrency, data-only, and bounded to 200 messages/64 KiB. A mismatched same-ID Registry draft is never adopted as proof of a different proposal."
+  ],
+  "separate_tooling_delivery": {
+    "pull_request": 6051,
+    "merge_commit": "847ceafdbed0e8b181c0fbc0e10d8420e9ab26a2",
+    "scope": "One automatic unblock repair level enforced at producer and supervisor materialization; already merged."
+  }
+}

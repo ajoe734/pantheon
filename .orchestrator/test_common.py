@@ -3799,6 +3799,25 @@ class LogicalActivityReaderTests(unittest.TestCase):
             {},
         )
 
+    def test_recent_logical_activity_keeps_append_order_and_skips_old_archives(self):
+        ids = [f"ordered-{index}" for index in range(6)]
+        self._rotate_into_archives([{"event_id": event_id} for event_id in ids])
+        two_hours_ago = time.time() - 7200
+        aged: set[str] = set()
+        for archive in self.archive_dir.glob("*.gz"):
+            with gzip.open(archive, "rt", encoding="utf-8") as handle:
+                held = {json.loads(line).get("event_id") for line in handle if line.strip()}
+            if held & {"ordered-0", "ordered-1"}:
+                os.utime(archive, (two_hours_ago, two_hours_ago))
+                aged |= held
+        self.assertTrue({"ordered-0", "ordered-1"} <= aged)
+
+        rows = common.recent_logical_activity(
+            self.log_path, not_before=time.time() - 3600
+        )
+        seen = [entry.get("event_id") for entry, _source, _line in rows]
+        self.assertEqual(seen, [event_id for event_id in ids if event_id not in aged])
+
     def test_recent_event_lookup_rejects_archive_not_matching_its_name(self):
         self._rotate_into_archives(
             [{"event_id": "event-a"}, {"event_id": "event-b"}]
