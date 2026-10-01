@@ -32,6 +32,9 @@ READERS = {
     "GOVERNANCE_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-governance-registry-reader", "registry-reader"),
     "RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-runtime-approval-reader", "approval_reader"),
     "RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-runtime-registry-reader", "registry-reader"),
+    "PERSONA_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-persona-approval-reader", "approval_reader"),
+    "CAPITAL_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-capital-approval-reader", "approval_reader"),
+    "EVOLUTION_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-evolution-approval-reader", "approval_reader"),
     "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-registry-reader", "registry-reader"),
 }
 WRITERS = {
@@ -46,6 +49,9 @@ CONSUMER_FILES = {
     "registry": ("REGISTRY_GOVERNANCE_SERVICE_TOKEN",),
     "governance": ("GOVERNANCE_REGISTRY_SERVICE_TOKEN",),
     "runtime-manager": ("RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN", "RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN"),
+    "persona": ("PERSONA_GOVERNANCE_SERVICE_TOKEN",),
+    "capital": ("CAPITAL_GOVERNANCE_SERVICE_TOKEN",),
+    "evolution": ("EVOLUTION_GOVERNANCE_SERVICE_TOKEN",),
     "operator-bff": ("PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN",),
     "strategy-distillation-worker": ("DISTILLATION_REGISTRY_SERVICE_TOKEN",),
     "alpha-replication-worker": ("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN",),

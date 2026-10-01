@@ -6,6 +6,7 @@ and review requests to the authoritative Governance and Consultation endpoints.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict, Optional
 from urllib.parse import quote
 
@@ -18,6 +19,12 @@ from .base import (
     internal_url,
     utc_now,
 )
+try:
+    from ..auth.policy import bff_error as _bff_error
+    from ..models import ErrorCode
+except (ImportError, ValueError):
+    from auth.policy import bff_error as _bff_error
+    from models import ErrorCode
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +35,6 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
     _HANDLED_COMMANDS = {
         "ApproveDecision",
         "RejectDecision",
-        "RequestApprovalRevision",
         "HumanGateApprove",
         "HumanGateReject",
         "HumanGateRequestMoreEvidence",
@@ -69,12 +75,13 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         action_id = str(params.get("action_id") or command_type or "").strip()
         entity_id = str(params.get("decision_id") or params.get("gate_id") or params.get("committee_id") or params.get("review_id") or params.get("entity_id") or "").strip()
 
-        if command_type == "ApproveDecision":
+        raw_candidates = [str(command_type or ""), str(action_id or ""), str(params.get("action") or ""), str(params.get("decision") or ""), str(params.get("verb") or ""), str(params.get("action_id") or ""), str(params.get("actionId") or ""), str(params.get("outcome") or "")]
+        if any(re.sub(r"[^a-z0-9]", "", v.lower()) in {"requestrevision", "requestapprovalrevision", "requestchanges", "requestchange"} for v in raw_candidates if v) or params.get("revision_notes") or params.get("revisionNotes"):
+            raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
+        elif command_type == "ApproveDecision":
             return self._execute_decision_action(command_id, entity_id, "approve", params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type == "RejectDecision":
             return self._execute_decision_action(command_id, entity_id, "reject", params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "RequestApprovalRevision":
-            return self._execute_decision_action(command_id, entity_id, "request-revision", params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type.startswith("HumanGate"):
             return self._execute_human_gate_action(command_id, entity_id, command_type or action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type == "RecordSponsorDecision":
@@ -97,44 +104,50 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        from ..governance import approval_owner
+
         target_id = decision_id or str(params.get("decision_id") or "").strip()
         if not target_id:
             raise ValueError(f"ApprovalDecision action {verb} requires decision_id.")
 
-        payload: Dict[str, Any] = {}
-        if verb == "approve":
-            payload["approval_notes"] = params.get("approval_notes") or params.get("notes") or "Approved by governance"
-            subpath = "approve"
-            expected_state = "approved"
-        elif verb == "reject":
-            payload["rejection_reason"] = params.get("rejection_reason") or params.get("reason") or "Rejected by governance"
-            subpath = "reject"
-            expected_state = "rejected"
-        else:
-            payload["revision_notes"] = params.get("revision_notes") or params.get("notes") or "Revision requested"
-            subpath = "request-revision"
-            expected_state = "pending_revision"
+        for k in ("decision", "outcome", "action", "verb", "action_id", "actionId"):
+            v = params.get(k)
+            if v is not None and not isinstance(v, str):
+                raise approval_owner.InvalidApprovalRequest(f"Invalid {k} carrier type: must be a string")
 
-        url = internal_url(f"/api/internal/v1/approval-decisions/{quote(target_id, safe='')}/{subpath}")
-        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
+        cand_verbs = set()
+        for k in ("decision", "outcome", "action", "verb", "action_id", "actionId"):
+            v = params.get(k)
+            if isinstance(v, str) and v.strip():
+                cand_verbs.add(re.sub(r"[^a-z0-9]", "", v.lower()))
 
+        has_app = any(v in {"approve", "approved", "approvedecision"} for v in cand_verbs)
+        has_cond = any(v in {"approvedwithconditions", "approvewithconditions", "conditional"} for v in cand_verbs)
+        has_rej = any(v in {"reject", "rejected", "rejectdecision"} for v in cand_verbs)
+
+        if (has_app or has_cond) and has_rej:
+            raise approval_owner.InvalidApprovalRequest("ApprovalDecision params contain conflicting verbs")
+        if verb in {"approve", "approved"} and has_rej:
+            raise approval_owner.InvalidApprovalRequest("ApprovalDecision approve conflicts with reject in params")
+        if verb in {"reject", "rejected"} and (has_app or has_cond):
+            raise approval_owner.InvalidApprovalRequest("ApprovalDecision reject conflicts with approve in params")
+        if any(v in {"stage", "freeze", "escalate"} for v in cand_verbs) or any(params.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
+            raise approval_owner.UnsupportedApprovalAction("Unsupported approval action")
+
+        if verb in {"approve", "approved"} and has_cond:
+            verb = "approved_with_conditions"
+
+        decision = approval_owner.decide(auth_token, target_id, {**params, "decision": verb, "outcome": verb}, command_id)
         return build_domain_receipt(
             command_id=command_id,
             entity_type="ApprovalDecision",
             entity_id=target_id,
             action_id=f"Decision:{verb}",
-            status=body.get("decision_state") or expected_state,
-            dispatch_path=url,
-            domain_receipt=body,
-            authoritative_readback={
-                "decision_id": target_id,
-                "decision_state": body.get("decision_state") or expected_state,
-            },
-            extra={
-                "decision_id": target_id,
-                "decision_state": body.get("decision_state") or expected_state,
-                "audit_id": body.get("audit_id"),
-            },
+            status=decision["decision_state"],
+            dispatch_path=approval_owner.owner_url(f"/api/governance/approvals/{quote(target_id, safe='')}/decide"),
+            domain_receipt=decision,
+            authoritative_readback={"decision_id": target_id, "decision_state": decision["decision_state"], "version": decision.get("version")},
+            extra={"decision_id": target_id, "decision_state": decision["decision_state"]},
         )
 
     def _execute_human_gate_action(
@@ -222,15 +235,17 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        target_review_id = review_id or str(params.get("review_id") or "review-001").strip()
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="Review",
-            entity_id=target_review_id,
-            action_id=action_id,
-            status="accepted",
-            dispatch_path="governance_review_store",
-            domain_receipt={"review_id": target_review_id, "action": action_id, "submitted": True},
-            authoritative_readback={"review_id": target_review_id, "status": "pending_review"},
-            extra={"review_id": target_review_id},
-        )
+        raw_candidates = [str(action_id or ""), str(params.get("decision") or ""), str(params.get("action") or ""), str(params.get("verb") or ""), str(params.get("action_id") or ""), str(params.get("actionId") or ""), str(params.get("outcome") or "")]
+        if any(re.sub(r"[^a-z0-9]", "", v.lower()) in {"requestrevision", "requestapprovalrevision", "requestchanges", "requestchange"} for v in raw_candidates if v) or params.get("revision_notes") or params.get("revisionNotes"):
+            raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
+        verbs = {re.sub(r"[^a-z0-9]", "", v.lower()) for v in raw_candidates if v and v.strip()}
+        has_app = any(v in {"approve", "approved", "approvedecision"} for v in verbs)
+        has_cond = any(v in {"approvedwithconditions", "approvewithconditions", "conditional"} for v in verbs)
+        has_rej = any(v in {"reject", "rejected", "rejectdecision"} for v in verbs)
+        if (has_app or has_cond) and has_rej:
+            raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Conflicting action and decision", "ReviewAction carriers contain conflicting verbs")
+        norm_verb = "approved_with_conditions" if has_cond else ("approve" if has_app else ("reject" if has_rej else ""))
+        if not norm_verb or any(v in {"stage", "freeze", "escalate"} for v in verbs) or any(params.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
+            from ..governance.approval_owner import UnsupportedApprovalAction
+            raise UnsupportedApprovalAction(f"review action {action_id!r} has no Governance owner transition")
+        return self._execute_decision_action(command_id, review_id, norm_verb, params, auth_token=auth_token, mfa_token=mfa_token)

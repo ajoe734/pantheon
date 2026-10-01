@@ -17,11 +17,13 @@ import os
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from services.control_plane.bff.auth import policy as auth_policy
 from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.governance import approval_owner
 from services.control_plane.bff.governance.router import create_governance_router
 from services.control_plane.bff.models import redact_evidence_refs, utc_now
 
@@ -192,6 +194,19 @@ class _SweepStore:
 
     def get_consult_request(self, request_id: str) -> Optional[Dict[str, Any]]:
         return copy.deepcopy(_CONSULT_REQUEST_1) if request_id == "consult-req-1" else None
+
+
+@pytest.fixture(autouse=True)
+def _owner_serves_approvals(monkeypatch):
+    """Approval reads are forwarded; stand in for the Governance owner DTOs."""
+    records = {item["decision_id"]: item for item in (_APPROVAL_1, _APPROVAL_2, _APPROVAL_3_DECISION_ONLY)}
+
+    def call_owner(method, path, authorization, **_kwargs):
+        if path.endswith("/approvals"):
+            return [copy.deepcopy(_APPROVAL_1), copy.deepcopy(_APPROVAL_2)]
+        return copy.deepcopy(records[path.rsplit("/", 1)[1]])
+
+    monkeypatch.setattr(approval_owner, "call_owner", call_owner)
 
 
 def _tenant_identity(*args: Any, **kwargs: Any) -> Any:

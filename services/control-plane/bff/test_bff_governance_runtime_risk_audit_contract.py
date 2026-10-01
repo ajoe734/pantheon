@@ -364,19 +364,6 @@ def test_bff_governance_review_routes_and_approval_evidence() -> None:
         assert audit.status_code == 200, audit.text
         assert audit.json()["events"][0]["entry_id"] == "audit-002"
 
-        store.get_approval_decision = lambda approval_id: {
-            "id": approval_id,
-            "tenant_id": "tenant-a",
-            "correlation_id": "corr-approval-005",
-            "evidence_refs": [{"ref_id": "ev-005", "type": "IncidentReport", "url": None}],
-        } if approval_id == "approval-gap-005" else None
-        evidence = client.get("/bff/approvals/approval-gap-005/evidence", headers=HEADERS)
-        assert evidence.status_code == 200, evidence.text
-        body = evidence.json()
-        assert body["correlation_id"] == "corr-approval-005"
-        assert body["audit_ref"]["href"] == "/bff/audit/entities/ApprovalDecision/approval-gap-005"
-        assert body["evidence"][0]["ref_id"] == "ev-005"
-
 
 def test_bff_deployment_runtime_and_risk_action_routes_return_final_envelopes() -> None:
     with _isolated_bff() as (client, _store):

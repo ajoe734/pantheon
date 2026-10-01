@@ -281,87 +281,6 @@ def test_router_registers_exactly_the_35_catalog_routes() -> None:
     assert len(router.routes) == 36
 
 
-def test_typed_approval_detail_replaces_generic_alias_and_preserves_envelope() -> None:
-    client = build_client()
-
-    listed = client.get("/api/v1/approval-decisions")
-    assert listed.status_code == 200
-    assert {item["decision_id"] for item in listed.json()["data"]} == {"approval-1", "approval-2"}
-
-    canonical = client.get("/api/v1/approval-decisions/approval-1")
-    compatibility = client.get("/bff/approvals/approval-1")
-    assert canonical.status_code == compatibility.status_code == 200
-    assert canonical.json()["data"]["decision_id"] == "approval-1"
-    assert compatibility.json()["data"]["decision_id"] == "approval-1"
-    assert client.get("/bff/approvals/missing").status_code == 404
-
-
-def test_approval_decisions_are_scoped_to_viewer_tenant_on_mounted_routes() -> None:
-    store = MockGovernanceStore()
-    store.approval_decisions["approval-unknown-tenant"] = {
-        "id": "approval-unknown-tenant",
-        "decision_id": "approval-unknown-tenant",
-    }
-    store.approval_decisions["approval-fallback"] = {
-        "id": "approval-fallback",
-        "decision_id": "approval-fallback",
-        "tenant_id": "tenant-a",
-    }
-    store.get_approval_decision = lambda _id: None  # type: ignore[method-assign]  # exercise list fallback
-
-    def viewer_identity(authorization: Optional[str] = None) -> Any:
-        tenant, _, role = (authorization or "tenant-a").removeprefix("Bearer ").partition(":")
-        return type("Identity", (), {
-            "operator_id": f"op-{tenant}",
-            "roles": {role or "viewer"},
-            "claims": {"tenant_id": tenant} if tenant != "none" else {},
-        })()
-
-    client = build_client(store, extract_identity=viewer_identity)
-    tenant_a, tenant_b, no_tenant = (
-        {"Authorization": tenant} for tenant in ("tenant-a", "tenant-b", "none")
-    )
-
-    ids = {item["decision_id"] for item in client.get("/api/v1/approval-decisions", headers=tenant_a).json()["data"]}
-    assert ids == {"approval-1", "approval-2", "approval-fallback"}
-    assert client.get("/api/v1/approval-decisions/approval-1", headers=tenant_a).status_code == 200
-    assert client.get("/api/v1/approval-decisions/approval-fallback", headers=tenant_a).status_code == 200
-    for headers in (tenant_b, no_tenant):
-        assert client.get("/api/v1/approval-decisions", headers=headers).json()["data"] == []
-        assert client.get("/api/v1/approval-decisions/approval-1", headers=headers).status_code == 404
-        assert client.get("/api/v1/approval-decisions/approval-fallback", headers=headers).status_code == 404
-    for headers in (tenant_a, tenant_b, no_tenant):
-        assert client.get("/api/v1/approval-decisions/approval-unknown-tenant", headers=headers).status_code == 404
-
-    approver = {"Authorization": "tenant-a:approver", "Idempotency-Key": "scope-1"}
-    payload = {"plan_id": "plan-1", "decision": "approve", "memo": "Approved with evidence", "tenant_id": "tenant-b"}
-    created = client.post("/api/v1/approval-decisions", json=payload, headers=approver)
-    assert created.status_code == 202
-    decision_id = created.json()["data"]["commandId"]
-    assert client.get(f"/api/v1/approval-decisions/{decision_id}", headers=tenant_a).status_code == 200
-    assert client.get(f"/api/v1/approval-decisions/{decision_id}", headers=tenant_b).status_code == 404
-
-
-def test_create_approval_decision_validation_dry_run_and_idempotent_replay() -> None:
-    client = build_client()
-    headers = {"Idempotency-Key": "approval-create-1"}
-    payload = {"plan_id": "plan-1", "decision": "approve", "memo": "Approved with evidence"}
-
-    created = client.post("/api/v1/approval-decisions", json=payload, headers=headers)
-    replayed = client.post("/api/v1/approval-decisions", json=payload, headers=headers)
-    assert created.status_code == replayed.status_code == 202
-    assert created.json() == replayed.json()
-
-    dry_run = client.post(
-        "/api/v1/approval-decisions",
-        json={**payload, "plan_id": "plan-2"},
-        headers={"Idempotency-Key": "approval-create-2", "X-Dry-Run": "true"},
-    )
-    assert dry_run.status_code == 200
-    assert dry_run.json()["meta"]["dryRun"] is True
-    assert client.post("/api/v1/approval-decisions", json={"plan_id": "plan-1"}).status_code == 422
-
-
 def test_consult_request_committee_memo_and_workbench_routes() -> None:
     client = build_client()
     workbench = client.get("/api/v1/workbench/consultation")
@@ -431,19 +350,27 @@ def test_consultation_session_and_policy_read_routes() -> None:
     assert client.get("/api/v1/personas/missing/consultations").status_code == 404
 
 
-def test_bff_approval_review_and_governance_ledger_compatibility() -> None:
+def test_review_and_governance_ledger_compatibility(monkeypatch: Any) -> None:
+    from services.control_plane.bff.governance import approval_owner
+
+    stubbed_response = {
+        "decision_id": "review-1",
+        "decision_state": "accepted",
+        "decision": "approved",
+        "status": "accepted",
+        "tenant_id": "tenant-a",
+        "version": 2,
+    }
+    monkeypatch.setattr(approval_owner, "call_owner", lambda *args, **kwargs: dict(stubbed_response))
+
     client = build_client()
 
-    approvals = client.get("/bff/approvals")
-    evidence = client.get("/bff/approvals/approval-1/evidence")
     ledger = client.get("/bff/management/governance-ledger?source_type=approval")
     reviews = client.get("/bff/reviews")
     review = client.get("/bff/reviews/review-1")
     validators = client.get("/bff/reviews/review-1/validators")
     audit = client.get("/bff/reviews/review-1/audit")
 
-    assert approvals.json()["count"] == 1
-    assert evidence.json()["evidence"][0]["ref_id"] == "evidence-1"
     # Two approval records plus the approval-scoped audit entry.
     assert ledger.json()["data"]["summary"]["approval_count"] == 3
     assert reviews.json()["items"][0]["item_id"] == "review-1"
@@ -454,48 +381,9 @@ def test_bff_approval_review_and_governance_ledger_compatibility() -> None:
     created = client.post("/bff/reviews", json={"id": "review-2"}, headers={"Idempotency-Key": "review-create-1"})
     acted = client.post(
         "/bff/reviews/review-1/actions/approve",
-        json={"reason": "Evidence verified"},
+        json={"expected_version": 1, "notes": "Evidence verified", "actor_role": "governance_reviewer"},
         headers={"Idempotency-Key": "review-action-1"},
     )
     assert created.status_code == acted.status_code == 202
     assert created.json()["status"] == acted.json()["status"] == "accepted"
 
-
-def test_single_and_batch_approval_decisions_validate_and_report_partial_results() -> None:
-    client = build_client()
-    single = client.post(
-        "/bff/approvals/approval-1/decide",
-        json={"decision": "approve"},
-        headers={"Idempotency-Key": "approval-decide-1"},
-    )
-    assert single.status_code == 202
-    assert single.json()["data"]["action"] == "approve"
-    assert client.post(
-        "/bff/approvals/approval-1/decide",
-        json={"decision": "reject"},
-        headers={"Idempotency-Key": "approval-decide-2"},
-    ).status_code == 422
-
-    batch = client.post(
-        "/bff/approvals/batch-decide",
-        json={
-            "decisions": [
-                {"id": "approval-1", "decision": "approve"},
-                {"id": "missing", "decision": "approve"},
-            ]
-        },
-        headers={"Idempotency-Key": "approval-batch-1"},
-    )
-    assert batch.status_code == 207
-    assert batch.json()["status"] == "partial"
-    assert batch.json()["summary"] == {"total": 2, "accepted": 1, "failed": 1}
-
-
-def test_unavailable_approval_detail_fails_closed_instead_of_returning_placeholder() -> None:
-    store = MockGovernanceStore()
-    store.sources["approval_decisions"] = "missing"
-    client = build_client(store)
-
-    response = client.get("/api/v1/approval-decisions/missing")
-    assert response.status_code == 503
-    assert response.json()["detail"]["error"]["code"] == "DEPENDENCY_UNAVAILABLE"

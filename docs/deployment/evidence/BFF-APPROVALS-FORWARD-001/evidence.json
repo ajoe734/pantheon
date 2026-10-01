@@ -1,0 +1,47 @@
+{
+  "task_id": "BFF-APPROVALS-FORWARD-001",
+  "scope": "source/contract validation only; no hosted or live acceptance claimed",
+  "forwarding": "services/control-plane/bff/governance/approval_owner.py is the single BFF path to the Governance owner (original JWT, stable Idempotency-Key, client expected_version)",
+  "removed": [
+    "GovernanceService._created_approvals and local approval reads/writes",
+    "/api/internal/v1/approval-decisions calls",
+    "approval action_kind admission in CommandAdapterService",
+    "BFF-side approver/duplicate role gates and circular approval gate in preconditions.py",
+    "RequestApprovalRevision and its aliases (request_revision, requestrevision, request_changes, requestchanges, ReviewAction revision verbs), including adapter execution, preconditions, executor dispatch, and action catalog entry"
+  ],
+  "unsupported": [
+    "escalate",
+    "freeze",
+    "stage",
+    "legacy incomplete create"
+  ],
+  "revision_retirement": "RequestApprovalRevision and its aliases (request_revision, requestrevision, request_changes, requestchanges, ReviewAction revision verbs, revision_notes) permanently retired with HTTP 410 naming RejectDecision with notes; zero Governance owner calls, votes, writes, executable admissions, or success receipts; named stage rejected with 501; route conflicts rejected with 422",
+  "owner_changes": [
+    "operator may propose/read within own tenant and owner_user_id",
+    "decide on PROPOSED runs accept_review inside the same execute_command callback"
+  ],
+  "validation": {
+    "services/control-plane/bff/test_bff_approvals_decide_contract.py": "127 passed against stub Governance HTTP owner (asserting RequestApprovalRevision and request_changes retired with 410, masked carriers rejected with 410, route verb conflicts rejected with 422, named stage rejected with 501, conflicting command decisions rejected with 422, unsupported URL review actions rejected with 501, masked unsupported raw action carriers stage/freeze/escalate in action_id/actionId/verb rejected with 501/422 with zero owner calls/votes, DecideRequest schema validation, non-governance role derivation remaining derived from verified identity, strict intent classification: human_gate_item_id/humanGateItemId in params cannot bypass raw-stage validation, unknown raw action_id cannot be silently overwritten, conditional vote remains supported; mounted review routes forward retained votes to owner with cross-tenant denial; conditional approval outcome preserved as approved_with_conditions; conflicting outcomes rejected with 422; review create rejects retired intents with 410 before admission; conditional wrapper preserves owner outcome across action/action_id/actionId; raw carrier types validated and direct ValueError raised; mounted tests asserting absent or empty conditions on conditional vote are rejected by owner with zero votes/decisions and version unchanged, unconditional approval with conditions rejected by owner, explicit approval commands retain governance intent validation regardless of target markers, incompatible target and command combinations rejected before admission, and mounted regressions asserting zero owner calls/votes and unchanged version for action/action_id/actionId conflicts and unsupported intents)",
+    "independent_review_regression": "65 regressions passed across all 11 test suites (/tmp/test_approval_raw_carrier_types_20261001.py, /tmp/test_approval_intent_classification_20261001.py, /tmp/test_approval_masked_unsupported_intent_20261001.py, /tmp/test_approval_named_stage_takeover_20261001.py, /tmp/test_approval_non_governance_role_takeover_20261001.py, /tmp/test_approval_revision_retirement_takeover_20261001.py, /tmp/test_codex_6077_independent.py, /tmp/test_codex_6077_outcome_review.py, /tmp/test_bff_forward_independent_review.py, /tmp/test_bff_f0df_review_regressions.py, /tmp/test_bff_approvals_5eff_independent.py)",
+    "services/control-plane/bff/test_command_executor.py": "24 passed (asserting RequestApprovalRevision retired with 410, zero owner calls in execute_command and execute_command_with_status)",
+    "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py": "3 passed (approval SSE publishing following owner result, retired revision publishes nothing with 410)",
+    "services/control-plane/bff/tests/test_command_adapters_router.py": "633 passed, 1 skipped (full suite including test_request_approval_revision_is_retired_with_410, alias equivalence including humangateapprove and humangatereject wrapper equivalence 20/20, and test_zero_reverse_main_imports)",
+    "services/control-plane/bff/tests/test_governance_router.py": "test_review_and_governance_ledger_compatibility migrated to valid owner vote with stubbed Governance response (202 accepted)",
+    "services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py": "6 passed",
+    "services/persona/test_lifecycle_approval_verifier.py": "13 passed",
+    "services/persona/test_training_target_owner.py": "14 passed",
+    "scripts/test_issue_dev_paper_principals.py": "27 passed",
+    "scripts/test_dev_paper_principal_renewal.py": "19 passed",
+    "services/governance/test_approval_authority_postgres.py": "53 passed against isolated PostgreSQL (gov_approval_test DB on postgres:16-alpine)",
+    "services/governance/test_governance_api.py": "33 passed against isolated PostgreSQL (migrated test_decide_from_proposed_raises_400 to assert atomic PROPOSED -> DECIDED CAS reaches 200, verifies version/durable readback, and rejects proposer/stale attempts)",
+    "services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py": "33 passed"
+  },
+  "baseline_reproductions": {
+    "action_catalog_evolution": "test_action_catalog.py::test_critical_actions_require_two_man independently reproduced dev baseline failure (PromoteEvolutionCandidateLive requires_two_man=False)",
+    "incident_service_api_url": "test_bff_governance_runtime_risk_audit_contract.py::test_bff_incident_routes_support_create_detail_and_action independently reproduced dev baseline failure (PANTHEON_INCIDENTS_API_URL unconfigured)"
+  },
+  "not_verified": [
+    "hosted dev write-readback",
+    "Capital PANTHEON_RUNTIME_MANAGER policy source (no existing policy reference identified; not wired)"
+  ]
+}

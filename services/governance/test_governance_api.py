@@ -340,6 +340,23 @@ def test_full_lifecycle_approved():
     assert body["decided_at"]     is not None
 
 
+def test_unsupported_revision_outcome_is_rejected_without_mutation():
+    did = uid()
+    proposer = _signed_headers(actor='synthetic-reviewer', role='approval_proposer', tenant='synthetic-tenant')
+    client.post("/api/governance/approvals", json={
+        "expected_version": 0, "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", "decision_id": did,
+        "target_type": "model_artifact", "target_id": "m-rv", "target_version": "v1", "risk_level": "medium",
+    }, headers=proposer)
+    r = client.post(f"/api/governance/approvals/{did}/decide", json={
+        "expected_version": 1, "actor_role": "risk_owner", "actor_id": "risk-owner-1",
+        "outcome": "request_revision", "rationale": "rework",
+    }, headers=_signed_headers(actor="risk-owner-1", role="risk_owner", tenant='synthetic-tenant'))
+    assert r.status_code == 422
+    after = client.get(f"/api/governance/approvals/{did}", headers=proposer).json()
+    assert after["decision_state"] == "proposed" and after["version"] == 1 and after["decision"] is None
+    assert client.get(f"/api/governance/audit?decision_id={did}&limit=50").json()[0]["event_type"] != "decided"
+
+
 def test_approved_with_conditions():
     did = uid()
     client.post("/api/governance/approvals", json={
@@ -661,25 +678,84 @@ def test_audit_log_grows_through_lifecycle():
 
 def test_decide_from_proposed_raises_400():
     did = uid()
+    proposer_headers = _signed_headers(actor='synthetic-reviewer', role='approval_proposer', tenant='synthetic-tenant')
+    subject = {"binding_id": "b1", "persona_id": "p1", "capital_pool_id": "cp1", "risk_direction": "neutral"}
     client.post("/api/governance/approvals", json={
         "expected_version": 0,
         "expires_at": "2099-01-01T00:00:00Z",
         "tenant_id": "synthetic-tenant",
         "owner_user_id": "synthetic-reviewer",
         "decision_id":    did,
-        "target_type":    "registry_entry",
-        "target_id":      "art-tr",
+        "target_type":    "capital_binding_activation",
+        "target_id":      "b1",
         "target_version": "v1",
-    }, headers=_signed_headers(actor='synthetic-reviewer', role='approval_proposer', tenant='synthetic-tenant'))
-    # Skip the review step — decide directly from proposed (state check must reject)
+        "risk_level":     "medium",
+        "subject":        subject,
+    }, headers=proposer_headers)
+
+    # 1. Proposer cannot vote on own proposal -> 400 with 'proposer'
+    proposer_vote = client.post(f"/api/governance/approvals/{did}/decide", json={
+        "expected_version": 1,
+        "actor_role": "governance_reviewer",
+        "outcome":    "approved",
+        "rationale":  "Proposer attempt",
+        "actor_id":   "synthetic-reviewer",
+        "expires_at": "2099-01-01T00:00:00Z",
+    }, headers=_signed_headers(actor="synthetic-reviewer", role="governance_reviewer", tenant="synthetic-tenant"))
+    assert proposer_vote.status_code == 400 and "proposer" in proposer_vote.text
+
+    # 2. Operator role cannot decide -> 403
+    op_vote = client.post(f"/api/governance/approvals/{did}/decide", json={
+        "expected_version": 1,
+        "actor_role": "governance_reviewer",
+        "outcome":    "approved",
+        "rationale":  "Operator attempt",
+        "actor_id":   "op-1",
+        "expires_at": "2099-01-01T00:00:00Z",
+    }, headers=_signed_headers(actor="op-1", role="operator", tenant="synthetic-tenant"))
+    assert op_vote.status_code == 403
+
+    # 3. Stale expected_version fails with 409
+    stale_vote = client.post(f"/api/governance/approvals/{did}/decide", json={
+        "expected_version": 0,
+        "actor_role": "governance_reviewer",
+        "outcome":    "approved",
+        "rationale":  "Stale version attempt",
+        "actor_id":   "rev-1",
+        "expires_at": "2099-01-01T00:00:00Z",
+    }, headers=_signed_headers(actor="rev-1", role="governance_reviewer", tenant="synthetic-tenant"))
+    assert stale_vote.status_code == 409
+
+    # 4. Valid reviewer decides directly from PROPOSED in one atomic CAS -> reaches 200
     r = client.post(f"/api/governance/approvals/{did}/decide", json={
         "expected_version": 1,
         "actor_role": "governance_reviewer",
         "outcome":    "approved",
-        "rationale":  "Should fail",
+        "rationale":  "Valid direct CAS decision",
         "actor_id":   "rev-1",
+        "expires_at": "2099-01-01T00:00:00Z",
     }, headers=_signed_headers(actor="rev-1", role="governance_reviewer", tenant='synthetic-tenant'))
-    assert r.status_code == 400
+    assert r.status_code == 200
+    data = r.json()
+    assert data["decision_state"] == "decided"
+    assert data["version"] == 2
+
+    # 5. Durable readback confirms decision state
+    readback = client.get(f"/api/governance/approvals/{did}", headers=_signed_headers(actor="rev-1", role="approval_reader", tenant="synthetic-tenant"))
+    assert readback.status_code == 200
+    assert readback.json()["decision_state"] == "decided"
+    assert readback.json()["version"] == 2
+
+    # 6. Subsequent vote with stale version 1 fails with 409
+    stale_after = client.post(f"/api/governance/approvals/{did}/decide", json={
+        "expected_version": 1,
+        "actor_role": "risk_owner",
+        "outcome":    "approved",
+        "rationale":  "After decision attempt",
+        "actor_id":   "risk-1",
+        "expires_at": "2099-01-01T00:00:00Z",
+    }, headers=_signed_headers(actor="risk-1", role="risk_owner", tenant="synthetic-tenant"))
+    assert stale_after.status_code == 409
 
 
 def test_review_from_under_review_raises_400():

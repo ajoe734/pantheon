@@ -15,14 +15,13 @@ from unittest.mock import patch
 # context. Importing through the canonical ``services.control_plane.bff``
 # path (as every other passing test in this directory already does) gives
 # ``.models``/``.command_adapters`` a real parent package.
+from fastapi import HTTPException
 from services.control_plane.bff.models import CommandStatus, CommandType
+from services.control_plane.bff.governance.approval_owner import UnsupportedApprovalAction
 from services.control_plane.bff.command_executor import (
     execute_command,
     execute_command_with_status,
     _execute_approve_deployment,
-    _execute_approve_decision,
-    _execute_reject_decision,
-    _execute_request_approval_revision,
     _execute_pause_runtime,
     _execute_escalate_diff,
     _execute_rollback,
@@ -84,59 +83,56 @@ class TestPauseRuntimeExecutor(unittest.TestCase):
 
 
 class TestApprovalDecisionExecutors(unittest.TestCase):
+    """Approval commands forward the caller's JWT to the Governance owner (no local write)."""
+
+    OWNER = "services.control_plane.bff.governance.approval_owner.call_owner"
+    TOKEN = "Bearer h." + __import__("base64").urlsafe_b64encode(
+        b'{"sub":"rev-1","roles":["governance_reviewer"]}').decode().rstrip("=") + ".s"
+
     def setUp(self):
-        os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
+        os.environ["PANTHEON_GOVERNANCE_APPROVAL_API_URL"] = "http://governance:8082"
 
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_approve_decision_success(self, mock_post):
-        mock_post.return_value = {
-            "decision_id": "appr-001",
-            "decision_state": "approved",
-            "status": "submitted",
-            "audit_id": "audit-appr-001",
-            "approved_at": "2026-04-18T06:00:00Z",
-        }
-        result = _execute_approve_decision("cmd-approve-decision", {
-            "decision_id": "appr-001",
-            "approval_notes": "Looks good",
-        })
-        self.assertEqual(result["decision_id"], "appr-001")
-        self.assertEqual(result["decision_state"], "approved")
-        self.assertEqual(result["command_id"], "cmd-approve-decision")
+    def test_approve_and_reject_forward_vote_with_stable_idempotency_key(self):
+        for command, params, outcome in (
+            (CommandType.APPROVE_DECISION, {"approval_notes": "Looks good"}, "approved"),
+            (CommandType.REJECT_DECISION, {"rejection_reason": "Risk evidence insufficient"}, "rejected"),
+        ):
+            with patch(self.OWNER, return_value={"decision_id": "appr-001", "decision_state": "under_review", "version": 2}) as owner:
+                result = execute_command("cmd-1", command, {"decision_id": "appr-001", "expected_version": 1, **params},
+                                         auth_token=self.TOKEN)
+            self.assertEqual(result["command_id"], "cmd-1")
+            self.assertEqual(result["status"], "under_review")
+            args, kwargs = owner.call_args
+            self.assertEqual(args[:3], ("POST", "/api/governance/approvals/appr-001/decide", self.TOKEN))
+            self.assertEqual(kwargs["idempotency_key"], "cmd-1")
+            self.assertEqual((kwargs["body"]["outcome"], kwargs["body"]["actor_id"], kwargs["body"]["expected_version"]),
+                             (outcome, "rev-1", 1))
 
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_reject_decision_success(self, mock_post):
-        mock_post.return_value = {
-            "decision_id": "appr-001",
-            "decision_state": "rejected",
-            "status": "submitted",
-            "audit_id": "audit-appr-001",
-            "rejected_at": "2026-04-18T06:05:00Z",
-        }
-        result = _execute_reject_decision("cmd-reject-decision", {
-            "decision_id": "appr-001",
-            "rejection_reason": "Risk evidence insufficient",
-        })
-        self.assertEqual(result["decision_id"], "appr-001")
-        self.assertEqual(result["decision_state"], "rejected")
-        self.assertEqual(result["command_id"], "cmd-reject-decision")
+    def test_request_revision_is_retired_with_410_and_no_owner_call(self):
+        with patch(self.OWNER) as owner:
+            with self.assertRaises(HTTPException) as ctx:
+                execute_command("cmd-2", CommandType.REQUEST_APPROVAL_REVISION,
+                                {"decision_id": "appr-001", "expected_version": 1, "revision_notes": "rework"}, auth_token=self.TOKEN)
+            self.assertEqual(ctx.exception.status_code, 410)
+            self.assertIn("RejectDecision with notes", str(ctx.exception.detail))
+            owner.assert_not_called()
 
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_request_revision_success(self, mock_post):
-        mock_post.return_value = {
-            "decision_id": "appr-001",
-            "decision_state": "pending_revision",
-            "status": "submitted",
-            "audit_id": "audit-appr-001",
-            "requested_at": "2026-04-18T06:10:00Z",
-        }
-        result = _execute_request_approval_revision("cmd-request-revision", {
-            "decision_id": "appr-001",
-            "revision_notes": "Need clearer evidence links",
-        })
-        self.assertEqual(result["decision_id"], "appr-001")
-        self.assertEqual(result["decision_state"], "pending_revision")
-        self.assertEqual(result["command_id"], "cmd-request-revision")
+        with patch(self.OWNER) as owner:
+            status, result, error = execute_command_with_status(
+                "cmd-2", CommandType.REQUEST_APPROVAL_REVISION,
+                {"decision_id": "appr-001", "expected_version": 1, "revision_notes": "rework"}, auth_token=self.TOKEN
+            )
+            self.assertEqual(status, CommandStatus.FAILED)
+            self.assertEqual(error["downstream_status"], 410)
+            self.assertFalse(error["retryable"])
+            owner.assert_not_called()
+
+    def test_dispatch_approve_decision(self):
+        with patch(self.OWNER, return_value={"decision_id": "appr-001", "decision_state": "decided", "version": 3}):
+            result = execute_command("cmd-3", CommandType.APPROVE_DECISION,
+                                     {"decision_id": "appr-001", "expected_version": 2, "approval_notes": "Proceed"},
+                                     auth_token=self.TOKEN)
+        self.assertEqual(result["status"], "decided")
 
 
 class TestDeploymentDiffExecutor(unittest.TestCase):
@@ -550,19 +546,6 @@ class TestExecuteCommandDispatch(unittest.TestCase):
             "approval_decision": "approve",
         })
         self.assertEqual(result["state_after"], "approved")
-
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_dispatch_approve_decision(self, mock_post):
-        mock_post.return_value = {
-            "decision_id": "appr-001",
-            "decision_state": "approved",
-            "status": "submitted",
-        }
-        result = execute_command("cmd-approval-queue", CommandType.APPROVE_DECISION, {
-            "decision_id": "appr-001",
-            "approval_notes": "Proceed",
-        })
-        self.assertEqual(result["decision_state"], "approved")
 
     @patch("services.control_plane.bff.command_executor._post_json")
     def test_dispatch_escalate_diff(self, mock_post):
