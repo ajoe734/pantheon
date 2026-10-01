@@ -1113,13 +1113,14 @@ def fetch_pr_for_task(
     root: Path = ROOT,
     state: str = "open",
 ) -> Mapping[str, Any] | None:
+    head_branch = resolve_authoritative_head_branch(candidate)
     listing = gh_json(
         runner,
         [
             "pr",
             "list",
             "--head",
-            candidate.branch,
+            head_branch,
             "--base",
             candidate.target_branch,
             "--state",
@@ -1131,6 +1132,25 @@ def fetch_pr_for_task(
         ],
         cwd=root,
     )
+    if (not isinstance(listing, list) or not listing) and head_branch != candidate.branch:
+        listing = gh_json(
+            runner,
+            [
+                "pr",
+                "list",
+                "--head",
+                candidate.branch,
+                "--base",
+                candidate.target_branch,
+                "--state",
+                state,
+                "--json",
+                "number",
+                "--limit",
+                "10",
+            ],
+            cwd=root,
+        )
     superseding = False
     if not isinstance(listing, list) or not listing:
         listing = _superseding_version_listing(candidate, runner, root=root, state=state)
