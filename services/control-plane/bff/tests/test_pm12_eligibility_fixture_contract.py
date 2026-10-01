@@ -36,9 +36,10 @@ production gates simultaneously:
    persona lacking a runtime binding correctly should not be recommended
    for promotion).
 
-3. **PM12 recommendation score gates** --
-   `personas/service.py::_pm12_recommendation_action_ids` (~L12371, task
-   brief cited ~L12344) requires `overall_score >= 85`, `risk_score >= 70`
+3. **PM12 recommendation score gates** (retired by PERSONA-EVALUATOR-AGENT-002:
+   the BFF no longer selects actions from scores; the persona evaluator agent
+   judges and saves them, and the fixture's scores below stay read-only
+   evidence) -- the retired gate required `overall_score >= 85`, `risk_score >= 70`
    (when present), and `execution_score >= 65` (when present) to recommend
    `"promote_to_canary_candidate"`. Those component scores are themselves
    derived from telemetry (pnl/drawdown/sharpe/fill_rate/slippage), so a
@@ -239,21 +240,6 @@ def test_builder_output_is_pm12_league_eligible_with_no_exclusion_reasons() -> N
         assert ranking_item["overall_score"] >= 85.0
         assert ranking_item["components"]["risk_score"] >= 70.0
         assert ranking_item["components"]["execution_score"] >= 65.0
-
-
-def test_builder_scores_clear_the_promote_to_canary_candidate_gate() -> None:
-    """Gate 3: `_pm12_recommendation_action_ids` requires overall_score >=
-    85, risk_score >= 70 (when present), execution_score >= 65 (when
-    present) to recommend "promote_to_canary_candidate". Assert directly
-    against the real gate function with the component scores the builder's
-    default telemetry is tuned to produce, headroom included."""
-    item = {
-        "score": 87.4,
-        "overall_score": 87.4,
-        "components": {"risk_score": 93.0, "execution_score": 98.6},
-    }
-    action_ids = persona_service_module._pm12_recommendation_action_ids(item)
-    assert "promote_to_canary_candidate" in action_ids
 
 
 def test_builder_is_reused_not_duplicated_by_the_fixture_seed() -> None:

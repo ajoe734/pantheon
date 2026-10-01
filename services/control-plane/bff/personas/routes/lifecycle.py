@@ -24,7 +24,6 @@ from ..service import (
     _persona_strategy_matches_response,
     _pm12_persona_league_ranking_item,
     _pm12_persona_league_rows,
-    _pm12_recommendation_action_ids,
     _post_json,
     _ppl_alloc_009_build_telemetry_event,
     _ppl_alloc_009_dev_proof_enabled,
@@ -313,16 +312,12 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
             if str(row.get("persona_id") or row.get("id") or "").strip() == persona_id
         ]
         refreshed = refreshed_matches[0] if len(refreshed_matches) == 1 else {}
-        actions = _pm12_recommendation_action_ids(refreshed) if refreshed else []
-        if (
-            refreshed.get("eligible") is not True
-            or "promote_to_canary_candidate" not in actions
-        ):
+        if refreshed.get("eligible") is not True:
             raise _ppl_alloc_009_eligibility_error(
                 "Canonical ranking did not admit the positive control",
                 (
                     "Telemetry was accepted, but the authoritative ranking did not "
-                    "produce the required promotion-review recommendation."
+                    "mark the persona eligible."
                 ),
                 precondition="canonical_promotion_eligibility",
                 status_code=502,
@@ -349,7 +344,6 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
                     "eligible": refreshed["eligible"],
                     "overall_score": refreshed["overall_score"],
                     "components": refreshed["components"],
-                    "recommendation_action_ids": actions,
                 },
                 "owner_receipt": {
                     "service": "telemetry",
