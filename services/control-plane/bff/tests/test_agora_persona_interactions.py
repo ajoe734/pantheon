@@ -605,3 +605,19 @@ def test_ineligible_participant_and_cross_tenant_fail_closed(monkeypatch):
         headers={"Authorization": AUTH["Authorization"], "X-Tenant-Id": "other"},
         json={"workshop_id": resolved["workshop_id"], "mode": "ask"})
     assert response.status_code == 403
+
+
+def test_synthesis_schema_accepted_by_real_adapter_validator(monkeypatch):
+    import sys
+    from pathlib import Path
+
+    from services.control_plane.bff.agora.interaction.runner import _SYNTHESIS_SCHEMA
+
+    adapter_dir = str((Path(__file__).resolve().parents[3] / "openclaw-gateway-adapter"))
+    monkeypatch.syspath_prepend(adapter_dir)
+    import assistant_openclaw_provider as module
+    result = {
+        "status": "no_consensus", "summary": "s", "agreements": ["a"], "evidence_refs": [],
+        "disagreements": [{"opinion_ids": ["o1", "o2"], "cause": "c", "detail": "d"}],
+    }
+    module._validate_extraction_arguments(result, _SYNTHESIS_SCHEMA)
