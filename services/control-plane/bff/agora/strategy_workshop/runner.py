@@ -147,6 +147,14 @@ def _maybe_create_registry_draft(
     except CanonicalOperationError:
         return None
     entry = readback.get("entry") or {}
+    stored_doc = (entry.get("metadata") or {}).get("strategy_spec") or entry.get("strategy_spec")
+    if (entry.get("registry_id") != payload["registry_id"]
+            or entry.get("artifact_state") != "draft"
+            or entry.get("version") != payload["version"]
+            or stored_doc != payload["strategy_spec"]):
+        # At-least-once agent calls can propose different content after a
+        # crash/race. Never attach an older same-ID draft as proof of this one.
+        return None
     return {
         "registry_id": payload["registry_id"],
         "strategy_id": str(entry.get("strategy_id") or strategy_id),

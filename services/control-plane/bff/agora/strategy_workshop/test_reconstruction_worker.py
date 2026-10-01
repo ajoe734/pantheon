@@ -174,7 +174,8 @@ def test_worker_survives_a_crash_after_running_before_completed() -> None:
     assert cards[0]["status"] == "completed"
 
 
-def test_worker_creates_registry_draft_when_active_spec_and_grade_allow(semantic_response) -> None:
+@pytest.mark.parametrize("mismatch", [None, "strategy_spec", "artifact_state", "registry_id", "version"])
+def test_worker_creates_registry_draft_when_active_spec_and_grade_allow(semantic_response, mismatch) -> None:
     from services.research.strategy_spec.test_models import _strategy_spec_payload
     from .reconstruction import StrategyMap
     proposal = _strategy_spec_payload()
@@ -209,11 +210,22 @@ def test_worker_creates_registry_draft_when_active_spec_and_grade_allow(semantic
     )
 
     ops = _FakeRegistryOperations(base_entry)
+    if mismatch:
+        create = ops.create_strategy_spec
+        def mismatched_readback(payload):
+            readback = create(payload)
+            readback["entry"][mismatch] = {} if mismatch == "strategy_spec" else "different"
+            return readback
+        ops.create_strategy_spec = mismatched_readback
     outcome = run_reconstruction_worker(
         store=store, canonical=ops, workshop_id=workshop_id,
         tenant_id="tenant-test", user_id="user-test",
     )
     assert outcome["result"]["completeness"]["grade"] != "insufficient"
+    if mismatch:
+        assert outcome["registry_draft_ref"] is None
+        assert len(ops.create_calls) == 1
+        return
     assert outcome["registry_draft_ref"] is not None
     assert outcome["registry_draft_ref"]["artifact_state"] == "draft"
     assert len(ops.create_calls) == 1

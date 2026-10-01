@@ -2741,18 +2741,6 @@ def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
     snapshot_at = utc_now()
     # No current deployment-bound audit owner is wired here. Never read an
     # archived audit as the state of the hosted release.
-    audit: Dict[str, Any] = {}
-    component_status = audit.get("component_status") if isinstance(audit.get("component_status"), dict) else {}
-    forbidden_scan = (
-        (audit.get("components") or {}).get("forbidden_path_scan")
-        if isinstance(audit.get("components"), dict)
-        else {}
-    )
-    forbidden_signals = (
-        forbidden_scan.get("forbidden_signals")
-        if isinstance(forbidden_scan, dict) and isinstance(forbidden_scan.get("forbidden_signals"), list)
-        else []
-    )
     evidence_refs = [
         _readiness_evidence_ref(_READINESS_STRICT_PUBLISH_AUDIT, "Strict publish audit JSON"),
         _readiness_evidence_ref(_READINESS_STRICT_PUBLISH_REPORT, "Strict publish audit report"),
@@ -2767,7 +2755,7 @@ def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
         _readiness_check(
             "browser_probe",
             "Browser health and /bff/me probe",
-            "pass" if component_status.get("LSP-002-V2") is True else "fail",
+            "unknown",
             blocking=True,
             message="Hosted browser probe must pass before strict publish can proceed.",
             evidence_refs=[_READINESS_STRICT_PUBLISH_AUDIT],
@@ -2775,7 +2763,7 @@ def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
         _readiness_check(
             "bundle_hash_capture",
             "Hosted bundle hash capture",
-            "pass" if component_status.get("LSP-003-V2") is True else "fail",
+            "unknown",
             blocking=True,
             message="Hosted bundle hash capture must pass before strict publish can proceed.",
             evidence_refs=[_READINESS_STRICT_PUBLISH_AUDIT],
@@ -2783,11 +2771,11 @@ def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
         _readiness_check(
             "forbidden_path_scan",
             "Forbidden mock/seed runtime path scan",
-            "pass" if component_status.get("LSP-004-V2") is True else "fail",
+            "unknown",
             blocking=True,
             message="Strict publish remains blocked while deployed bundles contain forbidden mock/seed signals.",
             evidence_refs=[_READINESS_STRICT_PUBLISH_AUDIT],
-            details={"forbidden_signal_count": len(forbidden_signals)},
+            details={"forbidden_signal_count": None},
         ),
     ]
     return _readiness_response(
@@ -2801,9 +2789,9 @@ def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
             "passed": None,
             "checked_at": None,
             "current_evidence_status": "unavailable",
-            "deployment_url": audit.get("deployment_url"),
-            "browser_probe_base_url": audit.get("browser_probe_base_url"),
-            "errors": audit.get("errors") if isinstance(audit.get("errors"), list) else [],
+            "deployment_url": None,
+            "browser_probe_base_url": None,
+            "errors": [],
         },
         links={
             "self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/strict-publish",
@@ -2812,8 +2800,6 @@ def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
     )
 def _build_management_bff_ha_readiness_payload() -> Dict[str, Any]:
     snapshot_at = utc_now()
-    packet_exists = False
-    review_approved = False
     evidence_refs = [
         _readiness_evidence_ref(_READINESS_BFF_HA_PACKET, "BFF HA failover demo packet"),
         _readiness_evidence_ref(_READINESS_BFF_HA_REVIEW, "BFF HA failover demo review"),
@@ -2828,7 +2814,7 @@ def _build_management_bff_ha_readiness_payload() -> Dict[str, Any]:
         _readiness_check(
             "dev_failover_demo_packet",
             "Dev failover demo packet recorded",
-            "pass" if packet_exists else "fail",
+            "unknown",
             blocking=True,
             message="The BFF HA readiness page requires the dev failover demo packet.",
             evidence_refs=[_READINESS_BFF_HA_PACKET],
@@ -2836,7 +2822,7 @@ def _build_management_bff_ha_readiness_payload() -> Dict[str, Any]:
         _readiness_check(
             "dev_failover_demo_review",
             "Dev failover demo review approved",
-            "pass" if review_approved else "fail",
+            "unknown",
             blocking=True,
             message="The dev failover demo must have reviewer approval.",
             evidence_refs=[_READINESS_BFF_HA_REVIEW],
@@ -3061,7 +3047,7 @@ def _build_management_ep5_readiness_payload() -> Dict[str, Any]:
             message="EP5 requires current owner evidence; repository bundles are historical references only.",
             evidence_refs=[ref["path"] for ref in evidence_refs],
             details={
-                "available_evidence_count": len([ref for ref in evidence_refs if ref.get("exists")]),
+                "available_evidence_count": None,
                 "required_evidence_count": len(evidence_refs),
             },
         )

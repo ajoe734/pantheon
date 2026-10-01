@@ -132,3 +132,14 @@ def test_reconstruct_endpoint_integration(monkeypatch: pytest.MonkeyPatch) -> No
     assert "strategy_map" in body["data"]
     assert "next_best_question" in body["data"]
 
+    from .semantic_provider import OpenClawOpsClient, OpenClawOpsClientError
+    def unavailable(*args, **kwargs):
+        raise OpenClawOpsClientError("private upstream error", status_code=503, error_code="UNAVAILABLE")
+    monkeypatch.setattr(OpenClawOpsClient, "_request", unavailable)
+    store.create_event({"workshop_id": ws_id, "event_type": "message", "actor_type": "operator",
+                        "redacted_summary": "I have not defined an entry rule"})
+    failed = client.post(f"/bff/agora/workshops/{ws_id}/reconstruct",
+                         headers={"Authorization": "Bearer user-test:tenant-test"})
+    assert failed.status_code == 503
+    assert "private upstream error" not in failed.text
+
