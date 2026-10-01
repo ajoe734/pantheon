@@ -279,8 +279,20 @@ class CapitalBoundaryService:
             target_type="capital_pool_activation", target_id=pool.pool_id,
             expected={"target_version": pool_digest(pool), "subject.pool_id": pool.pool_id,
                       "subject.risk_direction": "increase"},
-            contexts=[{}],
+            contexts=[self._pool_facts(pool)],
         )
+
+    def _pool_facts(self, pool: CapitalPool, lines: List[Dict[str, Any]] = ()) -> Dict[str, Any]:
+        """Facts of the complete resulting pool: authoritative allocations overlaid with plan lines."""
+        held = {a["allocation_id"]: (a.get("persona_id"), float(a.get("current_weight") or 0))
+                for a in self.allocation_store.list_allocations(capital_pool_id=pool.pool_id, tenant_id=_current_tenant())}
+        held.update({line["allocation_id"]: (line.get("persona_id"), float(line.get("target_weight") or 0)) for line in lines})
+        weights: Dict[str, float] = {}
+        for persona, weight in held.values():
+            weights[str(persona)] = weights.get(str(persona), 0.0) + weight
+        gross = sum(abs(w) for w in weights.values())
+        return {"target_weights": weights, "gross_exposure": gross, "net_exposure": sum(weights.values()),
+                "leverage": gross, "turnover": sum(abs(float(line.get("delta") or 0)) for line in lines)}
 
     def create_pool(self, body: CreateCapitalPoolRequest) -> tuple[CapitalPool, bool]:
         self._authorize("CapitalPool", "create", body.actor_role)
@@ -456,7 +468,7 @@ class CapitalBoundaryService:
                     "target_version": binding_digest(binding), "subject.binding_id": binding_id, "subject.persona_id": binding.persona_id,
                     "subject.capital_pool_id": pool.pool_id, "subject.risk_direction": "increase",
                 },
-                contexts=[{"stage": binding.allowed_deployment_scope}], required=("stage",),
+                contexts=[{"stage": binding.allowed_deployment_scope, **self._pool_facts(pool)}],
             )
             try:
                 updated = self.binding_store.activate(binding_id, body.approval_decision_id)
@@ -755,26 +767,16 @@ class CapitalBoundaryService:
         pool_id = str(proposal.get("capital_pool_id") or "")
         digest = plan_digest(proposal)
         lines = proposal.get("lines") or []
-        weights: Dict[str, float] = {}
-        for line in lines:
-            persona = str(line.get("persona_id"))
-            weights[persona] = weights.get(persona, 0.0) + float(line.get("target_weight") or 0)
-        plan_facts = {
-            "target_weights": weights,
-            "gross_exposure": sum(abs(w) for w in weights.values()),
-            "net_exposure": sum(weights.values()),
-            "leverage": sum(abs(w) for w in weights.values()),
-            "turnover": sum(abs(float(line.get("delta") or 0)) for line in lines),
-        }
+        pool = self.get_pool(pool_id)
+        plan_facts = self._pool_facts(pool, lines)
         self.guard.authorize(
-            pool=self.get_pool(pool_id), tenant_id=tenant, decision_id=decision_id,
+            pool=pool, tenant_id=tenant, decision_id=decision_id,
             target_type="rebalance_apply", target_id=rebalance_id,
             expected={
                 "target_version": digest, "subject.plan_id": rebalance_id, "subject.plan_digest": digest,
                 "subject.capital_pool_id": pool_id, "subject.risk_direction": "increase",
             },
-            contexts=[{"stage": line.get("stage"), **plan_facts} for line in increasing],
-            required=("stage", *plan_facts),
+            contexts=[{"stage": self._line_deployment_scope(line), **plan_facts} for line in increasing],
         )
 
     def apply_rebalance(

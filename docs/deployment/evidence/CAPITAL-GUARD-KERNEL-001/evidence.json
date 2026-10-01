@@ -73,14 +73,14 @@
   "limitations": [
     "No integration test against a live governance service or runtime manager; both are faked at the reader seam.",
     "Risk policy source is CAPITAL_RISK_POLICY_DIR/<risk_policy_ref>.json; no other capital-side policy store exists, so unconfigured deployments reject every increase (fail closed).",
-    "Pool status change uses target_type capital_pool_status, which is not a governance action target, so it gets generic require_valid checks and one decider, not two.",
-    "services/capital/conftest.py supplies healthy fakes by default so pre-existing service tests run; guard tests pass explicit fakes."
+    "services/capital/conftest.py supplies healthy fakes by default so pre-existing service tests run; guard tests pass explicit fakes.",
+    "Pool activation uses governance target capital_pool_activation (two deciders); it supplies no stage fact, so a policy with allowed_stages rejects pool activation (fail closed). Factors with no capital-side source (sector, factor, strategy-family concentration, overlap, correlation) reject when the policy configures them."
   ],
   "verification": {
     "passed": [
       {
-        "command": "python -m pytest -q services/capital",
-        "result": "93 passed, 1 warning"
+        "command": "pytest -q services/capital services/governance/test_approval_targets.py services/control-plane/governance/test_approval_decision.py",
+        "result": "see verification_run"
       }
     ]
   },
@@ -95,5 +95,14 @@
       "6": "CAPITAL_RISK_POLICY_DIR now defaults to services/capital/risk_policies; Compose reader/runtime-manager wiring deliberately left to BFF-APPROVALS-FORWARD-001 per task note (hosted acceptance is paired delivery); conftest seam now validates a real ApprovalEvidence"
     }
   },
-  "verification_run": "pytest services/capital services/governance/test_approval_targets.py services/control-plane/governance/test_approval_decision.py: 215 passed"
+  "verification_run": "pytest services/capital + governance approval tests: 220 passed, 1 skipped",
+  "review_rework_2": {
+    "head_reviewed": "2c23d05ad",
+    "items": {
+      "1": "CapitalGuard derives required observations from every configured RiskPolicy limit (zero-valued included); pool and binding activation supply the authoritative pool snapshot (_pool_facts); sector/factor limits with no source reject",
+      "2": "_pool_facts overlays plan lines on all authoritative tenant/pool allocations under the apply lock; test_rebalance_limits_include_unchanged_allocations",
+      "3": "rebalance stage uses _line_deployment_scope (paper_running -> paper); test_paper_running_line_uses_normalized_stage and test_live_line_rejected_when_only_paper_allowed",
+      "note": "An empty pool legitimately observes gross 0, so activation with gross_limit>0 passes; pre-existing allocations over the limit reject (test_pool_activation_sees_existing_allocations)."
+    }
+  }
 }

@@ -191,10 +191,10 @@ def test_binding_activation_binds_semantic_digest_and_policy_facts(client, monke
 def test_configured_limit_without_observation_fails_closed():
     policy = lambda ref: {"risk_policy_id": ref, "gross_limit": 0.5}  # noqa: E731
     with pytest.raises(CapitalGuardError, match="cannot be evaluated"):
-        _guard(policy=policy).authorize(**{**KW, "required": ("gross_exposure",)})
-    _guard(policy=policy).authorize(**{**KW, "required": ("gross_exposure",), "contexts": [{"gross_exposure": 0.4}]})
+        _guard(policy=policy).authorize(**KW)
+    _guard(policy=policy).authorize(**{**KW, "contexts": [{"gross_exposure": 0.4}]})
     with pytest.raises(CapitalGuardError, match="Risk policy rejected"):
-        _guard(policy=policy).authorize(**{**KW, "required": ("gross_exposure",), "contexts": [{"gross_exposure": 0.9}]})
+        _guard(policy=policy).authorize(**{**KW, "contexts": [{"gross_exposure": 0.9}]})
 
 
 def test_rebalance_approval_binds_owner_plan_digest_not_request_hash(client, monkeypatch):

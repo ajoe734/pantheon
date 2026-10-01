@@ -23,10 +23,13 @@ try:
 except ImportError:
     from risk_policy import RiskPolicy, RiskPolicyEvaluationContext, RiskPolicyEvaluator  # type: ignore
 
-# Owner-side fact -> the RiskPolicy limit that needs it (the evaluator skips a missing fact).
-_LIMIT_OF_FACT = {
-    "stage": "allowed_stages", "target_weights": "max_single_name_weight", "gross_exposure": "gross_limit",
-    "net_exposure": "net_limit", "leverage": "max_leverage", "turnover": "turnover_limit",
+# RiskPolicy limit -> the fact it needs (the evaluator silently skips a missing fact).
+_FACT_OF_LIMIT = {
+    "allowed_stages": "stage", "max_single_name_weight": "target_weights", "gross_limit": "gross_exposure",
+    "net_limit": "net_exposure", "max_leverage": "leverage", "turnover_limit": "turnover",
+    "max_sector_exposure": "sector_exposures", "max_factor_exposure": "factor_exposures",
+    "max_strategy_family_concentration": "strategy_family_concentration",
+    "max_target_overlap": "target_overlap", "max_signal_correlation": "signal_correlation",
 }
 SAFE_MODE_OK = frozenset({"normal", "normal_restored"})
 
@@ -84,14 +87,13 @@ class CapitalGuard:
         target_id: str,
         expected: Mapping[str, Any],
         contexts: Sequence[Mapping[str, Any]],
-        required: Sequence[str] = (),
     ) -> None:
         """Raise CapitalGuardError unless this exact risk increase is allowed now."""
         tenant = str(tenant_id or "").strip()
         if not tenant or _tenant_of(pool) != tenant:
             raise CapitalGuardError("Capital pool does not belong to the calling tenant")
         self._require_safe_mode(pool.pool_id)
-        self._require_risk_policy(pool, target_type, target_id, contexts, required)
+        self._require_risk_policy(pool, target_type, target_id, contexts)
         self._require_approval(decision_id, tenant, target_type, target_id, expected)
 
     def _require_safe_mode(self, pool_id: str) -> None:
@@ -102,7 +104,7 @@ class CapitalGuard:
         if state not in SAFE_MODE_OK:
             raise CapitalGuardError(f"Risk increase blocked while safe mode is {state!r}")
 
-    def _require_risk_policy(self, pool: Any, target_type: str, target_id: str, contexts: Sequence[Mapping[str, Any]], required: Sequence[str]) -> None:
+    def _require_risk_policy(self, pool: Any, target_type: str, target_id: str, contexts: Sequence[Mapping[str, Any]]) -> None:
         ref = str(pool.risk_policy_ref or "").strip()
         try:
             policy = self._policy_loader(ref)
@@ -110,9 +112,11 @@ class CapitalGuard:
             parsed = RiskPolicy.from_mapping(policy)
             for context in contexts:
                 # A configured limit that the owner cannot observe is not a pass.
-                for fact in required:
-                    if getattr(parsed, _LIMIT_OF_FACT[fact]) and context.get(fact) in (None, "", {}):
-                        raise CapitalGuardError(f"Risk policy limit {_LIMIT_OF_FACT[fact]} cannot be evaluated: {fact} unavailable")
+                # (zero-valued limits count as configured).
+                for limit, fact in _FACT_OF_LIMIT.items():
+                    configured = getattr(parsed, limit)
+                    if configured is not None and configured != () and context.get(fact) in (None, ""):
+                        raise CapitalGuardError(f"Risk policy limit {limit} cannot be evaluated: {fact} unavailable")
                 evaluation = evaluator.evaluate(policy, RiskPolicyEvaluationContext.from_mapping({
                     "target_type": target_type, "target_id": target_id,
                     "capital_pool_id": pool.pool_id, "risk_policy_ref": ref, **context,
