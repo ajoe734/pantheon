@@ -411,7 +411,6 @@ _WRAPPER_CANONICALS = {
         "RequestReview": ("review",),
         "ApproveDecision": ("approve",),
         "RejectDecision": ("reject",),
-        "RequestApprovalRevision": ("requestrevision",),
         "RecordSponsorDecision": ("sponsordecision",),
         "HumanGateApprove": (),
         "HumanGateReject": (),
@@ -444,6 +443,12 @@ def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())
     if command == "Observe" or (command == "PersonaAction" and verb == "observe"):
         raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "Observe is retired", "Use Persona read routes")
+    if (
+        command in {"RequestApprovalRevision", "request_approval_revision"}
+        or (command == "ReviewAction" and verb in {"requestrevision", "request_revision", "requestapprovalrevision"})
+        or (isinstance(params, dict) and bool(params.get("revision_notes")))
+    ):
+        raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
     canonical = ("AdvanceLifecycle" if command in {"PromoteCandidate", "Demote"}
                  else _WRAPPER_VERB_ALIASES.get((command, verb)))
     if canonical is None:

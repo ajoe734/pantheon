@@ -1406,7 +1406,6 @@ _EXECUTORS = {
     CommandType.APPROVE_DEPLOYMENT: _execute_approve_deployment,
     CommandType.APPROVE_DECISION: _make_adapter_executor(CommandType.APPROVE_DECISION),
     CommandType.REJECT_DECISION: _make_adapter_executor(CommandType.REJECT_DECISION),
-    CommandType.REQUEST_APPROVAL_REVISION: _make_adapter_executor(CommandType.REQUEST_APPROVAL_REVISION),
     CommandType.PAUSE_RUNTIME: _execute_pause_runtime,
     CommandType.PAUSE_EXECUTION: _execute_pause_runtime,
     CommandType.ESCALATE_DIFF: _execute_escalate_diff,
@@ -1484,6 +1483,17 @@ def execute_command(
     Returns the result payload on success.
     Raises Exception on any failure (caller should catch and record as FAILED).
     """
+    if command_type == CommandType.REQUEST_APPROVAL_REVISION or getattr(command_type, "value", command_type) == "RequestApprovalRevision":
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "error": {
+                    "code": "VALIDATION_FAILED",
+                    "message": "RequestApprovalRevision is retired",
+                    "reason": "Use RejectDecision with notes",
+                }
+            },
+        )
     executor = _EXECUTORS.get(command_type)
     if executor is not None:
         return executor(command_id, params, auth_token=auth_token, mfa_token=mfa_token)

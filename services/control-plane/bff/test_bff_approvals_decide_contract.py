@@ -173,13 +173,15 @@ def test_unsupported_verbs_are_explicit_and_never_become_votes(client, owner, pa
     assert len(owner.calls) == calls
 
 
-def test_revision_is_forwarded_unchanged_and_owner_rejects_without_mutation(client, owner):
+def test_revision_is_retired_with_410_and_no_owner_call(client, owner):
+    calls_before = len(owner.calls)
     response = client.post("/bff/approvals/a1/decide", json=vote(decision="request_revision"), headers=headers(key="rev"))
-    assert response.status_code == 422
-    method, path, body, key, _ = owner.calls[-1]
-    assert (method, path, key, body["outcome"], body["expected_version"]) == (
-        "POST", "/api/governance/approvals/a1/decide", "rev", "request_revision", 1)
-    assert owner.rows["a1"]["version"] == 1 and not owner.rows["a1"].get("votes") and not owner.receipts
+    assert response.status_code == 410
+    detail = response.json()["detail"]["error"]
+    assert detail["code"] == "VALIDATION_FAILED"
+    assert "RequestApprovalRevision is retired" in detail["message"]
+    assert "RejectDecision with notes" in str(detail)
+    assert len(owner.calls) == calls_before
 
 
 def test_vote_requires_version_and_owner_decides_authority(client, owner):
@@ -266,10 +268,11 @@ def test_command_entry_points_forward_the_original_jwt(owner):
         execute_command("cmd-2", CommandType.REJECT_DECISION,
                         {"decision_id": "a1", "expected_version": 1, "rejection_reason": "no"}, auth_token=token)
     assert stale.value.code == 409
-    with pytest.raises(urllib.error.HTTPError) as revision:
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as revision:
         execute_command("cmd-3", CommandType.REQUEST_APPROVAL_REVISION,
                         {"decision_id": "a1", "expected_version": 2, "revision_notes": "rework"}, auth_token=token)
-    assert revision.value.code == 422 and owner.calls[-1][2]["outcome"] == "request_revision" and owner.rows["a1"]["version"] == 2
+    assert revision.value.status_code == 410 and "RejectDecision with notes" in str(revision.value.detail)
 
     adapter = GovernanceCommandAdapter()
     receipt = adapter.execute("cmd-4", "ReviewAction", {"decision_id": "a1", "action": "reject", "expected_version": 2,
@@ -278,16 +281,15 @@ def test_command_entry_points_forward_the_original_jwt(owner):
     assert receipt["authoritative_readback"]["version"] == 3
     with pytest.raises(UnsupportedApprovalAction):
         adapter.execute("cmd-5", "ReviewAction", {"decision_id": "a1", "action": "escalate"}, auth_token=token)
-    with pytest.raises(urllib.error.HTTPError) as revision:
+    with pytest.raises(HTTPException) as revision:
         adapter.execute("cmd-6", "RequestApprovalRevision", {"decision_id": "a1", "expected_version": 3, "revision_notes": "rework"},
                         auth_token=token)
-    assert revision.value.code == 422 and owner.rows["a1"]["version"] == 3
+    assert revision.value.status_code == 410 and "RejectDecision with notes" in str(revision.value.detail)
     adapter.execute("cmd-7", "ApproveDecision", {"decision_id": "a1", "expected_version": 3, "approval_notes": "ok"}, auth_token=token)
     assert owner.calls[-1][1].endswith("/a1/decide")
 
 
-@pytest.mark.parametrize("command,conflict", [("RejectDecision", "approved"), ("ApproveDecision", "rejected"),
-                                              ("RequestApprovalRevision", "approved")])
+@pytest.mark.parametrize("command,conflict", [("RejectDecision", "approved"), ("ApproveDecision", "rejected")])
 def test_command_verb_never_conflicts_with_outcome_param(owner, command, conflict):
     calls = len(owner.calls)
     with pytest.raises(ValueError):

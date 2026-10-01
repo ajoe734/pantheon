@@ -15,6 +15,7 @@ from unittest.mock import patch
 # context. Importing through the canonical ``services.control_plane.bff``
 # path (as every other passing test in this directory already does) gives
 # ``.models``/``.command_adapters`` a real parent package.
+from fastapi import HTTPException
 from services.control_plane.bff.models import CommandStatus, CommandType
 from services.control_plane.bff.governance.approval_owner import UnsupportedApprovalAction
 from services.control_plane.bff.command_executor import (
@@ -108,13 +109,24 @@ class TestApprovalDecisionExecutors(unittest.TestCase):
             self.assertEqual((kwargs["body"]["outcome"], kwargs["body"]["actor_id"], kwargs["body"]["expected_version"]),
                              (outcome, "rev-1", 1))
 
-    def test_request_revision_is_forwarded_unchanged_to_owner(self):
-        with patch(self.OWNER, return_value={"decision_id": "appr-001", "decision_state": "under_review", "version": 1}) as owner:
-            execute_command("cmd-2", CommandType.REQUEST_APPROVAL_REVISION,
-                            {"decision_id": "appr-001", "expected_version": 1, "revision_notes": "rework"}, auth_token=self.TOKEN)
-        args, kwargs = owner.call_args
-        self.assertEqual(args[:3], ("POST", "/api/governance/approvals/appr-001/decide", self.TOKEN))
-        self.assertEqual((kwargs["body"]["outcome"], kwargs["idempotency_key"]), ("request_revision", "cmd-2"))
+    def test_request_revision_is_retired_with_410_and_no_owner_call(self):
+        with patch(self.OWNER) as owner:
+            with self.assertRaises(HTTPException) as ctx:
+                execute_command("cmd-2", CommandType.REQUEST_APPROVAL_REVISION,
+                                {"decision_id": "appr-001", "expected_version": 1, "revision_notes": "rework"}, auth_token=self.TOKEN)
+            self.assertEqual(ctx.exception.status_code, 410)
+            self.assertIn("RejectDecision with notes", str(ctx.exception.detail))
+            owner.assert_not_called()
+
+        with patch(self.OWNER) as owner:
+            status, result, error = execute_command_with_status(
+                "cmd-2", CommandType.REQUEST_APPROVAL_REVISION,
+                {"decision_id": "appr-001", "expected_version": 1, "revision_notes": "rework"}, auth_token=self.TOKEN
+            )
+            self.assertEqual(status, CommandStatus.FAILED)
+            self.assertEqual(error["downstream_status"], 410)
+            self.assertFalse(error["retryable"])
+            owner.assert_not_called()
 
     def test_dispatch_approve_decision(self):
         with patch(self.OWNER, return_value={"decision_id": "appr-001", "decision_state": "decided", "version": 3}):

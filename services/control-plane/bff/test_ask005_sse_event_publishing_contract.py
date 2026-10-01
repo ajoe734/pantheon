@@ -195,12 +195,19 @@ def test_first_vote_publishes_stage_changed_not_decided(monkeypatch) -> None:
     assert [event["type"] for _, event in _sse_buffers["approval"]] == ["approval.stage.changed"]
 
 
-def test_unsupported_or_owner_rejected_votes_publish_nothing() -> None:
+def test_unsupported_or_retired_votes_publish_nothing() -> None:
     client = TestClient(app)
     resp = client.post(
         f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
         json={"decision": "request_revision", "memo": "reviewed", "expected_version": 1},
         headers={**APPROVER_HEADERS, "Idempotency-Key": _idem()},
     )
-    assert resp.status_code == 422
+    assert resp.status_code == 410
+    assert len(_sse_buffers["approval"]) == 0
+    resp_unsupported = client.post(
+        f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
+        json={"decision": "freeze", "memo": "reviewed", "expected_version": 1},
+        headers={**APPROVER_HEADERS, "Idempotency-Key": _idem()},
+    )
+    assert resp_unsupported.status_code == 501
     assert len(_sse_buffers["approval"]) == 0

@@ -18,6 +18,12 @@ from .base import (
     internal_url,
     utc_now,
 )
+try:
+    from ..auth.policy import bff_error as _bff_error
+    from ..models import ErrorCode
+except (ImportError, ValueError):
+    from auth.policy import bff_error as _bff_error
+    from models import ErrorCode
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +34,6 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
     _HANDLED_COMMANDS = {
         "ApproveDecision",
         "RejectDecision",
-        "RequestApprovalRevision",
         "HumanGateApprove",
         "HumanGateReject",
         "HumanGateRequestMoreEvidence",
@@ -69,12 +74,12 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         action_id = str(params.get("action_id") or command_type or "").strip()
         entity_id = str(params.get("decision_id") or params.get("gate_id") or params.get("committee_id") or params.get("review_id") or params.get("entity_id") or "").strip()
 
-        if command_type == "ApproveDecision":
+        if command_type == "RequestApprovalRevision":
+            raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
+        elif command_type == "ApproveDecision":
             return self._execute_decision_action(command_id, entity_id, "approve", params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type == "RejectDecision":
             return self._execute_decision_action(command_id, entity_id, "reject", params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "RequestApprovalRevision":
-            return self._execute_decision_action(command_id, entity_id, "request_revision", params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type.startswith("HumanGate"):
             return self._execute_human_gate_action(command_id, entity_id, command_type or action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type == "RecordSponsorDecision":
@@ -201,6 +206,8 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         verb = str(params.get("decision") or params.get("action") or action_id or "").strip().lower()
+        if verb in {"request_revision", "requestrevision", "request_approval_revision"} or params.get("revision_notes"):
+            raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
         if verb not in {"approve", "reject"}:
             from ..governance.approval_owner import UnsupportedApprovalAction
 

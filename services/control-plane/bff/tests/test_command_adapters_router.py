@@ -894,7 +894,6 @@ _ALIAS_PARAMS: Dict[str, Dict[str, Any]] = {
     "RequestReview": {"persona_id": "alias-target-1"},
     "ApproveDecision": {"decision_id": "alias-target-1"},
     "RejectDecision": {"decision_id": "alias-target-1", "rejection_reason": "alias equivalence"},
-    "RequestApprovalRevision": {"decision_id": "alias-target-1", "revision_notes": "alias equivalence"},
     "RecordSponsorDecision": {"committee_id": "alias-target-1", "sponsor_decision": "approved", "rationale_ref": "ref-1"},
     "RemediateSentinelIntervention": {"intervention_id": "alias-target-1", "remediation_action": "resolve"},
     "HumanGateApprove": {"human_gate_item_id": "alias-target-1", "decision": "approve"},
@@ -1255,3 +1254,44 @@ def test_assistant_admission_uses_injected_service_and_returns_stored_command_id
         assert resp.status_code == 201, resp.text
         stored = [r["command_id"] for r in store._get_all_commands()]
         assert stored and resp.json()["data"]["command_id"] in stored
+
+
+def test_request_approval_revision_is_retired_with_410() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        store = CommandStore(os.path.join(td, "commands.jsonl"))
+        identity = OperatorIdentity(operator_id="op-test", roles=["operator", "approver"], mfa_verified=True, claims={"tenant_id": "tenant-test"})
+        svc = CommandAdapterService(command_store=store, read_surface=None, extract_identity=lambda *a, **k: identity)
+        app = FastAPI()
+        app.include_router(create_command_adapters_router(service=svc, submit_command_admission=svc.submit_command_admission))
+        client = TestClient(app)
+
+        # 1. Direct canonical command
+        resp1 = client.post("/bff/v1/commands", json={
+            "command": "RequestApprovalRevision",
+            "target": {"type": "ApprovalDecision", "id": "appr-1"},
+            "params": {"decision_id": "appr-1", "revision_notes": "rework"},
+            "audit_context": {"reason": "test"},
+        })
+        assert resp1.status_code == 410
+        assert "RequestApprovalRevision is retired" in resp1.json()["detail"]["error"]["message"]
+        assert "RejectDecision with notes" in str(resp1.json()["detail"]["error"])
+
+        # 2. Wrapped ReviewAction with requestrevision verb
+        resp2 = client.post("/bff/v1/commands", json={
+            "command": "ReviewAction",
+            "action": "requestrevision",
+            "target": {"type": "ApprovalDecision", "id": "appr-1"},
+            "params": {"decision_id": "appr-1", "revision_notes": "rework"},
+            "audit_context": {"reason": "test"},
+        })
+        assert resp2.status_code == 410
+        assert "RequestApprovalRevision is retired" in resp2.json()["detail"]["error"]["message"]
+        assert "RejectDecision with notes" in str(resp2.json()["detail"]["error"])
+
+        # 3. Action catalog does not contain RequestApprovalRevision
+        catalog = svc.get_action_catalog()
+        action_ids = [entry.action_id for entry in catalog.catalog]
+        assert "RequestApprovalRevision" not in action_ids
+
+        # 4. Nothing stored in command store
+        assert len(store._get_all_commands()) == 0

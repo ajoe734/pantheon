@@ -1356,7 +1356,6 @@ def require_final_command_preconditions(
         CommandType.ADVANCE_LIFECYCLE,
         CommandType.APPROVE_DECISION,
         CommandType.REJECT_DECISION,
-        CommandType.REQUEST_APPROVAL_REVISION,
     )
     if getattr(entry, "requires_approval", False) and not owner_verifies_approval and not approval_decision_id:
         raise _final_precondition_error(
@@ -1596,7 +1595,7 @@ def _resolve_read_surface(provided: Optional[Any] = None) -> Any:
     if _OPS_CONSOLE_READ_SURFACE_RESOLVER is not None:
         return _OPS_CONSOLE_READ_SURFACE_RESOLVER()
     import sys
-    main_mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+    main_mod = sys.modules.get("services.control_plane.bff.main")
     if main_mod is not None and hasattr(main_mod, "read_store"):
         return getattr(main_mod, "read_store")
     return None
@@ -1608,7 +1607,7 @@ def _resolve_ops_read_model(persona_id: str, provided: Optional[Callable[[str], 
     if _OPS_CONSOLE_OPS_READ_MODEL_RESOLVER is not None:
         return _OPS_CONSOLE_OPS_READ_MODEL_RESOLVER(persona_id)
     import sys
-    main_mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+    main_mod = sys.modules.get("services.control_plane.bff.main")
     if main_mod is not None and hasattr(main_mod, "_ops_read_model_entry_for_persona"):
         return getattr(main_mod, "_ops_read_model_entry_for_persona")(persona_id)
     return None
@@ -1620,7 +1619,7 @@ def _resolve_bff_error(provided: Optional[Callable[..., Any]] = None) -> Callabl
     if _OPS_CONSOLE_BFF_ERROR_RESOLVER is not None:
         return _OPS_CONSOLE_BFF_ERROR_RESOLVER
     import sys
-    main_mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+    main_mod = sys.modules.get("services.control_plane.bff.main")
     if main_mod is not None and hasattr(main_mod, "_bff_error"):
         return getattr(main_mod, "_bff_error")
     return _auth_bff_error
@@ -1632,7 +1631,7 @@ def _resolve_utc_now(provided: Optional[Callable[[], str]] = None) -> str:
     if _OPS_CONSOLE_UTC_NOW_RESOLVER is not None:
         return _OPS_CONSOLE_UTC_NOW_RESOLVER()
     import sys
-    main_mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+    main_mod = sys.modules.get("services.control_plane.bff.main")
     if main_mod is not None and hasattr(main_mod, "utc_now"):
         return getattr(main_mod, "utc_now")()
     return datetime.now(timezone.utc).isoformat()
@@ -2026,21 +2025,12 @@ def _validate_reject_decision(params: Dict[str, Any], identity: OperatorIdentity
 
 def _validate_request_approval_revision(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
     _err = bff_error_fn or _resolve_bff_error()
-    missing = _REQUEST_APPROVAL_REVISION_REQUIRED - params.keys()
-    if missing:
-        raise _err(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for RequestApprovalRevision",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if not str(params.get("revision_notes") or "").strip():
-        raise _err(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "RequestApprovalRevision requires non-empty revision_notes",
-            "revision_notes must be a non-empty string",
-        )
+    raise _err(
+        410,
+        ErrorCode.VALIDATION_FAILED,
+        "RequestApprovalRevision is retired",
+        "Use RejectDecision with notes",
+    )
 
 
 def _validate_pause_runtime(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:

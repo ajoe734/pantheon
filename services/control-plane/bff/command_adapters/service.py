@@ -459,7 +459,9 @@ class CommandAdapterService:
             )
 
     def get_action_catalog(self, identity: Optional[OperatorIdentity] = None) -> BffActionCatalogResponse:
-        return get_action_catalog()
+        catalog = get_action_catalog()
+        filtered = [entry for entry in catalog.catalog if entry.action_id != "RequestApprovalRevision"]
+        return BffActionCatalogResponse(catalog=filtered)
 
     def get_command_status(self, command_id: str, identity: Optional[OperatorIdentity] = None) -> CommandStatusResponse:
         clean_id = str(command_id or "").strip()
@@ -1680,7 +1682,7 @@ def _runtime_command_context(
 ) -> Dict[str, Optional[str]]:
     effective_store = read_store
     if effective_store is None:
-        bff_main = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+        bff_main = sys.modules.get("services.control_plane.bff.main")
         if bff_main is not None:
             effective_store = getattr(bff_main, "read_store", None)
     runtime_binding = (
@@ -1848,7 +1850,7 @@ async def process_command(
     """
     store = command_store
     if store is None:
-        bff_main = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+        bff_main = sys.modules.get("services.control_plane.bff.main")
         if bff_main is not None:
             store = getattr(bff_main, "command_store", None)
     if store is None:
@@ -1900,7 +1902,7 @@ async def process_command(
 
     effective_read_store = read_store
     if effective_read_store is None:
-        bff_main = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+        bff_main = sys.modules.get("services.control_plane.bff.main")
         if bff_main is not None:
             effective_read_store = getattr(bff_main, "read_store", None)
 

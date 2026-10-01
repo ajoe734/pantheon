@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse
 
 from ..models import safe_redact_evidence_refs
 from . import approval_owner
-from .approval_owner import InvalidApprovalRequest, UnsupportedApprovalAction
+from .approval_owner import InvalidApprovalRequest, RetiredApprovalAction, UnsupportedApprovalAction
 from .service import GovernanceService, SubmitAction, page_slice, split_csv, utc_now_rfc3339
 
 
@@ -290,6 +290,8 @@ def create_governance_router(
             except Exception:
                 content = {"detail": f"Governance owner returned HTTP {exc.code}"}
             raise HTTPException(status_code=exc.code, detail=content.get("detail", content)) from exc
+        except RetiredApprovalAction as exc:
+            _fail(410, "VALIDATION_FAILED", "RequestApprovalRevision is retired", "Use RejectDecision with notes", precondition_failed="retired_action")
         except UnsupportedApprovalAction as exc:
             _fail(501, "NOT_IMPLEMENTED", str(exc), "Unsupported approval action", precondition_failed="unsupported_action")
         except InvalidApprovalRequest as exc:

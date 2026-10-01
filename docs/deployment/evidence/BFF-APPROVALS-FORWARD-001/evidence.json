@@ -6,7 +6,8 @@
     "GovernanceService._created_approvals and local approval reads/writes",
     "/api/internal/v1/approval-decisions calls",
     "approval action_kind admission in CommandAdapterService",
-    "BFF-side approver/duplicate role gates and circular approval gate in preconditions.py"
+    "BFF-side approver/duplicate role gates and circular approval gate in preconditions.py",
+    "RequestApprovalRevision and its aliases (request_revision, requestrevision, ReviewAction revision verb), including adapter execution, preconditions, executor dispatch, and action catalog entry"
   ],
   "unsupported": [
     "request_changes",
@@ -15,22 +16,23 @@
     "stage",
     "legacy incomplete create"
   ],
-  "revision_forwarding": "RequestApprovalRevision forwarded unchanged to Governance owner /decide endpoint with original JWT/tenant/actor/CAS/idempotency; owner explicitly rejects unsupported outcome (422) with zero state/vote/audit mutation",
+  "revision_retirement": "RequestApprovalRevision and its aliases (request_revision, requestrevision, ReviewAction revision verb) permanently retired with HTTP 410 naming RejectDecision with notes; zero Governance owner calls, votes, writes, executable admissions, or success receipts",
   "owner_changes": [
     "operator may propose/read within own tenant and owner_user_id",
     "decide on PROPOSED runs accept_review inside the same execute_command callback"
   ],
   "validation": {
-    "services/control-plane/bff/test_bff_approvals_decide_contract.py": "19 passed against stub Governance HTTP owner (reproducing revision forwarded unchanged and rejected without mutation)",
-    "services/control-plane/bff/test_command_executor.py": "29 passed",
-    "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py": "3 passed (approval SSE publishing following owner result)",
+    "services/control-plane/bff/test_bff_approvals_decide_contract.py": "18 passed against stub Governance HTTP owner (asserting RequestApprovalRevision retired with 410 naming RejectDecision with notes, zero owner calls, zero store insertion)",
+    "services/control-plane/bff/test_command_executor.py": "29 passed (asserting RequestApprovalRevision retired with 410, zero owner calls in execute_command and execute_command_with_status)",
+    "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py": "3 passed (approval SSE publishing following owner result, retired revision publishes nothing with 410)",
+    "services/control-plane/bff/tests/test_command_adapters_router.py": "test_request_approval_revision_is_retired_with_410 and test_zero_reverse_main_imports passed",
     "services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py": "6 passed",
     "services/persona/test_lifecycle_approval_verifier.py": "13 passed",
     "services/persona/test_training_target_owner.py": "14 passed",
     "scripts/test_issue_dev_paper_principals.py": "27 passed",
     "scripts/test_dev_paper_principal_renewal.py": "19 passed",
-    "services/governance/test_approval_authority_postgres.py": "3 passed (operator/two-vote cases in-memory CAS)",
-    "services/governance/test_governance_api.py": "test_unsupported_revision_outcome_is_rejected_without_mutation verified",
+    "services/governance/test_approval_authority_postgres.py": "53 passed against isolated PostgreSQL (gov_approval_test DB on postgres:16-alpine)",
+    "services/governance/test_governance_api.py": "33 passed against isolated PostgreSQL (migrated test_decide_from_proposed_raises_400 to assert atomic PROPOSED -> DECIDED CAS reaches 200, verifies version/durable readback, and rejects proposer/stale attempts)",
     "services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py": "33 passed"
   },
   "baseline_reproductions": {
@@ -39,7 +41,6 @@
   },
   "not_verified": [
     "hosted dev write-readback",
-    "Postgres owner tests (need live GOV_APPROVAL_TEST_DSN)",
     "Capital PANTHEON_RUNTIME_MANAGER policy source (no existing policy reference identified; not wired)"
   ]
 }

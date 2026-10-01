@@ -19,12 +19,15 @@ _TIMEOUT = float(os.getenv("PANTHEON_GOVERNANCE_APPROVAL_TIMEOUT_SECONDS", "15")
 _ACTOR_ROLES = ("governance_reviewer", "risk_owner", "governance_committee")
 _OUTCOMES = {"approve": "approved", "approved": "approved", "reject": "rejected", "rejected": "rejected",
              "approved_with_conditions": "approved_with_conditions"}
-_REVISION = "request_revision"  # forwarded unchanged; the owner rejects it, nothing is mapped to a vote
 _PENDING = {"proposed", "under_review"}
 
 
 class UnsupportedApprovalAction(ValueError):
     """The verb has no Governance owner transition and is never reinterpreted as a vote."""
+
+
+class RetiredApprovalAction(ValueError):
+    """The action has been permanently retired and returns HTTP 410."""
 
 
 class InvalidApprovalRequest(ValueError):
@@ -114,16 +117,19 @@ def propose(authorization: Optional[str], payload: Mapping[str, Any], idempotenc
 
 def decide(authorization: Optional[str], decision_id: str, params: Mapping[str, Any], idempotency_key: str) -> Dict[str, Any]:
     """Forward one human vote; the owner moves PROPOSED→UNDER_REVIEW→DECIDED inside one CAS."""
-    verbs = {_OUTCOMES.get(v, v) for v in (str(params.get(k) or "").strip().lower() for k in ("outcome", "decision")) if v}
+    raw_candidates = [str(params.get(k) or "").strip().lower() for k in ("outcome", "decision", "action")]
+    if any(v in {"request_revision", "requestrevision", "request_approval_revision"} for v in raw_candidates) or params.get("revision_notes"):
+        raise RetiredApprovalAction("RequestApprovalRevision is retired; use RejectDecision with notes")
+    verbs = {_OUTCOMES.get(v, v) for v in raw_candidates if v}
     if len(verbs) > 1:
         raise InvalidApprovalRequest("outcome")
     verb = next(iter(verbs), "rejected" if params.get("rejection_reason") else "approved")
-    if verb not in _OUTCOMES.values() and verb != _REVISION:
+    if verb not in _OUTCOMES.values():
         raise UnsupportedApprovalAction(f"approval action {verb!r} has no Governance owner transition")
     version = params.get("expected_version", params.get("expectedVersion"))
     if isinstance(version, bool) or not isinstance(version, int) or version < 0:
         raise InvalidApprovalRequest("expected_version")
-    rationale = next((str(params[key]).strip() for key in ("rationale", "memo", "approval_notes", "rejection_reason", "revision_notes", "notes")
+    rationale = next((str(params[key]).strip() for key in ("rationale", "memo", "approval_notes", "rejection_reason", "notes")
                       if str(params.get(key) or "").strip()), "")
     if not rationale:
         raise InvalidApprovalRequest("rationale")
