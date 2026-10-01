@@ -237,16 +237,19 @@ _LIVE_BROKER_SIGNAL_VALUES = {
     "production",
 }
 
-_FINAL_COMMAND_TARGET_TYPES: Dict[CommandType, ObjectType] = {
-    CommandType.APPROVED_APPLY: ObjectType.REBALANCE,
-    CommandType.HUMAN_GATE_APPROVE: ObjectType.HUMAN_GATE_ITEM,
-    CommandType.HUMAN_GATE_REJECT: ObjectType.HUMAN_GATE_ITEM,
-    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: ObjectType.HUMAN_GATE_ITEM,
-    CommandType.HUMAN_GATE_REVOKE: ObjectType.HUMAN_GATE_ITEM,
-    CommandType.HUMAN_GATE_EXTEND_TTL: ObjectType.HUMAN_GATE_ITEM,
-    CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: ObjectType.RANKING,
-    CommandType.PAUSE_PAPER_RUNTIME: ObjectType.RUNTIME,
-    CommandType.RESUME_PAPER_RUNTIME: ObjectType.RUNTIME,
+_FINAL_COMMAND_TARGET_TYPES: Dict[CommandType, Tuple[ObjectType, ...]] = {
+    CommandType.APPROVED_APPLY: (ObjectType.REBALANCE,),
+    CommandType.HUMAN_GATE_APPROVE: (ObjectType.HUMAN_GATE_ITEM,),
+    CommandType.HUMAN_GATE_REJECT: (ObjectType.HUMAN_GATE_ITEM,),
+    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: (ObjectType.HUMAN_GATE_ITEM,),
+    CommandType.HUMAN_GATE_REVOKE: (ObjectType.HUMAN_GATE_ITEM,),
+    CommandType.HUMAN_GATE_EXTEND_TTL: (ObjectType.HUMAN_GATE_ITEM,),
+    CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: (ObjectType.RANKING,),
+    CommandType.PAUSE_RUNTIME: (ObjectType.RUNTIME, ObjectType.RUNTIME_BINDING),
+    CommandType.APPROVE_POOL: (ObjectType.CAPITAL_POOL,),
+    CommandType.CAPITAL_POOL_ACTION: (ObjectType.CAPITAL_POOL,),
+    CommandType.PAUSE_PAPER_RUNTIME: (ObjectType.RUNTIME,),
+    CommandType.RESUME_PAPER_RUNTIME: (ObjectType.RUNTIME,),
 }
 
 _SERVER_MANAGED_REBALANCE_EVIDENCE_TYPES = {
@@ -446,15 +449,16 @@ def validate_drawer_runtime_target(cmd: OperatorCommand) -> None:
 
 def validate_final_command_target_type(cmd: OperatorCommand) -> None:
     expected = _FINAL_COMMAND_TARGET_TYPES.get(cmd.command)
-    if expected is None or cmd.target.type == expected:
+    if expected is None or cmd.target.type in expected:
         return
+    expected_label = "/".join(t.value for t in expected)
     raise _auth_bff_error(
         422,
         ErrorCode.VALIDATION_FAILED,
         "Invalid command target type",
-        f"{cmd.command.value} must target {expected.value}, not {cmd.target.type.value}",
+        f"{cmd.command.value} must target {expected_label}, not {cmd.target.type.value}",
         precondition_failed="target.type",
-        suggestion=f"Use target.type={expected.value} for {cmd.command.value}",
+        suggestion=f"Use target.type={expected_label} for {cmd.command.value}",
     )
 
 

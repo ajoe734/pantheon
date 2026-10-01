@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
 import re
 import sys
@@ -36,6 +37,7 @@ from services.control_plane.bff.models import (
     CommandStatus,
     CommandType,
     ObjectType,
+    OperatorCommand,
     OperatorIdentity,
     TargetObject,
 )
@@ -921,19 +923,60 @@ def test_unmapped_wrapper_combinations_are_not_rewritten() -> None:
         assert canonicalize_wrapped_payload(payload) == payload
 
 
+def _mounted_service(td: str):
+    store = CommandStore(os.path.join(td, "commands.jsonl"))
+    svc = CommandAdapterService(command_store=store, read_surface=None, extract_identity=_test_extract_identity)
+    app = FastAPI()
+    app.include_router(create_command_adapters_router(service=svc, submit_command_admission=svc.submit_command_admission))
+    return store, svc, TestClient(app)
+
+
 @pytest.mark.parametrize("command", ["NotACommandAction", "CapitalPoolAction"])
 def test_unmapped_wrapper_is_rejected_before_storage(command) -> None:
     with tempfile.TemporaryDirectory() as td:
-        store = CommandStore(os.path.join(td, "commands.jsonl"))
-        svc = CommandAdapterService(command_store=store, read_surface=None, extract_identity=_test_extract_identity)
-        app = FastAPI()
-        app.include_router(create_command_adapters_router(service=svc, submit_command_admission=svc.submit_command_admission))
-        resp = TestClient(app).post("/bff/v1/commands", headers=HEADERS, json={
+        store, _svc, client = _mounted_service(td)
+        resp = client.post("/bff/v1/commands", headers={**HEADERS, "Idempotency-Key": "unmapped-key-1"}, json={
             "command": command, "action": "AlertAcknowledge", "target": {"type": "RiskAlert", "id": "alert-incident-inc-test"},
             "params": {}, "audit_context": {"reason": "unmapped"},
         })
-        assert resp.status_code >= 400
+        assert resp.status_code == 422, resp.text
         assert store._get_all_commands() == []
+
+
+@pytest.mark.parametrize("body", [
+    {"command": "PauseRuntime"},
+    {"command": "RuntimeAction", "action": "pause"},
+])
+def test_wrong_domain_target_is_rejected_before_store_and_token_use(body) -> None:
+    identity = OperatorIdentity(operator_id="op-test", roles=["operator", "approver"], mfa_verified=True)
+    params = {"runtime_binding_id": "rb-1", "pause_action": "pause"}
+    with tempfile.TemporaryDirectory() as td:
+        store, svc, client = _mounted_service(td)
+
+        def submit(target_type: str, key: str, token: str):
+            return client.post("/bff/v1/commands", headers={**HEADERS, "Idempotency-Key": key, "X-Confirm-Token": token}, json={
+                **body, "target": {"type": target_type, "id": "persona-123"}, "params": params, "audit_context": {"reason": "pause"},
+            })
+
+        res = svc.create_confirm_token(
+            payload={"action": "PauseRuntime", "command": "PauseRuntime", "target": {"type": "Persona", "id": "persona-123"}, "reason": "pause", "ttl_seconds": 60},
+            identity=identity, idempotency_key="wrong-target-token-1",
+        )
+        token = json.loads(res.body.decode("utf-8"))["data"]["tokenId"]
+        rejected = submit("Persona", "wrong-target-key-1", token)
+        assert rejected.status_code == 422, rejected.text
+        assert [c["type"] for c in store._get_all_commands()] == ["CreateConfirmToken"]
+        # the rejected submission must not have consumed the token
+        assert client.get(f"/bff/confirm-tokens/{token}", headers=HEADERS).json()["data"]["status"] == "created"
+
+
+def test_legitimate_runtime_binding_target_still_admitted_for_pause() -> None:
+    from services.control_plane.bff.command_adapters.preconditions import validate_final_command_target_type
+    for target_type in ("Runtime", "RuntimeBinding"):
+        validate_final_command_target_type(OperatorCommand.model_validate({
+            "command": "PauseRuntime", "target": {"type": target_type, "id": "rb-1"},
+            "params": {}, "audit_context": {"reason": "pause"},
+        }))
 
 
 def test_assistant_admission_uses_injected_service_and_returns_stored_command_id() -> None:
