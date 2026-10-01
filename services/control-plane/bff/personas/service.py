@@ -3236,7 +3236,13 @@ def _persona_intent_agora_item(session: Dict[str, Any]) -> Optional[Dict[str, An
         if isinstance(ref, dict)
     ]
     persona_ids = _persona_intent_agora_persona_ids(session)
-    topic = _persona_intent_text(session.get("topic") or session.get("title") or session.get("task"))
+    topic = _persona_intent_text(
+        session.get("topic")
+        or session.get("title")
+        or session.get("task")
+        or session.get("task_summary")
+        or session.get("taskSummary")
+    )
     occurred_at = _persona_intent_timestamp(session)
     item_id = f"agora_session:{session_id}"
     agora_summary = {
@@ -3262,7 +3268,13 @@ def _persona_intent_agora_item(session: Dict[str, Any]) -> Optional[Dict[str, An
         "persona_id": persona_ids[0] if persona_ids else None,
         "persona_ids": persona_ids,
         "intent": mode,
-        "title": session.get("title") or session.get("task") or f"Agora session {session_id}",
+        "title": (
+            session.get("title")
+            or session.get("task")
+            or session.get("task_summary")
+            or session.get("taskSummary")
+            or f"Agora session {session_id}"
+        ),
         "summary": topic or "Agora session intent summary.",
         "status": status,
         "created_at": session.get("createdAt") or session.get("created_at"),

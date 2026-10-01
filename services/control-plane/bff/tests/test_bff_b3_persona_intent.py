@@ -430,3 +430,98 @@ def test_persona_intent_real_read_surface_ports_consultation_projection_and_tena
     finally:
         ps.read_store = old_store
 
+
+def test_persona_intent_real_domain_consultation_port_store_fallback() -> None:
+    """Regression test: verify DomainConsultationPort preserves tenant_id and task_summary, preventing foreign leak and generic fallback."""
+    from services.consultation.models import ConsultRequest
+    from services.consultation.store import ConsultationStore
+    from services.control_plane.bff.personas import service as ps
+    from services.control_plane.bff.ports import DomainConsultationPort
+
+    class EmptyClient:
+        def list_requests(self) -> list[Any]:
+            return []
+
+    rows = []
+    for suffix, tenant, persona in [
+        ("own", "pantheon-dev", "persona-own"),
+        ("foreign", "tenant-beta", "persona-beta"),
+        ("own-no-persona", "pantheon-dev", None),
+        ("foreign-no-persona", "tenant-beta", None),
+    ]:
+        req = ConsultRequest(
+            request_id="consult-" + suffix,
+            tenant_id=tenant,
+            request_type="strategy_review",
+            requested_by={"actor_type": "human", "actor_id": "reviewer-" + suffix},
+            from_persona_id=persona,
+            target_type="strategy",
+            target_id="strategy-" + suffix,
+            task="Review strategy " + suffix,
+            consultation_type="strategy_review",
+            status="published",
+            trace_id="trace-" + suffix,
+            created_at="2026-10-01T01:00:00Z",
+        )
+        rows.append(req.model_dump(mode="json"))
+
+    store_dir = tempfile.TemporaryDirectory(prefix="agora-persona-consult-store-")
+    try:
+        canonical_store = ConsultationStore(store_dir.name)
+        for row in rows:
+            canonical_store.put_request(ConsultRequest(**row))
+
+        real_ports = create_in_memory_read_surface_ports(
+            persona_capital_runtime_kwargs={
+                "personas": [
+                    {"id": "persona-own", "persona_id": "persona-own", "tenant_id": "pantheon-dev"},
+                    {"id": "persona-beta", "persona_id": "persona-beta", "tenant_id": "tenant-beta"},
+                ]
+            }
+        )
+        real_ports.operations_consultation = DomainConsultationPort(client=EmptyClient(), store=canonical_store)
+
+        old_store = ps.read_store
+        try:
+            ps.read_store = real_ports
+            own_items, _, _, _ = ps._persona_intent_all_items("pantheon-dev")
+            foreign_items, _, _, _ = ps._persona_intent_all_items("tenant-beta")
+
+            own_ids = [x["id"] for x in own_items]
+            foreign_ids = [x["id"] for x in foreign_items]
+
+            assert set(own_ids) == {"agora_session:consult-own", "agora_session:consult-own-no-persona"}
+            assert set(foreign_ids) == {"agora_session:consult-foreign", "agora_session:consult-foreign-no-persona"}
+
+            # Verify task_summary preserved in title, summary, topic
+            own_item = next(it for it in own_items if it["id"] == "agora_session:consult-own")
+            assert own_item["title"] == "Review strategy own"
+            assert own_item["summary"] == "Review strategy own"
+            assert own_item["agora"]["topic"] == "Review strategy own"
+
+            # HTTP route test
+            os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
+            os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
+            service = PersonaService(
+                read_store=real_ports,
+                write_owner=_FakeOwner(),
+                ranking_write_owner=_FakeOwner(),
+                command_store=_FakeCommandStore(),
+            )
+            app = FastAPI()
+            app.include_router(create_personas_router(service=service))
+
+            with TestClient(app) as client:
+                resp = client.get("/bff/management/persona-intent", headers={"Authorization": "Bearer op-review:operator"})
+                assert resp.status_code == 200, resp.text
+                body = resp.json()
+                http_items = body["data"]["items"]
+                http_ids = [it["id"] for it in http_items]
+                assert set(http_ids) == {"agora_session:consult-own", "agora_session:consult-own-no-persona"}
+                assert body["data"]["summary"]["agora_session_count"] == 2
+                assert body["data"]["summary"]["persona_ids"] == ["persona-own"]
+        finally:
+            ps.read_store = old_store
+    finally:
+        store_dir.cleanup()
+
