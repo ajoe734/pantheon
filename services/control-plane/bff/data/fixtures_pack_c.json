@@ -271,8 +271,7 @@
         "status": "active",
         "sse_topic": "bff.approval",
         "resync_routes": [
-          "/bff/approvals",
-          "/bff/v5/interventions"
+          "/bff/approvals"
         ]
       },
       "journal": {

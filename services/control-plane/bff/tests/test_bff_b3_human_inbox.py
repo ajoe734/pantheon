@@ -2,7 +2,7 @@
 BFF-B3-003: contract tests for GET /bff/management/human-inbox.
 
 The route is a read-only Management aggregate. It composes governance review,
-approval, intervention, sentinel, and persona readiness blocker rows, then
+approval, incident, and persona readiness blocker rows, then
 exposes a detail route for the composed inbox item identity.
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3-human:operator"}
 
-_V5_INTERVENTIONS_STORE: List[Dict[str, Any]] = []
+_INCIDENTS_STORE: List[Dict[str, Any]] = []
 
 
 def _default_build_persona_readiness_items(
@@ -114,37 +114,24 @@ class _HumanInboxService(ManagementService):
                             "allowedActions": r.get("allowedActions") or {"canApprove": True},
                         })
 
-        # 2. Interventions
-        if not source_type or source_type == "intervention":
-            intv_records = list(_V5_INTERVENTIONS_STORE)
-            if hasattr(self.store, "list_v5_interventions"):
-                intv_records.extend(self.store.list_v5_interventions() or [])
-            for r in intv_records:
-                intv_id = str(r.get("intervention_id") or r.get("id") or "")
-                if intv_id:
+        # 2. Incidents
+        if not source_type or source_type == "incident":
+            inc_records = list(_INCIDENTS_STORE)
+            if hasattr(self.store, "list_incidents"):
+                inc_records.extend(self.store.list_incidents() or [])
+            for r in inc_records:
+                inc_id = str(r.get("incident_id") or r.get("id") or "")
+                if inc_id:
                     items.append({
-                        "id": f"intervention:{intv_id}",
-                        "item_id": intv_id,
-                        "source_id": intv_id,
-                        "intervention_id": intv_id,
-                        "source_type": "intervention",
+                        "id": f"incident:{inc_id}",
+                        "item_id": inc_id,
+                        "source_id": inc_id,
+                        "incident_id": inc_id,
+                        "source_type": "incident",
                         "status": r.get("status") or "pending",
-                        "priority": "critical" if r.get("kind") == "hiq_sentinel" else "high",
-                        "title": r.get("title") or "Hiq Sentinel Intervention",
+                        "priority": "critical" if r.get("severity") == "critical" else "high",
+                        "title": r.get("title") or "Incident",
                         "summary": r.get("description") or "",
-                        "route": f"/management/interventions?intervention={intv_id}",
-                        "bff_detail_path": f"/bff/v5/interventions/{intv_id}",
-                        "remediation_context": {
-                            "kind": r.get("kind") or "hiq_sentinel",
-                            "correlation_id": r.get("correlation_id"),
-                        },
-                        "allowedActions": {
-                            "canClaim": True,
-                            "canRelease": False,
-                            "canEscalate": True,
-                            "canDecide": True,
-                            "canRemediate": True,
-                        },
                     })
 
         # 3. Persona readiness blockers
@@ -204,7 +191,7 @@ class _HumanInboxService(ManagementService):
             "total": len(filtered),
             "total_items": len(filtered),
             "approval_count": sum(1 for x in filtered if x["source_type"] == "approval"),
-            "intervention_count": sum(1 for x in filtered if x["source_type"] == "intervention"),
+            "incident_count": sum(1 for x in filtered if x["source_type"] == "incident"),
             "readiness_blocker_count": sum(1 for x in filtered if x["source_type"] == "readiness_blocker"),
         }
 
@@ -214,7 +201,7 @@ class _HumanInboxService(ManagementService):
             "surfaces": {
                 "human_inbox": {"status": "ok", "source": "bff_composed", "snapshot_at": snap},
                 "approval_queue": {"status": "ok", "source": "read_store", "snapshot_at": snap},
-                "v5_interventions": {"status": "ok", "source": "bff_local_registry", "snapshot_at": snap},
+                "incidents": {"status": "ok", "source": "bff_local_registry", "snapshot_at": snap},
                 "persona_readiness": {"status": "ok", "source": "bff_composed", "snapshot_at": snap},
             },
         }
@@ -236,7 +223,7 @@ class _HumanInboxService(ManagementService):
                 item.get("id"),
                 item.get("source_id"),
                 item.get("item_id"),
-                item.get("intervention_id"),
+                item.get("incident_id"),
                 item.get("persona_id"),
             }
             if item_id in candidates:
@@ -253,29 +240,24 @@ def _fresh_client(td: str) -> TestClient:
     return TestClient(app)
 
 
-def _seed_intervention() -> None:
-    _V5_INTERVENTIONS_STORE.append(
+def _seed_incident() -> None:
+    _INCIDENTS_STORE.append(
         {
-            "intervention_id": "intv-human-001",
-            "kind": "hiq_sentinel",
+            "incident_id": "inc-human-001",
+            "severity": "critical",
             "status": "pending",
-            "target_type": "Runtime",
-            "target_id": "runtime-human-001",
-            "triggered_at": "2026-05-23T06:00:00Z",
-            "triggered_by": "sentinel",
-            "description": "Sentinel detected a risk breach requiring operator action.",
-            "correlation_id": "corr-human-001",
+            "description": "Risk breach requiring operator action.",
         }
     )
 
 
-def test_human_inbox_composes_approvals_and_interventions() -> None:
+def test_human_inbox_composes_approvals_and_incidents() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_interventions = list(_V5_INTERVENTIONS_STORE)
+        original_incidents = list(_INCIDENTS_STORE)
         try:
             client = _fresh_client(td)
-            _V5_INTERVENTIONS_STORE.clear()
-            _seed_intervention()
+            _INCIDENTS_STORE.clear()
+            _seed_incident()
 
             resp = client.get("/bff/management/human-inbox", headers=OPERATOR_HEADERS)
 
@@ -285,16 +267,13 @@ def test_human_inbox_composes_approvals_and_interventions() -> None:
             items = body["data"]["items"]
             summary = body["data"]["summary"]
             assert summary["approval_count"] >= 1
-            assert summary["intervention_count"] >= 1
+            assert summary["incident_count"] >= 1
             assert "byStatus" not in summary
             assert "byType" not in summary
             assert "highestRiskLevel" not in summary
             assert body["meta"]["surfaces"]["human_inbox"]["source"] == "bff_composed"
             assert "approval_queue" in body["meta"]["surfaces"]
-            assert body["meta"]["surfaces"]["v5_interventions"]["source"] in {
-                "bff_local_registry",
-                "local_snapshot",
-            }
+            assert body["meta"]["surfaces"]["incidents"]["source"] == "bff_local_registry"
 
             approval = next(item for item in items if item["source_type"] == "approval")
             assert approval["id"].startswith("approval:")
@@ -308,16 +287,14 @@ def test_human_inbox_composes_approvals_and_interventions() -> None:
             assert "sourceRecord" not in approval
             assert "source_record" not in approval
 
-            intervention = next(item for item in items if item["source_type"] == "intervention")
-            assert intervention["id"] == "intervention:intv-human-001"
-            assert intervention["priority"] == "critical"
-            assert intervention["allowedActions"]["canRemediate"] is True
-            assert intervention["remediation_context"]["correlation_id"] == "corr-human-001"
-            assert "sourceRecord" not in intervention
-            assert "source_record" not in intervention
+            incident = next(item for item in items if item["source_type"] == "incident")
+            assert incident["id"] == "incident:inc-human-001"
+            assert incident["priority"] == "critical"
+            assert "sourceRecord" not in incident
+            assert "source_record" not in incident
         finally:
-            _V5_INTERVENTIONS_STORE.clear()
-            _V5_INTERVENTIONS_STORE.extend(original_interventions)
+            _INCIDENTS_STORE.clear()
+            _INCIDENTS_STORE.extend(original_incidents)
 
 
 def test_human_inbox_includes_persona_readiness_blockers(monkeypatch) -> None:
@@ -386,11 +363,11 @@ def test_human_inbox_includes_persona_readiness_blockers(monkeypatch) -> None:
 
 def test_human_inbox_supports_filters_pagination_and_detail(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_interventions = list(_V5_INTERVENTIONS_STORE)
+        original_incidents = list(_INCIDENTS_STORE)
         try:
             client = _fresh_client(td)
-            _V5_INTERVENTIONS_STORE.clear()
-            _seed_intervention()
+            _INCIDENTS_STORE.clear()
+            _seed_incident()
             persona_fanout_calls = 0
             original_persona_fanout = _build_persona_readiness_items
 
@@ -402,7 +379,7 @@ def test_human_inbox_supports_filters_pagination_and_detail(monkeypatch) -> None
             monkeypatch.setattr(sys.modules[__name__], "_build_persona_readiness_items", tracking_persona_fanout)
 
             list_resp = client.get(
-                "/bff/management/human-inbox?source_type=intervention&status=pending&page_size=1",
+                "/bff/management/human-inbox?source_type=incident&status=pending&page_size=1",
                 headers=OPERATOR_HEADERS,
             )
             assert list_resp.status_code == 200, list_resp.text
@@ -414,16 +391,15 @@ def test_human_inbox_supports_filters_pagination_and_detail(monkeypatch) -> None
             assert persona_fanout_calls == 0
 
             detail_resp = client.get(
-                "/bff/management/human-inbox/intervention:intv-human-001",
+                "/bff/management/human-inbox/incident:inc-human-001",
                 headers=OPERATOR_HEADERS,
             )
             assert detail_resp.status_code == 200, detail_resp.text
             detail_body = detail_resp.json()
-            assert detail_body["data"]["intervention_id"] == "intv-human-001"
-            assert detail_body["data"]["bff_detail_path"] == "/bff/v5/interventions/intv-human-001"
+            assert detail_body["data"]["incident_id"] == "inc-human-001"
         finally:
-            _V5_INTERVENTIONS_STORE.clear()
-            _V5_INTERVENTIONS_STORE.extend(original_interventions)
+            _INCIDENTS_STORE.clear()
+            _INCIDENTS_STORE.extend(original_incidents)
 
 
 def test_human_inbox_detail_unknown_returns_404() -> None:

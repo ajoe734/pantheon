@@ -9,7 +9,7 @@ Three test-owned surfaces still force tests to construct or reach into
 of using `ReadSurfacePorts`:
 
 1. "Management" (the OODA/Management domain: `ooda_packets`,
-   `approval_decisions`, `deployment_diffs`, `v5_interventions`,
+   `approval_decisions`, `deployment_diffs`,
    `synthesis_conflict_logs`) -- tests build this data by mutating
    `ReadSurfaceStore` in place (see `test_ppl_alloc_012_ranking_projection.py`
    and friends).
@@ -46,7 +46,6 @@ class ManagementFixtureBuilder:
 
     def __init__(self) -> None:
         self._ooda_packets: List[Dict[str, Any]] = []
-        self._interventions: List[Dict[str, Any]] = []
         self._synthesis_conflict_logs: List[Dict[str, Any]] = []
         self._approval_decisions: List[Dict[str, Any]] = []
         self._deployment_diffs: Dict[str, Dict[str, Any]] = {}
@@ -54,11 +53,6 @@ class ManagementFixtureBuilder:
     def add_ooda_packet(self, packet_id: str, **overrides: Any) -> Dict[str, Any]:
         record = make_fixture_record("ooda_packets", record_id=packet_id, **overrides)
         self._ooda_packets.append(record)
-        return record
-
-    def add_intervention(self, intervention_id: str, **overrides: Any) -> Dict[str, Any]:
-        record = make_fixture_record("v5_interventions", record_id=intervention_id, **overrides)
-        self._interventions.append(record)
         return record
 
     def add_synthesis_conflict_log(self, log_id: str, **overrides: Any) -> Dict[str, Any]:
@@ -80,7 +74,6 @@ class ManagementFixtureBuilder:
         """Return the `ooda_management_kwargs`-shaped snapshot of everything added so far."""
         return {
             "ooda_packets": list(self._ooda_packets),
-            "interventions": list(self._interventions),
             "synthesis_conflict_logs": list(self._synthesis_conflict_logs),
             "approval_decisions": list(self._approval_decisions),
             "deployment_diffs": dict(self._deployment_diffs),

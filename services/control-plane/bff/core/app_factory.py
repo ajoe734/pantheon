@@ -563,8 +563,6 @@ _SSE_CHANNEL_CATALOG_FALLBACK: tuple[str, ...] = (
     "journal",
     "postmortem",
     "loop",
-    "sentinel",
-    "intervention",
     "audit",
     "system",
 )
@@ -784,7 +782,6 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
         return lambda *a, **kw: {}
     if name in {
         "_read_management_source_connector_registry", "read_source_connector_registry",
-        "_v5_intervention_records", "intervention_records_provider",
         "_list_governance_audit_events", "list_governance_audit_events",
         "_list_persona_records", "list_persona_records",
         "_list_strategy_summaries", "list_strategy_summaries",
@@ -1560,9 +1557,7 @@ def mount_bff_routers(
             read_surface=app_deps.read_surface,
             loop_truth_adapter=_dep("loop_truth"),
             downstream_health_monitor=_dep("downstream_health_monitor"),
-            intervention_records_provider=_dep("_v5_intervention_records"),
             submit_sem_command=_dep("_sem_command_response"),
-            submit_final_command_admission=_dep("_submit_final_command_admission"),
             reject_body_idempotency_key=_dep("_reject_body_idempotency_key"),
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),

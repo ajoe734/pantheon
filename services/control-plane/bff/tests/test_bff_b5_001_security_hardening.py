@@ -29,9 +29,7 @@ import os
 # human_gate_item_id/decision/audit_event fields and does not validate the
 # TTL cap). ``command_adapters.service.CommandAdapterService`` already
 # anticipates injection of exactly this kind of per-command validator via its
-# ``validators`` mapping -- the already-migrated ``test_v5_interventions.py``
-# uses the identical technique for ``RemediateSentinelIntervention`` and
-# ``DecideV5Intervention``. This test supplies a byte-for-byte behavioral
+# ``validators`` mapping. This test supplies a byte-for-byte behavioral
 # mirror of main.py's real validator (same required fields, same role gate,
 # same TTL bounds and error codes) as the injected validator, rather than
 # reimplementing the *command-admission* business logic under test (which

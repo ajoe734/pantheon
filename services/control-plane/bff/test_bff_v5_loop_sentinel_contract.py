@@ -129,16 +129,9 @@ class V5LoopSentinelTestReadPorts(ReadSurfacePorts):
             if self._seed_incidents is not False:
                 return "legacy_incident_backfill"
             return "missing"
-        if dataset == "sentinel_findings":
-            has_env, _ = self._get_env_sentinel_findings()
-            if has_env:
-                return "local_fallback"
+        if dataset == "incidents":
             if self._sentinel_findings_data is not None:
                 return "local_fallback"
-            if self._seed_incidents is not False:
-                return "legacy_incident_backfill"
-            return "missing"
-        if dataset == "incidents":
             if self._seed_incidents is not False:
                 return "legacy_incident_backfill"
             return "missing"
@@ -218,7 +211,7 @@ class V5LoopSentinelTestReadPorts(ReadSurfacePorts):
         record = next((r for r in records if r.get("id") == loop_run_id), None)
         return True, record
 
-    def list_sentinel_findings(self, **kwargs: Any) -> tuple[bool, list[dict[str, Any]]]:
+    def list_incidents(self, **kwargs: Any) -> tuple[bool, list[dict[str, Any]]]:
         has_env, env_records = self._get_env_sentinel_findings()
         if has_env:
             return True, list(env_records.values())
@@ -246,13 +239,6 @@ class V5LoopSentinelTestReadPorts(ReadSurfacePorts):
                 ],
             )
         return False, []
-
-    def get_sentinel_finding(self, finding_id: str) -> tuple[bool, dict[str, Any] | None]:
-        available, records = self.list_sentinel_findings()
-        if not available:
-            return False, None
-        record = next((r for r in records if r.get("id") == finding_id), None)
-        return True, record
 
     def list_persona_league(self, **kwargs: Any) -> list[dict[str, Any]]:
         ds = self._data.get("persona_league", [])
@@ -594,54 +580,6 @@ def test_v5_loop_runs_detail_missing_source_returns_degraded(monkeypatch):
     assert data.get("status") == "degraded"
 
 
-def test_v5_sentinel_findings_list_returns_200(monkeypatch):
-    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    with _v5_store() as client:
-        response = client.get("/bff/v5/sentinel/findings", headers=HEADERS)
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert "items" in payload
-    assert "meta" in payload
-
-
-def test_v5_sentinel_findings_list_contains_seeded_incident_derived_record(monkeypatch):
-    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    with _v5_store() as client:
-        response = client.get("/bff/v5/sentinel/findings", headers=HEADERS)
-    assert response.status_code == 200
-    items = response.json()["items"]
-    ids = [item.get("id") for item in items]
-    assert "inc-sentinel-1" in ids
-    # loop incident is excluded from sentinel findings
-    assert "inc-loop-1" not in ids
-
-
-def test_v5_sentinel_findings_detail_seeded_record_returns_200(monkeypatch):
-    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    with _v5_store() as client:
-        response = client.get("/bff/v5/sentinel/findings/inc-sentinel-1", headers=HEADERS)
-    assert response.status_code == 200, response.text
-    data = response.json().get("data", {})
-    assert data.get("id") == "inc-sentinel-1"
-    assert data.get("derived_from_incident_id") == "inc-sentinel-1"
-
-
-def test_v5_sentinel_findings_detail_unknown_id_is_404_when_source_available(monkeypatch):
-    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    with _v5_store() as client:
-        response = client.get("/bff/v5/sentinel/findings/not-a-finding", headers=HEADERS)
-    assert response.status_code == 404, response.text
-
-
-def test_v5_sentinel_findings_detail_missing_source_returns_degraded(monkeypatch):
-    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    with _v5_store(seed_incidents=False) as client:
-        response = client.get("/bff/v5/sentinel/findings/any-finding", headers=HEADERS)
-    assert response.status_code == 200, response.text
-    data = response.json().get("data", {})
-    assert data.get("status") == "degraded"
-
-
 def test_v5_control_room_returns_200(monkeypatch):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     with _v5_store() as client:
@@ -649,8 +587,7 @@ def test_v5_control_room_returns_200(monkeypatch):
     assert response.status_code == 200, response.text
     payload = response.json()
     assert "loops" in payload
-    assert "sentinel" in payload
-    assert "interventions" in payload
+    assert "incidents" in payload
     assert "meta" in payload
 
 
@@ -661,10 +598,9 @@ def test_v5_control_room_composes_loop_and_sentinel_read_models(monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     loop_ids = [item.get("id") for item in payload["loops"]["items"]]
-    sentinel_ids = [item.get("id") for item in payload["sentinel"]["items"]]
+    incident_ids = [item.get("id") for item in payload["incidents"]["items"]]
     assert "inc-loop-1" in loop_ids
-    assert "inc-sentinel-1" in sentinel_ids
-    assert "inc-loop-1" not in sentinel_ids
+    assert "inc-sentinel-1" in incident_ids
     assert "inc-sentinel-1" not in loop_ids
 
 
@@ -692,7 +628,6 @@ def test_v5_loop_sentinel_routes_no_500_without_source(monkeypatch):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     routes = [
         "/bff/v5/loop-runs",
-        "/bff/v5/sentinel/findings",
         "/bff/v5/control-room",
         "/bff/v5/execution/persona-health",
         "/bff/v5/execution/strategy-health",
@@ -749,20 +684,6 @@ def test_v5_loop_runs_dedicated_fallback_store_source_not_missing(monkeypatch):
     assert len(payload.get("items", [])) == 1
 
 
-def test_v5_sentinel_findings_dedicated_fallback_store_source_not_missing(monkeypatch):
-    """Regression: when PANTHEON_BFF_SENTINEL_FINDING_STORE has data and incidents are absent,
-    meta.surfaces.sentinel_findings.source must NOT be 'missing' and status must not be 'unavailable'."""
-    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    with _v5_fallback_store(sentinel_findings_data=_SENTINEL_FINDINGS_SEED) as client:
-        response = client.get("/bff/v5/sentinel/findings", headers=HEADERS)
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    surface = payload.get("meta", {}).get("surfaces", {}).get("sentinel_findings", {})
-    assert surface.get("source") != "missing", f"source must not be 'missing', got: {surface}"
-    assert surface.get("status") != "unavailable", f"status must not be 'unavailable', got: {surface}"
-    assert len(payload.get("items", [])) == 1
-
-
 def test_v5_control_room_partial_dedicated_fallback_surfaces_are_source_aware(monkeypatch):
     """Regression: control-room must not use a healthy sentinel fallback surface for missing loop runs."""
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
@@ -772,15 +693,11 @@ def test_v5_control_room_partial_dedicated_fallback_surfaces_are_source_aware(mo
     payload = response.json()
 
     loop_surface = payload.get("loops", {}).get("meta", {}).get("surfaces", {}).get("loop_runs", {})
-    sentinel_surface = payload.get("sentinel", {}).get("meta", {}).get("surfaces", {}).get("sentinel_findings", {})
     control_surface = payload.get("meta", {}).get("surfaces", {}).get("control_room", {})
 
     assert payload.get("loops", {}).get("items") == []
-    assert len(payload.get("sentinel", {}).get("items", [])) == 1
     assert loop_surface.get("source") == "missing", f"missing loop source must stay explicit, got: {loop_surface}"
     assert loop_surface.get("status") == "unavailable", f"missing loop source must be unavailable, got: {loop_surface}"
-    assert sentinel_surface.get("source") != "missing", f"sentinel source must reflect fallback store, got: {sentinel_surface}"
-    assert sentinel_surface.get("status") != "unavailable", f"sentinel source must stay available, got: {sentinel_surface}"
     assert control_surface.get("status") == "degraded", f"partial control-room data should be degraded, got: {control_surface}"
 
 

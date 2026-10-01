@@ -88,10 +88,6 @@ from .models import (
     DecisionJournalEntryDTO,
     ErrorCode,
     ErrorDetail,
-    InterventionKind,
-    InterventionListResponse,
-    InterventionRecord,
-    InterventionStatus,
     JournalEntryMergePatch,
     McpImportedTool,
     McpRejectedTool,
@@ -848,10 +844,6 @@ _REVIEW_MUTATION_REQUIRED = {"decision_id", "approval_decision_id"}
 _EXECUTE_MUTATION_REQUIRED = {"decision_id"}
 _RECORD_SPONSOR_DECISION_REQUIRED = {"committee_id", "sponsor_decision", "rationale_ref"}
 _VALID_SPONSOR_DECISIONS = {"approved", "rejected", "conditional"}
-_REMEDIATE_SENTINEL_REQUIRED = {"intervention_id", "remediation_action"}
-_VALID_REMEDIATION_ACTIONS = {"resolve", "dismiss", "escalate"}
-_DECIDE_V5_INTERVENTION_REQUIRED = {"intervention_id", "decision"}
-_VALID_V5_INTERVENTION_DECISIONS = {"approve", "reject", "defer", "dismiss"}
 _HUMAN_GATE_DECISIONS_BY_COMMAND: Dict[CommandType, str] = {
     CommandType.HUMAN_GATE_APPROVE: "approve",
     CommandType.HUMAN_GATE_REJECT: "reject",
@@ -1463,7 +1455,7 @@ def _require_two_man_signature_evidence(
     return signature_id
 def _human_gate_source_type(item_id: str) -> Optional[str]:
     prefix = item_id.split(":", 1)[0].strip().lower() if ":" in item_id else ""
-    if prefix in {"approval", "intervention"}:
+    if prefix == "approval":
         return prefix
     return None
 def _human_gate_max_ttl_seconds() -> int:
@@ -1504,31 +1496,16 @@ def _human_gate_find_approval_record(source_id: Optional[str]) -> Optional[Dict[
         if candidate == source_id:
             return dict(item)
     return None
-def _human_gate_find_intervention_record(source_id: Optional[str]) -> Optional[Dict[str, Any]]:
-    if not source_id:
-        return None
-    getter = getattr(read_store, "get_v5_intervention", None)
-    if callable(getter):
-        record = getter(source_id)
-        if record is not None:
-            return dict(record)
-    for item in _v5_intervention_records():
-        candidate = _human_gate_clean_text(item.get("intervention_id") or item.get("id"))
-        if candidate == source_id:
-            return dict(item)
-    return None
 def _human_gate_source_record(params: Dict[str, Any]) -> tuple[Optional[str], Optional[str], Optional[Dict[str, Any]]]:
     item_id = _human_gate_clean_text(params.get("human_gate_item_id") or params.get("itemId") or params.get("item_id"))
     source_type = _human_gate_clean_text(params.get("source_type") or params.get("sourceType")).lower() or None
-    if source_type not in {"approval", "intervention", None}:
+    if source_type not in {"approval", None}:
         source_type = None
     if not source_type:
         source_type = _human_gate_source_type(item_id)
     source_id = _human_gate_source_id_from_params(params, item_id, source_type)
     if source_type == "approval":
         return source_type, source_id, _human_gate_find_approval_record(source_id)
-    if source_type == "intervention":
-        return source_type, source_id, _human_gate_find_intervention_record(source_id)
     return source_type, source_id, None
 def _human_gate_actor_id(value: Any) -> Optional[str]:
     if isinstance(value, dict):
@@ -1708,8 +1685,6 @@ from .command_adapters.preconditions import (
     _validate_reject_mutation,
     _validate_review_mutation,
     _validate_execute_mutation,
-    _validate_remediate_sentinel_intervention,
-    _validate_decide_v5_intervention,
     _validate_human_gate_decision,
     _validate_quarterly_ranking_recommendation_submit,
     _check_binding_tenant_ownership,
@@ -2523,25 +2498,24 @@ _MANAGEMENT_RISK_LEVEL_ORDER = {
 }
 def _build_management_anomalies_payload(snapshot_at: str) -> Dict[str, Any]:
     runtime_alerts, runtime_surfaces = _build_runtime_alerts(snapshot_at)
-    sentinel_available, sentinel_findings = read_store.list_sentinel_findings()
-    sentinel_anomalies: List[Dict[str, Any]] = []
-    for finding in sentinel_findings:
-        finding_id = str(finding.get("id") or finding.get("finding_id") or "").strip()
-        if not finding_id:
+    incident_anomalies: List[Dict[str, Any]] = []
+    for incident in read_store.list_incidents():
+        incident_id = str(incident.get("id") or incident.get("incident_id") or "").strip()
+        if not incident_id:
             continue
-        sentinel_anomalies.append(
+        incident_anomalies.append(
             {
-                "id": finding_id,
-                "kind": finding.get("kind") or "sentinel_finding",
-                "severity": finding.get("severity") or finding.get("risk_level") or "medium",
-                "status": finding.get("status"),
-                "summary": finding.get("title") or finding.get("summary") or finding_id,
-                "created_at": finding.get("created_at"),
-                "triggered_at": finding.get("triggered_at"),
+                "id": incident_id,
+                "kind": incident.get("kind") or "incident",
+                "severity": incident.get("severity") or incident.get("risk_level") or "medium",
+                "status": incident.get("status"),
+                "summary": incident.get("title") or incident.get("summary") or incident_id,
+                "created_at": incident.get("created_at"),
+                "triggered_at": incident.get("triggered_at"),
                 "target_ref": {
-                    "label": "Open sentinel finding",
-                    "href": f"/management/sentinel?finding={finding_id}",
-                    "target_id": finding_id,
+                    "label": "Open incident",
+                    "href": f"/management/incidents/{incident_id}",
+                    "target_id": incident_id,
                 },
             }
         )
@@ -2558,34 +2532,28 @@ def _build_management_anomalies_payload(snapshot_at: str) -> Dict[str, Any]:
         for alert in runtime_alerts
     ]
     anomalies = sorted(
-        runtime_anomalies + sentinel_anomalies,
+        runtime_anomalies + incident_anomalies,
         key=_management_record_time,
         reverse=True,
     )
-    incident_source = read_store.dataset_source("incidents")
-    sentinel_dataset = "incidents" if incident_source != "missing" else "sentinel_findings"
-    sentinel_surface = _dataset_surface_status(
-        sentinel_dataset,
-        snapshot_at=snapshot_at,
-        source=None if sentinel_available else "missing",
-    )
+    incident_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
     anomalies_surface = _aggregate_group_surface(
         "management_anomalies",
         [
             runtime_surfaces["runtime_roster"],
             runtime_surfaces["telemetry_summary"],
-            sentinel_surface,
+            incident_surface,
         ],
         snapshot_at=snapshot_at,
         unavailable_message="Anomaly aggregate unavailable.",
-        degraded_message="Anomaly aggregate is available, but runtime telemetry or sentinel coverage is degraded.",
+        degraded_message="Anomaly aggregate is available, but runtime telemetry or incident coverage is degraded.",
     )
     meta = _snapshot_meta(snapshot_at)
     meta["surfaces"] = {
         "management_anomalies": anomalies_surface,
         "runtime_roster": runtime_surfaces["runtime_roster"],
         "telemetry_summary": runtime_surfaces["telemetry_summary"],
-        "sentinel_findings": sentinel_surface,
+        "incidents": incident_surface,
     }
     return {
         "items": anomalies,
@@ -4409,9 +4377,8 @@ from .pm12.service import (
 from .governance.human_inbox import (
     _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES,
     _HUMAN_INBOX_OPEN_APPROVAL_STATES,
+    _HUMAN_INBOX_OPEN_INCIDENT_STATUSES,
     _HUMAN_INBOX_OPEN_GOVERNANCE_STATUSES,
-    _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES,
-    _HUMAN_INBOX_OPEN_SENTINEL_STATUSES,
     _HUMAN_INBOX_PRIORITY_RANK,
     _HUMAN_INBOX_PROMOTION_PRODUCER,
     _HUMAN_INBOX_PROMOTION_SNAPSHOT_SCALARS,
@@ -4428,8 +4395,8 @@ from .governance.human_inbox import (
     _human_inbox_filter_items,
     _human_inbox_governance_contributor,
     _human_inbox_governance_review_item,
-    _human_inbox_intervention_contributor,
-    _human_inbox_intervention_item,
+    _human_inbox_incident_contributor,
+    _human_inbox_incident_item,
     _human_inbox_loaded_surface,
     _human_inbox_payload,
     _human_inbox_payload_from_loaded,
@@ -4443,8 +4410,6 @@ from .governance.human_inbox import (
     _human_inbox_promotion_review_from_projection,
     _human_inbox_promotion_review_item,
     _human_inbox_sanitize_promotion_snapshot,
-    _human_inbox_sentinel_contributor,
-    _human_inbox_sentinel_item,
     _human_inbox_submission_projection_from_record,
     _human_inbox_summary,
     _human_inbox_surfaces,
@@ -5087,34 +5052,6 @@ async def bff_types_compat(
         },
         "meta": {"snapshot_at": utc_now()},
     }
-_V5_INTERVENTIONS_STORE: List[Dict[str, Any]] = []
-def _v5_intervention_records(
-    *,
-    status: Optional[str] = None,
-    kind: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    records_by_id: Dict[str, Dict[str, Any]] = {}
-    store_lister = getattr(read_store, "list_v5_interventions", None)
-    if callable(store_lister):
-        for record in store_lister(status=status, kind=kind):
-            if not isinstance(record, dict):
-                continue
-            record_id = str(record.get("intervention_id") or record.get("id") or "").strip()
-            if record_id:
-                records_by_id[record_id] = dict(record)
-
-    for record in _V5_INTERVENTIONS_STORE:
-        if not isinstance(record, dict):
-            continue
-        if status and str(record.get("status") or "") != status:
-            continue
-        if kind and str(record.get("kind") or "") != kind:
-            continue
-        record_id = str(record.get("intervention_id") or record.get("id") or "").strip()
-        if record_id:
-            records_by_id[record_id] = dict(record)
-
-    return list(records_by_id.values())
 from .command_adapters.service import (
     process_command as _process_command,
     _process_command_stub,
@@ -5138,14 +5075,12 @@ SSE_CHANNEL_CATALOG = (
     "journal",
     "postmortem",
     "loop",
-    "sentinel",
-    "intervention",
     "audit",
     "system",
 )
 SSE_CHANNELS = set(SSE_CHANNEL_CATALOG)
 _SSE_RESYNC_ROUTES: Dict[str, tuple[str, ...]] = {
-    "approval": ("/bff/approvals", "/bff/v5/interventions"),
+    "approval": ("/bff/approvals",),
     "ask": (
         "/bff/management/ai/conversations",
         "/bff/management/ai/conversations/{id}",
@@ -5798,7 +5733,7 @@ def _sem_final_channel_records() -> List[Dict[str, Any]]:
 _OODA_STAGE_DEFS = [
     ("observe", "Observe", "telemetry/source/search health"),
     ("orient", "Orient", "active signal/persona proposal count"),
-    ("decide", "Decide", "pending approvals/interventions"),
+    ("decide", "Decide", "pending approvals"),
     ("act", "Act", "paper runtime / sandbox broker state"),
     ("learn", "Learn", "evolution/postmortem/retrain state"),
 ]
@@ -5973,33 +5908,21 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
             source=source,
             surface=surface,
         )
-    if path == "/bff/v5/sentinel/findings":
-        available, records = read_store.list_sentinel_findings()
-        src_dataset = "sentinel_findings" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
-        source = None if available else "missing"
-        return _sem_final_list_response(records, dataset=src_dataset, surface_key="sentinel_findings", source=source)
     if path == "/bff/v5/control-room":
         snapshot_at = utc_now()
         avail_lr, loop_runs = read_store.list_loop_runs()
-        avail_sf, sentinel_findings = read_store.list_sentinel_findings()
-        incidents_source = read_store.dataset_source("incidents")
+        incidents = read_store.list_incidents()
 
-        def _control_room_child_surface(dataset: str, available: bool) -> Dict[str, Any]:
+        def _control_room_child_surface(dataset: str) -> Dict[str, Any]:
             if dataset == "loop_runs":
-                return _loop_run_surface_status(available, snapshot_at=snapshot_at)[2]
-            if incidents_source != "missing":
-                return _dataset_surface_status("incidents", snapshot_at=snapshot_at)
-            return _dataset_surface_status(
-                dataset,
-                snapshot_at=snapshot_at,
-                source=None if available else "missing",
-            )
+                return _loop_run_surface_status(avail_lr, snapshot_at=snapshot_at)[2]
+            return _dataset_surface_status("incidents", snapshot_at=snapshot_at)
 
-        loop_surface = _control_room_child_surface("loop_runs", avail_lr)
-        sentinel_surface = _control_room_child_surface("sentinel_findings", avail_sf)
+        loop_surface = _control_room_child_surface("loop_runs")
+        incident_surface = _control_room_child_surface("incidents")
         child_statuses = {
             str(loop_surface.get("status") or "ok"),
-            str(sentinel_surface.get("status") or "ok"),
+            str(incident_surface.get("status") or "ok"),
         }
         if child_statuses == {"ok"}:
             control_surface = {"status": "ok", "source": "composed_read_models"}
@@ -6021,13 +5944,9 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
                 "items": loop_runs,
                 "meta": {"snapshot_at": snapshot_at, "surfaces": {"loop_runs": loop_surface}},
             },
-            "interventions": {
-                "items": _v5_intervention_records(),
-                "meta": {"snapshot_at": snapshot_at, "surfaces": {"interventions": {"status": "ok", "source": "bff_local_registry"}}},
-            },
-            "sentinel": {
-                "items": sentinel_findings,
-                "meta": {"snapshot_at": snapshot_at, "surfaces": {"sentinel_findings": sentinel_surface}},
+            "incidents": {
+                "items": incidents,
+                "meta": {"snapshot_at": snapshot_at, "surfaces": {"incidents": incident_surface}},
             },
             "ooda_status": ooda_card,
             "meta": {
@@ -6035,7 +5954,7 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
                 "surfaces": {
                     "control_room": control_surface,
                     "loop_runs": loop_surface,
-                    "sentinel_findings": sentinel_surface,
+                    "incidents": incident_surface,
                     "ooda_control_room_status": ooda_card["meta"],
                 },
             },

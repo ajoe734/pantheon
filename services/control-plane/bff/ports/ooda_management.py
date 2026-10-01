@@ -278,94 +278,6 @@ class OodaPacketsPort:
 
 
 # ---------------------------------------------------------------------------
-# Interventions Port
-# ---------------------------------------------------------------------------
-
-class InterventionsPort:
-    """Port for listing and retrieving V5 interventions."""
-
-    def __init__(
-        self,
-        *,
-        records_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None,
-        store: Optional[Any] = None,
-    ) -> None:
-        self._records_provider = records_provider
-        self._store = store
-
-    def _get_raw_records(self) -> Tuple[str, List[Dict[str, Any]]]:
-        if self._records_provider is not None:
-            try:
-                records = self._records_provider()
-                return "store", [dict(r) for r in (records or [])]
-            except Exception:
-                return "unavailable", []
-        if self._store is not None:
-            try:
-                if hasattr(self._store, "list_v5_interventions"):
-                    return "store", self._store.list_v5_interventions()
-                if hasattr(self._store, "list_records"):
-                    avail, recs = self._store.list_records("v5_interventions")
-                    if avail:
-                        return "store", list(recs or [])
-            except Exception:
-                return "unavailable", []
-        return "missing", []
-
-    def get_surface_status(self) -> Dict[str, Any]:
-        source, records = self._get_raw_records()
-        if source in ("missing", "unavailable"):
-            return {
-                "status": "unavailable",
-                "source": source,
-                "message": "Intervention store is unavailable.",
-            }
-        return {
-            "status": "ok" if records else "degraded",
-            "source": source,
-            "message": None if records else "Intervention store is empty.",
-        }
-
-    def list_interventions(
-        self,
-        *,
-        status: Optional[str] = None,
-        kind: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        _, raw_items = self._get_raw_records()
-        items = [dict(item) for item in raw_items if isinstance(item, dict)]
-        if status:
-            items = [
-                item
-                for item in items
-                if str(item.get("status") or "").strip().lower() == str(status).strip().lower()
-            ]
-        if kind:
-            items = [
-                item
-                for item in items
-                if str(item.get("kind") or "").strip().lower() == str(kind).strip().lower()
-            ]
-        items.sort(
-            key=lambda item: (
-                (_parse_rfc3339(item.get("triggered_at")) or datetime.min).replace(tzinfo=None)
-            ),
-            reverse=True,
-        )
-        return json.loads(json.dumps(items))
-
-    def get_intervention(self, intervention_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        if not intervention_id:
-            return None
-        clean_id = str(intervention_id).strip()
-        for item in self.list_interventions():
-            found_id = str(item.get("intervention_id") or item.get("id") or "").strip()
-            if found_id == clean_id:
-                return json.loads(json.dumps(item))
-        return None
-
-
-# ---------------------------------------------------------------------------
 # Synthesis Conflict Logs Port
 # ---------------------------------------------------------------------------
 
@@ -797,18 +709,16 @@ class ManagementReviewQueuePort:
 # ---------------------------------------------------------------------------
 
 class OodaManagementDomainPort:
-    """Consolidated domain port for OODA loop packets, interventions, and review queues."""
+    """Consolidated domain port for OODA loop packets and review queues."""
 
     def __init__(
         self,
         *,
         ooda_port: Optional[OodaPacketsPort] = None,
-        interventions_port: Optional[InterventionsPort] = None,
         synthesis_conflict_logs_port: Optional[SynthesisConflictLogsPort] = None,
         review_queue_port: Optional[ManagementReviewQueuePort] = None,
     ) -> None:
         self.ooda = ooda_port or OodaPacketsPort()
-        self.interventions = interventions_port or InterventionsPort()
         self.conflict_logs = synthesis_conflict_logs_port or SynthesisConflictLogsPort()
         self.review_queue = review_queue_port or ManagementReviewQueuePort()
 
@@ -827,13 +737,6 @@ class OodaManagementDomainPort:
 
     def list_ooda_packets_for_evolution_program(self, program_id: str) -> List[Dict[str, Any]]:
         return self.ooda.list_ooda_packets_for_evolution_program(program_id)
-
-    # Intervention delegates
-    def list_interventions(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self.interventions.list_interventions(**kwargs)
-
-    def get_intervention(self, intervention_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        return self.interventions.get_intervention(intervention_id)
 
     # Synthesis conflict delegates
     def list_synthesis_conflict_logs(self, **kwargs: Any) -> List[Dict[str, Any]]:

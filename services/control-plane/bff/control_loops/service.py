@@ -30,15 +30,7 @@ from services.control_plane.bff.trade_journey_projection_store import InvalidPag
 from services.control_plane.bff.models import ErrorCode
 
 
-HealthFindingsProvider = Callable[..., List[Dict[str, Any]]]
-InterventionRecordsProvider = Callable[..., List[Dict[str, Any]]]
-
 _LOOP_RUN_PROJECTION_SCHEMA = "pantheon.loop-run-projection.v1"
-_VALID_SENTINEL_FILTERS = {
-    "kind": {"hiq_sentinel", "risk_breach", "strategy_drift", "loop_anomaly", "persona_health"},
-    "status": {"open", "resolved", "dismissed", "escalated"},
-    "severity": {"critical", "high", "medium", "low"},
-}
 _OODA_STAGE_STATUSES = {
     "observe": {"open", "observing"},
     "orient": {"oriented"},
@@ -138,8 +130,6 @@ class ControlLoopsService:
         read_store: Optional[Any] = None,
         loop_truth_adapter: Optional[Any] = None,
         downstream_health_monitor: Optional[Any] = None,
-        health_findings_provider: Optional[HealthFindingsProvider] = None,
-        intervention_records_provider: Optional[InterventionRecordsProvider] = None,
         utc_now_fn: Optional[Callable[[], str]] = None,
         bff_error_fn: Optional[Callable[..., Exception]] = None,
         deployed_environment: Optional[str] = None,
@@ -147,8 +137,6 @@ class ControlLoopsService:
         self.read_store = read_store or _MissingReadPort()
         self.loop_truth = loop_truth_adapter or default_loop_truth
         self.downstream_health_monitor = downstream_health_monitor
-        self.health_findings_provider = health_findings_provider
-        self.intervention_records_provider = intervention_records_provider
         self.utc_now = utc_now_fn or utc_now_rfc3339
         self.bff_error = bff_error_fn or default_bff_error
         self.deployed_environment = str(
@@ -370,54 +358,6 @@ class ControlLoopsService:
             available=False if source == "missing" else None,
         )
 
-    def intervention_records(
-        self,
-        *,
-        status: Optional[str] = None,
-        kind: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        if self.intervention_records_provider is not None:
-            records = self.intervention_records_provider(status=status, kind=kind)
-            return [dict(item) for item in records or [] if isinstance(item, Mapping)]
-        return self._call_records(
-            ("list_interventions", "list_v5_interventions"),
-            status=status,
-            kind=kind,
-        )
-
-    def list_interventions(
-        self,
-        *,
-        status: Optional[str],
-        kind: Optional[str],
-    ) -> Dict[str, Any]:
-        records = self.intervention_records(status=status, kind=kind)
-        return {"items": records, "count": len(records), "generated_at": self.utc_now()}
-
-    def get_intervention(self, intervention_id: str) -> Dict[str, Any]:
-        clean_id = str(intervention_id or "").strip()
-        getter = getattr(self.read_store, "get_intervention", None)
-        record = getter(clean_id) if callable(getter) else None
-        if record is None:
-            record = next(
-                (
-                    item
-                    for item in self.intervention_records()
-                    if str(item.get("intervention_id") or item.get("id") or "").strip()
-                    == clean_id
-                ),
-                None,
-            )
-        return self._detail(
-            record if isinstance(record, Mapping) else None,
-            entity_id=clean_id,
-            label="Intervention",
-            dataset="interventions",
-            surface_key="intervention_detail",
-            source="domain_port",
-            available=True,
-        )
-
     def _available_records(self, method_name: str, **filters: Any) -> Tuple[bool, List[Dict[str, Any]]]:
         method = getattr(self.read_store, method_name, None)
         if not callable(method):
@@ -428,81 +368,6 @@ class ControlLoopsService:
                 dict(item) for item in result[1] or [] if isinstance(item, Mapping)
             ]
         return True, [dict(item) for item in result or [] if isinstance(item, Mapping)]
-
-    def list_sentinel_findings(
-        self,
-        *,
-        kind: Optional[str],
-        status: Optional[str],
-        severity: Optional[str],
-        tenant_id: Optional[str],
-    ) -> Dict[str, Any]:
-        for field, value in (("kind", kind), ("status", status), ("severity", severity)):
-            if value is not None and value.lower() not in _VALID_SENTINEL_FILTERS[field]:
-                raise self._error(
-                    400,
-                    ErrorCode.VALIDATION_FAILED,
-                    f"Invalid {field} '{value}'",
-                    f"Unknown sentinel finding {field} filter value",
-                    precondition_failed=field,
-                )
-        available, records = self._available_records(
-            "list_sentinel_findings", kind=kind, status=status, severity=severity
-        )
-        if self.health_findings_provider is not None:
-            derived = self.health_findings_provider(
-                kind=kind, status=status, severity=severity, tenant_id=tenant_id
-            )
-            existing = {str(item.get("id") or item.get("finding_id") or "") for item in records}
-            records.extend(
-                dict(item)
-                for item in derived or []
-                if isinstance(item, Mapping)
-                and str(item.get("id") or item.get("finding_id") or "") not in existing
-            )
-            available = available or bool(derived)
-        source = self.dataset_source("sentinel_findings")
-        if source == "missing" and available:
-            source = self.dataset_source("incidents")
-        return self._list_envelope(
-            records,
-            dataset="sentinel_findings",
-            surface_key="sentinel_findings",
-            source=source,
-            surface=self._surface("sentinel_findings", source=source, available=available),
-        )
-
-    def get_sentinel_finding(self, finding_id: str) -> Dict[str, Any]:
-        getter = getattr(self.read_store, "get_sentinel_finding", None)
-        result = getter(finding_id) if callable(getter) else (False, None)
-        if isinstance(result, tuple) and len(result) == 2:
-            available, record = bool(result[0]), result[1]
-        else:
-            record, available = result, result is not None
-        if record is None and self.health_findings_provider is not None:
-            derived = self.health_findings_provider(
-                kind=None, status=None, severity=None, tenant_id=None
-            )
-            record = next(
-                (
-                    item
-                    for item in derived or []
-                    if str((item or {}).get("id") or (item or {}).get("finding_id") or "")
-                    == finding_id
-                ),
-                None,
-            )
-            available = available or bool(derived)
-        source = self.dataset_source("sentinel_findings")
-        return self._detail(
-            record if isinstance(record, Mapping) else None,
-            entity_id=finding_id,
-            label="Sentinel finding",
-            dataset="sentinel_findings",
-            surface_key="sentinel_finding_detail",
-            source=source,
-            available=available,
-        )
 
     @staticmethod
     def _inventory_meta(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1039,25 +904,22 @@ class ControlLoopsService:
     def control_room(self) -> Dict[str, Any]:
         snapshot_at = self.utc_now()
         loops_available, loops = self._available_records("list_loop_runs")
-        sentinel_available, findings = self._available_records("list_sentinel_findings")
-        interventions = self.intervention_records()
+        incidents = self._call_records(("list_incidents",))
         packets = self._call_records(("list_ooda_packets",)) if self.ooda_routes_enabled() else []
         loop_surface = self._loop_run_surface(loops_available)
-        sentinel_source = self.dataset_source("sentinel_findings")
-        sentinel_surface = self._surface(
-            "sentinel_findings", source=sentinel_source, available=sentinel_available
+        incident_surface = self._surface(
+            "incidents", source=self.dataset_source("incidents"), available=None
         )
-        statuses = {loop_surface["status"], sentinel_surface["status"]}
+        statuses = {loop_surface["status"], incident_surface["status"]}
         control_status = "ok" if statuses == {"ok"} else (
             "unavailable" if statuses == {"unavailable"} else "degraded"
         )
         ooda_status = self._ooda_status(packets, snapshot_at)
         return {
             "loops": {"items": loops, "meta": {"surfaces": {"loop_runs": loop_surface}}},
-            "interventions": {"items": interventions},
-            "sentinel": {
-                "items": findings,
-                "meta": {"surfaces": {"sentinel_findings": sentinel_surface}},
+            "incidents": {
+                "items": incidents,
+                "meta": {"surfaces": {"incidents": incident_surface}},
             },
             "ooda_status": ooda_status,
             "meta": {
@@ -1068,7 +930,7 @@ class ControlLoopsService:
                         "source": "composed_domain_ports" if control_status != "unavailable" else "missing",
                     },
                     "loop_runs": loop_surface,
-                    "sentinel_findings": sentinel_surface,
+                    "incidents": incident_surface,
                     "ooda_control_room_status": ooda_status["meta"],
                 },
             },

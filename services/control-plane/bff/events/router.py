@@ -894,7 +894,7 @@ def create_events_router(
     _dep_inbox = _make_channel_sub_dep("inbox")
     _dep_cc_kpi = _make_channel_sub_dep("ranking")
     _dep_cc_events = _make_channel_sub_dep("loop")
-    _dep_alerts = _make_channel_sub_dep("sentinel")
+    _dep_alerts = _make_channel_sub_dep("system")
     _dep_deployment = _make_channel_sub_dep("artifact")
     _dep_reviews = _make_channel_sub_dep("approval")
 

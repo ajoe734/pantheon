@@ -339,7 +339,7 @@ def test_agora_token_cannot_call_management_routes(
     test_client, _fake_openclaw = client
 
     response = test_client.get(
-        "/bff/management/sentinel-pulse",
+        "/bff/management/hiq-backlog",
         headers=_auth("agora-only-user", agora_caps=True),
     )
 

@@ -177,9 +177,6 @@ class TestActionToOwnerMatrix(unittest.TestCase):
         adapter2 = find_adapter("RiskAlertAction", "riskalert", "acknowledge")
         self.assertIsInstance(adapter2, IncidentCommandAdapter)
 
-        adapter3 = find_adapter("RemediateSentinelIntervention", "sentinelintervention", "remediate")
-        self.assertIsInstance(adapter3, IncidentCommandAdapter)
-
     def test_evolution_adapter_mapping(self):
         adapter = find_adapter("EvolutionProgramAction", "evolutionprogram", "pause")
         self.assertIsInstance(adapter, EvolutionCommandAdapter)
