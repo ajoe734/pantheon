@@ -146,11 +146,6 @@ def _tenant_match(obj: Any, tenant: Optional[str]) -> bool:
     return bool(tid and (tenant is None or tid == tenant))
 
 
-def _is_binding_authorized(conflicting: Any, caller_tenant: Optional[str]) -> bool:
-    tid = getattr(conflicting, "tenant_id", None) or (getattr(conflicting, "metadata", None) or {}).get("tenant_id")
-    return bool(caller_tenant and tid == caller_tenant)
-
-
 def _resolve_data_dir() -> Path:
     base = (
         os.getenv("CAPITAL_DATA_DIR")
@@ -188,7 +183,6 @@ class CapitalBoundaryService:
     _OWNER_CREATE_LOCK = RLock()
     _CAPITAL_STATE_APPLY_LOCK = RLock()
     _REBALANCE_BINDING_STATUSES = frozenset({"pending", "active"})
-    _STAGE_DEPLOYMENT_SCOPE = STAGE_DEPLOYMENT_SCOPE
 
     def __init__(
         self,
@@ -459,12 +453,12 @@ class CapitalBoundaryService:
             if not pool and " pool " in msg and " already has " in msg:
                 pool = msg.split(" pool ", 1)[1].split(" already has ", 1)[0].strip().strip("'\"")
             conf = next((b for b in self.binding_store.list(capital_pool_id=pool, status="active", role="live_owner") if not binding or b.binding_id != binding.binding_id), None) if pool else None
-            if not conf or not _is_binding_authorized(conf, caller_tenant):
+            if not conf or not _tenant_match(conf, caller_tenant):
                 raise type(exc)(f"Single-live-owner rule violated: pool {pool!r} already has an active live_owner binding. Revoke or suspend it before activating a new live_owner.") from exc
         if "Capital sleeve identity is already bound:" in msg:
             pool, sleeve = (binding.capital_pool_id, str(getattr(binding, "capital_sleeve_id", "") or "").strip()) if binding else (None, "")
             conf = next((b for b in self.binding_store.list(capital_pool_id=pool) if (not binding or b.binding_id != binding.binding_id) and str(getattr(b, "capital_sleeve_id", "") or "").strip() == sleeve), None) if pool and sleeve else None
-            if not conf or not _is_binding_authorized(conf, caller_tenant):
+            if not conf or not _tenant_match(conf, caller_tenant):
                 safe_msg = f"Capital sleeve identity is already bound: pool={pool!r}, sleeve={sleeve!r}" if pool and sleeve else (msg.split(", binding=")[0] if ", binding=" in msg else msg)
                 raise type(exc)(safe_msg) from exc
 
@@ -520,15 +514,14 @@ class CapitalBoundaryService:
         required_scope: str | None = None,
     ) -> bool:
         return (
-            binding.persona_id == str(persona_id or "").strip()
-            and binding.capital_pool_id == capital_pool_id
-            and self._normalized_sleeve_id(binding.capital_sleeve_id)
-            == self._normalized_sleeve_id(capital_sleeve_id)
-            and self._binding_is_rebalance_eligible(binding)
-            and (
-                required_scope is None
-                or binding.permits_scope_ceiling(required_scope)
+            self._binding_identity_matches_rebalance_line(
+                binding,
+                capital_pool_id=capital_pool_id,
+                persona_id=persona_id,
+                capital_sleeve_id=capital_sleeve_id,
             )
+            and self._binding_is_rebalance_eligible(binding)
+            and (required_scope is None or binding.permits_scope_ceiling(required_scope))
         )
 
     def _binding_identity_matches_rebalance_line(
@@ -1294,16 +1287,11 @@ def list_pool_allocations(
     pool_id: str,
     persona_id: Optional[str] = None,
 ) -> AllocationListResponse:
-    service = get_capital_service()
     try:
-        service.get_pool(pool_id)
-        records = service.list_allocations(
-            capital_pool_id=pool_id,
-            persona_id=persona_id,
-        )
+        get_capital_service().get_pool(pool_id)
+        return list_allocations(capital_pool_id=pool_id, persona_id=persona_id)
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
-    return _allocation_list_response(records)
 
 
 @app.post("/api/containments", response_model=ContainmentBody, status_code=201)
