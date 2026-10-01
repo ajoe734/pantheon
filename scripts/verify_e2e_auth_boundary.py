@@ -28,7 +28,7 @@ import urllib.request
 PROTECTED = [
     "/bff/runtimes", "/bff/strategies", "/bff/personas", "/bff/capital-pools",
     "/bff/deployments", "/bff/approvals", "/bff/incidents", "/bff/v5/loop-runs",
-    "/bff/v5/sentinel/findings", "/api/v1/operator/runtime-state", "/bff/artifacts",
+    "/api/v1/operator/runtime-state", "/bff/artifacts",
     "/bff/management/trade-journeys", "/bff/management/trade-journeys/metrics",
 ]
 AUTH_REJECT = {401, 403}

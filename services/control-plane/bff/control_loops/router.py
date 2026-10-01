@@ -10,10 +10,9 @@ from __future__ import annotations
 
 import copy
 import inspect
-import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, BackgroundTasks, Body, Header, Query, Request
+from fastapi import APIRouter, Body, Header, Query, Request
 
 from services.control_plane.bff.loop_inventory import (
     LoopHealthDetailEnvelope,
@@ -24,7 +23,6 @@ from services.control_plane.bff.loop_inventory import (
 from services.control_plane.bff.models import (
     CommandType,
     ErrorCode,
-    InterventionListResponse,
     ObjectType,
     OperatorIdentity,
     redact_evidence_field_items,
@@ -121,20 +119,6 @@ def _default_require_operator_role(identity: Any) -> None:
         )
 
 
-def _identity_tenant(identity: Any) -> Optional[str]:
-    claims = getattr(identity, "claims", {})
-    if not isinstance(claims, dict):
-        return None
-    for key in ("tenant_id", "tenantId", "tid", "org_id"):
-        value = claims.get(key)
-        if value:
-            return str(value).strip() or None
-    tenant = claims.get("tenant")
-    if isinstance(tenant, dict) and tenant.get("id"):
-        return str(tenant["id"]).strip() or None
-    return None
-
-
 def create_control_loops_router(
     *,
     service: Optional[ControlLoopsService] = None,
@@ -142,10 +126,7 @@ def create_control_loops_router(
     get_read_store: Optional[Callable[[], Any]] = None,
     loop_truth_adapter: Optional[Any] = None,
     downstream_health_monitor: Optional[Any] = None,
-    health_findings_provider: Optional[Callable[..., Any]] = None,
-    intervention_records_provider: Optional[Callable[..., Any]] = None,
     submit_sem_command: Optional[Callable[..., Any]] = None,
-    submit_final_command_admission: Optional[Callable[..., Any]] = None,
     reject_body_idempotency_key: Optional[Callable[[Dict[str, Any]], None]] = None,
     extract_identity: Optional[IdentityExtractor] = None,
     require_read_role: Optional[RoleChecker] = None,
@@ -186,8 +167,6 @@ def create_control_loops_router(
             read_store=read_store,
             loop_truth_adapter=loop_truth_adapter,
             downstream_health_monitor=downstream_health_monitor,
-            health_findings_provider=health_findings_provider,
-            intervention_records_provider=intervention_records_provider,
             utc_now_fn=utc_now_fn,
             bff_error_fn=_err,
             deployed_environment=deployed_environment,
@@ -228,21 +207,6 @@ def create_control_loops_router(
             )
         result = submit_sem_command(**kwargs)
         return await result if inspect.isawaitable(result) else result
-
-    async def _submit_final(**kwargs: Any) -> Any:
-        if submit_final_command_admission is None:
-            raise _err(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Control-loop command admission is not composed",
-                "The composition root must inject the canonical final command owner.",
-                precondition_failed="submit_final_command_admission",
-            )
-        result = submit_final_command_admission(**kwargs)
-        resolved = await result if inspect.isawaitable(result) else result
-        if hasattr(resolved, "model_dump"):
-            return resolved.model_dump(by_alias=True)
-        return resolved
 
     # 1-2: OODA packet management reads.
     @router.get("/bff/ooda/packets")
@@ -287,135 +251,7 @@ def create_control_loops_router(
         response.setdefault("meta", {})["redacted_evidence_count"] = redacted_count
         return response
 
-    # 3-4: intervention list and critical remediation admission.
-    @router.get("/bff/v5/interventions", response_model=InterventionListResponse)
-    async def list_v5_interventions(
-        status: Optional[str] = Query(default=None),
-        kind: Optional[str] = Query(default=None),
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        # response_model=InterventionListResponse -> InterventionRecord has no
-        # `evidence_refs` field and no extra="allow" config, so FastAPI's
-        # response-model serialization always drops any such field before it
-        # reaches the wire; there is nothing to redact on this list surface.
-        _read_identity(authorization)
-        return resolved_service.list_interventions(status=status, kind=kind)
-
-    @router.post("/bff/v5/interventions/{intervention_id}/remediate", status_code=202)
-    async def remediate_v5_intervention(
-        intervention_id: str,
-        background_tasks: BackgroundTasks,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
-        x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
-        x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
-        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
-        x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ) -> Dict[str, Any]:
-        _reject_body_key(payload)
-        clean_id = str(intervention_id or "").strip()
-        params = {**payload, "intervention_id": clean_id}
-        command_payload = {
-            "command": CommandType.REMEDIATE_SENTINEL_INTERVENTION.value,
-            "target": {"type": ObjectType.SENTINEL_INTERVENTION.value, "id": clean_id},
-            "action": "remediate_sentinel_intervention",
-            "params": params,
-            "audit_context": {
-                "reason": str(payload.get("reason") or "HIQ Sentinel remediation"),
-                "incident_id": str(payload.get("incident_id") or "").strip() or None,
-            },
-        }
-        return await _submit_final(
-            background_tasks=background_tasks,
-            payload=command_payload,
-            authorization=authorization,
-            x_mfa_token=x_mfa_token,
-            x_trace_id=x_trace_id,
-            x_correlation_id=x_correlation_id,
-            x_request_id=x_request_id,
-            x_confirm_token=x_confirm_token,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            route="POST /bff/v5/interventions/{intervention_id}/remediate",
-            foundation_raw_payload={**payload, "intervention_id": clean_id},
-        )
-
-    # 5: dedicated intervention decision admission.
-    @router.post("/bff/v5/interventions/{id}/decide", status_code=202)
-    async def sem_v5_intervention_decide_command(
-        id: str,
-        background_tasks: BackgroundTasks,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
-        x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
-        x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
-        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
-        x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ) -> Dict[str, Any]:
-        clean_id = str(id or "").strip()
-        if not clean_id:
-            raise _err(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Intervention id is required",
-                "id must be a non-empty string",
-                precondition_failed="intervention_id",
-            )
-        _reject_body_key(payload)
-        decision = str(payload.get("decision") or payload.get("outcome") or "").strip().lower()
-        reason = str(
-            payload.get("reason") or payload.get("memo") or f"intervention.{decision or 'decide'}"
-        ).strip()
-        params = {
-            **payload,
-            "intervention_id": clean_id,
-            "interventionId": clean_id,
-            "decision": decision,
-            "action_id": "decide",
-            "audit_event": f"intervention.{decision or 'decide'}",
-        }
-        command_payload = {
-            "command": CommandType.DECIDE_V5_INTERVENTION.value,
-            "target": {"type": ObjectType.SENTINEL_INTERVENTION.value, "id": clean_id},
-            "action": "decide",
-            "params": params,
-            "audit_context": {
-                "reason": reason,
-                "incident_id": str(payload.get("incident_id") or payload.get("incidentId") or "").strip() or None,
-            },
-        }
-        return await _submit_final(
-            background_tasks=background_tasks,
-            payload=command_payload,
-            authorization=authorization,
-            x_mfa_token=x_mfa_token,
-            x_trace_id=x_trace_id,
-            x_correlation_id=x_correlation_id,
-            x_request_id=x_request_id,
-            x_confirm_token=x_confirm_token,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            route="POST /bff/v5/interventions/{id}/decide",
-            audit_extra={
-                "action_id": "decide",
-                "entity_type": ObjectType.SENTINEL_INTERVENTION.value,
-                "entity_id": clean_id,
-                "audit_event": f"intervention.{decision or 'decide'}",
-            },
-            enqueue=False,
-            include_durable_meta=True,
-        )
-
-    # 6-9: shared intervention action handler owns four decorators.
-    @router.post("/bff/v5/interventions/{id}/claim", status_code=202)
-    @router.post("/bff/v5/interventions/{id}/escalate", status_code=202)
-    @router.post("/bff/v5/interventions/{id}/release", status_code=202)
+    # Guarded-command two-man evidence signing (the only surviving /interventions route).
     @router.post("/bff/v5/interventions/{id}/two-man-sign", status_code=202)
     async def sem_v5_intervention_command(
         id: str,
@@ -477,85 +313,6 @@ def create_control_loops_router(
             x_idempotency_key=x_idempotency_key,
             terminal_on_persist=terminal_on_persist,
             trusted_evidence_producer=trusted_evidence_producer,
-        )
-
-    # 10-12: Sentinel finding/remediation trigger commands.
-    @router.post("/bff/v5/sentinel/findings/{id}/status", status_code=202)
-    async def sem_v5_sentinel_status_command(
-        id: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ) -> Dict[str, Any]:
-        identity = _read_identity(authorization)
-        _reject_body_key(payload)
-        return await _submit_sem(
-            command_type=CommandType.SENTINEL_FINDING_STATUS,
-            target_type=ObjectType.SENTINEL_FINDING,
-            target_id=id,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-        )
-
-    @router.post("/bff/v5/sentinel/remediation/build", status_code=202)
-    async def sem_v5_sentinel_remediation_build_command(
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ) -> Dict[str, Any]:
-        identity = _read_identity(authorization)
-        _reject_body_key(payload)
-        provided_finding = payload.get("finding_id") or payload.get("findingId")
-        target_id = str(provided_finding or f"remediation-{uuid.uuid4().hex[:8]}")
-        return await _submit_sem(
-            command_type=CommandType.SENTINEL_REMEDIATION_BUILD,
-            target_type=ObjectType.SENTINEL_REMEDIATION,
-            target_id=target_id,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            server_generated_target=not provided_finding,
-        )
-
-    @router.post("/bff/v5/sentinel/remediation/{actionId}/execute", status_code=202)
-    async def sem_v5_sentinel_remediation_execute_command(
-        actionId: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ) -> Dict[str, Any]:
-        identity = _read_identity(authorization)
-        _reject_body_key(payload)
-        return await _submit_sem(
-            command_type=CommandType.SENTINEL_REMEDIATION_EXECUTE,
-            target_type=ObjectType.SENTINEL_REMEDIATION,
-            target_id=actionId,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-        )
-
-    # 13-17: Sentinel, loop inventory, and controller-health reads.
-    @router.get("/bff/v5/sentinel/findings")
-    async def bff_v5_sentinel_findings_list(
-        kind: Optional[str] = Query(default=None),
-        status: Optional[str] = Query(default=None),
-        severity: Optional[str] = Query(default=None),
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = _read_identity(authorization)
-        return resolved_service.list_sentinel_findings(
-            kind=kind,
-            status=status,
-            severity=severity,
-            tenant_id=_identity_tenant(identity),
         )
 
     @router.get("/bff/v5/loop-inventory", response_model=LoopInventoryListEnvelope)
@@ -707,18 +464,7 @@ def create_control_loops_router(
             environment=environment,
         )
 
-    @router.get("/bff/v5/sentinel/findings/{finding_id}")
-    async def bff_get_sentinel_finding(
-        finding_id: str,
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = _read_identity(authorization)
-        response = resolved_service.get_sentinel_finding(str(finding_id or "").strip())
-        response["data"], redacted_count = _redact_single(identity, response["data"])
-        response.setdefault("meta", {})["redacted_evidence_count"] = redacted_count
-        return response
-
-    # 23-24: aggregate control room and intervention detail.
+    # 23: aggregate control room.
     @router.get("/bff/v5/control-room")
     async def bff_v5_control_room(
         authorization: Optional[str] = Header(default=None),
@@ -727,26 +473,9 @@ def create_control_loops_router(
         response = resolved_service.control_room()
         loops_items, loops_count = _redact_items(identity, response["loops"]["items"])
         response["loops"]["items"] = loops_items
-        interventions_items, interventions_count = _redact_items(
-            identity, response["interventions"]["items"]
-        )
-        response["interventions"]["items"] = interventions_items
-        sentinel_items, sentinel_count = _redact_items(identity, response["sentinel"]["items"])
-        response["sentinel"]["items"] = sentinel_items
-        response.setdefault("meta", {})["redacted_evidence_count"] = (
-            loops_count + interventions_count + sentinel_count
-        )
-        return response
-
-    @router.get("/bff/v5/interventions/{intervention_id}")
-    async def bff_v5_intervention_detail(
-        intervention_id: str,
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = _read_identity(authorization)
-        response = resolved_service.get_intervention(intervention_id)
-        response["data"], redacted_count = _redact_single(identity, response["data"])
-        response.setdefault("meta", {})["redacted_evidence_count"] = redacted_count
+        incident_items, incident_count = _redact_items(identity, response["incidents"]["items"])
+        response["incidents"]["items"] = incident_items
+        response.setdefault("meta", {})["redacted_evidence_count"] = loops_count + incident_count
         return response
 
     return router

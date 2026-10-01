@@ -128,8 +128,6 @@
         "services/control-plane/bff/test_rw05_artifact_compare_contract.py",
         "services/control-plane/bff/test_search_retrieval_cutoff_contract.py",
         "services/control-plane/bff/test_search_service_client.py",
-        "services/control-plane/bff/test_sent001_sentinel_findings_contract.py",
-        "services/control-plane/bff/test_sentinel_healthreason_rule_coverage.py",
         "services/control-plane/bff/test_source_connector_service_client.py",
         "services/control-plane/bff/test_source_search_ops_bff.py",
         "services/control-plane/bff/test_training_session_service_client.py",
@@ -139,7 +137,6 @@
         "services/control-plane/bff/test_tw02_parameter_controls_contract.py",
         "services/control-plane/bff/test_tw03_before_after_compare_contract.py",
         "services/control-plane/bff/test_tw04_teaching_replay_contract.py",
-        "services/control-plane/bff/test_v5_interventions.py",
         "services/control-plane/bff/test_w3_surfaces.py",
         "services/control-plane/bff/test_w4_remaining_catalog.py",
         "services/control-plane/bff/tests/rebalance_authority_test_support.py",
@@ -194,7 +191,7 @@
         "tests/e2e/test_human_management_frontend_persona_ooda_100.py",
         "tests/e2e/test_persona_ooda_15_cycle_autonomy.py"
       ],
-      "test_caller_count": 164,
+      "test_caller_count": 161,
       "matrix_item": "ACG-02-004",
       "target_disposition": "VERIFY",
       "target_owner": "CanonicalSnapshotAdapter delegate",
@@ -1016,12 +1013,11 @@
         "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
         "services/control-plane/bff/test_rw05_artifact_compare_contract.py",
         "services/control-plane/bff/test_tw04_teaching_replay_contract.py",
-        "services/control-plane/bff/test_v5_interventions.py",
         "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
         "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py",
         "services/lineage-read/test_main.py"
       ],
-      "test_caller_count": 13,
+      "test_caller_count": 12,
       "matrix_item": "ACG-02-002",
       "target_disposition": "MIGRATE",
       "target_owner": "local/fixture-pack seeded data"
@@ -1201,10 +1197,9 @@
       "test_callers": [
         "services/control-plane/bff/test_bff_strategy_persona_contract.py",
         "services/control-plane/bff/test_loop_prod_per_001_provisioning.py",
-        "services/control-plane/bff/test_v5_interventions.py",
         "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py"
       ],
-      "test_caller_count": 4,
+      "test_caller_count": 3,
       "matrix_item": "ACG-02-002",
       "target_disposition": "MIGRATE",
       "target_owner": "local/fixture-pack seeded data"

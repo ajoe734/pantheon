@@ -78,7 +78,6 @@ from services.control_plane.bff.ports.persona_capital_runtime import (
     create_persona_capital_runtime_port,
 )
 from services.control_plane.bff.ports.ooda_management import (
-    InterventionsPort,
     ManagementReviewQueuePort,
     OodaManagementDomainPort,
     OodaPacketsPort,
@@ -225,11 +224,6 @@ class ReadSurfacePorts:
             "ooda": (
                 self.ooda_management.ooda.get_surface_status()
                 if hasattr(self.ooda_management, "ooda") and hasattr(self.ooda_management.ooda, "get_surface_status")
-                else {"status": "ok"}
-            ),
-            "interventions": (
-                self.ooda_management.interventions.get_surface_status()
-                if hasattr(self.ooda_management, "interventions") and hasattr(self.ooda_management.interventions, "get_surface_status")
                 else {"status": "ok"}
             ),
         }
@@ -439,12 +433,6 @@ class ReadSurfacePorts:
     def list_ooda_packets_for_evolution_program(self, program_id: str) -> List[Dict[str, Any]]:
         return self.ooda_management.list_ooda_packets_for_evolution_program(program_id)
 
-    def list_interventions(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self.ooda_management.list_interventions(**kwargs)
-
-    def get_intervention(self, intervention_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        return self.ooda_management.get_intervention(intervention_id)
-
     def list_synthesis_conflict_logs(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.ooda_management.list_synthesis_conflict_logs(**kwargs)
 
@@ -491,6 +479,10 @@ class ReadSurfacePorts:
             # consultation client/store or catalog backend surfaces as
             # unavailable rather than a false healthy default.
             return self.operations_consultation.dataset_source(dataset)
+        if dataset == "incidents":
+            # The incident owner can be down while list_incidents() swallows
+            # the outage and returns []; surface its real availability.
+            return self.lifecycle_telemetry_governance.dataset_source("incidents")
         if dataset in (
             "deployment_plans",
             "personas",
@@ -509,7 +501,6 @@ class ReadSurfacePorts:
             "approval_decisions",
             "evolution_decisions",
             "ooda_packets",
-            "interventions",
             "synthesis_conflict_logs",
             "approval_queue_items",
             "governance_review_queue_items",
@@ -722,9 +713,6 @@ class ReadSurfacePorts:
     def list_loop_runs(self) -> Tuple[bool, List[Dict[str, Any]]]:
         return self.lifecycle_telemetry_governance.list_loop_runs()
 
-    def list_sentinel_findings(self, **kwargs: Any) -> Tuple[bool, List[Dict[str, Any]]]:
-        return self.lifecycle_telemetry_governance.list_sentinel_findings(**kwargs)
-
     def get_kill_switch_status(self) -> Dict[str, Any]:
         return self.lifecycle_telemetry_governance.get_kill_switch_status()
 
@@ -787,9 +775,6 @@ class ReadSurfacePorts:
 
     def get_rollbacks_by_incident(self, incident_id: str) -> List[Dict[str, Any]]:
         return self.lifecycle_telemetry_governance.get_rollbacks_by_incident(incident_id)
-
-    def get_sentinel_finding(self, finding_id: str) -> Tuple[bool, Optional[Dict[str, Any]]]:
-        return self.lifecycle_telemetry_governance.get_sentinel_finding(finding_id)
 
     def list_freeze_orders(self, status: Optional[str] = None, scope: Optional[str] = None) -> List[Dict[str, Any]]:
         return self.lifecycle_telemetry_governance.list_freeze_orders(status=status, scope=scope)
@@ -1360,7 +1345,6 @@ def create_in_memory_read_surface_ports(
     pcr_port = create_in_memory_persona_capital_runtime_port(**(persona_capital_runtime_kwargs or {}))
     ooda_kw = dict(ooda_management_kwargs or {})
     ooda_p = ooda_kw.get("ooda_port") or OodaPacketsPort(records_provider=lambda: list(ooda_kw.get("ooda_packets") or []))
-    int_p = ooda_kw.get("interventions_port") or InterventionsPort(records_provider=lambda: list(ooda_kw.get("interventions") or []))
     scl_p = ooda_kw.get("synthesis_conflict_logs_port") or SynthesisConflictLogsPort(records_provider=lambda: list(ooda_kw.get("synthesis_conflict_logs") or []))
     rq_p = ooda_kw.get("review_queue_port") or ManagementReviewQueuePort(
         deployment_plans_reader=lambda: list(ooda_kw.get("deployment_plans") or []),
@@ -1370,7 +1354,6 @@ def create_in_memory_read_surface_ports(
     )
     ooda_port = OodaManagementDomainPort(
         ooda_port=ooda_p,
-        interventions_port=int_p,
         synthesis_conflict_logs_port=scl_p,
         review_queue_port=rq_p,
     )

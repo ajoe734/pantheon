@@ -259,88 +259,6 @@ def _build_test_app() -> FastAPI:
             status_code=202,
         )
 
-    @app.post("/bff/v5/interventions/{id}/decide", status_code=202)
-    async def _intervention_decide(
-        id: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ):
-        identity = _test_extract_identity(authorization)
-        return _test_sem_command_response(
-            command_type=CommandType.DECIDE_V5_INTERVENTION,
-            target_type=ObjectType.SENTINEL_INTERVENTION,
-            target_id=id,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            status_code=202,
-        )
-
-    @app.post("/bff/v5/sentinel/findings/{id}/status", status_code=202)
-    async def _sentinel_finding_status(
-        id: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ):
-        identity = _test_extract_identity(authorization)
-        return _test_sem_command_response(
-            command_type=CommandType.SENTINEL_FINDING_STATUS,
-            target_type=ObjectType.SENTINEL_FINDING,
-            target_id=id,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            status_code=202,
-        )
-
-    @app.post("/bff/v5/sentinel/remediation/build", status_code=202)
-    async def _sentinel_remediation_build(
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ):
-        identity = _test_extract_identity(authorization)
-        provided_finding = payload.get("finding_id") or payload.get("findingId")
-        target_id = str(provided_finding or f"remediation-{uuid.uuid4().hex[:8]}")
-        return _test_sem_command_response(
-            command_type=CommandType.SENTINEL_REMEDIATION_BUILD,
-            target_type=ObjectType.SENTINEL_REMEDIATION,
-            target_id=target_id,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            status_code=202,
-            server_generated_target=not provided_finding,
-        )
-
-    @app.post("/bff/v5/sentinel/remediation/{id}/execute", status_code=202)
-    async def _sentinel_remediation_execute(
-        id: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ):
-        identity = _test_extract_identity(authorization)
-        return _test_sem_command_response(
-            command_type=CommandType.SENTINEL_REMEDIATION_EXECUTE,
-            target_type=ObjectType.SENTINEL_REMEDIATION,
-            target_id=id,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            status_code=202,
-        )
-
     return app
 
 
@@ -521,42 +439,6 @@ def test_deployment_create_server_generated_id_conflicts_on_different_payload() 
         assert conflict.status_code == 409, conflict.text
 
 
-def test_sentinel_remediation_build_server_generated_id_replays_on_retry() -> None:
-    """Regression: POST /bff/v5/sentinel/remediation/build with no finding_id must replay."""
-    with _isolated_command_bridge() as client:
-        headers = {**HEADERS, "Idempotency-Key": "sentinel-build-no-id"}
-        body = {"reason": "x"}  # no finding_id — server will generate it
-
-        first = client.post("/bff/v5/sentinel/remediation/build", headers=headers, json=body)
-        second = client.post("/bff/v5/sentinel/remediation/build", headers=headers, json=body)
-
-        assert first.status_code == 202, first.text
-        assert second.status_code == 202, second.text  # must NOT be 409
-        assert _receipt_id(second.json()) == _receipt_id(first.json())
-        assert second.json()["meta"]["idempotency"]["replayed"] is True
-        assert len(command_store._get_all_commands()) == 1
-
-
-def test_sentinel_remediation_build_with_client_finding_id_still_works() -> None:
-    """When finding_id is provided the normal idempotency hash includes target_id."""
-    with _isolated_command_bridge() as client:
-        headers = {**HEADERS, "Idempotency-Key": "sentinel-build-with-id"}
-        body = {"finding_id": "finding-sem-002"}
-
-        first = client.post("/bff/v5/sentinel/remediation/build", headers=headers, json=body)
-        second = client.post("/bff/v5/sentinel/remediation/build", headers=headers, json=body)
-        conflict = client.post(
-            "/bff/v5/sentinel/remediation/build",
-            headers=headers,
-            json={"finding_id": "finding-different"},
-        )
-
-        assert first.status_code == 202, first.text
-        assert second.status_code == 202, second.text
-        assert _receipt_id(second.json()) == _receipt_id(first.json())
-        assert conflict.status_code == 409, conflict.text
-
-
 def test_durable_idempotency_conflict_detected_after_memory_clear() -> None:
     """Regression: after _FINAL_CONTRACT_IDEMPOTENCY is cleared, a retry with a different
     payload must still return 409 — the command_store existing_record path must compare
@@ -626,34 +508,6 @@ def test_audit_and_v5_command_routes_write_domain_command_records() -> None:
                 {"target_type": "Deployment"},
                 "AuditExport",
             ),
-            (
-                "POST",
-                "/bff/v5/interventions/intv-sem-002/decide",
-                "sem-002-v5-decide",
-                {"decision": "dismiss"},
-                "DecideV5Intervention",
-            ),
-            (
-                "POST",
-                "/bff/v5/sentinel/findings/finding-sem-002/status",
-                "sem-002-sentinel-status",
-                {"status": "acknowledged"},
-                "SentinelFindingStatus",
-            ),
-            (
-                "POST",
-                "/bff/v5/sentinel/remediation/build",
-                "sem-002-sentinel-build",
-                {"finding_id": "finding-sem-002"},
-                "SentinelRemediationBuild",
-            ),
-            (
-                "POST",
-                "/bff/v5/sentinel/remediation/rem-sem-002/execute",
-                "sem-002-sentinel-execute",
-                {"reason": "dry run remediation command"},
-                "SentinelRemediationExecute",
-            ),
         ]
 
         for method, path, key, body, command_type in routes:
@@ -669,8 +523,4 @@ def test_audit_and_v5_command_routes_write_domain_command_records() -> None:
 
         assert [record["type"] for record in command_store._get_all_commands()] == [
             "AuditExport",
-            "DecideV5Intervention",
-            "SentinelFindingStatus",
-            "SentinelRemediationBuild",
-            "SentinelRemediationExecute",
         ]

@@ -39,14 +39,12 @@ class TestManagementFixtureBuilder(unittest.TestCase):
     def test_builds_typed_ooda_management_records(self) -> None:
         builder = ManagementFixtureBuilder()
         builder.add_ooda_packet("pkt-1", strategy_id="strat-1", runtime_id="rt-1")
-        builder.add_intervention("int-1", action="pause")
         builder.add_synthesis_conflict_log("log-1", conflict_type="divergence")
         builder.add_approval_decision("app-1", state="pending")
         builder.add_deployment_diff("dp-1", diff="allocated +50k")
 
         kwargs = builder.to_kwargs()
         self.assertEqual(kwargs["ooda_packets"][0]["id"], "pkt-1")
-        self.assertEqual(kwargs["interventions"][0]["id"], "int-1")
         self.assertEqual(kwargs["synthesis_conflict_logs"][0]["id"], "log-1")
         self.assertEqual(kwargs["approval_decisions"][0]["id"], "app-1")
         self.assertEqual(kwargs["deployment_diffs"]["dp-1"]["diff"], "allocated +50k")
