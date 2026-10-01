@@ -175,15 +175,16 @@ class PiWorkerTests(unittest.TestCase):
         worker["runner_signal"] = 15
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
-    def test_configured_capacity_shares_existing_account_cap(self):
+    def test_configured_capacity_uses_lupin_account_cap(self):
         config = json.loads((Path(__file__).parent / "config.json").read_text())
         self.assertEqual(config["agents"]["piastra"]["max_parallel"], 1)
         self.assertEqual(supervisor.normalize_agent_id("PiAstra"), "piastra")
         self.assertEqual(supervisor.agent_provider_key(config, "PiAstra"), "pi_astra")
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "piastra"), 1)
-        self.assertEqual(supervisor.agent_account_id(config, "PiAstra"), "codex1")
-        self.assertEqual(config["providers"]["pi_astra"]["account"], config["providers"]["codex"]["account"])
-        # Codex, Codex2 and Pi are logged in to one ChatGPT account and share one cap.
+        self.assertEqual(supervisor.agent_account_id(config, "PiAstra"), "lupinchen")
+        self.assertEqual(config["providers"]["pi_astra"]["pi"]["agent_dir"], "~/.pi/agent")
+        self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"]["lupinchen"], 1)
+        # Codex and Codex2 retain their existing account and capacity.
         self.assertEqual(supervisor.agent_account_id(config, "Codex2"), "codex1")
         self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"]["codex1"], 4)
         self.assertNotIn("codex2", config["ready_dispatcher"]["max_concurrent_per_account"])

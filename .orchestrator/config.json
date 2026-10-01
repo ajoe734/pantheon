@@ -770,10 +770,10 @@
     },
     "pi_astra": {
       "delivery_mode": "pi",
-      "account": "codex1",
+      "account": "lupinchen",
       "pi": {
         "cli": "~/.local/bin/pi",
-        "agent_dir": "~/.pi/pantheon-astra",
+        "agent_dir": "~/.pi/agent",
         "provider": "openai-codex",
         "model": "gpt-6-luna",
         "thinking": "high"
@@ -817,6 +817,7 @@
       "antigravity": 4,
       "antigravity2": 4,
       "codex1": 4,
+      "lupinchen": 1,
       "copilot": 0
     },
     "max_concurrent_workers": 13
