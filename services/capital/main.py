@@ -253,10 +253,11 @@ class CapitalBoundaryService:
     def _authorize_pool_activation(self, pool: CapitalPool, decision_id: str | None) -> None:
         t = _current_tenant()
         held = self.allocation_store.list_allocations(capital_pool_id=pool.pool_id, tenant_id=t)
+        bindings = self.list_bindings(capital_pool_id=pool.pool_id)
         self.guard.authorize(
             pool=pool, tenant_id=t, decision_id=decision_id, target_type="capital_pool_activation", target_id=pool.pool_id,
             expected={"target_version": pool_digest(pool), "subject.pool_id": pool.pool_id, "subject.risk_direction": "increase"},
-            allocations=held,
+            allocations=held, bindings=bindings,
         )
 
 
@@ -438,7 +439,7 @@ class CapitalBoundaryService:
                     "subject.persona_id": binding.persona_id, "subject.capital_pool_id": pool.pool_id,
                     "subject.risk_direction": "increase",
                 },
-                binding=binding, allocations=held,
+                binding=binding, allocations=held, bindings=self.list_bindings(capital_pool_id=pool.pool_id),
             )
             try:
                 updated = self.binding_store.activate(binding_id, body.approval_decision_id)
@@ -712,11 +713,12 @@ class CapitalBoundaryService:
         if not any(self._line_increases_risk(line, held_map.get(line.get("allocation_id"))) for line in lines):
             return
         digest = plan_digest(proposal)
+        bindings = self.list_bindings(capital_pool_id=pool_id)
         self.guard.authorize(
             pool=self.get_pool(pool_id), tenant_id=tenant, decision_id=decision_id,
             target_type="rebalance_apply", target_id=rebalance_id,
             expected={"target_version": digest, "subject.plan_id": rebalance_id, "subject.plan_digest": digest, "subject.capital_pool_id": pool_id, "subject.risk_direction": "increase"},
-            allocations=held, proposal_lines=lines,
+            allocations=held, proposal_lines=lines, bindings=bindings,
         )
 
     def apply_rebalance(
