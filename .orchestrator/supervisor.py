@@ -2185,6 +2185,9 @@ def _validate_auto_integrator_unblock_request(
     )
     if not isinstance(source, Mapping):
         raise ValueError("unblock request source task is not active")
+    # Enforce again under the canonical lock, including already queued requests
+    # from older producers. A caller cannot reset depth in the request body.
+    unblock_contract.require_root_repair_source(source_task_id, source)
     if str(source.get("status") or "") not in {"in_progress", "review", "review_approved"}:
         raise ValueError("unblock request source task is not integration-active")
     if task_generation(source) != request.get("source_task_generation"):

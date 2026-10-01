@@ -1597,6 +1597,29 @@ class IntegrationPlanTests(unittest.TestCase):
                     auto_integrator.Settings(), FakeRunner(), root=root, execute=True))
             self.assertFalse((root / auto_integrator.UNBLOCK_REQUEST_INBOX).exists())
 
+    def test_repair_tasks_never_spawn_children_for_any_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            for task_id, provenance in (
+                ("INTEGRATION-UNBLOCK-ABC", {}),
+                ("renamed-repair", {"unblock_request": {"source_task_id": "ABC"}}),
+                ("legacy-repair", {"auto_created_by": "auto_integrator"}),
+                ("current-repair", {"auto_created_by": "supervisor:auto_integrator_unblock_request"}),
+            ):
+                candidate = auto_integrator.TaskCandidate(
+                    task_id=task_id, title="Repair", owner="Codex", reviewer="Claude",
+                    branch=f"task/{task_id}", raw_task=provenance | {
+                        "generation": 2, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD},
+                    },
+                )
+                for reason in auto_integrator.unblock_contract.REASONS:
+                    for execute in (False, True):
+                        with self.subTest(task_id=task_id, reason=reason, execute=execute):
+                            self.assertIsNone(auto_integrator.open_unblock_task(
+                                candidate, reason, "still blocked", auto_integrator.Settings(),
+                                FakeRunner(), root=root, execute=execute))
+            self.assertFalse((root / auto_integrator.UNBLOCK_REQUEST_INBOX).exists())
+
     def test_red_checks_open_unblock_in_execute_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir, mock.patch.dict(
             os.environ, {}, clear=True

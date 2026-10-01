@@ -124,6 +124,26 @@ def requires_repair_task(reason: str) -> bool:
     })
 
 
+def require_root_repair_source(source_task_id: str, source: Mapping[str, Any]) -> None:
+    """Allow one automatic repair level, never a repair of a repair.
+
+    Check both legacy names and canonical provenance: renaming a generated
+    repair must not reset its depth. Rejections leave the existing task/PR
+    blocked for its owner; they never grant merge or delete historical work.
+    """
+    if (
+        source_task_id.upper().startswith("INTEGRATION-UNBLOCK-")
+        or source.get("unblock_request") is not None
+        or source.get("auto_created_by") in {
+            "auto_integrator", "supervisor:auto_integrator_unblock_request",
+        }
+    ):
+        raise ValueError(
+            "automatic unblock depth limit (1) reached; repair the existing "
+            "task/PR or escalate to Human/Ops, do not create a child repair"
+        )
+
+
 def repair_identity(identity: Mapping[str, Any]) -> dict[str, Any]:
     """One repair scope per source and immutable delivery, not per retry/reason."""
     return {key: identity.get(key) for key in (

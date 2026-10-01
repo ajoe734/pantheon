@@ -2097,6 +2097,7 @@ def open_unblock_task(
     execute: bool,
 ) -> str | None:
     try:
+        unblock_contract.require_root_repair_source(candidate.task_id, candidate.raw_task)
         reason = unblock_contract.validate_reason(reason)
     except ValueError as exc:
         print(
