@@ -975,11 +975,11 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         risk_level=RiskLevel.HIGH,
         requires_approval=True,
         requires_confirm_token=True,
-        requires_two_man=True,
+        requires_two_man=False,
         cooldown_seconds=60,
         idempotency_required=True,
         required_roles=["operator", "approver"],
-        description="Apply an approved rebalance or deployment change to live systems.",
+        description="Apply a persisted rebalance proposal at the Capital owner, which verifies the Governance approval_ref.",
     ),
     BffActionCatalogEntry(
         action_id="EmergencyContainment",

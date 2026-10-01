@@ -450,7 +450,6 @@ def _reconcile_containment_receipt(
     *,
     command_id: str,
     persona_id: str,
-    two_man_signature_id: str,
     auth_token: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     receipt = _get_json(
@@ -462,7 +461,6 @@ def _reconcile_containment_receipt(
             receipt,
             command_id=command_id,
             persona_id=persona_id,
-            two_man_signature_id=two_man_signature_id,
         )
     except RuntimeError:
         return None
@@ -497,7 +495,6 @@ def _validate_containment_receipt(
     *,
     command_id: str,
     persona_id: str,
-    two_man_signature_id: str,
 ) -> Dict[str, Any]:
     if not isinstance(body, dict):
         raise RuntimeError("Capital authority returned a non-object containment receipt")
@@ -505,10 +502,6 @@ def _validate_containment_receipt(
         raise RuntimeError("Capital authority returned a containment receipt for the wrong command")
     if str(body.get("persona_id") or "") != persona_id:
         raise RuntimeError("Capital authority returned a containment receipt for the wrong Persona")
-    if str(body.get("two_man_signature_id") or "") != two_man_signature_id:
-        raise RuntimeError(
-            "Capital authority returned a containment receipt for the wrong two-man signature"
-        )
     containment_state = str(
         body.get("containment_state") or body.get("state") or ""
     ).strip()
@@ -1306,7 +1299,6 @@ def _execute_emergency_containment_authority(
             reconciled = _reconcile_containment_receipt(
                 command_id=command_id,
                 persona_id=persona_id,
-                two_man_signature_id=two_man_signature_id,
                 auth_token=auth_token,
             )
         except Exception:
@@ -1314,12 +1306,7 @@ def _execute_emergency_containment_authority(
         if reconciled is None:
             raise exc
         body = {**reconciled, "owner_receipt_reconciled": True}
-    body = _validate_containment_receipt(
-        body,
-        command_id=command_id,
-        persona_id=persona_id,
-        two_man_signature_id=two_man_signature_id,
-    )
+    body = _validate_containment_receipt(body, command_id=command_id, persona_id=persona_id)
     containment_state = str(
         body.get("containment_state") or body.get("state") or ""
     ).strip()
@@ -1333,6 +1320,7 @@ def _execute_emergency_containment_authority(
         "entity_id": persona_id,
         "containment": True,
         "containment_state": containment_state,
+        "two_man_signature_id": two_man_signature_id,
         "risk_direction": "decrease_only",
         "live_capital_side_effects": False,
     }

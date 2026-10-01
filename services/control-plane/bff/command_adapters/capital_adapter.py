@@ -23,7 +23,8 @@ from .base import (
 
 # Fields the caller may never assert: identity, tenant and idempotency are bound by the BFF/owner.
 _BOUND_FIELDS = frozenset({"id", "actor_id", "actor_role", "tenant_id", "idempotency_key", "request_hash"})
-_POOL_ACTION_STATUS = {"pause": "paused", "freeze": "paused", "activate": "active", "resume": "active", "retire": "retired"}
+# Owner CapitalPool statuses are active / suspended / archived.
+_POOL_ACTION_STATUS = {"pause": "suspended", "freeze": "suspended", "activate": "active", "resume": "active", "retire": "archived"}
 
 
 def _executor() -> Any:

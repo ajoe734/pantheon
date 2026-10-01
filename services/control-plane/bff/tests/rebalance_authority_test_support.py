@@ -9,11 +9,12 @@ import json
 import os
 import sys
 import tempfile
+import urllib.request
 from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
 
@@ -46,6 +47,7 @@ from services.control_plane.bff.command_adapters.router import (
     create_action_command_router,
     create_command_adapters_router,
 )
+from services.control_plane.bff.command_adapters.capital_adapter import CapitalOwnerWriter
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.tests.management_projection_test_doubles import PplFixtureBuilder
 from services.control_plane.bff.models import ErrorCode, utc_now
@@ -579,27 +581,6 @@ class PplRankingProjectionHarness:
         )
 
 
-class _CommandExecutorCapitalAuthority:
-    """Adapts ``command_executor``'s real owner-facing HTTP calls to the
-    generic method-dispatch contract ``CapitalService.write`` expects.
-
-    ``command_executor.create_capital_pool`` forwards its payload verbatim to
-    the real Capital owner, which requires ``actor_id``/``actor_role`` on the
-    request body. ``CapitalService.write`` only threads ``actor_id`` (not a
-    role) through its call context, so this adapter fills the same
-    ``actor_role`` default the production command adapters already use for
-    owner mutations without an explicit role
-    (``command_adapters/capital_adapter.py``'s ``_execute_rebalance_apply``/
-    ``_execute_containment``), rather than inventing fixture-only policy.
-    """
-
-    def create_capital_pool(self, payload: Dict[str, Any], *, actor_id: str, **_: Any) -> Dict[str, Any]:
-        body = dict(payload)
-        body.setdefault("actor_id", actor_id)
-        body.setdefault("actor_role", "operator")
-        return command_executor.create_capital_pool(body)
-
-
 def _build_authority_harness_app(
     read_surface: ReadSurfacePorts,
     command_store: CommandStore,
@@ -619,7 +600,7 @@ def _build_authority_harness_app(
     app.include_router(
         create_capital_router(
             read_surface=read_surface,
-            get_capital_authority=lambda: _CommandExecutorCapitalAuthority(),
+            get_capital_authority=lambda: CapitalOwnerWriter(),
             extract_identity=extract_identity,
             require_read_role=require_read_role,
             require_operator_role=require_operator_role,
@@ -652,13 +633,16 @@ def _build_authority_harness_app(
     async def _create_binding(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ):
         identity = extract_identity(authorization)
         actor_id = str(getattr(identity, "operator_id", None) or getattr(identity, "id", None) or "operator-1")
         body = dict(payload)
         body.setdefault("actor_id", actor_id)
         body.setdefault("actor_role", "operator")
-        return command_executor.create_capital_binding(body)
+        if idempotency_key:
+            body.update(idempotency_key=idempotency_key, request_hash=_stable_json_hash(payload))
+        return command_executor.create_capital_binding(body, auth_token=authorization)
 
     @app.get("/api/v1/bindings")
     async def _list_bindings():
@@ -707,6 +691,7 @@ class CapitalBffAuthorityHarness:
         self.capital_client: Optional[TestClient] = None
         self.client: Optional[TestClient] = None
         self.read_surface = PplProjectionTestDouble()
+        self.owner_calls: List[Tuple[str, str, Optional[str]]] = []
 
     def __enter__(self) -> "CapitalBffAuthorityHarness":
         self.root.mkdir(parents=True, exist_ok=True)
@@ -731,11 +716,14 @@ class CapitalBffAuthorityHarness:
             }
         )
 
+        self._patch_guard_collaborators()  # before import: the module-level CapitalGuard binds them at construction
         sys.modules.pop("services.capital.main", None)
         self.capital_module = importlib.import_module("services.capital.main")
         self.capital_client = TestClient(self.capital_module.app)
         command_executor._post_json = self._post_json
         command_executor._get_json = self._get_json
+        self._original_urlopen = urllib.request.urlopen
+        urllib.request.urlopen = self._urlopen  # PATCH owner calls use the raw urllib primitive
         self._reset_bff_process_state()
 
         assert self.client is not None
@@ -747,6 +735,7 @@ class CapitalBffAuthorityHarness:
                 "owner_id": "fund-real",
                 "owner_type": "fund",
                 "risk_policy_ref": "risk-main",
+                "approval_decision_id": "approval-pool-real",
             },
             headers={**HEADERS, "Idempotency-Key": "create-pool-real"},
         )
@@ -774,7 +763,24 @@ class CapitalBffAuthorityHarness:
             self._seed_authoritative_allocation()
         return self
 
+    def _patch_guard_collaborators(self) -> None:
+        """Healthy runtime/policy and a Governance reader that approves exactly what the guard asks about."""
+        from services.capital import capital_guard
+        from services.capital.conftest import _ApprovesWhatIsAsked
+
+        self._guard_originals = {
+            name: getattr(capital_guard, name)
+            for name in ("read_safe_mode", "load_risk_policy", "configured_approval_reader")
+        }
+        capital_guard.read_safe_mode = lambda pool_id: "normal"
+        capital_guard.load_risk_policy = lambda ref: {"risk_policy_id": ref}
+        capital_guard.configured_approval_reader = lambda domain: _ApprovesWhatIsAsked()
+
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        from services.capital import capital_guard
+
+        for name, original in getattr(self, "_guard_originals", {}).items():
+            setattr(capital_guard, name, original)
         if self.client is not None:
             self.client.close()
         if self.capital_client is not None:
@@ -782,6 +788,7 @@ class CapitalBffAuthorityHarness:
 
         command_executor._post_json = self._original_post_json
         command_executor._get_json = self._original_get_json
+        urllib.request.urlopen = self._original_urlopen
 
         if self._previous_capital_module is None:
             sys.modules.pop("services.capital.main", None)
@@ -913,60 +920,75 @@ class CapitalBffAuthorityHarness:
         assert applied.status_code == 200, applied.text
         assert applied.json()["allocation_readback"][0]["current_weight"] == 0.10
 
-    def apply_evidence(
+    def run_command(
         self,
-        rebalance_id: str,
+        command: str,
+        target: Dict[str, str],
+        params: Dict[str, Any],
         *,
-        suffix: str,
-    ) -> tuple[Dict[str, Any], Dict[str, str]]:
-        """Create restart-safe approval, confirm-token, and two-man evidence."""
+        key: str,
+        token: Optional[Dict[str, str]] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """Admit ``command`` through ``/bff/v1/commands`` and return its stored, processed record.
+
+        ``token`` (``{"command": ..., optional "target"}``) first issues a confirm token the same way
+        ``/bff/confirm-tokens`` does.  The background processor runs before the response returns, so
+        the record is terminal: it ran the real executor against the isolated Capital owner.
+        """
         assert self.client is not None
-        approval_id = f"approval-{suffix}"
-        signature_id = f"tms-{suffix}"
-        token_id = f"ct-{suffix}"
+        caller = headers or HEADERS
+        extra: Dict[str, str] = {}
+        if token is not None:
+            token_id = f"ct-{key}"
+            issued = self.client.post(
+                "/bff/v1/commands",
+                json={
+                    "command": "CreateConfirmToken",
+                    "target": {"type": "ConfirmToken", "id": token_id},
+                    "params": {"tokenId": token_id, "command": token["command"], "target": target, "operator_id": "op-2"},
+                    "audit_context": {"reason": "confirm"},
+                },
+                headers={**caller, "Idempotency-Key": f"confirm-{key}"},
+            )
+            assert issued.status_code == 202, issued.text
+            extra["X-Confirm-Token"] = token_id
+        response = self.client.post(
+            "/bff/v1/commands",
+            json={"command": command, "target": target, "params": params, "audit_context": {"reason": key}},
+            headers={**caller, **extra, "Idempotency-Key": key},
+        )
+        assert response.status_code == 202, response.text
+        record = self.command_store.get_command(response.json()["data"]["receipt"]["command_id"])
+        assert record is not None
+        return record
 
-        approved = self.client.post(
-            f"/bff/rebalances/{rebalance_id}/approve",
-            json={"approval_decision_id": approval_id, "memo": "Regression approval"},
-            headers={**APPROVER_HEADERS, "Idempotency-Key": f"approve-{suffix}"},
+    def _urlopen(self, request: Any, timeout: Optional[float] = None) -> Any:
+        assert self.capital_client is not None
+        parsed = urlsplit(request.full_url)
+        auth = request.get_header("Authorization")
+        self.owner_calls.append((request.get_method(), request.full_url, auth))
+        response = self.capital_client.request(
+            request.get_method(), parsed.path, content=request.data,
+            headers={"Content-Type": "application/json"},
         )
-        assert approved.status_code == 201, approved.text
+        if response.status_code >= 400:
+            raise HTTPError(request.full_url, response.status_code, response.reason_phrase, response.headers, BytesIO(response.content))
 
-        confirmed = self.client.post(
-            "/bff/confirm-tokens",
-            json={
-                "tokenId": token_id,
-                "command": "ApprovedApply",
-                "target": {"type": "Rebalance", "id": rebalance_id},
-                "operator_id": "op-2",
-                "reason": "Confirm authoritative rebalance apply",
-            },
-            headers={**HEADERS, "Idempotency-Key": f"confirm-{suffix}"},
-        )
-        assert confirmed.status_code == 201, confirmed.text
+        class _Response:
+            status = response.status_code
+            headers = response.headers
 
-        first = self.client.post(
-            f"/bff/rebalances/{rebalance_id}/two-man-sign",
-            json={"two_man_signature_id": signature_id},
-            headers={**HEADERS, "Idempotency-Key": f"sign-first-{suffix}"},
-        )
-        assert first.status_code == 202, first.text
-        assert first.json()["data"]["complete"] is False
-        second = self.client.post(
-            f"/bff/rebalances/{rebalance_id}/two-man-sign",
-            json={"two_man_signature_id": signature_id},
-            headers={**SECOND_OPERATOR_HEADERS, "Idempotency-Key": f"sign-second-{suffix}"},
-        )
-        assert second.status_code == 202, second.text
-        assert second.json()["data"]["complete"] is True
+            def read(self) -> bytes:
+                return response.content
 
-        return (
-            {
-                "approval_decision_id": approval_id,
-                "two_man_signature_id": signature_id,
-            },
-            {**HEADERS, "X-Confirm-Token": token_id},
-        )
+            def __enter__(self) -> "_Response":
+                return self
+
+            def __exit__(self, *exc: Any) -> None:
+                return None
+
+        return _Response()
 
     def _post_json(
         self,
@@ -975,8 +997,9 @@ class CapitalBffAuthorityHarness:
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        del auth_token, mfa_token
+        del mfa_token
         assert self.capital_client is not None
+        self.owner_calls.append(("POST", url, auth_token))
         parsed = urlsplit(url)
         path = parsed.path + (f"?{parsed.query}" if parsed.query else "")
         response = self.capital_client.post(path, json=payload)
@@ -1003,8 +1026,9 @@ class CapitalBffAuthorityHarness:
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Any:
-        del auth_token, mfa_token
+        del mfa_token
         assert self.capital_client is not None
+        self.owner_calls.append(("GET", url, auth_token))
         parsed = urlsplit(url)
         path = parsed.path + (f"?{parsed.query}" if parsed.query else "")
         response = self.capital_client.get(path)

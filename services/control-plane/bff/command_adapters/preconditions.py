@@ -255,9 +255,7 @@ _SERVER_MANAGED_REBALANCE_EVIDENCE_TYPES = {
     CommandType.REBALANCE_APPROVAL,
     CommandType.REBALANCE_TWO_MAN_SIGN,
 }
-_REBALANCE_EVIDENCE_PRODUCER = "bff.rebalance-evidence.v1"
 _V5_TWO_MAN_EVIDENCE_PRODUCER = "bff.v5-two-man-evidence.v1"
-_PPL_ALLOC_009_PAPER_AUTHORITY_MODE = "paper_simulation_v5"
 _RETRYABLE_CAPITAL_COMMAND_TYPES = {CommandType.APPROVED_APPLY}
 
 
@@ -474,8 +472,8 @@ def reject_server_managed_rebalance_evidence_command(cmd: OperatorCommand) -> No
         ),
         precondition_failed="trusted_evidence_producer",
         suggestion=(
-            "Use POST /bff/rebalances/{id}/approve or "
-            "POST /bff/rebalances/{id}/two-man-sign"
+            "Capital approval is verified by the Capital owner from the "
+            "Governance decision supplied as approval_ref"
         ),
     )
 
@@ -817,25 +815,6 @@ def require_final_command_confirm_token(
     return token_id
 
 
-def _trusted_rebalance_evidence_record(
-    record: Dict[str, Any],
-    *,
-    command_type: CommandType,
-) -> bool:
-    foundation = (
-        record.get("foundation")
-        if isinstance(record.get("foundation"), dict)
-        else {}
-    )
-    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
-    return bool(
-        record.get("type") == command_type.value
-        and record.get("status") == CommandStatus.EXECUTED.value
-        and foundation.get("trusted_evidence_producer") == _REBALANCE_EVIDENCE_PRODUCER
-        and audit.get("trusted_evidence_producer") == _REBALANCE_EVIDENCE_PRODUCER
-    )
-
-
 _V5_TWO_MAN_EVIDENCE_PRODUCERS = {
     "bff.v5-two-man-evidence.v1",
     "bff.v5.intervention.two-man-sign",
@@ -893,14 +872,7 @@ def _two_man_signature_record(
     for record in records:
         if cmd is None:
             continue
-        if cmd.command == CommandType.APPROVED_APPLY:
-            trusted = _trusted_rebalance_evidence_record(
-                record,
-                command_type=CommandType.REBALANCE_TWO_MAN_SIGN,
-            )
-        else:
-            trusted = _trusted_v5_two_man_evidence_record(record)
-        if not trusted:
+        if not _trusted_v5_two_man_evidence_record(record):
             continue
         params = _record_params(record)
         audit = _record_audit(record)
@@ -1021,34 +993,6 @@ def _approval_decision_approved(decision: Dict[str, Any]) -> bool:
         if decision.get(field) not in (None, "")
     }
     return bool(values.intersection({"approve", "approved", "accepted"}))
-
-
-def _rebalance_approval_decision_record(
-    decision_id: str,
-    command_store: Optional[Any] = None,
-) -> Optional[Dict[str, Any]]:
-    if command_store is None:
-        return None
-    records = []
-    if hasattr(command_store, "_get_all_commands"):
-        records = command_store._get_all_commands()
-    elif hasattr(command_store, "get_all_commands"):
-        records = command_store.get_all_commands()
-    for record in reversed(records):
-        if not _trusted_rebalance_evidence_record(
-            record,
-            command_type=CommandType.REBALANCE_APPROVAL,
-        ):
-            continue
-        params = _record_params(record)
-        candidate = str(
-            params.get("approval_decision_id")
-            or params.get("decision_id")
-            or ""
-        ).strip()
-        if candidate == decision_id:
-            return dict(params)
-    return None
 
 
 def _approval_decision_applies_to_command(decision: Dict[str, Any], decision_id: str, cmd: OperatorCommand) -> bool:
@@ -1303,14 +1247,6 @@ def require_final_command_preconditions(
         return {}
 
     params = dict(cmd.params)
-    paper_simulation_authority = bool(
-        cmd.command == CommandType.APPROVED_APPLY
-        and (
-            params.get("authority_mode") == _PPL_ALLOC_009_PAPER_AUTHORITY_MODE
-            or params.get("target_environment") == "paper"
-            or str(params.get("environment") or "").strip().lower() == "paper"
-        )
-    )
     is_human_gate = cmd.command in _HUMAN_GATE_DECISIONS_BY_COMMAND
 
     # ------------------------------------------------------------------ #
@@ -1332,6 +1268,7 @@ def require_final_command_preconditions(
     approval_decision_id = _precondition_value(payload, params, _APPROVAL_EVIDENCE_FIELDS)
     owner_verifies_approval = cmd.command in (
         CommandType.ADVANCE_LIFECYCLE,
+        CommandType.APPROVED_APPLY,
         CommandType.APPROVE_DECISION,
         CommandType.REJECT_DECISION,
     )
@@ -1348,7 +1285,7 @@ def require_final_command_preconditions(
         )
 
     two_man_sig_id = _precondition_value(payload, params, _TWO_MAN_EVIDENCE_FIELDS)
-    if not is_human_gate and getattr(entry, "requires_two_man", False) and not paper_simulation_authority and not two_man_sig_id:
+    if not is_human_gate and getattr(entry, "requires_two_man", False) and not two_man_sig_id:
         raise _final_precondition_error(
             cmd=cmd,
             status_code=409,
@@ -1378,29 +1315,12 @@ def require_final_command_preconditions(
         if validated_token_id:
             evidence["confirm_token_id"] = validated_token_id
 
-    if paper_simulation_authority and not identity.mfa_verified:
-        raise _final_precondition_error(
-            cmd=cmd,
-            status_code=403,
-            code=ErrorCode.FORBIDDEN,
-            message="Paper allocation apply requires MFA",
-            reason="PAPER_SIMULATION_MFA_REQUIRED",
-            kind="mfa",
-            correlation_id=correlation_id,
-            suggestion="Retry with the strict dev operator identity and verified MFA",
-        )
-
     if getattr(entry, "requires_approval", False) and not owner_verifies_approval and approval_decision_id:
         approval_decision = (
             read_store.get_approval_decision(approval_decision_id)
             if read_store and hasattr(read_store, "get_approval_decision")
             else None
         )
-        if approval_decision is None and cmd.command == CommandType.APPROVED_APPLY:
-            approval_decision = _rebalance_approval_decision_record(
-                approval_decision_id,
-                command_store=command_store,
-            )
         if approval_decision is None:
             raise _final_precondition_error(
                 cmd=cmd,
@@ -1450,30 +1370,6 @@ def require_final_command_preconditions(
                 details_extra={"approvalDecisionId": approval_decision_id},
             )
         evidence["approval_decision_id"] = approval_decision_id
-        if paper_simulation_authority:
-            approval_actor = str(
-                approval_decision.get("decided_by")
-                or approval_decision.get("actor_id")
-                or approval_decision.get("operator_id")
-                or ""
-            ).strip()
-            if not approval_actor or approval_actor == identity.operator_id:
-                raise _final_precondition_error(
-                    cmd=cmd,
-                    status_code=409,
-                    code=ErrorCode.HUMAN_GATE_PENDING,
-                    message="Paper allocation approval and apply must be distinct",
-                    reason="PAPER_SIMULATION_APPROVAL_APPLY_NOT_DISTINCT",
-                    kind="approval",
-                    correlation_id=correlation_id,
-                    suggestion=(
-                        "Use an approver identity distinct from the authenticated "
-                        "operator applying the paper allocation"
-                    ),
-                )
-            evidence["paper_simulation_authority"] = (
-                _PPL_ALLOC_009_PAPER_AUTHORITY_MODE
-            )
 
     if is_human_gate:
         evidence.update(
@@ -1488,7 +1384,7 @@ def require_final_command_preconditions(
         )
         return evidence
 
-    if getattr(entry, "requires_two_man", False) and not paper_simulation_authority and two_man_sig_id:
+    if getattr(entry, "requires_two_man", False) and two_man_sig_id:
         evidence["two_man_signature_id"] = _require_two_man_signature_evidence(
             cmd=cmd,
             signature_id=two_man_sig_id,
