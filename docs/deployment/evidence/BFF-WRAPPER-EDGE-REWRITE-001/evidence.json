@@ -1,21 +1,60 @@
 {
   "task_id": "BFF-WRAPPER-EDGE-REWRITE-001",
   "change_class": "corrective",
+  "base_sha": "d61575a5968874676744d8ae022b4affa2e6c33b",
+  "validated_source_head": "524df3d99cfd74f25ffd135b5f65adba4ee35e98",
+  "delivery_branch": "task/BFF-WRAPPER-EDGE-REWRITE-001-v6",
   "changes": [
-    "command_adapters/contracts.py: one _WRAPPER_VERB_ALIASES table and canonicalize_wrapped_payload; submit_command_admission rewrites a mapped wrapper payload to its canonical command before any other step, so hash, confirm-token binding, approval/two-man, validators, target checks, storage and execution see only the canonical command",
-    "the mapping table (_WRAPPER_CANONICALS -> _WRAPPER_VERB_ALIASES) holds every alias the adapters accepted before (short verbs plus the canonical command names, e.g. RuntimeAction/pausepaperruntime, PersonaAction/advance_lifecycle, DeploymentAction/approvedeployment); Evolution program verbs have no canonical CommandType so they are not mapped and keep the EvolutionCommandAdapter owner path; no global *Action fallback",
-    "deleted adapter branches/handlers unreachable after the rewrite (deployment approve, capital approve-pool/rebalance-apply, persona EmergencyContainment, wrapper verb aliases in runtime/capital/deployment/incident/persona) and default credentials (sig-emergency-ops, lifecycle-confirm, sig-sentinel-remed)",
-    "assistant governed tools submit through the one CommandAdapterService resolved before both routers mount (app_factory), and the receipt carries the stored command id from the admission response; empty admission output is rejected",
-    "review round 2: table now also maps every other adapter-accepted canonical alias (RuntimeAction repair/safe-mode/risk-off/approve+reject rollback, PersonaAction observe/demote, DeploymentAction create/patch, RebalanceAction propose/create); admission-stored StartRuntime/AdvanceLifecycle records resolve trusted runtime_id and the admitted confirm_token id at execution (no default credential); dead action_id branches in runtime/persona adapters and the persona AdvanceLifecycle adapter handler removed",
-    "review round 3: table now maps the governance ReviewAction aliases (RequestReview/review, ApproveDecision/approve, RejectDecision/reject, RequestApprovalRevision/requestrevision, RecordSponsorDecision/sponsordecision); governance adapter alias-verb branches removed; mounted equivalence harness seeds params for the new canonicals (RecordSponsorDecision is rejected 404 identically wrapped and direct)",
-    "review round 4: stored-record execution resolves the admitted confirm token and runtime/session target for all five RuntimeAction repair aliases (service.py _RUNTIME_REPAIR_TARGET_KEYS); runtime adapter repair branches, _execute_repair_action and its repair-confirm-token default deleted (command_executor owns repair execution, staleness evidence still required before any backend call); dispatch test covers all five repair aliases; v5 branch carries one commit with compliant trailers",
-    "review round 5 (PR #6067 REJECT): table maps RebalanceAction/EmergencyContainment (capital adapter action_id=emergencycontainment branch deleted, so a wrapper-bound token no longer reaches containment without canonical two-man gating), V5InterventionAction/remediate+remediatesentinelintervention -> RemediateSentinelIntervention (owner dispatch verified), and ReviewAction/HumanGate* (governance adapter humangate action_id branch deleted); equivalence tests seed params for every canonical (RecordSponsorDecision accepted via projection patch; RebalanceProposal is rejected 422 by canonical admission itself, parity asserted)"
+    "Mapped wrappers are replaced at command admission; token binding, approval/two-man gates, validation, target checks, storage and execution use the canonical command.",
+    "One mapping table preserves existing mapped aliases; unmapped wrapper verbs retain their adapter path. Unreachable adapter branches and default credentials were deleted.",
+    "Assistant governed tools use the injected shared admission service and return its stored command id; accepted runtime/persona repair commands retain admitted tokens and trusted targets.",
+    "Preserve malformed params for schema rejection and guard non-string command lookup so malformed submissions return 422 without storage.",
+    "Map the existing RankingAction/QuarterlyRankingRecommendationSubmit alias; keep the quarterly validator and domain semantics unchanged."
   ],
-  "tests": {
-    "added": "tests/test_command_adapters_router.py::test_wrapped_alias_is_admitted_exactly_like_its_canonical_command (table-driven over the single mapping table; per alias: own-token, token issued for another action, no-token; seeded approval and two-man evidence; compares response, persisted type/params/status and request_hash), test_every_alias_has_an_accepted_path_stored_as_canonical (202 and persisted type == canonical for every alias), test_unmapped_wrapper_combinations_are_not_rewritten, test_unmapped_wrapper_is_rejected_before_storage, test_assistant_admission_uses_injected_service_and_returns_stored_command_id; test_accepted_wrapped_alias_dispatches_successfully (StartRuntime, AdvanceLifecycle execute successfully with mocked owner backend)",
-    "updated": "test_aud_002 (unmapped verb), test_assistant_security (admission stub), test_management_domain_actions (removed 3 wrapper-via-adapter tests for now-unreachable paths)",
-    "result": "round 5: six scoped files 431 passed, 3 failed (same 3 as clean base d61575a59), 2 subtests passed"
+  "coverage": "Mounted table covers every mapping: accepted/rejected response and persisted record/hash parity, own/cross-action/absent confirm tokens, and six malformed params shapes. Independent literal RankingAction cases prove both 202 acceptance with a digest-verified snapshot and 422 rejection for missing params. Non-string commands reject before storage.",
+  "validation": [
+    {
+      "command": "timeout 600s /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/e009b127da2c8000/bin/python -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/test_aud_002_audit_action_write_engine.py services/control-plane/bff/tests/test_evolution_program_action_receipts.py services/control-plane/bff/tests/test_management_domain_actions.py services/control-plane/bff/tests/test_assistant_security.py services/control-plane/bff/test_command_executor.py",
+      "exit_status": 1,
+      "result": "840 passed, 3 failed, 2 subtests passed in 517.27s",
+      "log": "/tmp/bff-wrapper-v6-scoped.log",
+      "sha256": "ea6871141616b051e8ac5f6ea61fa0bac2f2c0350d79113319f45520e9cb09b7"
+    },
+    {
+      "command": "timeout 180s /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/e009b127da2c8000/bin/python -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py -k 'ranking_adapter or QuarterlyRanking or unmapped_wrapper_is_rejected or (malformed_params and RiskAlertAction)'",
+      "exit_status": 0,
+      "result": "39 passed, 659 deselected in 26.34s",
+      "log": "/tmp/bff-wrapper-v6-regressions.log",
+      "sha256": "1a5912e34e945ac1c5c4d6c25de8db2f162dd4f578cb0e7c59a110cb8079e384"
+    },
+    {
+      "command": "timeout 180s /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/e009b127da2c8000/bin/python -m pytest -q /tmp/test_bff_wrapper_edge_review.py",
+      "exit_status": 0,
+      "result": "3 passed in 13.60s; PYTHONPATH=task worktree, PANTHEON_BFF_AUTH_STUB=true, PANTHEON_BFF_AUTH_MODE=permissive",
+      "log": "/tmp/bff-wrapper-v6-reviewer-reproducer.log",
+      "sha256": "85a02ba29caca5489a9bc58ad40110e3fa64d7196f5937593c650420f1ec5a1a"
+    },
+    {
+      "command": "timeout 180s /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/e009b127da2c8000/bin/python -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py -k 'zero_reverse_main_imports or command_confirmations_lifecycle or confirm_command_by_token_contract_and_regressions'",
+      "exit_status": 1,
+      "result": "3 failed, 11 deselected in 8.98s; clean git archive d61575a5968874676744d8ae022b4affa2e6c33b",
+      "log": "/tmp/bff-wrapper-v6-base.log",
+      "sha256": "f6ca9ac20b714c6e0093bb0baf0f77ee7c6bc1d2c2833803d652392594158400"
+    }
+  ],
+  "known_baseline_failures": [
+    "test_zero_reverse_main_imports (pre-existing reverse main lookups)",
+    "test_command_confirmations_lifecycle (missing _publish_event)",
+    "test_confirm_command_by_token_contract_and_regressions (missing _publish_event)"
+  ],
+  "diff_budget": {
+    "production_added": 184,
+    "production_deleted": 384,
+    "production_net": -200,
+    "test_net": 260,
+    "limit": 0
   },
-  "provenance": "Delivery lineage repair, not approval. Carries the full task diff (merge-base 51adc8c34..315a18fb7, 16 files) of published task/BFF-WRAPPER-EDGE-REWRITE-001-v2 (PR #6058) onto origin/dev d61575a59; every carried blob verified byte-identical to 315a18fb7. v2 and the older -v3 (PR #6062, different lineage) have non-compliant commits and are preserved unmodified; -v4 replaces them without force-push.",
-  "known_limits": "Response/stored command for a wrapped submission now reports the canonical command name. Order-dependent baseline pollution between test_management_domain_actions and test_evolution_program_owner_contract exists on dev."
+  "checks": "git diff --check origin/dev..HEAD and python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD passed. python3 scripts/git/diff_budget.py --base origin/dev --head HEAD --change-class corrective --budget 0 passed.",
+  "provenance": "Unused -v6 continuation starts at current dev d61575a59. Anchor 70bb4cc2e carries all 17 files byte-identical to published 390e7ff00 (PR #6067); prior branches/PRs/history preserved. Source fix 524df3d99 has compliant subject/trailers; no force push or budget/baseline change.",
+  "limits": "No hosted deployment claim. Scoped suite exits 1 because of the independently reproduced baseline failures; independent Codex2 review is pending."
 }
