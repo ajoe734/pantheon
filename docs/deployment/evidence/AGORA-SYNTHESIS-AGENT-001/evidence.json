@@ -1,15 +1,19 @@
 {
   "task_id": "AGORA-SYNTHESIS-AGENT-001",
-  "summary": "runner._synthesize heuristic replaced by one structured OpenClaw provider call (invoke_structured_extraction). The call runs under the existing InteractionLifecycleStore durable invocation claim (persona_id 'synthesis'), with the provider Idempotency-Key = invocation id; the result is stored on that invocation and in finalize.",
+  "summary": "runner._synthesize heuristic replaced by one structured OpenClaw provider call (invoke_structured_extraction) under the existing InteractionLifecycleStore durable invocation claim (persona_id 'synthesis'). Wire projection matches the committed InteractionSynthesis schema (string agreements, {opinion_ids,cause,detail} disagreements, unavailable = status 'degraded'); the saved result rides the invocation row and is stripped from provider_invocations reads so ProviderInvocation stays schema-valid.",
+  "review_fixes": {
+    "crash_window": "adapter does not dedupe on Idempotency-Key, so a reclaimed claim (claim attempt > 1) is NOT re-executed: it is recorded as failed SYNTHESIS_OUTCOME_AMBIGUOUS (synthesis degraded) and only an operator-requested retry (new attempt) calls the provider again",
+    "set_identity": "opinions are sorted by opinion_id before hashing, so reordered saved sets share one synthesis id and adopt the saved result",
+    "schema": "InteractionSynthesis and ProviderInvocation (incl. synthesis entry) validated with jsonschema for success and failure"
+  },
   "validation": {
-    "membership_checks": "full nested schema enforced (agreements/disagreements/evidence_refs item shapes); opinion_ids subset of supplied opinions; evidence_refs subset of supplied opinion evidence",
-    "failure_mode": "provider/malformed failure -> synthesis status unavailable, retryable failed synthesis invocation, interaction degraded with opinions preserved; prepare_retry re-runs only the synthesis (personas not re-invoked); a succeeded synthesis with the same opinion set is adopted without a provider call"
+    "membership_checks": "nested shapes enforced; disagreement opinion_ids >=2 and subset of supplied opinions; evidence_refs subset of supplied opinion evidence",
+    "failure_mode": "provider/malformed/ambiguous -> synthesis status degraded 'Synthesis unavailable.', opinions preserved, retryable by operator; personas are not re-invoked"
   },
   "tests": {
-    "command": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/agora/interaction",
-    "result": "16 passed; covers identical-label/conflicting-reason, different-label/compatible-condition, malformed nested schema, store-backed synthesis-only retry and restart adoption"
+    "command": "pytest -q services/control-plane/bff/agora/interaction services/control-plane/bff/tests/test_agora_persona_interactions.py",
+    "result": "31 passed; adds crash-window no-duplicate-call, reordered-set adoption, committed-schema validation"
   },
-  "not_run": "Criterion 7 real dev acceptance (live two-persona interaction with real provider, refresh readback, one failed synthesis call, UI contract check) was NOT run: this worker has no dev environment/provider access. Requires dev operator evidence before approval.",
-  "known_contract_note": "provider_invocations now includes one extra entry with participant.persona_id='synthesis'.",
-  "production_net_lines": 93
+  "not_run": "Criterion 7 real dev acceptance (live two-persona interaction, refresh readback, one failed synthesis call) NOT run: no dev/provider access. Requires dev operator evidence; source approval must not mark the whole task done.",
+  "production_net_lines": 85
 }

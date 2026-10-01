@@ -113,8 +113,7 @@ def _make_mock_client(
             ids = [o["opinion_id"] for o in opinions]
             return {"data": {"output": {"structured_data": {
                 "status": "recommendation", "summary": "provider synthesis",
-                "agreements": [{"statement": "ok", "opinion_ids": ids, "rationale": "r"}],
-                "disagreements": [], "evidence_refs": []}}}}
+                "agreements": ["ok"], "disagreements": [], "evidence_refs": []}}}}
 
         def ensure_persona_opinion_agent(self, admission: Dict[str, Any], persona_profile: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
             return {"execution_authority": "none", "agent_id": admission.get("agent_id", "mock-agent")}
@@ -673,8 +672,6 @@ def test_degraded_status_on_partial_failure(bff_client):
     assert detail["status"] == "degraded"
     assert "macro-quant" in detail["missing_participant_ids"]
     assert len(detail["opinions"]) == 1
-    assert detail["synthesis"]["degraded"] is True
-    assert detail["synthesis"]["missing_participant_ids"] == ["macro-quant"]
     assert worker.metrics["degraded_count"] == 1
 
 
@@ -993,7 +990,7 @@ def test_synthesis_comes_from_provider_not_labels(bff_client):
         return {"data": {"output": {"structured_data": {
             "status": "no_consensus", "summary": "reasons conflict",
             "agreements": [], "evidence_refs": [],
-            "disagreements": [{"detail": "d", "opinion_ids": ids, "rationale": "r"}]}}}}
+            "disagreements": [{"cause": "c", "detail": "d", "opinion_ids": ids}]}}}}
     interaction_id, calls, client_factory = _run_synthesis(bff_client, conflicting)
     detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
     assert detail["synthesis"]["status"] == "no_consensus"
@@ -1007,7 +1004,7 @@ def test_synthesis_failure_keeps_opinions_and_retry_reuses_saved(bff_client):
         raise RuntimeError("down")
     interaction_id, calls, _ = _run_synthesis(bff_client, boom)
     detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
-    assert detail["synthesis"]["status"] == "unavailable"
+    assert detail["synthesis"]["status"] == "degraded"
     assert len(detail["opinions"]) == 2
 
     def bad_refs(opinions):
@@ -1015,14 +1012,14 @@ def test_synthesis_failure_keeps_opinions_and_retry_reuses_saved(bff_client):
             "status": "options", "summary": "s", "agreements": [], "disagreements": [],
             "evidence_refs": [{"ref_type": "x", "ref_id": "unsupplied"}]}}}}
     interaction_id, calls, _ = _run_synthesis(bff_client, bad_refs)
-    assert interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")["synthesis"]["status"] == "unavailable"
+    assert interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")["synthesis"]["status"] == "degraded"
 
 
 def _ok(opinions, status="options"):
     ids = [o["opinion_id"] for o in opinions]
     return {"data": {"output": {"structured_data": {
         "status": status, "summary": "s", "evidence_refs": [], "disagreements": [],
-        "agreements": [{"statement": "ok", "opinion_ids": ids, "rationale": "r"}]}}}}
+        "agreements": ["ok"]}}}}
 
 
 def test_different_labels_compatible_conditions_come_from_provider(bff_client):
@@ -1046,17 +1043,16 @@ def test_different_labels_compatible_conditions_come_from_provider(bff_client):
 
 def test_malformed_nested_synthesis_is_unavailable(bff_client):
     for bad in (
-        {"statement": None, "opinion_ids": ["x"], "rationale": "r"},
-        {"statement": "s", "opinion_ids": None, "rationale": "r"},
-        {"statement": "s", "opinion_ids": [], "rationale": {"unexpected": True}},
+        [None],
+        [{"unexpected": True}],
     ):
         def malformed(opinions, bad=bad):
             out = _ok(opinions)
-            out["data"]["output"]["structured_data"]["agreements"] = [bad]
+            out["data"]["output"]["structured_data"]["agreements"] = bad
             return out
         interaction_id, _, _ = _run_synthesis(bff_client, malformed)
         detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
-        assert detail["synthesis"]["status"] == "unavailable"
+        assert detail["synthesis"]["status"] == "degraded"
         assert len(detail["opinions"]) == 2
 
 
@@ -1074,7 +1070,7 @@ def test_synthesis_only_retry_and_restart_adoption(bff_client):
                                     read_store=read_store, client_factory=factory)
     worker.run_once()
     detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
-    assert detail["status"] == "degraded" and detail["synthesis"]["status"] == "unavailable"
+    assert detail["status"] == "degraded" and detail["synthesis"]["status"] == "degraded"
     first_opinions = detail["opinions"]
     state["fail"] = False
     interaction_lifecycle.prepare_retry(interaction_id, "pantheon-dev", "interaction-user", idempotency_key="k1",
@@ -1089,7 +1085,53 @@ def test_synthesis_only_retry_and_restart_adoption(bff_client):
     class Boom:
         def invoke_structured_extraction(self, **kw):
             raise AssertionError("must not call provider")
-    again = _synthesize(Boom(), detail["opinions"], [], "t", operator_id="o", trace_id="tr", interaction_id=interaction_id,
-                        attempt=1, lifecycle_store=interaction_lifecycle, tenant_id="pantheon-dev",
-                        user_id="interaction-user", lease_owner="w2")
+    again = _synthesize(Boom(), list(reversed(detail["opinions"])), "t", operator_id="o", trace_id="tr",
+                        interaction_id=interaction_id, attempt=1, lifecycle_store=interaction_lifecycle, lease_owner="w2")
     assert again == detail["synthesis"] and len(factory.synthesis_log) == synth_calls
+
+
+def test_crash_window_is_not_re_executed_and_set_order_is_normalized(bff_client):
+    from datetime import timedelta
+    from services.control_plane.bff.agora.interaction.runner import _synthesize
+    interaction_id, _, factory = _run_synthesis(bff_client, lambda o: _ok(o))
+    opinions = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")["opinions"]
+    seen = []
+    class Dies:
+        def invoke_structured_extraction(self, **kw):
+            seen.append(kw["idempotency_key"])
+            raise KeyboardInterrupt  # worker dies after the call started, before finish_invocation
+    kw = dict(operator_id="o", trace_id="tr", interaction_id=interaction_id, lifecycle_store=interaction_lifecycle)
+    with pytest.raises(KeyboardInterrupt):
+        _synthesize(Dies(), opinions, "2026-01-01T00:00:00Z", attempt=7, lease_owner="w1", **kw)
+    for row in interaction_lifecycle._invocations[interaction_id].values():
+        if row["status"] == "running":
+            row["lease_until"] = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+    class Counting:
+        def invoke_structured_extraction(self, **kw):
+            seen.append(kw["idempotency_key"])
+            return _ok(opinions)
+    result = _synthesize(Counting(), list(reversed(opinions)), "2026-01-01T00:00:00Z", attempt=7, lease_owner="w2", **kw)
+    assert len(seen) == 1 and result["status"] == "degraded" and result["summary"] == "Synthesis unavailable."
+    failed = [i for i in interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")["provider_invocations"]
+              if i["status"] == "failed"]
+    assert failed[-1]["error"]["code"] == "SYNTHESIS_OUTCOME_AMBIGUOUS"
+    # same saved set in the opposite order is the same synthesis identity
+    reordered = _synthesize(Counting(), opinions, "t", attempt=1, lease_owner="w3", **kw)
+    again = _synthesize(Counting(), list(reversed(opinions)), "t", attempt=1, lease_owner="w3", **kw)
+    assert again == reordered and len(seen) == 2
+
+
+def test_resource_matches_committed_schema(bff_client):
+    jsonschema = pytest.importorskip("jsonschema")
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[3] / "specs/agora/v10/persona_interaction_daily.schema.json"
+    schema = json.loads(root.read_text())
+    for fn, expected in ((lambda o: _ok(o), "options"), (lambda o: (_ for _ in ()).throw(RuntimeError("down")), "degraded")):
+        interaction_id, _, _ = _run_synthesis(bff_client, fn)
+        detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+        assert detail["synthesis"]["status"] == expected
+        assert any(i["participant"]["persona_id"] == "synthesis" for i in detail["provider_invocations"])
+        defs = {"$ref": "#/definitions/InteractionSynthesis", "definitions": schema["definitions"]}
+        jsonschema.validate(detail["synthesis"], defs)
+        for inv in detail["provider_invocations"]:
+            jsonschema.validate(inv, {"$ref": "#/definitions/ProviderInvocation", "definitions": schema["definitions"]})
