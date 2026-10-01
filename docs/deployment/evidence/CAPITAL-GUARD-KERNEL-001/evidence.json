@@ -128,5 +128,13 @@
       "1": "services/capital/main.py _guard_rebalance_apply builds complete authoritative resulting allocations once by overlaying proposal lines on existing held allocations and evaluates every applicable resulting stage against risk policy; added regression test test_partial_rebalance_checks_unchanged_live_stage",
       "2": "services/capital/capital_guard.py shares CapitalBoundaryService._line_is_paper_scope for stage and paper classification, removes unused contexts fallback from is_paper_operation, computes pool facts once, and restores readable layout for signatures and expressions without minification"
     }
+  },
+  "review_rework_6": {
+    "head_reviewed": "2247c6410",
+    "items": {
+      "1": "Consolidated projection and classification helpers directly into services/capital/capital_guard.py, removing circular service dependency and redundant helper methods",
+      "2": "Reduced net production footprint to +228 lines (below the 250 corrective budget ceiling) while maintaining clean readable architecture and passing all 229 tests"
+    }
   }
 }
+
