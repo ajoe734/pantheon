@@ -542,36 +542,6 @@ def _execute_approve_deployment(
     }
 
 
-def _execute_decision_vote(verb: str):
-    def execute(
-        command_id: str, params: Dict[str, Any],
-        auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Forward the verified caller's vote to the Governance approval owner."""
-        from .governance import approval_owner
-
-        decision_id = str(params.get("decision_id") or "").strip()
-        if not decision_id:
-            raise ValueError(f"{verb} requires decision_id.")
-        decision = approval_owner.decide(auth_token, decision_id, {**params, "decision": verb}, command_id)
-        return {"command_id": command_id, "decision_id": decision_id, **decision}
-
-    return execute
-
-
-_execute_approve_decision = _execute_decision_vote("approve")
-_execute_reject_decision = _execute_decision_vote("reject")
-
-
-def _execute_request_approval_revision(
-    command_id: str, params: Dict[str, Any],
-    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
-) -> Dict[str, Any]:
-    from .governance.approval_owner import UnsupportedApprovalAction
-
-    raise UnsupportedApprovalAction("RequestApprovalRevision has no Governance owner transition")
-
-
 def _execute_pause_runtime(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
@@ -1757,9 +1727,9 @@ _EXECUTORS = {
     CommandType.START_PAPER_MONITORING_SESSION: _execute_start_paper_monitoring_session,
     CommandType.PROBE_TELEMETRY_INGEST: _execute_probe_telemetry_ingest,
     CommandType.APPROVE_DEPLOYMENT: _execute_approve_deployment,
-    CommandType.APPROVE_DECISION: _execute_approve_decision,
-    CommandType.REJECT_DECISION: _execute_reject_decision,
-    CommandType.REQUEST_APPROVAL_REVISION: _execute_request_approval_revision,
+    CommandType.APPROVE_DECISION: _make_adapter_executor(CommandType.APPROVE_DECISION),
+    CommandType.REJECT_DECISION: _make_adapter_executor(CommandType.REJECT_DECISION),
+    CommandType.REQUEST_APPROVAL_REVISION: _make_adapter_executor(CommandType.REQUEST_APPROVAL_REVISION),
     CommandType.PAUSE_RUNTIME: _execute_pause_runtime,
     CommandType.PAUSE_EXECUTION: _execute_pause_runtime,
     CommandType.ESCALATE_DIFF: _execute_escalate_diff,

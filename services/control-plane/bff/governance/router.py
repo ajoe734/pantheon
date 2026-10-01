@@ -21,7 +21,7 @@ from fastapi.responses import JSONResponse
 from ..models import safe_redact_evidence_refs
 from . import approval_owner
 from .approval_owner import InvalidApprovalRequest, UnsupportedApprovalAction
-from .service import GovernanceService, page_slice, split_csv, utc_now_rfc3339
+from .service import GovernanceService, SubmitAction, page_slice, split_csv, utc_now_rfc3339
 
 
 PageSlice = Callable[[Sequence[Any], Optional[str], int], Tuple[List[Any], Optional[str]]]
@@ -131,20 +131,14 @@ def create_governance_router(
     publish_event: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
     get_interventions: Optional[Callable[[], List[Dict[str, Any]]]] = None,
     read_surface_state: Optional[Callable[[], str]] = None,
+    submit_action: Optional["SubmitAction"] = None,
     governance_service: Optional[GovernanceService] = None,
     reject_body_idempotency_key: Optional[Callable[[Dict[str, Any]], None]] = None,
     command_store: Optional[Any] = None,
-    run_management_read: Optional[Callable[..., Any]] = None,
 ) -> APIRouter:
     """Build the exact 35-route Governance domain router."""
 
     router = APIRouter()
-    if run_management_read is None:
-        try:
-            from ..personas.routes.common import run_management_read as _default_rmr
-            run_management_read = _default_rmr
-        except Exception:
-            run_management_read = None
     _get_store = (
         (lambda: read_surface() if callable(read_surface) else read_surface)
         if read_surface is not None
@@ -263,6 +257,7 @@ def create_governance_router(
                 redact_evidence_refs=_redact,
                 capabilities_for_identity=_capabilities,
                 read_surface_state=_read_surface_state,
+                submit_action=submit_action,
                 command_store=command_store,
             )
         return resolved_service
@@ -296,14 +291,14 @@ def create_governance_router(
                 content = {"detail": f"Governance owner returned HTTP {exc.code}"}
             raise HTTPException(status_code=exc.code, detail=content.get("detail", content)) from exc
         except UnsupportedApprovalAction as exc:
-            _fail(422, "UNSUPPORTED", str(exc), "Unsupported approval action", precondition_failed="unsupported_action")
+            _fail(501, "NOT_IMPLEMENTED", str(exc), "Unsupported approval action", precondition_failed="unsupported_action")
         except InvalidApprovalRequest as exc:
             field = str(exc)
             _fail(422, "VALIDATION_FAILED", f"{field} is required or invalid", f"Invalid approval decision field: {field}", precondition_failed=field)
-        except (urllib.error.URLError, OSError) as exc:
+        except (urllib.error.URLError, OSError, RuntimeError):
             _fail(503, "DEPENDENCY_UNAVAILABLE", "Governance approval owner unavailable", "Governance approval owner unreachable")
 
-    def _idempotency_key(primary: Optional[str], alternate: Optional[str]) -> str:
+    def _idempotency_key(primary: Optional[str], alternate: Optional[str], *, required: bool = False) -> str:
         first = str(primary or "").strip()
         second = str(alternate or "").strip()
         if first and second and first != second:
@@ -314,6 +309,8 @@ def create_governance_router(
                 "Idempotency-Key and X-Idempotency-Key must match when both are provided",
                 precondition_failed="idempotency_key",
             )
+        if required and not (first or second):
+            _fail(422, "VALIDATION_FAILED", "Idempotency-Key is required", "Approval writes need a stable Idempotency-Key", precondition_failed="idempotency_key")
         return first or second or str(uuid.uuid4())
 
     def _not_found(label: str, resource_id: str) -> None:
@@ -372,7 +369,7 @@ def create_governance_router(
         state: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        identity = _identity(authorization)
+        identity = _extract(authorization)
         decisions = await _forward(approval_owner.list_decisions, authorization, state=state, outcome=outcome)
         redacted_decisions, total_redacted = _redact_evidence_field_items(identity, decisions)
         meta = _read_meta(
@@ -391,8 +388,8 @@ def create_governance_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Any:
-        _identity(authorization)
-        key = _idempotency_key(idempotency_key, x_idempotency_key)
+        _extract(authorization)
+        key = _idempotency_key(idempotency_key, x_idempotency_key, required=True)
         return await _forward(approval_owner.propose, authorization, payload, key)
 
     @router.get("/api/v1/approval-decisions/{decision_id}")
@@ -400,7 +397,7 @@ def create_governance_router(
         decision_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        identity = _identity(authorization)
+        identity = _extract(authorization)
         decision = await _forward(approval_owner.get_decision, authorization, decision_id)
         redacted, total_redacted = _redact_evidence_field_items(identity, [decision])
         meta = _read_meta("approval_decisions", "approval_decision_detail", snapshot_at=_now())
@@ -988,7 +985,7 @@ def create_governance_router(
     async def list_bff_approvals(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        identity = _identity(authorization)
+        identity = _extract(authorization)
         items = await _forward(approval_owner.list_decisions, authorization, pending_only=True)
         redacted_items, total_redacted = _redact_evidence_field_items(identity, items)
         return {
@@ -1153,7 +1150,7 @@ def create_governance_router(
         approval_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        identity = _identity(authorization)
+        identity = _extract(authorization)
         clean_id = approval_id.strip()
         decision = await _forward(approval_owner.get_decision, authorization, clean_id)
         processed, redacted_count = _safe_redact(identity, list(decision.get("evidence_refs") or []))
@@ -1172,7 +1169,7 @@ def create_governance_router(
         approval_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        identity = _identity(authorization)
+        identity = _extract(authorization)
         detail = await _forward(approval_owner.get_decision, authorization, approval_id.strip())
         redacted, total_redacted = _redact_evidence_field_items(identity, [detail])
         meta = _snapshot(_now())
@@ -1189,12 +1186,16 @@ def create_governance_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Any:
-        identity = _identity(authorization)
+        identity = _extract(authorization)
         clean_id = approval_id.strip()
         result = await _forward(approval_owner.decide, authorization, clean_id, payload,
-                                _idempotency_key(idempotency_key, x_idempotency_key))
+                                _idempotency_key(idempotency_key, x_idempotency_key, required=True))
         if publish_event is not None:
-            publish_event("approval.decided", {"approval_id": clean_id, "decision": result.get("outcome"), "actor_id": getattr(identity, "operator_id", None)})
+            publish_event(
+                "approval.decided" if result.get("decision_state") == "decided" else "approval.stage.changed",
+                {"approval_id": clean_id, "decision_state": result.get("decision_state"), "version": result.get("version"),
+                 "actor_id": getattr(identity, "operator_id", None)},
+            )
         return JSONResponse(status_code=202, content=result)
 
     @router.post("/bff/approvals/batch-decide", status_code=202)
@@ -1204,14 +1205,14 @@ def create_governance_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> JSONResponse:
-        _identity(authorization)
+        _extract(authorization)
         _reject_body_idempotency_key(payload)
         decisions = payload.get("decisions") if isinstance(payload.get("decisions"), list) else None
         if not decisions:
             _fail(422, "VALIDATION_FAILED", "decisions must be a non-empty list", "The decisions field must contain at least one item", precondition_failed="decisions")
         if len(decisions) > 50:
             _fail(422, "VALIDATION_FAILED", "batch-decide accepts at most 50 items", f"Received {len(decisions)} items", precondition_failed="decisions")
-        batch_key = _idempotency_key(idempotency_key, x_idempotency_key)
+        batch_key = _idempotency_key(idempotency_key, x_idempotency_key, required=True)
         results: List[Dict[str, Any]] = []
         for index, item in enumerate(decisions):
             if not isinstance(item, dict) or not str(item.get("id") or "").strip():

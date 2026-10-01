@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import inspect
 import json
 import os
 from datetime import datetime, timezone
 from typing import (
     Any,
+    Awaitable,
     Callable,
     Dict,
     Iterable,
@@ -22,6 +24,7 @@ from typing import (
     Protocol,
     Sequence,
     Tuple,
+    Union,
 )
 
 from ..models import (
@@ -46,6 +49,28 @@ class ApprovalQueueReaderPort(Protocol):
 
 
 PageSlice = Callable[[Sequence[Any], Optional[str], int], Tuple[List[Any], Optional[str]]]
+
+
+class SubmitAction(Protocol):
+    """Named-parameter contract for governance command-admission submission.
+
+    ``GovernanceService.submit_governance_action`` is the only caller and
+    always invokes this with these exact keyword arguments (see below); a
+    bare ``Callable[..., Any]`` let a mismatched positional-argument seam
+    (e.g. the composition-root lambda that used to bind this) pass static
+    checks while raising ``TypeError`` at request time.
+    """
+
+    def __call__(
+        self,
+        *,
+        action_kind: str,
+        target_id: str,
+        action_id: str,
+        payload: Mapping[str, Any],
+        identity: Any,
+        idempotency_key: str,
+    ) -> Union[Any, Awaitable[Any]]: ...
 
 
 def utc_now_rfc3339() -> str:
@@ -118,18 +143,14 @@ def count_by(records: Iterable[Mapping[str, Any]], field: str) -> Dict[str, int]
     return counts
 
 
-def _identity_tenant(identity: Any) -> Optional[str]:
-    claims = getattr(identity, "claims", None) or {}
-    ids = claims.get("tenant_ids") or claims.get("tenantIds") or []
-    return str(claims.get("tenant_id") or claims.get("tenantId") or (ids[0] if len(ids) == 1 else "") or "") or None
-
-
-def _in_tenant(item: Mapping[str, Any], tenant: Optional[str]) -> bool:
-    return bool(tenant) and item.get("tenant_id") == tenant
-
-
 def _identity_operator_id(identity: Any) -> str:
     return str(getattr(identity, "operator_id", None) or getattr(identity, "id", None) or "operator")
+
+
+async def _maybe_await(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 class GovernanceService:
@@ -190,6 +211,7 @@ class GovernanceService:
         *,
         utc_now: Callable[[], str] = utc_now_rfc3339,
         page_slice_fn: PageSlice = page_slice,
+        submit_action: Optional[SubmitAction] = None,
         publish_event: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
         get_interventions: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         dataset_surface_status: Optional[Callable[..., Dict[str, Any]]] = None,
@@ -202,6 +224,7 @@ class GovernanceService:
         self.command_store = command_store
         self.utc_now = utc_now
         self.page_slice = page_slice_fn
+        self.submit_action = submit_action
         self.publish_event = publish_event
         self.get_interventions = get_interventions or (lambda: [])
         self.dataset_surface_status = dataset_surface_status or self._default_dataset_surface_status
@@ -1317,6 +1340,43 @@ class GovernanceService:
                 if record_id(item, "item_id", "review_id", "id") == review_id
             ),
             None,
+        )
+
+    async def submit_governance_action(
+        self,
+        *,
+        action_kind: str,
+        target_id: str,
+        action_id: str,
+        payload: Mapping[str, Any],
+        identity: Any,
+        idempotency_key: str,
+    ) -> Any:
+        if self.submit_action is None:
+            from fastapi import HTTPException
+            from ..models import ErrorCode
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": {
+                        "code": ErrorCode.DEPENDENCY_UNAVAILABLE.value,
+                        "message": "Governance action submission unavailable",
+                        "details": {
+                            "precondition_failed": "submit_action_unconfigured",
+                            "suggestion": "Configure command submission on GovernanceService",
+                        },
+                    }
+                },
+            )
+        return await _maybe_await(
+            self.submit_action(
+                action_kind=action_kind,
+                target_id=target_id,
+                action_id=action_id,
+                payload=dict(payload),
+                identity=identity,
+                idempotency_key=idempotency_key,
+            )
         )
 
     def governance_ledger(

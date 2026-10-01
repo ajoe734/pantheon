@@ -1,0 +1,15 @@
+{
+  "task_id": "BFF-APPROVALS-FORWARD-001",
+  "scope": "source/contract validation only; no hosted or live acceptance claimed",
+  "forwarding": "services/control-plane/bff/governance/approval_owner.py is the single BFF path to the Governance owner (original JWT, stable Idempotency-Key, client expected_version)",
+  "removed": ["GovernanceService._created_approvals and local approval reads/writes", "/api/internal/v1/approval-decisions calls", "approval action_kind admission in CommandAdapterService", "BFF-side approver/duplicate role gates"],
+  "unsupported": ["request_revision", "request_changes", "escalate", "freeze", "stage", "legacy incomplete create"],
+  "owner_changes": ["operator may propose/read within own tenant and owner_user_id", "decide on PROPOSED runs accept_review inside the same execute_command callback"],
+  "validation": {
+    "services/governance/test_approval_operator_propose.py": "3 passed (in-memory CAS store; Postgres-backed owner tests need GOV_APPROVAL_TEST_DSN and were not run)",
+    "services/control-plane/bff/test_bff_approvals_decide_contract.py": "11 passed against a stub Governance HTTP owner",
+    "scripts/test_issue_dev_paper_principals.py + scripts/test_dev_paper_principal_renewal.py": "passed",
+    "services/persona/test_lifecycle_approval_verifier.py + test_training_target_owner.py": "passed"
+  },
+  "not_verified": ["hosted dev write-readback", "Postgres owner tests", "Capital PANTHEON_RUNTIME_MANAGER policy source (no existing policy reference identified; not wired)"]
+}
