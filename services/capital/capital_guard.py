@@ -29,12 +29,12 @@ _FACT_OF_LIMIT = {
     "max_target_overlap": "target_overlap", "max_signal_correlation": "signal_correlation",
 }
 SAFE_MODE_OK = frozenset({"normal", "normal_restored"})
-_PAPER_STAGES = frozenset({"paper", "paper_candidate", "paper_running"})
-
-
 def is_paper_line(line: Any) -> bool:
-    get = line.get if isinstance(line, dict) else (lambda k: getattr(line, k, None))
-    return str(get("stage") or "").strip().lower() in _PAPER_STAGES and str(get("capital_scope") or "").strip().lower() == "paper_ledger"
+    try:
+        from .main import CapitalBoundaryService
+    except ImportError:
+        from services.capital.main import CapitalBoundaryService
+    return CapitalBoundaryService._line_is_paper_scope(line)
 
 
 def is_paper_operation(
@@ -44,19 +44,25 @@ def is_paper_operation(
     binding: Any = None,
     allocations: Sequence[Any] = (),
     proposal_lines: Sequence[Any] = (),
-    contexts: Sequence[Mapping[str, Any]] = (),
 ) -> bool:
     if (getattr(pool, "metadata", None) or {}).get("execution_context") != "paper":
         return False
     if target_type == "capital_pool_activation":
-        if allocations:
-            return all(is_paper_line(a) for a in allocations)
-        return all(str(c.get("stage") or "").strip().lower() in _PAPER_STAGES for c in contexts if c.get("stage"))
+        return all(is_paper_line(a) for a in allocations)
     if target_type == "capital_binding_activation":
-        get = binding.get if isinstance(binding, dict) else (lambda k: getattr(binding, k, None))
-        return bool(binding and get("role") == "paper_owner" and get("allowed_deployment_scope") == "paper" and all(is_paper_line(a) for a in allocations))
+        getter = binding.get if isinstance(binding, dict) else (lambda k: getattr(binding, k, None))
+        return bool(
+            binding
+            and getter("role") == "paper_owner"
+            and getter("allowed_deployment_scope") == "paper"
+            and all(is_paper_line(a) for a in allocations)
+        )
     if target_type == "rebalance_apply":
-        return bool(proposal_lines and all(is_paper_line(l) for l in proposal_lines) and all(is_paper_line(a) for a in allocations))
+        return bool(
+            proposal_lines
+            and all(is_paper_line(line) for line in proposal_lines)
+            and all(is_paper_line(a) for a in allocations)
+        )
     return False
 
 
@@ -93,7 +99,10 @@ def _tenant_of(obj: Any) -> Optional[str]:
 
 class CapitalGuard:
     def __init__(
-        self, *, approval_reader: Any = None, safe_mode_reader: Callable[[str], str] | None = None,
+        self,
+        *,
+        approval_reader: Any = None,
+        safe_mode_reader: Callable[[str], str] | None = None,
         policy_loader: Callable[[str], Mapping[str, Any]] | None = None,
     ) -> None:
         self._approval_reader = approval_reader
@@ -101,18 +110,29 @@ class CapitalGuard:
         self._policy_loader = policy_loader or load_risk_policy
 
     def authorize(
-        self, *, pool: Any, tenant_id: Optional[str], decision_id: Optional[str],
-        target_type: str, target_id: str, expected: Mapping[str, Any],
-        contexts: Sequence[Mapping[str, Any]], binding: Any = None,
-        allocations: Sequence[Any] = (), proposal_lines: Sequence[Any] = (),
+        self,
+        *,
+        pool: Any,
+        tenant_id: Optional[str],
+        decision_id: Optional[str],
+        target_type: str,
+        target_id: str,
+        expected: Mapping[str, Any],
+        contexts: Sequence[Mapping[str, Any]],
+        binding: Any = None,
+        allocations: Sequence[Any] = (),
+        proposal_lines: Sequence[Any] = (),
     ) -> None:
         """Raise CapitalGuardError unless this exact risk increase is allowed now."""
         tenant = str(tenant_id or "").strip()
         if not tenant or _tenant_of(pool) != tenant:
             raise CapitalGuardError("Capital pool does not belong to the calling tenant")
         if is_paper_operation(
-            pool=pool, target_type=target_type, binding=binding,
-            allocations=allocations, proposal_lines=proposal_lines, contexts=contexts,
+            pool=pool,
+            target_type=target_type,
+            binding=binding,
+            allocations=allocations,
+            proposal_lines=proposal_lines,
         ):
             if str(getattr(pool, "risk_policy_ref", None) or "").strip():
                 self._require_risk_policy(pool, target_type, target_id, contexts)
@@ -129,13 +149,21 @@ class CapitalGuard:
         if state not in SAFE_MODE_OK:
             raise CapitalGuardError(f"Risk increase blocked while safe mode is {state!r}")
 
-    def _require_risk_policy(self, pool: Any, target_type: str, target_id: str, contexts: Sequence[Mapping[str, Any]]) -> None:
+    def _require_risk_policy(
+        self,
+        pool: Any,
+        target_type: str,
+        target_id: str,
+        contexts: Sequence[Mapping[str, Any]],
+    ) -> None:
         ref = str(pool.risk_policy_ref or "").strip()
         try:
             policy = self._policy_loader(ref)
             evaluator = RiskPolicyEvaluator()
             parsed = RiskPolicy.from_mapping(policy)
             for context in contexts:
+                # A configured limit that the owner cannot observe is not a pass.
+                # (zero-valued limits count as configured).
                 for limit, fact in _FACT_OF_LIMIT.items():
                     if target_type == "capital_pool_activation" and limit == "allowed_stages" and "stage" not in context:
                         continue
@@ -143,8 +171,11 @@ class CapitalGuard:
                     if configured is not None and configured != () and context.get(fact) in (None, ""):
                         raise CapitalGuardError(f"Risk policy limit {limit} cannot be evaluated: {fact} unavailable")
                 evaluation = evaluator.evaluate(policy, RiskPolicyEvaluationContext.from_mapping({
-                    "target_type": target_type, "target_id": target_id,
-                    "capital_pool_id": pool.pool_id, "risk_policy_ref": ref, **context,
+                    "target_type": target_type,
+                    "target_id": target_id,
+                    "capital_pool_id": pool.pool_id,
+                    "risk_policy_ref": ref,
+                    **context,
                 }))
                 if evaluation.rejected:
                     raise CapitalGuardError("Risk policy rejected: " + "; ".join(evaluation.blocking_reasons))
@@ -153,7 +184,14 @@ class CapitalGuard:
         except Exception as exc:
             raise CapitalGuardError(f"Risk policy unavailable: {exc}") from exc
 
-    def _require_approval(self, decision_id: Optional[str], tenant: str, target_type: str, target_id: str, expected: Mapping[str, Any]) -> None:
+    def _require_approval(
+        self,
+        decision_id: Optional[str],
+        tenant: str,
+        target_type: str,
+        target_id: str,
+        expected: Mapping[str, Any],
+    ) -> None:
         try:
             reader = self._approval_reader or configured_approval_reader("capital")
             reader.get(str(decision_id or "")).require_valid(

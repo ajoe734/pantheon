@@ -95,3 +95,38 @@ def test_nonempty_pool_reactivation_rejected_on_forbidden_stage(client, monkeypa
     resp = c.patch("/api/capital-pools/pool-001/status", json=_ACT)
     assert resp.status_code == 403
     assert "Risk policy rejected" in resp.json()["detail"]
+
+
+def test_partial_rebalance_checks_unchanged_live_stage(client, monkeypatch):
+    c, _ = client
+    assert c.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    assert c.post("/api/bindings", json=_binding_payload()).status_code == 201
+    assert c.post("/api/rebalances", json=_rebalance_payload()).status_code == 201
+    assert c.post("/api/rebalances/rb-001/apply", json=_apply_payload()).status_code == 200
+    assert c.post(
+        "/api/bindings",
+        json=_binding_payload(
+            binding_id="binding-paper",
+            persona_id="persona-paper",
+            capital_sleeve_id="sleeve-paper",
+            role="paper_owner",
+            allowed_deployment_scope="paper",
+        ),
+    ).status_code == 201
+    line = {
+        **_rebalance_payload()["lines"][0],
+        "persona_id": "persona-paper",
+        "capital_sleeve_id": "sleeve-paper",
+        "stage": "paper_running",
+        "capital_scope": "paper_ledger",
+    }
+    _policy(monkeypatch, allowed_stages=["paper"])
+    assert c.post(
+        "/api/rebalances",
+        json=_rebalance_payload(rebalance_id="rb-paper", lines=[line]),
+    ).status_code == 201
+    response = c.post(
+        "/api/rebalances/rb-paper/apply",
+        json=_apply_payload(rebalance_id="rb-paper", command_id="cmd-paper"),
+    )
+    assert response.status_code == 403, response.text

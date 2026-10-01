@@ -95,7 +95,7 @@
       "6": "CAPITAL_RISK_POLICY_DIR now defaults to services/capital/risk_policies; Compose reader/runtime-manager wiring deliberately left to BFF-APPROVALS-FORWARD-001 per task note (hosted acceptance is paired delivery); conftest seam now validates a real ApprovalEvidence"
     }
   },
-  "verification_run": "pytest services/capital + governance approval tests: 227 passed, 1 skipped",
+  "verification_run": "pytest services/capital + governance approval tests: 229 passed, 0 skipped",
   "review_rework_2": {
     "head_reviewed": "2c23d05ad",
     "items": {
@@ -120,6 +120,13 @@
       "2": "is_paper_operation evaluates stored/resulting allocations and binding scope each operation; caller paper label cannot authorize canary/live allocations or bindings even at same or zero weight",
       "3": "Explicit paper risk_policy_ref enforces configured limits (negative, unobservable, missing policy fails closed); empty paper pool activation passes without inventing stage",
       "4": "ActivateBindingRequest makes approval_decision_id optional at API model level while preserving lowerstore contract"
+    }
+  },
+  "review_rework_5": {
+    "head_reviewed": "b0226418a",
+    "items": {
+      "1": "services/capital/main.py _guard_rebalance_apply builds complete authoritative resulting allocations once by overlaying proposal lines on existing held allocations and evaluates every applicable resulting stage against risk policy; added regression test test_partial_rebalance_checks_unchanged_live_stage",
+      "2": "services/capital/capital_guard.py shares CapitalBoundaryService._line_is_paper_scope for stage and paper classification, removes unused contexts fallback from is_paper_operation, computes pool facts once, and restores readable layout for signatures and expressions without minification"
     }
   }
 }
