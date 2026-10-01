@@ -83,12 +83,6 @@ _AUDIT_2: Dict[str, Any] = {
     "timestamp": "2026-08-30T12:05:00Z",
     "evidence_refs": [],
 }
-_INTERVENTION_1: Dict[str, Any] = {
-    "intervention_id": "iv-1",
-    "status": "open",
-    "target_type": "Intervention",
-    "evidence_refs": copy.deepcopy(_MIXED_REFS),
-}
 _SESSION_1: Dict[str, Any] = {
     "session_id": "session-1",
     "id": "session-1",
@@ -210,7 +204,6 @@ def _build_app(
     store: Optional[_SweepStore] = None,
     *,
     capabilities_for_identity: Any = None,
-    get_interventions: Any = None,
 ) -> FastAPI:
     app = FastAPI()
     register_error_handlers(app)
@@ -224,7 +217,6 @@ def _build_app(
             utc_now=utc_now,
             redact_evidence_refs=redact_evidence_refs,
             capabilities_for_identity=capabilities_for_identity or auth_policy.capabilities_for_identity,
-            get_interventions=get_interventions or (lambda: [copy.deepcopy(_INTERVENTION_1)]),
         )
     )
     return app
@@ -505,17 +497,16 @@ def test_bff_approvals_list_passes_through_for_full_capability_identity() -> Non
         assert payload["meta"]["redacted_evidence_count"] == 0
 
 
-# --- Management governance ledger: all four evidence sources ---------------
+# --- Management governance ledger: all three evidence sources ---------------
 
 
-def test_governance_ledger_redacts_all_four_evidence_sources_for_low_capability_identity() -> None:
+def test_governance_ledger_redacts_all_three_evidence_sources_for_low_capability_identity() -> None:
     # The ledger dedupes approval entries by decision_id across the
     # approval_queue_items/approval_decisions datasets (first-seen wins), so
     # approval-1 surfaces once as an "approval" source_type entry sourced
-    # from approval_queue_items; the intervention and audit(-override)
-    # sources each surface their own entry. All four underlying datasets
-    # (approval_queue_items, approval_decisions, v5_interventions,
-    # governance_audit_events) feed the ledger's evidence redaction path.
+    # from approval_queue_items; the audit(-override) sources each surface
+    # their own entry. All three underlying datasets
+    # (approval_queue_items, approval_decisions, governance_audit_events) feed the ledger's evidence redaction path.
     with _stub_auth_env():
         client = TestClient(_build_app())
         response = client.get(
@@ -533,9 +524,6 @@ def test_governance_ledger_redacts_all_four_evidence_sources_for_low_capability_
         assert approval_entry["source_dataset"] == "approval_queue_items"
         _assert_mixed_refs_redacted_for_low_capability(approval_entry["evidence_refs"])
 
-        intervention_entry = next(item for item in items if item["source_type"] == "intervention")
-        _assert_mixed_refs_redacted_for_low_capability(intervention_entry["evidence_refs"])
-
         audit_approval_entry = next(
             item for item in items
             if item["source_dataset"] == "governance_audit_events" and item["source_type"] == "approval"
@@ -545,9 +533,9 @@ def test_governance_ledger_redacts_all_four_evidence_sources_for_low_capability_
         override_entry = next(item for item in items if item["source_type"] == "override")
         assert override_entry["evidence_refs"] == []
 
-        # 3 entries carry the 3-ref mixed fixture (approval-1, intervention,
-        # audit-approval); 2 of each 3 refs are withheld (metric/job) = 6.
-        assert payload["meta"]["redacted_evidence_count"] == 6
+        # 2 entries carry the 3-ref mixed fixture (approval-1,
+        # audit-approval); 2 of each 3 refs are withheld (metric/job) = 4.
+        assert payload["meta"]["redacted_evidence_count"] == 4
 
 
 def test_governance_ledger_includes_decision_only_approval_entry() -> None:
@@ -616,9 +604,9 @@ def test_governance_ledger_fails_closed_when_capabilities_unresolvable() -> None
         )
         assert response.status_code == 200, response.text
         payload = response.json()
-        # 3 entries carry the 3-ref mixed fixture; fail-closed withholds all
-        # 3 mapped-kind refs on each = 9.
-        assert payload["meta"]["redacted_evidence_count"] == 9
+        # 2 entries carry the 3-ref mixed fixture; fail-closed withholds all
+        # 3 mapped-kind refs on each = 6.
+        assert payload["meta"]["redacted_evidence_count"] == 6
 
 
 # --- Consultation session surfaces ------------------------------------------

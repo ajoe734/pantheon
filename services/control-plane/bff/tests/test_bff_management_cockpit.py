@@ -220,26 +220,6 @@ def _seeded_client(td: str) -> TestClient:
             "completed_at": "2026-05-23T07:50:00Z",
         }
     ]
-    store.list_v5_interventions = lambda **kwargs: [
-        {
-            "id": "intervention-b3-001",
-            "title": "Manual circuit trip",
-            "status": "open",
-            "severity": "medium",
-            "created_at": "2026-05-23T08:03:00Z",
-            "runtime_id": "runtime-b3-001",
-        }
-    ]
-    store.list_sentinel_findings = lambda **kwargs: [
-        {
-            "id": "sentinel-b3-001",
-            "title": "Telemetry heartbeats delayed",
-            "severity": "medium",
-            "state": "active",
-            "detected_at": "2026-05-23T08:02:00Z",
-            "runtime_id": "runtime-b3-001",
-        }
-    ]
     store.dataset_source = lambda dataset: {
         "incidents": "service_store",
         "governance_review_queue_items": "service_store",
@@ -250,8 +230,6 @@ def _seeded_client(td: str) -> TestClient:
         "paper_runtime_monitoring_sessions": "service_store",
         "paper_live_drift_reports": "service_store",
         "rollbacks": "service_store",
-        "v5_interventions": "service_store",
-        "sentinel_findings": "service_store",
     }.get(dataset, "missing")
 
     app = FastAPI()
@@ -275,11 +253,10 @@ def test_bff_management_cockpit_composes_required_sections() -> None:
         assert "runtimeHealth" not in data
         assert data["alerts"]["summary"]["total_active"] >= 1
         inbox_summary = data["human_inbox"]["data"]["summary"]
-        assert inbox_summary["total"] >= 4
+        assert inbox_summary["total"] >= 3
         assert inbox_summary["governance_review_count"] == 1
         assert inbox_summary["approval_count"] == 1
-        assert inbox_summary["intervention_count"] == 1
-        assert inbox_summary["sentinel_finding_count"] == 1
+        assert inbox_summary["incident_count"] == 1
         assert data["trading_pulse"]["summary"]["runtime_count"] == 1
         assert data["trading_pulse"]["summary"]["total_pnl"] == 0.42
         assert data["trading_pulse"]["summary"]["baseline_comparison_count"] == 1
@@ -344,7 +321,7 @@ def _healthy_cockpit_context(monkeypatch):
     [
         ("_build_operator_alerts_payload", "alerts", "incident_feed"),
         ("_human_inbox_payload", "data", "approval_queue"),
-        ("_build_management_anomalies_payload", "items", "sentinel_findings"),
+        ("_build_management_anomalies_payload", "items", "incidents"),
     ],
 )
 def test_cockpit_preserves_non_runtime_owner_unavailability(
@@ -352,7 +329,7 @@ def test_cockpit_preserves_non_runtime_owner_unavailability(
 ) -> None:
     """MGMT-READ-001 seventh review: management_cockpit previously merged
     only runtime/telemetry owner observations, so an unavailable
-    incident_feed/approval_queue/sentinel_findings surface was reported as
+    incident_feed/approval_queue/incidents surface was reported as
     status=ok while its failed owner and reason were silently dropped."""
     failure = dict(
         status="unavailable",
@@ -425,7 +402,7 @@ def test_cockpit_surface_owner_observation_preserves_provenance_fields(
 ) -> None:
     """MGMT-READ-001 eighth review: _mgmt_nl_surface_owner_observation
     reconstructed a partial untyped dict that dropped source_version,
-    observed_at and correlation_id from an incident/approval/sentinel
+    observed_at and correlation_id from an incident/approval
     surface observation. Every contributing owner observation must carry
     the full ManagementObservation provenance fields through cockpit
     conversion."""

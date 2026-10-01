@@ -120,7 +120,7 @@ def _human_gate_clean_text(value: Any) -> str:
 
 def _human_gate_source_type(item_id: str) -> Optional[str]:
     prefix = item_id.split(":", 1)[0].strip().lower() if ":" in item_id else ""
-    if prefix in {"approval", "intervention"}:
+    if prefix == "approval":
         return prefix
     return None
 
@@ -419,7 +419,6 @@ _WRAPPER_CANONICALS = {
         "HumanGateRevoke": (),
         "HumanGateExtendTtl": (),
     },
-    "V5InterventionAction": {"RemediateSentinelIntervention": ("remediate",)},
     "RiskAlertAction": {"AlertAcknowledge": ("acknowledge", "ack")},
     "RankingAction": {"QuarterlyRankingRecommendationSubmit": ()},
 }

@@ -2,7 +2,7 @@
 
 This module provides typed domain ports (protocols and domain adapters) for:
 - Incident and Postmortem reads (IN-01, IN-02, PM-01, PM-02)
-- Lifecycle and Loop reads (Loop runs, Sentinel findings, Kill switch, Trade journey projection)
+- Lifecycle and Loop reads (Loop runs, Kill switch, Trade journey projection)
 - Governance and Evolution reads (Evolution decisions, Freeze orders, Rollbacks, Audit events)
 - Lineage and Inspiration reads (Lineage edges, records, graph nodes, Inspiration graph)
 - Telemetry and Drift reads (Telemetry events with source fallback, Summaries, Performance, Paper-live drift)
@@ -90,7 +90,7 @@ class IncidentReaderPort(Protocol):
 
 @runtime_checkable
 class LifecycleReaderPort(Protocol):
-    """Port for Lifecycle, Loop Runs, Sentinel Findings, and Kill Switch reads."""
+    """Port for Lifecycle, Loop Runs, and Kill Switch reads."""
 
     def list_loop_runs(self) -> Tuple[bool, List[Dict[str, Any]]]: ...
 
@@ -99,16 +99,6 @@ class LifecycleReaderPort(Protocol):
     def list_loop_health_records(self) -> Tuple[bool, List[Dict[str, Any]]]: ...
 
     def get_loop_health_record(self, loop_id: str) -> Tuple[bool, Optional[Dict[str, Any]]]: ...
-
-    def list_sentinel_findings(
-        self,
-        *,
-        kind: Optional[str] = None,
-        status: Optional[str] = None,
-        severity: Optional[str] = None,
-    ) -> Tuple[bool, List[Dict[str, Any]]]: ...
-
-    def get_sentinel_finding(self, finding_id: str) -> Tuple[bool, Optional[Dict[str, Any]]]: ...
 
     def get_kill_switch_status(self) -> Dict[str, Any]: ...
 
@@ -422,7 +412,7 @@ class DomainIncidentPort:
 
 
 class DomainLifecyclePort:
-    """Lifecycle, Loop, Sentinel, and Kill Switch domain reader adapter."""
+    """Lifecycle, Loop, and Kill Switch domain reader adapter."""
 
     _LOOP_RUN_ID_RE = re.compile(r"^loop-run-(\d+)$")
 
@@ -431,7 +421,6 @@ class DomainLifecyclePort:
         *,
         loop_runs: Optional[Dict[str, Dict[str, Any]]] = None,
         loop_health_records: Optional[Dict[str, Dict[str, Any]]] = None,
-        sentinel_findings: Optional[Dict[str, Dict[str, Any]]] = None,
         kill_switch: Optional[Dict[str, Any]] = None,
         projection_metadata: Optional[Dict[str, Any]] = None,
         incidents: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -439,7 +428,6 @@ class DomainLifecyclePort:
     ) -> None:
         self._loop_runs = dict(loop_runs) if loop_runs is not None else None
         self._loop_health_records = dict(loop_health_records or {})
-        self._sentinel_findings = dict(sentinel_findings) if sentinel_findings is not None else None
         self._kill_switch = dict(kill_switch or {})
         self._projection_metadata = dict(projection_metadata or {"envelope": "loop_runs", "status": "ok"})
         self._incidents = dict(incidents or {})
@@ -490,35 +478,6 @@ class DomainLifecyclePort:
     def get_loop_health_record(self, loop_id: str) -> Tuple[bool, Optional[Dict[str, Any]]]:
         return True, self._loop_health_records.get(loop_id)
 
-    def list_sentinel_findings(
-        self,
-        *,
-        kind: Optional[str] = None,
-        status: Optional[str] = None,
-        severity: Optional[str] = None,
-    ) -> Tuple[bool, List[Dict[str, Any]]]:
-        if self._sentinel_findings is not None:
-            results = list(self._sentinel_findings.values())
-            return True, self._apply_sentinel_filters(results, kind=kind, status=status, severity=severity)
-        if self._incidents:
-            results = [
-                self._derive_sentinel_finding(inc)
-                for inc in self._incidents.values()
-                if isinstance(inc, dict) and "loop" not in str(inc.get("title") or "").lower()
-            ]
-            return True, self._apply_sentinel_filters(results, kind=kind, status=status, severity=severity)
-        return False, []
-
-    def get_sentinel_finding(self, finding_id: str) -> Tuple[bool, Optional[Dict[str, Any]]]:
-        avail, findings = self.list_sentinel_findings()
-        if not avail:
-            return False, None
-        for finding in findings:
-            fid = finding.get("finding_id") or finding.get("id")
-            if fid == finding_id:
-                return True, finding
-        return True, None
-
     def get_kill_switch_status(self) -> Dict[str, Any]:
         ks = dict(self._kill_switch)
         status = str(ks.get("status") or "").lower()
@@ -564,23 +523,6 @@ class DomainLifecyclePort:
         }
 
     @staticmethod
-    def _apply_sentinel_filters(
-        records: List[Dict[str, Any]],
-        *,
-        kind: Optional[str],
-        status: Optional[str],
-        severity: Optional[str],
-    ) -> List[Dict[str, Any]]:
-        filtered = list(records)
-        if kind:
-            filtered = [r for r in filtered if str(r.get("kind") or "").lower() == kind.lower()]
-        if status:
-            filtered = [r for r in filtered if str(r.get("status") or "").lower() == status.lower()]
-        if severity:
-            filtered = [r for r in filtered if str(r.get("severity") or "").lower() == severity.lower()]
-        return filtered
-
-    @staticmethod
     def _derive_loop_run(incident: Dict[str, Any], *, override_id: Optional[str] = None) -> Dict[str, Any]:
         inc_id = str(incident.get("incident_id") or incident.get("id") or "inc-unknown")
         run_id = override_id or f"loop-run-{inc_id}"
@@ -594,22 +536,6 @@ class DomainLifecyclePort:
             "incident_ref": inc_id,
             "summary": incident.get("title") or incident.get("summary") or "",
         }
-
-    @staticmethod
-    def _derive_sentinel_finding(incident: Dict[str, Any]) -> Dict[str, Any]:
-        inc_id = str(incident.get("incident_id") or incident.get("id") or "inc-unknown")
-        finding_id = f"sf-{inc_id}"
-        return {
-            "finding_id": finding_id,
-            "id": finding_id,
-            "kind": incident.get("kind") or "anomaly",
-            "status": incident.get("status") or "open",
-            "severity": incident.get("severity") or "medium",
-            "created_at": incident.get("created_at") or "",
-            "incident_id": inc_id,
-            "details": incident.get("description") or incident.get("summary") or incident.get("title") or "",
-        }
-
 
 class DomainGovernancePort:
     """Governance and Evolution domain reader adapter."""
@@ -1309,18 +1235,6 @@ class CompositeLifecycleTelemetryGovernancePort:
     def get_loop_health_record(self, loop_id: str) -> Tuple[bool, Optional[Dict[str, Any]]]:
         return self.lifecycle.get_loop_health_record(loop_id)
 
-    def list_sentinel_findings(
-        self,
-        *,
-        kind: Optional[str] = None,
-        status: Optional[str] = None,
-        severity: Optional[str] = None,
-    ) -> Tuple[bool, List[Dict[str, Any]]]:
-        return self.lifecycle.list_sentinel_findings(kind=kind, status=status, severity=severity)
-
-    def get_sentinel_finding(self, finding_id: str) -> Tuple[bool, Optional[Dict[str, Any]]]:
-        return self.lifecycle.get_sentinel_finding(finding_id)
-
     def get_kill_switch_status(self) -> Dict[str, Any]:
         return self.lifecycle.get_kill_switch_status()
 
@@ -1477,7 +1391,6 @@ class InMemoryLifecycleTelemetryGovernancePort(CompositeLifecycleTelemetryGovern
         rollbacks_by_incident: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         loop_runs: Optional[Dict[str, Dict[str, Any]]] = None,
         loop_health_records: Optional[Dict[str, Dict[str, Any]]] = None,
-        sentinel_findings: Optional[Dict[str, Dict[str, Any]]] = None,
         kill_switch: Optional[Dict[str, Any]] = None,
         projection_metadata: Optional[Dict[str, Any]] = None,
         freeze_orders: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -1503,7 +1416,6 @@ class InMemoryLifecycleTelemetryGovernancePort(CompositeLifecycleTelemetryGovern
         life_port = DomainLifecyclePort(
             loop_runs=loop_runs,
             loop_health_records=loop_health_records,
-            sentinel_findings=sentinel_findings,
             kill_switch=kill_switch,
             projection_metadata=projection_metadata,
             incidents=incidents,

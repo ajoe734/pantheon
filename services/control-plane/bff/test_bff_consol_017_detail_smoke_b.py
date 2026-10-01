@@ -25,7 +25,6 @@ PACK_B = {
     "research_ticket_id": "rt-pack-b-001",
     "research_experiment_id": "exp-pack-b-001",
     "research_analysis_id": "analysis-pack-b-001",
-    "intervention_id": "intv-pack-b-001",
     "agora_session_id": "agora-session-pack-b-001",
     "artifact_id": "artifact-pack-b-001",
     "lineage_id": "lineage-pack-b-001",
@@ -102,16 +101,6 @@ class DetailSmokeBTestReadPorts(ReadSurfacePorts):
         if isinstance(ds, dict):
             return ds.get(str(analysis_id or ""))
         return next((a for a in ds if a.get("id") == analysis_id or a.get("analysis_id") == analysis_id), None)
-
-    def list_v5_interventions(self, **kwargs: Any) -> list[dict[str, Any]]:
-        ds = self._get_dataset("v5_interventions")
-        return list(ds.values()) if isinstance(ds, dict) else list(ds)
-
-    def get_v5_intervention(self, intv_id: str | None) -> dict[str, Any] | None:
-        ds = self._get_dataset("v5_interventions")
-        if isinstance(ds, dict):
-            return ds.get(str(intv_id or ""))
-        return next((i for i in ds if i.get("id") == intv_id or i.get("intervention_id") == intv_id), None)
 
     def list_agora_sessions(self, **kwargs: Any) -> list[dict[str, Any]]:
         ds = self._get_dataset("agora_sessions")
@@ -230,13 +219,7 @@ def test_detail_smoke_b_pack_b_routes_resolve_acceptance_links() -> None:
         assert analysis_record["ticket_id"] == PACK_B["research_ticket_id"]
         assert analysis_record["experiment_id"] == PACK_B["research_experiment_id"]
 
-        intervention = _get(client, f"/bff/v5/interventions/{PACK_B['intervention_id']}")
-        assert intervention.status_code == 200, intervention.text
-        skeleton = _data(intervention.json())["remediation_skeleton"]
-        assert skeleton["two_man_rule_enforced"] is True
-        assert skeleton["remediation_actions_available"]
-
-        # Agora sessions and messages detail routes retired per AGORA-DEAD-SURFACES-REMOVAL-001
+        # Agora sessions/messages (AGORA-DEAD-SURFACES-REMOVAL-001) and V5 intervention detail (BFF-SENTINEL-REMOVAL-001) routes retired
 
         artifact = _get(client, f"/bff/artifacts/{PACK_B['artifact_id']}")
         assert artifact.status_code == 200, artifact.text
@@ -255,7 +238,6 @@ def test_detail_smoke_b_phantom_family_ids_return_typed_404() -> None:
         for path in (
             "/bff/evolution-programs/phantom-id-does-not-exist",
             "/bff/research-experiments/phantom-id-does-not-exist",
-            "/bff/v5/interventions/phantom-id-does-not-exist",
             "/bff/agora/sessions/phantom-id-does-not-exist",
             "/bff/artifacts/phantom-id-does-not-exist",
         ):

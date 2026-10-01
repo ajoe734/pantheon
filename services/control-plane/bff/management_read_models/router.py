@@ -6,7 +6,6 @@ Consolidates the 17 Management domain HTTP GET routes into create_management_rou
 - Management cockpit aggregate (/bff/management/cockpit)
 - Trading pulse card aggregate (/bff/management/trading-pulse)
 - Trading pulse rankings (/bff/management/trading-pulse/rankings)
-- Sentinel pulse (/bff/management/sentinel-pulse)
 - Operator health status (/api/v1/operator/health-status)
 - Loop throughput metrics (/bff/management/loop-throughput)
 - Risk radar indicators (/bff/management/risk-radar)
@@ -14,7 +13,6 @@ Consolidates the 17 Management domain HTTP GET routes into create_management_rou
 - Human review inbox (/bff/management/human-inbox)
 - Human review inbox detail (/bff/management/human-inbox/{item_id})
 - HIQ backlog (/bff/management/hiq-backlog)
-- Intervention stream (/bff/management/intervention-stream)
 - Evidence explorer (/bff/management/evidence)
 - Operations read model (/bff/management/operations-read-model/{persona_id})
 - Degraded control guidance (/api/v1/operator/degraded-control-guidance)
@@ -1664,31 +1662,6 @@ def create_management_router(
         return svc.get_trading_pulse_rankings(limit=limit, snapshot_at=snap)
 
     # -----------------------------------------------------------------------
-    # 6. Sentinel Pulse
-    # -----------------------------------------------------------------------
-    @router.get("/bff/management/sentinel-pulse")
-    async def bff_management_sentinel_pulse(
-        kind: Optional[str] = Query(default=None),
-        status: Optional[str] = Query(default=None),
-        severity: Optional[str] = Query(default=None),
-        q: str = Query(default=""),
-        page_token: Optional[str] = Query(default=None),
-        page_size: int = Query(default=20, ge=1, le=100),
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        """BFF: Management Sentinel Pulse composed from v5 sentinel read surfaces."""
-        identity = _extract_id(authorization)
-        _req_read(identity)
-        return svc.get_sentinel_pulse(
-            kind=kind,
-            status=status,
-            severity=severity,
-            q=q,
-            page_token=page_token,
-            page_size=page_size,
-        )
-
-    # -----------------------------------------------------------------------
     # 7. Operator Health Status
     # -----------------------------------------------------------------------
     @router.get("/api/v1/operator/health-status")
@@ -1864,7 +1837,7 @@ def create_management_router(
         page_size: int = Query(default=50, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        """BFF: read-only HIQ backlog aggregate for sentinel and intervention review."""
+        """BFF: read-only HIQ backlog aggregate for incident and approval review."""
         identity = _extract_id(authorization)
         _req_read(identity)
         return svc.get_hiq_backlog(
@@ -1876,35 +1849,6 @@ def create_management_router(
             page_token=page_token,
             page_size=page_size,
             identity=identity,
-        )
-
-    # -----------------------------------------------------------------------
-    # 14. Intervention Stream
-    # -----------------------------------------------------------------------
-    @router.get("/bff/management/intervention-stream")
-    async def bff_management_intervention_stream(
-        persona_id: Optional[str] = Query(default=None),
-        personaId: Optional[str] = Query(default=None),
-        status: Optional[str] = Query(default=None),
-        kind: Optional[str] = Query(default=None),
-        q: str = Query(default=""),
-        window_hours: int = Query(default=24, ge=1, le=720),
-        windowHours: Optional[int] = Query(default=None, ge=1, le=720),
-        page_token: Optional[str] = Query(default=None),
-        page_size: int = Query(default=50, ge=1, le=200),
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        """BFF: read-only intervention event stream for Management Console review."""
-        identity = _extract_id(authorization)
-        _req_read(identity)
-        return svc.get_intervention_stream(
-            persona_id=persona_id or personaId,
-            status=status,
-            kind=kind,
-            q=q,
-            window_hours=windowHours or window_hours,
-            page_token=page_token,
-            page_size=page_size,
         )
 
     # -----------------------------------------------------------------------

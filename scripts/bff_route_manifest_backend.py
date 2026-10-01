@@ -102,7 +102,6 @@ FAMILY_RULES: list[tuple[str, str]] = [
     # ── Track E OODA packet foundation ───────────────────────────────────────
     ("/bff/ooda", "ooda-packet-foundation"),
     # ── execute-plans cutover / v5 smoke ─────────────────────────────────────
-    ("/bff/v5/sentinel", "execute-plans-cutover-smoke"),
     ("/bff/v5/loop-runs", "execute-plans-cutover-smoke"),
     ("/bff/v5/execution", "execute-plans-cutover-smoke"),
     ("/bff/v5/control-room", "execute-plans-cutover-smoke"),

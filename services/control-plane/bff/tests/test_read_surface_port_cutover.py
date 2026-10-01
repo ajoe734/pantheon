@@ -47,7 +47,6 @@ from ports import (
     create_in_memory_persona_capital_runtime_port,
     # OODA & Management
     OodaPacketsPort,
-    InterventionsPort,
     SynthesisConflictLogsPort,
     ManagementReviewQueuePort,
     OodaManagementDomainPort,
@@ -278,15 +277,12 @@ class TestPersonaCapitalRuntimePortCutover(unittest.TestCase):
 
 
 class TestOodaManagementPortCutover(unittest.TestCase):
-    """Verifies OODA loop packets, interventions, conflict logs, and review queues."""
+    """Verifies OODA loop packets, conflict logs, and review queues."""
 
     def setUp(self) -> None:
         raw_ooda = [
             {"packet_id": "pkt-1", "stage": "orient", "status": "active", "strategy_id": "strat-1", "runtime_id": "rt-1"},
             {"packet_id": "pkt-2", "stage": "decide", "status": "completed", "strategy_id": "strat-2"},
-        ]
-        raw_interventions = [
-            {"intervention_id": "int-1", "kind": "circuit_breaker", "status": "resolved", "triggered_at": "2026-08-28T12:00:00Z"},
         ]
         raw_conflicts = [
             {"log_id": "log-1", "capital_pool_id": "pool-1", "synthesis_method": "consensus", "proposal_ids": ["prop-1"]},
@@ -299,7 +295,6 @@ class TestOodaManagementPortCutover(unittest.TestCase):
         ]
         self.domain_port = OodaManagementDomainPort(
             ooda_port=OodaPacketsPort(records_provider=lambda: raw_ooda),
-            interventions_port=InterventionsPort(records_provider=lambda: raw_interventions),
             synthesis_conflict_logs_port=SynthesisConflictLogsPort(records_provider=lambda: raw_conflicts),
             review_queue_port=ManagementReviewQueuePort(
                 deployment_plans_reader=lambda: raw_plans,
@@ -321,11 +316,7 @@ class TestOodaManagementPortCutover(unittest.TestCase):
         strat_pkts = self.domain_port.list_ooda_packets_for_strategy("strat-1")
         self.assertEqual(len(strat_pkts), 1)
 
-    def test_interventions_and_conflict_logs(self) -> None:
-        ints = self.domain_port.list_interventions()
-        self.assertEqual(len(ints), 1)
-        self.assertEqual(self.domain_port.get_intervention("int-1")["kind"], "circuit_breaker")
-
+    def test_conflict_logs(self) -> None:
         conflicts = self.domain_port.list_synthesis_conflict_logs()
         self.assertEqual(len(conflicts), 1)
         self.assertEqual(self.domain_port.get_synthesis_conflict_log("log-1")["capital_pool_id"], "pool-1")
@@ -407,7 +398,6 @@ class TestLifecycleTelemetryGovernancePortCutover(unittest.TestCase):
             incidents={"inc-1": {"id": "inc-1", "incident_id": "inc-1", "severity": "P1", "status": "resolved"}},
             postmortems={"pm-1": {"id": "pm-1", "report_id": "pm-1", "incident_id": "inc-1"}},
             loop_runs={"lr-1": {"id": "lr-1", "status": "healthy"}},
-            sentinel_findings={"sf-1": {"id": "sf-1", "finding": "no_drift"}},
             kill_switch={"active": False, "status": "armed"},
             evolution_decisions={"ed-1": {"id": "ed-1", "status": "approved"}},
             freeze_orders={},
@@ -437,10 +427,6 @@ class TestLifecycleTelemetryGovernancePortCutover(unittest.TestCase):
         avail, runs = self.port.list_loop_runs()
         self.assertTrue(avail)
         self.assertEqual(len(runs), 1)
-
-        avail, findings = self.port.list_sentinel_findings()
-        self.assertTrue(avail)
-        self.assertEqual(len(findings), 1)
 
         ks = self.port.get_kill_switch_status()
         self.assertFalse(ks["active"])

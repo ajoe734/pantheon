@@ -1238,44 +1238,6 @@ def _execute_execute_mutation(
     }
 
 
-def _execute_remediate_sentinel_intervention(
-    command_id: str, params: Dict[str, Any],
-    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Dispatch RemediateSentinelIntervention to the sentinel remediation endpoint.
-
-    Two-man authorization must have been validated by the BFF precondition layer
-    before this executor is called.
-    """
-    intervention_id = str(params.get("intervention_id") or "").strip()
-    if not intervention_id:
-        raise ValueError("RemediateSentinelIntervention requires intervention_id.")
-    two_man_signature_id = (
-        params.get("twoManSignatureId")
-        or params.get("two_man_signature_id")
-        or params.get("twoManApprovalId")
-        or params.get("two_man_approval_id")
-        or params.get("secondOperatorId")
-        or params.get("second_operator_id")
-        or ""
-    )
-    payload: Dict[str, Any] = {
-        "intervention_id": intervention_id,
-        "remediation_action": params.get("remediation_action", "resolve"),
-        "two_man_signature_id": two_man_signature_id,
-        "operator_note": params.get("operator_note") or params.get("reason") or "",
-    }
-    url = _internal_url(f"/api/internal/v1/sentinel/interventions/{intervention_id}/remediate")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-    return {
-        "command_id": command_id,
-        "intervention_id": body.get("intervention_id", intervention_id),
-        "status": body.get("status"),
-        "remediated_at": body.get("remediated_at"),
-        "two_man_signature_id": body.get("two_man_signature_id", two_man_signature_id),
-    }
-
-
 def _execute_approve_pool(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
@@ -1493,7 +1455,6 @@ _EXECUTORS = {
     CommandType.REJECT_MUTATION: _execute_reject_mutation,
     CommandType.REVIEW_MUTATION: _execute_review_mutation,
     CommandType.EXECUTE_MUTATION: _execute_execute_mutation,
-    CommandType.REMEDIATE_SENTINEL_INTERVENTION: _execute_remediate_sentinel_intervention,
     CommandType.CAPITAL_POOL_ACTION: _make_adapter_executor(CommandType.CAPITAL_POOL_ACTION),
     CommandType.RANKING_FORMULA_ACTION: _make_adapter_executor(CommandType.RANKING_FORMULA_ACTION),
     CommandType.REBALANCE_ACTION: _make_adapter_executor(CommandType.REBALANCE_ACTION),
@@ -1530,10 +1491,6 @@ _EXECUTORS = {
     CommandType.DEPLOYMENT_PATCH: _make_adapter_executor(CommandType.DEPLOYMENT_PATCH),
     CommandType.REBALANCE_PATCH: _make_adapter_executor(CommandType.REBALANCE_PATCH),
     CommandType.V5_INTERVENTION_ACTION: _make_adapter_executor(CommandType.V5_INTERVENTION_ACTION),
-    CommandType.DECIDE_V5_INTERVENTION: _make_adapter_executor(CommandType.DECIDE_V5_INTERVENTION),
-    CommandType.SENTINEL_FINDING_STATUS: _make_adapter_executor(CommandType.SENTINEL_FINDING_STATUS),
-    CommandType.SENTINEL_REMEDIATION_BUILD: _make_adapter_executor(CommandType.SENTINEL_REMEDIATION_BUILD),
-    CommandType.SENTINEL_REMEDIATION_EXECUTE: _make_adapter_executor(CommandType.SENTINEL_REMEDIATION_EXECUTE),
 }
 
 
