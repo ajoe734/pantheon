@@ -1078,7 +1078,8 @@ def create_governance_router(
         unsupported = [v for v in candidates if v not in {"approve", "approved", "reject", "rejected"}]
         if unsupported:
             _fail(501, "NOT_IMPLEMENTED", f"approval action {unsupported[0]!r} has no Governance owner transition", "Unsupported approval action", precondition_failed="unsupported_action")
-        app_c, rej_c = [v for v in candidates if v in {"approve", "approved"}], [v for v in candidates if v in {"reject", "rejected"}]
+        app_c = [v for v in candidates if v in {"approve", "approved"}]
+        rej_c = [v for v in candidates if v in {"reject", "rejected"}]
         if app_c and rej_c:
             _fail(422, "VALIDATION_FAILED", "Conflicting action and decision", "URL action and body decision conflict", precondition_failed="conflicting_decision")
         vote_verb = "approve" if app_c else ("reject" if rej_c else None)

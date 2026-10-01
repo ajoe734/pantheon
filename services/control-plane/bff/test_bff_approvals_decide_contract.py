@@ -463,3 +463,21 @@ def test_forwarded_vote_matches_real_owner_schema(command_client, owner, command
     assert response.status_code == 202 and len(owner.calls) == 1
     DecideRequest.model_validate(owner.calls[0][2])
     assert owner.calls[0][2]['actor_role'] == 'governance_reviewer'
+
+
+@pytest.mark.parametrize("command", [CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME])
+def test_non_governance_role_remains_derived_from_verified_identity(command):
+    from types import SimpleNamespace
+    from services.control_plane.bff.command_adapters.service import stored_command_params
+    from services.control_plane.bff.models import ObjectType
+
+    cmd = SimpleNamespace(
+        command=command,
+        action=None,
+        params={"actor_role": "admin"},
+        target=SimpleNamespace(type=ObjectType.RUNTIME, id="synthetic-runtime"),
+    )
+    identity = SimpleNamespace(operator_id="original-operator", roles=["operator"])
+    params = stored_command_params(cmd, identity)
+    assert params["actor_id"] == "original-operator"
+    assert params["actor_role"] == "operator"
