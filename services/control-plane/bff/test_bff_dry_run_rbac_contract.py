@@ -522,20 +522,6 @@ def _build_test_app() -> FastAPI:
             )
         return JSONResponse(status_code=201, content={"data": {"id": "deploy-live"}})
 
-    # Interventions
-    @app.post("/bff/v5/interventions/{intervention_id}/claim")
-    async def claim_intervention(intervention_id: str, request: Request) -> JSONResponse:
-        _check_auth(request, is_write=True)
-        payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
-        idem_key = request.headers.get("Idempotency-Key")
-        if _is_dry_run(request):
-            return _dry_run_success_response(
-                {"command": "V5InterventionAction", "status": "accepted", "intervention_id": intervention_id, **payload},
-                idempotency_key=idem_key,
-                evidence_kind="intervention.preview",
-            )
-        return JSONResponse(status_code=200, content={"data": {"status": "claimed"}})
-
     # Rebalances
     @app.post("/bff/rebalances")
     async def post_rebalances(request: Request) -> JSONResponse:
@@ -754,13 +740,6 @@ def test_dry_run_command_routes_do_not_write_command_store_or_sse() -> None:
         ))
         assert deployment["data"]["command"] == "CreateDeployment"
 
-        intervention = _assert_dry_run(client.post(
-            "/bff/v5/interventions/intervention-dry/claim",
-            headers=_dry_headers("dry-intervention-001"),
-            json={"reason": "preview"},
-        ))
-        assert intervention["data"]["command"] == "V5InterventionAction"
-
         rebalance = _assert_dry_run(client.post(
             "/bff/rebalances",
             headers=_dry_headers("dry-rebalance-001"),
@@ -892,7 +871,6 @@ def test_strict_bearer_jwt_full_rbac_matrix_for_management_reads_and_writes() ->
         ("/bff/strategies", {"name": "matrix strategy preview"}),
         ("/bff/ranking-formulas", {"name": "matrix ranking formula preview"}),
         ("/bff/agora/notes", {"title": "matrix note preview", "body": "preview"}),
-        ("/bff/v5/interventions/int-rbac-matrix/claim", {"reason": "preview"}),
     )
     role_cases = (
         ("viewer", ["viewer"], True, False),

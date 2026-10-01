@@ -1,13 +1,12 @@
-"""Incident and Sentinel Domain Command Adapter.
+"""Incident Domain Command Adapter.
 
-Routes incident state transitions, risk alert acknowledgements, sentinel interventions,
-and findings remediation to the authoritative Incident domain and internal API endpoints.
+Routes incident state transitions and risk alert acknowledgements to the authoritative
+Incident domain, plus the guarded two-man evidence receipt (V5InterventionAction).
 """
 from __future__ import annotations
 
 import logging
 from typing import Any, Dict, Optional
-from urllib.parse import quote
 
 from ..ports.lifecycle_telemetry_governance import DomainIncidentPort
 
@@ -15,27 +14,19 @@ from .base import (
     ActionUnavailableError,
     DomainCommandAdapter,
     build_domain_receipt,
-    http_request_json,
-    internal_url,
-    utc_now,
 )
 
 log = logging.getLogger(__name__)
 
 
 class IncidentCommandAdapter(DomainCommandAdapter):
-    """Adapter for Incident, Alert, and Sentinel remediation authority commands."""
+    """Adapter for Incident, Alert, and two-man evidence commands."""
 
     _HANDLED_COMMANDS = {
         "IncidentAction",
         "RiskAlertAction",
         "AlertAcknowledge",
-        "RemediateSentinelIntervention",
         "V5InterventionAction",
-        "DecideV5Intervention",
-        "SentinelFindingStatus",
-        "SentinelRemediationBuild",
-        "SentinelRemediationExecute",
     }
 
     _HANDLED_ENTITIES = {
@@ -47,10 +38,6 @@ class IncidentCommandAdapter(DomainCommandAdapter):
         "alert",
         "sentinelintervention",
         "sentinel-intervention",
-        "sentinelfinding",
-        "sentinel-finding",
-        "sentinelremediation",
-        "sentinel-remediation",
     }
 
     def can_handle(self, command_type: str, entity_type: str, action_id: str) -> bool:
@@ -67,64 +54,24 @@ class IncidentCommandAdapter(DomainCommandAdapter):
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         action_id = str(params.get("action_id") or command_type or "").strip()
-        entity_id = str(params.get("incident_id") or params.get("alert_id") or params.get("intervention_id") or params.get("finding_id") or params.get("entity_id") or "").strip()
+        entity_id = str(params.get("incident_id") or params.get("alert_id") or params.get("entity_id") or "").strip()
 
         if command_type == "IncidentAction":
             return self._execute_incident_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type in {"RiskAlertAction", "AlertAcknowledge"}:
             return self._execute_alert_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "RemediateSentinelIntervention":
-            return self._execute_remediate_sentinel(command_id, entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif action_id.lower() in {"acknowledge", "alertacknowledge"}:
             return self._execute_alert_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif action_id.lower() in {"resolve", "investigate", "close", "reopen"}:
             return self._execute_incident_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"V5InterventionAction", "DecideV5Intervention", "SentinelFindingStatus", "SentinelRemediationBuild", "SentinelRemediationExecute"}:
-            return self._execute_sentinel_action(command_id, entity_id, command_type or action_id, params, auth_token=auth_token, mfa_token=mfa_token)
+        elif command_type == "V5InterventionAction":
+            return self._execute_two_man_evidence(command_id, entity_id, command_type or action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         else:
             raise ActionUnavailableError(
                 f"Incident action {action_id!r} on {entity_id!r} is not supported.",
                 action_id=action_id,
                 entity_type="Incident",
             )
-
-    def _execute_remediate_sentinel(
-        self,
-        command_id: str,
-        intervention_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        target_id = intervention_id or str(params.get("intervention_id") or "").strip()
-        if not target_id:
-            raise ValueError("RemediateSentinelIntervention requires intervention_id.")
-        two_man_signature_id = params["two_man_signature_id"]
-
-        payload = {
-            "intervention_id": target_id,
-            "remediation_action": params.get("remediation_action", "resolve"),
-            "two_man_signature_id": two_man_signature_id,
-            "operator_note": params.get("operator_note") or params.get("reason") or "Remediation executed",
-        }
-        url = internal_url(f"/api/internal/v1/sentinel/interventions/{quote(target_id, safe='')}/remediate")
-        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
-
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="SentinelIntervention",
-            entity_id=target_id,
-            action_id="RemediateSentinelIntervention",
-            status=body.get("status") or "remediated",
-            dispatch_path=url,
-            domain_receipt=body,
-            authoritative_readback={"intervention_id": target_id, "status": "resolved"},
-            extra={
-                "intervention_id": target_id,
-                "remediated_at": body.get("remediated_at") or utc_now(),
-                "two_man_signature_id": two_man_signature_id,
-            },
-        )
 
     def _execute_alert_action(
         self,
@@ -174,7 +121,7 @@ class IncidentCommandAdapter(DomainCommandAdapter):
             extra={"incident_id": target_id, "status": read_back_status},
         )
 
-    def _execute_sentinel_action(
+    def _execute_two_man_evidence(
         self,
         command_id: str,
         entity_id: str,
@@ -186,10 +133,10 @@ class IncidentCommandAdapter(DomainCommandAdapter):
         return build_domain_receipt(
             command_id=command_id,
             entity_type="SentinelIntervention",
-            entity_id=entity_id or "sentinel-target",
+            entity_id=entity_id or "two-man-evidence",
             action_id=action_name,
             status="executed",
-            dispatch_path="sentinel_intervention_authority",
+            dispatch_path="two_man_evidence_authority",
             domain_receipt={"entity_id": entity_id, "action": action_name, "executed": True},
             authoritative_readback={"entity_id": entity_id, "status": "active"},
             extra={"entity_id": entity_id},

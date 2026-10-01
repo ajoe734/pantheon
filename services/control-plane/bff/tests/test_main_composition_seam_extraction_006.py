@@ -170,7 +170,7 @@ def test_canonical_route_set_matches_standalone_composition() -> None:
     canonical_routes = get_canonical_bff_route_set()
     standalone_routes = get_canonical_bff_route_set(compose_bff_app())
     assert canonical_routes == standalone_routes
-    assert len(canonical_routes) > 500
+    assert len(canonical_routes) > 450
 
 
 def test_assistant_provider_symbols_reexported_on_main() -> None:

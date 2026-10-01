@@ -3,7 +3,7 @@
     "snapshot_date": "2026-10-01",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 635,
+    "total_routes": 621,
     "status_values": [
       "implemented",
       "alias",
@@ -1827,38 +1827,8 @@
       "status": "implemented"
     },
     {
-      "method": "GET",
-      "path": "/bff/v5/sentinel/findings",
-      "family": "execute-plans-cutover-smoke",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/v5/sentinel/findings/{param}",
-      "family": "execute-plans-cutover-smoke",
-      "status": "implemented"
-    },
-    {
       "method": "POST",
       "path": "/bff/v5/downstream-health/dlq/replay",
-      "family": "execute-plans-cutover-smoke",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/v5/sentinel/findings/{param}/status",
-      "family": "execute-plans-cutover-smoke",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/v5/sentinel/remediation/build",
-      "family": "execute-plans-cutover-smoke",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/v5/sentinel/remediation/{param}/execute",
       "family": "execute-plans-cutover-smoke",
       "status": "implemented"
     },
@@ -3271,12 +3241,6 @@
     },
     {
       "method": "GET",
-      "path": "/bff/management/intervention-stream",
-      "family": "unknown",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
       "path": "/bff/management/loop-throughput",
       "family": "unknown",
       "status": "implemented"
@@ -3477,12 +3441,6 @@
     {
       "method": "GET",
       "path": "/bff/management/risk-radar",
-      "family": "unknown",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/management/sentinel-pulse",
       "family": "unknown",
       "status": "implemented"
     },
@@ -3784,48 +3742,6 @@
       "method": "POST",
       "path": "/internal/agora/dataset-handoffs/{param}/ack",
       "family": "unknown",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/v5/interventions",
-      "family": "v5-interventions",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/v5/interventions/{param}",
-      "family": "v5-interventions",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/v5/interventions/{param}/claim",
-      "family": "v5-interventions",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/v5/interventions/{param}/decide",
-      "family": "v5-interventions",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/v5/interventions/{param}/escalate",
-      "family": "v5-interventions",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/v5/interventions/{param}/release",
-      "family": "v5-interventions",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/v5/interventions/{param}/remediate",
-      "family": "v5-interventions",
       "status": "implemented"
     },
     {

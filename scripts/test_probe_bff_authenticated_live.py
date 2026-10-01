@@ -249,12 +249,6 @@ def test_build_dry_run_results_attaches_per_probe_side_effect_proofs(monkeypatch
                 "meta.liveCapitalSideEffects": False,
                 "data.id": f"{probe.family}-id",
             }
-        elif probe.family == "dry-run-v5-intervention-claim":
-            result["extracted"] = {
-                "meta.dryRun": True,
-                "meta.durable": False,
-                "meta.liveCapitalSideEffects": False,
-            }
         elif probe.family.endswith("-readback-not-persisted"):
             result.update({
                 "status": 404,
@@ -280,14 +274,13 @@ def test_build_dry_run_results_attaches_per_probe_side_effect_proofs(monkeypatch
         idempotency_prefix="idem-dry",
     )
 
-    assert len(results) == 7
+    assert len(results) == 6
     assert all(result["side_effect_check"]["ok"] is True for result in results)
     assert [result["side_effect_check"]["kind"] for result in results] == [
         "dry_run_preview_meta",
         "readback_not_persisted",
         "dry_run_preview_meta",
         "readback_not_persisted",
-        "dry_run_command_meta",
         "validation_rejected_before_persistence",
         "validation_rejected_before_persistence",
     ]
@@ -383,13 +376,13 @@ def test_build_rbac_matrix_results_attaches_write_side_effect_proofs(monkeypatch
     )
 
     write_results = [result for result in results if result["family"].startswith("rbac-write-")]
-    assert len(results) == 56
-    assert len(write_results) == 32
+    assert len(results) == 48
+    assert len(write_results) == 24
     assert all(result["side_effect_check"]["ok"] is True for result in write_results)
-    assert [result["side_effect_check"]["kind"] for result in write_results].count("rbac_dry_run_write_meta") == 16
+    assert [result["side_effect_check"]["kind"] for result in write_results].count("rbac_dry_run_write_meta") == 12
     assert [result["side_effect_check"]["kind"] for result in write_results].count(
         "authorization_rejected_before_persistence"
-    ) == 16
+    ) == 12
     readback_checks = [
         result["side_effect_check"].get("readback_not_persisted")
         for result in write_results

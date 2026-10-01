@@ -51,24 +51,10 @@
       "status": "implemented"
     },
     {
-      "method": "GET",
-      "path": "/bff/v5/interventions",
-      "family": "v5-interventions",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/v5/interventions/{id}/remediate",
-      "family": "v5-interventions",
-      "status": "implemented"
-    },
-    {
       "method": "POST",
       "path": "/bff/v5/interventions/{id}/two-man-sign",
       "family": "v5-interventions",
-      "status": "superseded_with_reason",
-      "task_id": "BFF-LUV-GAP-011",
-      "reason": "Superseded by POST /bff/v5/interventions/{id}/remediate + RemediateSentinelIntervention, which is already a two-man guarded surface requiring two_man_signature_id. A separate two-man-sign step is redundant; callers should submit remediate with the second-operator signature directly."
+      "status": "implemented"
     },
     {
       "method": "POST",
@@ -1336,13 +1322,6 @@
     {
       "method": "GET",
       "path": "/bff/v5/loop-runs",
-      "family": "execute-plans-cutover-smoke",
-      "status": "deferred_with_task",
-      "task_id": "BFF-LUV-GAP-012"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/v5/sentinel/findings",
       "family": "execute-plans-cutover-smoke",
       "status": "deferred_with_task",
       "task_id": "BFF-LUV-GAP-012"

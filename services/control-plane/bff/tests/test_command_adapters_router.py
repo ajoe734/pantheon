@@ -895,7 +895,6 @@ _ALIAS_PARAMS: Dict[str, Dict[str, Any]] = {
     "ApproveDecision": {"decision_id": "alias-target-1"},
     "RejectDecision": {"decision_id": "alias-target-1", "rejection_reason": "alias equivalence"},
     "RecordSponsorDecision": {"committee_id": "alias-target-1", "sponsor_decision": "approved", "rationale_ref": "ref-1"},
-    "RemediateSentinelIntervention": {"intervention_id": "alias-target-1", "remediation_action": "resolve"},
     "HumanGateApprove": {"human_gate_item_id": "alias-target-1", "decision": "approve"},
     "HumanGateReject": {"human_gate_item_id": "alias-target-1", "decision": "reject"},
     "HumanGateRequestMoreEvidence": {"human_gate_item_id": "alias-target-1", "decision": "request_more_evidence"},
@@ -1109,7 +1108,6 @@ def test_ranking_adapter_existing_canonical_alias_parity(params, expected) -> No
 
 _DISPATCH_CASES = [
     # Persona lifecycle's real authenticated owner is covered by test_persona_lifecycle_forward.
-    ("V5InterventionAction", "remediate", "RemediateSentinelIntervention", "/sentinel/interventions/alias-target-1/remediate"),
 ]
 
 

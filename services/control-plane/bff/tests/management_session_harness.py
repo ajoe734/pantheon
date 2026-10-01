@@ -108,9 +108,6 @@ class InMemoryManagementReadStore:
     def list_incident_alerts(self) -> List[Dict[str, Any]]:
         return []
 
-    def list_sentinel_findings(self) -> List[Dict[str, Any]]:
-        return []
-
     def list_loop_executions(self) -> List[Dict[str, Any]]:
         return []
 
@@ -118,9 +115,6 @@ class InMemoryManagementReadStore:
         return []
 
     def list_incident_records(self) -> List[Dict[str, Any]]:
-        return []
-
-    def list_intervention_records(self) -> List[Dict[str, Any]]:
         return []
 
     def list_evidence_records(self) -> List[Dict[str, Any]]:

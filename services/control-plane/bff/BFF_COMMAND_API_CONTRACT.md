@@ -557,7 +557,6 @@ but must also be adapted to the `/bff/v1/commands` envelope in BFF-CONSOL-019.
 |---|---|---|---|---|---|---|---|
 | `/bff/approvals/{id}/decide` | POST | `ApproveDecision` / `RejectDecision` / `RequestApprovalRevision` / `EscalateDecision` / `FreezeDecision` | `approval:{id}:decide:{decision}:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `approval.{decision}` | approver |
 | `/bff/alerts/{id}/acknowledge` | POST | `AcknowledgeAlert` | `alert:{id}:acknowledge:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `alert.acknowledge` | operator |
-| `/bff/v5/interventions/{id}/decide` | POST | `DecideV5Intervention` | `intervention:{id}:decide:{decision}:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `intervention.{decision}` | operator or approver |
 | `/bff/confirm-tokens` | POST | `IssueConfirmToken` | `confirm-token:{actionId}:{entityId}:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `{actionId}.confirm_token.issued` | role-specific per high-risk action catalog |
 | `/bff/confirm-tokens/{tokenId}/redeem` | POST | `RedeemConfirmToken` | `confirm-token:{tokenId}:redeem:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `confirm_token.redeem` | operator (token already carries role gate) |
 

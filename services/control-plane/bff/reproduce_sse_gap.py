@@ -18,7 +18,7 @@ def test_sse_compatibility_routes_exposed(client):
         ("/bff/sse/command-center/kpi", "ranking", {}),
         ("/bff/sse/command-center/events", "loop", {}),
         ("/bff/sse/jobs/job-1/progress", "tool", {}),
-        ("/bff/sse/alerts", "sentinel", {}),
+        ("/bff/sse/alerts", "system", {}),
         ("/bff/sse/incidents/inc-1/timeline", "journal", {}),
         ("/bff/sse/deployment/events", "artifact", {}),
         ("/bff/sse/review/updates", "approval", {}),

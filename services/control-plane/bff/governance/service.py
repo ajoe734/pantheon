@@ -213,7 +213,6 @@ class GovernanceService:
         page_slice_fn: PageSlice = page_slice,
         submit_action: Optional[SubmitAction] = None,
         publish_event: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
-        get_interventions: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         dataset_surface_status: Optional[Callable[..., Dict[str, Any]]] = None,
         redact_evidence_refs: Optional[Callable[..., Tuple[List[Dict[str, Any]], int]]] = None,
         capabilities_for_identity: Optional[Callable[[Any], Any]] = None,
@@ -226,7 +225,6 @@ class GovernanceService:
         self.page_slice = page_slice_fn
         self.submit_action = submit_action
         self.publish_event = publish_event
-        self.get_interventions = get_interventions or (lambda: [])
         self.dataset_surface_status = dataset_surface_status or self._default_dataset_surface_status
         self.redact_evidence_refs = redact_evidence_refs or self._fail_closed_redact_evidence_refs
         self.capabilities_for_identity = capabilities_for_identity or (lambda identity: None)
@@ -1421,26 +1419,6 @@ class GovernanceService:
                     "evidence_refs": copy.deepcopy(item.get("evidence_refs") or []),
                 }
                 entries_by_id.setdefault(entry["id"], entry)
-        for item in self.get_interventions() or []:
-            intervention_id = record_id(item, "intervention_id", "id")
-            if not intervention_id:
-                continue
-            entries_by_id[f"ledger-intervention-{intervention_id}"] = {
-                "id": f"ledger-intervention-{intervention_id}",
-                "entry_id": f"ledger-intervention-{intervention_id}",
-                "source_type": "intervention",
-                "source_dataset": "v5_interventions",
-                "event_type": f"intervention.{str(item.get('status') or 'unknown').lower()}",
-                "status": item.get("status") or "unknown",
-                "actor": item.get("triggered_by") or item.get("actor") or item.get("owner"),
-                "target_type": item.get("target_type") or "Intervention",
-                "target_id": item.get("target_id") or intervention_id,
-                "occurred_at": record_time(item) or None,
-                "title": f"Intervention: {item.get('kind') or item.get('type') or 'intervention'}",
-                "summary": item.get("description") or item.get("summary") or item.get("reason"),
-                "href": f"/bff/v5/interventions/{intervention_id}",
-                "evidence_refs": copy.deepcopy(item.get("evidence_refs") or []),
-            }
         for event in self.list_audit_events():
             event_id = record_id(event, "entry_id", "id", "auditId")
             haystack = " ".join(

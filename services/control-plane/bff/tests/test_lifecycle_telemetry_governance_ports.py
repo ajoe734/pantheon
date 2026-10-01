@@ -392,25 +392,17 @@ def test_postmortem_port_reads(sample_incidents_data, sample_postmortems_data):
 
 
 # =====================================================================
-# Tests: Lifecycle, Loop Runs, Sentinel, and Kill Switch
+# Tests: Lifecycle, Loop Runs, and Kill Switch
 # =====================================================================
 
-def test_lifecycle_loop_runs_and_sentinel():
-    """Verify loop runs and sentinel findings listing and derivation."""
+def test_lifecycle_loop_runs():
+    """Verify loop runs listing."""
     port = DomainLifecyclePort(
         loop_runs={
             "lr-001": {
                 "loop_run_id": "lr-001",
                 "loop_id": "loop-execution",
                 "status": "completed",
-            }
-        },
-        sentinel_findings={
-            "sf-001": {
-                "finding_id": "sf-001",
-                "kind": "drift",
-                "status": "open",
-                "severity": "high",
             }
         },
     )
@@ -424,22 +416,11 @@ def test_lifecycle_loop_runs_and_sentinel():
     assert avail is True
     assert run["loop_run_id"] == "lr-001"
 
-    avail, findings = port.list_sentinel_findings(severity="high")
-    assert avail is True
-    assert len(findings) == 1
-    assert findings[0]["finding_id"] == "sf-001"
-
-    avail, finding = port.get_sentinel_finding("sf-001")
-    assert avail is True
-    assert finding is not None
-    assert finding["finding_id"] == "sf-001"
-
 
 def test_lifecycle_fallback_from_incidents(sample_incidents_data):
-    """Verify loop runs and sentinel findings derivation from incidents when primary store is None."""
+    """Verify loop runs derivation from incidents when primary store is None."""
     port = DomainLifecyclePort(
         loop_runs=None,
-        sentinel_findings=None,
         incidents=sample_incidents_data,
     )
 
@@ -447,9 +428,6 @@ def test_lifecycle_fallback_from_incidents(sample_incidents_data):
     assert avail is True
     assert len(runs) == 3
 
-    avail, findings = port.list_sentinel_findings()
-    assert avail is True
-    assert len(findings) == 3
 
 
 def test_lifecycle_loop_health_and_projection_reader():

@@ -39,7 +39,6 @@ class CommandType(str, Enum):
     REVIEW_MUTATION = "ReviewMutation"
     EXECUTE_MUTATION = "ExecuteMutation"
     RECORD_SPONSOR_DECISION = "RecordSponsorDecision"
-    REMEDIATE_SENTINEL_INTERVENTION = "RemediateSentinelIntervention"
     CAPITAL_POOL_ACTION = "CapitalPoolAction"
     RANKING_FORMULA_ACTION = "RankingFormulaAction"
     REBALANCE_ACTION = "RebalanceAction"
@@ -65,10 +64,6 @@ class CommandType(str, Enum):
     CONFIRM_TOKEN_DELETE = "DeleteConfirmToken"
     CONFIRM_TOKEN_REDEEM = "RedeemConfirmToken"
     V5_INTERVENTION_ACTION = "V5InterventionAction"
-    DECIDE_V5_INTERVENTION = "DecideV5Intervention"
-    SENTINEL_FINDING_STATUS = "SentinelFindingStatus"
-    SENTINEL_REMEDIATION_BUILD = "SentinelRemediationBuild"
-    SENTINEL_REMEDIATION_EXECUTE = "SentinelRemediationExecute"
     ALERT_ACKNOWLEDGE = "AlertAcknowledge"
     HUMAN_GATE_APPROVE = "HumanGateApprove"
     HUMAN_GATE_REJECT = "HumanGateReject"
@@ -118,8 +113,6 @@ class ObjectType(str, Enum):
     JOB = "Job"
     AUDIT_EXPORT = "AuditExport"
     CONFIRM_TOKEN = "ConfirmToken"
-    SENTINEL_FINDING = "SentinelFinding"
-    SENTINEL_REMEDIATION = "SentinelRemediation"
     HUMAN_GATE_ITEM = "HumanGateItem"
 
 
@@ -1275,42 +1268,3 @@ def redact_settings_bundle(
 
     _traverse(bundle_copy)
     return bundle_copy, total_redacted
-
-
-# --------------------------------------------------------------------------- #
-# v5 Interventions — HIQ Sentinel remediation (BFF-FINAL-009)
-# --------------------------------------------------------------------------- #
-
-class InterventionStatus(str, Enum):
-    PENDING = "pending"
-    REMEDIATED = "remediated"
-    DISMISSED = "dismissed"
-    ESCALATED = "escalated"
-
-
-class InterventionKind(str, Enum):
-    HIQ_SENTINEL = "hiq_sentinel"
-    RISK_BREACH = "risk_breach"
-    STRATEGY_DRIFT = "strategy_drift"
-    LOOP_ANOMALY = "loop_anomaly"
-
-
-class InterventionRecord(BaseModel):
-    intervention_id: str
-    kind: InterventionKind
-    status: InterventionStatus
-    target_type: str
-    target_id: str
-    triggered_at: str
-    triggered_by: str = "sentinel"
-    remediation_action: Optional[str] = None
-    remediated_at: Optional[str] = None
-    two_man_signature_id: Optional[str] = None
-    correlation_id: Optional[str] = None
-    description: str = ""
-
-
-class InterventionListResponse(BaseModel):
-    items: List[InterventionRecord]
-    count: int
-    generated_at: str = Field(default_factory=utc_now)
