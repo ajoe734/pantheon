@@ -5,7 +5,7 @@
   "scope": "Delete dead Agora backend surfaces no longer used by the V6 trading desk (signals, feedback, signals SSE alias, watchlist, markets, notes, market-notes, training-examples, insights, memory, committee sessions, evidence-pack, persona-lab, skill-coaching, evaluation suites/runs, alerts triage, daily, sessions, messages, ask, inbox, incoming, handoffs, research-tasks, shadow router, dashboard-recipes, and widgets), preserving trading-room, workshops, interactions, proposals, candidate decisions, candidate-pools, performance, capabilities, operational-readiness, journal, postmortems, servant, research plans/runs, trading-intents, and me.",
   "owner": "Antigravity",
   "reviewer": "Codex",
-  "frozen_base": "ad76e3dee7c177ab4e053700c4372cafb9d15536",
+  "frozen_base": "d61575a5968874676744d8ae022b4affa2e6c33b",
   "budget_summary": {
     "production": {
       "additions": 474,
@@ -13,14 +13,14 @@
       "net": -6674
     },
     "test": {
-      "additions": 289,
-      "deletions": 4709,
-      "net": -4420
+      "additions": 336,
+      "deletions": 4728,
+      "net": -4392
     },
     "docs_evidence": {
-      "additions": 181,
+      "additions": 186,
       "deletions": 38,
-      "net": 143
+      "net": 148
     },
     "requirement": "net production lines <= -3000",
     "achieved": "net production lines = -6674"
@@ -76,9 +76,9 @@
   ],
   "validation": [
     {
-      "command": "python3 scripts/git/diff_budget.py --base ad76e3dee7c177ab4e053700c4372cafb9d15536",
+      "command": "python3 scripts/git/diff_budget.py --base d61575a5968874676744d8ae022b4affa2e6c33b",
       "exit_code": 0,
-      "result": "Diff budget check passes with net production lines -6674 (added 474, deleted 7148), net test lines -4420 (added 289, deleted 4709), and net docs/evidence +143 (added 181, deleted 38), exceeding the -3000 net production line reduction requirement."
+      "result": "Diff budget check passes with net production lines -6674 (added 474, deleted 7148), net test lines -4392 (added 336, deleted 4728), and net docs/evidence +148 (added 186, deleted 38), exceeding the -3000 net production line reduction requirement."
     },
     {
       "command": ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
