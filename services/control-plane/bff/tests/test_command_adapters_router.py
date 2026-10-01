@@ -1111,7 +1111,7 @@ def test_ranking_adapter_existing_canonical_alias_parity(params, expected) -> No
 
 _DISPATCH_CASES = [
     ("RuntimeAction", "start", "StartRuntime", "/runtimes/alias-target-1/start"),
-    ("PersonaAction", "advance_lifecycle", "AdvanceLifecycle", "/personas/alias-target-1/advance-lifecycle"),
+    # Persona lifecycle's real authenticated owner is covered by test_persona_lifecycle_forward.
     ("V5InterventionAction", "remediate", "RemediateSentinelIntervention", "/sentinel/interventions/alias-target-1/remediate"),
     ("RuntimeAction", "RestartPaperRuntime", "RestartPaperRuntime", "/paper-runtimes/alias-target-1/restart"),
     ("RuntimeAction", "RestartTelemetryBridge", "RestartTelemetryBridge", "/paper-runtimes/alias-target-1/telemetry-bridge/restart"),
