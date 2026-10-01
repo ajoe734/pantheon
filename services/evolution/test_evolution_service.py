@@ -18,6 +18,8 @@ Run:
 """
 from __future__ import annotations
 
+from services.evolution import dispatch_outbox as approval_gate
+
 import os
 import sys
 import tempfile
@@ -2326,7 +2328,7 @@ def test_execution_rejects_invalid_approval_before_effects(
     advance_to_reviewed(did)
     advance_to_approved(did)
     decision = evo_main.store.get(did)
-    snapshot = evo_main.configured_approval_reader("evolution").get(
+    snapshot = approval_gate.configured_approval_reader("evolution").get(
         decision.approval_decision_id
     ).model_dump()
     if invalid == "changed_proposal":
@@ -2348,7 +2350,7 @@ def test_execution_rejects_invalid_approval_before_effects(
     if invalid in {"missing", "unavailable"}:
         error = ApprovalUnavailable if invalid == "unavailable" else ApprovalInvalid
         reader = Mock(get=Mock(side_effect=error("Governance read rejected")))
-    monkeypatch.setattr(evo_main, "configured_approval_reader", lambda domain: reader)
+    monkeypatch.setattr(approval_gate, "configured_approval_reader", lambda domain: reader)
     dispatch = Mock(side_effect=AssertionError("must not dispatch without approval"))
     monkeypatch.setattr(evo_main.controller, "dispatch_approved", dispatch)
     before = deepcopy(evo_main.store.get(did).to_dict())
@@ -2373,7 +2375,7 @@ def test_execution_validates_approval_via_real_http_reader(monkeypatch, body_rol
     did = propose()["decision_id"]
     advance_to_reviewed(did, apv_id="approval-http-exact")
     advance_to_approved(did)
-    snapshot = evo_main.configured_approval_reader("evolution").get("approval-http-exact").model_dump()
+    snapshot = approval_gate.configured_approval_reader("evolution").get("approval-http-exact").model_dump()
     reads = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -2393,7 +2395,7 @@ def test_execution_validates_approval_via_real_http_reader(monkeypatch, body_rol
     monkeypatch.setenv("EVOLUTION_GOVERNANCE_BASE_URL", f"http://127.0.0.1:{server.server_port}")
     monkeypatch.setenv("EVOLUTION_GOVERNANCE_SERVICE_TOKEN", "synthetic-unit-token")
     monkeypatch.delenv("EVOLUTION_GOVERNANCE_SERVICE_TOKEN_FILE", raising=False)
-    monkeypatch.setattr(evo_main, "configured_approval_reader", configured_approval_reader)
+    monkeypatch.setattr(approval_gate, "configured_approval_reader", configured_approval_reader)
     try:
         response = client.post(f"/api/evolution/proposals/{did}/execute", json={
             "actor_role": body_role, "actor_id": "caller",

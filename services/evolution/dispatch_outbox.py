@@ -54,6 +54,51 @@ from services.foundation.reliable_delivery import (
     reconcile_prepared,
 )
 
+from services.foundation import sha256_checksum
+from services.governance.approval_authority import ApprovalInvalid, configured_approval_reader
+
+
+_IMMUTABLE_PROPOSAL_FIELDS = (
+    "decision_id",
+    "tenant_id",
+    "target_type",
+    "target_id",
+    "target_version",
+    "action_type",
+    "risk_level",
+    "created_by_role",
+    "created_by_id",
+    "rationale",
+    "evidence_refs",
+    "threshold_snapshots",
+    "linked_postmortem_id",
+    "linked_incident_id",
+    "capital_pool_id",
+    "persona_id",
+    "target_stage",
+    "metadata",
+)
+
+
+def immutable_decision_fingerprint(decision: Mapping[str, Any]) -> str:
+    return sha256_checksum({field: decision.get(field) for field in _IMMUTABLE_PROPOSAL_FIELDS})
+
+
+def require_execution_approval(decision: Mapping[str, Any]) -> None:
+    """Require current Governance authority for exactly this stored proposal."""
+    if decision.get("decision_state") != "approved" or not decision.get("approval_decision_id"):
+        raise ApprovalInvalid("An approved proposal with a governance approval is required")
+    configured_approval_reader("evolution").get(decision["approval_decision_id"]).require_valid(expected={
+        "tenant_id": decision["tenant_id"],
+        "target_type": "evolution_execute",
+        "target_id": decision["decision_id"],
+        "target_version": decision["target_version"],
+        "risk_level": decision["risk_level"],
+        "subject.proposal_id": decision["decision_id"],
+        "subject.proposal_content_digest": immutable_decision_fingerprint(decision),
+    })
+
+
 OWNER_SERVICE = "evolution-svc"
 DISPATCH_EVENT_TYPE = "evolution.dispatch_requested"
 AGGREGATE_TYPE = "evolution_decision"

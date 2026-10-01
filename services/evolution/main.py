@@ -63,7 +63,7 @@ from services.foundation import (
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 from services.governance.approval_authority import (
-    ApprovalInvalid, ApprovalUnavailable, configured_approval_reader,
+    ApprovalInvalid, ApprovalUnavailable,
 )
 
 # ---------------------------------------------------------------------------
@@ -139,6 +139,7 @@ from postmortem_bridge import (  # type: ignore
     build_published_postmortem_proposal_request,
 )
 from services.evolution.dispatch_outbox import (
+    immutable_decision_fingerprint, require_execution_approval,
     CompensationLedger,
     DispatchIntent,
     EvolutionDispatchError,
@@ -898,33 +899,8 @@ def _validated_delivery_event(body: ProposeRequest) -> Dict[str, Any] | None:
     }
 
 
-_IMMUTABLE_PROPOSAL_FIELDS = (
-    "decision_id",
-    "tenant_id",
-    "target_type",
-    "target_id",
-    "target_version",
-    "action_type",
-    "risk_level",
-    "created_by_role",
-    "created_by_id",
-    "rationale",
-    "evidence_refs",
-    "threshold_snapshots",
-    "linked_postmortem_id",
-    "linked_incident_id",
-    "capital_pool_id",
-    "persona_id",
-    "target_stage",
-    "metadata",
-)
-
-
 def _immutable_decision_fingerprint(decision: EvolutionDecision) -> str:
-    payload = decision.to_dict()
-    return sha256_checksum(
-        {field: payload.get(field) for field in _IMMUTABLE_PROPOSAL_FIELDS}
-    )
+    return immutable_decision_fingerprint(decision.to_dict())
 
 
 def _build_proposed_decision(
@@ -2032,19 +2008,7 @@ def _require_execution_approval(decision: EvolutionDecision) -> None:
     if decision.decision_state != EvolutionDecisionState.APPROVED:
         raise HTTPException(status_code=422, detail="Can only execute from approved")
     try:
-        if not decision.approval_decision_id:
-            raise ApprovalInvalid("A governance approval is required to execute")
-        configured_approval_reader("evolution").get(
-            decision.approval_decision_id
-        ).require_valid(expected={
-            "tenant_id": decision.tenant_id,
-            "target_type": "evolution_execute",
-            "target_id": decision.decision_id,
-            "target_version": decision.target_version,
-            "risk_level": _enum_value(decision.risk_level),
-            "subject.proposal_id": decision.decision_id,
-            "subject.proposal_content_digest": _immutable_decision_fingerprint(decision),
-        })
+        require_execution_approval(decision.to_dict())
     except ApprovalUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ApprovalInvalid as exc:
