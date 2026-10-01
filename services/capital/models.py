@@ -179,7 +179,7 @@ class CreateBindingRequest(BaseModel):
 class ActivateBindingRequest(BaseModel):
     actor_id: str
     actor_role: str
-    approval_decision_id: str
+    approval_decision_id: Optional[str] = None
 
 
 class UpdateBindingStatusRequest(BaseModel):

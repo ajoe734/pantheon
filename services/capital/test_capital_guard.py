@@ -222,3 +222,122 @@ def test_rebalance_with_unobservable_plan_limit_is_rejected_then_evaluated(clien
              target_version=plan["plan_digest"], subject=subject, policy={"gross_limit": 0.0001})
     blocked = test_client.post("/api/rebalances/rb-001/apply", json=_apply_payload(approval_ref="dec-real"))
     assert blocked.status_code == 403 and "Risk policy rejected" in blocked.json()["detail"]
+
+
+def test_real_provisioning_paper_pool_create_readback_replay_spies_zero_calls(client, monkeypatch):
+    test_client, _ = client
+    safe_mode_calls, policy_calls, approval_calls = [], [], []
+    monkeypatch.setattr(_main().capital_guard, "_safe_mode_reader", lambda pool_id: safe_mode_calls.append(pool_id) or "normal")
+    monkeypatch.setattr(_main().capital_guard, "_policy_loader", lambda ref: policy_calls.append(ref) or {"risk_policy_id": ref})
+    monkeypatch.setattr(_main().capital_guard, "_approval_reader", type("SpyReader", (), {"get": lambda s, d: approval_calls.append(d)})())
+
+    payload = {
+        "actor_id": "control-plane-bff", "actor_role": "admin", "pool_id": "pool-persona-paper-001",
+        "name": "CP1 Trader paper pool", "owner_id": "tenant-test", "owner_type": "org",
+        "status": "active", "currency": "USD", "single_runtime_enforced": True,
+        "metadata": {"internal": True, "execution_context": "paper", "tenant_id": "tenant-test", "persona_id": "persona-cp1"},
+    }
+    created = test_client.post("/api/capital-pools", json=payload)
+    assert created.status_code == 201, created.text
+    assert created.json()["status"] == "active"
+    readback = test_client.get("/api/capital-pools/pool-persona-paper-001")
+    assert readback.status_code == 200
+    assert readback.json()["status"] == "active"
+    assert readback.json()["metadata"]["execution_context"] == "paper"
+    assert len(safe_mode_calls) == 0
+    assert len(policy_calls) == 0
+    assert len(approval_calls) == 0
+
+
+def test_explicit_paper_policy_enforces_limits_and_rejects(client, monkeypatch):
+    test_client, _ = client
+    payload = {
+        "actor_id": "control-plane-bff", "actor_role": "admin", "pool_id": "pool-paper-strict",
+        "name": "Strict paper pool", "owner_id": "tenant-test", "owner_type": "org",
+        "status": "active", "currency": "USD", "risk_policy_ref": "paper-strict-policy",
+        "metadata": {"internal": True, "execution_context": "paper"},
+    }
+    monkeypatch.setattr(_main().capital_guard, "_policy_loader", lambda ref: (_ for _ in ()).throw(FileNotFoundError("no policy")))
+    res_missing = test_client.post("/api/capital-pools", json=payload)
+    assert res_missing.status_code == 403
+    assert "Risk policy unavailable" in res_missing.json()["detail"]
+
+    monkeypatch.setattr(_main().capital_guard, "_policy_loader", lambda ref: {"risk_policy_id": ref, "max_sector_exposure": {"tech": 0.2}})
+    res_unobs = test_client.post("/api/capital-pools", json=payload)
+    assert res_unobs.status_code == 403
+    assert "cannot be evaluated" in res_unobs.json()["detail"]
+
+    monkeypatch.setattr(_main().capital_guard, "_policy_loader", lambda ref: {"risk_policy_id": ref, "gross_limit": -1.0})
+    res_rejected = test_client.post("/api/capital-pools", json=payload)
+    assert res_rejected.status_code == 403
+    assert "Risk policy rejected" in res_rejected.json()["detail"]
+
+
+def test_paper_binding_activation_passes_guard_and_honors_lowerstore_contract(client):
+    test_client, _ = client
+    test_client.post("/api/capital-pools", json={
+        "actor_id": "control-plane-bff", "actor_role": "admin", "pool_id": "pool-paper-binding",
+        "name": "Paper pool", "owner_id": "tenant-test", "owner_type": "org", "status": "active",
+        "metadata": {"execution_context": "paper"},
+    })
+    binding = test_client.post("/api/bindings", json={
+        "actor_id": "control-plane-bff", "actor_role": "admin", "binding_id": "binding-paper-01",
+        "persona_id": "persona-1", "capital_pool_id": "pool-paper-binding", "role": "paper_owner",
+        "allowed_deployment_scope": "paper",
+    }).json()
+    assert binding["status"] == "pending"
+
+    # Lowerstore currently insists any active binding has a decision; until BFF-CAPITAL-FORWARD-001 lands,
+    # activating without approval_decision_id passes CapitalGuard but raises 400 from the lower store.
+    res_no_approval = test_client.post("/api/bindings/binding-paper-01/activate", json={
+        "actor_id": "persona-admin-1", "actor_role": "persona.admin",
+    })
+    assert res_no_approval.status_code == 400
+    assert "approval_decision_id is required" in res_no_approval.json()["detail"]
+
+
+def test_canary_live_mixed_and_sameweight_upgrade_deny_unapproved_money_effect(client, monkeypatch):
+    test_client, _ = client
+    test_client.post("/api/capital-pools", json={
+        "actor_id": "control-plane-bff", "actor_role": "admin", "pool_id": "pool-paper-upgrades",
+        "name": "Paper pool", "owner_id": "tenant-test", "owner_type": "org", "status": "active",
+        "metadata": {"execution_context": "paper"},
+    })
+    test_client.post("/api/bindings", json={
+        "actor_id": "control-plane-bff", "actor_role": "admin", "binding_id": "binding-canary-01",
+        "persona_id": "persona-c1", "capital_pool_id": "pool-paper-upgrades", "role": "live_owner",
+        "allowed_deployment_scope": "canary", "capital_sleeve_id": "sleeve-c1",
+    })
+    test_client.post("/api/bindings", json={
+        "actor_id": "control-plane-bff", "actor_role": "admin", "binding_id": "binding-paper-p",
+        "persona_id": "persona-p", "capital_pool_id": "pool-paper-upgrades", "role": "paper_owner",
+        "allowed_deployment_scope": "paper",
+    })
+    monkeypatch.setattr(_main().capital_guard, "_approval_reader", SnapshotApprovalReader(None))
+    denied_canary = test_client.post("/api/bindings/binding-canary-01/activate", json={
+        "actor_id": "persona-admin-1", "actor_role": "persona.admin", "approval_decision_id": "dec-missing",
+    })
+    assert denied_canary.status_code == 403
+    assert "approval" in denied_canary.json()["detail"].lower()
+
+    base_line = {
+        "ranking_snapshot_id": "ranking-q3",
+        "allocation_evaluation_id": "allocation-evaluation-q3",
+        "allocation_policy_version": "persona-real-allocation-v1",
+    }
+    paper_line = {
+        **base_line, "allocation_line_digest": "dig-p",
+        "persona_id": "persona-p", "stage": "paper_running", "capital_scope": "paper_ledger",
+        "capital_pool_id": "pool-paper-upgrades", "current_weight": 0.0, "target_weight": 0.5, "delta": 0.5,
+    }
+    canary_line = {
+        **base_line, "allocation_line_digest": "dig-c",
+        "persona_id": "persona-c1", "stage": "canary_running", "capital_scope": "pool",
+        "capital_pool_id": "pool-paper-upgrades", "capital_sleeve_id": "sleeve-c1",
+        "current_weight": 0.0, "target_weight": 0.2, "delta": 0.2,
+    }
+    assert test_client.post("/api/rebalances", json=_rebalance_payload(
+        rebalance_id="rb-mixed", capital_pool_id="pool-paper-upgrades", lines=[paper_line, canary_line],
+    )).status_code == 201
+    denied_mixed = test_client.post("/api/rebalances/rb-mixed/apply", json=_apply_payload(rebalance_id="rb-mixed", approval_ref="dec-none"))
+    assert denied_mixed.status_code == 403

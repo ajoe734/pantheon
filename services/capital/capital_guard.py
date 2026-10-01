@@ -32,6 +32,60 @@ _FACT_OF_LIMIT = {
     "max_target_overlap": "target_overlap", "max_signal_correlation": "signal_correlation",
 }
 SAFE_MODE_OK = frozenset({"normal", "normal_restored"})
+_STAGE_DEPLOYMENT_SCOPE = {
+    "paper": "paper",
+    "paper_candidate": "paper",
+    "paper_running": "paper",
+    "canary": "canary",
+    "canary_candidate": "canary",
+    "canary_running": "canary",
+    "live": "live",
+    "live_candidate": "live",
+    "live_running": "live",
+}
+
+
+def is_paper_line(line: Any) -> bool:
+    get = (lambda k: line.get(k)) if isinstance(line, dict) else (lambda k: getattr(line, k, None))
+    stage = _STAGE_DEPLOYMENT_SCOPE.get(str(get("stage") or "").strip().lower())
+    scope = str(get("capital_scope") or "").strip().lower()
+    return stage == "paper" and scope == "paper_ledger"
+
+
+def is_paper_operation(
+    *,
+    pool: Any,
+    target_type: str,
+    binding: Any = None,
+    allocations: Sequence[Any] = (),
+    proposal_lines: Sequence[Any] = (),
+    contexts: Sequence[Mapping[str, Any]] = (),
+) -> bool:
+    if (getattr(pool, "metadata", None) or {}).get("execution_context") != "paper":
+        return False
+    if target_type == "capital_pool_activation":
+        if allocations:
+            return all(is_paper_line(a) for a in allocations)
+        return all(
+            _STAGE_DEPLOYMENT_SCOPE.get(str(c.get("stage") or "").strip().lower()) in (None, "paper")
+            for c in contexts
+            if c.get("stage") is not None
+        )
+    if target_type == "capital_binding_activation":
+        get = (lambda k: binding.get(k)) if isinstance(binding, dict) else (lambda k: getattr(binding, k, None))
+        return bool(
+            binding
+            and get("role") == "paper_owner"
+            and get("allowed_deployment_scope") == "paper"
+            and all(is_paper_line(a) for a in allocations)
+        )
+    if target_type == "rebalance_apply":
+        return bool(
+            proposal_lines
+            and all(is_paper_line(l) for l in proposal_lines)
+            and all(is_paper_line(a) for a in allocations)
+        )
+    return False
 
 
 class CapitalGuardError(PermissionError):
@@ -87,11 +141,25 @@ class CapitalGuard:
         target_id: str,
         expected: Mapping[str, Any],
         contexts: Sequence[Mapping[str, Any]],
+        binding: Any = None,
+        allocations: Sequence[Any] = (),
+        proposal_lines: Sequence[Any] = (),
     ) -> None:
         """Raise CapitalGuardError unless this exact risk increase is allowed now."""
         tenant = str(tenant_id or "").strip()
         if not tenant or _tenant_of(pool) != tenant:
             raise CapitalGuardError("Capital pool does not belong to the calling tenant")
+        if is_paper_operation(
+            pool=pool,
+            target_type=target_type,
+            binding=binding,
+            allocations=allocations,
+            proposal_lines=proposal_lines,
+            contexts=contexts,
+        ):
+            if str(getattr(pool, "risk_policy_ref", None) or "").strip():
+                self._require_risk_policy(pool, target_type, target_id, contexts)
+            return
         self._require_safe_mode(pool.pool_id)
         self._require_risk_policy(pool, target_type, target_id, contexts)
         self._require_approval(decision_id, tenant, target_type, target_id, expected)

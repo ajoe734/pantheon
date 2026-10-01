@@ -287,6 +287,7 @@ class CapitalBoundaryService:
             expected={"target_version": pool_digest(pool), "subject.pool_id": pool.pool_id,
                       "subject.risk_direction": "increase"},
             contexts=contexts,
+            allocations=held,
         )
 
     def _pool_facts(self, pool: CapitalPool, lines: List[Dict[str, Any]] = ()) -> Dict[str, Any]:
@@ -468,6 +469,7 @@ class CapitalBoundaryService:
                 raise CapitalServiceError(
                     f"CapitalPool '{pool.pool_id}' must be active before bindings can be activated"
                 )
+            held = self.allocation_store.list_allocations(capital_pool_id=pool.pool_id, tenant_id=_current_tenant())
             self.guard.authorize(
                 pool=pool, tenant_id=_current_tenant(), decision_id=body.approval_decision_id,
                 target_type="capital_binding_activation", target_id=binding_id,
@@ -476,6 +478,8 @@ class CapitalBoundaryService:
                     "subject.capital_pool_id": pool.pool_id, "subject.risk_direction": "increase",
                 },
                 contexts=[{"stage": binding.allowed_deployment_scope, **self._pool_facts(pool)}],
+                binding=binding,
+                allocations=held,
             )
             try:
                 updated = self.binding_store.activate(binding_id, body.approval_decision_id)
@@ -542,10 +546,12 @@ class CapitalBoundaryService:
         return getattr(line, field, None)
 
     @classmethod
-    def _line_increases_risk(cls, line: Any) -> bool:
-        return float(cls._line_value(line, "target_weight") or 0) > float(
+    def _line_increases_risk(cls, line: Any, existing: Any = None) -> bool:
+        if float(cls._line_value(line, "target_weight") or 0) > float(
             cls._line_value(line, "current_weight") or 0
-        )
+        ):
+            return True
+        return bool(existing and cls._line_is_paper_scope(existing) and not cls._line_is_paper_scope(line))
 
     @classmethod
     def _line_deployment_scope(cls, line: Any) -> str | None:
@@ -768,12 +774,17 @@ class CapitalBoundaryService:
     def _guard_rebalance_apply(
         self, rebalance_id: str, proposal: Dict[str, Any], decision_id: str | None, tenant: str | None
     ) -> None:
-        increasing = [line for line in proposal.get("lines") or [] if self._line_increases_risk(line)]
+        lines = proposal.get("lines") or []
+        pool_id = str(proposal.get("capital_pool_id") or "")
+        held = self.allocation_store.list_allocations(capital_pool_id=pool_id, tenant_id=tenant)
+        held_map = {a.get("allocation_id"): a for a in held}
+        increasing = [
+            line for line in lines
+            if self._line_increases_risk(line, held_map.get(line.get("allocation_id")))
+        ]
         if not increasing:
             return
-        pool_id = str(proposal.get("capital_pool_id") or "")
         digest = plan_digest(proposal)
-        lines = proposal.get("lines") or []
         pool = self.get_pool(pool_id)
         plan_facts = self._pool_facts(pool, lines)
         self.guard.authorize(
@@ -784,6 +795,8 @@ class CapitalBoundaryService:
                 "subject.capital_pool_id": pool_id, "subject.risk_direction": "increase",
             },
             contexts=[{"stage": self._line_deployment_scope(line), **plan_facts} for line in increasing],
+            allocations=held,
+            proposal_lines=lines,
         )
 
     def apply_rebalance(
