@@ -1075,14 +1075,14 @@ def create_governance_router(
             _fail(410, "VALIDATION_FAILED", "RequestApprovalRevision is retired", "Use RejectDecision with notes", precondition_failed="retired_action")
         if any(payload.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
             _fail(501, "NOT_IMPLEMENTED", "named stage approvals are unsupported", "Unsupported approval action", precondition_failed="unsupported_action")
-        unsupported = [v for v in candidates if v not in {"approve", "approved", "reject", "rejected"}]
+        unsupported = [v for v in candidates if v not in {"approve", "approved", "reject", "rejected", "approvedwithconditions", "approvewithconditions"}]
         if unsupported:
             _fail(501, "NOT_IMPLEMENTED", f"approval action {unsupported[0]!r} has no Governance owner transition", "Unsupported approval action", precondition_failed="unsupported_action")
-        app_c = [v for v in candidates if v in {"approve", "approved"}]
+        app_c = [v for v in candidates if v in {"approve", "approved", "approvedwithconditions", "approvewithconditions"}]
         rej_c = [v for v in candidates if v in {"reject", "rejected"}]
         if app_c and rej_c:
             _fail(422, "VALIDATION_FAILED", "Conflicting action and decision", "URL action and body decision conflict", precondition_failed="conflicting_decision")
-        vote_verb = "approve" if app_c else ("reject" if rej_c else None)
+        vote_verb = "approved_with_conditions" if any("condition" in v for v in app_c) else ("approve" if app_c else ("reject" if rej_c else None))
         if vote_verb:
             clean_id = review_id.strip()
             params = dict(payload)

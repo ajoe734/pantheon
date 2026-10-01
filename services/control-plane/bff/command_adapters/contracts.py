@@ -409,7 +409,7 @@ _WRAPPER_CANONICALS = {
     },
     "ReviewAction": {
         "RequestReview": ("review",),
-        "ApproveDecision": ("approve",),
+        "ApproveDecision": ("approve", "approved", "approved_with_conditions", "approve_with_conditions"),
         "RejectDecision": ("reject",),
         "RecordSponsorDecision": ("sponsordecision",),
         "HumanGateApprove": (),
@@ -456,7 +456,7 @@ def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     has_stage = any(action_params.get(k) not in (None, "") or payload.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage"))
     if is_gov and (has_stage or any(v in {"stage", "freeze", "escalate"} for v in raw_verbs)):
         raise _bff_error(501, ErrorCode.NOT_IMPLEMENTED, "named stage or unsupported approval actions are unsupported", "Unsupported approval action")
-    has_app = any(v in {"approve", "approved"} for v in raw_verbs)
+    has_app = any(v in {"approve", "approved", "approvedwithconditions", "approvewithconditions"} for v in raw_verbs)
     has_rej = any(v in {"reject", "rejected"} for v in raw_verbs)
     if (norm_c == "approvedecision" and has_rej) or (norm_c == "rejectdecision" and has_app) or (has_app and has_rej):
         raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Conflicting action and decision", f"{command} carriers contain conflicting verbs")

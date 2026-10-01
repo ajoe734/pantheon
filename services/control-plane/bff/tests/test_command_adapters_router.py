@@ -1007,8 +1007,17 @@ def _submit_alias(wrapper: str, verb: str, canonical: str, *, wrapped: bool, tok
                 json={"tokenId": "ct-alias-1", "command": token_for, "target": target, "reason": "alias equivalence", "ttlSeconds": 300},
             )
             assert issued.status_code == 201, issued.text
-            headers["X-Confirm-Token"] = "ct-alias-1"
-        resp = client.post("/bff/v1/commands", headers=headers, json=body)
+        rec = {
+            "recommendation_id": "pm12-2026-q4-persona-alias-promote_to_canary_candidate",
+            "ranking_snapshot_id": "snapshot-alias-1",
+            "persona_id": "persona-alias",
+            "action_id": "promote_to_canary_candidate",
+            "rationale": "Provider rationale.",
+            "evidence_ref_ids": [],
+        }
+        from unittest.mock import patch
+        with patch("services.control_plane.bff.pm12.evaluator_results.saved_recommendation", return_value=rec):
+            resp = client.post("/bff/v1/commands", headers=headers, json=body)
         _ALIAS_RECORDS[:] = [r for r in store._get_all_commands() if r.get("type") == canonical]
         stored = [
             {

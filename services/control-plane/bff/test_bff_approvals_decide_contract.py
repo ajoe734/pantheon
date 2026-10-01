@@ -506,3 +506,111 @@ def test_supported_vote_cannot_mask_unsupported_raw_intent(command_client, owner
     assert response.status_code in (422, 501), (response.status_code, owner.calls)
     assert not owner.calls
     assert owner.rows["a1"]["version"] == 1
+
+
+@pytest.mark.parametrize("carrier", [
+    {"decision": "approved_with_conditions"},
+    {"decision": "approve", "outcome": "approved_with_conditions"},
+])
+def test_conditional_approval_single_entrypoints(client, owner, carrier):
+    response = client.post(
+        "/bff/approvals/a1/decide",
+        headers=headers(key="cond-single"),
+        json=vote(**carrier, conditions=["require extra monitoring"]),
+    )
+    assert response.status_code == 202, response.text
+    assert owner.calls[-1][2]["outcome"] == "approved_with_conditions"
+    assert owner.calls[-1][2]["conditions"] == ["require extra monitoring"]
+
+
+def test_conditional_approval_conflicting_single_rejected(client, owner):
+    response = client.post(
+        "/bff/approvals/a1/decide",
+        headers=headers(key="cond-conflict"),
+        json=vote(decision="reject", outcome="approved_with_conditions", conditions=["extra"]),
+    )
+    assert response.status_code == 422 and not owner.calls
+
+
+def test_conditional_approval_batch_decide(client, owner):
+    owner.rows["a2"] = {**owner.rows["a1"], "decision_id": "a2"}
+    batch = {
+        "decisions": [
+            vote(id="a1", decision="approved_with_conditions", conditions=["cond-1"]),
+            vote(id="a2", decision="approve", outcome="approved_with_conditions", conditions=["cond-2"]),
+        ]
+    }
+    response = client.post(
+        "/bff/approvals/batch-decide",
+        headers=headers(key="cond-batch"),
+        json=batch,
+    )
+    assert response.status_code == 202, response.text
+    assert response.json()["status"] == "accepted"
+    outcomes = [c[2]["outcome"] for c in owner.calls if c[1].endswith("/decide")]
+    assert outcomes[-2:] == ["approved_with_conditions", "approved_with_conditions"]
+
+
+@pytest.mark.parametrize("command_name", ["ApproveDecision", "ReviewAction"])
+def test_conditional_approval_command_adapter(command_client, owner, command_name):
+    payload = {
+        "command": command_name,
+        "target": {"type": "ApprovalDecision", "id": "a1"},
+        "params": {
+            "decision_id": "a1",
+            "expected_version": 1,
+            "outcome": "approved_with_conditions",
+            "conditions": ["audit trail requirement"],
+            "approval_notes": "approved conditionally",
+        },
+        "audit_context": {"reason": "risk approval"},
+    }
+    if command_name == "ReviewAction":
+        payload["action"] = "approve"
+    response = command_client.post(
+        "/bff/v1/commands",
+        headers={
+            "Authorization": "Bearer " + jwt("rev-1", "tenant-a", "operator", "governance_reviewer"),
+            "Idempotency-Key": f"cond-cmd-{command_name}",
+        },
+        json=payload,
+    )
+    assert response.status_code == 202, response.text
+    assert owner.calls[-1][2]["outcome"] == "approved_with_conditions"
+    assert owner.calls[-1][2]["conditions"] == ["audit trail requirement"]
+
+
+def test_conditional_approval_command_conflicting_rejected(command_client, owner):
+    response = command_client.post(
+        "/bff/v1/commands",
+        headers={
+            "Authorization": "Bearer " + jwt("rev-1", "tenant-a", "operator", "governance_reviewer"),
+            "Idempotency-Key": "cond-cmd-conflict",
+        },
+        json={
+            "command": "RejectDecision",
+            "target": {"type": "ApprovalDecision", "id": "a1"},
+            "params": {
+                "decision_id": "a1",
+                "expected_version": 1,
+                "outcome": "approved_with_conditions",
+                "rejection_reason": "conflict",
+            },
+            "audit_context": {"reason": "conflict test"},
+        },
+    )
+    assert response.status_code == 422 and not owner.calls
+
+
+@pytest.mark.parametrize("carrier", [{"decision": "request_changes"}, {"verb": "request_revision"}])
+def test_review_create_cannot_admit_retired_intent(review_client, owner, carrier):
+    mounted, store = review_client
+    response = mounted.post(
+        "/bff/reviews",
+        headers=headers(),
+        json={"review_id": "a1", "expected_version": 1, "notes": "rework", **carrier},
+    )
+    assert response.status_code == 410
+    assert len(store._get_all_commands()) == 0
+    assert not owner.calls
+

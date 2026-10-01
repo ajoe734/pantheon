@@ -11,7 +11,6 @@ import base64
 import json
 import os
 import re
-import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Mapping, Optional
@@ -19,7 +18,8 @@ from typing import Any, Dict, List, Mapping, Optional
 _TIMEOUT = float(os.getenv("PANTHEON_GOVERNANCE_APPROVAL_TIMEOUT_SECONDS", "15"))
 _ACTOR_ROLES = ("governance_reviewer", "risk_owner", "governance_committee", "automated_gate")
 _OUTCOMES = {"approve": "approved", "approved": "approved", "reject": "rejected", "rejected": "rejected",
-             "approved_with_conditions": "approved_with_conditions"}
+             "approved_with_conditions": "approved_with_conditions", "approvedwithconditions": "approved_with_conditions",
+             "approve_with_conditions": "approved_with_conditions", "approvewithconditions": "approved_with_conditions"}
 _PENDING = {"proposed", "under_review"}
 
 
@@ -108,9 +108,13 @@ def decide(authorization: Optional[str], decision_id: str, params: Mapping[str, 
         raise UnsupportedApprovalAction("unsupported approval action")
     known_verbs = {_OUTCOMES[v] for v in raw_v if v in _OUTCOMES}
     unknown_verbs = {v for v in raw_v if v and v not in _OUTCOMES}
-    if len(known_verbs) > 1:
+    if "rejected" in known_verbs and any(k.startswith("approved") for k in known_verbs):
         raise InvalidApprovalRequest("outcome")
-    verb = next(iter(known_verbs), None) or next(iter(unknown_verbs), None) or ("rejected" if params.get("rejection_reason") else "approved")
+    verb = "approved_with_conditions" if "approved_with_conditions" in known_verbs else (
+        next(iter(known_verbs), None) or next(iter(unknown_verbs), None) or ("rejected" if params.get("rejection_reason") else "approved")
+    )
+    if len(known_verbs) > 1 and "approved_with_conditions" not in known_verbs:
+        raise InvalidApprovalRequest("outcome")
     if verb not in _OUTCOMES.values():
         raise UnsupportedApprovalAction(f"approval action {verb!r} has no Governance owner transition")
     version = params.get("expected_version", params.get("expectedVersion"))

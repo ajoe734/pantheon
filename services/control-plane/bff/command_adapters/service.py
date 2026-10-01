@@ -880,8 +880,9 @@ class CommandAdapterService:
         caller) with exactly these keyword arguments.
         """
         _reject_body_idempotency_key(payload)
-        verbs = {re.sub(r"[^a-z0-9]", "", str(v).lower()) for v in (action_id, payload.get("decision"), payload.get("action")) if v}
-        if {"requestrevision", "requestapprovalrevision"}.intersection(verbs) or payload.get("revision_notes") or payload.get("revisionNotes"):
+        p_p = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+        verbs = {re.sub(r"[^a-z0-9]", "", str(v).lower()) for v in (action_id, payload.get("decision"), payload.get("action"), payload.get("verb"), payload.get("action_id"), payload.get("actionId"), payload.get("outcome"), p_p.get("decision"), p_p.get("action"), p_p.get("verb"), p_p.get("action_id"), p_p.get("actionId"), p_p.get("outcome")) if v}
+        if {"requestrevision", "requestapprovalrevision", "requestchanges", "requestchange"}.intersection(verbs) or payload.get("revision_notes") or payload.get("revisionNotes") or p_p.get("revision_notes") or p_p.get("revisionNotes"):
             raise self._raise_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
         entity_type, command_type = ObjectType.REVIEW, CommandType.REVIEW_ACTION
         resolved_key = str(idempotency_key or "").strip()
