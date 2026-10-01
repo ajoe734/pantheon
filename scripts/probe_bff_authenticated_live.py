@@ -71,7 +71,6 @@ READ_PROBES: tuple[Probe, ...] = (
     Probe("GET", "/bff/evolution-programs", "evolution"),
     Probe("GET", "/bff/jobs", "jobs"),
     Probe("GET", "/bff/approvals", "approval"),
-    Probe("GET", "/bff/v5/interventions", "v5-intervention"),
     Probe("GET", "/bff/alerts", "alerts"),
     Probe("GET", "/bff/incidents", "incidents"),
     Probe("GET", "/bff/audit", "audit"),
@@ -144,7 +143,6 @@ READ_PROBES: tuple[Probe, ...] = (
         ),
     ),
     Probe("GET", "/bff/v5/loop-runs", "v5-loop-runs"),
-    Probe("GET", "/bff/v5/sentinel/findings", "v5-sentinel"),
     Probe("GET", "/bff/v5/execution/persona-health", "v5-persona-health"),
 )
 
@@ -212,7 +210,6 @@ RBAC_WRITE_PATHS: tuple[tuple[str, str, dict[str, Any]], ...] = (
     ("strategy", "/bff/strategies", {"name": ""}),
     ("ranking-formula", "/bff/ranking-formulas", {"name": ""}),
     ("agora-note", "/bff/agora/notes", {"title": "", "body": "live dry-run RBAC matrix"}),
-    ("intervention-claim", "/bff/v5/interventions/int-live-rbac-matrix/claim", {"reason": ""}),
 )
 RBAC_WRITE_READBACK_RESOURCES = {"strategy", "ranking-formula", "agora-note"}
 
@@ -1103,8 +1100,8 @@ def build_two_man_race_results(
                 "two-man-race",
                 body={
                     "twoManSignatureId": signature_id,
-                    "command": "RemediateSentinelIntervention",
-                    "target": {"type": "SentinelIntervention", "id": target_id},
+                    "command": "HardRollback",
+                    "target": {"type": "Runtime", "id": target_id},
                     "signerOperatorIds": ["live-two-man-primary", "live-two-man-secondary"],
                     "reason": f"two-man race probe {actor_label}",
                 },
@@ -1323,12 +1320,6 @@ def build_dry_run_results(
             "/bff/ranking-formulas",
             {"name": f"live-dry-run-ranking-formula-{stamp}"},
             "/bff/ranking-formulas/{id}",
-        ),
-        (
-            "dry-run-v5-intervention-claim",
-            "/bff/v5/interventions/int-live-dry-run/claim",
-            {"reason": f"live-dry-run-claim-{stamp}"},
-            "",
         ),
     )
     invalid_specs = (

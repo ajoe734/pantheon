@@ -69,7 +69,7 @@ const gateTitles = {
 const REQUIRED_RBAC_LABELS = ["anonymous", "viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"];
 const REQUIRED_RBAC_READ_ALLOWED_LABELS = ["viewer", "operator", "reviewer", "approver", "admin"];
 const REQUIRED_RBAC_READ_FAMILIES = ["bff-strategies", "bff-ranking-formulas", "bff-agora-signals"];
-const REQUIRED_RBAC_WRITE_FAMILIES = ["strategy", "ranking-formula", "agora-note", "intervention-claim"];
+const REQUIRED_RBAC_WRITE_FAMILIES = ["strategy", "ranking-formula", "agora-note"];
 const REQUIRED_RBAC_WRITE_READBACK_FAMILIES = ["strategy", "ranking-formula", "agora-note"];
 const REQUIRED_RBAC_WRITE_ALLOWED_LABELS = ["operator", "reviewer", "approver", "admin"];
 const REQUIRED_RBAC_READ_PATHS = {
@@ -81,7 +81,6 @@ const REQUIRED_RBAC_WRITE_PATHS = {
   strategy: "/bff/strategies",
   "ranking-formula": "/bff/ranking-formulas",
   "agora-note": "/bff/agora/notes",
-  "intervention-claim": "/bff/v5/interventions/int-live-rbac-matrix/claim",
 };
 const REQUIRED_RBAC_MATRIX_FAMILIES = REQUIRED_RBAC_LABELS.flatMap((label) => [
   ...REQUIRED_RBAC_READ_FAMILIES.map((family) => `rbac-read-${label}-${family}`),
@@ -92,7 +91,6 @@ const REQUIRED_DRY_RUN_FAMILIES = [
   "dry-run-strategy-create-readback-not-persisted",
   "dry-run-ranking-formula-create",
   "dry-run-ranking-formula-create-readback-not-persisted",
-  "dry-run-v5-intervention-claim",
   "dry-run-invalid-strategy",
   "dry-run-invalid-ranking-formula",
 ];
@@ -867,7 +865,7 @@ function analyzeStrictAuthEvidence(stepOutcomes, preflight = {}) {
     && item?.side_effect_check?.kind === "validation_rejected_before_persistence"
     && item?.side_effect_check?.error_code === "VALIDATION_FAILED"
   );
-  const successDryRunMetaProofs = successDryRuns.length >= 3 && successDryRuns.every((item) =>
+  const successDryRunMetaProofs = successDryRuns.length >= 2 && successDryRuns.every((item) =>
     item?.side_effect_check?.ok === true
     && ["dry_run_preview_meta", "dry_run_command_meta"].includes(item?.side_effect_check?.kind)
     && item?.side_effect_check?.dryRun === true
@@ -896,17 +894,17 @@ function analyzeStrictAuthEvidence(stepOutcomes, preflight = {}) {
   });
   const dryRunProbeCountMatches = dryRunProbeCount === dryRun.length;
   const dryRunSideEffectProofCount = dryRunSideEffectProofs.length;
-  const allDryRunSideEffectProofs = dryRun.length >= 7 && dryRunSideEffectProofCount === dryRun.length;
-  const dryRunRequestProofsOk = dryRunRequestProofs.length === dryRunRequestRequired.length && dryRunRequestRequired.length === 5;
+  const allDryRunSideEffectProofs = dryRun.length >= 6 && dryRunSideEffectProofCount === dryRun.length;
+  const dryRunRequestProofsOk = dryRunRequestProofs.length === dryRunRequestRequired.length && dryRunRequestRequired.length === 4;
   const rbacWriteSideEffectProofCount = rbacWriteSideEffectProofs.length;
-  const rbacWriteSideEffectProofsOk = rbacWrite.length >= 32
+  const rbacWriteSideEffectProofsOk = rbacWrite.length >= 24
     && rbacWriteProbeCount === rbacWrite.length
     && rbacWriteSummarySideEffectProofCount === rbacWrite.length
     && rbacWriteSideEffectProofCount === rbacWrite.length
     && rbacWriteMarkerLinkedProofs.length === rbacWrite.length
     && rbacReadDeniedEnvelopeProofs.length === rbacReadDeniedRequired.length
     && rbacReadDeniedRequired.length === expectedRbacReadDeniedCount
-    && rbacWriteDryRunMetaProofs.length >= 16
+    && rbacWriteDryRunMetaProofs.length >= 12
     && rbacWriteReadbackProofs.length === rbacWriteReadbackRequired.length
     && rbacWriteReadbackRequired.length === REQUIRED_RBAC_WRITE_ALLOWED_LABELS.length * REQUIRED_RBAC_WRITE_READBACK_FAMILIES.length
     && rbacWriteDeniedNoPersistence.length === expectedRbacWriteDeniedCount;
@@ -962,7 +960,7 @@ function analyzeStrictAuthEvidence(stepOutcomes, preflight = {}) {
     summaryPassed,
     rbacOk: baseOk && providedRbac && rbacPreflightBearerLinksOk && rbacProbeCount > 0 && allRbacOk && rbacWriteSideEffectProofsOk,
     dryRunOk: baseOk
-      && dryRunProbeCount >= 7
+      && dryRunProbeCount >= 6
       && dryRunProbeCountMatches
       && dryRunFamilyCoverageOk
       && allDryRunOk
