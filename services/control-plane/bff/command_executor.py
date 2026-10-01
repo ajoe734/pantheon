@@ -1212,58 +1212,6 @@ def _execute_remediate_sentinel_intervention(
     }
 
 
-_PERSONA_LIFECYCLE_TRANSITIONS: dict[str, list[str]] = {
-    "draft": ["paper_owner", "retired"],
-    "paper_owner": ["live_owner", "retired"],
-    "live_owner": ["retired"],
-    "retired": [],
-}
-
-
-def _execute_advance_lifecycle(
-    command_id: str, params: Dict[str, Any],
-    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Dispatch AdvanceLifecycle to internal API /personas/{id}/advance-lifecycle.
-
-    State machine: draft → paper_owner → live_owner → retired.
-    No skip transitions; retire allowed from any non-retired state.
-    """
-    persona_id = str(params.get("persona_id") or params.get("entity_id") or "").strip()
-    if not persona_id:
-        raise ValueError("AdvanceLifecycle requires persona_id.")
-
-    target_state = str(params.get("target_state") or "").strip()
-    allowed_targets = {"paper_owner", "live_owner", "retired"}
-    if target_state not in allowed_targets:
-        raise ValueError(
-            f"AdvanceLifecycle: target_state must be one of {sorted(allowed_targets)}, got {target_state!r}."
-        )
-
-    confirm_token = str(params.get("confirm_token") or "").strip()
-    if not confirm_token:
-        raise ValueError("AdvanceLifecycle requires confirm_token.")
-
-    payload: Dict[str, Any] = {
-        "target_state": target_state,
-        "confirm_token": confirm_token,
-    }
-    if params.get("memo"):
-        payload["memo"] = str(params["memo"])
-
-    url = _internal_url(f"/api/internal/v1/personas/{persona_id}/advance-lifecycle")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-    return {
-        "command_id": command_id,
-        "status": "accepted",
-        "persona_id": body.get("persona_id", persona_id),
-        "from_state": body.get("from_state"),
-        "to_state": body.get("to_state", target_state),
-        "audit_id": body.get("audit_id"),
-        "advanced_at": body.get("advanced_at"),
-    }
-
-
 def _execute_approve_pool(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
@@ -1718,7 +1666,7 @@ def _make_adapter_executor(cmd_type: CommandType):
 
 # Dispatch table: CommandType -> execution function
 _EXECUTORS = {
-    CommandType.ADVANCE_LIFECYCLE: _execute_advance_lifecycle,
+    CommandType.ADVANCE_LIFECYCLE: _make_adapter_executor(CommandType.ADVANCE_LIFECYCLE),
     CommandType.APPROVE_POOL: _execute_approve_pool,
     CommandType.START_RUNTIME: _execute_start_runtime,
     CommandType.RESTART_PAPER_RUNTIME: _execute_restart_paper_runtime,
@@ -1773,12 +1721,9 @@ _EXECUTORS = {
     CommandType.HUMAN_GATE_REVOKE: _make_adapter_executor(CommandType.HUMAN_GATE_REVOKE),
     CommandType.HUMAN_GATE_EXTEND_TTL: _make_adapter_executor(CommandType.HUMAN_GATE_EXTEND_TTL),
     CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: _make_adapter_executor(CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT),
-    CommandType.OBSERVE: _make_adapter_executor(CommandType.OBSERVE),
     CommandType.REQUEST_REVIEW: _make_adapter_executor(CommandType.REQUEST_REVIEW),
     CommandType.PAUSE_PAPER_RUNTIME: _make_adapter_executor(CommandType.PAUSE_PAPER_RUNTIME),
     CommandType.RESUME_PAPER_RUNTIME: _make_adapter_executor(CommandType.RESUME_PAPER_RUNTIME),
-    CommandType.DEMOTE: _make_adapter_executor(CommandType.DEMOTE),
-    CommandType.PROMOTE_CANDIDATE: _make_adapter_executor(CommandType.PROMOTE_CANDIDATE),
     CommandType.REBALANCE_PROPOSAL: _make_adapter_executor(CommandType.REBALANCE_PROPOSAL),
     CommandType.APPROVED_APPLY: _execute_approved_rebalance_apply,
     CommandType.EMERGENCY_CONTAINMENT: _execute_emergency_containment_authority,

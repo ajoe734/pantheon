@@ -1352,7 +1352,8 @@ def require_final_command_preconditions(
         )
 
     approval_decision_id = _precondition_value(payload, params, _APPROVAL_EVIDENCE_FIELDS)
-    if getattr(entry, "requires_approval", False) and not approval_decision_id:
+    owner_verifies_approval = cmd.command == CommandType.ADVANCE_LIFECYCLE
+    if getattr(entry, "requires_approval", False) and not owner_verifies_approval and not approval_decision_id:
         raise _final_precondition_error(
             cmd=cmd,
             status_code=409,
@@ -1407,7 +1408,7 @@ def require_final_command_preconditions(
             suggestion="Retry with the strict dev operator identity and verified MFA",
         )
 
-    if getattr(entry, "requires_approval", False) and approval_decision_id:
+    if getattr(entry, "requires_approval", False) and not owner_verifies_approval and approval_decision_id:
         approval_decision = (
             read_store.get_approval_decision(approval_decision_id)
             if read_store and hasattr(read_store, "get_approval_decision")
@@ -2769,34 +2770,6 @@ def _validate_quarterly_ranking_recommendation_submit(
         )
 
 
-def _validate_observe(
-    params: Dict[str, Any],
-    identity: OperatorIdentity,
-    *,
-    read_surface: Optional[Any] = None,
-    ops_read_model_fn: Optional[Callable[[str], Any]] = None,
-    check_binding_tenant_ownership_fn: Optional[Callable[[Any, OperatorIdentity], str]] = None,
-    bff_error_fn: Optional[Callable[..., Any]] = None,
-) -> None:
-    _err = bff_error_fn or _resolve_bff_error()
-    if not {"operator", "reviewer", "approver", "admin"}.intersection(identity.roles):
-        raise _err(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Observe action requires operator, reviewer, approver, or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    _enforce_ops_console_preconditions(
-        params,
-        identity,
-        read_surface=read_surface,
-        ops_read_model_fn=ops_read_model_fn,
-        check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn,
-        bff_error_fn=_err,
-    )
-
-
 def _validate_request_review(
     params: Dict[str, Any],
     identity: OperatorIdentity,
@@ -2928,80 +2901,6 @@ def _validate_resume_paper_runtime(
         params,
         identity,
         required_bindings=["paper"],
-        read_surface=read_surface,
-        ops_read_model_fn=ops_read_model_fn,
-        check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn,
-        bff_error_fn=_err,
-    )
-
-
-def _validate_demote(
-    params: Dict[str, Any],
-    identity: OperatorIdentity,
-    *,
-    read_surface: Optional[Any] = None,
-    ops_read_model_fn: Optional[Callable[[str], Any]] = None,
-    check_binding_tenant_ownership_fn: Optional[Callable[[Any, OperatorIdentity], str]] = None,
-    bff_error_fn: Optional[Callable[..., Any]] = None,
-) -> None:
-    _err = bff_error_fn or _resolve_bff_error()
-    if not {"operator", "approver", "admin"}.intersection(identity.roles):
-        raise _err(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Demote action requires operator, approver, or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    persona_id = params.get("persona_id") or params.get("personaId")
-    if not persona_id:
-        raise _err(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing persona_id for Demote",
-            "persona_id must be provided",
-            precondition_failed="missing_persona",
-        )
-    _enforce_ops_console_preconditions(
-        params,
-        identity,
-        read_surface=read_surface,
-        ops_read_model_fn=ops_read_model_fn,
-        check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn,
-        bff_error_fn=_err,
-    )
-
-
-def _validate_promote_candidate(
-    params: Dict[str, Any],
-    identity: OperatorIdentity,
-    *,
-    read_surface: Optional[Any] = None,
-    ops_read_model_fn: Optional[Callable[[str], Any]] = None,
-    check_binding_tenant_ownership_fn: Optional[Callable[[Any, OperatorIdentity], str]] = None,
-    bff_error_fn: Optional[Callable[..., Any]] = None,
-) -> None:
-    _err = bff_error_fn or _resolve_bff_error()
-    if not {"operator", "approver", "admin"}.intersection(identity.roles):
-        raise _err(
-            403,
-            ErrorCode.FORBIDDEN,
-            "PromoteCandidate action requires operator, approver, or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    persona_id = params.get("persona_id") or params.get("personaId")
-    if not persona_id:
-        raise _err(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing persona_id for PromoteCandidate",
-            "persona_id must be provided",
-            precondition_failed="missing_persona",
-        )
-    _enforce_ops_console_preconditions(
-        params,
-        identity,
         read_surface=read_surface,
         ops_read_model_fn=ops_read_model_fn,
         check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn,
@@ -3145,12 +3044,9 @@ def build_default_validators(
         CommandType.HUMAN_GATE_REVOKE: lambda p, i: _validate_human_gate_decision(p, i, bff_error_fn=bff_error_fn),
         CommandType.HUMAN_GATE_EXTEND_TTL: lambda p, i: _validate_human_gate_decision(p, i, bff_error_fn=bff_error_fn),
         CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: lambda p, i: _validate_quarterly_ranking_recommendation_submit(p, i, read_surface=read_surface, bff_error_fn=bff_error_fn),
-        CommandType.OBSERVE: lambda p, i: _validate_observe(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
         CommandType.REQUEST_REVIEW: lambda p, i: _validate_request_review(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
         CommandType.PAUSE_PAPER_RUNTIME: lambda p, i: _validate_pause_paper_runtime(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
         CommandType.RESUME_PAPER_RUNTIME: lambda p, i: _validate_resume_paper_runtime(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
-        CommandType.DEMOTE: lambda p, i: _validate_demote(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
-        CommandType.PROMOTE_CANDIDATE: lambda p, i: _validate_promote_candidate(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
         CommandType.REBALANCE_PROPOSAL: lambda p, i: _validate_rebalance_proposal(p, i, bff_error_fn=bff_error_fn),
         CommandType.APPROVED_APPLY: lambda p, i: _validate_approved_apply(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
         CommandType.EMERGENCY_CONTAINMENT: lambda p, i: _validate_emergency_containment(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
