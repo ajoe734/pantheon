@@ -1093,6 +1093,7 @@ class InteractionLifecycleStore:
         for invocation_json, opinion_json, error_json, status in invocations:
             invocation = _decode(invocation_json)
             invocation["status"] = status
+            invocation.pop("synthesis", None)  # saved result is read through the synthesis field
             if error_json is not None:
                 invocation["error"] = _decode(error_json)
             resource["provider_invocations"].append(invocation)
@@ -1306,7 +1307,7 @@ class InteractionLifecycleStore:
         resource = copy.deepcopy(self._requests[interaction_id])
         resource.pop("request_fingerprint", None)
         rows = list(self._invocations.get(interaction_id, {}).values())
-        resource["provider_invocations"] = [copy.deepcopy(row["invocation"]) for row in rows]
+        resource["provider_invocations"] = [{k: copy.deepcopy(v) for k, v in row["invocation"].items() if k != "synthesis"} for row in rows]
         resource["opinions"] = [copy.deepcopy(row["opinion"]) for row in rows if row.get("opinion")]
         resource["synthesis"] = copy.deepcopy(self._syntheses.get(interaction_id))
         resource.setdefault("missing_participant_ids", [])

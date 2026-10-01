@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import hashlib
 import os
 import sys
@@ -95,12 +96,25 @@ def _make_mock_client(
     return_values: Optional[Dict[str, Any]] = None,
     call_log: Optional[List[Dict[str, Any]]] = None,
     invoke_fn: Optional[Any] = None,
+    synthesis_fn: Optional[Any] = None,
 ):
     import json
     call_log = call_log if call_log is not None else []
     return_values = return_values or {}
+    synthesis_log = []
 
     class MockClient(OpenClawOpsClient):
+        def invoke_structured_extraction(self, *, prompt, extraction_schema, operator_id, trace_id=None, idempotency_key=None):
+            import json as _json
+            opinions = _json.loads(prompt.split("\n\n", 1)[1])
+            synthesis_log.append(trace_id)
+            if synthesis_fn is not None:
+                return synthesis_fn(opinions)
+            ids = [o["opinion_id"] for o in opinions]
+            return {"data": {"output": {"structured_data": {
+                "status": "recommendation", "summary": "provider synthesis",
+                "agreements": ["ok"], "disagreements": [], "evidence_refs": []}}}}
+
         def ensure_persona_opinion_agent(self, admission: Dict[str, Any], persona_profile: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
             return {"execution_authority": "none", "agent_id": admission.get("agent_id", "mock-agent")}
 
@@ -141,7 +155,9 @@ def _make_mock_client(
                 },
             }
 
-    return lambda: MockClient(), call_log
+    factory = lambda: MockClient()
+    factory.synthesis_log = synthesis_log
+    return factory, call_log
 
 
 read_store = FakePersonaReadStore()
@@ -577,7 +593,7 @@ def test_concurrent_pre_expiry_workers_execute_provider_only_once(bff_client):
     detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
     assert detail["status"] == "completed"
     assert len(detail["opinions"]) == 1
-    assert len(detail["provider_invocations"]) == 1
+    assert len([i for i in detail["provider_invocations"] if i["participant"]["persona_id"] != "synthesis"]) == 1
 
 
 def test_retry_and_recover_routes_do_not_execute_inline(bff_client):
@@ -656,7 +672,6 @@ def test_degraded_status_on_partial_failure(bff_client):
     assert detail["status"] == "degraded"
     assert "macro-quant" in detail["missing_participant_ids"]
     assert len(detail["opinions"]) == 1
-    assert detail["synthesis"]["status"] == "degraded"
     assert worker.metrics["degraded_count"] == 1
 
 
@@ -953,3 +968,268 @@ def test_stale_worker_after_reclaim_preserves_new_owner_work(bff_client):
     assert len(final_detail["opinions"]) == 1
     assert "Worker B fast execution succeeded." in final_detail["opinions"][0]["rationale"]
     assert final_detail["synthesis"]["status"] == "recommendation"
+
+
+def _run_synthesis(bff_client, synthesis_fn, return_values=None):
+    calls = []
+    client_factory, _ = _make_mock_client(return_values=return_values, call_log=calls, synthesis_fn=synthesis_fn)
+    submit_resp, _ = _submit_interaction(bff_client, personas=("risk-analyst", "macro-quant"))
+    interaction_id = submit_resp.json()["data"]["interaction_id"]
+    worker = AgoraInteractionWorker(
+        lifecycle_store=interaction_lifecycle, workshop_store=workshop_store,
+        read_store=read_store, client_factory=client_factory,
+    )
+    worker.run_once()
+    return interaction_id, calls, client_factory
+
+
+def test_synthesis_comes_from_provider_not_labels(bff_client):
+    # identical labels (all "support") but genuinely conflicting reasons; provider judges the reasons
+    reasons = iter(["valid because volatility is mean-reverting", "invalid because volatility is trending"])
+    def persona(prompt, **kw):
+        return {"status": "completed", "output": {
+            "request_id": f"r-{uuid.uuid4().hex[:6]}", "agent_id": str(kw.get("agent_id")),
+            "json_events": [{"item": {"text": json.dumps({
+                "conclusion": "support", "rationale": next(reasons), "confidence": 0.7,
+                "uncertainty": [], "risks": [], "invalidation_conditions": [],
+                "evidence_refs": [], "recommended_measures": []})}}]}}
+    seen = []
+    def conflicting(opinions):
+        seen.extend(o["rationale"] for o in opinions)
+        ids = [o["opinion_id"] for o in opinions]
+        return {"data": {"output": {"structured_data": {
+            "status": "no_consensus", "summary": "reasons conflict",
+            "agreements": [], "evidence_refs": [],
+            "disagreements": [{"cause": "c", "detail": "d", "opinion_ids": ids}]}}}}
+    factory, _ = _make_mock_client(invoke_fn=persona, synthesis_fn=conflicting)
+    submit_resp, _ = _submit_interaction(bff_client, personas=("risk-analyst", "macro-quant"))
+    interaction_id = submit_resp.json()["data"]["interaction_id"]
+    AgoraInteractionWorker(lifecycle_store=interaction_lifecycle, workshop_store=workshop_store,
+                           read_store=read_store, client_factory=factory).run_once()
+    detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert {o["conclusion"] for o in detail["opinions"]} == {"support"}
+    assert any("mean-reverting" in r for r in seen) and any("trending" in r for r in seen)
+    assert detail["synthesis"]["status"] == "no_consensus"
+    assert detail["synthesis"]["summary"] == "reasons conflict"
+    assert len(detail["opinions"]) == 2
+    assert len(factory.synthesis_log) == 1
+
+
+def test_duplicate_opinion_ids_rejected_by_adapter_and_runner(bff_client):
+    jsonschema = pytest.importorskip("jsonschema")
+    import pathlib
+    from services.control_plane.bff.agora.interaction.runner import _SYNTHESIS_SCHEMA
+    adapter_dir = str(pathlib.Path(__file__).resolve().parents[4] / "openclaw-gateway-adapter")
+    sys.path.insert(0, adapter_dir)
+    try:
+        import assistant_openclaw_provider as adapter
+    finally:
+        sys.path.remove(adapter_dir)
+    def dup(opinions):
+        a, b = (o["opinion_id"] for o in opinions)
+        result = {"status": "no_consensus", "summary": "s", "agreements": [], "evidence_refs": [],
+                  "disagreements": [{"cause": "c", "detail": "d", "opinion_ids": [a, b, a]}]}
+        try:
+            adapter._validate_extraction_arguments(result, _SYNTHESIS_SCHEMA)
+        except Exception:  # noqa: BLE001 - adapter may or may not reject; runner must
+            pass
+        return {"data": {"output": {"structured_data": result}}}
+    interaction_id, _, _ = _run_synthesis(bff_client, dup)
+    detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert detail["synthesis"]["status"] == "degraded"
+    root = pathlib.Path(__file__).resolve().parents[3] / "specs/agora/v10/persona_interaction_daily.schema.json"
+    schema = json.loads(root.read_text())
+    jsonschema.validate(detail["synthesis"], {"$ref": "#/definitions/InteractionSynthesis", "definitions": schema["definitions"]})
+
+
+def test_synthesis_failure_keeps_opinions_and_retry_reuses_saved(bff_client):
+    def boom(opinions):
+        raise RuntimeError("down")
+    interaction_id, calls, _ = _run_synthesis(bff_client, boom)
+    detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert detail["synthesis"]["status"] == "degraded"
+    assert len(detail["opinions"]) == 2
+
+    def bad_refs(opinions):
+        return {"data": {"output": {"structured_data": {
+            "status": "options", "summary": "s", "agreements": [], "disagreements": [],
+            "evidence_refs": [{"ref_type": "x", "ref_id": "unsupplied"}]}}}}
+    interaction_id, calls, _ = _run_synthesis(bff_client, bad_refs)
+    assert interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")["synthesis"]["status"] == "degraded"
+
+
+def _ok(opinions, status="options"):
+    ids = [o["opinion_id"] for o in opinions]
+    return {"data": {"output": {"structured_data": {
+        "status": status, "summary": "s", "evidence_refs": [], "disagreements": [],
+        "agreements": ["ok"]}}}}
+
+
+def test_different_labels_compatible_conditions_come_from_provider(bff_client):
+    labels = iter(["support", "oppose"])
+    def persona(prompt, **kw):
+        return {"status": "completed", "output": {
+            "request_id": f"r-{uuid.uuid4().hex[:6]}", "agent_id": str(kw.get("agent_id")),
+            "json_events": [{"item": {"text": json.dumps({
+                "conclusion": next(labels), "rationale": "same compatible condition", "confidence": 0.7,
+                "uncertainty": [], "risks": [], "invalidation_conditions": ["rates fall"],
+                "evidence_refs": [], "recommended_measures": []})}}]}}
+    factory, _ = _make_mock_client(invoke_fn=persona, synthesis_fn=lambda o: _ok(o, "recommendation"))
+    submit_resp, _ = _submit_interaction(bff_client, personas=("risk-analyst", "macro-quant"))
+    interaction_id = submit_resp.json()["data"]["interaction_id"]
+    AgoraInteractionWorker(lifecycle_store=interaction_lifecycle, workshop_store=workshop_store,
+                           read_store=read_store, client_factory=factory).run_once()
+    detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert {o["conclusion"] for o in detail["opinions"]} == {"support", "oppose"}
+    assert detail["synthesis"]["status"] == "recommendation"
+
+
+def test_malformed_nested_synthesis_is_unavailable(bff_client):
+    for bad in (
+        [None],
+        [{"unexpected": True}],
+    ):
+        def malformed(opinions, bad=bad):
+            out = _ok(opinions)
+            out["data"]["output"]["structured_data"]["agreements"] = bad
+            return out
+        interaction_id, _, _ = _run_synthesis(bff_client, malformed)
+        detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+        assert detail["synthesis"]["status"] == "degraded"
+        assert len(detail["opinions"]) == 2
+
+
+def test_synthesis_only_retry_and_restart_adoption(bff_client):
+    state = {"fail": True}
+    def flaky(opinions):
+        if state["fail"]:
+            raise RuntimeError("down")
+        return _ok(opinions)
+    calls = []
+    factory, _ = _make_mock_client(call_log=calls, synthesis_fn=flaky)
+    submit_resp, _ = _submit_interaction(bff_client, personas=("risk-analyst", "macro-quant"))
+    interaction_id = submit_resp.json()["data"]["interaction_id"]
+    worker = AgoraInteractionWorker(lifecycle_store=interaction_lifecycle, workshop_store=workshop_store,
+                                    read_store=read_store, client_factory=factory)
+    worker.run_once()
+    detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert detail["status"] == "degraded" and detail["synthesis"]["status"] == "degraded"
+    first_opinions = detail["opinions"]
+    state["fail"] = False
+    interaction_lifecycle.prepare_retry(interaction_id, "pantheon-dev", "interaction-user", idempotency_key="k1",
+                                        fingerprint="f", actor_id="interaction-user", reason="synthesis")
+    worker.run_once()
+    detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert detail["status"] == "completed" and detail["synthesis"]["status"] == "options"
+    assert detail["opinions"] == first_opinions and len(calls) == 2  # personas were not invoked again
+    synth_calls = len(factory.synthesis_log)
+    # restart / lease recovery: the saved result and correlation are adopted, no provider call
+    from services.control_plane.bff.agora.interaction.runner import _synthesize
+    class Boom:
+        def invoke_structured_extraction(self, **kw):
+            raise AssertionError("must not call provider")
+    again = _synthesize(Boom(), list(reversed(detail["opinions"])), "t", operator_id="o", trace_id="tr",
+                        interaction_id=interaction_id, attempt=1, lifecycle_store=interaction_lifecycle, lease_owner="w2")
+    assert again == detail["synthesis"] and len(factory.synthesis_log) == synth_calls
+
+
+def test_crash_window_is_not_re_executed_and_set_order_is_normalized(bff_client):
+    from datetime import timedelta
+    from services.control_plane.bff.agora.interaction.runner import _synthesize
+    interaction_id, _, factory = _run_synthesis(bff_client, lambda o: _ok(o))
+    opinions = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")["opinions"]
+    seen = []
+    class Dies:
+        def invoke_structured_extraction(self, **kw):
+            seen.append(kw["idempotency_key"])
+            raise KeyboardInterrupt  # worker dies after the call started, before finish_invocation
+    kw = dict(operator_id="o", trace_id="tr", interaction_id=interaction_id, lifecycle_store=interaction_lifecycle)
+    with pytest.raises(KeyboardInterrupt):
+        _synthesize(Dies(), opinions, "2026-01-01T00:00:00Z", attempt=7, lease_owner="w1", **kw)
+    for row in interaction_lifecycle._invocations[interaction_id].values():
+        if row["status"] == "running":
+            row["lease_until"] = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+    class Counting:
+        def invoke_structured_extraction(self, **kw):
+            seen.append(kw["idempotency_key"])
+            return _ok(opinions)
+    result = _synthesize(Counting(), list(reversed(opinions)), "2026-01-01T00:00:00Z", attempt=7, lease_owner="w2", **kw)
+    assert len(seen) == 1 and result["status"] == "degraded" and result["summary"] == "Synthesis unavailable."
+    failed = [i for i in interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")["provider_invocations"]
+              if i["status"] == "failed"]
+    assert failed[-1]["error"]["code"] == "SYNTHESIS_OUTCOME_AMBIGUOUS"
+    # same saved set in the opposite order is the same synthesis identity
+    reordered = _synthesize(Counting(), opinions, "t", attempt=1, lease_owner="w3", **kw)
+    again = _synthesize(Counting(), list(reversed(opinions)), "t", attempt=1, lease_owner="w3", **kw)
+    assert again == reordered and len(seen) == 2
+
+
+def test_resource_matches_committed_schema(bff_client):
+    jsonschema = pytest.importorskip("jsonschema")
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[3] / "specs/agora/v10/persona_interaction_daily.schema.json"
+    schema = json.loads(root.read_text())
+    for fn, expected in ((lambda o: _ok(o), "options"), (lambda o: (_ for _ in ()).throw(RuntimeError("down")), "degraded")):
+        interaction_id, _, _ = _run_synthesis(bff_client, fn)
+        detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+        assert detail["synthesis"]["status"] == expected
+        assert any(i["participant"]["persona_id"] == "synthesis" for i in detail["provider_invocations"])
+        defs = {"$ref": "#/definitions/InteractionSynthesis", "definitions": schema["definitions"]}
+        jsonschema.validate(detail["synthesis"], defs)
+        for inv in detail["provider_invocations"]:
+            jsonschema.validate(inv, {"$ref": "#/definitions/ProviderInvocation", "definitions": schema["definitions"]})
+
+
+def test_selected_evidence_resolves_to_supplied_records_and_matches_wire_schema(bff_client):
+    jsonschema = pytest.importorskip("jsonschema")
+    import pathlib
+    from services.control_plane.bff.agora.interaction.runner import _SYNTHESIS_SCHEMA
+    adapter_dir = str(pathlib.Path(__file__).resolve().parents[4] / "openclaw-gateway-adapter")
+    sys.path.insert(0, adapter_dir)
+    try:
+        import assistant_openclaw_provider as adapter
+    finally:
+        sys.path.remove(adapter_dir)
+    ref = {"ref_type": "market_data", "ref_id": "m-1", "observed_at": "2026-01-01T00:00:00Z",
+           "data_cutoff": "2026-01-01T00:00:00Z", "freshness": "fresh"}
+    def persona(prompt, **kw):
+        return {"status": "completed", "output": {
+            "request_id": f"r-{uuid.uuid4().hex[:6]}", "agent_id": str(kw.get("agent_id")),
+            "json_events": [{"item": {"text": json.dumps({
+                "conclusion": "support", "rationale": "r", "confidence": 0.7, "uncertainty": [], "risks": [],
+                "invalidation_conditions": [], "evidence_refs": [ref], "recommended_measures": []})}}]}}
+    def select(opinions):
+        result = {"status": "recommendation", "summary": "s", "agreements": ["a"], "disagreements": [],
+                  "evidence_refs": [{"ref_type": "market_data", "ref_id": "m-1"}]}
+        adapter._validate_extraction_arguments(result, _SYNTHESIS_SCHEMA)
+        return {"data": {"output": {"structured_data": result}}}
+    factory, _ = _make_mock_client(invoke_fn=persona, synthesis_fn=select)
+    submit_resp, _ = _submit_interaction(bff_client, personas=("risk-analyst", "macro-quant"))
+    interaction_id = submit_resp.json()["data"]["interaction_id"]
+    AgoraInteractionWorker(lifecycle_store=interaction_lifecycle, workshop_store=workshop_store,
+                           read_store=read_store, client_factory=factory).run_once()
+    synthesis = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")["synthesis"]
+    assert synthesis["status"] == "recommendation"
+    assert [{k: r[k] for k in ref} for r in synthesis["evidence_refs"]] == [ref]  # factual metadata preserved
+    root = pathlib.Path(__file__).resolve().parents[3] / "specs/agora/v10/persona_interaction_daily.schema.json"
+    schema = json.loads(root.read_text())
+    jsonschema.validate(synthesis, {"$ref": "#/definitions/InteractionSynthesis", "definitions": schema["definitions"]})
+
+
+def test_compose_worker_env_wires_openclaw_client_and_adapter_service_auth(monkeypatch):
+    yaml = pytest.importorskip("yaml")
+    import pathlib, re
+    compose = yaml.safe_load((pathlib.Path(__file__).resolve().parents[5] / "docker-compose.yml").read_text())
+    services = compose["services"]
+    env = services["agora-interaction-worker"]["environment"]
+    ref = "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN"
+    assert env[ref] == services["operator-bff"]["environment"][ref]  # same token reference, no new credential
+    assert env["PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL"] == services["operator-bff"]["environment"]["PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL"]
+    monkeypatch.setenv("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", "deploy-secret")
+    for k, v in env.items():
+        if k.startswith("PANTHEON_OPENCLAW_"):
+            monkeypatch.setenv(k, re.sub(r"\$\{(\w+):-([^}]*)\}", lambda m: os.environ.get(m.group(1)) or m.group(2), str(v)))
+    client = OpenClawOpsClient()
+    assert client.configured and client._base_url == "http://openclaw-gateway-adapter:8104"
+    path = "/api/openclaw-adapter/agents/persona-opinion/ensure"
+    assert client._assistant_service_headers(path) == {"X-Pantheon-Service-Token": "deploy-secret"}
