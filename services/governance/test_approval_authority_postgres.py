@@ -541,3 +541,115 @@ def test_every_mounted_approval_path_rejects_missing_principal_and_header_escala
     for suffix, method, body in paths:
         r = httpx.request(method, root+suffix, json=body, headers={'Idempotency-Key': uuid.uuid4().hex, 'X-Actor-Role': 'risk_owner', 'X-Tenant-Id': 'synthetic-tenant'})
         assert r.status_code == 401, (method, suffix, r.text)
+
+
+# ---------------------------------------------------------------------------
+# Operator proposal authority and PROPOSED->decide in one owner CAS callback.
+# In-memory store mirroring execute_command (tenant 404, expected_version CAS,
+# idempotent replay): needs no database.
+# ---------------------------------------------------------------------------
+import copy as _copy
+import hashlib as _hashlib
+import json as _json
+
+from fastapi.testclient import TestClient as _TestClient
+from services.governance import main as _gov_main
+from services.governance.pg_store import ApprovalCommandConflict, ApprovalCommandNotFound
+from approval_decision import ApprovalDecision  # type: ignore
+
+OP_SECRET = "s" * 40
+OP_TENANT = "tenant-op"
+OP_SUBJECT = {"binding_id": "b1", "persona_id": "p1", "capital_pool_id": "pool1", "risk_direction": "increase"}
+
+
+class OperatorMemoryStore:
+    def __init__(self):
+        self.rows, self.receipts = {}, {}
+
+    def get(self, decision_id):
+        row = self.rows.get(decision_id)
+        return ApprovalDecision.from_dict(_copy.deepcopy(row)) if row else None
+
+    def list_all(self):
+        return [self.get(key) for key in self.rows]
+
+    def find_by_target(self, target_type, target_id):
+        return [d for d in self.list_all() if d.target_id == target_id]
+
+    def execute_command(self, *, command, mutate, audit_store):
+        digest = _hashlib.sha256(_json.dumps(command, sort_keys=True).encode()).hexdigest()
+        key = (command["tenant_id"], command["actor_id"], command["idempotency_key"])
+        if key in self.receipts:
+            if self.receipts[key][0] != digest:
+                raise ApprovalCommandConflict("Idempotency key has different command content")
+            return self.receipts[key][1]
+        base = self.rows.get(command["decision_id"])
+        if base and base["tenant_id"] != command["tenant_id"]:
+            raise ApprovalCommandNotFound("Approval decision not found")
+        if (base.get("version", 0) if base else 0) != command["expected_version"]:
+            raise ApprovalCommandConflict("Approval base version is stale")
+        decision = mutate(ApprovalDecision.from_dict(_copy.deepcopy(base)) if base else None)
+        decision.version = command["expected_version"] + 1
+        decision.event_id = f"evt-{decision.version}"
+        self.rows[decision.decision_id] = payload = decision.to_dict()
+        self.receipts[key] = (digest, payload)
+        return payload
+
+
+@pytest.fixture()
+def op_owner(monkeypatch):
+    for name, value in {"JWT_SECRET": OP_SECRET, "JWT_ISSUER": "iss", "JWT_AUDIENCE": "aud"}.items():
+        monkeypatch.setenv(f"PANTHEON_GOVERNANCE_{name}", value)
+    monkeypatch.setattr(_gov_main, "store", OperatorMemoryStore())
+    return _TestClient(_gov_main.app)
+
+
+def op_auth(sub, role, tenant=OP_TENANT, key=None):
+    result = {"Authorization": "Bearer " + token(OP_SECRET, sub=sub, roles=[role], tenant_id=tenant, iss="iss", aud="aud")}
+    if key:
+        result["Idempotency-Key"] = key
+    return result
+
+
+def op_proposal(**overrides):
+    body = dict(target_type="capital_binding_activation", target_id="b1", target_version="1", risk_level="medium",
+                tenant_id=OP_TENANT, owner_user_id="op-1", expected_version=0, subject=OP_SUBJECT, decision_id="d1")
+    body.update(overrides)
+    return body
+
+
+def op_vote(sub, role, version, outcome="approved", key="k", held=None):
+    return {"json": {"expected_version": version, "actor_role": role, "actor_id": sub, "outcome": outcome,
+                     "rationale": "reviewed", "expires_at": "2099-01-01T00:00:00Z"},
+            "headers": op_auth(sub, held or role, key=key)}
+
+
+def test_operator_proposes_and_reads_only_within_own_tenant_and_owner(op_owner):
+    assert op_owner.post("/api/governance/approvals", json=op_proposal(), headers=op_auth("op-1", "operator", key="p")).status_code == 201
+    assert op_owner.get("/api/governance/approvals/d1", headers=op_auth("op-1", "operator")).json()["version"] == 1
+    assert op_owner.get("/api/governance/approvals/d1", headers=op_auth("op-2", "operator", tenant="other")).status_code == 404
+    assert op_owner.post("/api/governance/approvals", json=op_proposal(decision_id="d2", owner_user_id="op-2"),
+                      headers=op_auth("op-1", "operator", key="q")).status_code == 403
+    assert op_owner.post("/api/governance/approvals", json=op_proposal(decision_id="d3", tenant_id="other"),
+                      headers=op_auth("op-1", "operator", key="r")).status_code == 403
+
+
+def test_operator_cannot_decide_and_proposer_cannot_vote(op_owner):
+    op_owner.post("/api/governance/approvals", json=op_proposal(owner_user_id="rev-1"),
+               headers=op_auth("rev-1", "operator", key="p"))
+    assert op_owner.post("/api/governance/approvals/d1/decide", **op_vote("op-1", "governance_reviewer", 1, held="operator")).status_code == 403
+    denied = op_owner.post("/api/governance/approvals/d1/decide", **op_vote("rev-1", "governance_reviewer", 1))
+    assert denied.status_code == 400 and "proposer" in denied.text
+
+
+def test_two_distinct_voters_complete_target_and_first_vote_stays_under_review(op_owner):
+    op_owner.post("/api/governance/approvals", json=op_proposal(), headers=op_auth("op-1", "operator", key="p"))
+    first = op_owner.post("/api/governance/approvals/d1/decide", **op_vote("rev-1", "governance_reviewer", 1, key="v1"))
+    assert first.status_code == 200, first.text
+    assert first.json()["decision_state"] == "under_review" and first.json()["version"] == 2
+    stale = op_owner.post("/api/governance/approvals/d1/decide", **op_vote("rk-1", "risk_owner", 1, key="v2"))
+    assert stale.status_code == 409
+    replay = op_owner.post("/api/governance/approvals/d1/decide", **op_vote("rev-1", "governance_reviewer", 1, key="v1"))
+    assert replay.json() == first.json()
+    second = op_owner.post("/api/governance/approvals/d1/decide", **op_vote("rk-1", "risk_owner", 2, key="v3"))
+    assert second.status_code == 200 and second.json()["decision_state"] == "decided" and second.json()["version"] == 3

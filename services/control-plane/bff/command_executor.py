@@ -537,75 +537,6 @@ def _execute_approve_deployment(
     }
 
 
-def _execute_approve_decision(
-    command_id: str, params: Dict[str, Any],
-    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Dispatch ApproveDecision to the approval-decision authority endpoint."""
-    decision_id = str(params.get("decision_id") or "").strip()
-    if not decision_id:
-        raise ValueError("ApproveDecision requires decision_id.")
-    payload = {
-        "approval_notes": params.get("approval_notes"),
-    }
-    url = _internal_url(f"/api/internal/v1/approval-decisions/{decision_id}/approve")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-    return {
-        "command_id": command_id,
-        "decision_id": body.get("decision_id", decision_id),
-        "decision_state": body.get("decision_state", "approved"),
-        "status": body.get("status") or body.get("decision_state", "approved"),
-        "audit_id": body.get("audit_id"),
-        "approved_at": body.get("approved_at"),
-    }
-
-
-def _execute_reject_decision(
-    command_id: str, params: Dict[str, Any],
-    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Dispatch RejectDecision to the approval-decision authority endpoint."""
-    decision_id = str(params.get("decision_id") or "").strip()
-    if not decision_id:
-        raise ValueError("RejectDecision requires decision_id.")
-    payload = {
-        "rejection_reason": params.get("rejection_reason"),
-    }
-    url = _internal_url(f"/api/internal/v1/approval-decisions/{decision_id}/reject")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-    return {
-        "command_id": command_id,
-        "decision_id": body.get("decision_id", decision_id),
-        "decision_state": body.get("decision_state", "rejected"),
-        "status": body.get("status") or body.get("decision_state", "rejected"),
-        "audit_id": body.get("audit_id"),
-        "rejected_at": body.get("rejected_at"),
-    }
-
-
-def _execute_request_approval_revision(
-    command_id: str, params: Dict[str, Any],
-    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Dispatch RequestApprovalRevision to the approval-decision authority endpoint."""
-    decision_id = str(params.get("decision_id") or "").strip()
-    if not decision_id:
-        raise ValueError("RequestApprovalRevision requires decision_id.")
-    payload = {
-        "revision_notes": params.get("revision_notes"),
-    }
-    url = _internal_url(f"/api/internal/v1/approval-decisions/{decision_id}/request-revision")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-    return {
-        "command_id": command_id,
-        "decision_id": body.get("decision_id", decision_id),
-        "decision_state": body.get("decision_state", "pending_revision"),
-        "status": body.get("status"),
-        "audit_id": body.get("audit_id"),
-        "requested_at": body.get("requested_at"),
-    }
-
-
 def _execute_pause_runtime(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
@@ -1473,9 +1404,9 @@ _EXECUTORS = {
     CommandType.ADVANCE_LIFECYCLE: _make_adapter_executor(CommandType.ADVANCE_LIFECYCLE),
     CommandType.APPROVE_POOL: _execute_approve_pool,
     CommandType.APPROVE_DEPLOYMENT: _execute_approve_deployment,
-    CommandType.APPROVE_DECISION: _execute_approve_decision,
-    CommandType.REJECT_DECISION: _execute_reject_decision,
-    CommandType.REQUEST_APPROVAL_REVISION: _execute_request_approval_revision,
+    CommandType.APPROVE_DECISION: _make_adapter_executor(CommandType.APPROVE_DECISION),
+    CommandType.REJECT_DECISION: _make_adapter_executor(CommandType.REJECT_DECISION),
+    CommandType.REQUEST_APPROVAL_REVISION: _make_adapter_executor(CommandType.REQUEST_APPROVAL_REVISION),
     CommandType.PAUSE_RUNTIME: _execute_pause_runtime,
     CommandType.PAUSE_EXECUTION: _execute_pause_runtime,
     CommandType.ESCALATE_DIFF: _execute_escalate_diff,

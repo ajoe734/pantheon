@@ -360,8 +360,14 @@ Configure the Governance-specific JWT secret or existing JWKS/OIDC settings,
 expected issuer and audience. The verified `sub`, `tenant_id`, roles and finite
 future `exp` are mandatory. Generic BFF/runtime credentials and asserted body or
 header roles are not approval authority. A scoped `approval_reader` can read;
-`approval_proposer` can propose. Decision/revocation roles use the single matrix
-in `write_authority.py`, including low-risk `automated_gate`. Human promotion
+`approval_proposer` or an ordinary authenticated `operator` can propose a complete
+pending proposal for its own tenant and `owner_user_id` and read it back; `operator`
+never decides. Decision/revocation roles use the single matrix
+in `write_authority.py`, including low-risk `automated_gate`. `decide` on a
+`proposed` decision performs `accept_review` then the vote inside the same
+`execute_command` callback/CAS (no separate `/review` hop); a proposer cannot vote
+its own action target and a multi-vote target stays `under_review` until enough
+distinct deciders approve. Human promotion
 MFA and distinct-actor gates remain separately enforced.
 
 Each mutation requires `Idempotency-Key` and integer `expected_version` (0 for

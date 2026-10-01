@@ -74,7 +74,7 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         elif command_type == "RejectDecision":
             return self._execute_decision_action(command_id, entity_id, "reject", params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type == "RequestApprovalRevision":
-            return self._execute_decision_action(command_id, entity_id, "request-revision", params, auth_token=auth_token, mfa_token=mfa_token)
+            return self._execute_decision_action(command_id, entity_id, "request_revision", params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type.startswith("HumanGate"):
             return self._execute_human_gate_action(command_id, entity_id, command_type or action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type == "RecordSponsorDecision":
@@ -97,44 +97,22 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        from ..governance import approval_owner
+
         target_id = decision_id or str(params.get("decision_id") or "").strip()
         if not target_id:
             raise ValueError(f"ApprovalDecision action {verb} requires decision_id.")
-
-        payload: Dict[str, Any] = {}
-        if verb == "approve":
-            payload["approval_notes"] = params.get("approval_notes") or params.get("notes") or "Approved by governance"
-            subpath = "approve"
-            expected_state = "approved"
-        elif verb == "reject":
-            payload["rejection_reason"] = params.get("rejection_reason") or params.get("reason") or "Rejected by governance"
-            subpath = "reject"
-            expected_state = "rejected"
-        else:
-            payload["revision_notes"] = params.get("revision_notes") or params.get("notes") or "Revision requested"
-            subpath = "request-revision"
-            expected_state = "pending_revision"
-
-        url = internal_url(f"/api/internal/v1/approval-decisions/{quote(target_id, safe='')}/{subpath}")
-        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
-
+        decision = approval_owner.decide(auth_token, target_id, {**params, "decision": verb}, command_id)
         return build_domain_receipt(
             command_id=command_id,
             entity_type="ApprovalDecision",
             entity_id=target_id,
             action_id=f"Decision:{verb}",
-            status=body.get("decision_state") or expected_state,
-            dispatch_path=url,
-            domain_receipt=body,
-            authoritative_readback={
-                "decision_id": target_id,
-                "decision_state": body.get("decision_state") or expected_state,
-            },
-            extra={
-                "decision_id": target_id,
-                "decision_state": body.get("decision_state") or expected_state,
-                "audit_id": body.get("audit_id"),
-            },
+            status=decision["decision_state"],
+            dispatch_path=approval_owner.owner_url(f"/api/governance/approvals/{quote(target_id, safe='')}/decide"),
+            domain_receipt=decision,
+            authoritative_readback={"decision_id": target_id, "decision_state": decision["decision_state"], "version": decision.get("version")},
+            extra={"decision_id": target_id, "decision_state": decision["decision_state"]},
         )
 
     def _execute_human_gate_action(
@@ -222,15 +200,9 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        target_review_id = review_id or str(params.get("review_id") or "review-001").strip()
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="Review",
-            entity_id=target_review_id,
-            action_id=action_id,
-            status="accepted",
-            dispatch_path="governance_review_store",
-            domain_receipt={"review_id": target_review_id, "action": action_id, "submitted": True},
-            authoritative_readback={"review_id": target_review_id, "status": "pending_review"},
-            extra={"review_id": target_review_id},
-        )
+        verb = str(params.get("decision") or params.get("action") or action_id or "").strip().lower()
+        if verb not in {"approve", "reject"}:
+            from ..governance.approval_owner import UnsupportedApprovalAction
+
+            raise UnsupportedApprovalAction(f"review action {verb!r} has no Governance owner transition")
+        return self._execute_decision_action(command_id, review_id, verb, params, auth_token=auth_token, mfa_token=mfa_token)
