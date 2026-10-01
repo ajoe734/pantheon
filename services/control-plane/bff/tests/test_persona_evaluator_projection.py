@@ -70,6 +70,15 @@ def test_refresh_after_ranking_advances_keeps_saved_snapshot_projection(monkeypa
         }
         monkeypatch.setattr(evaluator_results, "saved_evaluator_result", lambda *a, **k: saved)
         before = _items(client)[0]
+        for field in ("name", "state", "owner", "archetype", "risk"):
+            assert before[field] is not None
+        matching_state = client.get(URL, headers=HEADERS, params={"quarter": "2026-Q1", "state": before["state"]}).json()["data"]["items"]
+        assert len(matching_state) == 1 and matching_state[0]["persona_id"] == persona
+        matching_arch = client.get(URL, headers=HEADERS, params={"quarter": "2026-Q1", "archetype": before["archetype"]}).json()["data"]["items"]
+        assert len(matching_arch) == 1 and matching_arch[0]["persona_id"] == persona
+        mismatched_state = client.get(URL, headers=HEADERS, params={"quarter": "2026-Q1", "state": "unknown_state"}).json()["data"]["items"]
+        assert len(mismatched_state) == 0
+
         real_attach = personas_service._pm12_attach_ranking_snapshot
 
         def advanced(items, **kwargs):  # live ranking moves: new scores/evidence
@@ -78,7 +87,8 @@ def test_refresh_after_ranking_advances_keeps_saved_snapshot_projection(monkeypa
 
         monkeypatch.setattr(personas_service, "_pm12_attach_ranking_snapshot", advanced)
         after = _items(client)[0]
-        for key in ("ranking_snapshot_id", "score", "state", "evidence_refs", "evidence_ref_ids"):
+        assert after["state"] is not None
+        for key in ("ranking_snapshot_id", "score", "state", "name", "owner", "archetype", "risk", "evidence_refs", "evidence_ref_ids"):
             assert after[key] == before[key]
         assert after["evidence_ref_ids"] == ["ev-old"] and after["evidence_refs"] == []
 
