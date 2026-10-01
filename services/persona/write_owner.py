@@ -210,6 +210,7 @@ class PersonaInboundAuthority:
     actor_id: str
     roles: frozenset[str]
     token_kind: str
+    tenant_id: str | None = None
 
 
 class GovernanceDecisionVerifier(Protocol):
@@ -220,6 +221,7 @@ class GovernanceDecisionVerifier(Protocol):
         *,
         decision_id: str,
         persona_id: str,
+        tenant_id: str,
         source_state: str,
         target_state: str,
     ) -> bool: ...
@@ -267,6 +269,36 @@ class HttpGovernanceApprovalVerifier:
         self._base_url = base_url.rstrip("/")
         self._service_token = service_token
         self._timeout_seconds = timeout_seconds
+
+    def verify_persona_lifecycle_decision(
+        self,
+        *,
+        decision_id: str,
+        persona_id: str,
+        tenant_id: str,
+        source_state: str,
+        target_state: str,
+    ) -> bool:
+        from services.governance.approval_authority import (
+            ApprovalInvalid,
+            ApprovalReader,
+            ApprovalUnavailable,
+        )
+        try:
+            ApprovalReader(base_url=self._base_url, service_token=self._service_token,
+                           timeout_seconds=self._timeout_seconds).verify(
+                decision_id, expected={
+                    'tenant_id': tenant_id,
+                    'target_type': 'persona_lifecycle_transition',
+                    'subject.persona_id': persona_id,
+                    'subject.from_state': source_state,
+                    'subject.to_state': target_state,
+                })
+        except ApprovalUnavailable:
+            raise
+        except ApprovalInvalid:
+            return False
+        return True
 
     def verify_training_target_approval(
         self,
@@ -397,6 +429,7 @@ def _authenticate_persona_mutation(
         actor_id=context.actor_id,
         roles=context.roles,
         token_kind=context.token_kind,
+        tenant_id=str(context.claims.get("tenant_id") or "").strip() or None,
     )
 
 
@@ -429,6 +462,7 @@ def _require_lifecycle_authority(
     verifier: GovernanceDecisionVerifier | None,
     decision_id: str | None,
     persona_id: str,
+    tenant_id: str | None,
     source_state: str,
     target_state: str,
 ) -> None:
@@ -442,7 +476,12 @@ def _require_lifecycle_authority(
         return
 
     clean_decision_id = str(decision_id or "").strip()
-    if not clean_decision_id or verifier is None:
+    if (
+        not clean_decision_id
+        or verifier is None
+        or not tenant_id
+        or authority.tenant_id != tenant_id
+    ):
         raise PersonaAuthorityError(
             "LIFECYCLE_AUTHORITY_REQUIRED",
             "Lifecycle transition requires its policy owner or a verified Governance decision",
@@ -452,6 +491,7 @@ def _require_lifecycle_authority(
         verified = verifier.verify_persona_lifecycle_decision(
             decision_id=clean_decision_id,
             persona_id=persona_id,
+            tenant_id=str(tenant_id or ""),
             source_state=source_state,
             target_state=target_state,
         )
@@ -1470,6 +1510,13 @@ def build_training_target_approval_verifier() -> TrainingTargetApprovalVerifier 
     )
 
 
+def build_governance_decision_verifier() -> GovernanceDecisionVerifier | None:
+    """Real lifecycle decision verifier from env, or None (fails closed)."""
+
+    verifier = build_training_target_approval_verifier()
+    return verifier if isinstance(verifier, HttpGovernanceApprovalVerifier) else None
+
+
 def build_persona_training_target_owner(
     persona_owner: PersistentPersonaOwner,
     *,
@@ -1561,6 +1608,9 @@ def create_app(
     governance_decision_verifier: GovernanceDecisionVerifier | None = None,
 ) -> FastAPI:
     persistent_owner = owner or build_persona_owner()
+    governance_decision_verifier = (
+        governance_decision_verifier or build_governance_decision_verifier()
+    )
     persistent_capability_owner = capability_owner or build_capability_snapshot_owner()
     persistent_training_target_owner = (
         training_target_owner
@@ -1647,6 +1697,7 @@ def create_app(
                 verifier=governance_decision_verifier,
                 decision_id=body.governance_decision_id,
                 persona_id=persona_id,
+                tenant_id=current.tenant_id,
                 source_state=current.lifecycle_state,
                 target_state=body.target_state,
             )

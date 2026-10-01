@@ -29,6 +29,15 @@ def _persona_headers(actor_id: str, *roles: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {actor_id}:{','.join(roles)}"}
 
 
+def _persona_jwt_headers(actor_id: str, tenant_id: str | None, *roles: str) -> dict[str, str]:
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    claims: dict[str, Any] = {"sub": actor_id, "roles": list(roles), "exp": 4102444800}
+    if tenant_id:
+        claims["tenant_id"] = tenant_id
+    return {"Authorization": f"Bearer {encode_jwt_hs256(claims, secret='persona-test-secret')}"}
+
+
 def _persona_create_payload(**overrides: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "actor_id": "operator-persona",
@@ -233,6 +242,7 @@ class _ExactGovernanceDecisionVerifier:
         *,
         decision_id: str,
         persona_id: str,
+        tenant_id: str,
         source_state: str,
         target_state: str,
     ) -> bool:
@@ -249,6 +259,7 @@ def test_persona_http_decision_executor_requires_exact_governance_binding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("PERSONA_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PERSONA_JWT_SECRET", "persona-test-secret")
     owner = PersistentPersonaOwner.from_json_path(tmp_path / "personas.json")
     client = TestClient(
         create_app(
@@ -259,7 +270,7 @@ def test_persona_http_decision_executor_requires_exact_governance_binding(
     admin_headers = _persona_headers("operator-persona", "persona.admin")
     assert client.post(
         "/api/personas",
-        json=_persona_create_payload(),
+        json=_persona_create_payload(tenant_id="tenant-owner-proof"),
         headers=admin_headers,
     ).status_code == 201
     assert client.patch(
@@ -268,26 +279,26 @@ def test_persona_http_decision_executor_requires_exact_governance_binding(
         headers=admin_headers,
     ).status_code == 200
 
-    wrong_decision = client.patch(
-        "/api/personas/persona-owner-proof/lifecycle",
-        json={
-            "actor_id": "governance-executor",
-            "target_state": "consultable",
-            "governance_decision_id": "decision-wrong-target",
-        },
-        headers=_persona_headers("governance-executor", "operator"),
-    )
-    accepted = client.patch(
-        "/api/personas/persona-owner-proof/lifecycle",
-        json={
-            "actor_id": "governance-executor",
-            "target_state": "consultable",
-            "governance_decision_id": "decision-consultable",
-        },
-        headers=_persona_headers("governance-executor", "operator"),
-    )
+    def _advance(tenant_id: str | None, decision_id: str = "decision-consultable"):
+        return client.patch(
+            "/api/personas/persona-owner-proof/lifecycle",
+            json={
+                "actor_id": "governance-executor",
+                "target_state": "consultable",
+                "governance_decision_id": decision_id,
+            },
+            headers=_persona_jwt_headers("governance-executor", tenant_id, "operator"),
+        )
+
+    wrong_decision = _advance("tenant-owner-proof", "decision-wrong-target")
+    foreign_tenant = _advance("tenant-other")
+    missing_tenant = _advance(None)
+    assert owner.get("persona-owner-proof").lifecycle_state == "research_only"
+    accepted = _advance("tenant-owner-proof")
 
     assert wrong_decision.status_code == 403
+    assert foreign_tenant.status_code == 403
+    assert missing_tenant.status_code == 403
     assert accepted.status_code == 200
     assert accepted.json()["metadata"]["last_lifecycle_governance_decision_id"] == (
         "decision-consultable"
