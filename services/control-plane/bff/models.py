@@ -83,12 +83,6 @@ class CommandType(str, Enum):
     # BFF-WRITE-P0-LIFECYCLE: P0-1/2/3 lifecycle action types
     ADVANCE_LIFECYCLE = "AdvanceLifecycle"
     APPROVE_POOL = "ApprovePool"
-    START_RUNTIME = "StartRuntime"
-    RESTART_PAPER_RUNTIME = "RestartPaperRuntime"
-    RESTART_TELEMETRY_BRIDGE = "RestartTelemetryBridge"
-    TERMINATE_STALE_PAPER_MONITORING_SESSION = "TerminateStalePaperMonitoringSession"
-    START_PAPER_MONITORING_SESSION = "StartPaperMonitoringSession"
-    PROBE_TELEMETRY_INGEST = "ProbeTelemetryIngest"
     REQUEST_REVIEW = "RequestReview"
     PAUSE_PAPER_RUNTIME = "PausePaperRuntime"
     RESUME_PAPER_RUNTIME = "ResumePaperRuntime"
