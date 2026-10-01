@@ -6,6 +6,7 @@ import json
 from types import SimpleNamespace
 from urllib.error import HTTPError
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
@@ -200,6 +201,43 @@ def test_concurrent_owner_transition_is_preserved_as_409(boundary, monkeypatch):
         advance(boundary)
     assert failure.value.status_code == 409
     assert boundary.owner.get(PERSONA).lifecycle_state == "frozen"
+
+
+def test_ordinary_create_route_forwards_authenticated_tenant_not_raw_metadata(boundary, monkeypatch):
+    from services.control_plane.bff.auth.policy import extract_identity_jwt
+    from services.control_plane.bff.personas import PersonaService, create_personas_router
+    from services.control_plane.bff.personas import service
+    from services.control_plane.bff.personas.routes import collection
+    from services.control_plane.bff.persona_provisioning_coordinator import PersonaProvisioningCoordinationError
+
+    created_ids = []
+
+    def create_owner_step(record, *, payload, owner):
+        service._persona_record_for_provisioning(record, payload=payload, owner=owner, mutate_store=True)
+        created_ids.append(record.persona_id)
+        # This contract isolates the real Persona step, not Capital/Runtime onboarding.
+        raise PersonaProvisioningCoordinationError("Other provisioning owners intentionally not mounted")
+
+    monkeypatch.setattr(collection, "_coordinate_persona_create", create_owner_step)
+    svc = PersonaService(read_store=boundary.port, write_owner=boundary.port,
+                         ranking_write_owner=SimpleNamespace(), command_store=SimpleNamespace())
+    app = FastAPI()
+    app.include_router(create_personas_router(service=svc, extract_identity_fn=extract_identity_jwt))
+    with TestClient(app) as client:
+        response = client.post("/bff/personas", headers={
+            "Authorization": bearer(), "Idempotency-Key": "new-authenticated-persona",
+        }, json={"name": "New authenticated persona", "metadata": {"tenant_id": "foreign"}})
+    assert response.status_code == 503, response.text
+    assert len(created_ids) == 1
+    fresh = PersistentPersonaOwner.from_json_path(boundary.path).get(created_ids[0])
+    assert fresh.tenant_id == TENANT
+    assert fresh.metadata["tenant_id"] == TENANT
+    # No metadata fallback is needed for the owner to admit a same-tenant JWT.
+    accepted = boundary.port.advance_lifecycle(created_ids[0], actor_id="alice",
+        target_state="research_only", governance_decision_id=None,
+        authorization=bearer(roles=("persona.admin",)))
+    assert accepted["tenant_id"] == TENANT
+    assert accepted["updated_by"] == "alice"
 
 
 @pytest.mark.parametrize("response", [[], {}, {"persona_id": "foreign", "lifecycle_state": "paper_owner"}])

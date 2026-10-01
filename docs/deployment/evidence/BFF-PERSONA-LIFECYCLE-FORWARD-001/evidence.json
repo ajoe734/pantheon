@@ -1,0 +1,49 @@
+{
+  "task_id": "BFF-PERSONA-LIFECYCLE-FORWARD-001",
+  "status": "partial_draft_blocked_on_dependency",
+  "ready_for_review": false,
+  "base_sha": "51adc8c34086f92f895dc993ff249549ef9798f5",
+  "changes_so_far": [
+    "Persona HTTP create forwards the server-derived tenant into the owner's formal tenant field, not only metadata.",
+    "Lifecycle HTTP transport supports the original caller bearer without provisioning-token fallback; preserves owner rejection statuses and checks the actual returned identity, state, actor and decision reference.",
+    "No shared command/admission/adapter or REST lifecycle implementation is changed in this partial draft."
+  ],
+  "validated_source_git_blobs": {
+    "services/control-plane/bff/ports/persona_write_owner.py": "f8d82ac7939759af35d2ef27fb583c087ca5790f",
+    "services/control-plane/bff/tests/test_persona_lifecycle_forward.py": "1c3cf45fdb984d105aff2949c67f2d9f9fd9d548",
+    "services/control-plane/bff/tests/test_persona_create_owner_contract.py": "4ec08f2e770c3393a6b689e7f8e94f97b869f154",
+    "services/control-plane/bff/tests/test_agora_servant_production_write_owner.py": "138c83c3760f59a0b40dad1874e05de710bbfbf3"
+  },
+  "validation": {
+    "command": "/tmp/clean-bff-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_lifecycle_forward.py services/control-plane/bff/tests/test_persona_create_owner_contract.py services/control-plane/bff/tests/test_agora_servant_production_write_owner.py services/control-plane/bff/tests/test_persona_owner_transport_contract.py services/control-plane/bff/tests/test_persona_governance_caller_contract.py",
+    "result": "98 passed, 3 warnings in 48.53s; no deselected or skipped tests",
+    "log": "/tmp/persona-forward-transport-final-tests.log",
+    "log_sha256": "8742ef38c45b9d1b39e0f1e13f06d51760531ec344558309b3feb90e251f6841",
+    "diff_check": "git diff --check passed",
+    "boundary": "Socket transport replaced by TestClient against the real Persona owner, strict JWT authentication and temporary durable JSON store. Governance decision reads use explicit fixture evidence with the real verifier. Ordinary-create route test executes only the Persona creation step and deliberately returns 503 because other provisioning owners are not mounted. Not hosted, Postgres or completed-onboarding evidence."
+  },
+  "baseline_command_suite": {
+    "result": "120 passed, 3 failed, 2 subtests passed before shared command changes; shared command source remains unchanged",
+    "failures": [
+      "test_zero_reverse_main_imports",
+      "test_command_confirmations_lifecycle",
+      "test_confirm_command_by_token_contract_and_regressions"
+    ],
+    "log": "/tmp/persona-forward-command-baseline.log",
+    "log_sha256": "2c158326ba222e6613c4290e975b0ddf5587818286ef41ad1ab1d8ab17d7cc43"
+  },
+  "remaining": [
+    "Wait for corrected wrapper task BFF-WRAPPER-EDGE-REWRITE-001 / PR 6058 to pass independent review, required checks and merge.",
+    "Rebase onto current dev; integrate canonical command, wrapper and REST lifecycle forwarding while preserving confirmation, tenant, audit and idempotency boundaries.",
+    "Remove obsolete internal lifecycle execution and fabricated Observe/promote/demote receipts; bind authenticated actor and tenant, never client-provided authority.",
+    "Run the complete mounted lifecycle/alias/negative matrix and relevant regressions, then independent review, checks, merge and canonical closeout."
+  ],
+  "whole_task_line_budget": {
+    "base_sha": "51adc8c34086f92f895dc993ff249549ef9798f5",
+    "current_production_added": 55,
+    "current_production_deleted": 4,
+    "current_production_net": 51,
+    "compliance": "NOT YET MET: this is partial transport preparation; required net-negative legacy removal remains outstanding. No budget tooling or baseline substitution."
+  },
+  "authority_limits": "No deployment, live/capital mutation, canonical approval, reviewer attestation, completed task, or end-to-end operational acceptance is claimed."
+}

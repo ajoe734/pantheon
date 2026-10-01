@@ -1,8 +1,9 @@
 """Typed HTTP port for the Persona service's durable write owner.
 
 The BFF never imports Persona application stores or opens Persona-owned tables.
-Both writes and their read-after-write projections cross the deployed Persona
-service boundary with a bounded timeout and a dedicated service credential.
+Writes and read projections cross the Persona service boundary with a bounded
+timeout. Provisioning uses its service credential; human lifecycle operations
+forward the original authenticated caller without borrowing provisioning roles.
 """
 from __future__ import annotations
 
@@ -334,10 +335,17 @@ class PersonaRegistryHttpWritePort:
             write=True,
             authorization=authorization,
         )
+        metadata = value.get("metadata") if isinstance(value, dict) else None
         if (
             not isinstance(value, dict)
+            or not isinstance(metadata, dict)
             or value.get("persona_id") != persona_id
             or value.get("lifecycle_state") != target_state
+            or value.get("updated_by") != actor_id
+            or (
+                governance_decision_id
+                and metadata.get("last_lifecycle_governance_decision_id") != governance_decision_id
+            )
         ):
             raise PersonaWriteOwnerUnavailable(
                 "persona_lifecycle_owner", "Persona lifecycle owner returned invalid readback"
