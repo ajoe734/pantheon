@@ -891,6 +891,11 @@ _ALIAS_PARAMS: Dict[str, Dict[str, Any]] = {
     "ApproveRollback": {"rollback_id": "rb-1"},
     "RejectRollback": {"rollback_id": "rb-1", "rejection_reason": "alias equivalence"},
     "AdvanceLifecycle": {"target_state": "paper_owner"},
+    "RequestReview": {"persona_id": "alias-target-1"},
+    "ApproveDecision": {"decision_id": "alias-target-1"},
+    "RejectDecision": {"decision_id": "alias-target-1", "rejection_reason": "alias equivalence"},
+    "RequestApprovalRevision": {"decision_id": "alias-target-1", "revision_notes": "alias equivalence"},
+    "RecordSponsorDecision": {"committee_id": "alias-target-1", "sponsor_decision": "approved", "rationale_ref": "ref-1"},
     "EmergencyContainment": {"action": "freeze", "trigger": "forced_kill", "evidence_refs": ["ev-1"]},
 }
 _ALIAS_TARGET_TYPES = {"HardRollback": ObjectType.RUNTIME, "ExecuteRollback": ObjectType.RUNTIME}
@@ -1024,8 +1029,9 @@ def test_wrapped_alias_is_admitted_exactly_like_its_canonical_command(wrapper, v
 @pytest.mark.parametrize("wrapper,verb,canonical", sorted((w, v, c) for (w, v), c in __import__("services.control_plane.bff.command_adapters.contracts", fromlist=["x"])._WRAPPER_VERB_ALIASES.items()))
 def test_every_alias_has_an_accepted_path_stored_as_canonical(wrapper, verb, canonical) -> None:
     status, _body, stored = _submit_alias(wrapper, verb, canonical, wrapped=True, token_for=canonical)
-    if canonical == "RebalanceProposal":  # canonical admission itself demands server-side allocation evidence
-        assert status == 422 and stored == []
+    expected_reject = {"RebalanceProposal": 422, "RecordSponsorDecision": 404}  # canonical admission itself needs evidence/projection the harness lacks
+    if canonical in expected_reject:
+        assert status == expected_reject[canonical] and stored == []
         return
     assert status == 202, (status, _body)
     assert [row["type"] for row in stored if row["request_hash"]] == [canonical]

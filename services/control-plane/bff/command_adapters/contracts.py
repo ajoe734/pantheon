@@ -377,6 +377,13 @@ _WRAPPER_CANONICALS = {
         "Observe": (),
         "Demote": (),
     },
+    "ReviewAction": {
+        "RequestReview": ("review",),
+        "ApproveDecision": ("approve",),
+        "RejectDecision": ("reject",),
+        "RequestApprovalRevision": ("requestrevision",),
+        "RecordSponsorDecision": ("sponsordecision",),
+    },
     "RiskAlertAction": {"AlertAcknowledge": ("acknowledge", "ack")},
 }
 _WRAPPER_VERB_ALIASES = {
