@@ -105,9 +105,9 @@ def test_canonical_paper_command_cannot_be_redirected_by_params(command, alias):
     assert params["action_id"] == params["actionId"] == command
     adapter = find_adapter(command, params["entity_type"], params["action_id"])
     assert isinstance(adapter, RuntimeCommandAdapter)
-    with patch.object(adapter, "_execute_pause", return_value={"status": "unit-dispatched"}) as pause, patch.object(adapter, "_execute_start") as start:
+    with patch.object(adapter, "_execute_pause", return_value={"status": "unit-dispatched"}) as pause:
         adapter.execute("cmd-unit", command, {**malicious, "entity_id": "rt-paper-001"})
-    start.assert_not_called()
+    pause.assert_called_once()
     assert pause.call_args.args[2] == ("pause" if command == "PausePaperRuntime" else "resume")
 
 
@@ -130,9 +130,6 @@ class TestActionToOwnerMatrix(unittest.TestCase):
     def test_runtime_adapter_mapping(self):
         adapter = find_adapter("RuntimeAction", "runtime", "pause")
         self.assertIsInstance(adapter, RuntimeCommandAdapter)
-
-        adapter2 = find_adapter("StartRuntime", "runtime", "start")
-        self.assertIsInstance(adapter2, RuntimeCommandAdapter)
 
         adapter3 = find_adapter("PausePaperRuntime", "runtime", "pause")
         self.assertIsInstance(adapter3, RuntimeCommandAdapter)

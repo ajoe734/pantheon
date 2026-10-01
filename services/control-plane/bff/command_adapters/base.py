@@ -79,11 +79,6 @@ def internal_url(path: str) -> str:
     return f"{base}{path}"
 
 
-def runtime_repair_url(path: str) -> str:
-    base = get_base_url("PANTHEON_RUNTIME_MANAGER_API_URL", "PANTHEON_INTERNAL_API_URL")
-    return f"{base}{path}"
-
-
 def governance_url(path: str) -> str:
     base = get_base_url("PANTHEON_GOVERNANCE_API_URL", "PANTHEON_EVOLUTION_API_URL")
     return f"{base}{path}"

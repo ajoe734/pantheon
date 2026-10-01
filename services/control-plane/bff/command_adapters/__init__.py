@@ -17,7 +17,6 @@ from .base import (
     governance_url,
     http_request_json,
     internal_url,
-    runtime_repair_url,
     utc_now,
 )
 from .capital_adapter import CapitalCommandAdapter
@@ -61,6 +60,5 @@ __all__ = [
     "governance_url",
     "http_request_json",
     "internal_url",
-    "runtime_repair_url",
     "utc_now",
 ]
