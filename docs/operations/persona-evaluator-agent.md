@@ -38,12 +38,15 @@ formulas are unchanged and are read-only evidence.
 
 ## Limits, dedupe, degraded runs
 
-- At most 5 requests per run and 20 per rolling hour (persisted; a slot is
-  reserved before the POST and kept when the outcome is unknown).
+- At most 5 POST attempts per run (unknown outcomes count) and 20 per rolling
+  hour (persisted; a slot and the exact request identity are reserved before the
+  POST and kept when the outcome is unknown; later runs replay that identity
+  even if the ranking snapshot changed).
 - Deduplicated per persona and target state for 7 days, plus a deterministic
   decision id / `Idempotency-Key`, so a replay or a concurrent run merges (HTTP 409)
   instead of creating a second request.
-- A degraded run (evidence, agent or output unavailable) is recorded in
+- A degraded run (evidence, an unavailable ranking surface or source, missing
+  refs, agent or output unavailable) is recorded in
   `last_run` and creates nothing.
 
 ## Authority

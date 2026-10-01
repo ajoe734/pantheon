@@ -12,14 +12,14 @@
       "pm12/evaluator_results.py": "+36/-0"
     },
     "owner_additions": {
-      "services/persona-evaluator-agent/persona_evaluator_agent.py": 361,
+      "services/persona-evaluator-agent/persona_evaluator_agent.py": 374,
       "services/persona-evaluator-agent/Dockerfile": 11,
       "docker-compose.yml": 27
     },
-    "overall_net": 308
+    "overall_net": 321
   },
   "verification": {
-    "agent_unit_tests": "services/persona-evaluator-agent: 11 passed",
+    "agent_unit_tests": "services/persona-evaluator-agent: 14 passed (adds unavailable-evidence degraded, unknown-outcome per-run limit, pending-identity replay across snapshots)",
     "bff": "tests/test_persona_evaluator_projection.py: 3 passed; affected BFF suites show no new failures vs frozen base (24 + 2 pre-existing environment failures unchanged)"
   },
   "not_verified": [
