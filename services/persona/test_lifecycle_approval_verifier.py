@@ -135,3 +135,21 @@ def test_invalid_decision_rejected(monkeypatch, over):
 ])
 def test_mismatched_binding_rejected(monkeypatch, over):
     assert _verify(monkeypatch, _evidence(), **over) is False
+
+
+def test_verifier_reads_rotating_token_file_per_call_without_env_fallback(monkeypatch, tmp_path):
+    from services.persona.write_owner import build_training_target_approval_verifier
+
+    path = tmp_path / "PERSONA_GOVERNANCE_SERVICE_TOKEN"
+    path.write_text("first")
+    path.chmod(0o600)
+    monkeypatch.setenv("PERSONA_TRAINING_TARGET_GOVERNANCE_BASE_URL", "http://governance:8082")
+    monkeypatch.setenv("PERSONA_GOVERNANCE_SERVICE_TOKEN", "stale-env-secret")
+    monkeypatch.setenv("PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE", str(path))
+    provider = build_training_target_approval_verifier()._token_provider
+    assert provider() == "first"
+    path.write_text("rotated")
+    assert provider() == "rotated"
+    path.unlink()
+    with pytest.raises(RuntimeError):
+        provider()

@@ -292,36 +292,8 @@ def _check_read_surface_state() -> Optional[StalenessWarning]:
     )
 
 
-# Single product owner of the governance action_kind -> ObjectType and
-# action_id -> CommandType mapping used by ``submit_governance_action``.
-# ``governance/router.py`` only ever submits action_kind="review" (from
-# POST /bff/reviews and POST /bff/reviews/{id}/actions/{id}) or
-# action_kind="approval" (from POST /bff/approvals/{id}/decide and
-# POST /bff/approvals/batch-decide); do not fork a second copy of this table.
-_GOVERNANCE_ACTION_KIND_OBJECT_TYPES: Dict[str, "ObjectType"] = {
-    "review": ObjectType.REVIEW,
-    "approval": ObjectType.APPROVAL_DECISION,
-}
-
-_GOVERNANCE_DECISION_COMMAND_TYPES: Dict[str, "CommandType"] = {
-    "approve": CommandType.APPROVE_DECISION,
-    "reject": CommandType.REJECT_DECISION,
-    "request_revision": CommandType.REQUEST_APPROVAL_REVISION,
-    "request_changes": CommandType.REQUEST_APPROVAL_REVISION,
-}
-
-
-def resolve_governance_object_type(action_kind: str) -> ObjectType:
-    return _GOVERNANCE_ACTION_KIND_OBJECT_TYPES.get(action_kind, ObjectType.REVIEW)
-
-
-def resolve_governance_command_type(action_kind: str, action_id: str) -> CommandType:
-    if action_kind == "approval":
-        # escalate/freeze are accepted decisions without a dedicated command
-        # type yet; route them through the revision-request command as a
-        # pass-through until a dedicated command type is defined.
-        return _GOVERNANCE_DECISION_COMMAND_TYPES.get(action_id, CommandType.REQUEST_APPROVAL_REVISION)
-    return CommandType.REVIEW_ACTION
+# Governance command admission only submits action_kind="review" (POST /bff/reviews and
+# POST /bff/reviews/{id}/actions/{id}); approval votes forward to the Governance owner.
 
 
 class CommandAdapterService:
@@ -920,13 +892,10 @@ class CommandAdapterService:
         idempotency, concurrency-safety, and receipt projection.
 
         Called by ``GovernanceService.submit_governance_action`` (the only
-        caller) with exactly these keyword arguments; owns the
-        action_kind/action_id -> ObjectType/CommandType mapping so it is not
-        forked between the composition root and tests.
+        caller) with exactly these keyword arguments.
         """
         _reject_body_idempotency_key(payload)
-        entity_type = resolve_governance_object_type(action_kind)
-        command_type = resolve_governance_command_type(action_kind, action_id)
+        entity_type, command_type = ObjectType.REVIEW, CommandType.REVIEW_ACTION
         resolved_key = str(idempotency_key or "").strip()
         request_hash = _stable_json_hash(
             {"action_kind": action_kind, "target_id": target_id, "action_id": action_id, "payload": payload}
@@ -971,12 +940,6 @@ class CommandAdapterService:
         command_id = str(uuid.uuid4())
         submitted_at = self._utc_now()
         target = TargetObject(type=entity_type, id=target_id)
-        # Concurrent conflicting decisions on the *same* approval target must
-        # not both be admitted (see the decide-conflict contract tests); a
-        # review target, by contrast, legitimately receives a sequence of
-        # distinct in-flight commands (submit, then an action) with no
-        # worker in this seam marking the prior one terminal, so only the
-        # approval action_kind uses the active-target admission guard.
         preconditions_checked = ["authentication", "authorization", "idempotency"]
         audit_record = {
             "operator_id": identity.operator_id,
@@ -987,36 +950,15 @@ class CommandAdapterService:
             "idempotency_key": resolved_key,
             "request_hash": request_hash,
         }
-        if action_kind == "approval":
-            preconditions_checked.append("concurrent_safety")
-            audit_record["preconditions_checked"] = preconditions_checked
-            record, active = store.submit_command_if_no_active_target(
-                command_id=command_id,
-                command_type=command_type,
-                target=target,
-                submitted_at=submitted_at,
-                params={"action_id": action_id, **payload},
-                audit_context=audit_record,
-            )
-            if active is not None:
-                raise self._raise_error(
-                    409,
-                    ErrorCode.RESOURCE_CONFLICT,
-                    "A command is already in flight for this target",
-                    f"Command {active['command_id']} is currently {active['status']}",
-                    precondition_failed="concurrent_safety",
-                    suggestion="Wait for the in-flight command to complete or time out before retrying",
-                )
-        else:
-            audit_record["preconditions_checked"] = preconditions_checked
-            record = store.submit_command(
-                command_id=command_id,
-                command_type=command_type,
-                target=target,
-                submitted_at=submitted_at,
-                params={"action_id": action_id, **payload},
-                audit_context=audit_record,
-            )
+        audit_record["preconditions_checked"] = preconditions_checked
+        record = store.submit_command(
+            command_id=command_id,
+            command_type=command_type,
+            target=target,
+            submitted_at=submitted_at,
+            params={"action_id": action_id, **payload},
+            audit_context=audit_record,
+        )
         assert record is not None
 
         result = project_final_command_response(

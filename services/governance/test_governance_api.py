@@ -340,6 +340,23 @@ def test_full_lifecycle_approved():
     assert body["decided_at"]     is not None
 
 
+def test_unsupported_revision_outcome_is_rejected_without_mutation():
+    did = uid()
+    proposer = _signed_headers(actor='synthetic-reviewer', role='approval_proposer', tenant='synthetic-tenant')
+    client.post("/api/governance/approvals", json={
+        "expected_version": 0, "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", "decision_id": did,
+        "target_type": "model_artifact", "target_id": "m-rv", "target_version": "v1", "risk_level": "medium",
+    }, headers=proposer)
+    r = client.post(f"/api/governance/approvals/{did}/decide", json={
+        "expected_version": 1, "actor_role": "risk_owner", "actor_id": "risk-owner-1",
+        "outcome": "request_revision", "rationale": "rework",
+    }, headers=_signed_headers(actor="risk-owner-1", role="risk_owner", tenant='synthetic-tenant'))
+    assert r.status_code == 422
+    after = client.get(f"/api/governance/approvals/{did}", headers=proposer).json()
+    assert after["decision_state"] == "proposed" and after["version"] == 1 and after["decision"] is None
+    assert client.get(f"/api/governance/audit?decision_id={did}&limit=50").json()[0]["event_type"] != "decided"
+
+
 def test_approved_with_conditions():
     did = uid()
     client.post("/api/governance/approvals", json={
