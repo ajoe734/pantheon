@@ -1,0 +1,85 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "CAPITAL-GUARD-KERNEL-001",
+  "title": "One deterministic capital guard for every risk-increasing action",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "corrective",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "df5320b88f6bdf0d927e876d78bd05323c64c64d",
+  "scope": {
+    "owned": [
+      "services/capital/capital_guard.py",
+      "services/capital/main.py",
+      "services/capital/models.py",
+      "services/capital/allocation_store.py",
+      "services/capital/conftest.py",
+      "services/capital/test_capital_guard.py",
+      "services/capital/test_service.py",
+      "services/capital/test_tenant_scoping.py",
+      "docs/deployment/evidence/CAPITAL-GUARD-KERNEL-001/evidence.json"
+    ],
+    "not_changing": [
+      "services/governance/",
+      "services/runtime-manager/",
+      "services/runtime_manager/",
+      "services/control-plane/"
+    ],
+    "composes_with": [
+      "GOV-APPROVAL-TARGETS-001 action-bound approval targets",
+      "CAPITAL-TENANT-COLUMN-001 tenant scoping"
+    ]
+  },
+  "acceptance_criteria": [
+    {
+      "criterion": "1. One capital_guard module is the only place that authorizes risk-increasing actions; pool activation/status change, binding activation and rebalance apply call it",
+      "status": "passed",
+      "verification": "services/capital/capital_guard.py CapitalGuard.authorize; called from update_pool_status (only when moving to active), activate_binding and the first-commit branch of apply_rebalance (only when a line increases weight, so exact replays stay readable). test_routes_call_guard_for_pool_binding_and_rebalance."
+    },
+    {
+      "criterion": "2. Valid governance approval for exactly this action via ApprovalEvidence.require_valid, two distinct deciders for live increases",
+      "status": "passed",
+      "verification": "Guard reads the exact decision and calls require_valid(expected=tenant_id,target_type,target_id and subject.* incl. risk_direction=increase). For capital_binding_activation and rebalance_apply, approval_targets.required_deciders demands two distinct deciders on increases. Two-decider logic itself lives in governance and is covered there; this task asserts the guard passes the expected binding (test_allows_when_every_check_passes_and_binds_exact_action). Rebalance apply reuses the existing approval_ref field as the governance decision id."
+    },
+    {
+      "criterion": "3. Reject risk increases while kill switch or safe mode is active; fail closed if unreadable",
+      "status": "passed",
+      "verification": "Safe-mode state read from the runtime manager GET /api/kill-switch/{pool}/safe-mode; only normal/normal_restored pass. test_rejects_while_safe_mode_or_kill_switch_active, test_fails_closed_when_safe_mode_unreadable, test_binding_activation_and_apply_blocked_by_safe_mode."
+    },
+    {
+      "criterion": "4. Run existing risk_policy limits and the tenant check",
+      "status": "passed",
+      "verification": "RiskPolicyEvaluator.evaluate per increasing line; missing/unloadable policy fails closed; tenant must be non-empty and equal the pool tenant. test_risk_policy_limits_reject, test_fails_closed_when_risk_policy_missing, test_rejects_missing_or_foreign_tenant."
+    },
+    {
+      "criterion": "5. Containment stays decrease-only without approval and still requires evidence and audit",
+      "status": "passed",
+      "verification": "Containment path untouched apart from removing the unused approval fields; existing decrease-only, evidence_refs and audit-delivery tests in test_service.py still pass."
+    },
+    {
+      "criterion": "6. String-only approval_ref and two_man_signature_id checks deleted",
+      "status": "passed",
+      "verification": "Removed the increases_live/approval_ref truthiness check from allocation_store.apply_rebalance and the approval_ref/two_man_signature_id fields from the containment request/response models and record."
+    },
+    {
+      "criterion": "7. Tests cover each rule and every fail-closed path",
+      "status": "passed",
+      "verification": "services/capital/test_capital_guard.py plus updated existing tests."
+    }
+  ],
+  "limitations": [
+    "No integration test against a live governance service or runtime manager; both are faked at the reader seam.",
+    "Risk policy source is CAPITAL_RISK_POLICY_DIR/<risk_policy_ref>.json; no other capital-side policy store exists, so unconfigured deployments reject every increase (fail closed).",
+    "Pool status change uses target_type capital_pool_status, which is not a governance action target, so it gets generic require_valid checks and one decider, not two.",
+    "services/capital/conftest.py supplies healthy fakes by default so pre-existing service tests run; guard tests pass explicit fakes."
+  ],
+  "verification": {
+    "passed": [
+      {
+        "command": "python -m pytest -q services/capital",
+        "result": "93 passed, 1 warning"
+      }
+    ]
+  }
+}

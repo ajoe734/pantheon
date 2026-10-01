@@ -68,6 +68,7 @@ try:
         build_capital_pool_store,
     )
     from .write_authority import is_authorized, matrix_as_list
+    from .capital_guard import CapitalGuard
     from .inbound_authority import (
         CapitalInboundAuthorityError,
         authenticate_capital_request,
@@ -111,6 +112,7 @@ except ImportError:
         build_capital_pool_store,
     )
     from write_authority import is_authorized, matrix_as_list  # type: ignore
+    from capital_guard import CapitalGuard  # type: ignore
     from inbound_authority import (  # type: ignore
         CapitalInboundAuthorityError,
         authenticate_capital_request,
@@ -196,7 +198,9 @@ class CapitalBoundaryService:
         allocation_store: AllocationAuthorityStore,
         audit_log_path: Path,
         audit_store: Any,
+        guard: CapitalGuard | None = None,
     ) -> None:
+        self.guard = guard or CapitalGuard()
         self.pool_store = pool_store
         self.binding_store = binding_store
         self.allocation_store = allocation_store
@@ -310,8 +314,14 @@ class CapitalBoundaryService:
 
     def update_pool_status(self, pool_id: str, body: UpdateCapitalPoolStatusRequest) -> CapitalPool:
         self._authorize("CapitalPool", "update_status", body.actor_role)
-        self.get_pool(pool_id)
+        pool = self.get_pool(pool_id)
         with self._CAPITAL_STATE_APPLY_LOCK:
+            if body.status == "active" and pool.status != "active":
+                self.guard.authorize(
+                    pool=pool, tenant_id=_current_tenant(), decision_id=body.approval_decision_id,
+                    target_type="capital_pool_status", target_id=pool_id,
+                    expected={"target_version": body.status}, contexts=[{}],
+                )
             updated = self.pool_store.update_status(pool_id, body.status)
         self._emit(
             event_type="capital_pool_status_updated",
@@ -409,6 +419,15 @@ class CapitalBoundaryService:
                 raise CapitalServiceError(
                     f"CapitalPool '{pool.pool_id}' must be active before bindings can be activated"
                 )
+            self.guard.authorize(
+                pool=pool, tenant_id=_current_tenant(), decision_id=body.approval_decision_id,
+                target_type="capital_binding_activation", target_id=binding_id,
+                expected={
+                    "subject.binding_id": binding_id, "subject.persona_id": binding.persona_id,
+                    "subject.capital_pool_id": pool.pool_id, "subject.risk_direction": "increase",
+                },
+                contexts=[{}],
+            )
             try:
                 updated = self.binding_store.activate(binding_id, body.approval_decision_id)
             except Exception as exc:
@@ -697,6 +716,26 @@ class CapitalBoundaryService:
     def get_rebalance_receipt(self, command_id: str) -> Dict[str, Any]:
         return self.allocation_store.get_rebalance_receipt(command_id, tenant_id=_current_tenant())
 
+    def _guard_rebalance_apply(
+        self, rebalance_id: str, proposal: Dict[str, Any], decision_id: str | None, tenant: str | None
+    ) -> None:
+        increasing = [line for line in proposal.get("lines") or [] if self._line_increases_risk(line)]
+        if not increasing:
+            return
+        pool_id = str(proposal.get("capital_pool_id") or "")
+        self.guard.authorize(
+            pool=self.get_pool(pool_id), tenant_id=tenant, decision_id=decision_id,
+            target_type="rebalance_apply", target_id=rebalance_id,
+            expected={
+                "subject.plan_id": rebalance_id, "subject.plan_digest": proposal.get("request_hash"),
+                "subject.capital_pool_id": pool_id, "subject.risk_direction": "increase",
+            },
+            contexts=[
+                {"stage": line.get("stage"), "target_weights": {str(line.get("persona_id")): line.get("target_weight")}}
+                for line in increasing
+            ],
+        )
+
     def apply_rebalance(
         self,
         rebalance_id: str,
@@ -713,6 +752,7 @@ class CapitalBoundaryService:
                 # remain readable even if its binding is later revoked or expires.
                 proposal = self.allocation_store.get_rebalance(rebalance_id, tenant_id=tenant)
                 self._validate_persisted_rebalance_bindings(proposal)
+                self._guard_rebalance_apply(rebalance_id, proposal, body.approval_ref, tenant)
             payload = {
                 **body.model_dump(mode="json"),
                 "tenant_id": tenant,
@@ -1019,8 +1059,12 @@ async def enforce_capital_mutation_authority(request: Request, call_next):
         reset_current_authority(token)
 
 
+capital_guard = CapitalGuard()
+
+
 def get_capital_service() -> CapitalBoundaryService:
     return CapitalBoundaryService(
+        guard=capital_guard,
         pool_store=pool_store,
         binding_store=binding_store,
         allocation_store=allocation_authority_store,

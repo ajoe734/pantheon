@@ -150,6 +150,7 @@ class UpdateCapitalPoolStatusRequest(BaseModel):
     actor_id: str
     actor_role: str
     status: str
+    approval_decision_id: Optional[str] = None
 
 
 class CreateBindingRequest(BaseModel):
@@ -360,8 +361,6 @@ class CreateContainmentRequest(BaseModel):
     target_stage: Optional[str] = None
     allocation_increase: bool = False
     command_id: Optional[str] = None
-    approval_ref: Optional[str] = None
-    two_man_signature_id: Optional[str] = None
     receipt_ref: Optional[str] = None
     audit_ref: Optional[str] = None
 
@@ -386,8 +385,6 @@ class ContainmentBody(BaseModel):
     payload_hash: str
     executed_at: str
     capital_pool_id: Optional[str] = None
-    approval_ref: Optional[str] = None
-    two_man_signature_id: Optional[str] = None
     authoritative_containment_readback: bool
     authoritative_capital_readback: bool
     authoritative_capital_state_applied: bool

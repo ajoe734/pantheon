@@ -192,7 +192,7 @@ def test_23_routes_same_tenant_and_cross_tenant_isolation(capital_test_env):
     # Transition back to active
     client.patch(
         "/api/capital-pools/pool-alpha-1/status",
-        json={"actor_id": "admin-alpha", "actor_role": "capital.admin", "status": "active"},
+        json={"actor_id": "admin-alpha", "actor_role": "capital.admin", "status": "active", "approval_decision_id": "approval-pool-1"},
         headers=headers_a,
     )
 
@@ -277,7 +277,7 @@ def test_23_routes_same_tenant_and_cross_tenant_isolation(capital_test_env):
         json={"actor_id": "admin-alpha", "actor_role": "persona.admin", "approval_decision_id": "app-001"},
         headers=headers_a,
     )
-    assert res.status_code == 200
+    assert res.status_code == 200, res.text
     assert res.json()["status"] == "active"
 
     # 10. PATCH /api/bindings/{binding_id}/status
