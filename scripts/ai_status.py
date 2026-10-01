@@ -2994,7 +2994,9 @@ def approved_closeout_commit_ref(
         raise SystemExit(
             "Cannot finalize task: canonical approval has an invalid exact head SHA."
         )
-    if approved_branch != branch:
+    # A rewritten replacement PR branch `<branch>-v<N>`, which the
+    # auto-integrator delivers like the leased branch, is the same delivery.
+    if re.sub(r"-v[0-9]+$", "", approved_branch) != re.sub(r"-v[0-9]+$", "", branch):
         raise SystemExit(
             "Cannot finalize task: delivery branch does not match canonical approved "
             f"head branch ({branch} != {approved_branch or 'missing'})."
