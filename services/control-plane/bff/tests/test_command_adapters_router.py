@@ -960,15 +960,18 @@ def _submit_alias(wrapper: str, verb: str, canonical: str, *, wrapped: bool, tok
     only thing that can reject a request is the case under test.
     """
     target = _alias_target(canonical)
+    params_dict = {
+        "reason": "alias equivalence",
+        "approval_decision_id": "appr-alias-1",
+        "two_man_signature_id": "sig-alias-1",
+        **_ALIAS_PARAMS.get(canonical, {}),
+    }
+    if verb in {"approvedwithconditions", "approvewithconditions"}:
+        params_dict["outcome"] = "approved_with_conditions"
     body: Dict[str, Any] = {
         "command": wrapper if wrapped else canonical,
         "target": target,
-        "params": {
-            "reason": "alias equivalence",
-            "approval_decision_id": "appr-alias-1",
-            "two_man_signature_id": "sig-alias-1",
-            **_ALIAS_PARAMS.get(canonical, {}),
-        },
+        "params": params_dict,
         "audit_context": {"reason": "alias equivalence"},
     }
     if wrapped:

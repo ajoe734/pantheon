@@ -134,7 +134,7 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         if any(v in {"stage", "freeze", "escalate"} for v in cand_verbs) or any(params.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
             raise approval_owner.UnsupportedApprovalAction("Unsupported approval action")
 
-        if verb in {"approve", "approved"} and (has_cond or bool(params.get("conditions"))):
+        if verb in {"approve", "approved"} and has_cond:
             verb = "approved_with_conditions"
 
         decision = approval_owner.decide(auth_token, target_id, {**params, "decision": verb, "outcome": verb}, command_id)

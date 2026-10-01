@@ -484,15 +484,18 @@ def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         verb = "approved_with_conditions" if has_cond else ("approve" if has_app else ("reject" if has_rej else action))
         verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())
     else:
+        has_cond = False
         verb = action or action_params.get("action_id") or action_params.get("actionId") or next((v for v in raw_verbs if v), None)
         verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())
     if command == "Observe" or (command == "PersonaAction" and verb == "observe"):
         raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "Observe is retired", "Use Persona read routes")
-    canonical = "AdvanceLifecycle" if command in {"PromoteCandidate", "Demote"} else _WRAPPER_VERB_ALIASES.get((command, verb))
+    canonical = "AdvanceLifecycle" if command in {"PromoteCandidate", "Demote"} else (command if norm_c in {"approvedecision", "rejectdecision"} else _WRAPPER_VERB_ALIASES.get((command, verb)))
     if canonical is None:
         return payload
     cleaned = {k: v for k, v in params.items() if k not in ("action_id", "actionId")} if isinstance(params, dict) else params
-    return {**{k: v for k, v in payload.items() if k != "action"}, "command": canonical, "params": cleaned}
+    if has_cond and isinstance(cleaned, dict):
+        cleaned["outcome"] = "approved_with_conditions"
+    return {**{k: v for k, v in payload.items() if k not in ("action", "action_id", "actionId")}, "command": canonical, "params": cleaned}
 
 
 def foundation_environment_scope() -> EnvironmentScope:

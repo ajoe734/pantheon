@@ -83,6 +83,12 @@ def make_handler(owner: Owner):
                     DecideRequest.model_validate(body)
                 except Exception as exc:
                     return self._send(422, {"detail": str(exc)})
+                if body.get("outcome") == "approved_with_conditions":
+                    conds = body.get("conditions")
+                    if not conds or any(not isinstance(c, str) or not c.strip() for c in conds):
+                        return self._send(422, {"detail": "'approved_with_conditions' requires nonempty conditions"})
+                elif body.get("conditions"):
+                    return self._send(422, {"detail": "conditions require 'approved_with_conditions'"})
             if body.get("outcome") not in ("approved", "rejected", "approved_with_conditions"):
                 return self._send(422, {"detail": "Input should be 'approved', 'rejected' or 'approved_with_conditions'"})
             if (tenant, key) in owner.receipts:
@@ -649,7 +655,7 @@ def test_previously_supported_conditional_vote_remains_supported(client, owner):
     response = client.post(
         "/bff/approvals/a1/decide",
         headers=headers(key="synthetic-conditional"),
-        json=vote(decision="approved_with_conditions"),
+        json=vote(decision="approved_with_conditions", conditions=["synthetic audit review"]),
     )
     assert response.status_code == 202, response.text
     assert len(owner.calls) == 1
@@ -727,6 +733,57 @@ def test_stored_command_conflicting_decision_cannot_vote(owner, entry, command, 
         pass
     assert owner.calls == [], owner.calls
     assert owner.rows["a1"]["version"] == 1
+
+
+@pytest.mark.parametrize("empty_conditions", [None, [], [""], ["   "]])
+def test_conditional_approval_absent_or_empty_conditions_rejected_by_owner(client, owner, empty_conditions):
+    kwargs = {"decision": "approved_with_conditions"}
+    if empty_conditions is not None:
+        kwargs["conditions"] = empty_conditions
+    response = client.post(
+        "/bff/approvals/a1/decide",
+        headers=headers(key=f"cond-empty-{type(empty_conditions).__name__}-{len(empty_conditions) if isinstance(empty_conditions, list) else 0}"),
+        json=vote(**kwargs),
+    )
+    assert response.status_code in (400, 422), response.text
+    assert owner.calls[-1][2]["outcome"] == "approved_with_conditions"
+    assert owner.rows["a1"]["version"] == 1
+    assert owner.rows["a1"].get("votes") is None or len(owner.rows["a1"].get("votes", [])) == 0
+    assert owner.rows["a1"]["decision"] is None
+
+
+@pytest.mark.parametrize("carrier", ["action", "action_id", "actionId"])
+@pytest.mark.parametrize("conditions", [None, [], ["   "]])
+def test_conditional_command_absent_or_empty_conditions_fails_owner(command_client, owner, carrier, conditions):
+    params = {"decision_id": "a1", "expected_version": 1, "approval_notes": "reviewed"}
+    if conditions is not None:
+        params["conditions"] = conditions
+    body = {"command": "ReviewAction", "target": {"type": "ApprovalDecision", "id": "a1"},
+            "params": params, "audit_context": {"reason": "review"}}
+    if carrier == "action":
+        body[carrier] = "approved_with_conditions"
+    else:
+        params[carrier] = "approved_with_conditions"
+    auth = {"Authorization": "Bearer " + jwt("rev-1", "tenant-a", "operator", "governance_reviewer"),
+            "Idempotency-Key": f"cond-cmd-empty-{carrier}-{len(conditions) if isinstance(conditions, list) else 'none'}"}
+    response = command_client.post("/bff/v1/commands", headers=auth, json=body)
+    assert response.status_code in (200, 201, 202), response.text
+    assert owner.calls[-1][2]["outcome"] == "approved_with_conditions"
+    assert owner.rows["a1"]["version"] == 1
+    assert owner.rows["a1"].get("votes") is None or len(owner.rows["a1"].get("votes", [])) == 0
+
+
+def test_unconditional_approval_with_conditions_rejected_by_owner(client, owner):
+    response = client.post(
+        "/bff/approvals/a1/decide",
+        headers=headers(key="uncond-with-conds"),
+        json=vote(decision="approve", conditions=["unexpected condition"]),
+    )
+    assert response.status_code in (400, 422), response.text
+    assert owner.calls[-1][2]["outcome"] == "approved"
+    assert owner.rows["a1"]["version"] == 1
+    assert owner.rows["a1"].get("votes") is None or len(owner.rows["a1"].get("votes", [])) == 0
+
 
 
 
