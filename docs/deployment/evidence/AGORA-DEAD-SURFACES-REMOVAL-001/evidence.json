@@ -114,7 +114,7 @@
       "command": "PYTHONPATH=. .venv-pantheon/bin/pytest -q services/control-plane/bff/test_[a-c]*.py",
       "exit_code": 1,
       "batch": "Batch 2a: Root test_[a-c]*.py",
-      "result": "Head: 49 files, 750 tests -> 693 passed, 1 skipped, 56 failed in 578s (exit code 1). Base: 52 files, 853 tests -> 796 passed, 1 skipped, 56 failed in 781s (exit code 1). Identical 57 baseline failures match Base. 3 deleted test files (test_ask_*.py) and obsolete action catalog assertions retired on Head. Zero regressions."
+      "result": "Head: 49 files, 750 tests -> 692 passed, 1 skipped, 57 failed in 578s (exit code 1). Base: 52 files, 853 tests -> 796 passed, 1 skipped, 56 failed in 781s (exit code 1). Per-node diff of FAILED sets: 56 failures identical; the one head-only failure test_bff_promotion_review_governance.py::test_human_inbox_degrades_cleanly_when_persona_readiness_blocks is a wall-clock timing test (0.2s budget vs 1.0s sleep) that failed under load and PASSES on both head and base when re-run in isolation (13 passed on each, see reconciliation entry). 3 deleted test files (test_ask_*.py) and obsolete action catalog assertions retired on Head. No deterministic regressions."
     },
     {
       "command": "PYTHONPATH=. .venv-pantheon/bin/pytest -q services/control-plane/bff/test_[d-k]*.py",
@@ -126,7 +126,7 @@
       "command": "PYTHONPATH=. .venv-pantheon/bin/pytest -q services/control-plane/bff/test_[l-r]*.py",
       "exit_code": 1,
       "batch": "Batch 2c: Root test_[l-r]*.py",
-      "result": "Head: 67 files, 477 tests -> 465 passed, 2 skipped, 10 failed in 300s (exit code 1). Base: 67 files, 477 tests -> 465 passed, 2 skipped, 10 failed in 290s (exit code 1). Identical 10 baseline failures match Base. Zero regressions."
+      "result": "Head: 67 files, 477 tests -> 465 passed, 2 skipped, 11 failed (exit code 1, 300s). Base: 67 files, 477 tests -> 464 passed, 2 skipped, 11 failed (exit code 1, 290s). Per-node diff: 10 failures identical; base-only test_mgmt_load_005_read_concurrency.py::test_human_inbox_timeout_returns_degraded_envelope_without_hanging vs head-only ::test_evidence_timeout_returns_degraded_envelope_without_hanging are both wall-clock (<0.4s) timing tests that flake under load; the whole test_mgmt_load_005 file passes on head and base in isolation. No deterministic regressions."
     },
     {
       "command": "PYTHONPATH=. .venv-pantheon/bin/pytest -q services/control-plane/bff/test_[s-z]*.py",
@@ -157,6 +157,11 @@
       "exit_code": 1,
       "batch": "Batch 3d: bff/tests/ rem[59:118]",
       "result": "Head: 59 files, 838 tests -> 795 passed, 19 skipped, 23 failed, 1 collection error in 513s (exit code 1). Base: 59 files, 840 tests -> 797 passed, 19 skipped, 23 failed, 1 collection error in 506s (exit code 1). Identical 24 baseline failures and identical collection error in test_persona_paper_owner_lifecycle_contract.py match Base. Zero regressions."
+    },
+    {
+      "command": "per-node reconciliation of /tmp/agora-paired-runs-d61575a-17a2b1a/*_{base,head}.log (FAILED/ERROR set diff) + isolated rerun of the two differing files on head and frozen base d61575a59, + full-tree --collect-only on both",
+      "exit_code": 0,
+      "result": "Batches 1,2b,2d,3a,3b,3c,3d: FAILED/ERROR sets identical per node between base and head. Batch 2a/2c differ only by the load-sensitive timing tests named above; isolated rerun of test_bff_promotion_review_governance.py::test_human_inbox_degrades_cleanly_when_persona_readiness_blocks + test_mgmt_load_005_read_concurrency.py: 13 passed on head, 13 passed on base. Coverage: sum of batch totals (passed+failed+skipped+errors) = 5009 head / 5157 base, exactly equal to full `pytest --collect-only services/control-plane/bff` (5009 head, 5157 base), so the batches are the complete recursive suite. Removed tests = 148 (2a:103, 3a:22, 3b:13, 3c:8, 3d:2), all in deleted/retired Agora surfaces. Earlier recorded file counts corrected: 2a base 52/head 49 files; recursive subdir 41 files each side; tests/test_agora*.py base 25/head 24."
     }
   ]
 }
