@@ -296,3 +296,35 @@ def test_pool_reactivation_reads_status_under_apply_lock(client, monkeypatch):
     assert result.status_code == 403, result.text
 
 
+@pytest.mark.parametrize("scale", [0.0, -1.0])
+def test_request_scale_claim_cannot_waive_zero_capital_limits(client, monkeypatch, scale):
+    c, _ = client
+    _policy(monkeypatch, max_canary_capital_scale_pct=0.0, max_canary_gross_scale_pct=0.0)
+    assert c.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    assert c.post("/api/bindings", json=_binding_payload()).status_code == 201
+    line = {**_rebalance_payload()["lines"][0], "stage": "canary_running", "capital_scale_pct": scale, "gross_scale_pct": scale}
+    created = c.post("/api/rebalances", json=_rebalance_payload(lines=[line]))
+    assert created.status_code == 201, created.text
+    applied = c.post("/api/rebalances/rb-001/apply", json=_apply_payload())
+    assert applied.status_code == 403, applied.text
+    allocs = c.get("/api/allocations?capital_pool_id=pool-001").json()
+    assert allocs["count"] == 0 and len(allocs["items"]) == 0
+
+
+@pytest.mark.parametrize("limits", [
+    {"gross_limit": "NaN"}, {"gross_limit": "Infinity"}, {"gross_limit": "invalid"},
+    {"allowed_asset_classes": ["crypto"]}, {"allowed_strategy_families": ["momentum"]},
+])
+def test_configured_constraints_cannot_silently_disappear(client, monkeypatch, limits):
+    c, _ = client
+    _policy(monkeypatch, **limits)
+    assert c.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    assert c.post("/api/bindings", json=_binding_payload()).status_code == 201
+    created = c.post("/api/rebalances", json=_rebalance_payload())
+    assert created.status_code == 201, created.text
+    applied = c.post("/api/rebalances/rb-001/apply", json=_apply_payload())
+    assert applied.status_code == 403, applied.text
+    allocs = c.get("/api/allocations?capital_pool_id=pool-001").json()
+    assert allocs["count"] == 0 and len(allocs["items"]) == 0
+
+

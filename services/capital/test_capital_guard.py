@@ -347,9 +347,8 @@ def test_finite_scale_helper():
     from services.capital.capital_guard import _finite_scale
     assert _finite_scale(1.5, "capital_scale_pct") == 1.5
     assert _finite_scale("2.5", "gross_scale_pct") == 2.5
-    assert _finite_scale(0, "capital_scale_pct") == 0.0
-    for bad in ["NaN", "Infinity", "-Infinity", float("nan"), float("inf"), -float("inf"), "abc", True, False]:
-        with pytest.raises(CapitalGuardError, match="must be a finite number"):
+    for bad in ["NaN", "Infinity", "-Infinity", float("nan"), float("inf"), -float("inf"), "abc", True, False, 0, 0.0, -1.0]:
+        with pytest.raises(CapitalGuardError, match="must be a positive finite number"):
             _finite_scale(bad, "capital_scale_pct")
 
 
@@ -359,4 +358,21 @@ def test_require_risk_policy_rejects_nonfinite_observations():
         guard.authorize(**{**KW, "contexts": [{"stage": "canary", "gross_exposure": 0.5, "capital_scale_pct": float("nan")}]})
     with pytest.raises(CapitalGuardError, match="cannot be evaluated"):
         guard.authorize(**{**KW, "contexts": [{"stage": "canary", "gross_exposure": float("inf"), "capital_scale_pct": 2.0}]})
+
+
+def test_require_risk_policy_rejects_malformed_configured_limits():
+    for bad_limit in [{"gross_limit": "NaN"}, {"gross_limit": "Infinity"}, {"gross_limit": "invalid"}, {"max_single_weight": "NaN"}, {"max_sector_exposure": {"tech": "NaN"}}]:
+        guard = _guard(policy=lambda ref, b=bad_limit: {"risk_policy_id": ref, **b})
+        with pytest.raises(CapitalGuardError, match="Malformed risk policy limit"):
+            guard.authorize(**{**KW, "contexts": [{"stage": "live", "gross_exposure": 0.5}]})
+
+
+def test_require_risk_policy_rejects_missing_asset_or_strategy_observations():
+    guard = _guard(policy=lambda ref: {"risk_policy_id": ref, "allowed_asset_classes": ["crypto"]})
+    with pytest.raises(CapitalGuardError, match="asset_classes unavailable"):
+        guard.authorize(**{**KW, "contexts": [{"stage": "live", "gross_exposure": 0.5}]})
+
+    guard2 = _guard(policy=lambda ref: {"risk_policy_id": ref, "allowed_strategy_families": ["momentum"]})
+    with pytest.raises(CapitalGuardError, match="strategy_family unavailable"):
+        guard2.authorize(**{**KW, "contexts": [{"stage": "live", "gross_exposure": 0.5}]})
 

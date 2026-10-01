@@ -15,14 +15,14 @@ _FACT_OF_LIMIT = {
     "max_strategy_family_concentration": "strategy_family_concentration",
     "max_target_overlap": "target_overlap", "max_signal_correlation": "signal_correlation",
     "max_canary_capital_scale_pct": "capital_scale_pct", "max_canary_gross_scale_pct": "gross_scale_pct",
+    "allowed_asset_classes": "asset_classes", "allowed_strategy_families": "strategy_family",
 }
+_STRING_LIMITS = frozenset({"allowed_stages", "allowed_asset_classes", "allowed_strategy_families"})
+_RAW_LIMIT_KEYS = ("gross_limit", "net_limit", "max_single_name_weight", "max_single_weight", "max_leverage", "turnover_limit", "max_target_overlap", "max_signal_correlation", "max_pairwise_correlation", "max_canary_capital_scale_pct", "max_canary_gross_scale_pct")
+_RAW_MAP_KEYS = ("max_sector_exposure", "max_factor_exposure", "max_strategy_family_concentration", "drawdown_actions")
 _SCOPE_RANK = {"paper": 0, "canary": 1, "live": 2}
 SAFE_MODE_OK = frozenset({"normal", "normal_restored"})
-STAGE_DEPLOYMENT_SCOPE = {
-    "paper": "paper", "paper_candidate": "paper", "paper_running": "paper",
-    "canary": "canary", "canary_candidate": "canary", "canary_running": "canary",
-    "live": "live", "live_candidate": "live", "live_running": "live",
-}
+STAGE_DEPLOYMENT_SCOPE = {f"{k}{s}": k for k in ("paper", "canary", "live") for s in ("", "_candidate", "_running")}
 
 
 def _val(obj: Any, key: str, default: Any = None) -> Any:
@@ -43,22 +43,35 @@ is_paper_line = line_is_paper_scope
 def line_increases_risk(line: Any, existing: Any = None) -> bool:
     if float(_val(line, "target_weight", 0) or 0) > float(_val(line, "current_weight", 0) or 0):
         return True
-    if existing:
-        if line_is_paper_scope(existing) and not line_is_paper_scope(line):
-            return True
-        ls, es = line_deployment_scope(line), line_deployment_scope(existing)
-        return bool(ls and es and _SCOPE_RANK.get(ls, 0) > _SCOPE_RANK.get(es, 0))
-    return False
+    if not existing:
+        return False
+    if line_is_paper_scope(existing) and not line_is_paper_scope(line):
+        return True
+    ls, es = line_deployment_scope(line), line_deployment_scope(existing)
+    return bool(ls and es and _SCOPE_RANK.get(ls, 0) > _SCOPE_RANK.get(es, 0))
+
+
+def _is_finite_num(val: Any) -> bool:
+    try:
+        return not isinstance(val, bool) and math.isfinite(float(val))
+    except (TypeError, ValueError):
+        return False
 
 
 def _finite_scale(v: Any, name: str) -> float:
-    try:
-        f = float(v)
-        if isinstance(v, bool) or not math.isfinite(f):
-            raise ValueError
-        return f
-    except (TypeError, ValueError) as exc:
-        raise CapitalGuardError(f"Invalid {name}: {v!r} must be a finite number") from exc
+    if _is_finite_num(v) and float(v) > 0:
+        return float(v)
+    raise CapitalGuardError(f"Invalid {name}: {v!r} must be a positive finite number")
+
+
+def _validate_raw_policy(policy: Mapping[str, Any]) -> None:
+    for k in _RAW_LIMIT_KEYS:
+        if policy.get(k) is not None and not _is_finite_num(policy[k]):
+            raise CapitalGuardError(f"Malformed risk policy limit {k}: {policy[k]!r}")
+    for k in _RAW_MAP_KEYS:
+        v = policy.get(k)
+        if v is not None and any(not _is_finite_num(i) for i in (v.values() if isinstance(v, Mapping) else [v])):
+            raise CapitalGuardError(f"Malformed risk policy limit {k}: {v!r}")
 
 
 def project_contexts(*, allocations: Sequence[Any] = (), lines: Sequence[Any] = (), stage: Optional[str] = None) -> list[dict[str, Any]]:
@@ -76,23 +89,26 @@ def project_contexts(*, allocations: Sequence[Any] = (), lines: Sequence[Any] = 
             l_st, cur_st = _val(l, "stage"), cur.get("stage")
             if l_st and cur_st and (line_deployment_scope(l) != line_deployment_scope(cur) or str(l_st).strip().lower() != str(cur_st).strip().lower()):
                 raise CapitalGuardError(f"Incompatible stage claim for allocation {key}: proposal stage {l_st!r} does not match persisted {cur_st!r}")
-            if tw is not None:
-                cur["current_weight"] = cur["target_weight"] = float(tw)
-            if _val(l, "persona_id"):
-                cur["persona_id"] = _val(l, "persona_id")
+            target = cur
         else:
-            res[key] = dict(l) if isinstance(l, Mapping) else l.__dict__.copy()
-            if tw is not None:
-                res[key]["current_weight"] = res[key]["target_weight"] = float(tw)
+            target = res[key] = dict(l) if isinstance(l, Mapping) else l.__dict__.copy()
+        if tw is not None:
+            target["current_weight"] = target["target_weight"] = float(tw)
+        if _val(l, "persona_id"):
+            target["persona_id"] = _val(l, "persona_id")
+        for k in ("asset_classes", "strategy_family"):
+            if _val(l, k) is not None:
+                target[k] = _val(l, k)
     weights: dict[str, float] = {}
     for a in res.values():
         p, tw = str(a.get("persona_id") or ""), a.get("target_weight")
         weights[p] = weights.get(p, 0.0) + float(tw if tw is not None else (a.get("current_weight") or 0))
     gross = sum(abs(w) for w in weights.values())
-    facts: dict[str, Any] = {
-        "target_weights": weights, "gross_exposure": gross, "net_exposure": sum(weights.values()),
-        "leverage": gross, "turnover": sum(abs(float(_val(l, "delta", 0) or 0)) for l in lines),
-    }
+    facts: dict[str, Any] = {"target_weights": weights, "gross_exposure": gross, "net_exposure": sum(weights.values()), "leverage": gross, "turnover": sum(abs(float(_val(l, "delta", 0) or 0)) for l in lines)}
+    acs = sorted({ac for a in res.values() for ac in (_val(a, "asset_classes") if isinstance(_val(a, "asset_classes"), (list, tuple, set)) else ([_val(a, "asset_classes")] if _val(a, "asset_classes") else [])) if ac})
+    if acs: facts["asset_classes"] = tuple(acs)
+    fams = {str(_val(a, "strategy_family") or "").strip() for a in res.values()} - {""}
+    if len(fams) == 1: facts["strategy_family"] = next(iter(fams))
     s = STAGE_DEPLOYMENT_SCOPE.get(str(stage).strip().lower(), stage) if stage else None
     stages = sorted(({line_deployment_scope(a) for a in res.values()} - {None}) | ({s} if s else set()), key=lambda x: str(x or ""))
     canary_lines = [l for l in lines if (line_deployment_scope(l) or (line_deployment_scope(res.get(str(_val(l, "allocation_id")))) if _val(l, "allocation_id") else None) or s) == "canary"]
@@ -111,8 +127,7 @@ def is_paper_operation(*, pool: Any, target_type: str, binding: Any = None, allo
     ) or (target_type == "rebalance_apply" and bool(proposal_lines and all(is_paper_line(l) for l in proposal_lines)))
 
 
-class CapitalGuardError(PermissionError):
-    """A risk-increasing action was refused (maps to HTTP 403)."""
+class CapitalGuardError(PermissionError): pass
 
 
 def read_safe_mode(pool_id: str) -> str:
@@ -155,7 +170,8 @@ class CapitalGuard:
                 self._require_risk_policy(pool, target_type, target_id, contexts)
             return
         self._require_safe_mode(pool.pool_id)
-        self._require_risk_policy(pool, target_type, target_id, contexts)
+        if not (target_type == "capital_pool_activation" and not allocations):
+            self._require_risk_policy(pool, target_type, target_id, contexts)
         self._require_approval(decision_id, tenant, target_type, target_id, expected)
 
     def _require_safe_mode(self, pool_id: str) -> None:
@@ -170,22 +186,17 @@ class CapitalGuard:
         ref = str(getattr(pool, "risk_policy_ref", None) or "").strip()
         try:
             policy = self._policy_loader(ref)
+            _validate_raw_policy(policy)
             parsed = RiskPolicy.from_mapping(policy)
             for context in contexts:
                 for limit, fact in _FACT_OF_LIMIT.items():
-                    if (target_type == "capital_pool_activation" and limit == "allowed_stages" and "stage" not in context) or (
+                    if (target_type == "capital_pool_activation" and limit in _STRING_LIMITS and fact not in context) or (
                         limit in ("max_canary_capital_scale_pct", "max_canary_gross_scale_pct") and context.get("stage") != "canary"
                     ):
                         continue
                     obs = context.get(fact)
                     if getattr(parsed, limit, None) not in (None, ()):
-                        try:
-                            if obs in (None, ""):
-                                raise ValueError
-                            vals = list(obs.values()) if isinstance(obs, Mapping) else ([obs] if limit != "allowed_stages" else [])
-                            if any(isinstance(v, bool) or not math.isfinite(float(v)) for v in vals):
-                                raise ValueError
-                        except (TypeError, ValueError):
+                        if obs in (None, "", (), []) or (limit not in _STRING_LIMITS and any(not _is_finite_num(v) for v in (obs.values() if isinstance(obs, Mapping) else [obs]))):
                             raise CapitalGuardError(f"Risk policy limit {limit} cannot be evaluated: {fact} unavailable")
                 eval = RiskPolicyEvaluator().evaluate(policy, RiskPolicyEvaluationContext.from_mapping({
                     "target_type": target_type, "target_id": target_id, "capital_pool_id": pool.pool_id, "risk_policy_ref": ref, **context,
