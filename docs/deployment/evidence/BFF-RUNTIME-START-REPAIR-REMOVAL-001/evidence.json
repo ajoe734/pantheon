@@ -1,0 +1,88 @@
+{
+  "task_id": "BFF-RUNTIME-START-REPAIR-REMOVAL-001",
+  "change_class": "simplify",
+  "base_sha": "d18956ba9ca239c6b6c2ea029bd3885eeb2166b9",
+  "validated_source_head": "ec2ab8035c6857a01d3f479fb75e7286127f9e7c",
+  "changes": [
+    "Remove all six dead runtime command types, catalog entries, executor handlers, wrapper mappings, adapter branches and repair URL helpers/exports.",
+    "Delete obsolete command tests; retain pause/resume anti-redirection coverage and prove unsupported wrapper verbs record ACTION_UNAVAILABLE without downstream dispatch.",
+    "Replace repair document with reconciler recovery runbook: pause, wait for worker removal, then resume to reset restart count."
+  ],
+  "unchanged": [
+    "Runtime-manager/reconciler implementation; generic wrapper admission.",
+    "Preconditions and assistant tool contracts already contain no deleted command references."
+  ],
+  "validation": [
+    {
+      "command": "timeout 180s /tmp/bff-runtime-removal-venv/bin/python -m pytest -q --tb=short services/control-plane/bff/test_command_executor.py services/control-plane/bff/tests/test_management_domain_actions.py services/control-plane/bff/tests/test_assistant_security.py",
+      "exit_status": 0,
+      "result": "104 passed, 2 subtests passed",
+      "log": "/tmp/bff-removal-focused-tests-final.log",
+      "sha256": "440bbf645a1b8a8749e031c2b7bdd3f2e548f3d4b222648ccefbe0e6f47ffd6b"
+    },
+    {
+      "command": "timeout 180s /tmp/bff-runtime-removal-venv/bin/python -m pytest -q --tb=short services/control-plane/bff/tests/test_command_adapters_router.py -k 'RuntimeAction or runtime or unmapped or accepted_wrapped_alias or wrong_domain or action_catalog'",
+      "exit_status": 0,
+      "result": "178 passed, 476 deselected",
+      "log": "/tmp/bff-removal-router-tests-final.log",
+      "sha256": "2bcd0815a4300cbc27f545f672fc47df71aefd63d959cc8523cde42bd316e064"
+    },
+    {
+      "command": "timeout 180s env PYTHONPATH=/tmp/clean-bff-venv/lib/python3.12/site-packages /tmp/bff-runtime-removal-venv/bin/python -m pytest -q services/paper_fleet_reconciler/test_paper_fleet_reconciler.py",
+      "exit_status": 0,
+      "result": "65 passed, including real Redis leader-fencing tests",
+      "log": "/tmp/bff-removal-reconciler-tests-final.log",
+      "sha256": "10c9e5ca89efa5168116e8296101c14bdf8fd84875179f03a6ba2cdb46f866eb"
+    },
+    {
+      "command": "timeout 90s /tmp/bff-runtime-removal-venv/bin/python -m pytest -q scripts/test_agora_bundle_digests.py scripts/test_dev_paper_diagnostics_failure_path.py",
+      "exit_status": 0,
+      "result": "29 passed",
+      "log": "/tmp/bff-removal-smoke-tail.log",
+      "sha256": "baeb9ab920cef97e1bf501010b85437d217f5cdcf0e0f8f6ce263ec8a3c83f36"
+    },
+    {
+      "command": "timeout 180s /tmp/bff-runtime-removal-venv/bin/python -m pytest -q --tb=short services/control-plane/bff/test_action_catalog.py services/control-plane/bff/test_bff_write_gap_2026_05_28.py",
+      "exit_status": 1,
+      "result": "51 passed; 2 failures reproduced on the unchanged base",
+      "log": "/tmp/bff-removal-contract-tests.log",
+      "sha256": "9e1933fa7be8a6e4ef50a1231ba85c656ce92535aead040021d6dc12fb48e26d"
+    },
+    {
+      "command": "timeout 180s /tmp/bff-runtime-removal-venv/bin/python -m pytest -q --tb=short services/control-plane/bff/test_action_catalog.py services/control-plane/bff/test_bff_write_gap_2026_05_28.py scripts/test_deploy_nonprod_vm.py::test_actual_ssh_command_forwards_drift_metadata",
+      "exit_status": 1,
+      "result": "75 passed; same 2 contract failures and deployment failure; cwd=/tmp/bff-runtime-removal-baseline (git archive of base_sha)",
+      "log": "/tmp/bff-removal-baseline-tests.log",
+      "sha256": "ba8138a9372314c7e52cae21712102e796a4dcd0b64d0e5b40ebceacdc9700ee"
+    },
+    {
+      "command": "timeout 240s env PATH=\"/tmp/bff-runtime-removal-venv/bin:$PATH\" PYTHON=/tmp/bff-runtime-removal-venv/bin/python bash scripts/run-acceptance.sh smoke",
+      "exit_status": 1,
+      "result": "BFF smoke 26 passed; stage0 stopped at deployment test (41 passed, 2 skipped, 1 baseline failure)",
+      "log": "/tmp/bff-removal-smoke-final.log",
+      "sha256": "02cfa0b338c35e3973c2d8c7cd047177c62a1af6e7cbe0a9f3b2e500e6f92981"
+    }
+  ],
+  "known_baseline_failures": [
+    "test_critical_actions_require_two_man: PromoteEvolutionCandidateLive lacks two-man metadata.",
+    "test_post_bff_confirm_by_token_valid_returns_202_and_publishes_audit: missing CommandAdapterService._publish_event.",
+    "test_actual_ssh_command_forwards_drift_metadata: transport contract fails before stub SSH."
+  ],
+  "incomplete_attempts": [
+    "Initial system Python lacked pytest; used isolated test environment.",
+    "Initial reconciler run lacked redis (63 passed, 2 errors); installed declared redis dependency and reran all 65 successfully; removed its leaked test container.",
+    "Initial smoke used system Python subprocess and failed PEP 668; reran with isolated environment on PATH.",
+    "Six-file combined BFF batch reached timeout 240s (exit 124), not passed; replaced with bounded focused batches."
+  ],
+  "static_checks": [
+    "No deleted CamelCase command names or snake/upper-case identifiers in services/scripts/tests Python, TypeScript or shell files; no BFF runtime repair URL helpers or _execute_start remain.",
+    "git diff --check origin/dev..HEAD; check_commit_trailers.py --range origin/dev..HEAD --skip-merge; diff_budget.py --base origin/dev --change-class simplify --budget -300."
+  ],
+  "diff_budget": {
+    "production_added": 3,
+    "production_deleted": 445,
+    "production_net": -442,
+    "limit": -300
+  },
+  "limits": "No hosted deployment claim. Known base failures remain outside this deletion scope. Independent Claude review and supervisor integration are pending."
+}
