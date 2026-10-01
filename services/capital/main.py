@@ -502,9 +502,7 @@ class CapitalBoundaryService:
     def _normalized_sleeve_id(value: Any) -> str | None:
         return str(value or "").strip() or None
 
-    _line_increases_risk = staticmethod(line_increases_risk)
-    _line_deployment_scope = staticmethod(line_deployment_scope)
-    _line_is_paper_scope = staticmethod(line_is_paper_scope)
+    _line_increases_risk, _line_deployment_scope, _line_is_paper_scope = staticmethod(line_increases_risk), staticmethod(line_deployment_scope), staticmethod(line_is_paper_scope)
 
     def _binding_is_rebalance_eligible(
         self,
@@ -712,8 +710,7 @@ class CapitalBoundaryService:
         return self.allocation_store.get_rebalance_receipt(command_id, tenant_id=_current_tenant())
 
     def _guard_rebalance_apply(self, rebalance_id: str, proposal: Dict[str, Any], decision_id: str | None, tenant: str | None) -> None:
-        lines = proposal.get("lines") or []
-        pool_id = str(proposal.get("capital_pool_id") or "")
+        lines, pool_id = proposal.get("lines") or [], str(proposal.get("capital_pool_id") or "")
         held = self.allocation_store.list_allocations(capital_pool_id=pool_id, tenant_id=tenant)
         held_map = {a.get("allocation_id"): a for a in held}
         if not any(self._line_increases_risk(line, held_map.get(line.get("allocation_id"))) for line in lines):

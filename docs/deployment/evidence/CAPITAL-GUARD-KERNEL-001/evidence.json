@@ -160,7 +160,16 @@
       "3": "Added route regressions in services/capital/test_capital_guard_routes.py covering both capital_scale_pct and gross_scale_pct for non-finite and malformed values (confirming 403 status and zero allocation state writes) and valid finite cases enforcing policy limits; added unit tests in services/capital/test_capital_guard.py"
     }
   },
-  "verification_run": "pytest services/capital + governance approval tests: 252 passed, 1 skipped; reproduction script: 3 passed"
+  "review_rework_10": {
+    "head_reviewed": "8d91fb2164f268feb6c98e62f48ef718df77c805",
+    "items": {
+      "1": "In services/capital/capital_guard.py, _finite_scale strictly enforces positive finite numbers (math.isfinite(f) and f > 0), rejecting proposal scale claims of 0.0, -1.0, NaN, and Infinity, preventing callers from waiving zero limits",
+      "2": "In services/capital/capital_guard.py, _validate_raw_policy validates raw configured policy limits before lossy parsing, rejecting non-finite, boolean, and malformed values (including aliases max_single_weight, max_pairwise_correlation, and mapping limits) with CapitalGuardError",
+      "3": "In services/capital/capital_guard.py, _FACT_OF_LIMIT and _STRING_LIMITS enforce allowed_asset_classes and allowed_strategy_families, failing closed when observations are missing, unobservable, or empty",
+      "4": "Added route regressions in test_capital_guard_routes.py and unit tests in test_capital_guard.py asserting 403 and zero allocation state writes; compacted capital_guard.py to maintain net production lines <= 250"
+    }
+  },
+  "verification_run": "pytest services/capital + governance approval tests: 262 passed, 1 warning; reproduction scripts: 7 passed, 1 warning"
 }
 
 
