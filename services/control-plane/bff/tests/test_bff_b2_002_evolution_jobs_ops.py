@@ -739,5 +739,3 @@ def test_bff_loop_run_detail_unauthorized() -> None:
             assert client.get("/bff/v5/loop-runs/any-lr").status_code == 401
         finally:
             pass
-
-
