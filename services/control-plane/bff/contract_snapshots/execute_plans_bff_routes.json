@@ -1314,10 +1314,9 @@
       "method": "GET",
       "path": "/bff/sse/agora/signals",
       "family": "sse-compatibility",
-      "status": "implemented_by_alias",
+      "status": "superseded_with_reason",
       "task_id": "BFF-LUV-GAP-010",
-      "covered_by": "GET /api/v1/stream/{channel}",
-      "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
