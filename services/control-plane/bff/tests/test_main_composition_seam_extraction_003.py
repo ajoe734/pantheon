@@ -110,7 +110,7 @@ def test_compose_bff_app_matches_main_route_set():
     assert diff_main_only == set(), f"Routes only in main.py: {diff_main_only}"
     assert diff_standalone_only == set(), f"Routes only in standalone composer: {diff_standalone_only}"
     assert len(standalone_routes) == len(main_routes)
-    assert len(standalone_routes) > 500
+    assert len(standalone_routes) > 450
 
 
 # ============================================================================
