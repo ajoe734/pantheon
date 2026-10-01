@@ -8,14 +8,11 @@ from __future__ import annotations
 
 import copy
 import hashlib
-import inspect
 import json
 import os
-import uuid
 from datetime import datetime, timezone
 from typing import (
     Any,
-    Awaitable,
     Callable,
     Dict,
     Iterable,
@@ -25,7 +22,6 @@ from typing import (
     Protocol,
     Sequence,
     Tuple,
-    Union,
 )
 
 from ..models import (
@@ -50,28 +46,6 @@ class ApprovalQueueReaderPort(Protocol):
 
 
 PageSlice = Callable[[Sequence[Any], Optional[str], int], Tuple[List[Any], Optional[str]]]
-
-
-class SubmitAction(Protocol):
-    """Named-parameter contract for governance command-admission submission.
-
-    ``GovernanceService.submit_governance_action`` is the only caller and
-    always invokes this with these exact keyword arguments (see below); a
-    bare ``Callable[..., Any]`` let a mismatched positional-argument seam
-    (e.g. the composition-root lambda that used to bind this) pass static
-    checks while raising ``TypeError`` at request time.
-    """
-
-    def __call__(
-        self,
-        *,
-        action_kind: str,
-        target_id: str,
-        action_id: str,
-        payload: Mapping[str, Any],
-        identity: Any,
-        idempotency_key: str,
-    ) -> Union[Any, Awaitable[Any]]: ...
 
 
 def utc_now_rfc3339() -> str:
@@ -158,12 +132,6 @@ def _identity_operator_id(identity: Any) -> str:
     return str(getattr(identity, "operator_id", None) or getattr(identity, "id", None) or "operator")
 
 
-async def _maybe_await(value: Any) -> Any:
-    if inspect.isawaitable(value):
-        return await value
-    return value
-
-
 class GovernanceService:
     """Application service over existing governance and consultation ports."""
 
@@ -194,15 +162,6 @@ class GovernanceService:
         "under_review",
         "reviewed",
     }
-    _DECISIONS = {
-        "approve",
-        "reject",
-        "request_revision",
-        "request_changes",
-        "escalate",
-        "freeze",
-    }
-
     # Mutation-review role policy. This is the single owner of the actor/
     # state/evidence policy used by both the direct POST action validators
     # (main.py ApproveMutation/RejectMutation/ReviewMutation/ExecuteMutation)
@@ -231,7 +190,6 @@ class GovernanceService:
         *,
         utc_now: Callable[[], str] = utc_now_rfc3339,
         page_slice_fn: PageSlice = page_slice,
-        submit_action: Optional[SubmitAction] = None,
         publish_event: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
         get_interventions: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         dataset_surface_status: Optional[Callable[..., Dict[str, Any]]] = None,
@@ -244,15 +202,12 @@ class GovernanceService:
         self.command_store = command_store
         self.utc_now = utc_now
         self.page_slice = page_slice_fn
-        self.submit_action = submit_action
         self.publish_event = publish_event
         self.get_interventions = get_interventions or (lambda: [])
         self.dataset_surface_status = dataset_surface_status or self._default_dataset_surface_status
         self.redact_evidence_refs = redact_evidence_refs or self._fail_closed_redact_evidence_refs
         self.capabilities_for_identity = capabilities_for_identity or (lambda identity: None)
         self.read_surface_state = read_surface_state or (lambda: "fresh")
-        self._created_approvals: Dict[str, Dict[str, Any]] = {}
-        self._idempotency: Dict[Any, Dict[str, Any]] = {}
 
     def submitted_promotion_reviews(
         self,
@@ -349,16 +304,6 @@ class GovernanceService:
 
     # Approval decisions -------------------------------------------------
 
-    def list_approval_decisions(
-        self, *, outcome: Optional[str] = None, state: Optional[str] = None, identity: Any
-    ) -> List[Dict[str, Any]]:
-        tenant = _identity_tenant(identity) if identity is not None else None
-        return [
-            item
-            for item in self._all_approval_decisions(outcome=outcome, state=state)
-            if _in_tenant(item, tenant)
-        ]
-
     def _all_approval_decisions(
         self, *, outcome: Optional[str] = None, state: Optional[str] = None
     ) -> List[Dict[str, Any]]:
@@ -373,7 +318,6 @@ class GovernanceService:
         except TypeError:
             records = self._call("list_approval_decisions", default=[])
         items = [copy.deepcopy(item) for item in (records or [])]
-        items.extend(copy.deepcopy(list(self._created_approvals.values())))
         if outcome:
             requested = {part.lower() for part in split_csv(outcome) or []}
             items = [
@@ -398,100 +342,6 @@ class GovernanceService:
             if item_id:
                 seen.add(item_id)
             result.append(item)
-        return result
-
-    def get_approval_detail(self, approval_id: str, identity: Any) -> Optional[Dict[str, Any]]:
-        """Typed replacement for the former generic ``/bff/approvals/{id}`` alias."""
-        clean_id = str(approval_id or "").strip()
-        if not clean_id:
-            return None
-        decision = self._created_approvals.get(clean_id)
-        if decision is None:
-            decision = self._call("get_approval_decision", clean_id, default=None)
-        if decision is None:
-            decision = self._call("get_approval_decision_by_id", clean_id, default=None)
-        if decision is None:
-            decision = next(
-                (
-                    item
-                    for item in self._all_approval_decisions()
-                    if record_id(item, "decision_id", "id", "item_id") == clean_id
-                ),
-                None,
-            )
-        if decision is None or identity is None or not _in_tenant(decision, _identity_tenant(identity)):
-            return None
-        return copy.deepcopy(decision)
-
-    def create_approval_decision(
-        self,
-        payload: Mapping[str, Any],
-        *,
-        identity: Any,
-        idempotency_key: str,
-        dry_run: bool,
-        correlation_id: str,
-    ) -> Dict[str, Any]:
-        plan_id = str(payload.get("plan_id") or "").strip()
-        decision = str(payload.get("decision") or "").strip().lower()
-        memo = str(payload.get("memo") or "").strip()
-        if not plan_id:
-            raise ValueError("plan_id")
-        if decision not in {"approve", "reject"}:
-            raise ValueError("decision")
-        if len(memo) < 8:
-            raise ValueError("memo")
-
-        request_hash = stable_json_hash(
-            {"plan_id": plan_id, "decision": decision, "memo": memo}
-        )
-        idempotency_key = (_identity_tenant(identity), idempotency_key)
-        existing = self._idempotency.get(idempotency_key)
-        if existing:
-            if existing["request_hash"] != request_hash:
-                raise RuntimeError("idempotency_conflict")
-            return copy.deepcopy(existing["result"])
-
-        decided_at = self.utc_now()
-        decision_id = str(uuid.uuid4())
-        record = {
-            "id": decision_id,
-            "decision_id": decision_id,
-            "plan_id": plan_id,
-            "decision": decision,
-            "outcome": "approved" if decision == "approve" else "rejected",
-            "decision_state": "decided",
-            "memo": memo,
-            "approver_id": _identity_operator_id(identity),
-            "tenant_id": _identity_tenant(identity),
-            "decided_at": decided_at,
-        }
-        data = {
-            "status": "accepted",
-            "commandId": decision_id,
-            "command_id": decision_id,
-            "plan_id": plan_id,
-            "decision": decision,
-            "approver_id": record["approver_id"],
-            "approverId": record["approver_id"],
-            "decided_at": decided_at,
-            "decidedAt": decided_at,
-        }
-        result = {
-            "data": data,
-            "meta": {
-                "snapshot_at": decided_at,
-                "dryRun": dry_run,
-                "correlationId": correlation_id,
-                "evidenceKind": "approval.decide",
-            },
-        }
-        if not dry_run:
-            self._created_approvals[decision_id] = record
-            self._idempotency[idempotency_key] = {
-                "request_hash": request_hash,
-                "result": copy.deepcopy(result),
-            }
         return result
 
     # Consultation requests, committees, and memos ---------------------
@@ -1459,23 +1309,6 @@ class GovernanceService:
 
     # Compatibility surfaces ------------------------------------------
 
-    def list_pending_approvals(self, identity: Any) -> List[Dict[str, Any]]:
-        tenant = _identity_tenant(identity) if identity is not None else None
-        return [
-            item
-            for item in self.list_approval_queue()
-            if _in_tenant(item, tenant)
-            if str(item.get("decision_state") or item.get("state") or item.get("status") or "").lower()
-            in self._PENDING_APPROVAL_STATES
-        ]
-
-    def approval_evidence(self, approval_id: str, identity: Any) -> Optional[List[Dict[str, Any]]]:
-        decision = self.get_approval_detail(approval_id, identity)
-        if decision is None:
-            return None
-        refs = decision.get("evidence_refs") or decision.get("evidence") or []
-        return copy.deepcopy(list(refs))
-
     def get_review(self, review_id: str) -> Optional[Dict[str, Any]]:
         return next(
             (
@@ -1485,60 +1318,6 @@ class GovernanceService:
             ),
             None,
         )
-
-    async def submit_governance_action(
-        self,
-        *,
-        action_kind: str,
-        target_id: str,
-        action_id: str,
-        payload: Mapping[str, Any],
-        identity: Any,
-        idempotency_key: str,
-    ) -> Any:
-        if self.submit_action is None:
-            from fastapi import HTTPException
-            from ..models import ErrorCode
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "error": {
-                        "code": ErrorCode.DEPENDENCY_UNAVAILABLE.value,
-                        "message": "Governance action submission unavailable",
-                        "details": {
-                            "precondition_failed": "submit_action_unconfigured",
-                            "suggestion": "Configure command submission on GovernanceService",
-                        },
-                    }
-                },
-            )
-        return await _maybe_await(
-            self.submit_action(
-                action_kind=action_kind,
-                target_id=target_id,
-                action_id=action_id,
-                payload=dict(payload),
-                identity=identity,
-                idempotency_key=idempotency_key,
-            )
-        )
-
-    def validate_decision(self, payload: Mapping[str, Any]) -> str:
-        decision = str(payload.get("decision") or "").strip().lower()
-        if not decision:
-            if str(payload.get("rejection_reason") or "").strip():
-                decision = "reject"
-            elif str(payload.get("revision_notes") or "").strip():
-                decision = "request_revision"
-            else:
-                decision = "approve"
-        if decision not in self._DECISIONS:
-            raise ValueError("decision")
-        if decision == "reject" and not str(payload.get("rejection_reason") or "").strip():
-            raise ValueError("rejection_reason")
-        if decision in {"request_revision", "request_changes"} and not str(payload.get("revision_notes") or "").strip():
-            raise ValueError("revision_notes")
-        return decision
 
     def governance_ledger(
         self,

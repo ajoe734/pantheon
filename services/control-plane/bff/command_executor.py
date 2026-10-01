@@ -542,73 +542,34 @@ def _execute_approve_deployment(
     }
 
 
-def _execute_approve_decision(
-    command_id: str, params: Dict[str, Any],
-    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Dispatch ApproveDecision to the approval-decision authority endpoint."""
-    decision_id = str(params.get("decision_id") or "").strip()
-    if not decision_id:
-        raise ValueError("ApproveDecision requires decision_id.")
-    payload = {
-        "approval_notes": params.get("approval_notes"),
-    }
-    url = _internal_url(f"/api/internal/v1/approval-decisions/{decision_id}/approve")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-    return {
-        "command_id": command_id,
-        "decision_id": body.get("decision_id", decision_id),
-        "decision_state": body.get("decision_state", "approved"),
-        "status": body.get("status") or body.get("decision_state", "approved"),
-        "audit_id": body.get("audit_id"),
-        "approved_at": body.get("approved_at"),
-    }
+def _execute_decision_vote(verb: str):
+    def execute(
+        command_id: str, params: Dict[str, Any],
+        auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Forward the verified caller's vote to the Governance approval owner."""
+        from .governance import approval_owner
+
+        decision_id = str(params.get("decision_id") or "").strip()
+        if not decision_id:
+            raise ValueError(f"{verb} requires decision_id.")
+        decision = approval_owner.decide(auth_token, decision_id, {**params, "decision": verb}, command_id)
+        return {"command_id": command_id, "decision_id": decision_id, **decision}
+
+    return execute
 
 
-def _execute_reject_decision(
-    command_id: str, params: Dict[str, Any],
-    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Dispatch RejectDecision to the approval-decision authority endpoint."""
-    decision_id = str(params.get("decision_id") or "").strip()
-    if not decision_id:
-        raise ValueError("RejectDecision requires decision_id.")
-    payload = {
-        "rejection_reason": params.get("rejection_reason"),
-    }
-    url = _internal_url(f"/api/internal/v1/approval-decisions/{decision_id}/reject")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-    return {
-        "command_id": command_id,
-        "decision_id": body.get("decision_id", decision_id),
-        "decision_state": body.get("decision_state", "rejected"),
-        "status": body.get("status") or body.get("decision_state", "rejected"),
-        "audit_id": body.get("audit_id"),
-        "rejected_at": body.get("rejected_at"),
-    }
+_execute_approve_decision = _execute_decision_vote("approve")
+_execute_reject_decision = _execute_decision_vote("reject")
 
 
 def _execute_request_approval_revision(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch RequestApprovalRevision to the approval-decision authority endpoint."""
-    decision_id = str(params.get("decision_id") or "").strip()
-    if not decision_id:
-        raise ValueError("RequestApprovalRevision requires decision_id.")
-    payload = {
-        "revision_notes": params.get("revision_notes"),
-    }
-    url = _internal_url(f"/api/internal/v1/approval-decisions/{decision_id}/request-revision")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-    return {
-        "command_id": command_id,
-        "decision_id": body.get("decision_id", decision_id),
-        "decision_state": body.get("decision_state", "pending_revision"),
-        "status": body.get("status"),
-        "audit_id": body.get("audit_id"),
-        "requested_at": body.get("requested_at"),
-    }
+    from .governance.approval_owner import UnsupportedApprovalAction
+
+    raise UnsupportedApprovalAction("RequestApprovalRevision has no Governance owner transition")
 
 
 def _execute_pause_runtime(

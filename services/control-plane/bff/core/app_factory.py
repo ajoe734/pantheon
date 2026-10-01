@@ -1530,7 +1530,6 @@ def mount_bff_routers(
             redact_evidence_refs=_dep("redact_evidence_refs"),
             capabilities_for_identity=_dep("_capabilities_for_identity"),
             read_surface_state=_dep("_read_surface_state"),
-            submit_action=getattr(command_adapter_service, "submit_governance_action", _dep("_submit_final_command_admission")),
             publish_event=lambda event_type, data: _dep("_publish_event")(
                 sse_buffers.get("audit") if isinstance(sse_buffers, dict) else [],
                 sse_subscribers.get("audit") if isinstance(sse_subscribers, dict) else set(),

@@ -1351,7 +1351,7 @@ def _approval_reader(authorization: Optional[str]) -> AuthContext:
     _dev_paper_grant(ctx)
     from services.governance.write_authority import WRITE_AUTHORITY_MATRIX
     roles = {role for values in WRITE_AUTHORITY_MATRIX.values() for role in values}
-    if not ctx.roles.intersection(roles | {'approval_reader', 'approval_proposer'}):
+    if not ctx.roles.intersection(roles | {'approval_reader', 'approval_proposer', 'operator'}):
         raise HTTPException(403, 'Approval read role required')
     return ctx
 
@@ -1373,7 +1373,7 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
     role = declared_role.value if declared_role else 'approval_proposer'
     if operation == 'propose':
         from services.governance.write_authority import WRITE_AUTHORITY_MATRIX
-        allowed = {'approval_proposer'} | {r for rs in WRITE_AUTHORITY_MATRIX.values() for r in rs}
+        allowed = {'approval_proposer', 'operator'} | {r for rs in WRITE_AUTHORITY_MATRIX.values() for r in rs}
         if not ctx.roles.intersection(allowed):
             raise HTTPException(403, 'Approval propose role required')
         if body.tenant_id != ctx.claims['tenant_id'] or body.owner_user_id != ctx.actor_id:
@@ -1427,6 +1427,8 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
             if operation == 'decide':
                 validate_paper_decide_body(body.model_dump(mode='json'), decision=current, now=now)
             verify_paper_candidate_for_decision(current, reader=_paper_registry_reader())
+        if operation == 'decide' and decision.decision_state == DecisionState.PROPOSED:
+            decision.accept_review(actor_role=role, actor_id=ctx.actor_id)
         if operation == 'review':
             decision.accept_review(actor_role=role, actor_id=ctx.actor_id)
         elif operation == 'revoke':
