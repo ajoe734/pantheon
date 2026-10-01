@@ -456,8 +456,10 @@ def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     is_appr_target = target_type in {"approvaldecision", "approval"}
     is_appr_cmd = norm_c in {"approvedecision", "rejectdecision"}
     has_appr_verb = any(v in {"approve", "approved", "approvedecision", "approvedwithconditions", "approvewithconditions", "conditional", "reject", "rejected", "rejectdecision"} for v in raw_verbs)
-    is_hg = norm_c.startswith("humangate") or (target_type in {"humangateitem", "humangate"} and not is_appr_cmd and not has_appr_verb)
-    is_gov = is_appr_cmd or is_appr_target or (not is_hg and norm_c == "reviewaction" and (has_appr_verb or not any(v.startswith("humangate") or v in {"requestreview", "review", "recordsponsordecision", "sponsordecision"} for v in raw_verbs)))
+    act_verbs = [re.sub(r"[^a-z0-9]", "", str(v).lower()) for v in (action, action_params.get("action_id"), action_params.get("actionId"), action_params.get("action"), action_params.get("verb")) if isinstance(v, str) and v.strip()]
+    has_hg_act = any(v.startswith("humangate") for v in act_verbs) and not any(v in {"approve", "approved", "approvedecision", "approvedwithconditions", "approvewithconditions", "conditional", "reject", "rejected", "rejectdecision"} for v in act_verbs)
+    is_hg = not is_appr_cmd and (norm_c.startswith("humangate") or (norm_c == "reviewaction" and has_hg_act))
+    is_gov = not is_hg and (is_appr_cmd or is_appr_target or (norm_c == "reviewaction" and (has_appr_verb or not any(v.startswith("humangate") or v in {"requestreview", "review", "recordsponsordecision", "sponsordecision"} for v in raw_verbs))))
     if is_gov:
         if any(v.startswith("humangate") or v in {"requestreview", "recordsponsordecision", "sponsordecision"} for v in raw_verbs):
             raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Conflicting action and decision", f"{command} carriers contain conflicting domain operations")

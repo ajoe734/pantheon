@@ -350,7 +350,19 @@ def test_consultation_session_and_policy_read_routes() -> None:
     assert client.get("/api/v1/personas/missing/consultations").status_code == 404
 
 
-def test_review_and_governance_ledger_compatibility() -> None:
+def test_review_and_governance_ledger_compatibility(monkeypatch: Any) -> None:
+    from services.control_plane.bff.governance import approval_owner
+
+    stubbed_response = {
+        "decision_id": "review-1",
+        "decision_state": "accepted",
+        "decision": "approved",
+        "status": "accepted",
+        "tenant_id": "tenant-a",
+        "version": 2,
+    }
+    monkeypatch.setattr(approval_owner, "call_owner", lambda *args, **kwargs: dict(stubbed_response))
+
     client = build_client()
 
     ledger = client.get("/bff/management/governance-ledger?source_type=approval")
@@ -369,8 +381,9 @@ def test_review_and_governance_ledger_compatibility() -> None:
     created = client.post("/bff/reviews", json={"id": "review-2"}, headers={"Idempotency-Key": "review-create-1"})
     acted = client.post(
         "/bff/reviews/review-1/actions/approve",
-        json={"reason": "Evidence verified"},
+        json={"expected_version": 1, "notes": "Evidence verified", "actor_role": "governance_reviewer"},
         headers={"Idempotency-Key": "review-action-1"},
     )
     assert created.status_code == acted.status_code == 202
     assert created.json()["status"] == acted.json()["status"] == "accepted"
+
