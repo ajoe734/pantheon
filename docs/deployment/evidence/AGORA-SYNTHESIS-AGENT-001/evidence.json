@@ -4,7 +4,8 @@
   "review_fixes": {
     "crash_window": "adapter does not dedupe on Idempotency-Key, so a reclaimed claim (claim attempt > 1) is NOT re-executed: it is recorded as failed SYNTHESIS_OUTCOME_AMBIGUOUS (synthesis degraded) and only an operator-requested retry (new attempt) calls the provider again",
     "set_identity": "opinions are sorted by opinion_id before hashing, so reordered saved sets share one synthesis id and adopt the saved result",
-    "schema": "InteractionSynthesis and ProviderInvocation (incl. synthesis entry) validated with jsonschema for success and failure"
+    "schema": "InteractionSynthesis and ProviderInvocation (incl. synthesis entry) validated with jsonschema for success and failure",
+    "unsupported_schema_keyword": "removed uniqueItems from transmitted _IDS (adapter _SUPPORTED_SCHEMA_KEYWORDS lacks it; nonempty disagreements previously 422'd OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH); uniqueness still enforced locally in _validated_synthesis via len(set(opinion_ids))>=2. Regression test_synthesis_schema_accepted_by_real_adapter_validator runs actual adapter _validate_extraction_arguments with nonempty disagreements (fails with uniqueItems restored, passes now)."
   },
   "validation": {
     "membership_checks": "nested shapes enforced; disagreement opinion_ids >=2 and subset of supplied opinions; evidence_refs subset of supplied opinion evidence",
@@ -12,8 +13,8 @@
   },
   "tests": {
     "command": "pytest -q services/control-plane/bff/agora/interaction services/control-plane/bff/tests/test_agora_persona_interactions.py",
-    "result": "31 passed; adds crash-window no-duplicate-call, reordered-set adoption, committed-schema validation"
+    "result": "test_agora_persona_interactions.py + test_pint_013 : 51 passed incl. new adapter-validator regression. test_pint_003_durable_opinions.py has 7 failures that pre-exist at 4adf323 (stale heuristic-synthesis fixtures)."
   },
   "not_run": "Criterion 7 real dev acceptance (live two-persona interaction, refresh readback, one failed synthesis call) NOT run: no dev/provider access. Requires dev operator evidence; source approval must not mark the whole task done.",
-  "production_net_lines": 85
+  "production_net_lines": 84
 }

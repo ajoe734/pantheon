@@ -136,7 +136,7 @@ def _raise_transient_provider_degraded(provider_payload: Dict[str, Any]) -> None
 
 _SYNTHESIS_STATUSES = ["recommendation", "options", "no_consensus", "more_research_required"]
 _STR = {"type": "string", "minLength": 1}
-_IDS = {"type": "array", "minItems": 2, "uniqueItems": True, "items": _STR}
+_IDS = {"type": "array", "minItems": 2, "items": _STR}
 _SYNTHESIS_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
