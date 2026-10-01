@@ -26,7 +26,6 @@ class PersonaCommandAdapter(DomainCommandAdapter):
 
     _HANDLED_COMMANDS = {
         "PersonaAction",
-        "AdvanceLifecycle",
         "Observe",
         "Demote",
         "PromoteCandidate",
@@ -54,11 +53,9 @@ class PersonaCommandAdapter(DomainCommandAdapter):
         action_id = str(params.get("action_id") or command_type or "").strip()
         persona_id = str(params.get("persona_id") or params.get("entity_id") or "").strip()
 
-        if command_type == "AdvanceLifecycle" or action_id.lower() in {"advancelifecycle", "advance_lifecycle"}:
-            return self._execute_advance_lifecycle(command_id, persona_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"Observe"} or action_id.lower() == "observe":
+        if command_type in {"Observe"}:
             return self._execute_observe(command_id, persona_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"PromoteCandidate", "Demote"} or action_id.lower() in {"promotecandidate", "demote"}:
+        elif command_type in {"PromoteCandidate", "Demote"}:
             return self._execute_promote_demote(command_id, persona_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         else:
             raise ActionUnavailableError(
@@ -66,52 +63,6 @@ class PersonaCommandAdapter(DomainCommandAdapter):
                 action_id=action_id,
                 entity_type="Persona",
             )
-
-    def _execute_advance_lifecycle(
-        self,
-        command_id: str,
-        persona_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        target_persona_id = persona_id or str(params.get("persona_id") or "").strip()
-        if not target_persona_id:
-            raise ValueError("AdvanceLifecycle requires persona_id.")
-
-        target_state = str(params.get("target_state") or "paper_owner").strip()
-        confirm_token = params["confirm_token_id"]
-
-        payload: Dict[str, Any] = {
-            "target_state": target_state,
-            "confirm_token": confirm_token,
-        }
-        if params.get("memo"):
-            payload["memo"] = str(params["memo"])
-
-        url = internal_url(f"/api/internal/v1/personas/{quote(target_persona_id, safe='')}/advance-lifecycle")
-        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
-
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="Persona",
-            entity_id=target_persona_id,
-            action_id="AdvanceLifecycle",
-            status="accepted",
-            dispatch_path=url,
-            domain_receipt=body,
-            authoritative_readback={
-                "persona_id": target_persona_id,
-                "current_state": body.get("to_state", target_state),
-                "from_state": body.get("from_state"),
-            },
-            extra={
-                "persona_id": target_persona_id,
-                "from_state": body.get("from_state"),
-                "to_state": body.get("to_state", target_state),
-                "audit_id": body.get("audit_id"),
-            },
-        )
 
     def _execute_observe(
         self,

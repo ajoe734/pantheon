@@ -885,6 +885,11 @@ _ALIAS_PARAMS: Dict[str, Dict[str, Any]] = {
     "ApproveDeployment": {"deployment_plan_id": "alias-target-1", "approval_decision": "approve"},
     "EscalateDiff": {"plan_id": "alias-target-1", "escalation_reason": "alias equivalence"},
     "PromoteCandidate": {"persona_id": "alias-target-1"},
+    "Demote": {"persona_id": "alias-target-1"},
+    "IssueRiskOff": {"reduce_exposure_pct": 10},
+    "IssueSafeMode": {"safe_mode_level": "soft"},
+    "ApproveRollback": {"rollback_id": "rb-1"},
+    "RejectRollback": {"rollback_id": "rb-1", "rejection_reason": "alias equivalence"},
     "AdvanceLifecycle": {"target_state": "paper_owner"},
     "EmergencyContainment": {"action": "freeze", "trigger": "forced_kill", "evidence_refs": ["ev-1"]},
 }
@@ -916,6 +921,9 @@ def _alias_target(canonical: str) -> Dict[str, str]:
     entity_type = get_catalog_entry(canonical).entity_type
     target_type = _ALIAS_TARGET_TYPES.get(canonical) or next((o for o in ObjectType if o.value == entity_type), ObjectType.RUNTIME)
     return {"type": target_type.value, "id": "alias-target-1"}
+
+
+_ALIAS_RECORDS: List[Dict[str, Any]] = []
 
 
 def _submit_alias(wrapper: str, verb: str, canonical: str, *, wrapped: bool, token_for: Optional[str]):
@@ -972,6 +980,7 @@ def _submit_alias(wrapper: str, verb: str, canonical: str, *, wrapped: bool, tok
             assert issued.status_code == 201, issued.text
             headers["X-Confirm-Token"] = "ct-alias-1"
         resp = client.post("/bff/v1/commands", headers=headers, json=body)
+        _ALIAS_RECORDS[:] = [r for r in store._get_all_commands() if r.get("type") == canonical]
         stored = [
             {
                 **_scrub({k: r.get(k) for k in ("type", "target", "params", "status")}),
@@ -1015,8 +1024,28 @@ def test_wrapped_alias_is_admitted_exactly_like_its_canonical_command(wrapper, v
 @pytest.mark.parametrize("wrapper,verb,canonical", sorted((w, v, c) for (w, v), c in __import__("services.control_plane.bff.command_adapters.contracts", fromlist=["x"])._WRAPPER_VERB_ALIASES.items()))
 def test_every_alias_has_an_accepted_path_stored_as_canonical(wrapper, verb, canonical) -> None:
     status, _body, stored = _submit_alias(wrapper, verb, canonical, wrapped=True, token_for=canonical)
+    if canonical == "RebalanceProposal":  # canonical admission itself demands server-side allocation evidence
+        assert status == 422 and stored == []
+        return
     assert status == 202, (status, _body)
     assert [row["type"] for row in stored if row["request_hash"]] == [canonical]
+
+
+@pytest.mark.parametrize("wrapper,verb,canonical", [("RuntimeAction", "start", "StartRuntime"), ("PersonaAction", "advance_lifecycle", "AdvanceLifecycle")])
+def test_accepted_wrapped_alias_dispatches_successfully(monkeypatch, wrapper, verb, canonical) -> None:
+    from services.control_plane.bff import command_executor
+    from services.control_plane.bff.command_adapters.service import _resolve_execution_params_for_record
+
+    status, _body, _stored = _submit_alias(wrapper, verb, canonical, wrapped=True, token_for=canonical)
+    assert status == 202
+    posts: List[Any] = []
+    monkeypatch.setenv("PANTHEON_INTERNAL_API_URL", "http://owner.invalid")
+    monkeypatch.setattr(command_executor, "_post_json", lambda url, payload, **_kw: posts.append((url, payload)) or {})
+    params = _resolve_execution_params_for_record(_ALIAS_RECORDS[0])
+    outcome, _result, error = command_executor.execute_command_with_status("cmd-1", CommandType(canonical), params)
+    assert outcome.value == "executed", error
+    assert posts[0][0].endswith(("/runtimes/alias-target-1/start", "/personas/alias-target-1/advance-lifecycle"))
+    assert posts[0][1]["confirm_token"] == "ct-alias-1"
 
 
 def test_unmapped_wrapper_combinations_are_not_rewritten() -> None:

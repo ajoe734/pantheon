@@ -112,30 +112,30 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
 
         if command_type == "StartRuntime":
             return self._execute_start(command_id, entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"PauseRuntime", "PauseExecution", "PausePaperRuntime"} or action_id.lower() in {"pauseruntime", "pauseexecution", "pausepaperruntime"}:
+        elif command_type in {"PauseRuntime", "PauseExecution", "PausePaperRuntime"}:
             return self._execute_pause(command_id, entity_id, "pause", params, auth_token=auth_token, mfa_token=mfa_token, command_type=command_type)
-        elif command_type == "ResumePaperRuntime" or action_id.lower() == "resumepaperruntime":
+        elif command_type == "ResumePaperRuntime":
             return self._execute_pause(command_id, entity_id, "resume", params, auth_token=auth_token, mfa_token=mfa_token, command_type=command_type)
-        elif command_type in {"RestartPaperRuntime"} or action_id.lower() == "restartpaperruntime":
+        elif command_type in {"RestartPaperRuntime"}:
             return self._execute_repair_action(command_id, "RestartPaperRuntime", "/api/internal/v1/runtime-repair/paper-runtimes/{runtime_id}/restart", "runtime_id", entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"RestartTelemetryBridge"} or action_id.lower() == "restarttelemetrybridge":
+        elif command_type in {"RestartTelemetryBridge"}:
             return self._execute_repair_action(command_id, "RestartTelemetryBridge", "/api/internal/v1/runtime-repair/paper-runtimes/{runtime_id}/telemetry-bridge/restart", "runtime_id", entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"TerminateStalePaperMonitoringSession"} or action_id.lower() == "terminatestalepapermonitoringsession":
+        elif command_type in {"TerminateStalePaperMonitoringSession"}:
             session_id = str(params.get("session_id") or entity_id)
             return self._execute_repair_action(command_id, "TerminateStalePaperMonitoringSession", "/api/internal/v1/runtime-repair/monitoring-sessions/{session_id}/terminate-stale", "session_id", session_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"StartPaperMonitoringSession"} or action_id.lower() == "startpapermonitoringsession":
+        elif command_type in {"StartPaperMonitoringSession"}:
             return self._execute_repair_action(command_id, "StartPaperMonitoringSession", "/api/internal/v1/runtime-repair/paper-runtimes/{runtime_id}/monitoring-sessions/start", "runtime_id", entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"ProbeTelemetryIngest"} or action_id.lower() == "probetelemetryingest":
+        elif command_type in {"ProbeTelemetryIngest"}:
             return self._execute_repair_action(command_id, "ProbeTelemetryIngest", "/api/internal/v1/runtime-repair/paper-runtimes/{runtime_id}/telemetry-ingest/probe", "runtime_id", entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"IssueSafeMode"} or action_id.lower() == "issuesafemode":
+        elif command_type in {"IssueSafeMode"}:
             return self._execute_safe_mode(command_id, params)
-        elif command_type in {"ExecuteRollback", "HardRollback"} or action_id.lower() in {"executerollback", "hardrollback"}:
+        elif command_type in {"ExecuteRollback", "HardRollback"}:
             return self._execute_rollback(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"ApproveRollback"} or action_id.lower() == "approverollback":
+        elif command_type in {"ApproveRollback"}:
             return self._execute_approve_rollback(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"RejectRollback"} or action_id.lower() == "rejectrollback":
+        elif command_type in {"RejectRollback"}:
             return self._execute_reject_rollback(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"ActivateKillSwitch", "IssueRiskOff"} or action_id.lower() in {"activatekillswitch", "issueriskoff"}:
+        elif command_type in {"ActivateKillSwitch", "IssueRiskOff"}:
             return self._execute_kill_switch(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
         else:
             raise ActionUnavailableError(
