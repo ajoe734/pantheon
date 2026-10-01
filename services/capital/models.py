@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class CapitalPoolBody(BaseModel):
+    approval_digest: Optional[str] = None
     pool_id: str
     tenant_id: Optional[str] = None
     name: str
@@ -107,6 +108,7 @@ class RiskPolicyEvaluationResponse(BaseModel):
 
 
 class PersonaCapitalBindingBody(BaseModel):
+    approval_digest: Optional[str] = None
     binding_id: str
     tenant_id: Optional[str] = None
     persona_id: str
@@ -138,6 +140,7 @@ class CreateCapitalPoolRequest(BaseModel):
     owner_id: str
     owner_type: str
     status: str = "active"
+    approval_decision_id: Optional[str] = None
     description: Optional[str] = None
     currency: str = "USD"
     budget: Optional[float] = None
@@ -150,6 +153,7 @@ class UpdateCapitalPoolStatusRequest(BaseModel):
     actor_id: str
     actor_role: str
     status: str
+    approval_decision_id: Optional[str] = None
 
 
 class CreateBindingRequest(BaseModel):
@@ -288,6 +292,7 @@ class AllocationListResponse(BaseModel):
 
 
 class RebalanceBody(BaseModel):
+    plan_digest: Optional[str] = None
     id: str
     rebalance_id: str
     tenant_id: Optional[str] = None
@@ -360,8 +365,6 @@ class CreateContainmentRequest(BaseModel):
     target_stage: Optional[str] = None
     allocation_increase: bool = False
     command_id: Optional[str] = None
-    approval_ref: Optional[str] = None
-    two_man_signature_id: Optional[str] = None
     receipt_ref: Optional[str] = None
     audit_ref: Optional[str] = None
 
@@ -386,8 +389,6 @@ class ContainmentBody(BaseModel):
     payload_hash: str
     executed_at: str
     capital_pool_id: Optional[str] = None
-    approval_ref: Optional[str] = None
-    two_man_signature_id: Optional[str] = None
     authoritative_containment_readback: bool
     authoritative_capital_readback: bool
     authoritative_capital_state_applied: bool

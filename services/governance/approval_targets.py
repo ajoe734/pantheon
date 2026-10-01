@@ -9,6 +9,7 @@ from services.governance.write_authority import is_authorized_to_decide
 
 SUBJECT_FIELDS = {
     'rebalance_apply': ('plan_id', 'plan_digest', 'capital_pool_id', 'risk_direction'),
+    'capital_pool_activation': ('pool_id', 'risk_direction'),
     'capital_binding_activation': ('binding_id', 'persona_id', 'capital_pool_id', 'risk_direction'),
     'persona_lifecycle_transition': ('persona_id', 'from_state', 'to_state'),
     'evolution_execute': ('proposal_id', 'proposal_content_digest'),
@@ -58,7 +59,7 @@ def merged_constraints(metadata: Optional[Mapping[str, Any]]) -> tuple:
 
 def required_deciders(target_type: Any, metadata: Optional[Mapping[str, Any]]) -> int:
     """A risk-increasing capital or rebalance target needs two distinct deciders."""
-    if target_name(target_type) in ('capital_binding_activation', 'rebalance_apply') \
+    if target_name(target_type) in ('capital_pool_activation', 'capital_binding_activation', 'rebalance_apply') \
             and subject_of(metadata).get('risk_direction') == 'increase':
         return 2
     return 1

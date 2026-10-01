@@ -58,6 +58,7 @@ def _pool_payload(**overrides):
         "owner_id": "fund-001",
         "owner_type": "fund",
         "risk_policy_ref": "risk-main",
+        "approval_decision_id": "approval-pool-create",
     }
     payload.update(overrides)
     return payload
@@ -694,8 +695,8 @@ def test_rebalance_apply_updates_authoritative_allocations_and_replays_once(clie
 
     denied_payload = _apply_payload(approval_ref=None)
     denied = test_client.post("/api/rebalances/rb-001/apply", json=denied_payload)
-    assert denied.status_code == 409
-    assert "approval reference" in denied.json()["detail"]
+    assert denied.status_code == 403
+    assert "approval" in denied.json()["detail"].lower()
 
     apply_payload = _apply_payload()
     applied = test_client.post("/api/rebalances/rb-001/apply", json=apply_payload)
@@ -1226,8 +1227,8 @@ def test_live_candidate_increase_requires_approval(client):
             approval_ref=None,
         ),
     )
-    assert denied.status_code == 409
-    assert "approval reference" in denied.json()["detail"]
+    assert denied.status_code == 403
+    assert "approval" in denied.json()["detail"].lower()
 
 
 @pytest.mark.parametrize("pool_status", ["suspended", "archived"])
@@ -1280,6 +1281,7 @@ def test_first_apply_revalidates_pool_and_receipt_replay_survives_suspend(client
             "actor_id": "capital-admin-1",
             "actor_role": "capital.admin",
             "status": "active",
+            "approval_decision_id": "approval-pool-reactivate",
         },
     ).status_code == 200
     applied = test_client.post(

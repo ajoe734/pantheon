@@ -1,0 +1,116 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "CAPITAL-GUARD-KERNEL-001",
+  "title": "One deterministic capital guard for every risk-increasing action",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "corrective",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "ebf3ad0f4c3ec33c3a103c8021cbe04fc3d1bcf5",
+  "scope": {
+    "owned": [
+      "services/capital/capital_guard.py",
+      "services/capital/main.py",
+      "services/capital/models.py",
+      "services/capital/allocation_store.py",
+      "services/capital/conftest.py",
+      "services/capital/test_capital_guard.py",
+      "services/capital/test_service.py",
+      "services/capital/test_tenant_scoping.py",
+      "docs/deployment/evidence/CAPITAL-GUARD-KERNEL-001/evidence.json",
+      "services/governance/models.py",
+      "services/governance/approval_targets.py",
+      "services/control-plane/governance/approval_decision.py",
+      "services/control-plane/governance/approval_decision.schema.json"
+    ],
+    "not_changing": [
+      "services/runtime-manager/",
+      "docker-compose.yml (owned by BFF-APPROVALS-FORWARD-001)"
+    ],
+    "composes_with": [
+      "GOV-APPROVAL-TARGETS-001 action-bound approval targets",
+      "CAPITAL-TENANT-COLUMN-001 tenant scoping"
+    ]
+  },
+  "acceptance_criteria": [
+    {
+      "criterion": "1. One capital_guard module is the only place that authorizes risk-increasing actions; pool activation/status change, binding activation and rebalance apply call it",
+      "status": "passed",
+      "verification": "services/capital/capital_guard.py CapitalGuard.authorize; called from update_pool_status (only when moving to active), activate_binding and the first-commit branch of apply_rebalance (only when a line increases weight, so exact replays stay readable). test_routes_call_guard_for_pool_binding_and_rebalance."
+    },
+    {
+      "criterion": "2. Valid governance approval for exactly this action via ApprovalEvidence.require_valid, two distinct deciders for live increases",
+      "status": "passed",
+      "verification": "Guard reads the exact decision and calls require_valid(expected=tenant_id,target_type,target_id and subject.* incl. risk_direction=increase). For capital_binding_activation and rebalance_apply, approval_targets.required_deciders demands two distinct deciders on increases. Two-decider logic itself lives in governance and is covered there; this task asserts the guard passes the expected binding (test_allows_when_every_check_passes_and_binds_exact_action). Rebalance apply reuses the existing approval_ref field as the governance decision id."
+    },
+    {
+      "criterion": "3. Reject risk increases while kill switch or safe mode is active; fail closed if unreadable",
+      "status": "passed",
+      "verification": "Safe-mode state read from the runtime manager GET /api/kill-switch/{pool}/safe-mode; only normal/normal_restored pass. test_rejects_while_safe_mode_or_kill_switch_active, test_fails_closed_when_safe_mode_unreadable, test_binding_activation_and_apply_blocked_by_safe_mode."
+    },
+    {
+      "criterion": "4. Run existing risk_policy limits and the tenant check",
+      "status": "passed",
+      "verification": "RiskPolicyEvaluator.evaluate per increasing line; missing/unloadable policy fails closed; tenant must be non-empty and equal the pool tenant. test_risk_policy_limits_reject, test_fails_closed_when_risk_policy_missing, test_rejects_missing_or_foreign_tenant."
+    },
+    {
+      "criterion": "5. Containment stays decrease-only without approval and still requires evidence and audit",
+      "status": "passed",
+      "verification": "Containment path untouched apart from removing the unused approval fields; existing decrease-only, evidence_refs and audit-delivery tests in test_service.py still pass."
+    },
+    {
+      "criterion": "6. String-only approval_ref and two_man_signature_id checks deleted",
+      "status": "passed",
+      "verification": "Removed the increases_live/approval_ref truthiness check from allocation_store.apply_rebalance and the approval_ref/two_man_signature_id fields from the containment request/response models and record."
+    },
+    {
+      "criterion": "7. Tests cover each rule and every fail-closed path",
+      "status": "passed",
+      "verification": "services/capital/test_capital_guard.py plus updated existing tests."
+    }
+  ],
+  "limitations": [
+    "No integration test against a live governance service or runtime manager; both are faked at the reader seam.",
+    "Risk policy source is CAPITAL_RISK_POLICY_DIR/<risk_policy_ref>.json; no other capital-side policy store exists, so unconfigured deployments reject every increase (fail closed).",
+    "services/capital/conftest.py supplies healthy fakes by default so pre-existing service tests run; guard tests pass explicit fakes.",
+    "Empty pool activation evaluates pool-level limits (weights, gross, net, leverage, turnover) without requiring a deployment stage; reactivating a non-empty pool evaluates its authoritative resulting allocations and actual normalized stages under lock. Factors with no capital-side source (sector, factor, strategy-family concentration, overlap, correlation) reject when the policy configures them."
+  ],
+  "verification": {
+    "passed": [
+      {
+        "command": "pytest -q services/capital services/governance/test_approval_targets.py services/control-plane/governance/test_approval_decision.py",
+        "result": "see verification_run"
+      }
+    ]
+  },
+  "review_rework": {
+    "head_reviewed": "7bc4938e3",
+    "items": {
+      "1": "create_pool authorizes active creation via _authorize_pool_activation before persistence; CreateCapitalPoolRequest.approval_decision_id; test_active_pool_create_is_guarded_before_persistence",
+      "2": "Governance target capital_pool_activation (models, approval_decision.py, schema, approval_targets subject + 2 deciders); test_pool_activation_proposal_and_exact_approval builds a real ProposeApprovalRequest",
+      "3": "target_version = owner-computed pool_digest/binding_digest, exposed as approval_digest on the pool/binding bodies; test_binding_activation_binds_semantic_digest_and_policy_facts",
+      "4": "guard contexts carry binding scope as stage and rebalance plan facts (weights, gross, net, leverage, turnover); a configured limit with no observation is rejected; test_configured_limit_without_observation_fails_closed",
+      "5": "plan_digest is computed from stored normalized lines (allocation_line_digest), exposed on RebalanceBody and compared at apply; request_hash only keeps idempotency; test_rebalance_approval_binds_owner_plan_digest_not_request_hash",
+      "6": "CAPITAL_RISK_POLICY_DIR now defaults to services/capital/risk_policies; Compose reader/runtime-manager wiring deliberately left to BFF-APPROVALS-FORWARD-001 per task note (hosted acceptance is paired delivery); conftest seam now validates a real ApprovalEvidence"
+    }
+  },
+  "verification_run": "pytest services/capital + governance approval tests: 223 passed, 1 skipped",
+  "review_rework_2": {
+    "head_reviewed": "2c23d05ad",
+    "items": {
+      "1": "CapitalGuard derives required observations from every configured RiskPolicy limit (zero-valued included); pool and binding activation supply the authoritative pool snapshot (_pool_facts); sector/factor limits with no source reject",
+      "2": "_pool_facts overlays plan lines on all authoritative tenant/pool allocations under the apply lock; test_rebalance_limits_include_unchanged_allocations",
+      "3": "rebalance stage uses _line_deployment_scope (paper_running -> paper); test_paper_running_line_uses_normalized_stage and test_live_line_rejected_when_only_paper_allowed",
+      "note": "An empty pool legitimately observes gross 0, so activation with gross_limit>0 passes; pre-existing allocations over the limit reject (test_pool_activation_sees_existing_allocations)."
+    }
+  },
+  "review_rework_3": {
+    "head_reviewed": "a91cb1517",
+    "items": {
+      "1": "Empty pool activation checks pool-level limits without requiring or inventing a deployment stage; active pool create and empty reactivation pass under allowed_stages=[paper] policy",
+      "2": "Reactivating a non-empty pool evaluates its authoritative resulting allocations with normalized stages under lock; existing live allocations reject under paper-only policy",
+      "3": "Added positive empty active create, positive empty reactivation, and negative nonempty forbidden stage tests in test_capital_guard_routes.py"
+    }
+  }
+}
