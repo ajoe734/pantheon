@@ -1,0 +1,81 @@
+{
+  "task_id": "BFF-PERSONA-LIFECYCLE-FORWARD-001",
+  "status": "implementation_validated_pending_independent_review",
+  "ready_for_review": true,
+  "base_sha": "d18956ba9ca239c6b6c2ea029bd3885eeb2166b9",
+  "validated_source_sha": "ade57a2ec23fb6d975fb75a0798bab93c9e437a1",
+  "dependency": "Wrapper PR6068 independently approved, required checks passed after an exact-head retry, merged as d18956ba9. Original Persona authority PR6057 remains merged.",
+  "changes": [
+    "Canonical command, mapped PersonaAction wrappers and REST lifecycle routes share admission, confirmation, audit, idempotency and stored-record execution.",
+    "PromoteCandidate and Demote normalize to AdvanceLifecycle with an explicit caller-proposed target state; confirmation issuance normalizes those legacy command names too. Observe is retired. No lifecycle state judgment remains in the BFF.",
+    "PersonaCommandAdapter forwards the original JWT, derives actor_id from its authenticated subject and checks formal tenant readback. Persona owns transition/role/approval/concurrency decisions. The provisioning credential is never substituted.",
+    "The internal advance-lifecycle dispatch, old transition table and fabricated Observe/Promote/Demote receipts are removed. Governance references are forwarded to the real owner, not accepted as BFF approval proof.",
+    "Lifecycle execution target/action cannot be redirected by caller entity_type or action fields; all nine mounted entry points verify the actual owner call. Command idempotency includes the authenticated tenant; lifecycle status reads cannot return another tenant's receipt. Formally unbound Persona records remain denied. Create supplies the authenticated tenant as a formal owner field.",
+    "The injected confirmation audit publisher is retained on CommandAdapterService, fixing two shared confirmation tests and the corresponding root audit-publication regression. Seven old local lifecycle judgment tests and one fake internal-dispatch case are replaced by real mounted owner coverage. Unrelated tests are preserved."
+  ],
+  "validated_source_git_blobs": {
+    "services/control-plane/bff/action_catalog.py": "a0593988b44fdac5e89c49bd7519aab594bfe17d",
+    "services/control-plane/bff/command_adapters/contracts.py": "16752a30ccab06c4d27e36a28e05da231e3f61b5",
+    "services/control-plane/bff/command_adapters/persona_adapter.py": "e3ff6dd287bd24b09213281ae53177ae871e4ad5",
+    "services/control-plane/bff/command_adapters/preconditions.py": "cb6086a6fe80fe75859b129f59c291011f3cb8e3",
+    "services/control-plane/bff/command_adapters/service.py": "2ec9d858be30481a27dff70c6dbc43533911f54a",
+    "services/control-plane/bff/command_executor.py": "940c296ba334c4f6287d17ea1815a88df72ff763",
+    "services/control-plane/bff/main.py": "055d2f8aebfb44e03d24b3ce0b02bac2e5f276fd",
+    "services/control-plane/bff/models.py": "09b4dbc51523133b57596a9096bd2c4ba47d8757",
+    "services/control-plane/bff/personas/routes/lifecycle.py": "d1a0444d80d23e3d02476f684d8c8c2ea5b19b4d",
+    "services/control-plane/bff/ports/persona_write_owner.py": "79474dcefccc126fe4ffa601d1cbafbd6e70937e",
+    "services/control-plane/bff/test_bff_write_gap_2026_05_28.py": "64a5cd5f9cc8f41cdaa9e82df8b7362beb9705c6",
+    "services/control-plane/bff/tests/test_agora_servant_production_write_owner.py": "138c83c3760f59a0b40dad1874e05de710bbfbf3",
+    "services/control-plane/bff/tests/test_command_adapters_router.py": "584a5fed50455a0f7f8cbc457be544e5e29753c2",
+    "services/control-plane/bff/tests/test_management_domain_actions.py": "658125840ebd219ea0382c20231967abbd94b593",
+    "services/control-plane/bff/tests/test_persona_create_owner_contract.py": "4ec08f2e770c3393a6b689e7f8e94f97b869f154",
+    "services/control-plane/bff/tests/test_persona_lifecycle_forward.py": "ab34af01559543a590664335ef317b7ebef6cc71"
+  },
+  "validation": [
+    {
+      "command": "/tmp/clean-bff-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_lifecycle_forward.py services/control-plane/bff/tests/test_persona_create_owner_contract.py services/control-plane/bff/tests/test_agora_servant_production_write_owner.py services/control-plane/bff/tests/test_persona_owner_transport_contract.py services/control-plane/bff/tests/test_persona_governance_caller_contract.py",
+      "result": "271 passed, 3 warnings in 308.36s; no skipped/deselected tests",
+      "exit_code": 0,
+      "log": "/tmp/persona-forward-final-owner-validation.log",
+      "log_sha256": "00cacc9109063f826db7c035d3b520f559cb701a2a9d5774e7ee965ced43ad65"
+    },
+    {
+      "command": "/tmp/clean-bff-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/tests/test_management_domain_actions.py services/control-plane/bff/tests/test_assistant_security.py services/control-plane/bff/tests/test_legacy_command_write_retirement.py services/control-plane/bff/test_action_catalog.py services/control-plane/bff/test_execute_plans_contract_registry.py services/control-plane/bff/test_bff_write_gap_2026_05_28.py",
+      "result": "906 passed, 2 failed, 2 subtests passed, 191 warnings in 616.99s",
+      "exit_code": 1,
+      "failures": ["test_zero_reverse_main_imports", "test_critical_actions_require_two_man (PromoteEvolutionCandidateLive)"],
+      "log": "/tmp/persona-forward-final-shared-validation.log",
+      "log_sha256": "245cd369313a085c20df00f5a9543ad53c3cbce75e5fc0e3b0dc4b8f5dce34ae"
+    }
+  ],
+  "paired_baseline": {
+    "worktree": "/tmp/pantheon-persona-forward-base-20261001",
+    "sha": "d18956ba9ca239c6b6c2ea029bd3885eeb2166b9",
+    "shared_command": "/tmp/clean-bff-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py -k 'zero_reverse_main_imports or command_confirmations_lifecycle or confirm_command_by_token_contract_and_regressions'",
+    "shared_result": "3 failed, 725 deselected, 3 warnings in 7.18s; exit1. Reverse-main-import violation independently reproduced. Both missing-_publish_event failures now pass on candidate.",
+    "shared_log": "/tmp/persona-forward-d189-shared-baseline.log",
+    "shared_log_sha256": "0bb181566d96c9ab6a8d23c38f91e08675a450bf99c7bcb6f867c7fb673ea0be",
+    "root_command": "/tmp/clean-bff-venv/bin/python -m pytest -q services/control-plane/bff/test_action_catalog.py services/control-plane/bff/test_execute_plans_contract_registry.py services/control-plane/bff/test_bff_write_gap_2026_05_28.py (clean frozen-base worktree)",
+    "root_result": "80 passed, 2 failed, 191 warnings in 94.92s; exit1. Critical Evolution two-man assertion independently reproduced; confirmation audit publication failure fixed. Seven old lifecycle tests removed and replaced by mounted authoritative-owner cases.",
+    "root_log": "/tmp/persona-forward-d189-root-baseline.log",
+    "root_log_sha256": "0c7bbc4b214559913af0d32c186f2c7bf426a33fb8df22aae0a0a4f24c0d8b26"
+  },
+  "execution_history": [
+    "Initial mounted run stopped at3 failures/83passes: direct Observe retirement status and lifecycle status-read tenant lookup corrected.",
+    "Next five-file run217passed/3failed: demotion fixture had replaced metadata and lost approval actors; preserving real approval metadata corrected the fixture, not Governance code.",
+    "Five-file intermediate run247passed; subsequent new decision-reference cases added.",
+    "Concurrent five-file attempt timed out at320seconds before a terminal summary (/tmp/persona-forward-owner-delivery-validation.log). It is incomplete, not passed. The complete rerun was262passed; after canonical target hardening, the final frozen-source suite is271passed above.",
+    "The first shared invocation named a nonexistent tests/test_command_executor.py and exited4; corrected to bff/test_command_executor.py. First corrected shared run825passed/3failed; two obsolete Persona-only fixtures were migrated to actual owner/retirement expectations, leaving only the independently reproduced baseline failure."
+  ],
+  "whole_task_line_budget": {
+    "command": "python3 scripts/git/diff_budget.py --base d18956ba9ca239c6b6c2ea029bd3885eeb2166b9 --head ade57a2ec23fb6d975fb75a0798bab93c9e437a1 --change-class simplify --budget -100",
+    "production_added": 193,
+    "production_deleted": 382,
+    "production_net": -189,
+    "required_maximum": -100,
+    "exit_code": 0,
+    "boundary": "Complete task versus integrated current dev, including original transport/create work. Wrapper changes are already merged in the base; no task changes hidden or reclassified."
+  },
+  "delivery_validation": "git diff --check and full origin/dev..HEAD commit trailer check passed. Independent review, required PR checks, merge and canonical closeout remain mandatory.",
+  "authority_limits": "Real mounted Persona routing/authentication, durable temporary JSON and real Governance verifier with explicit fixture decision reads; only socket transport substituted by TestClient. No hosted deployment, Postgres validation, live capital effects, completed onboarding, reviewer attestation or operational acceptance claimed."
+}
