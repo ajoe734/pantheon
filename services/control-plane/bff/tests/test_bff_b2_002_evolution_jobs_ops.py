@@ -50,7 +50,6 @@ class _EvolutionJobsOpsTestStore:
         self._programs: dict[str, dict[str, Any]] = {}
         self._jobs: dict[str, dict[str, Any]] = {}
         self._loop_runs: dict[str, dict[str, Any]] = {}
-        self._findings: dict[str, dict[str, Any]] = {}
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.ports, name)
@@ -75,11 +74,6 @@ class _EvolutionJobsOpsTestStore:
         item = {"id": run_id, "run_id": run_id, "status": "running", "created_at": "2026-06-01T00:00:00Z", **kwargs}
         self._loop_runs[run_id] = item
         return item
-
-    def get_sentinel_finding(self, finding_id: Optional[str]) -> tuple[bool, Optional[dict[str, Any]]]:
-        if not finding_id or finding_id not in self._findings:
-            return True, None
-        return True, self._findings.get(finding_id)
 
     # U8A note: create/patch are no longer methods on the read-store double
     # (the real read surface never had them — see
@@ -140,9 +134,6 @@ class _EvolutionJobsOpsTestStore:
         if not job_id:
             return None
         return self._jobs.get(job_id)
-
-    def get_sentinel_finding(self, finding_id: Optional[str]) -> tuple[bool, Optional[dict[str, Any]]]:
-        return True, None
 
     def dataset_source(self, dataset: str) -> str:
         return "evolution_jobs_ops_test"
@@ -746,28 +737,5 @@ def test_bff_loop_run_detail_unauthorized() -> None:
         try:
             client = _fresh_client(td)
             assert client.get("/bff/v5/loop-runs/any-lr").status_code == 401
-        finally:
-            pass
-
-
-# ---------------------------------------------------------------------------
-# 13c. GET /bff/v5/sentinel/findings/{id}  (bonus — detail)
-# ---------------------------------------------------------------------------
-
-def test_bff_sentinel_finding_detail_not_found() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        try:
-            client = _fresh_client(td)
-            resp = client.get("/bff/v5/sentinel/findings/nonexistent-finding", headers=OPERATOR_HEADERS)
-            assert resp.status_code == 404, resp.text
-        finally:
-            pass
-
-
-def test_bff_sentinel_finding_detail_unauthorized() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        try:
-            client = _fresh_client(td)
-            assert client.get("/bff/v5/sentinel/findings/any-sf").status_code == 401
         finally:
             pass

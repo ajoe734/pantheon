@@ -182,7 +182,6 @@ def build_command_security_app(
             require_operator_role=require_operator_role,
             require_read_role=require_read_role,
             bff_error=bff_error,
-            submit_final_command_admission=service.submit_command_admission,
             submit_sem_command=service.sem_command_response,
         )
     )
@@ -356,13 +355,6 @@ def build_consolidated_cross_cutting_app(read_surface: Any) -> FastAPI:
     )
 
     # 7. Control Loops
-    def _v5_provider(**kw: Any) -> list:
-        if hasattr(read_surface, "list_v5_interventions"):
-            return read_surface.list_v5_interventions(**kw)
-        if hasattr(read_surface, "list_interventions"):
-            return read_surface.list_interventions(**kw)
-        return []
-
     app.include_router(
         create_control_loops_router(
             read_surface=read_surface,
@@ -371,7 +363,6 @@ def build_consolidated_cross_cutting_app(read_surface: Any) -> FastAPI:
             require_operator_role=require_operator_role,
             bff_error=bff_error,
             utc_now_fn=utc_now,
-            intervention_records_provider=_v5_provider,
         )
     )
 
