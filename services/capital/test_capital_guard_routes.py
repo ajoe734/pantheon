@@ -482,5 +482,36 @@ def test_retained_allocation_evaluated_on_subsequent_rebalance(client, monkeypat
         assert (response.status_code, count) == (403, 1)
 
 
+@pytest.mark.parametrize('policy,trusted,claimed,stage', [
+    ({'liquidity_constraints': {'min_avg_daily_volume': 1000}}, {'liquidity': {'avg_daily_volume': 10}}, {'liquidity': {'avg_daily_volume': 10000}}, 'live_running'),
+    ({'drawdown_actions': {'risk_off': 10}}, {'drawdown_pct': 20}, {'drawdown_pct': 1}, 'live_running'),
+    ({'allowed_asset_classes': ['equity']}, {'asset_classes': ['crypto']}, {'asset_classes': ['equity']}, 'live_running'),
+    ({'allowed_strategy_families': ['trend']}, {'strategy_family': 'forbidden'}, {'strategy_family': 'trend'}, 'live_running'),
+    ({'max_canary_capital_scale_pct': 5}, {'capital_scale_pct': 20}, {'capital_scale_pct': 1}, 'canary_running'),
+])
+def test_nested_proposal_metadata_cannot_override_binding_facts(client, monkeypatch, policy, trusted, claimed, stage):
+    c, _ = client
+    assert c.post('/api/capital-pools', json=_pool_payload()).status_code == 201
+    assert c.post('/api/bindings', json=_binding_payload(metadata=trusted)).status_code == 201
+    guard = sys.modules['services.capital.main'].capital_guard
+    monkeypatch.setattr(guard, '_policy_loader', lambda ref: {'risk_policy_id': ref, **policy})
+    line = {**_rebalance_payload()['lines'][0], 'stage': stage, 'metadata': claimed}
+    proposal = c.post('/api/rebalances', json=_rebalance_payload(lines=[line]))
+    assert proposal.status_code == 201, proposal.text
+    response = c.post('/api/rebalances/rb-001/apply', json=_apply_payload())
+    allocations = c.get('/api/allocations?capital_pool_id=pool-001').json()
+    assert (response.status_code, allocations['count']) == (403, 0), (response.status_code, allocations)
 
 
+def test_nonempty_pool_cannot_activate_forbidden_new_binding_stage(client, monkeypatch):
+    c, _ = client
+    assert c.post('/api/capital-pools', json=_pool_payload()).status_code == 201
+    assert c.post('/api/bindings', json=_binding_payload(role='paper_owner', allowed_deployment_scope='paper')).status_code == 201
+    line = {**_rebalance_payload()['lines'][0], 'stage': 'paper_running', 'capital_scope': 'paper_ledger'}
+    assert c.post('/api/rebalances', json=_rebalance_payload(lines=[line])).status_code == 201
+    assert c.post('/api/rebalances/rb-001/apply', json=_apply_payload()).status_code == 200
+    assert c.post('/api/bindings', json=_binding_payload(binding_id='live-new', persona_id='persona-new', capital_sleeve_id='sleeve-new')).status_code == 201
+    guard = sys.modules['services.capital.main'].capital_guard
+    monkeypatch.setattr(guard, '_policy_loader', lambda ref: {'risk_policy_id': ref, 'allowed_stages': ['paper']})
+    response = c.post('/api/bindings/live-new/activate', json={'actor_id': 'persona-admin-1', 'actor_role': 'persona.admin', 'approval_decision_id': 'dec-live'})
+    assert response.status_code == 403, response.text

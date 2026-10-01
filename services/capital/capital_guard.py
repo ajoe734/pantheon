@@ -98,7 +98,7 @@ def project_contexts(
     for l in lines:
         for k in ("capital_scale_pct", "gross_scale_pct"):
             if _val(l, k) is not None: _finite_scale(_val(l, k), k)
-    res = {str(_val(a, "allocation_id")): dict(a) if isinstance(a, Mapping) else a.__dict__.copy() for a in allocations if _val(a, "allocation_id")}
+    res = {str(_val(a, "allocation_id")): {"allocation_id": str(_val(a, "allocation_id")), "persona_id": _val(a, "persona_id"), "capital_sleeve_id": _val(a, "capital_sleeve_id"), "binding_id": _val(a, "binding_id"), "stage": _val(a, "stage"), "target_weight": _val(a, "target_weight"), "current_weight": _val(a, "current_weight", 0)} for a in allocations if _val(a, "allocation_id")}
     for l in lines:
         aid = str(_val(l, "allocation_id") or _val(l, "capital_sleeve_id") or _val(l, "persona_id") or id(l))
         cur, tw = res.get(aid), _val(l, "target_weight")
@@ -108,39 +108,38 @@ def project_contexts(
                 raise CapitalGuardError(f"Incompatible stage claim for allocation {aid}: proposal stage {l_st!r} does not match persisted {cur_st!r}")
             target = cur
         else:
-            target = res[aid] = dict(l) if isinstance(l, Mapping) else l.__dict__.copy()
+            target = res[aid] = {"allocation_id": aid, "stage": _val(l, "stage")}
         if tw is not None: target["current_weight"] = target["target_weight"] = float(tw)
-        for f in ("persona_id", "capital_sleeve_id", "binding_id"):
-            if _val(l, f): target[f] = _val(l, f)
+        target.update({f: _val(l, f) for f in ("persona_id", "capital_sleeve_id", "binding_id") if _val(l, f)})
 
     weights: dict[str, float] = {}
     for a in res.values():
         p = str(a.get("persona_id") or "")
         weights[p] = weights.get(p, 0.0) + float(a.get("target_weight") if a.get("target_weight") is not None else (a.get("current_weight") or 0))
     gross = sum(abs(w) for w in weights.values())
-    facts = {
-        "target_weights": weights, "gross_exposure": gross, "net_exposure": sum(weights.values()),
-        "leverage": gross, "turnover": sum(abs(float(_val(l, "delta", 0) or 0)) for l in lines),
-    }
+    facts = {"target_weights": weights, "gross_exposure": gross, "net_exposure": sum(weights.values()), "leverage": gross, "turnover": sum(abs(float(_val(l, "delta", 0) or 0)) for l in lines)}
     s = STAGE_DEPLOYMENT_SCOPE.get(str(stage).strip().lower(), stage) if stage else None
-    if not res:
-        ctx = {"stage": s, **facts} if s else dict(facts)
-        _enrich_context_from_meta(ctx, {**dict(_val(pool, "metadata") or {}), **dict(_val(binding, "metadata") or {})}, s)
-        return [ctx]
-
-    b_map = {_val(b, "binding_id"): b for b in ([binding] if binding else []) + list(bindings) if _val(b, "binding_id")}
-    for b in ([binding] if binding else []) + list(bindings):
-        if _val(b, "persona_id") and _val(b, "capital_sleeve_id"):
-            b_map[(_val(b, "persona_id"), _val(b, "capital_sleeve_id"))] = b
+    all_b = ([binding] if binding else []) + list(bindings)
+    b_map = {_val(b, "binding_id"): b for b in all_b if _val(b, "binding_id")}
+    b_map.update({(_val(b, "persona_id"), _val(b, "capital_sleeve_id")): b for b in all_b if _val(b, "persona_id") and _val(b, "capital_sleeve_id")})
     p_meta = dict(_val(pool, "metadata") or {}) if pool else {}
 
     contexts: list[dict[str, Any]] = []
     for a in res.values():
-        b = b_map.get(_val(a, "binding_id")) or b_map.get((_val(a, "persona_id"), _val(a, "capital_sleeve_id"))) or binding
-        meta = {**p_meta, **(dict(_val(b, "metadata") or {}) if b else {}), **(dict(_val(a, "metadata") or {}) if _val(a, "metadata") else {})}
-        st = line_deployment_scope(a) or (line_deployment_scope(b) if b else None) or s
+        b = b_map.get(_val(a, "binding_id")) or b_map.get((_val(a, "persona_id"), _val(a, "capital_sleeve_id")))
+        meta, st = {**p_meta, **(dict(_val(b, "metadata") or {}) if b else {})}, line_deployment_scope(a) or (line_deployment_scope(b) if b else None) or (s if not binding else None)
         ctx = {**facts, "stage": st} if st else dict(facts)
         _enrich_context_from_meta(ctx, meta, st)
+        contexts.append(ctx)
+
+    if binding:
+        b_st = line_deployment_scope(binding) or s
+        b_ctx = {**facts, "stage": b_st} if b_st else dict(facts)
+        _enrich_context_from_meta(b_ctx, {**p_meta, **dict(_val(binding, "metadata") or {})}, b_st)
+        contexts.append(b_ctx)
+    elif not contexts:
+        ctx = {"stage": s, **facts} if s else dict(facts)
+        _enrich_context_from_meta(ctx, p_meta, s)
         contexts.append(ctx)
     return contexts
 

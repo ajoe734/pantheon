@@ -209,5 +209,14 @@
       "5": "Verified with test_capital_guard_review_52b77a0.py (16 passed), test_capital_caller_fact_takeover_20261001.py (6 passed), and full capital + governance test suite (295 passed, 1 skipped)"
     }
   },
-  "verification_run": "pytest services/capital + governance approval tests + route regressions: 295 passed, 1 skipped, 1 warning"
+  "review_rework_15": {
+    "head_reviewed": "af45c7d6e9826cc02f103d8b484fd13720602141",
+    "items": {
+      "1": "In services/capital/capital_guard.py project_contexts, remove caller proposal/allocation metadata as an observation source, constructing projected allocations with only required structural fields and sourcing context observations strictly from pool and binding metadata",
+      "2": "In services/capital/capital_guard.py project_contexts, include a separate context for the binding being activated in addition to every held allocation, retaining its own metadata/stage and pool aggregates",
+      "3": "Added permanent route regressions in services/capital/test_capital_guard_routes.py: test_nested_proposal_metadata_cannot_override_binding_facts (covering liquidity, drawdown, asset classes, strategy family, canary scale) and test_nonempty_pool_cannot_activate_forbidden_new_binding_stage",
+      "4": "Maintained net production lines <= 250 (net +244 vs origin/dev)"
+    }
+  },
+  "verification_run": "pytest services/capital + governance approval tests + route regressions: 301 passed, 1 skipped, 1 warning"
 }
