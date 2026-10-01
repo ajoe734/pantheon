@@ -1070,19 +1070,20 @@ def create_governance_router(
     ) -> Any:
         identity = _identity(authorization, operator=True)
         clean_action = re.sub(r"[^a-z0-9]", "", str(action_id or "").strip().lower())
-        clean_payload = re.sub(r"[^a-z0-9]", "", str(payload.get("decision") or payload.get("action") or "").strip().lower())
-        if (
-            clean_action in {"requestrevision", "requestapprovalrevision"}
-            or clean_payload in {"requestrevision", "requestapprovalrevision"}
-            or payload.get("revision_notes")
-            or payload.get("revisionNotes")
-        ):
+        candidates = [clean_action] + [re.sub(r"[^a-z0-9]", "", str(payload.get(k) or "").strip().lower()) for k in ("decision", "action", "verb", "action_id", "actionId", "outcome") if payload.get(k)]
+        if any(v in {"requestrevision", "requestapprovalrevision", "requestchanges", "requestchange"} for v in candidates) or payload.get("revision_notes") or payload.get("revisionNotes"):
             _fail(410, "VALIDATION_FAILED", "RequestApprovalRevision is retired", "Use RejectDecision with notes", precondition_failed="retired_action")
-        vote_verb = clean_action if clean_action in {"approve", "approved", "reject", "rejected"} else (clean_payload if clean_payload in {"approve", "approved", "reject", "rejected"} else None)
+        if any(payload.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
+            _fail(501, "NOT_IMPLEMENTED", "named stage approvals are unsupported", "Unsupported approval action", precondition_failed="unsupported_action")
+        app_c = [v for v in candidates if v in {"approve", "approved"}]
+        rej_c = [v for v in candidates if v in {"reject", "rejected"}]
+        if app_c and rej_c:
+            _fail(422, "VALIDATION_FAILED", "Conflicting action and decision", "URL action and body decision conflict", precondition_failed="conflicting_decision")
+        vote_verb = "approve" if app_c else ("reject" if rej_c else None)
         if vote_verb:
             clean_id = review_id.strip()
             params = dict(payload)
-            params.setdefault("decision", vote_verb)
+            params["decision"] = vote_verb
             key = _idempotency_key(idempotency_key, x_idempotency_key, required=False)
             result = await _forward(approval_owner.decide, authorization, clean_id, params, key)
             _publish_decision(clean_id, result, identity)

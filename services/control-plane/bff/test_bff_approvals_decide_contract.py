@@ -356,7 +356,7 @@ def test_review_action_routes_forward_votes_and_deny_cross_tenant(review_client,
     assert cross.status_code == 404
 
 
-@pytest.mark.parametrize("cmd", ["request_revision", "requestrevision", "request_approval_revision", "RequestApprovalRevision"])
+@pytest.mark.parametrize("cmd", ["request_revision", "requestrevision", "request_approval_revision", "RequestApprovalRevision", "request_changes", "requestchanges"])
 def test_direct_revision_commands_return_410(command_client, owner, cmd):
     calls_before = len(owner.calls)
     res = command_client.post("/bff/v1/commands", headers=headers(role="operator", key=f"c-{cmd}"),
@@ -365,10 +365,58 @@ def test_direct_revision_commands_return_410(command_client, owner, cmd):
     assert len(owner.calls) == calls_before
 
 
-@pytest.mark.parametrize("field", ["action", "decision", "action_id"])
+@pytest.mark.parametrize("field", ["action", "decision", "action_id", "verb"])
 def test_wrapped_review_action_revision_returns_410(command_client, owner, field):
     calls_before = len(owner.calls)
     res = command_client.post("/bff/v1/commands", headers=headers(role="operator", key=f"w-{field}"),
                               json={"command": "ReviewAction", "target": {"type": "Review", "id": "a1"}, "params": {"decision_id": "a1", field: "requestrevision", "notes": "rework"}, "audit_context": {"reason": "review"}})
     assert res.status_code == 410
+    assert len(owner.calls) == calls_before
+
+
+@pytest.mark.parametrize("carrier", ["action_id", "verb"])
+def test_retired_revision_cannot_be_masked(command_client, owner, carrier):
+    calls_before = len(owner.calls)
+    v_before = owner.rows["a1"]["version"]
+    res = command_client.post(
+        "/bff/v1/commands",
+        headers={"Authorization": "Bearer " + jwt("rev-1", "tenant-a", "operator", "governance_reviewer"), "Idempotency-Key": f"mask-{carrier}"},
+        json={"command": "ReviewAction", "action": "approve", "target": {"type": "ApprovalDecision", "id": "a1"},
+              "params": {"decision_id": "a1", carrier: "requestrevision", "expected_version": 1, "approval_notes": "reviewed"},
+              "audit_context": {"reason": "independent review"}},
+    )
+    assert res.status_code == 410
+    assert len(owner.calls) == calls_before
+    assert owner.rows["a1"]["version"] == v_before
+
+
+@pytest.mark.parametrize("route_verb,body_verb", [("approve", "reject"), ("reject", "approve")])
+def test_route_verb_conflict_cannot_cast_opposite_vote(review_client, owner, route_verb, body_verb):
+    client, store = review_client
+    calls_before = len(owner.calls)
+    res = client.post(f"/bff/reviews/a1/actions/{route_verb}", headers=headers(key=f"conflict-{route_verb}"),
+                      json={"decision": body_verb, "expected_version": 1, "notes": "conflict test"})
+    assert res.status_code == 422
+    assert len(owner.calls) == calls_before
+
+
+@pytest.mark.parametrize("field", ["stageName", "stage_name"])
+def test_stage_vote_rejected_without_whole_approval_effect(client, owner, field):
+    calls_before = len(owner.calls)
+    v_before = owner.rows["a1"]["version"]
+    res = client.post("/bff/approvals/a1/decide", headers=headers(),
+                      json=vote(decision="approve", **{field: "Risk review"}))
+    assert res.status_code in {400, 410, 422, 501}
+    assert len(owner.calls) == calls_before
+    assert owner.rows["a1"]["version"] == v_before
+
+
+@pytest.mark.parametrize("verb", ["request_revision", "request_changes"])
+def test_revision_batch_items_are_gone_without_owner_call(client, owner, verb):
+    calls_before = len(owner.calls)
+    res = client.post("/bff/approvals/batch-decide", headers=headers(key=f"retired-b-{verb}"),
+                      json={"decisions": [{"id": "a1", **vote(decision=verb)}]})
+    assert res.status_code == 207
+    item = res.json()["results"][0]
+    assert item["status"] == "failed" and item["http_status"] == 410
     assert len(owner.calls) == calls_before

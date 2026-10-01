@@ -1441,12 +1441,17 @@ def execute_command(
     Returns the result payload on success.
     Raises Exception on any failure (caller should catch and record as FAILED).
     """
-    norm_cmd = re.sub(r"[^a-z0-9]", "", getattr(command_type, "value", str(command_type)).lower())
-    action_val = str(params.get("action") or params.get("decision") or params.get("action_id") or "").lower()
-    norm_action = re.sub(r"[^a-z0-9]", "", action_val)
+    raw_vals = [
+        getattr(command_type, "value", str(command_type)),
+        params.get("action"),
+        params.get("decision"),
+        params.get("action_id"),
+        params.get("actionId"),
+        params.get("verb"),
+        params.get("outcome"),
+    ]
     if (
-        norm_cmd in {"requestapprovalrevision", "requestrevision"}
-        or norm_action in {"requestapprovalrevision", "requestrevision"}
+        any(re.sub(r"[^a-z0-9]", "", str(v or "").lower()) in {"requestrevision", "requestapprovalrevision", "requestchanges", "requestchange"} for v in raw_vals if v)
         or bool(params.get("revision_notes") or params.get("revisionNotes"))
     ):
         raise HTTPException(
@@ -1459,6 +1464,13 @@ def execute_command(
                 }
             },
         )
+    if any(params.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
+        norm_cmd = re.sub(r"[^a-z0-9]", "", getattr(command_type, "value", str(command_type)).lower())
+        if norm_cmd in {"approvedecision", "rejectdecision", "reviewaction"}:
+            raise HTTPException(
+                status_code=501,
+                detail={"error": {"code": "NOT_IMPLEMENTED", "message": "named stage approvals are unsupported", "reason": "Unsupported approval action"}},
+            )
     executor = _EXECUTORS.get(command_type)
     if executor is not None:
         return executor(command_id, params, auth_token=auth_token, mfa_token=mfa_token)

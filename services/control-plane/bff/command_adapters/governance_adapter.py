@@ -75,7 +75,8 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         action_id = str(params.get("action_id") or command_type or "").strip()
         entity_id = str(params.get("decision_id") or params.get("gate_id") or params.get("committee_id") or params.get("review_id") or params.get("entity_id") or "").strip()
 
-        if re.sub(r"[^a-z0-9]", "", str(command_type or "").lower()) in {"requestapprovalrevision", "requestrevision"}:
+        raw_candidates = [str(command_type or ""), str(action_id or ""), str(params.get("action") or ""), str(params.get("decision") or ""), str(params.get("verb") or ""), str(params.get("action_id") or ""), str(params.get("actionId") or ""), str(params.get("outcome") or "")]
+        if any(re.sub(r"[^a-z0-9]", "", v.lower()) in {"requestrevision", "requestapprovalrevision", "requestchanges", "requestchange"} for v in raw_candidates if v) or params.get("revision_notes") or params.get("revisionNotes"):
             raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
         elif command_type == "ApproveDecision":
             return self._execute_decision_action(command_id, entity_id, "approve", params, auth_token=auth_token, mfa_token=mfa_token)
@@ -206,12 +207,17 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        verb = str(params.get("decision") or params.get("action") or action_id or "").strip().lower()
-        norm_verb = re.sub(r"[^a-z0-9]", "", verb)
-        if norm_verb in {"requestrevision", "requestapprovalrevision"} or params.get("revision_notes") or params.get("revisionNotes"):
+        raw_candidates = [str(action_id or ""), str(params.get("decision") or ""), str(params.get("action") or ""), str(params.get("verb") or ""), str(params.get("action_id") or ""), str(params.get("actionId") or ""), str(params.get("outcome") or "")]
+        if any(re.sub(r"[^a-z0-9]", "", v.lower()) in {"requestrevision", "requestapprovalrevision", "requestchanges", "requestchange"} for v in raw_candidates if v) or params.get("revision_notes") or params.get("revisionNotes"):
             raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
-        if norm_verb not in {"approve", "reject"}:
+        verbs = {re.sub(r"[^a-z0-9]", "", v.lower()) for v in raw_candidates if v and v.strip()}
+        has_app = any(v in {"approve", "approved"} for v in verbs)
+        has_rej = any(v in {"reject", "rejected"} for v in verbs)
+        if has_app and has_rej:
+            raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Conflicting action and decision", "ReviewAction carriers contain conflicting verbs")
+        norm_verb = "approve" if has_app else ("reject" if has_rej else "")
+        if not norm_verb:
             from ..governance.approval_owner import UnsupportedApprovalAction
 
-            raise UnsupportedApprovalAction(f"review action {verb!r} has no Governance owner transition")
+            raise UnsupportedApprovalAction(f"review action {action_id!r} has no Governance owner transition")
         return self._execute_decision_action(command_id, review_id, norm_verb, params, auth_token=auth_token, mfa_token=mfa_token)

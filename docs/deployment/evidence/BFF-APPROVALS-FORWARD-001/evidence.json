@@ -7,22 +7,21 @@
     "/api/internal/v1/approval-decisions calls",
     "approval action_kind admission in CommandAdapterService",
     "BFF-side approver/duplicate role gates and circular approval gate in preconditions.py",
-    "RequestApprovalRevision and its aliases (request_revision, requestrevision, ReviewAction revision verb), including adapter execution, preconditions, executor dispatch, and action catalog entry"
+    "RequestApprovalRevision and its aliases (request_revision, requestrevision, request_changes, requestchanges, ReviewAction revision verbs), including adapter execution, preconditions, executor dispatch, and action catalog entry"
   ],
   "unsupported": [
-    "request_changes",
     "escalate",
     "freeze",
     "stage",
     "legacy incomplete create"
   ],
-  "revision_retirement": "RequestApprovalRevision and its aliases (request_revision, requestrevision, ReviewAction revision verb) permanently retired with HTTP 410 naming RejectDecision with notes; zero Governance owner calls, votes, writes, executable admissions, or success receipts",
+  "revision_retirement": "RequestApprovalRevision and its aliases (request_revision, requestrevision, request_changes, requestchanges, ReviewAction revision verbs, revision_notes) permanently retired with HTTP 410 naming RejectDecision with notes; zero Governance owner calls, votes, writes, executable admissions, or success receipts; named stage rejected with 501; route conflicts rejected with 422",
   "owner_changes": [
     "operator may propose/read within own tenant and owner_user_id",
     "decide on PROPOSED runs accept_review inside the same execute_command callback"
   ],
   "validation": {
-    "services/control-plane/bff/test_bff_approvals_decide_contract.py": "31 passed against stub Governance HTTP owner (asserting RequestApprovalRevision retired with 410 naming RejectDecision with notes, zero owner calls, zero store insertion; mounted review routes forward retained votes to owner with cross-tenant denial and return 410 before admission on retired revision verbs)",
+    "services/control-plane/bff/test_bff_approvals_decide_contract.py": "42 passed against stub Governance HTTP owner (asserting RequestApprovalRevision and request_changes retired with 410, masked carriers rejected with 410, route verb conflicts rejected with 422, named stage rejected with 501, zero owner calls, zero store insertion; mounted review routes forward retained votes to owner with cross-tenant denial)",
     "services/control-plane/bff/test_command_executor.py": "29 passed (asserting RequestApprovalRevision retired with 410, zero owner calls in execute_command and execute_command_with_status)",
     "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py": "3 passed (approval SSE publishing following owner result, retired revision publishes nothing with 410)",
     "services/control-plane/bff/tests/test_command_adapters_router.py": "624 passed (full suite including test_request_approval_revision_is_retired_with_410 and test_zero_reverse_main_imports)",

@@ -99,13 +99,17 @@ def propose(authorization: Optional[str], payload: Mapping[str, Any], idempotenc
 
 
 def decide(authorization: Optional[str], decision_id: str, params: Mapping[str, Any], idempotency_key: str) -> Dict[str, Any]:
-    raw_candidates = [str(params.get(k) or "").strip().lower() for k in ("outcome", "decision", "action")]
-    if any(re.sub(r"[^a-z0-9]", "", v) in {"requestrevision", "requestapprovalrevision"} for v in raw_candidates) or params.get("revision_notes") or params.get("revisionNotes"):
+    if any(params.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
+        raise UnsupportedApprovalAction("named stage approvals are unsupported; votes must target whole approval")
+    retired_vals = [str(params.get(k) or "").strip().lower() for k in ("outcome", "decision", "action", "verb", "action_id", "actionId")]
+    if any(re.sub(r"[^a-z0-9]", "", v) in {"requestrevision", "requestapprovalrevision", "requestchanges", "requestchange"} for v in retired_vals if v) or params.get("revision_notes") or params.get("revisionNotes"):
         raise RetiredApprovalAction("RequestApprovalRevision is retired; use RejectDecision with notes")
-    verbs = {_OUTCOMES.get(v, v) for v in raw_candidates if v}
-    if len(verbs) > 1:
+    decision_vals = [str(params.get(k) or "").strip().lower() for k in ("outcome", "decision", "action", "verb")]
+    known_verbs = {_OUTCOMES[v] for v in decision_vals if v in _OUTCOMES}
+    unknown_verbs = {v for v in decision_vals if v and v not in _OUTCOMES}
+    if len(known_verbs) > 1:
         raise InvalidApprovalRequest("outcome")
-    verb = next(iter(verbs), "rejected" if params.get("rejection_reason") else "approved")
+    verb = next(iter(known_verbs), None) or next(iter(unknown_verbs), None) or ("rejected" if params.get("rejection_reason") else "approved")
     if verb not in _OUTCOMES.values():
         raise UnsupportedApprovalAction(f"approval action {verb!r} has no Governance owner transition")
     version = params.get("expected_version", params.get("expectedVersion"))

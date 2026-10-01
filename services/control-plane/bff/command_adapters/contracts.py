@@ -438,17 +438,28 @@ def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         return payload
     params = payload.get("params", {})
     action_params = params if isinstance(params, dict) else {}
-    norm_cmd = re.sub(r"[^a-z0-9]", "", command.lower())
-    if norm_cmd in {"requestapprovalrevision", "requestrevision"}:
+    raw_candidates = [
+        command, action, payload.get("decision"), payload.get("verb"), payload.get("action_id"), payload.get("actionId"), payload.get("outcome"),
+        action_params.get("action"), action_params.get("decision"), action_params.get("action_id"), action_params.get("actionId"), action_params.get("verb"), action_params.get("outcome"),
+    ]
+    if (
+        any(re.sub(r"[^a-z0-9]", "", str(v or "").lower()) in {"requestrevision", "requestapprovalrevision", "requestchanges", "requestchange"} for v in raw_candidates if isinstance(v, str))
+        or bool(action_params.get("revision_notes") or action_params.get("revisionNotes") or payload.get("revision_notes") or payload.get("revisionNotes"))
+    ):
         raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
-    if bool(action_params.get("revision_notes") or action_params.get("revisionNotes") or payload.get("revision_notes") or payload.get("revisionNotes")):
-        raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
-    raw_review_verb = None
+    if any(action_params.get(k) not in (None, "") or payload.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
+        norm_c = re.sub(r"[^a-z0-9]", "", command.lower())
+        if norm_c in {"reviewaction", "approvedecision", "rejectdecision", "requestreview"} or any(
+            re.sub(r"[^a-z0-9]", "", str(v or "").lower()) in {"approve", "reject", "stage"} for v in raw_candidates[1:] if isinstance(v, str)
+        ):
+            raise _bff_error(501, ErrorCode.NOT_IMPLEMENTED, "named stage approvals are unsupported", "Unsupported approval action")
+    raw_verbs = [re.sub(r"[^a-z0-9]", "", str(v).lower()) for v in raw_candidates[1:] if isinstance(v, str) and v.strip()]
     if command == "ReviewAction":
-        raw_review_verb = next((v for v in (action, payload.get("decision"), payload.get("verb"), action_params.get("action"), action_params.get("decision"), action_params.get("action_id"), action_params.get("actionId"), action_params.get("verb"), action_params.get("outcome")) if isinstance(v, str) and v.strip()), None)
-        if re.sub(r"[^a-z0-9]", "", str(raw_review_verb or "").lower()) in {"requestrevision", "requestapprovalrevision"}:
-            raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
-    verb = action or action_params.get("action_id") or action_params.get("actionId") or raw_review_verb
+        has_app = any(v in {"approve", "approved"} for v in raw_verbs)
+        has_rej = any(v in {"reject", "rejected"} for v in raw_verbs)
+        if has_app and has_rej:
+            raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Conflicting action and decision", "ReviewAction carriers contain conflicting verbs")
+    verb = action or action_params.get("action_id") or action_params.get("actionId") or next((v for v in raw_verbs if v), None)
     verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())
     if command == "Observe" or (command == "PersonaAction" and verb == "observe"):
         raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "Observe is retired", "Use Persona read routes")
