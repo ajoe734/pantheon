@@ -130,3 +130,67 @@ def test_partial_rebalance_checks_unchanged_live_stage(client, monkeypatch):
         json=_apply_payload(rebalance_id="rb-paper", command_id="cmd-paper"),
     )
     assert response.status_code == 403, response.text
+
+
+def test_equal_weight_canary_to_live_requires_guard(client, monkeypatch):
+    c, _ = client
+    line = {**_rebalance_payload()["lines"][0], "stage": "canary_running"}
+    _seed(c, lines=[line])
+    assert c.post("/api/rebalances/rb-001/apply", json=_apply_payload()).status_code == 200
+    guard = sys.modules["services.capital.main"].capital_guard
+    monkeypatch.setattr(guard, "_safe_mode_reader", lambda _: "risk_off")
+    upgrade = {**line, "stage": "live_running", "current_weight": 0.12, "target_weight": 0.12, "delta": 0.0}
+    assert c.post("/api/rebalances", json=_rebalance_payload(rebalance_id="rb-upgrade", lines=[upgrade])).status_code == 201
+    response = c.post("/api/rebalances/rb-upgrade/apply", json=_apply_payload(rebalance_id="rb-upgrade", command_id="cmd-upgrade", approval_ref=None))
+    assert response.status_code == 403, response.text
+
+
+def test_canary_scale_without_observation_fails_closed(client, monkeypatch):
+    c, _ = client
+    _policy(monkeypatch, max_canary_capital_scale_pct=0.0, max_canary_gross_scale_pct=0.0)
+    line = {**_rebalance_payload()["lines"][0], "stage": "canary_running"}
+    _seed(c, lines=[line])
+    response = c.post("/api/rebalances/rb-001/apply", json=_apply_payload())
+    assert response.status_code == 403, response.text
+
+
+def test_canary_scale_with_observation_enforces_limits(client, monkeypatch):
+    c, _ = client
+    _policy(monkeypatch, max_canary_capital_scale_pct=5.0, max_canary_gross_scale_pct=25.0)
+    line_ok = {**_rebalance_payload()["lines"][0], "stage": "canary_running", "capital_scale_pct": 2.0, "gross_scale_pct": 10.0}
+    _seed(c, lines=[line_ok])
+    assert c.post("/api/rebalances/rb-001/apply", json=_apply_payload()).status_code == 200
+
+    line_exceed = {**line_ok, "current_weight": 0.12, "target_weight": 0.15, "delta": 0.03, "capital_scale_pct": 10.0}
+    assert c.post("/api/rebalances", json=_rebalance_payload(rebalance_id="rb-exceed", lines=[line_exceed])).status_code == 201
+    resp = c.post("/api/rebalances/rb-exceed/apply", json=_apply_payload(rebalance_id="rb-exceed", command_id="cmd-exceed"))
+    assert resp.status_code == 403, resp.text
+
+
+def test_binding_activation_keeps_existing_live_stage(client, monkeypatch):
+    c, _ = client
+    _seed(c)
+    assert c.post("/api/rebalances/rb-001/apply", json=_apply_payload()).status_code == 200
+    assert c.post(
+        "/api/bindings",
+        json=_binding_payload(
+            binding_id="paper-binding", persona_id="paper-persona",
+            capital_sleeve_id="paper-sleeve", role="paper_owner", allowed_deployment_scope="paper",
+        ),
+    ).status_code == 201
+    _policy(monkeypatch, allowed_stages=["paper"])
+    response = c.post("/api/bindings/paper-binding/activate", json={"actor_id": "persona-admin-1", "actor_role": "persona.admin", "approval_decision_id": "dec-paper"})
+    assert response.status_code == 403, response.text
+
+
+def test_rebalance_cannot_hide_persisted_live_stage(client, monkeypatch):
+    c, _ = client
+    line = _rebalance_payload()["lines"][0]
+    _seed(c)
+    assert c.post("/api/rebalances/rb-001/apply", json=_apply_payload()).status_code == 200
+    _policy(monkeypatch, allowed_stages=["paper"])
+    claimed_paper = {**line, "stage": "paper_running", "current_weight": 0.12, "target_weight": 0.2, "delta": 0.08}
+    assert c.post("/api/rebalances", json=_rebalance_payload(rebalance_id="rb-masked", lines=[claimed_paper])).status_code == 201
+    response = c.post("/api/rebalances/rb-masked/apply", json=_apply_payload(rebalance_id="rb-masked", command_id="cmd-masked"))
+    assert response.status_code == 403, response.text
+

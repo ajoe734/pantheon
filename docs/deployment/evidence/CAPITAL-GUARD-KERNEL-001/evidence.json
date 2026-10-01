@@ -7,7 +7,7 @@
   "target_repo": "ajoe734/pantheon",
   "task_class": "corrective",
   "delivery_state": "ready_for_independent_review",
-  "base_sha": "51adc8c34086f92f895dc993ff249549ef9798f5",
+  "base_sha": "d61575a5968874676744d8ae022b4affa2e6c33b",
   "scope": {
     "owned": [
       "services/capital/capital_guard.py",
@@ -95,7 +95,7 @@
       "6": "CAPITAL_RISK_POLICY_DIR now defaults to services/capital/risk_policies; Compose reader/runtime-manager wiring deliberately left to BFF-APPROVALS-FORWARD-001 per task note (hosted acceptance is paired delivery); conftest seam now validates a real ApprovalEvidence"
     }
   },
-  "verification_run": "pytest services/capital + governance approval tests: 229 passed, 0 skipped",
+  "verification_run": "pytest services/capital + governance approval tests: 233 passed, 1 skipped",
   "review_rework_2": {
     "head_reviewed": "2c23d05ad",
     "items": {
@@ -135,6 +135,15 @@
       "1": "Consolidated projection and classification helpers directly into services/capital/capital_guard.py, removing circular service dependency and redundant helper methods",
       "2": "Reduced net production footprint to +228 lines (below the 250 corrective budget ceiling) while maintaining clean readable architecture and passing all 229 tests"
     }
+  },
+  "review_rework_7": {
+    "head_reviewed": "83c7a95c6",
+    "items": {
+      "1": "In services/capital/capital_guard.py project_contexts, compute policy contexts from authoritative persisted state, preserving existing allocation stages on rebalance, rejecting incompatible proposal stage claims with CapitalGuardError, and unioning held stages with binding deployment scope so existing live stages are retained on binding activation",
+      "2": "In services/capital/capital_guard.py, added max_canary_capital_scale_pct and max_canary_gross_scale_pct to required observations for canary stage contexts, failing closed when unobserved and evaluating supplied line scale observations",
+      "3": "Added regression tests in services/capital/test_capital_guard_routes.py covering equal-weight canary-to-live promotion guard, unobserved canary scale fail-closed, observed canary scale limit enforcement, binding activation live stage retention, and rebalance stage masking rejection"
+    }
   }
 }
+
 
