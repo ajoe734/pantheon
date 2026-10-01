@@ -134,14 +134,20 @@ def collect_evidence(
         data = resp["data"]
         snapshot_id = str(data["ranking_snapshot_id"])
         raw_items = [i for i in data["items"] if isinstance(i, dict) and i.get("persona_id")]
+        surfaces = (resp.get("meta") or {}).get("surfaces") or {}
     except Exception as exc:
         raise Degraded(f"ranking read API unavailable: {exc}") from exc
     if not raw_items or not snapshot_id:
         raise Degraded("ranking evidence is empty")
+    down = sorted(k for k, v in surfaces.items() if isinstance(v, dict) and v.get("status") == "unavailable")
+    if down:
+        raise Degraded(f"evidence surfaces unavailable: {down}")
     items = []
     for raw in raw_items[:MAX_PERSONAS]:
         refs = [str(r.get("refId") or r.get("ref_id") or r.get("id")) for r in raw.get("evidence_refs") or []
                 if isinstance(r, dict) and (r.get("refId") or r.get("ref_id") or r.get("id"))]
+        if raw.get("source_confidence") == "unavailable" or raw.get("telemetry_resolution") == "missing" or not refs:
+            raise Degraded(f"evidence unavailable for persona {raw['persona_id']}")
         items.append({
             "persona_id": str(raw["persona_id"]), "name": raw.get("name"), "state": raw.get("state"),
             "stage": raw.get("stage"), "score": raw.get("score"), "tier": raw.get("tier"),
@@ -199,25 +205,28 @@ def lifecycle_target(rec: dict[str, Any]) -> str | None:
     return to_state if to_state in LIFECYCLE_TRANSITIONS.get(rec["from_state"], set()) else None
 
 
-def propose_lifecycle(
-    rec: dict[str, Any], to_state: str, *, quarter: str, snapshot_id: str, governance_url: str,
-    tenant: str, actor: str, token: str, fetch: Callable[..., Any] = _http,
-) -> Any:
-    """The only write: a governance proposal. Deterministic id/idempotency key make replays no-ops."""
-    key = hashlib.sha256(f"{rec['persona_id']}|{rec['from_state']}|{to_state}|{snapshot_id}".encode()).hexdigest()
+def lifecycle_request(
+    rec: dict[str, Any], to_state: str, *, snapshot_id: str, tenant: str, actor: str
+) -> dict[str, Any]:
+    """Deterministic per persona+target identity, so any replay (any snapshot, restart) is a no-op."""
+    key = hashlib.sha256(f"{rec['persona_id']}|{rec['from_state']}|{to_state}".encode()).hexdigest()
     digest = hashlib.sha256(json.dumps(rec, sort_keys=True).encode()).hexdigest()
+    return {"key": key, "body": {
+        "decision_id": f"pev-{key[:40]}", "expected_version": 0,
+        "target_type": "persona_lifecycle_transition", "target_id": rec["persona_id"],
+        "target_version": snapshot_id, "risk_level": "high", "persona_id": rec["persona_id"],
+        "tenant_id": tenant, "owner_user_id": actor,
+        "subject": {"persona_id": rec["persona_id"], "from_state": rec["from_state"], "to_state": to_state},
+        "proposal_id": rec["recommendation_id"], "proposal_revision": 1, "proposal_content_digest": digest,
+        "validation_result_digest": hashlib.sha256(snapshot_id.encode()).hexdigest(),
+    }}
+
+
+def propose_lifecycle(request: dict[str, Any], *, governance_url: str, token: str, fetch: Callable[..., Any] = _http) -> Any:
+    """The only write: a governance proposal, always sent from a persisted request identity."""
     return fetch(
-        f"{governance_url}/api/governance/approvals",
-        data={
-            "decision_id": f"pev-{key[:40]}", "expected_version": 0,
-            "target_type": "persona_lifecycle_transition", "target_id": rec["persona_id"],
-            "target_version": snapshot_id, "risk_level": "high", "persona_id": rec["persona_id"],
-            "tenant_id": tenant, "owner_user_id": actor,
-            "subject": {"persona_id": rec["persona_id"], "from_state": rec["from_state"], "to_state": to_state},
-            "proposal_id": rec["recommendation_id"], "proposal_revision": 1, "proposal_content_digest": digest,
-            "validation_result_digest": hashlib.sha256(snapshot_id.encode()).hexdigest(),
-        },
-        headers={"Authorization": f"Bearer {token}", "Idempotency-Key": key},
+        f"{governance_url}/api/governance/approvals", data=request["body"],
+        headers={"Authorization": f"Bearer {token}", "Idempotency-Key": request["key"]},
     )
 
 
@@ -247,10 +256,10 @@ def run_once(
         return record
 
     run_id = f"persona-eval-{moment:%Y%m%dT%H%M%SZ}"
-    created = deduped = skipped = 0
+    created = deduped = skipped = attempts = 0
 
     def apply(state: dict[str, Any]) -> None:
-        nonlocal created, deduped, skipped
+        nonlocal created, deduped, skipped, attempts
         entry = {"ranking_snapshot_id": snapshot_id, "run_id": run_id, "evaluated_at": moment.isoformat(),
                  "provider": "openclaw", "items": recs}
         if reused:
@@ -261,36 +270,40 @@ def run_once(
         for _, key in stale[:-MAX_SNAPSHOTS_KEPT]:  # admitted snapshots stay readable for replayed submits
             del state["results"][key]
         state["created"] = [t for t in state["created"] if now() - t < 3600]
-        state["requests"] = {k: v for k, v in state["requests"].items() if now() - v["at"] < DEDUPE_TTL_SECONDS}
+        state["requests"] = {k: v for k, v in state["requests"].items() if v.get("pending") or now() - v["at"] < DEDUPE_TTL_SECONDS}
         for rec in recs:
             to_state = lifecycle_target(rec)
             if to_state is None:
                 continue  # advisory entry: persisted, never executable
             dedupe_key = f"{rec['persona_id']}|{to_state}"
-            if dedupe_key in state["requests"]:
+            entry = state["requests"].get(dedupe_key)
+            if entry and not entry.get("pending"):
                 deduped += 1
+                rec["governance_request"] = {"decision_id": entry["decision_id"], "to_state": to_state}
                 continue
-            if created >= MAX_PER_RUN or len(state["created"]) >= MAX_PER_HOUR:
+            if attempts >= MAX_PER_RUN or len(state["created"]) >= MAX_PER_HOUR:
                 skipped += 1
                 continue
-            state["created"].append(now())  # reserved before the possibly-creating POST
+            if entry is None:  # identity persisted before the possibly-creating POST; unknown outcomes replay it
+                request = lifecycle_request(rec, to_state, snapshot_id=snapshot_id, tenant=tenant, actor=actor)
+                entry = {"decision_id": request["body"]["decision_id"], "at": now(), "pending": request}
+                state["requests"][dedupe_key] = entry
+            attempts += 1
+            state["created"].append(now())
             store.save(state)
             try:
-                resp = propose_lifecycle(
-                    rec, to_state, quarter=quarter, snapshot_id=snapshot_id, governance_url=governance_url,
-                    tenant=tenant, actor=actor, token=governance_token, fetch=fetch,
-                )
+                resp = propose_lifecycle(entry["pending"], governance_url=governance_url, token=governance_token, fetch=fetch)
             except Exception:
-                skipped += 1  # outcome unknown: the slot stays reserved and the next run replays the same key
+                skipped += 1  # outcome unknown: slot and pending identity stay reserved
                 continue
-            decision_id = resp.get("decision_id") if isinstance(resp, dict) else None
             if resp.get("_http_status") == 201:
                 created += 1
             else:
                 deduped += 1
                 state["created"].pop()
-            rec["governance_request"] = {"decision_id": decision_id, "to_state": to_state}
-            state["requests"][dedupe_key] = {"decision_id": decision_id, "at": now()}
+            entry.pop("pending")
+            entry["at"] = now()
+            rec["governance_request"] = {"decision_id": entry["decision_id"], "to_state": to_state}
 
     store.update(apply)
     record = {"status": "ok", "quarter": quarter, "ranking_snapshot_id": snapshot_id, "run_id": run_id,

@@ -19,7 +19,8 @@ def _item(pid, state="paper_owner", score=20.0):
             "evidence_refs": [{"refId": f"ev-{pid}"}]}
 
 
-def _fetch(items, recs, *, snapshot="snap-1", ranking_down=False, agent_down=False, status=201, log=None):
+def _fetch(items, recs, *, snapshot="snap-1", ranking_down=False, agent_down=False, status=201, log=None,
+           surfaces=None, gov_down=False):
     log = log if log is not None else []
 
     def fetch(url, data=None, headers=None, timeout=20):
@@ -27,12 +28,14 @@ def _fetch(items, recs, *, snapshot="snap-1", ranking_down=False, agent_down=Fal
         if "quarterly-ranking" in url:
             if ranking_down:
                 raise OSError("down")
-            return {"data": {"ranking_snapshot_id": snapshot, "items": items}}
+            return {"data": {"ranking_snapshot_id": snapshot, "items": items}, "meta": {"surfaces": surfaces or {}}}
         if "/structured" in url:
             if agent_down:
                 raise OSError("agent down")
             return {"data": {"output": {"structured_data": {"recommendations": recs}}}}
         if "/api/governance/approvals" in url:
+            if gov_down:
+                raise TimeoutError("timeout")
             return {"decision_id": data["decision_id"], "_http_status": status}
         raise AssertionError(url)
 
@@ -120,6 +123,39 @@ def test_degraded_runs_create_nothing_and_are_recorded(tmp_path):
         assert out["status"] == "degraded" and out["created"] == 0 and _proposals(log) == []
     state = pea.Store(tmp_path / "state.json").load()
     assert state["last_run"]["status"] == "degraded" and state["results"] == {}
+
+
+def test_unavailable_evidence_records_degraded_and_creates_nothing(tmp_path):
+    missing = {**_item("p1"), "telemetry_resolution": "missing", "source_confidence": "unavailable"}
+    norefs = {**_item("p1"), "evidence_refs": []}
+    cases = [
+        ([missing], {}),
+        ([norefs], {}),
+        ([_item("p1")], {"persona_health": {"status": "unavailable"}}),
+    ]
+    for items, surfaces in cases:
+        fetch, log = _fetch(items, [_rec("p1")], surfaces=surfaces)
+        out = _run(tmp_path, fetch)
+        assert out["status"] == "degraded" and out["created"] == 0 and _proposals(log) == []
+        assert not [u for u, _ in log if "/structured" in u]
+
+
+def test_unknown_outcomes_count_against_per_run_limit(tmp_path):
+    items = [_item(f"p{i}") for i in range(8)]
+    fetch, log = _fetch(items, [_rec(f"p{i}") for i in range(8)], gov_down=True)
+    out = _run(tmp_path, fetch)
+    assert len(_proposals(log)) == pea.MAX_PER_RUN and out["created"] == 0 and out["skipped"] == 8
+
+
+def test_pending_identity_is_replayed_across_snapshot_change(tmp_path):
+    down, log1 = _fetch([_item("p1")], [_rec("p1")], gov_down=True)
+    _run(tmp_path, down)
+    first = _proposals(log1)[0]
+    fetch2, log2 = _fetch([_item("p1")], [_rec("p1")], snapshot="snap-2")
+    out = _run(tmp_path, fetch2, now=NOW + 60)
+    replay = _proposals(log2)
+    assert len(replay) == 1 and replay[0] == first and out["created"] == 1
+    assert _run(tmp_path, fetch2, now=NOW + 120)["deduped"] == 1 and len(_proposals(log2)) == 1
 
 
 def test_agent_has_no_tool_and_no_decision_or_write_path_beyond_propose():
