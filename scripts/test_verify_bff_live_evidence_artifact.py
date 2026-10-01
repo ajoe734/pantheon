@@ -233,12 +233,12 @@ def strict_rbac_matrix_entries() -> list[dict[str, object]]:
     read_paths = {
         "bff-strategies": "/bff/strategies",
         "bff-ranking-formulas": "/bff/ranking-formulas",
-        "bff-agora-signals": "/bff/agora/signals",
+        "bff-agora-journal": "/bff/agora/journal",
     }
     write_paths = {
         "strategy": "/bff/strategies",
         "ranking-formula": "/bff/ranking-formulas",
-        "agora-note": "/bff/agora/notes",
+        "agora-journal": "/bff/agora/journal",
     }
     read_allowed = {"viewer", "operator", "reviewer", "approver", "admin"}
     write_allowed = {"operator", "reviewer", "approver", "admin"}
@@ -296,7 +296,7 @@ def strict_rbac_matrix_entries() -> list[dict[str, object]]:
                 }
             else:
                 readback = None
-                if resource == "agora-note":
+                if resource == "agora-journal":
                     readback = {
                         "kind": "list_readback_not_persisted",
                         "ok": True,

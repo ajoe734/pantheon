@@ -48,6 +48,7 @@ class TargetType(str, Enum):
     EVOLUTION_PROPOSAL = "evolution_proposal"
     REBALANCE_APPLY = "rebalance_apply"
     CAPITAL_BINDING_ACTIVATION = "capital_binding_activation"
+    CAPITAL_POOL_ACTIVATION = "capital_pool_activation"
     PERSONA_LIFECYCLE_TRANSITION = "persona_lifecycle_transition"
     EVOLUTION_EXECUTE = "evolution_execute"
 

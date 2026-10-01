@@ -34,7 +34,6 @@ from .models import (
     AgoraMeta,
 )
 from .identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
-from .identity.router import create_identity_router
 from .servant.router import create_servant_router
 from .strategy_workshop.router import create_strategy_workshop_router
 from .strategy_workshop.operations import WorkshopCanonicalOperations
@@ -42,9 +41,6 @@ from .strategy_workshop.store import make_workshop_store
 from .research.router import create_research_router
 from .trading_room.router import create_trading_room_router
 from .trading_room.store import make_trading_room_store
-from .dashboard.router import create_dashboard_router
-from .shadow.router import create_shadow_router
-from .personalization.router import create_personalization_router
 from .management_projection.router import create_management_projection_router
 from .dataset_extraction.router import create_dataset_extraction_router, _default_store
 from .interaction.router import create_interaction_router
@@ -216,14 +212,6 @@ def create_agora_router(
         read_store = get_read_store()
         if read_store is None:
             raise RuntimeError("read store is not configured")
-        result["signals"] = _read_list(
-            "signals",
-            lambda: read_store.list_agora_signals(),
-        )
-        result["inbox"] = _read_list(
-            "inbox",
-            lambda: read_store.list_evidence_refs(),
-        )
         result["journal"] = _read_list(
             "journal",
             lambda: read_store.list_decision_journal_entries(
@@ -362,7 +350,6 @@ def create_agora_router(
         bff_error=bff_error,
         utc_now=utc_now,
     )
-    router.include_router(create_identity_router(service=agora_service, require_write_role=require_write_role, **_kw))
     router.include_router(create_servant_router(
         **_kw,
         require_write_role=require_write_role,
@@ -397,9 +384,6 @@ def create_agora_router(
         get_trade_journey_store=get_trade_journey_store,
         workshop_store=workshop_store,
     ))
-    router.include_router(create_dashboard_router(**_kw))
-    router.include_router(create_shadow_router(**_kw))
-    router.include_router(create_personalization_router(service=agora_service, require_write_role=require_write_role, **_kw))
     router.include_router(create_management_projection_router(**_kw))
     router.include_router(
         create_dataset_extraction_router(
@@ -487,201 +471,6 @@ def create_agora_router(
             user_id=scope.user_id if scope else None,
         )
 
-    @router.get("/bff/agora/daily")
-    def agora_daily_brief(
-        authorization: Optional[str] = Header(default=None),
-        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
-        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
-        x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        scope = None
-        try:
-            scope = resolve_agora_user_scope(
-                identity,
-                utc_now=utc_now,
-                requested_tenant_id=x_tenant_id or x_pantheon_tenant,
-            )
-        except AgoraScopeResolutionError as exc:
-            _raise_scope_error(exc, bff_error)
-        resolved_tenant = (scope.tenant_id if scope else None) or (x_tenant_id.strip() if x_tenant_id else None) or (x_pantheon_tenant.strip() if x_pantheon_tenant else None)
-        resolved_user = (scope.user_id if scope else None) or (x_user_id.strip() if x_user_id else None) or getattr(identity, "operator_id", None)
-        return agora_service.get_daily_brief(
-            identity=identity,
-            tenant_id=resolved_tenant,
-            user_id=resolved_user,
-        )
-
-    @router.get("/bff/agora/signals")
-    def agora_list_signals(
-        review_status: Optional[str] = Query(default=None, alias="reviewStatus"),
-        status: Optional[str] = None,
-        page_token: Optional[str] = None,
-        page_size: int = Query(default=20, ge=1, le=200),
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        return agora_service.list_signals(
-            review_status=review_status or status,
-            page_token=page_token,
-            page_size=page_size,
-        )
-
-    @router.post("/bff/agora/signals", status_code=201)
-    def agora_create_signal(
-        response: Response,
-        payload: Dict[str, Any] = Body(...),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-        x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
-        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
-        x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
-    ) -> Any:
-        identity = extract_identity(authorization)
-        (require_agora_signal_write_role or require_write_role)(identity)
-        if x_correlation_id and response is not None:
-            response.headers["X-Correlation-Id"] = x_correlation_id
-        if x_request_id and response is not None:
-            response.headers["X-Request-Id"] = x_request_id
-        return agora_service.create_signal(
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            x_correlation_id=x_correlation_id,
-            x_request_id=x_request_id,
-            x_dry_run=x_dry_run,
-            response=response,
-        )
-
-    @router.get("/bff/agora/signals/{signalId}")
-    def agora_get_signal(
-        signalId: str,
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        return agora_service.get_signal(signalId)
-
-    @router.post("/bff/agora/feedback", status_code=201)
-    def agora_create_bulk_feedback(
-        payload: Dict[str, Any] = Body(...),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-        x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
-        x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
-    ) -> Any:
-        identity = extract_identity(authorization)
-        (require_agora_bulk_feedback_role or require_write_role)(identity)
-        return agora_service.create_bulk_feedback(
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            x_dry_run=x_dry_run,
-            x_correlation_id=x_correlation_id,
-        )
-
-    @router.post("/bff/agora/signals/{signalId}/feedback")
-    def agora_record_signal_feedback(
-        signalId: str,
-        payload: Dict[str, Any] = Body(...),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-        x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
-    ) -> Any:
-        identity = extract_identity(authorization)
-        require_write_role(identity)
-        return agora_service.record_signal_feedback(
-            signal_id=signalId,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            x_dry_run=x_dry_run,
-        )
-
-    @router.get("/bff/agora/markets")
-    @router.get("/bff/agora/watchlist")
-    def agora_list_watchlist(
-        page_token: Optional[str] = None,
-        page_size: int = Query(default=50, ge=1, le=200),
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        return agora_service.list_watchlist(page_token=page_token, page_size=page_size)
-
-    @router.post("/bff/agora/committee/{sessionId}/evidence-pack", status_code=201)
-    def agora_committee_evidence_pack(
-        sessionId: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ) -> Any:
-        identity = extract_identity(authorization)
-        require_write_role(identity)
-        return agora_service.create_committee_evidence_pack(
-            session_id=sessionId,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-        )
-
-    @router.post("/bff/agora/committee/{sessionId}/evidence-pack/files", status_code=201)
-    def agora_committee_evidence_files(
-        sessionId: str,
-        payload: Dict[str, Any] = Body(...),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ) -> Any:
-        identity = extract_identity(authorization)
-        require_write_role(identity)
-        return agora_service.upload_committee_evidence_files(
-            session_id=sessionId,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-        )
-
-    @router.get("/bff/agora/market-notes")
-    @router.get("/bff/agora/notes")
-    def agora_list_notes(
-        page_token: Optional[str] = None,
-        page_size: int = Query(default=20, ge=1, le=200),
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        return agora_service.list_notes(page_token=page_token, page_size=page_size)
-
-    @router.post("/bff/agora/notes", status_code=201)
-    def agora_create_note(
-        payload: Dict[str, Any] = Body(...),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-        x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
-    ) -> Any:
-        identity = extract_identity(authorization)
-        require_write_role(identity)
-        return agora_service.create_note(
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            x_dry_run=x_dry_run,
-        )
-
     @router.get("/bff/agora/decision-journal")
     @router.get("/bff/agora/journal")
     def agora_list_journal_entries(
@@ -747,244 +536,6 @@ def create_agora_router(
             user_id=scope.user_id if scope else None,
         )
 
-    @router.get("/bff/agora/training-examples")
-    def agora_list_training_examples(
-        page_token: Optional[str] = None,
-        page_size: int = Query(default=20, ge=1, le=200),
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        return agora_service.list_training_examples(page_token=page_token, page_size=page_size)
-
-    @router.post("/bff/agora/training-examples", status_code=201)
-    def agora_create_training_example(
-        payload: Dict[str, Any] = Body(...),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-        x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
-    ) -> Any:
-        identity = extract_identity(authorization)
-        require_write_role(identity)
-        return agora_service.create_training_example(
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            x_dry_run=x_dry_run,
-        )
-
-    @router.get("/bff/agora/research-tasks")
-    @router.get("/bff/research/tasks")
-    def agora_list_research_tasks(
-        status: Optional[str] = Query(default=None),
-        owner: Optional[str] = Query(default=None),
-        page_token: Optional[str] = None,
-        page_size: int = Query(default=20, ge=1, le=200),
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        return agora_service.list_research_tasks(
-            status=status,
-            owner=owner,
-            page_token=page_token,
-            page_size=page_size,
-        )
-
-    @router.post("/bff/agora/persona-lab/{draftId}/actions/submit-commit", status_code=202)
-    def agora_submit_persona_lab_commit(
-        draftId: str,
-        payload: Dict[str, Any] = Body(...),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ) -> Any:
-        identity = extract_identity(authorization)
-        (require_operator_role or require_write_role)(identity)
-        return agora_service.submit_persona_lab_commit(
-            draft_id=draftId,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-        )
-
-    @router.get("/api/v1/agora/ask/stream")
-    def agora_ask_stream(
-        authorization: Optional[str] = Header(default=None),
-        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-        last_event_id_header: Optional[str] = Header(default=None, alias="Last-Event-ID"),
-    ) -> Any:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        return agora_service.stream_channel_events("ask", last_event_id=last_event_id or last_event_id_header)
-
-    @router.get("/bff/sse/agora/signals")
-    def agora_signals_stream(
-        authorization: Optional[str] = Header(default=None),
-        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-        last_event_id_header: Optional[str] = Header(default=None, alias="Last-Event-ID"),
-    ) -> Any:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        return agora_service.stream_channel_events("signal", last_event_id=last_event_id or last_event_id_header)
-
-    @router.get("/bff/sse/agora/sessions/{sessionId}")
-    def agora_session_stream(
-        sessionId: str,
-        authorization: Optional[str] = Header(default=None),
-        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-        last_event_id_header: Optional[str] = Header(default=None, alias="Last-Event-ID"),
-    ) -> Any:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        return agora_service.stream_channel_events(
-            f"session:{sessionId}", last_event_id=last_event_id or last_event_id_header
-        )
-
-    @router.get("/bff/agora/committee/sessions")
-    def agora_list_committee_sessions(
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        return agora_service.list_committee_sessions()
-
-    @router.post("/bff/agora/committee/sessions", status_code=201)
-    def agora_create_committee_session(
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ) -> Any:
-        identity = extract_identity(authorization)
-        require_write_role(identity)
-        return agora_service.create_committee_session(
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-        )
-
-    @router.get("/bff/agora/committee/sessions/{sessionId}")
-    def agora_get_committee_session(
-        sessionId: str,
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        return agora_service.get_committee_session(sessionId)
-
-    @router.post("/bff/agora/committee/sessions/{sessionId}/open")
-    def agora_open_committee_session(
-        sessionId: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ) -> Any:
-        identity = extract_identity(authorization)
-        require_write_role(identity)
-        return agora_service.open_committee_session(
-            sessionId,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-        )
-
-    @router.post("/bff/agora/committee/sessions/{sessionId}/close")
-    def agora_close_committee_session(
-        sessionId: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ) -> Any:
-        identity = extract_identity(authorization)
-        require_write_role(identity)
-        return agora_service.close_committee_session(
-            sessionId,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-        )
-
-    @router.get("/bff/agora/committee/sessions/{sessionId}/memos")
-    def agora_list_committee_session_memos(
-        sessionId: str,
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        return agora_service.list_committee_session_memos(sessionId)
-
-    @router.post("/bff/agora/committee/sessions/{sessionId}/memos", status_code=201)
-    def agora_submit_committee_session_memo(
-        sessionId: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ) -> Any:
-        identity = extract_identity(authorization)
-        require_write_role(identity)
-        return agora_service.submit_committee_session_memo(
-            sessionId,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-        )
-
-    @router.get("/bff/agora/committee/sessions/{sessionId}/memos/{memoId}")
-    def agora_get_committee_session_memo(
-        sessionId: str,
-        memoId: str,
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        return agora_service.get_committee_session_memo(sessionId, memoId)
-
-    @router.post("/bff/agora/committee/sessions/{sessionId}/memos/{memoId}/publish")
-    def agora_publish_committee_session_memo(
-        sessionId: str,
-        memoId: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ) -> Any:
-        identity = extract_identity(authorization)
-        require_write_role(identity)
-        return agora_service.publish_committee_session_memo(
-            sessionId,
-            memoId,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-        )
-
-    @router.get("/bff/agora/skill-coaching/sessions")
-    def agora_list_skill_coaching_sessions(
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        return agora_service.list_skill_coaching_sessions()
-
-    @router.get("/bff/agora/persona-lab/runs")
-    def agora_list_persona_lab_runs(
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        return agora_service.list_persona_lab_runs()
 
     @router.get("/bff/agora/postmortems")
     def agora_list_postmortems(
@@ -993,30 +544,6 @@ def create_agora_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
         return agora_service.list_postmortems()
-
-    @router.get("/bff/agora/evaluation-suites")
-    def agora_list_evaluation_suites(
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        return agora_service.list_evaluation_suites()
-
-    @router.get("/bff/agora/evaluation-runs")
-    def agora_list_evaluation_runs(
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        return agora_service.list_evaluation_runs()
-
-    @router.get("/bff/agora/alerts/triage")
-    def agora_list_alerts_triage(
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        return agora_service.list_alerts_triage()
 
     router.interaction_lifecycle = interaction_lifecycle
     router.workshop_store = workshop_store

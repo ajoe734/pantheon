@@ -25,7 +25,7 @@ import sys
 import urllib.request
 
 SURFACES = [
-    "/bff/agora/signals", "/bff/agora/inbox", "/bff/agora/journal", "/bff/agora/postmortems",
+    "/bff/agora/journal", "/bff/agora/postmortems",
     "/bff/strategies", "/bff/personas", "/bff/capital-pools", "/bff/deployments", "/bff/runtimes",
     "/bff/incidents", "/bff/v5/loop-runs", "/bff/skills",
     "/bff/channels", "/bff/mcp-servers", "/bff/research-experiments", "/bff/jobs",

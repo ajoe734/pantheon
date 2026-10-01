@@ -219,16 +219,7 @@ def test_detail_smoke_b_pack_b_routes_resolve_acceptance_links() -> None:
         assert analysis_record["ticket_id"] == PACK_B["research_ticket_id"]
         assert analysis_record["experiment_id"] == PACK_B["research_experiment_id"]
 
-        session = _get(client, f"/bff/agora/sessions/{PACK_B['agora_session_id']}")
-        assert session.status_code == 200, session.text
-        session_record = _data(session.json())
-        assert session_record["topic"]
-        assert session_record["participants"]
-
-        messages = _get(client, f"/bff/agora/sessions/{PACK_B['agora_session_id']}/messages")
-        assert messages.status_code == 200, messages.text
-        messages_payload = messages.json()
-        assert messages_payload["data"]
+        # Agora sessions/messages (AGORA-DEAD-SURFACES-REMOVAL-001) and V5 intervention detail (BFF-SENTINEL-REMOVAL-001) routes retired
 
         artifact = _get(client, f"/bff/artifacts/{PACK_B['artifact_id']}")
         assert artifact.status_code == 200, artifact.text

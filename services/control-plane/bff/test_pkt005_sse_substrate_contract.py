@@ -176,13 +176,6 @@ bff_sse_incident_timeline_alias = next(r.endpoint for r in _events_router.routes
 bff_sse_deployment_events_alias = next(r.endpoint for r in _events_router.routes if r.path == "/bff/sse/deployment/events")
 bff_sse_review_updates_alias = next(r.endpoint for r in _events_router.routes if r.path == "/bff/sse/review/updates")
 
-bff_sse_agora_signals_alias = next(
-    r.endpoint for r in _agora_router.routes if getattr(r, "path", None) == "/bff/sse/agora/signals"
-)
-bff_sse_agora_session_alias = next(
-    r.endpoint for r in _agora_router.routes if getattr(r, "path", None) == "/bff/sse/agora/sessions/{sessionId}"
-)
-
 
 async def stream_approval_events(last_event_id: Optional[str] = None, authorization: Optional[str] = None):
     return await stream_generic_events("approval", last_event_id, authorization)
@@ -327,9 +320,7 @@ def test_approval_and_ask_stream_routes_publish_replay_metadata_headers() -> Non
             "ask",
             (
                 "/bff/management/ai/conversations,"
-                "/bff/management/ai/conversations/{id},"
-                "/bff/agora/ask/sessions/{id},"
-                "/bff/agora/committee/sessions/{id}"
+                "/bff/management/ai/conversations/{id}"
             ),
         ),
     ]:
@@ -357,8 +348,6 @@ def test_execute_plans_sse_compatibility_routes_are_registered() -> None:
         "/bff/sse/incidents/{incidentId}/timeline",
         "/bff/sse/deployment/events",
         "/bff/sse/review/updates",
-        "/bff/sse/agora/signals",
-        "/bff/sse/agora/sessions/{sessionId}",
     }.issubset(registered_paths)
 
 
@@ -379,28 +368,6 @@ def test_execute_plans_sse_compatibility_aliases_share_replay_headers() -> None:
         response = client.get(path, headers={"Authorization": AUTH})
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
-        assert response.headers["X-SSE-Channel"] == expected_channel
-        assert response.headers["X-SSE-Replay-Supported"] == "true"
-        assert response.headers["X-SSE-Replay-Window-Events"] == "500"
-        assert response.headers["X-SSE-Replay-Store"] == "in-memory"
-
-    for sync_factory, expected_channel in [
-        (
-            lambda: bff_sse_agora_signals_alias(
-                last_event_id=None, authorization=AUTH, last_event_id_header=None,
-            ),
-            "signal",
-        ),
-        (
-            lambda: bff_sse_agora_session_alias(
-                sessionId="ask-final-sse-001", last_event_id=None, authorization=AUTH,
-                last_event_id_header=None,
-            ),
-            "session:ask-final-sse-001",
-        ),
-    ]:
-        response = sync_factory()
-        assert response.media_type == "text/event-stream"
         assert response.headers["X-SSE-Channel"] == expected_channel
         assert response.headers["X-SSE-Replay-Supported"] == "true"
         assert response.headers["X-SSE-Replay-Window-Events"] == "500"

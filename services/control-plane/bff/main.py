@@ -3635,46 +3635,11 @@ def _submit_final_command_admission(
         response_deprecation=response_deprecation,
     )
 _AGORA_CORE_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-_AGORA_SIGNAL_WRITE_ROLES = {"analyst", "operator", "approver", "admin", "reviewer"}
-_AGORA_BULK_FEEDBACK_ROLES = {"analyst", "operator", "reviewer", "approver", "admin"}
 from .assistant.management_service import (
     _truthy_header,
     _request_dry_run_requested,
     _dry_run_success_response,
 )
-def _require_agora_signal_write_role(identity: OperatorIdentity) -> None:
-    if not _AGORA_SIGNAL_WRITE_ROLES.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Agora signal creation requires analyst-level role",
-            "Operator does not hold the required analyst, operator, reviewer, approver, or admin role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with analyst-level Agora write access",
-        )
-def _agora_required_text(payload: Dict[str, Any], *fields: str) -> str:
-    for field in fields:
-        clean = str(payload.get(field) or "").strip()
-        if clean:
-            return clean
-    label = fields[0] if fields else "value"
-    raise _bff_error(
-        422,
-        ErrorCode.VALIDATION_FAILED,
-        f"{label} is required",
-        f"Agora request requires a non-empty {label}",
-        precondition_failed=label,
-    )
-def _require_agora_bulk_feedback_role(identity: OperatorIdentity) -> None:
-    if not _AGORA_BULK_FEEDBACK_ROLES.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Agora feedback access requires analyst role",
-            "Operator does not hold the required Agora feedback role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with analyst, operator, reviewer, approver, or admin role",
-        )
 _MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {}
 _TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {}
 _SKILL_REGISTRY: Dict[str, Dict[str, Any]] = {}
@@ -5119,8 +5084,6 @@ _SSE_RESYNC_ROUTES: Dict[str, tuple[str, ...]] = {
     "ask": (
         "/bff/management/ai/conversations",
         "/bff/management/ai/conversations/{id}",
-        "/bff/agora/ask/sessions/{id}",
-        "/bff/agora/committee/sessions/{id}",
     ),
 }
 class SseReplayUnavailableError(Exception):
@@ -6199,8 +6162,6 @@ bff_sse_alerts_alias = _mounted_router_endpoint(_events_router, "/bff/sse/alerts
 bff_sse_incident_timeline_alias = _mounted_router_endpoint(_events_router, "/bff/sse/incidents/{incidentId}/timeline")
 bff_sse_review_updates_alias = _mounted_router_endpoint(_events_router, "/bff/sse/review/updates")
 bff_sse_deployment_events_alias = _mounted_router_endpoint(_deployment_router, "/bff/sse/deployment/events")
-bff_sse_agora_signals_alias = _mounted_router_endpoint(_agora_router, "/bff/sse/agora/signals")
-bff_sse_agora_session_alias = _mounted_router_endpoint(_agora_router, "/bff/sse/agora/sessions/{sessionId}")
 
 from .shared.module_retirement_guard import (
     GETATTR_ERROR_MESSAGE as _GETATTR_ERROR_MESSAGE,

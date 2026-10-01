@@ -505,18 +505,9 @@ def test_dataset_surface_status_full_app_parity(state: str, monkeypatch: pytest.
 # BFF-MUTATION-ROUTE-ROLES-001: state-changing routes require the operator role,
 # exercised through the mounted composition root (this reviewed composition suite).
 
-# (method, path, expected operator status, expected error code, payload)
 MUTATION_ROUTES = [
     ("POST", "/bff/jobs/j1/actions/retry", 202, None, {"reason": "operator retry"}),
     ("POST", "/bff/rankings/r1/actions/publish", 202, None, {}),
-    ("POST", "/bff/agora/messages/m1/actions/ack", 202, None, {}),
-    ("POST", "/bff/agora/ask/sessions", 201, None, {"question": "What is the current risk?"}),
-    ("POST", "/bff/agora/ask/sessions/{session}/close", 200, None, {}),
-    ("POST", "/bff/agora/ask", 202, None, {"question": "Summarize current risk."}),
-    ("POST", "/bff/agora/insights/i1/actions/ack", 202, None, {}),
-    ("POST", "/bff/agora/memory/m1/actions/ack", 202, None, {}),
-    ("POST", "/bff/memory/m1/actions/quarantine", 202, None, {"reason": "operator review"}),
-    ("POST", "/bff/insights/i1/actions/attach-strategy", 202, None, {"strategy_id": "strategy-fixture"}),
     ("POST", "/api/v1/personas/p1/strategy-discovery", 202, None, {"query": "momentum", "lookback_days": 30}),
     ("POST", "/bff/personas/p1/strategy-discovery", 202, None, {"query": "momentum", "lookback_days": 30}),
     ("POST", "/api/v1/personas/p1/strategy-matches/m1/actions", 202, None, {"action": "promote_seed_candidate", "notes": "operator approved"}),
@@ -530,7 +521,6 @@ def mutation_roles_client():
     mp.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     mp.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     from services.control_plane.bff import main
-    from services.control_plane.bff.agora.service import AgoraService
     from services.control_plane.bff.personas import service as persona_service
     from services.control_plane.bff.personas.routes import lifecycle
 
@@ -541,8 +531,6 @@ def mutation_roles_client():
     store = type(main.read_store)
     mp.setattr(store, "get_job_bff", lambda self, job_id: {"job_id": job_id, "status": "failed"}, raising=False)
     mp.setattr(store, "get_ranking", lambda self, rid: {"ranking_id": rid}, raising=False)
-    mp.setattr(AgoraService, "get_insight", lambda self, i: {"insightId": i})
-    mp.setattr(AgoraService, "get_memory_entry", lambda self, m: {"memoryId": m})
     match = {"match_id": "m1", "matched_object_type": "strategy_spec_seed", "matched_object_id": "seed-1", "metadata": {}}
     mp.setattr(persona_service, "_ensure_persona_exists", lambda *a, **k: None)
     mp.setattr(lifecycle, "_ensure_persona_exists", lambda *a, **k: None)
@@ -552,12 +540,7 @@ def mutation_roles_client():
     mp.undo()
 
 def _resolve(mutation_roles_client, path):
-    if "{session}" not in path:
-        return path
-    r = mutation_roles_client.post("/bff/agora/ask/sessions", json={"question": "fixture"}, headers={
-        "Authorization": "Bearer op-1:operator", "Idempotency-Key": "k-fixture-session"})
-    assert r.status_code == 201, r.text
-    return path.replace("{session}", r.json()["data"]["sessionId"])
+    return path
 
 @pytest.mark.parametrize("method,path,status,code,payload", MUTATION_ROUTES)
 def test_viewer_token_is_forbidden(mutation_roles_client, method, path, status, code, payload):

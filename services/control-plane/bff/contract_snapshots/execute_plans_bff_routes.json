@@ -753,92 +753,105 @@
       "method": "GET",
       "path": "/bff/agora/daily",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
       "path": "/bff/agora/signals",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
       "path": "/bff/agora/signals/{signalId}",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "POST",
       "path": "/bff/agora/signals/{signalId}/feedback",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
       "path": "/bff/agora/watchlist",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
       "path": "/bff/agora/sessions",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "POST",
       "path": "/bff/agora/sessions",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
       "path": "/bff/agora/sessions/{sessionId}",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
       "path": "/bff/agora/sessions/{sessionId}/messages",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "POST",
       "path": "/bff/agora/sessions/{sessionId}/messages",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "POST",
       "path": "/bff/agora/messages/{messageId}/actions/{actionId}",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
       "path": "/bff/agora/notes",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "POST",
       "path": "/bff/agora/notes",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
@@ -864,71 +877,81 @@
       "method": "GET",
       "path": "/bff/agora/insights",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "POST",
       "path": "/bff/agora/insights",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "POST",
       "path": "/bff/agora/insights/{insightId}/actions/{actionId}",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
       "path": "/bff/agora/memory",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "POST",
       "path": "/bff/agora/memory/{memoryId}/actions/{actionId}",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
       "path": "/bff/agora/training-examples",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "POST",
       "path": "/bff/agora/training-examples",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
       "path": "/bff/research/tasks",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "POST",
       "path": "/bff/memory/{memoryId}/actions/quarantine",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "POST",
       "path": "/bff/insights/{insightId}/actions/attach-strategy",
       "family": "agora-core",
-      "status": "implemented",
-      "task_id": "BFF-LUV-GAP-006"
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-006",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
@@ -940,19 +963,22 @@
       "method": "POST",
       "path": "/bff/agora/committee/{sessionId}/evidence-pack",
       "family": "agora-extended",
-      "status": "implemented"
+      "status": "superseded_with_reason",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "POST",
       "path": "/bff/agora/committee/{sessionId}/evidence-pack/files",
       "family": "agora-extended",
-      "status": "implemented"
+      "status": "superseded_with_reason",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "POST",
       "path": "/bff/agora/persona-lab/{draftId}/actions/submit-commit",
       "family": "agora-extended",
-      "status": "implemented"
+      "status": "superseded_with_reason",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
@@ -973,9 +999,8 @@
       "method": "GET",
       "path": "/bff/agora/committee-sessions",
       "family": "agora-extended",
-      "status": "implemented_by_alias",
-      "covered_by": "GET /bff/agora/sessions",
-      "proof": "test_agora_daily_signals_sessions_and_research_task_reads"
+      "status": "superseded_with_reason",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
@@ -996,9 +1021,8 @@
       "method": "GET",
       "path": "/bff/agora/incoming",
       "family": "agora-extended",
-      "status": "implemented_by_alias",
-      "covered_by": "GET /bff/agora/handoffs",
-      "proof": "test_persona_lab_submit_commit_creates_management_handoff"
+      "status": "superseded_with_reason",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
@@ -1018,25 +1042,22 @@
       "method": "GET",
       "path": "/bff/agora/research-tasks",
       "family": "agora-extended",
-      "status": "implemented_by_alias",
-      "covered_by": "GET /bff/research/tasks",
-      "proof": "test_agora_daily_signals_sessions_and_research_task_reads"
+      "status": "superseded_with_reason",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
       "path": "/bff/agora/market-notes",
       "family": "agora-extended",
-      "status": "implemented_by_alias",
-      "covered_by": "GET /bff/agora/notes",
-      "proof": "test_agora_note_journal_insight_and_training_creation"
+      "status": "superseded_with_reason",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
       "path": "/bff/agora/markets",
       "family": "agora-extended",
-      "status": "implemented_by_alias",
-      "covered_by": "GET /bff/agora/watchlist",
-      "proof": "test_agora_daily_signals_sessions_and_research_task_reads"
+      "status": "superseded_with_reason",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
@@ -1057,7 +1078,8 @@
       "method": "GET",
       "path": "/bff/agora/handoffs",
       "family": "agora-extended",
-      "status": "implemented"
+      "status": "superseded_with_reason",
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
@@ -1278,19 +1300,17 @@
       "method": "GET",
       "path": "/bff/sse/agora/signals",
       "family": "sse-compatibility",
-      "status": "implemented_by_alias",
+      "status": "superseded_with_reason",
       "task_id": "BFF-LUV-GAP-010",
-      "covered_by": "GET /api/v1/stream/{channel}",
-      "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",
       "path": "/bff/sse/agora/sessions/{sessionId}",
       "family": "sse-compatibility",
-      "status": "implemented_by_alias",
+      "status": "superseded_with_reason",
       "task_id": "BFF-LUV-GAP-010",
-      "covered_by": "GET /api/v1/agora/ask/stream",
-      "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"
+      "reason": "Dead Agora surface deleted by AGORA-DEAD-SURFACES-REMOVAL-001"
     },
     {
       "method": "GET",

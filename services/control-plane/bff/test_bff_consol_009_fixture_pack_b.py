@@ -181,26 +181,8 @@ def test_pack_b_evolution_live_list_returns_non_empty() -> None:
             assert len(items) >= 1, "evolution-decisions must return ≥1 record"
 
 
-def test_pack_b_agora_signals_live_list_returns_non_empty() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        with mock.patch.dict(os.environ, SERVICE_ENV_BLANKS, clear=False):
-            client = _fresh_pack_b_client(td)
-            resp = client.get("/bff/agora/signals", headers=HEADERS)
-            assert resp.status_code == 200, f"/bff/agora/signals: {resp.text}"
-            data = resp.json()
-            items = data.get("data") or data.get("items") or []
-            assert len(items) >= 1, "agora/signals must return ≥1 record"
-
-
-def test_pack_b_agora_sessions_live_list_returns_non_empty() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        with mock.patch.dict(os.environ, SERVICE_ENV_BLANKS, clear=False):
-            client = _fresh_pack_b_client(td)
-            resp = client.get("/bff/agora/sessions", headers=HEADERS)
-            assert resp.status_code == 200, f"/bff/agora/sessions: {resp.text}"
-            data = resp.json()
-            items = data.get("data") or data.get("items") or []
-            assert len(items) >= 1, "agora/sessions must return ≥1 record"
+# Agora signals and sessions live list tests retired per AGORA-DEAD-SURFACES-REMOVAL-001
+# V5 interventions live list test retired per BFF-SENTINEL-REMOVAL-001
 
 
 def test_pack_b_research_tickets_live_list_returns_non_empty() -> None:

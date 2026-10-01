@@ -14,7 +14,7 @@ from fastapi import APIRouter, Cookie, Header, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ...dashboard.router import (
+from ...widget_registry import (
     _FORBIDDEN_INTERACTIONS,
     _REGISTRY_VERSION,
     _WIDGET_REGISTRY,

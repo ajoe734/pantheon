@@ -315,7 +315,7 @@ def test_build_rbac_matrix_results_attaches_write_side_effect_proofs(monkeypatch
         }
         if probe.expect_error_envelope:
             result["error_envelope_shape"] = canonical_error_shape()
-        if probe.family.endswith("readback-not-persisted") and probe.path == "/bff/agora/notes":
+        if probe.family.endswith("readback-not-persisted") and probe.path == "/bff/agora/journal":
             result.update(
                 {
                     "status": 200,
@@ -350,10 +350,10 @@ def test_build_rbac_matrix_results_attaches_write_side_effect_proofs(monkeypatch
                 "rbac-write-reviewer-ranking-formula",
                 "rbac-write-approver-ranking-formula",
                 "rbac-write-admin-ranking-formula",
-                "rbac-write-operator-agora-note",
-                "rbac-write-reviewer-agora-note",
-                "rbac-write-approver-agora-note",
-                "rbac-write-admin-agora-note",
+                "rbac-write-operator-agora-journal",
+                "rbac-write-reviewer-agora-journal",
+                "rbac-write-approver-agora-journal",
+                "rbac-write-admin-agora-journal",
             }:
                 extracted["data.id"] = f"{probe.family}-id"
             result["extracted"] = extracted
@@ -387,7 +387,7 @@ def test_build_rbac_matrix_results_attaches_write_side_effect_proofs(monkeypatch
         result["side_effect_check"].get("readback_not_persisted")
         for result in write_results
         if result["rbac_label"] in {"operator", "reviewer", "approver", "admin"}
-        and result["rbac_resource"] in {"strategy", "ranking-formula", "agora-note"}
+        and result["rbac_resource"] in {"strategy", "ranking-formula", "agora-journal"}
     ]
     assert len(readback_checks) == 12
     assert all(isinstance(check, dict) and check["ok"] is True for check in readback_checks)

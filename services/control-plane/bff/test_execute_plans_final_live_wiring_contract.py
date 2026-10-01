@@ -21,17 +21,8 @@ from ports import create_in_memory_read_surface_ports  # noqa: E402
 
 FINAL_CONTRACT_METHOD_PATHS = {
     ("DELETE", "/bff/confirm-tokens/{tokenId}"),
-    ("GET", "/bff/agora/alerts/triage"),
-    ("GET", "/bff/agora/ask/sessions"),
-    ("GET", "/bff/agora/evaluation-runs"),
-    ("GET", "/bff/agora/evaluation-suites"),
-    ("GET", "/bff/agora/inbox"),
     ("GET", "/bff/agora/journal"),
-    ("GET", "/bff/agora/persona-lab/runs"),
     ("GET", "/bff/agora/postmortems"),
-    ("GET", "/bff/agora/signals"),
-    ("GET", "/bff/agora/signals/{id}"),
-    ("GET", "/bff/agora/skill-coaching/sessions"),
     ("GET", "/bff/alerts"),
     ("GET", "/bff/alerts/{id}"),
     ("GET", "/bff/approvals"),
@@ -130,8 +121,6 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("PATCH", "/bff/strategies/{id}"),
     ("PATCH", "/bff/tools/{id}"),
     ("POST", "/bff/v1/commands"),
-    ("POST", "/bff/agora/ask"),
-    ("POST", "/bff/agora/signals/{id}/feedback"),
     ("POST", "/bff/alerts/{id}/acknowledge"),
     ("POST", "/bff/alerts/{id}/escalate-incident"),
     ("POST", "/bff/approvals/batch-decide"),
@@ -224,11 +213,8 @@ LIVE_PROBE_CONCRETE_ROUTES = [
     ("GET", "/bff/tools"),
     ("GET", "/bff/ranking-formulas"),
     ("GET", "/bff/experiments"),
-    ("GET", "/bff/agora/signals"),
-    ("GET", "/bff/agora/inbox"),
     ("GET", "/bff/agora/journal"),
     ("GET", "/bff/agora/postmortems"),
-    ("GET", "/bff/agora/ask/sessions"),
     ("GET", "/bff/v5/loop-inventory"),
     ("GET", "/bff/v5/loop-runs"),
     ("GET", "/bff/v5/execution/persona-health"),
@@ -571,7 +557,7 @@ def test_execute_plans_final_stub_auth_smoke_avoids_server_errors(monkeypatch) -
 
     with _isolated_final_read_models() as client:
         for path in [
-            "/bff/agora/signals/sig_001",
+            "/bff/agora/journal",
             "/bff/artifacts",
             "/bff/artifacts/art_001",
             "/bff/capital-pools/pool-main",

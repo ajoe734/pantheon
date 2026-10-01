@@ -3188,6 +3188,20 @@ def _persona_intent_agora_persona_ids(session: Dict[str, Any]) -> List[str]:
         ref_id = _persona_intent_text(ref.get("ref_id") or ref.get("id"))
         if ref_type == "persona" and ref_id:
             persona_ids.append(ref_id)
+    for key in ("persona_id", "personaId", "from_persona_id", "fromPersonaId"):
+        raw_val = _persona_intent_text(session.get(key))
+        if raw_val:
+            persona_ids.append(raw_val)
+    if session.get("target_type") == "persona":
+        target_ref = _persona_intent_text(session.get("target_ref") or session.get("targetRef"))
+        if target_ref:
+            persona_ids.append(target_ref)
+    raw_pids = session.get("persona_ids") or session.get("personaIds")
+    if isinstance(raw_pids, list):
+        for pid in raw_pids:
+            clean_pid = _persona_intent_text(pid)
+            if clean_pid:
+                persona_ids.append(clean_pid)
     seen: set[str] = set()
     ordered: List[str] = []
     for persona_id in persona_ids:
@@ -3199,11 +3213,11 @@ def _persona_intent_agora_persona_ids(session: Dict[str, Any]) -> List[str]:
 
 # --- _persona_intent_agora_item ---
 def _persona_intent_agora_item(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    session_id = _management_record_id(session, "sessionId", "session_id", "id")
+    session_id = _management_record_id(session, "sessionId", "session_id", "id", "requestId", "request_id")
     if not session_id:
         return None
     status = _persona_intent_text(session.get("status") or "unknown").lower() or "unknown"
-    mode = _persona_intent_text(session.get("mode") or session.get("sessionType") or "agora_session")
+    mode = _persona_intent_text(session.get("mode") or session.get("sessionType") or session.get("consultation_type") or "agora_session")
     messages = [message for message in (session.get("messages") or []) if isinstance(message, dict)]
     latest_message_at = max(
         [
@@ -3218,7 +3232,13 @@ def _persona_intent_agora_item(session: Dict[str, Any]) -> Optional[Dict[str, An
         if isinstance(ref, dict)
     ]
     persona_ids = _persona_intent_agora_persona_ids(session)
-    topic = _persona_intent_text(session.get("topic") or session.get("title"))
+    topic = _persona_intent_text(
+        session.get("topic")
+        or session.get("title")
+        or session.get("task")
+        or session.get("task_summary")
+        or session.get("taskSummary")
+    )
     occurred_at = _persona_intent_timestamp(session)
     item_id = f"agora_session:{session_id}"
     agora_summary = {
@@ -3244,17 +3264,23 @@ def _persona_intent_agora_item(session: Dict[str, Any]) -> Optional[Dict[str, An
         "persona_id": persona_ids[0] if persona_ids else None,
         "persona_ids": persona_ids,
         "intent": mode,
-        "title": session.get("title") or f"Agora session {session_id}",
+        "title": (
+            session.get("title")
+            or session.get("task")
+            or session.get("task_summary")
+            or session.get("taskSummary")
+            or f"Agora session {session_id}"
+        ),
         "summary": topic or "Agora session intent summary.",
         "status": status,
         "created_at": session.get("createdAt") or session.get("created_at"),
-        "updated_at": session.get("updatedAt") or session.get("updated_at") or latest_message_at,
+        "updated_at": session.get("updatedAt") or session.get("updated_at") or latest_message_at or session.get("createdAt") or session.get("created_at"),
         "occurred_at": occurred_at,
         "agora": agora_summary,
         "redacted": True,
         "redaction": _persona_intent_redaction(["messages", "message_content", "raw_transcript"]),
         "route": "/management/persona-intent?source_type=agora_session",
-        "bff_detail_path": f"/bff/agora/ask/sessions/{session_id}",
+        "bff_detail_path": None,
     }
 
 
@@ -3287,8 +3313,20 @@ def _persona_intent_all_items(tenant_id: Optional[str] = None) -> tuple[
         for persona in personas
         if _persona_intent_text(persona.get("persona_id") or persona.get("id"))
     }
-    agora_sessions = list(_get_active_read_store().list_agora_sessions() or [])
+    active_store = _get_active_read_store()
+    if hasattr(active_store, "list_consult_requests"):
+        consult_records = list(active_store.list_consult_requests() or [])
+    else:
+        consult_records = []
+    if not consult_records and hasattr(active_store, "list_agora_sessions"):
+        agora_sessions = list(active_store.list_agora_sessions() or [])
+    else:
+        agora_sessions = consult_records
+
     for session in agora_sessions:
+        session_tenant = _persona_intent_text(session.get("tenant_id") or session.get("tenantId"))
+        if tenant_id and session_tenant and session_tenant != tenant_id:
+            continue
         referenced_persona_ids = _persona_intent_agora_persona_ids(session)
         if referenced_persona_ids and not all(
             persona_id in visible_persona_ids for persona_id in referenced_persona_ids

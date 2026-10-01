@@ -4,7 +4,7 @@ Provides GET /bff/agora/operational-readiness to compose:
   - Source snapshot identity, source time, age, SLA (86400s), and freshness.
   - Source-instance desired and observed state.
   - Paper-signal-producer health, active binding, last success, and consumed snapshot.
-  - Projection cursor/freshness for signals, decision_events, inbox, journal,
+  - Projection cursor/freshness for decision_events, journal,
     candidates, interactions, and performance.
   - Exact BFF deployment identity.
 
@@ -285,9 +285,7 @@ class ReadStoreAgoraOperationalReadinessProvider:
     """
 
     _SURFACE_READERS: Dict[str, str] = {
-        "signals": "list_agora_signals",
         "journal": "list_decision_journal_entries",
-        "inbox": "list_evidence_refs",
     }
 
     def __init__(
@@ -528,9 +526,7 @@ class ReadStoreAgoraOperationalReadinessProvider:
                     "reason": f"{surface}_provider_unavailable",
                 }
         for surface in (
-            "signals",
             "decision_events",
-            "inbox",
             "journal",
             "candidates",
             "interactions",
@@ -1334,9 +1330,7 @@ class AgoraOperationalReadinessService:
         provider_error: Optional[str] = None,
     ) -> Dict[str, AgoraSurfaceReadiness]:
         surface_keys = [
-            "signals",
             "decision_events",
-            "inbox",
             "journal",
             "candidates",
             "interactions",

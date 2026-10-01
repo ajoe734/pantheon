@@ -40,8 +40,6 @@ DEFAULT_SSE_RESYNC_ROUTES: Dict[str, tuple[str, ...]] = {
     "ask": (
         "/bff/management/ai/conversations",
         "/bff/management/ai/conversations/{id}",
-        "/bff/agora/ask/sessions/{id}",
-        "/bff/agora/committee/sessions/{id}",
     ),
 }
 

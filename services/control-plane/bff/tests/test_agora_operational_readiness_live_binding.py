@@ -24,9 +24,7 @@ NOW = "2026-09-01T12:00:00Z"
 SNAPSHOT_ID = "mss-live-authority-001"
 BINDING_ID = "rb-paper-live-001"
 SURFACES = (
-    "signals",
     "decision_events",
-    "inbox",
     "journal",
     "candidates",
     "interactions",

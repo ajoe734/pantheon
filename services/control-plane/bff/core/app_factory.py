@@ -742,7 +742,6 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
         "raise_if_read_surface_unavailable_fn", "_raise_if_session_logged_out",
         "_reject_body_idempotency_key", "reject_body_idempotency_key", "reject_body_idempotency_key_fn",
         "_require_ooda_packet_routes_enabled", "_require_journal_write_role",
-        "_require_agora_signal_write_role", "_require_agora_bulk_feedback_role",
         "_capital_bff_idempotency_check", "capital_bff_idempotency_check",
         "_strategy_persona_idempotency_check", "strategy_persona_idempotency_check",
     }:
@@ -1616,8 +1615,6 @@ def mount_bff_routers(
         require_write_role=_dep("_require_operator_role"),
         require_operator_role=_dep("_require_operator_role"),
         require_journal_write_role=_dep("_require_journal_write_role"),
-        require_agora_signal_write_role=_dep("_require_agora_signal_write_role"),
-        require_agora_bulk_feedback_role=_dep("_require_agora_bulk_feedback_role"),
         bff_error=_dep("_bff_error"),
         utc_now=_dep("utc_now"),
         read_surface=app_deps.read_surface,

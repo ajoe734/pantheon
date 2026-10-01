@@ -1491,10 +1491,6 @@ _EXECUTORS = {
     CommandType.DEPLOYMENT_PATCH: _make_adapter_executor(CommandType.DEPLOYMENT_PATCH),
     CommandType.REBALANCE_PATCH: _make_adapter_executor(CommandType.REBALANCE_PATCH),
     CommandType.V5_INTERVENTION_ACTION: _make_adapter_executor(CommandType.V5_INTERVENTION_ACTION),
-    CommandType.AGORA_SIGNAL_FEEDBACK: _make_adapter_executor(CommandType.AGORA_SIGNAL_FEEDBACK),
-    CommandType.AGORA_MESSAGE_ACTION: _make_adapter_executor(CommandType.AGORA_MESSAGE_ACTION),
-    CommandType.AGORA_INSIGHT_ACTION: _make_adapter_executor(CommandType.AGORA_INSIGHT_ACTION),
-    CommandType.AGORA_MEMORY_ACTION: _make_adapter_executor(CommandType.AGORA_MEMORY_ACTION),
 }
 
 
