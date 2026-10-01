@@ -5602,18 +5602,28 @@ def _pm12_quarterly_recommendations(
     evidence_refs: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     result = evaluator_results.saved_evaluator_result(quarter_window["quarter"]) or {}
-    by_persona = {str(item.get("persona_id") or ""): item for item in ranked_items}
     recommendations: List[Dict[str, Any]] = []
+    snapshots: Dict[str, Dict[str, Any]] = {}
     for saved in result.get("items") or []:
-        item = by_persona.get(saved.get("persona_id"))
+        snapshot_id = str(saved.get("ranking_snapshot_id") or "")
+        if snapshot_id not in snapshots:
+            record = _get_ranking_write_owner().get_ranking_snapshot(snapshot_id)
+            snapshots[snapshot_id] = record if isinstance(record, dict) else {}
+        item = next(
+            (
+                i for i in snapshots[snapshot_id].get("items") or []
+                if isinstance(i, dict) and i.get("persona_id") == saved.get("persona_id")
+            ),
+            None,
+        )
         if item is None:
-            continue
+            continue  # fail closed: evaluated snapshot cannot be resolved
         recommendations.append(
             _pm12_quarterly_recommendation_item(
-                {**item, "ranking_snapshot_id": saved["ranking_snapshot_id"]},
+                {**json.loads(json.dumps(item)), "ranking_snapshot_id": snapshot_id, "evidence_refs": []},
                 action_id=saved["action_id"],
                 quarter_window=quarter_window,
-                evidence_refs=evidence_refs,
+                evidence_refs=[],
                 saved={**saved, "evaluator_run_id": result.get("run_id"), "evaluated_at": result.get("evaluated_at")},
             )
         )

@@ -54,3 +54,42 @@ def test_bff_has_no_score_to_action_rule_or_static_rationale():
     assert not hasattr(personas_service, "_pm12_recommendation_action_ids")
     assert not hasattr(personas_service, "_pm12_add_recommendation_action")
     assert all("rationale" not in a for a in personas_service._PM12_QUARTERLY_RECOMMENDATION_ACTIONS.values())
+
+
+def test_refresh_after_ranking_advances_keeps_saved_snapshot_projection(monkeypatch):
+    with gov_test._isolated_client() as (client, _store, _commands):
+        first = _items(client)[0]
+        persona, snap = first["persona_id"], first["ranking_snapshot_id"]
+        saved = {
+            "run_id": "persona-eval-1", "evaluated_at": "2026-01-01T00:00:00+00:00",
+            "items": [{
+                "persona_id": persona, "action_id": "promote_to_canary_candidate", "rationale": "Provider.",
+                "evidence_ref_ids": ["ev-old"], "governance_request": None, "ranking_snapshot_id": snap,
+                "recommendation_id": f"pm12-2026-q1-{persona}-promote_to_canary_candidate",
+            }],
+        }
+        monkeypatch.setattr(evaluator_results, "saved_evaluator_result", lambda *a, **k: saved)
+        before = _items(client)[0]
+        real_attach = personas_service._pm12_attach_ranking_snapshot
+
+        def advanced(items, **kwargs):  # live ranking moves: new scores/evidence
+            moved = [{**i, "score": 95.0, "state": "frozen", "evidence_refs": [{"id": "ev-new"}]} for i in items]
+            return real_attach(moved, **kwargs)
+
+        monkeypatch.setattr(personas_service, "_pm12_attach_ranking_snapshot", advanced)
+        after = _items(client)[0]
+        for key in ("ranking_snapshot_id", "score", "state", "evidence_refs", "evidence_ref_ids"):
+            assert after[key] == before[key]
+        assert after["evidence_ref_ids"] == ["ev-old"] and after["evidence_refs"] == []
+
+
+def test_unresolvable_saved_snapshot_fails_closed(monkeypatch):
+    with gov_test._isolated_client() as (client, _store, _commands):
+        persona = _items(client)[0]["persona_id"]
+        saved = {"run_id": "r", "items": [{
+            "persona_id": persona, "action_id": "promote_to_canary_candidate", "rationale": "x",
+            "evidence_ref_ids": [], "ranking_snapshot_id": "snap-missing",
+            "recommendation_id": f"pm12-2026-q1-{persona}-promote_to_canary_candidate",
+        }]}
+        monkeypatch.setattr(evaluator_results, "saved_evaluator_result", lambda *a, **k: saved)
+        assert _items(client) == []
