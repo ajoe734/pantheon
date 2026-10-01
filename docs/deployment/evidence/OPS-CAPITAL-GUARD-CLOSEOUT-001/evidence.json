@@ -1,0 +1,20 @@
+{
+  "task_id": "OPS-CAPITAL-GUARD-CLOSEOUT-001",
+  "subject_task_id": "CAPITAL-GUARD-KERNEL-001",
+  "scope": "Historical merged-review evidence only; reconciliation pending",
+  "historical_review": {"owner": "Antigravity", "reviewer": "Codex", "generation": 13, "status": "review_approved", "at": "2026-10-01T15:18:56Z", "activity_event_id": "ai-status-event-b74d608c525048155f8778e2a3fe03b1b25686d54d4991db0ff63112bacaa321"},
+  "journal": {"binding": "PANTHEON_TASK_STATE_EVENT_LOG", "file": "task-state-events-v2.jsonl", "sequence_event_sha256": {
+    "27489": "00b255eaf6ad549c015dfc2e2c612c3cef9da75bd000b8ea7bdd7cd77296f7ad",
+    "27490": "5fed7aedc65b99ec3a89e723fdbfefb031db628406246a3273e3921aae0c6018",
+    "27492": "d298f95431c4ec7f5e079f17067629e1f36581eae9e0c738c33df3af7095e56d",
+    "27712": "f8862a6d23f8665f98d96bc43c6d5f75e481d59053d9e3ae58aa17c21420fdd9",
+    "27746": "69f5901705f7c1df6f4b03c54f77deed8b7a6d03123ae15fb3a9f731efa8a24b"
+  }},
+  "delivery": {"repository": "ajoe734/pantheon", "pr": 6078, "head": "6ab61d61e34a9f08a905779a7db1b0990bc38f12", "merge": "6377295aafe0b6250e5e2b00a6327b9b7d81e045", "verified_dev": "3cecdf55f2f0300415e2f06dc2f474669e15c388", "manifest_blob": "ba6ed43165c0987d4f47de782a258d57122fb34d"},
+  "stale_receipt": {"generation": 8, "pr": 6059, "head": "fb5e2ace9755cb4ee3a14d1e2670cbcb4932fb7f", "merge": "33dc57e0f9909504c4629714523ca84622ebd0d7", "preserved": true},
+  "whole_task_production": {"pr_6059": 243, "pr_6078": 1, "cumulative": 244, "budget": 250},
+  "review_evidence": "docs/deployment/evidence/OPS-CAPITAL-GUARD-CLOSEOUT-001/merged-review.md",
+  "validation": ["governed show of cleanup and subject tasks", "targeted canonical journal event digests, assignment and exact-head binding", "gh pr view 6078 --repo ajoe734/pantheon", "gh api repos/ajoe734/pantheon/pulls/{6059,6078}/files --paginate and diff_budget classification", "git merge-base --is-ancestor for approved head and merge against fetched origin/dev", "git rev-parse approved-head:historical-manifest"],
+  "limits": {"new_review_attestation": false, "root_reconciled": false, "hosted_acceptance": false, "production_net_lines": 0},
+  "next": "Independent evidence review and merge; approved command-source promotion; existing Human/Ops/reviewer reconcile_merged_done with product delivery evidence and terminal readback"
+}

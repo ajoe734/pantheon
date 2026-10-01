@@ -376,6 +376,25 @@ class OpenClawOpsClient:
             query["operator_id"] = operator_id
         return self._request("GET", "/api/openclaw-adapter/audit/invocations", query=query)
 
+    def invoke_structured_extraction(
+        self, *, prompt: str, extraction_schema: Dict[str, Any], operator_id: str,
+        trace_id: Optional[str] = None, idempotency_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Data-only turn: the adapter pins the single `emit_extraction` tool and rejects any other."""
+        headers = {"X-Operator-Id": operator_id}
+        if trace_id:
+            headers["X-Trace-Id"] = trace_id
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+        return self._request(
+            "POST",
+            "/api/openclaw-adapter/assistant/providers/openclaw/structured",
+            body={"mode": "user", "prompt": prompt, "extraction_schema": extraction_schema},
+            headers=headers,
+            expected_status={200},
+            timeout_seconds=self._assistant_timeout_seconds(),
+        )
+
     def invoke_assistant_provider(
         self,
         *,
