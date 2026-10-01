@@ -73,7 +73,6 @@ from services.control_plane.bff.pm12.service import (
     _pm12_performance_attribution_rows,
     _pm12_performance_attribution_sources,
     _pm12_quarterly_recommendation_item,
-    _pm12_recommendation_action_ids,
     _pm12_resolve_quarterly_recommendation_submit_params,
     _pm12_semantic_values_match,
 )
@@ -430,18 +429,6 @@ def test_pm12_allocation_line_assertion_hash_and_digest():
     assert _pm12_allocation_line_assertion_hash(line_alt) == assertion_hash
 
 
-def test_pm12_recommendation_action_ids():
-    high_perf = {"overall_score": 90.0, "search_score": 85.0, "eligible": True}
-    actions = _pm12_recommendation_action_ids(high_perf)
-    assert "promote_to_canary_candidate" in actions
-    assert "increase_research_budget" in actions
-
-    poor_perf = {"overall_score": 30.0, "execution_score": 40.0}
-    poor_actions = _pm12_recommendation_action_ids(poor_perf)
-    assert "suspend_persona" in poor_actions
-    assert "require_retraining" in poor_actions
-
-
 def test_pm12_performance_attribution_response_direct():
     res = _pm12_performance_attribution_response(
         dimensions=["persona"],
@@ -492,7 +479,6 @@ def test_management_ai_service_audit_and_store_isolation():
 def test_pm12_quarter_window_and_action_helpers():
     import importlib
     from services.control_plane.bff.pm12.service import (
-        _pm12_add_recommendation_action,
         _pm12_current_quarter_id,
         _pm12_quarter_window,
     )
@@ -509,15 +495,7 @@ def test_pm12_quarter_window_and_action_helpers():
     assert window["year"] == 2026
     assert window["quarter_number"] == 2
 
-    # 3. Add recommendation action deduplicates and restricts to valid actions
-    actions: List[str] = []
-    _pm12_add_recommendation_action(actions, "promote_to_canary_candidate")
-    _pm12_add_recommendation_action(actions, "promote_to_canary_candidate")
-    assert len(actions) == 1
-    _pm12_add_recommendation_action(actions, "unknown_action_not_in_manifest")
-    assert len(actions) == 1
-
-    # 4. Delegation identity: main re-exports pm12 service implementations.
+    # 3. Delegation identity: main re-exports pm12 service implementations.
     # GENUINE BLOCKER: this assertion is specifically about whether main.py's own
     # module-level names are bound to the pm12.service objects (rather than a local
     # duplicate definition living in main.py itself), so it inherently requires
@@ -525,7 +503,6 @@ def test_pm12_quarter_window_and_action_helpers():
     # binding. Steps 1-3 above already exercise the real pm12.service seam directly
     # with no main dependency.
     assert bff_main._pm12_quarter_window is _pm12_quarter_window
-    assert bff_main._pm12_add_recommendation_action is _pm12_add_recommendation_action
     assert bff_main._pm12_quarterly_recommendation_item is _pm12_quarterly_recommendation_item
 
 

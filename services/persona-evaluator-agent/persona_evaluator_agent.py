@@ -27,6 +27,7 @@ from urllib.parse import parse_qs, urlparse
 MAX_PER_RUN = 5
 MAX_PER_HOUR = 20
 MAX_PERSONAS = 60  # keeps the prompt bounded
+MAX_SNAPSHOTS_KEPT = 20
 DEDUPE_TTL_SECONDS = 7 * 86400
 ACTIONS = (
     "promote_to_canary_candidate",
@@ -98,7 +99,7 @@ def quarter_of(moment: datetime) -> str:
 
 
 class Store:
-    """One JSON file: saved results per quarter, governance requests, creation times, last run."""
+    """One JSON file: saved results per quarter+snapshot, governance requests, creation times, last run."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -109,7 +110,7 @@ class Store:
             state = json.loads(self.path.read_text())
         except (OSError, ValueError):
             state = {}
-        return {"quarters": {}, "requests": {}, "created": [], "last_run": None, **state}
+        return {"results": {}, "latest": {}, "requests": {}, "created": [], "last_run": None, **state}
 
     def save(self, state: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -230,8 +231,8 @@ def run_once(
     quarter = quarter_of(moment)
     try:
         items, snapshot_id = collect_evidence(bff_url, quarter, bff_headers, fetch)
-        saved = store.load()["quarters"].get(quarter)
-        if saved and saved["ranking_snapshot_id"] == snapshot_id:
+        saved = store.load()["results"].get(f"{quarter}|{snapshot_id}")
+        if saved:
             recs, reused = saved["items"], True  # refresh/retry/restart reads the same recommendation
         else:
             recs = [
@@ -254,7 +255,11 @@ def run_once(
                  "provider": "openclaw", "items": recs}
         if reused:
             entry.update({k: saved[k] for k in ("run_id", "evaluated_at")})
-        state["quarters"][quarter] = entry
+        state["results"][f"{quarter}|{snapshot_id}"] = entry
+        state["latest"][quarter] = snapshot_id
+        stale = sorted((v["evaluated_at"], k) for k, v in state["results"].items() if k.startswith(f"{quarter}|"))
+        for _, key in stale[:-MAX_SNAPSHOTS_KEPT]:  # admitted snapshots stay readable for replayed submits
+            del state["results"][key]
         state["created"] = [t for t in state["created"] if now() - t < 3600]
         state["requests"] = {k: v for k, v in state["requests"].items() if now() - v["at"] < DEDUPE_TTL_SECONDS}
         for rec in recs:
@@ -309,8 +314,10 @@ def serve(store: Store, token: str, port: int) -> ThreadingHTTPServer:
                 code, body = 401, {"error": "service token required"}
             else:
                 state = store.load()
-                quarter = (parse_qs(url.query).get("quarter") or [""])[0].upper()
-                code, body = 200, {"data": {"quarter": quarter, "result": state["quarters"].get(quarter),
+                query = parse_qs(url.query)
+                quarter = (query.get("quarter") or [""])[0].upper()
+                snapshot_id = (query.get("snapshot_id") or [state["latest"].get(quarter, "")])[0]
+                code, body = 200, {"data": {"quarter": quarter, "result": state["results"].get(f"{quarter}|{snapshot_id}"),
                                             "last_run": state["last_run"]}}
             payload = json.dumps(body).encode()
             self.send_response(code)

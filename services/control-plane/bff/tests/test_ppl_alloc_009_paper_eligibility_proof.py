@@ -894,31 +894,10 @@ def test_route_rejects_non_exact_owner_event_readback(
     assert "readback did not prove" in response.text
 
 
-def test_pm12_promotion_thresholds_and_weights_remain_unchanged() -> None:
+def test_pm12_score_weights_remain_unchanged() -> None:
     assert personas_service._PM12_LEAGUE_SCORE_WEIGHTS == {
         "pnl": 0.35,
         "risk": 0.25,
         "execution": 0.25,
         "activity": 0.15,
     }
-    below_threshold = {
-        "overall_score": 84.999,
-        "components": {
-            "risk_score": 70.0,
-            "execution_score": 65.0,
-        },
-    }
-    at_threshold = {
-        "overall_score": 85.0,
-        "components": {
-            "risk_score": 70.0,
-            "execution_score": 65.0,
-        },
-    }
-
-    assert "promote_to_canary_candidate" not in (
-        personas_service._pm12_recommendation_action_ids(below_threshold)
-    )
-    assert "promote_to_canary_candidate" in (
-        personas_service._pm12_recommendation_action_ids(at_threshold)
-    )

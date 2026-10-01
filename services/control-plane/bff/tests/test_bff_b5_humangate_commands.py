@@ -306,8 +306,12 @@ def test_human_inbox_decision_flow_can_submit_decisions_via_command_path() -> No
             command_store.update_status(command_id, CommandStatus.EXECUTED)
 
 
-def test_quarterly_ranking_recommendation_submit_uses_command_response_without_live_mutation() -> None:
+def test_quarterly_ranking_recommendation_submit_uses_command_response_without_live_mutation(
+    _saved_evaluator_result_stub,
+) -> None:
     with _isolated_b5_client() as client:
+        snapshot = read_store.get_ranking_snapshot("snap-b5-001")
+        _saved_evaluator_result_stub.record({**snapshot, "ranking_snapshot_id": "snap-b5-001"})
         recommendations = client.get(
             "/bff/management/quarterly-ranking/recommendations",
             headers=HEADERS,

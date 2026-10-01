@@ -62,7 +62,7 @@ def test_lifecycle_recommendation_creates_one_governance_request_and_saves_resul
     body = _proposals(log)[0]
     assert body["target_type"] == "persona_lifecycle_transition"
     assert body["subject"] == {"persona_id": "p1", "from_state": "paper_owner", "to_state": "frozen"}
-    saved = pea.Store(tmp_path / "state.json").load()["quarters"][QUARTER]
+    saved = pea.Store(tmp_path / "state.json").load()["results"][f"{QUARTER}|snap-1"]
     assert saved["ranking_snapshot_id"] == "snap-1" and saved["items"][0]["rationale"] == "weak risk posture"
     assert saved["items"][0]["governance_request"]["to_state"] == "frozen"
 
@@ -119,7 +119,7 @@ def test_degraded_runs_create_nothing_and_are_recorded(tmp_path):
         out = _run(tmp_path, fetch)
         assert out["status"] == "degraded" and out["created"] == 0 and _proposals(log) == []
     state = pea.Store(tmp_path / "state.json").load()
-    assert state["last_run"]["status"] == "degraded" and state["quarters"] == {}
+    assert state["last_run"]["status"] == "degraded" and state["results"] == {}
 
 
 def test_agent_has_no_tool_and_no_decision_or_write_path_beyond_propose():
