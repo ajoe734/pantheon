@@ -3449,7 +3449,7 @@ class ManagementService:
                                     "source_type": "incident",
                                     "inboxType": "incident",
                                     "status": st,
-                                    "action_state": "pending" if st in ("active", "open", "new", "escalated") else "resolved",
+                                    "action_state": "pending" if st in ("active", "open", "new", "escalated", "investigating") else "resolved",
                                     "priority": "critical" if str(r.get("severity") or "").lower() in ("critical", "sev1", "high") else "medium",
                                     "title": str(r.get("title") or r.get("summary") or "Incident"),
                                     "summary": str(r.get("summary") or "Incident requires review"),
@@ -3844,7 +3844,7 @@ class ManagementService:
                 if not isinstance(inc, dict):
                     continue
                 st = str(inc.get("status") or "").lower()
-                if st in ("open", "active", "triggered", "elevated"):
+                if st in ("open", "active", "triggered", "elevated", "investigating"):
                     inc_id = str(inc.get("incident_id") or inc.get("id") or "")
                     incident_alerts.append({
                         "alert_id": inc_id or f"inc-{len(incident_alerts)}",
@@ -4022,7 +4022,17 @@ class ManagementService:
                         "summary": f.get("title") or f.get("summary") or f_id,
                         "created_at": f.get("created_at") or snap,
                     })
-                surfaces["incidents"] = {"status": "ok", "source": "store"}
+                incident_source = "store"
+                source_fn = getattr(store, "dataset_source", None)
+                if callable(source_fn):
+                    try:
+                        incident_source = str(source_fn("incidents"))
+                    except Exception:
+                        incident_source = "error"
+                if incident_source in ("missing", "unavailable", "error"):
+                    surfaces["incidents"] = {"status": "unavailable", "source": incident_source}
+                else:
+                    surfaces["incidents"] = {"status": "ok", "source": "store"}
             else:
                 surfaces["incidents"] = {"status": "unavailable", "source": "missing"}
         except Exception:

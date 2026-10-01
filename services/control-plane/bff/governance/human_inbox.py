@@ -63,7 +63,7 @@ _HUMAN_INBOX_OPEN_GOVERNANCE_STATUSES = {
     "reviewed",
 }
 
-_HUMAN_INBOX_OPEN_INCIDENT_STATUSES = {"pending", "open", "active", "escalated"}
+_HUMAN_INBOX_OPEN_INCIDENT_STATUSES = {"pending", "open", "active", "escalated", "investigating"}
 
 _HUMAN_INBOX_PRIORITY_RANK = {
     "critical": 4,
