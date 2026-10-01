@@ -295,6 +295,7 @@ LOCAL_HUMAN_OPS_ACTIONS = frozenset(
         "dependency-contract",
         "execution-resource",
         "artifact-contract",
+        "budget-contract",
         "reopen",
         "resume_integration",
         "note",
@@ -661,6 +662,7 @@ TASK_ID_COMMAND_ARG_INDEX: dict[str, int] = {
     "dependency-track": 0,
     "execution-resource": 0,
     "artifact-contract": 0,
+    "budget-contract": 0,
     "start": 0,
     "progress": 0,
     "note": 0,
@@ -5798,6 +5800,76 @@ def command_artifact_contract(state: dict[str, Any], args: list[str]) -> None:
             "artifact": artifact,
             "previous": current_artifacts,
             "current": updated,
+            "message": reason,
+            **local_human_ops_audit_fields(),
+        }
+    )
+
+
+def command_budget_contract(state: dict[str, Any], args: list[str]) -> None:
+    """Revise a pre-dispatch task's line budget without changing its change class."""
+    if len(args) != 4:
+        raise SystemExit(
+            "Usage: budget-contract <task-id> <expected-old-budget> <new-budget> <reason>"
+        )
+    task_id, raw_previous, raw_current, reason = args
+    if current_actor() != "Human/Ops":
+        raise SystemExit("Only Human/Ops can revise task budget contracts")
+    if not reason.strip():
+        raise SystemExit("Budget contract revision reason is required")
+    try:
+        previous, current = int(raw_previous), int(raw_current)
+    except ValueError as exc:
+        raise SystemExit("Expected and new budgets must be integers") from exc
+
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    status = str(task.get("status") or "").strip().lower()
+    if has_terminal_fact(state, task_id) or status in {"done", "superseded"}:
+        raise SystemExit(f"Task {task_id} is terminal in lifecycle state {status}")
+    if status not in {"todo", "blocked"}:
+        raise SystemExit(
+            f"Task {task_id} is in lifecycle state {status!r}; "
+            "budget contracts can only be revised in pre-dispatch states todo or blocked"
+        )
+    if task.get("artifact_conflict_guard") is not None:
+        raise SystemExit(
+            f"Task {task_id} has an immutable artifact conflict guard; "
+            "revise its catalog contract instead of changing its budget"
+        )
+    _diff_budget_module().validate_task_metadata(task)
+    if task.get("net_prod_line_budget") != previous:
+        raise SystemExit(
+            f"Task {task_id} budget changed: expected {previous}, "
+            f"found {task.get('net_prod_line_budget')!r}"
+        )
+    _diff_budget_module().validate_task_metadata(
+        {"change_class": task.get("change_class"), "net_prod_line_budget": current}
+    )
+
+    timestamp = iso_now()
+    task["net_prod_line_budget"] = current
+    task["contract_revision"] = {
+        "kind": "budget_contract",
+        "previous": previous,
+        "current": current,
+        "change_class": task["change_class"],
+        "reason": reason,
+        "updated_at": timestamp,
+        "updated_by": "Human/Ops",
+    }
+    task["last_update"] = timestamp
+    task["next"] = reason
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": "Human/Ops",
+            "type": "budget_contract_revised",
+            "task_id": task_id,
+            "previous": previous,
+            "current": current,
+            "change_class": task["change_class"],
             "message": reason,
             **local_human_ops_audit_fields(),
         }
@@ -11389,6 +11461,7 @@ def main(argv: list[str]) -> int:
         "dependency-track": command_dependency_track,
         "execution-resource": command_execution_resource,
         "artifact-contract": command_artifact_contract,
+        "budget-contract": command_budget_contract,
         "reopen": command_reopen,
         "resume_integration": command_resume_integration,
         "handoff": command_handoff,

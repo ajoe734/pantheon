@@ -13746,6 +13746,111 @@ class TaskMetadataTests(unittest.TestCase):
                     ["TASK-ARTIFACT-CONTRACT-002", "add", "evidence.json", "Unauthorized"],
                 )
 
+    def test_budget_contract_records_added_scope_without_changing_task_authority(self) -> None:
+        reason = "User added automatic paper operation scope after the initial budget"
+        env = {
+            "AI_NAME": "Human/Ops",
+            "PANTHEON_LOCAL_HUMAN_OPS": "1",
+            "HUMAN_OPS_REASON": reason,
+            "ORCH_RUN_ID": "",
+        }
+        for status in ("todo", "blocked"):
+            task = {
+                "id": f"TASK-BUDGET-{status.upper()}",
+                "status": status,
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "generation": 8,
+                "change_class": "corrective",
+                "net_prod_line_budget": 250,
+                "artifacts": ["services/example.py"],
+            }
+            before = deepcopy(task)
+            self.state["tasks"].append(task)
+            with self.subTest(status=status), mock.patch.dict(os.environ, env, clear=False):
+                ai_status.command_budget_contract(self.state, [task["id"], "250", "300", reason])
+                self.assertEqual(task["net_prod_line_budget"], 300)
+                for key in before.keys() - {"net_prod_line_budget"}:
+                    self.assertEqual(task[key], before[key])
+                revision = task["contract_revision"]
+                self.assertEqual(revision["kind"], "budget_contract")
+                self.assertEqual((revision["previous"], revision["current"]), (250, 300))
+                self.assertEqual(revision["reason"], reason)
+                self.assertEqual(revision["updated_by"], "Human/Ops")
+
+        events = [
+            json.loads(line)
+            for line in self._test_log_file.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        revisions = [event for event in events if event.get("type") == "budget_contract_revised"]
+        self.assertEqual(len(revisions), 2)
+        for event in revisions:
+            self.assertEqual((event["previous"], event["current"]), (250, 300))
+            self.assertEqual(event["change_class"], "corrective")
+            self.assertEqual(event["operator_mode"], "local_human_ops")
+            self.assertEqual(event["operator_reason"], reason)
+
+    def test_budget_contract_rejects_stale_or_invalid_metadata_without_mutation(self) -> None:
+        cases = (
+            ({}, "249", "300", "Added scope", "budget changed"),
+            ({}, "250", "300.5", "Added scope", "must be integers"),
+            ({}, "250", "300", " ", "reason is required"),
+            ({"change_class": None}, "250", "300", "Added scope", "requires change_class"),
+            ({"net_prod_line_budget": True}, "1", "300", "Added scope", "must be an integer"),
+        )
+        for overrides, previous, current, reason, error in cases:
+            task = {
+                "id": "TASK-BUDGET-INVALID",
+                "status": "blocked",
+                "change_class": "corrective",
+                "net_prod_line_budget": 250,
+                **overrides,
+            }
+            self.state["tasks"] = [task]
+            before = deepcopy(self.state)
+            with (
+                self.subTest(overrides=overrides, previous=previous, current=current, reason=reason),
+                mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+                mock.patch.object(ai_status, "append_log") as append_log,
+                self.assertRaisesRegex(SystemExit, error),
+            ):
+                ai_status.command_budget_contract(self.state, [task["id"], previous, current, reason])
+            self.assertEqual(self.state, before)
+            append_log.assert_not_called()
+
+    def test_budget_contract_rejects_active_terminal_guarded_or_nonhuman_changes(self) -> None:
+        cases = [
+            (status, "Human/Ops", {}, False, "pre-dispatch")
+            for status in ("in_progress", "review", "review_approved", "unknown")
+        ] + [
+            ("done", "Human/Ops", {}, False, "terminal"),
+            ("superseded", "Human/Ops", {}, False, "terminal"),
+            ("blocked", "Human/Ops", {}, True, "terminal"),
+            ("blocked", "Human/Ops", {"artifact_conflict_guard": {}}, False, "immutable"),
+            ("blocked", "Codex", {}, False, "Only Human/Ops"),
+        ]
+        for status, actor, overrides, terminal, error in cases:
+            task = {
+                "id": "TASK-BUDGET-REJECT",
+                "status": status,
+                "change_class": "corrective",
+                "net_prod_line_budget": 250,
+                **overrides,
+            }
+            self.state["tasks"] = [task]
+            before = deepcopy(self.state)
+            with (
+                self.subTest(status=status, actor=actor, terminal=terminal, overrides=overrides),
+                mock.patch.dict(os.environ, {"AI_NAME": actor}, clear=False),
+                mock.patch.object(ai_status, "has_terminal_fact", return_value=terminal),
+                mock.patch.object(ai_status, "append_log") as append_log,
+                self.assertRaisesRegex(SystemExit, error),
+            ):
+                ai_status.command_budget_contract(self.state, [task["id"], "250", "300", "Added scope"])
+            self.assertEqual(self.state, before)
+            append_log.assert_not_called()
+
     def test_execution_resource_command_success_when_field_absent(self) -> None:
         task = {
             "id": "TASK-RES-ABSENT",
