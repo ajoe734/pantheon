@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import hashlib
 import os
 import sys
@@ -103,7 +104,7 @@ def _make_mock_client(
     synthesis_log = []
 
     class MockClient(OpenClawOpsClient):
-        def invoke_structured_extraction(self, *, prompt, extraction_schema, operator_id, trace_id=None):
+        def invoke_structured_extraction(self, *, prompt, extraction_schema, operator_id, trace_id=None, idempotency_key=None):
             import json as _json
             opinions = _json.loads(prompt.split("\n\n", 1)[1])
             synthesis_log.append(trace_id)
@@ -593,7 +594,7 @@ def test_concurrent_pre_expiry_workers_execute_provider_only_once(bff_client):
     detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
     assert detail["status"] == "completed"
     assert len(detail["opinions"]) == 1
-    assert len(detail["provider_invocations"]) == 1
+    assert len([i for i in detail["provider_invocations"] if i["participant"]["persona_id"] != "synthesis"]) == 1
 
 
 def test_retry_and_recover_routes_do_not_execute_inline(bff_client):
@@ -1017,14 +1018,78 @@ def test_synthesis_failure_keeps_opinions_and_retry_reuses_saved(bff_client):
     assert interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")["synthesis"]["status"] == "unavailable"
 
 
-def test_saved_synthesis_is_adopted_without_second_provider_call():
+def _ok(opinions, status="options"):
+    ids = [o["opinion_id"] for o in opinions]
+    return {"data": {"output": {"structured_data": {
+        "status": status, "summary": "s", "evidence_refs": [], "disagreements": [],
+        "agreements": [{"statement": "ok", "opinion_ids": ids, "rationale": "r"}]}}}}
+
+
+def test_different_labels_compatible_conditions_come_from_provider(bff_client):
+    labels = iter(["support", "oppose"])
+    def persona(prompt, **kw):
+        return {"status": "completed", "output": {
+            "request_id": f"r-{uuid.uuid4().hex[:6]}", "agent_id": str(kw.get("agent_id")),
+            "json_events": [{"item": {"text": json.dumps({
+                "conclusion": next(labels), "rationale": "same compatible condition", "confidence": 0.7,
+                "uncertainty": [], "risks": [], "invalidation_conditions": ["rates fall"],
+                "evidence_refs": [], "recommended_measures": []})}}]}}
+    factory, _ = _make_mock_client(invoke_fn=persona, synthesis_fn=lambda o: _ok(o, "recommendation"))
+    submit_resp, _ = _submit_interaction(bff_client, personas=("risk-analyst", "macro-quant"))
+    interaction_id = submit_resp.json()["data"]["interaction_id"]
+    AgoraInteractionWorker(lifecycle_store=interaction_lifecycle, workshop_store=workshop_store,
+                           read_store=read_store, client_factory=factory).run_once()
+    detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert {o["conclusion"] for o in detail["opinions"]} == {"support", "oppose"}
+    assert detail["synthesis"]["status"] == "recommendation"
+
+
+def test_malformed_nested_synthesis_is_unavailable(bff_client):
+    for bad in (
+        {"statement": None, "opinion_ids": ["x"], "rationale": "r"},
+        {"statement": "s", "opinion_ids": None, "rationale": "r"},
+        {"statement": "s", "opinion_ids": [], "rationale": {"unexpected": True}},
+    ):
+        def malformed(opinions, bad=bad):
+            out = _ok(opinions)
+            out["data"]["output"]["structured_data"]["agreements"] = [bad]
+            return out
+        interaction_id, _, _ = _run_synthesis(bff_client, malformed)
+        detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+        assert detail["synthesis"]["status"] == "unavailable"
+        assert len(detail["opinions"]) == 2
+
+
+def test_synthesis_only_retry_and_restart_adoption(bff_client):
+    state = {"fail": True}
+    def flaky(opinions):
+        if state["fail"]:
+            raise RuntimeError("down")
+        return _ok(opinions)
+    calls = []
+    factory, _ = _make_mock_client(call_log=calls, synthesis_fn=flaky)
+    submit_resp, _ = _submit_interaction(bff_client, personas=("risk-analyst", "macro-quant"))
+    interaction_id = submit_resp.json()["data"]["interaction_id"]
+    worker = AgoraInteractionWorker(lifecycle_store=interaction_lifecycle, workshop_store=workshop_store,
+                                    read_store=read_store, client_factory=factory)
+    worker.run_once()
+    detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert detail["status"] == "degraded" and detail["synthesis"]["status"] == "unavailable"
+    first_opinions = detail["opinions"]
+    state["fail"] = False
+    interaction_lifecycle.prepare_retry(interaction_id, "pantheon-dev", "interaction-user", idempotency_key="k1",
+                                        fingerprint="f", actor_id="interaction-user", reason="synthesis")
+    worker.run_once()
+    detail = interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert detail["status"] == "completed" and detail["synthesis"]["status"] == "options"
+    assert detail["opinions"] == first_opinions and len(calls) == 2  # personas were not invoked again
+    synth_calls = len(factory.synthesis_log)
+    # restart / lease recovery: the saved result and correlation are adopted, no provider call
     from services.control_plane.bff.agora.interaction.runner import _synthesize
     class Boom:
         def invoke_structured_extraction(self, **kw):
             raise AssertionError("must not call provider")
-    opinions = [{"opinion_id": "opn-1"}]
-    import hashlib
-    sid = "syn-" + hashlib.sha256(b"opn-1").hexdigest()[:20]
-    saved = {"synthesis_id": sid, "status": "options", "summary": "kept"}
-    out = _synthesize(Boom(), opinions, [], "t", operator_id="o", trace_id="tr", prior={"synthesis": saved})
-    assert out is saved
+    again = _synthesize(Boom(), detail["opinions"], [], "t", operator_id="o", trace_id="tr", interaction_id=interaction_id,
+                        attempt=1, lifecycle_store=interaction_lifecycle, tenant_id="pantheon-dev",
+                        user_id="interaction-user", lease_owner="w2")
+    assert again == detail["synthesis"] and len(factory.synthesis_log) == synth_calls

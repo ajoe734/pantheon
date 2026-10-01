@@ -135,18 +135,48 @@ def _raise_transient_provider_degraded(provider_payload: Dict[str, Any]) -> None
 
 
 _SYNTHESIS_STATUSES = ["recommendation", "options", "no_consensus", "more_research_required"]
+_STR = {"type": "string", "minLength": 1}
+
+
+def _items(label: str) -> Dict[str, Any]:
+    props = {label: _STR, "opinion_ids": {"type": "array", "items": _STR}, "rationale": _STR}
+    return {"type": "array", "items": {"type": "object", "additionalProperties": False, "required": list(props), "properties": props}}
+
+
 _SYNTHESIS_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "required": ["status", "summary", "agreements", "disagreements", "evidence_refs"],
     "properties": {
         "status": {"type": "string", "enum": _SYNTHESIS_STATUSES},
-        "summary": {"type": "string", "minLength": 1},
-        "agreements": {"type": "array", "items": {"type": "object", "required": ["statement", "opinion_ids", "rationale"]}},
-        "disagreements": {"type": "array", "items": {"type": "object", "required": ["detail", "opinion_ids", "rationale"]}},
-        "evidence_refs": {"type": "array", "items": {"type": "object", "required": ["ref_type", "ref_id"]}},
+        "summary": _STR,
+        "agreements": _items("statement"),
+        "disagreements": _items("detail"),
+        "evidence_refs": {"type": "array", "items": {"type": "object", "additionalProperties": False,
+                          "required": ["ref_type", "ref_id"], "properties": {"ref_type": _STR, "ref_id": _STR}}},
     },
 }
+
+
+def _validated_synthesis(result: Any, ids: List[str], opinions: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Deterministic envelope, nested-shape and opinion/evidence membership checks only."""
+    def text(value: Any) -> bool:
+        return isinstance(value, str) and bool(value.strip())
+    supplied = {(str(r.get("ref_type")), str(r.get("ref_id"))) for o in opinions for r in o.get("evidence_refs") or []}
+    ok = isinstance(result, dict) and result.get("status") in _SYNTHESIS_STATUSES and text(result.get("summary"))
+    for key, label in (("agreements", "statement"), ("disagreements", "detail")):
+        rows = result.get(key) if ok else None
+        ok = ok and isinstance(rows, list) and all(
+            isinstance(r, dict) and text(r.get(label)) and text(r.get("rationale"))
+            and isinstance(r.get("opinion_ids"), list) and set(r["opinion_ids"]) <= set(ids)
+            for r in rows)
+    refs = result.get("evidence_refs") if ok else None
+    ok = ok and isinstance(refs, list) and all(
+        isinstance(r, dict) and text(r.get("ref_type")) and text(r.get("ref_id"))
+        and (r["ref_type"], r["ref_id"]) in supplied for r in refs)
+    if not ok:
+        raise ValueError("synthesis response is malformed or references unsupplied opinions/evidence")
+    return result
 
 
 def _synthesize(
@@ -157,16 +187,38 @@ def _synthesize(
     *,
     operator_id: str,
     trace_id: str,
-    prior: Optional[Dict[str, Any]],
+    interaction_id: str,
+    attempt: int,
+    lifecycle_store: Optional[InteractionLifecycleStore],
+    tenant_id: str,
+    user_id: str,
+    lease_owner: Optional[str],
 ) -> Optional[Dict[str, Any]]:
-    """One structured provider judgment over the persisted opinions; never assembled locally."""
+    """One structured provider judgment over the persisted opinions; never assembled locally.
+
+    Reuses the durable invocation claim, so a retry or lease recovery adopts the saved
+    result instead of calling the provider again.  Returns None while another worker owns it.
+    """
     if not opinions:
         return None
     ids = [opinion["opinion_id"] for opinion in opinions]
     synthesis_id = "syn-" + hashlib.sha256("\0".join(ids).encode("utf-8")).hexdigest()[:20]
-    saved = (prior or {}).get("synthesis")
-    if isinstance(saved, dict) and saved.get("synthesis_id") == synthesis_id and saved.get("status") != "unavailable":
-        return saved  # retry / restart adopts the saved result and its provider correlation
+    invocation_id = "inv-" + hashlib.sha256(f"{synthesis_id}\0{attempt}".encode("utf-8")).hexdigest()[:20]
+    correlation_id = f"{trace_id}:{invocation_id}"
+    invocation = {
+        "invocation_id": invocation_id, "interaction_id": interaction_id, "participant": {"persona_id": "synthesis"},
+        "provider_kind": "openclaw", "request_correlation_id": correlation_id, "status": "running",
+        "started_at": created_at, "authority": authority_boundary(),
+    }
+    if lifecycle_store is not None:
+        for saved in (lifecycle_store.get(interaction_id, tenant_id, user_id) or {}).get("provider_invocations") or []:
+            result = saved.get("synthesis")
+            if saved.get("status") == "succeeded" and (result or {}).get("synthesis_id") == synthesis_id:
+                return result  # adopt the saved result and its provider correlation
+        durable, claimed = lifecycle_store.claim_invocation(
+            interaction_id, invocation, lease_owner=lease_owner or "", lease_duration_seconds=300)
+        if not claimed:
+            return durable["invocation"].get("synthesis")
     base = {
         "synthesis_id": synthesis_id,
         "opinion_ids": ids,
@@ -176,8 +228,8 @@ def _synthesize(
         "conditions": [c for opinion in opinions for c in opinion.get("invalidation_conditions") or []],
         "created_at": created_at,
         "authority": authority_boundary(),
+        "provider_correlation_id": correlation_id,
     }
-    correlation_id = f"{trace_id}:{synthesis_id}"
     prompt = (
         "Synthesize the independent Persona opinions below into one judgment: recommendation, options, "
         "no_consensus or more_research_required, with a summary and agreements/disagreements, each with "
@@ -185,29 +237,28 @@ def _synthesize(
         "Reference only evidence supplied in the opinions. Return only through emit_extraction.\n\n"
         + json.dumps(opinions, sort_keys=True, default=str)
     )
+    error = None
     try:
         raw = client.invoke_structured_extraction(
-            prompt=prompt, extraction_schema=_SYNTHESIS_SCHEMA, operator_id=operator_id, trace_id=correlation_id
+            prompt=prompt, extraction_schema=_SYNTHESIS_SCHEMA, operator_id=operator_id,
+            trace_id=correlation_id, idempotency_key=invocation_id,
         )
         data = raw.get("data") if isinstance(raw.get("data"), dict) else raw
         output = data.get("output") if isinstance(data.get("output"), dict) else {}
-        result = output.get("structured_data")
-        if not isinstance(result, dict) or result.get("status") not in _SYNTHESIS_STATUSES or not str(result.get("summary") or "").strip():
-            raise ValueError("synthesis response is malformed")
-        supplied = {(str(r.get("ref_type")), str(r.get("ref_id"))) for o in opinions for r in o.get("evidence_refs") or []}
-        items = list(result.get("agreements") or []) + list(result.get("disagreements") or [])
-        if any(not isinstance(i, dict) or not set(i.get("opinion_ids") or []) <= set(ids) for i in items):
-            raise ValueError("synthesis references an unknown opinion")
-        refs = result.get("evidence_refs") or []
-        if any(not isinstance(r, dict) or (str(r.get("ref_type")), str(r.get("ref_id"))) not in supplied for r in refs):
-            raise ValueError("synthesis references unsupplied evidence")
+        result = _validated_synthesis(output.get("structured_data"), ids, opinions)
+        synthesis = {**base, "status": result["status"], "summary": result["summary"],
+                     "agreements": result["agreements"], "disagreements": result["disagreements"],
+                     "evidence_refs": result["evidence_refs"]}
     except Exception as exc:  # noqa: BLE001 - opinions stay readable; no fabricated synthesis
-        return {**base, "status": "unavailable", "summary": "Synthesis unavailable.", "agreements": [],
-                "disagreements": [], "evidence_refs": [], "error": _provider_error(exc),
-                "provider_correlation_id": correlation_id}
-    return {**base, "status": result["status"], "summary": result["summary"],
-            "agreements": result.get("agreements") or [], "disagreements": result.get("disagreements") or [],
-            "evidence_refs": refs, "provider_correlation_id": correlation_id}
+        error = {**_provider_error(exc), "retryable": True}  # a fresh synthesis-only call is always safe
+        synthesis = {**base, "status": "unavailable", "summary": "Synthesis unavailable.", "agreements": [],
+                     "disagreements": [], "evidence_refs": [], "error": error}
+    if lifecycle_store is not None:
+        invocation.update({"status": "failed" if error else "succeeded", "completed_at": created_at,
+                           "error": error, "synthesis": synthesis})
+        lifecycle_store.finish_invocation(interaction_id, invocation=invocation, opinion=None, error=error,
+                                          outbox=[], lease_owner=lease_owner)
+    return synthesis
 
 
 def run_selected_persona_interaction(
@@ -578,12 +629,16 @@ def run_selected_persona_interaction(
             "in_progress_participant_ids": in_progress_persona_ids,
         }
 
-    prior_record = lifecycle_store.get(interaction_id, tenant_id, user_id) if lifecycle_store is not None else None
     synthesis = _synthesize(
-        client, opinions, failed_persona_ids, occurred_at,
-        operator_id=operator_id, trace_id=trace_id, prior=prior_record,
+        client, opinions, failed_persona_ids, occurred_at, operator_id=operator_id, trace_id=trace_id,
+        interaction_id=interaction_id, attempt=invocation_attempt, lifecycle_store=lifecycle_store,
+        tenant_id=tenant_id, user_id=user_id, lease_owner=lease_owner,
     )
-    final_status = "completed" if opinions and not failed_persona_ids else ("degraded" if opinions else "failed")
+    if opinions and synthesis is None:  # another worker holds the synthesis claim
+        return {"status": "running", "opinions": opinions, "invocations": invocations, "synthesis": None,
+                "missing_participant_ids": [], "in_progress_participant_ids": ["synthesis"]}
+    unavailable = (synthesis or {}).get("status") == "unavailable"
+    final_status = "completed" if opinions and not failed_persona_ids and not unavailable else ("degraded" if opinions else "failed")
     closed_event_id = _event_id(tenant_id, user_id, interaction_id, attempt_event("closed"))
     closed_event = {
         "event_id": closed_event_id,

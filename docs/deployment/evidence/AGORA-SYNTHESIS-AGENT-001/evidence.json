@@ -1,14 +1,15 @@
 {
   "task_id": "AGORA-SYNTHESIS-AGENT-001",
-  "summary": "runner._synthesize heuristic replaced by one structured OpenClaw provider call (OpenClawOpsClient.invoke_structured_extraction, same /structured endpoint as servant research_proposal); result persisted via existing InteractionLifecycleStore.finalize.",
+  "summary": "runner._synthesize heuristic replaced by one structured OpenClaw provider call (invoke_structured_extraction). The call runs under the existing InteractionLifecycleStore durable invocation claim (persona_id 'synthesis'), with the provider Idempotency-Key = invocation id; the result is stored on that invocation and in finalize.",
   "validation": {
-    "membership_checks": "opinion_ids subset of supplied opinions; evidence_refs subset of supplied opinion evidence",
-    "failure_mode": "provider/malformed failure -> status unavailable, opinions preserved, retried on next run; saved non-unavailable synthesis with same synthesis_id adopted without a provider call"
+    "membership_checks": "full nested schema enforced (agreements/disagreements/evidence_refs item shapes); opinion_ids subset of supplied opinions; evidence_refs subset of supplied opinion evidence",
+    "failure_mode": "provider/malformed failure -> synthesis status unavailable, retryable failed synthesis invocation, interaction degraded with opinions preserved; prepare_retry re-runs only the synthesis (personas not re-invoked); a succeeded synthesis with the same opinion set is adopted without a provider call"
   },
   "tests": {
-    "command": "pytest services/control-plane/bff/agora/interaction",
-    "result": "interaction suite passes; new tests cover provider-sourced synthesis, failure/malformed/unsupplied evidence, saved-result adoption"
+    "command": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/agora/interaction",
+    "result": "16 passed; covers identical-label/conflicting-reason, different-label/compatible-condition, malformed nested schema, store-backed synthesis-only retry and restart adoption"
   },
-  "not_run": "Real dev acceptance (criterion 7: live two-persona workshop interaction with real provider, refresh readback, one failed synthesis call) was not run in this worker environment; must be performed by reviewer/deploy.",
-  "production_net_lines": 35
+  "not_run": "Criterion 7 real dev acceptance (live two-persona interaction with real provider, refresh readback, one failed synthesis call, UI contract check) was NOT run: this worker has no dev environment/provider access. Requires dev operator evidence before approval.",
+  "known_contract_note": "provider_invocations now includes one extra entry with participant.persona_id='synthesis'.",
+  "production_net_lines": 93
 }
