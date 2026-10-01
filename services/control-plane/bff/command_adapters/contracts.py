@@ -353,8 +353,7 @@ _WRAPPER_VERB_ALIASES = {
     ("DeploymentAction", "approve"): "ApproveDeployment",
     ("DeploymentAction", "escalatediff"): "EscalateDiff",
     ("PersonaAction", "promote"): "PromoteCandidate",
-    **{(w, v): "AlertAcknowledge" for w in ("RiskAlertAction", "IncidentAction") for v in ("acknowledge", "ack")},
-    ("IncidentAction", "remediate"): "RemediateSentinelIntervention",
+    **{("RiskAlertAction", v): "AlertAcknowledge" for v in ("acknowledge", "ack")},
     **{("EvolutionProgramAction", v.lower() + "program"): v + "EvolutionProgram" for v in ("Approve", "Pause", "Resume", "Complete", "Retire")},
     ("EvolutionProgramAction", "stop"): "StopEvolutionProgram",
     ("EvolutionProgramAction", "freezegeneration"): "FreezeEvolutionGeneration",
@@ -370,8 +369,6 @@ def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     verb = payload.get("action") or params.get("action_id") or params.get("actionId")
     verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())
     canonical = _WRAPPER_VERB_ALIASES.get((payload.get("command"), verb))
-    if canonical is None and str(payload.get("command")).endswith("Action"):
-        canonical = next((c.value for c in CommandType if c.value.lower() == verb and not c.value.endswith("Action")), None)
     if canonical is None:
         return payload
     return {

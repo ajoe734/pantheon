@@ -340,7 +340,12 @@ def execute_governed_tool(
         except HTTPException as exc:
             detail = exc.detail.get("error", {}) if isinstance(exc.detail, dict) else {}
             raise ToolValidationError(str(detail.get("message") or exc.detail), field_name=(detail.get("details") or {}).get("precondition_failed")) from exc
-        result = {"command_id": _command_id, "source": "assistant_tool_contract", "receipt": getattr(response, "model_dump", lambda **_: response)(mode="json")}
+        receipt = getattr(response, "model_dump", lambda **_: response)(mode="json")
+        admitted = (receipt.get("data") if isinstance(receipt, dict) else None) or {}
+        _command_id = str(admitted.get("command_id") or "")
+        if not _command_id:
+            raise ToolValidationError("Command admission returned no stored command.")
+        result = {"command_id": _command_id, "source": "assistant_tool_contract", "receipt": receipt}
         error = None
         status = "admitted"
     else:

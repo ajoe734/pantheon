@@ -902,6 +902,19 @@ def mount_bff_routers(
         _assistant_provider_reauth_code,
         _assistant_provider_usage_summary,
     )
+    from ..command_adapters.service import CommandAdapterService
+    command_adapter_service = _dep(
+        "_command_adapter_service",
+        lambda: CommandAdapterService(
+            command_store=app_deps.command_store,
+            read_surface=app_deps.read_surface,
+            extract_identity=_dep("_extract_identity"),
+            require_operator_role=_dep("_require_operator_role"),
+            require_read_role=_dep("_require_read_role"),
+            bff_error=_dep("_bff_error"),
+            utc_now=_dep("utc_now"),
+        ),
+    )
     app.include_router(
         create_assistant_router(
             build_context_pack=_dep("_assistant_build_context_pack"),
@@ -917,7 +930,7 @@ def mount_bff_routers(
             provider_reauth=_dep("_assistant_provider_reauth", lambda: _assistant_provider_reauth),
             provider_reauth_status=_dep("_assistant_provider_reauth_status", lambda: _assistant_provider_reauth_status),
             provider_reauth_code=_dep("_assistant_provider_reauth_code", lambda: _assistant_provider_reauth_code),
-            submit_command_admission=_dep("_submit_final_command_admission"),
+            submit_command_admission=command_adapter_service.submit_command_admission,
         )
     )
 
@@ -1269,19 +1282,6 @@ def mount_bff_routers(
 
     # 21: Command adapters
     from ..command_adapters.router import create_command_adapters_router
-    from ..command_adapters.service import CommandAdapterService
-    command_adapter_service = _dep(
-        "_command_adapter_service",
-        lambda: CommandAdapterService(
-            command_store=app_deps.command_store,
-            read_surface=app_deps.read_surface,
-            extract_identity=_dep("_extract_identity"),
-            require_operator_role=_dep("_require_operator_role"),
-            require_read_role=_dep("_require_read_role"),
-            bff_error=_dep("_bff_error"),
-            utc_now=_dep("utc_now"),
-        ),
-    )
     app.include_router(create_command_adapters_router(service=command_adapter_service))
 
     # 22-24: Rankings

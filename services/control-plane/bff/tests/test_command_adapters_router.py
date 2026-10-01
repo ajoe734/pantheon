@@ -911,3 +911,65 @@ def test_wrapped_alias_is_admitted_exactly_like_its_canonical_command(alias, tok
     assert _submit_alias(wrapper, verb, canonical, wrapped=True, token=token) == _submit_alias(
         wrapper, verb, canonical, wrapped=False, token=token
     )
+
+
+def test_unmapped_wrapper_combinations_are_not_rewritten() -> None:
+    from services.control_plane.bff.command_adapters.contracts import canonicalize_wrapped_payload
+
+    for command, verb in (("IncidentAction", "acknowledge"), ("IncidentAction", "remediate"), ("NotACommandAction", "AlertAcknowledge"), ("CapitalPoolAction", "AlertAcknowledge")):
+        payload = {"command": command, "action": verb, "target": {"type": "Incident", "id": "x"}, "params": {}}
+        assert canonicalize_wrapped_payload(payload) == payload
+
+
+@pytest.mark.parametrize("command", ["NotACommandAction", "CapitalPoolAction"])
+def test_unmapped_wrapper_is_rejected_before_storage(command) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        store = CommandStore(os.path.join(td, "commands.jsonl"))
+        svc = CommandAdapterService(command_store=store, read_surface=None, extract_identity=_test_extract_identity)
+        app = FastAPI()
+        app.include_router(create_command_adapters_router(service=svc, submit_command_admission=svc.submit_command_admission))
+        resp = TestClient(app).post("/bff/v1/commands", headers=HEADERS, json={
+            "command": command, "action": "AlertAcknowledge", "target": {"type": "RiskAlert", "id": "alert-incident-inc-test"},
+            "params": {}, "audit_context": {"reason": "unmapped"},
+        })
+        assert resp.status_code >= 400
+        assert store._get_all_commands() == []
+
+
+def test_assistant_admission_uses_injected_service_and_returns_stored_command_id() -> None:
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from services.control_plane.bff.assistant import routes
+    from services.control_plane.bff.core.app_factory import mount_bff_routers
+
+    class _Captured(Exception):
+        pass
+
+    captured: Dict[str, Any] = {}
+    original = routes.create_assistant_router
+
+    def capture(**kw):
+        captured["router"] = original(**kw)
+        captured["submit"] = kw["submit_command_admission"]
+        raise _Captured()
+
+    identity = OperatorIdentity(operator_id="asst-probe", roles=["operator"], mfa_verified=True, claims={"tenant_id": "tenant-probe"})
+    with tempfile.TemporaryDirectory() as td:
+        store = CommandStore(os.path.join(td, "commands.jsonl"))
+        svc = CommandAdapterService(command_store=store, read_surface=None, extract_identity=lambda *a, **k: identity)
+        deps = SimpleNamespace(read_surface=MagicMock(), command_store=store)
+        routes.create_assistant_router = capture
+        try:
+            with pytest.raises(_Captured):
+                mount_bff_routers(FastAPI(), app_deps=deps, _command_adapter_service=svc, _extract_identity=lambda *a, **k: identity)
+        finally:
+            routes.create_assistant_router = original
+        assert captured["submit"].__self__ is svc
+        app = FastAPI()
+        app.include_router(captured["router"])
+        resp = TestClient(app).post("/bff/assistant/tools/execute", json={
+            "action_id": "AuditExport", "entity_type": "AuditExport", "entity_id": "audit-test", "params": {}, "reason": "probe",
+        })
+        assert resp.status_code == 201, resp.text
+        stored = [r["command_id"] for r in store._get_all_commands()]
+        assert stored and resp.json()["data"]["command_id"] in stored

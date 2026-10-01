@@ -1045,7 +1045,7 @@ def test_validate_tool_denies_non_allowlisted_action() -> None:
 
 
 def _exec_admitted(**kwargs):
-    return execute_governed_tool(submit_command=lambda body, command_id, token: {"receipt_id": command_id}, **kwargs)
+    return execute_governed_tool(submit_command=lambda body, command_id, token: {"data": {"command_id": command_id}}, **kwargs)
 
 
 def test_execute_governed_tool_denies_non_allowlisted_action() -> None:
@@ -1254,7 +1254,7 @@ def _make_tool_test_app() -> FastAPI:
         extract_identity=lambda _auth: _AssistantSecurityIdentity(roles=["operator"]),
         require_read_role=lambda _id: None,
         bff_error=bff_error,
-        submit_command_admission=lambda **kw: {"receipt_id": kw["idempotency_key"], "command": kw["payload"]["command"]},
+        submit_command_admission=lambda **kw: {"data": {"command_id": kw["idempotency_key"]}, "command": kw["payload"]["command"]},
     )
     app.include_router(router)
     return app

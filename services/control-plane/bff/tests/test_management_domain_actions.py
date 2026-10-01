@@ -517,6 +517,7 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
                 "entity_id": "persona-alpha",
                 "action_id": "AdvanceLifecycle",
                 "target_state": "paper_owner",
+                "confirm_token_id": "ct-persona-adv-01",
             },
         )
 
