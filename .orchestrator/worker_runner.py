@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import signal
 import stat
@@ -382,13 +383,19 @@ def _append_leased_git_metadata_mounts(
         candidate = common_dir / relative
         if candidate.exists():
             protected.append(candidate)
+    # The task's rewritten replacement branches (`<branch>-v<N>`, which the
+    # auto-integrator delivers like the branch itself) stay writable so a later
+    # run can continue one; every other task's branch stays read-only.
+    own_refs = re.compile(
+        re.escape(re.sub(r"-v[0-9]+$", "", branch_ref)) + r"(?:-v[0-9]+)?"
+    )
     heads_root = common_dir / "refs" / "heads"
     if heads_root.is_dir():
         for candidate in heads_root.rglob("*"):
             if not candidate.is_file():
                 continue
             relative_ref = candidate.relative_to(common_dir).as_posix()
-            if relative_ref != branch_ref:
+            if not own_refs.fullmatch(relative_ref):
                 protected.append(candidate)
 
     # Parent protections are installed before the selected nested gitdir is
