@@ -22,7 +22,7 @@
   ],
   "validation": {
     "services/governance/test_approval_authority_postgres.py (operator/two-vote cases)": "3 passed (in-memory CAS store; Postgres-backed owner tests need GOV_APPROVAL_TEST_DSN and were not run)",
-    "services/control-plane/bff/test_bff_approvals_decide_contract.py": "11 passed against a stub Governance HTTP owner",
+    "services/control-plane/bff/test_bff_approvals_decide_contract.py": "15 passed against a stub Governance HTTP owner (adds verb/outcome conflict, dry-run, batch owner-result coverage)",
     "scripts/test_issue_dev_paper_principals.py + scripts/test_dev_paper_principal_renewal.py": "passed",
     "services/persona/test_lifecycle_approval_verifier.py + test_training_target_owner.py": "passed"
   },
@@ -30,6 +30,7 @@
     "hosted dev write-readback",
     "Postgres owner tests",
     "Capital PANTHEON_RUNTIME_MANAGER policy source (no existing policy reference identified; not wired)",
-    "out-of-contract test files edited (need Human/Ops artifact-contract revision): test_command_executor.py, test_bff_consol_010_fixture_pack_c.py, test_bff_governance_runtime_risk_audit_contract.py, test_mgmt_load_005_read_concurrency.py"
+    "out-of-contract test files edited (need Human/Ops artifact-contract revision): test_command_executor.py, test_bff_consol_010_fixture_pack_c.py, test_bff_governance_runtime_risk_audit_contract.py, test_mgmt_load_005_read_concurrency.py",
+    "RequestApprovalRevision: Governance owner has no revision transition; stays explicit 501 pending an acceptance revision"
   ]
 }
