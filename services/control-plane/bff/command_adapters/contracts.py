@@ -454,11 +454,10 @@ def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         ):
             raise _bff_error(501, ErrorCode.NOT_IMPLEMENTED, "named stage approvals are unsupported", "Unsupported approval action")
     raw_verbs = [re.sub(r"[^a-z0-9]", "", str(v).lower()) for v in raw_candidates[1:] if isinstance(v, str) and v.strip()]
-    if command == "ReviewAction":
-        has_app = any(v in {"approve", "approved"} for v in raw_verbs)
-        has_rej = any(v in {"reject", "rejected"} for v in raw_verbs)
-        if has_app and has_rej:
-            raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Conflicting action and decision", "ReviewAction carriers contain conflicting verbs")
+    norm_c = re.sub(r"[^a-z0-9]", "", str(command or "").lower())
+    has_app, has_rej = any(v in {"approve", "approved"} for v in raw_verbs), any(v in {"reject", "rejected"} for v in raw_verbs)
+    if (norm_c == "approvedecision" and has_rej) or (norm_c == "rejectdecision" and has_app) or (has_app and has_rej):
+        raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Conflicting action and decision", f"{command} carriers contain conflicting verbs")
     verb = action or action_params.get("action_id") or action_params.get("actionId") or next((v for v in raw_verbs if v), None)
     verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())
     if command == "Observe" or (command == "PersonaAction" and verb == "observe"):

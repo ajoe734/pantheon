@@ -374,4 +374,3 @@ def test_review_and_governance_ledger_compatibility() -> None:
     )
     assert created.status_code == acted.status_code == 202
     assert created.json()["status"] == acted.json()["status"] == "accepted"
-

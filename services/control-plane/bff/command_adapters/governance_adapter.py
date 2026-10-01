@@ -109,6 +109,9 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         target_id = decision_id or str(params.get("decision_id") or "").strip()
         if not target_id:
             raise ValueError(f"ApprovalDecision action {verb} requires decision_id.")
+        raw_v = [re.sub(r"[^a-z0-9]", "", str(params.get(k) or "").lower()) for k in ("decision", "outcome", "action", "verb", "action_id", "actionId")]
+        if (verb == "approve" and any(v in {"reject", "rejected"} for v in raw_v)) or (verb == "reject" and any(v in {"approve", "approved"} for v in raw_v)):
+            raise approval_owner.InvalidApprovalRequest(f"Conflicting decision in params: {verb}")
         decision = approval_owner.decide(auth_token, target_id, {**params, "decision": verb}, command_id)
         return build_domain_receipt(
             command_id=command_id,

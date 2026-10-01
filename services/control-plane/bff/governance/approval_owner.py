@@ -17,7 +17,7 @@ import urllib.request
 from typing import Any, Dict, List, Mapping, Optional
 
 _TIMEOUT = float(os.getenv("PANTHEON_GOVERNANCE_APPROVAL_TIMEOUT_SECONDS", "15"))
-_ACTOR_ROLES = ("governance_reviewer", "risk_owner", "governance_committee")
+_ACTOR_ROLES = ("governance_reviewer", "risk_owner", "governance_committee", "automated_gate")
 _OUTCOMES = {"approve": "approved", "approved": "approved", "reject": "rejected", "rejected": "rejected",
              "approved_with_conditions": "approved_with_conditions"}
 _PENDING = {"proposed", "under_review"}
@@ -122,7 +122,7 @@ def decide(authorization: Optional[str], decision_id: str, params: Mapping[str, 
     roles = claims.get("roles") if isinstance(claims.get("roles"), list) else []
     held = [r for r in _ACTOR_ROLES if r in roles]
     role = params.get("actor_role") or (held[0] if len(held) == 1 else None)
-    if not role:
+    if not role or role not in _ACTOR_ROLES:
         raise InvalidApprovalRequest("actor_role")
     body = {
         "expected_version": version, "actor_role": role, "actor_id": claims.get("sub"),

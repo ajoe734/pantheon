@@ -77,6 +77,12 @@ def make_handler(owner: Owner):
             row = owner.rows.get(parts[-2])
             if not row or row["tenant_id"] != tenant:
                 return self._send(404, {"detail": "Approval decision not found"})
+            if parts[-1] == "decide":
+                from services.governance.models import DecideRequest
+                try:
+                    DecideRequest.model_validate(body)
+                except Exception as exc:
+                    return self._send(422, {"detail": str(exc)})
             if body.get("outcome") not in ("approved", "rejected", "approved_with_conditions"):
                 return self._send(422, {"detail": "Input should be 'approved', 'rejected' or 'approved_with_conditions'"})
             if (tenant, key) in owner.receipts:
@@ -420,3 +426,40 @@ def test_revision_batch_items_are_gone_without_owner_call(client, owner, verb):
     item = res.json()["results"][0]
     assert item["status"] == "failed" and item["http_status"] == 410
     assert len(owner.calls) == calls_before
+
+
+@pytest.mark.parametrize('command,decision', [('ApproveDecision', 'reject'), ('RejectDecision', 'approve')])
+def test_canonical_command_conflicting_decision_has_no_effect(command_client, owner, command, decision):
+    response = command_client.post('/bff/v1/commands', headers={
+        'Authorization': 'Bearer ' + jwt('rev-1', 'tenant-a', 'operator', 'governance_reviewer'),
+        'Idempotency-Key': f'independent-conflict-{command}-{decision}',
+    }, json={'command': command, 'target': {'type': 'ApprovalDecision', 'id': 'a1'},
+             'params': {'decision_id': 'a1', 'decision': decision, 'expected_version': 1,
+                        'approval_notes': 'reviewed', 'rejection_reason': 'reviewed'},
+             'audit_context': {'reason': 'review'}})
+    assert (response.status_code, len(owner.calls), owner.rows['a1']['version']) == (422, 0, 1), (
+        response.status_code, owner.calls, owner.rows['a1'], response.text)
+
+
+@pytest.mark.parametrize('verb', ['escalate', 'freeze', 'stage'])
+def test_unsupported_url_action_cannot_be_reinterpreted_as_vote(review_client, owner, verb):
+    client, store = review_client
+    response = client.post(f'/bff/reviews/a1/actions/{verb}', headers=headers(key=f'independent-url-{verb}'),
+                           json=vote())
+    assert response.status_code in (422, 501) and not owner.calls, (
+        response.status_code, owner.calls, owner.rows['a1'], response.text)
+
+
+@pytest.mark.parametrize('command', ['ApproveDecision', 'RejectDecision'])
+def test_forwarded_vote_matches_real_owner_schema(command_client, owner, command):
+    from services.governance.models import DecideRequest
+    response = command_client.post('/bff/v1/commands', headers={
+        'Authorization': 'Bearer ' + jwt('rev-1', 'tenant-a', 'operator', 'governance_reviewer'),
+        'Idempotency-Key': f'independent-schema-{command}',
+    }, json={'command': command, 'target': {'type': 'ApprovalDecision', 'id': 'a1'},
+             'params': {'decision_id': 'a1', 'expected_version': 1, 'actor_role': 'governance_reviewer',
+                        'approval_notes': 'reviewed', 'rejection_reason': 'reviewed'},
+             'audit_context': {'reason': 'review'}})
+    assert response.status_code == 202 and len(owner.calls) == 1
+    DecideRequest.model_validate(owner.calls[0][2])
+    assert owner.calls[0][2]['actor_role'] == 'governance_reviewer'

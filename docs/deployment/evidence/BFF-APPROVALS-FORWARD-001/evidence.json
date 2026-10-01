@@ -21,7 +21,8 @@
     "decide on PROPOSED runs accept_review inside the same execute_command callback"
   ],
   "validation": {
-    "services/control-plane/bff/test_bff_approvals_decide_contract.py": "42 passed against stub Governance HTTP owner (asserting RequestApprovalRevision and request_changes retired with 410, masked carriers rejected with 410, route verb conflicts rejected with 422, named stage rejected with 501, zero owner calls, zero store insertion; mounted review routes forward retained votes to owner with cross-tenant denial)",
+    "services/control-plane/bff/test_bff_approvals_decide_contract.py": "49 passed against stub Governance HTTP owner (asserting RequestApprovalRevision and request_changes retired with 410, masked carriers rejected with 410, route verb conflicts rejected with 422, named stage rejected with 501, conflicting command decisions rejected with 422, unsupported URL review actions rejected with 501, zero owner calls, zero store insertion; mounted review routes forward retained votes to owner with cross-tenant denial and DecideRequest schema validation)",
+    "independent_review_regression": "17 passed in /tmp/test_bff_forward_independent_review.py and committed into test_bff_approvals_decide_contract.py (conflicting intent rejected with 422, unsupported URL actions rejected with 501/422, DecideRequest schema validation)",
     "services/control-plane/bff/test_command_executor.py": "29 passed (asserting RequestApprovalRevision retired with 410, zero owner calls in execute_command and execute_command_with_status)",
     "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py": "3 passed (approval SSE publishing following owner result, retired revision publishes nothing with 410)",
     "services/control-plane/bff/tests/test_command_adapters_router.py": "624 passed (full suite including test_request_approval_revision_is_retired_with_410 and test_zero_reverse_main_imports)",

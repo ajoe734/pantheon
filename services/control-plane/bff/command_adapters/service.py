@@ -130,6 +130,10 @@ def stored_command_params(
     canonical_paper = cmd.command in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}
     if canonical_paper:
         canonical_action_id = cmd.command.value
+    is_gov = cmd.command in {CommandType.APPROVE_DECISION, CommandType.REJECT_DECISION, CommandType.REVIEW_ACTION} or (cmd.target and cmd.target.type.value in {"ApprovalDecision", "Review"})
+    held_gov = [r for r in ("governance_reviewer", "risk_owner", "governance_committee", "automated_gate") if r in identity.roles]
+    p_role = cmd.params.get("actor_role")
+    actor_role = (p_role if p_role in ("governance_reviewer", "risk_owner", "governance_committee", "automated_gate") else (held_gov[0] if len(held_gov) == 1 else None)) if is_gov else (p_role or next((r for r in ("admin", "approver", "reviewer", "operator") if r in identity.roles), "operator"))
     params.update(
         {
             "entity_type": "Runtime" if canonical_paper else (cmd.params.get("entity_type") or cmd.target.type.value),
@@ -137,14 +141,7 @@ def stored_command_params(
             "action_id": canonical_action_id,
             "actionId": canonical_action_id,
             "actor_id": identity.operator_id,
-            "actor_role": next(
-                (
-                    role
-                    for role in ("admin", "approver", "reviewer", "operator")
-                    if role in identity.roles
-                ),
-                "operator",
-            ),
+            "actor_role": actor_role,
         }
     )
     return params
