@@ -438,6 +438,14 @@ def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         return payload
     params = payload.get("params", {})
     action_params = params if isinstance(params, dict) else {}
+    for k in ("action_id", "actionId", "action", "verb", "decision", "outcome"):
+        v_param = action_params.get(k)
+        if v_param is not None and not isinstance(v_param, str):
+            raise _bff_error(422, ErrorCode.VALIDATION_FAILED, f"Invalid {k} carrier type", f"Carrier {k} must be a string")
+        if k != "action":
+            v_pay = payload.get(k)
+            if v_pay is not None and not isinstance(v_pay, str):
+                raise _bff_error(422, ErrorCode.VALIDATION_FAILED, f"Invalid {k} carrier type", f"Carrier {k} must be a string")
     raw_candidates = [
         command, action, payload.get("decision"), payload.get("verb"), payload.get("action_id"), payload.get("actionId"), payload.get("outcome"),
         action_params.get("action"), action_params.get("decision"), action_params.get("action_id"), action_params.get("actionId"), action_params.get("verb"), action_params.get("outcome"),
@@ -453,29 +461,28 @@ def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     target_type = re.sub(r"[^a-z0-9]", "", str(target.get("type") or action_params.get("entity_type") or "").lower())
     is_appr_target = target_type in {"approvaldecision", "approval"}
     is_appr_cmd = norm_c in {"approvedecision", "rejectdecision"}
+    has_appr_verb = any(v in {"approve", "approved", "approvedecision", "approvedwithconditions", "approvewithconditions", "conditional", "reject", "rejected", "rejectdecision"} for v in raw_verbs)
     is_hg = (norm_c.startswith("humangate") or target_type in {"humangateitem", "humangate"}) and not is_appr_target
-    is_gov = not is_hg and (is_appr_target or is_appr_cmd or (norm_c == "reviewaction" and not any(
-        v.startswith("humangate") or v in {"requestreview", "review", "recordsponsordecision", "sponsordecision"} for v in raw_verbs
-    )))
+    is_gov = not is_hg and (is_appr_target or is_appr_cmd or (norm_c == "reviewaction" and (has_appr_verb or not any(v.startswith("humangate") or v in {"requestreview", "review", "recordsponsordecision", "sponsordecision"} for v in raw_verbs))))
     if is_gov:
+        cand_verbs = [re.sub(r"[^a-z0-9]", "", str(v).lower()) for v in raw_candidates[1:] if isinstance(v, str) and v.strip()]
+        if any(v.startswith("humangate") or v in {"requestreview", "recordsponsordecision", "sponsordecision"} for v in cand_verbs):
+            raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Conflicting action and decision", f"{command} carriers contain conflicting domain operations")
         if any(action_params.get(k) or payload.get(k) for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
             raise _bff_error(501, ErrorCode.NOT_IMPLEMENTED, "named stage approvals are unsupported", "Unsupported approval action")
-        has_app, has_cond, has_rej = (norm_c == "approvedecision"), False, (norm_c == "rejectdecision")
         for v in (v for v in raw_candidates[1:] if isinstance(v, str) and v.strip()):
             nv = re.sub(r"[^a-z0-9]", "", v.lower())
             if nv in {"stage", "freeze", "escalate"}:
                 raise _bff_error(501, ErrorCode.NOT_IMPLEMENTED, f"unsupported approval action: {v}", "Unsupported approval action")
-            if nv in {"approve", "approved", "approvedecision"}:
-                has_app = True
-            elif nv in {"approvedwithconditions", "approvewithconditions", "conditional"}:
-                has_cond = True
-            elif nv in {"reject", "rejected", "rejectdecision"}:
-                has_rej = True
-            else:
+            if nv not in {"approve", "approved", "approvedecision", "approvedwithconditions", "approvewithconditions", "conditional", "reject", "rejected", "rejectdecision"}:
                 raise _bff_error(422, ErrorCode.VALIDATION_FAILED, f"Unknown approval action: {v}", f"Carrier contains unsupported or unknown action: {v}")
+        has_app = any(v in {"approve", "approved", "approvedecision"} for v in cand_verbs) or (norm_c == "approvedecision")
+        has_cond = any(v in {"approvedwithconditions", "approvewithconditions", "conditional"} for v in cand_verbs)
+        has_rej = any(v in {"reject", "rejected", "rejectdecision"} for v in cand_verbs) or (norm_c == "rejectdecision")
         if (has_app or has_cond) and has_rej:
             raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Conflicting action and decision", f"{command} carriers contain conflicting verbs")
-        verb = re.sub(r"[^a-z0-9]", "", str("approved_with_conditions" if has_cond else ("approve" if has_app else ("reject" if has_rej else action))).lower())
+        verb = "approved_with_conditions" if has_cond else ("approve" if has_app else ("reject" if has_rej else action))
+        verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())
     else:
         verb = action or action_params.get("action_id") or action_params.get("actionId") or next((v for v in raw_verbs if v), None)
         verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())

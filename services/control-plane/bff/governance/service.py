@@ -328,42 +328,8 @@ class GovernanceService:
     def _all_approval_decisions(
         self, *, outcome: Optional[str] = None, state: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        try:
-            records = self._call(
-                "list_approval_decisions",
-                outcome=outcome,
-                state=state,
-                include_fixture_pack=False,
-                default=[],
-            )
-        except TypeError:
-            records = self._call("list_approval_decisions", default=[])
-        items = [copy.deepcopy(item) for item in (records or [])]
-        if outcome:
-            requested = {part.lower() for part in split_csv(outcome) or []}
-            items = [
-                item
-                for item in items
-                if str(item.get("outcome") or item.get("decision") or "").lower() in requested
-            ]
-        if state:
-            requested = {part.lower() for part in split_csv(state) or []}
-            items = [
-                item
-                for item in items
-                if str(item.get("decision_state") or item.get("state") or item.get("status") or "").lower()
-                in requested
-            ]
-        seen: set[str] = set()
-        result: List[Dict[str, Any]] = []
-        for item in items:
-            item_id = record_id(item, "decision_id", "id", "item_id")
-            if item_id and item_id in seen:
-                continue
-            if item_id:
-                seen.add(item_id)
-            result.append(item)
-        return result
+        records = self._call("list_approval_decisions", default=[])
+        return [copy.deepcopy(item) for item in (records or [])]
 
     # Consultation requests, committees, and memos ---------------------
 

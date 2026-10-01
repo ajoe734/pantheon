@@ -109,7 +109,35 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         target_id = decision_id or str(params.get("decision_id") or "").strip()
         if not target_id:
             raise ValueError(f"ApprovalDecision action {verb} requires decision_id.")
-        decision = approval_owner.decide(auth_token, target_id, {"decision": verb, **params}, command_id)
+
+        for k in ("decision", "outcome", "action", "verb", "action_id", "actionId"):
+            v = params.get(k)
+            if v is not None and not isinstance(v, str):
+                raise approval_owner.InvalidApprovalRequest(f"Invalid {k} carrier type: must be a string")
+
+        cand_verbs = set()
+        for k in ("decision", "outcome", "action", "verb", "action_id", "actionId"):
+            v = params.get(k)
+            if isinstance(v, str) and v.strip():
+                cand_verbs.add(re.sub(r"[^a-z0-9]", "", v.lower()))
+
+        has_app = any(v in {"approve", "approved", "approvedecision"} for v in cand_verbs)
+        has_cond = any(v in {"approvedwithconditions", "approvewithconditions", "conditional"} for v in cand_verbs)
+        has_rej = any(v in {"reject", "rejected", "rejectdecision"} for v in cand_verbs)
+
+        if (has_app or has_cond) and has_rej:
+            raise approval_owner.InvalidApprovalRequest("ApprovalDecision params contain conflicting verbs")
+        if verb in {"approve", "approved"} and has_rej:
+            raise approval_owner.InvalidApprovalRequest("ApprovalDecision approve conflicts with reject in params")
+        if verb in {"reject", "rejected"} and (has_app or has_cond):
+            raise approval_owner.InvalidApprovalRequest("ApprovalDecision reject conflicts with approve in params")
+        if any(v in {"stage", "freeze", "escalate"} for v in cand_verbs) or any(params.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
+            raise approval_owner.UnsupportedApprovalAction("Unsupported approval action")
+
+        if verb in {"approve", "approved"} and (has_cond or bool(params.get("conditions"))):
+            verb = "approved_with_conditions"
+
+        decision = approval_owner.decide(auth_token, target_id, {**params, "decision": verb, "outcome": verb}, command_id)
         return build_domain_receipt(
             command_id=command_id,
             entity_type="ApprovalDecision",
@@ -212,10 +240,11 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
             raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
         verbs = {re.sub(r"[^a-z0-9]", "", v.lower()) for v in raw_candidates if v and v.strip()}
         has_app = any(v in {"approve", "approved", "approvedecision"} for v in verbs)
+        has_cond = any(v in {"approvedwithconditions", "approvewithconditions", "conditional"} for v in verbs)
         has_rej = any(v in {"reject", "rejected", "rejectdecision"} for v in verbs)
-        if has_app and has_rej:
+        if (has_app or has_cond) and has_rej:
             raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Conflicting action and decision", "ReviewAction carriers contain conflicting verbs")
-        norm_verb = "approve" if has_app else ("reject" if has_rej else "")
+        norm_verb = "approved_with_conditions" if has_cond else ("approve" if has_app else ("reject" if has_rej else ""))
         if not norm_verb or any(v in {"stage", "freeze", "escalate"} for v in verbs) or any(params.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
             from ..governance.approval_owner import UnsupportedApprovalAction
             raise UnsupportedApprovalAction(f"review action {action_id!r} has no Governance owner transition")

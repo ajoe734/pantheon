@@ -11,20 +11,36 @@ from typing import Any, Dict, List, Mapping, Optional
 
 _TIMEOUT = float(os.getenv("PANTHEON_GOVERNANCE_APPROVAL_TIMEOUT_SECONDS", "15"))
 _ACTOR_ROLES = ("governance_reviewer", "risk_owner", "governance_committee", "automated_gate")
-_OUTCOMES = {"approve": "approved", "approved": "approved", "approvedecision": "approved",
-             "reject": "rejected", "rejected": "rejected", "rejectdecision": "rejected",
-             "approved_with_conditions": "approved_with_conditions", "approvedwithconditions": "approved_with_conditions",
-             "approve_with_conditions": "approved_with_conditions", "approvewithconditions": "approved_with_conditions"}
+_OUTCOMES = {
+    "approve": "approved",
+    "approved": "approved",
+    "approvedecision": "approved",
+    "reject": "rejected",
+    "rejected": "rejected",
+    "rejectdecision": "rejected",
+    "approved_with_conditions": "approved_with_conditions",
+    "approvedwithconditions": "approved_with_conditions",
+    "approve_with_conditions": "approved_with_conditions",
+    "approvewithconditions": "approved_with_conditions",
+}
 _PENDING = {"proposed", "under_review"}
 
 
-class UnsupportedApprovalAction(ValueError): pass
-class RetiredApprovalAction(ValueError): pass
-class InvalidApprovalRequest(ValueError): pass
+class UnsupportedApprovalAction(ValueError):
+    """Raised when an approval action has no valid governance transition."""
+
+
+class RetiredApprovalAction(ValueError):
+    """Raised when a retired approval action is attempted."""
+
+
+class InvalidApprovalRequest(ValueError):
+    """Raised when approval request parameters are invalid."""
 
 
 def owner_url(path: str) -> str:
     from ..command_adapters.base import governance_approval_url
+
     return governance_approval_url(path)
 
 
@@ -34,16 +50,22 @@ def bearer(authorization: Optional[str]) -> str:
 
 
 def call_owner(
-    method: str, path: str, authorization: Optional[str], *,
-    body: Optional[Mapping[str, Any]] = None, idempotency_key: Optional[str] = None,
+    method: str,
+    path: str,
+    authorization: Optional[str],
+    *,
+    body: Optional[Mapping[str, Any]] = None,
+    idempotency_key: Optional[str] = None,
     query: Optional[Mapping[str, Any]] = None,
 ) -> Any:
     params = {k: v for k, v in (query or {}).items() if v not in (None, "")}
     url = owner_url(path) + (("?" + urllib.parse.urlencode(params)) if params else "")
     headers = {"Accept": "application/json", "Authorization": bearer(authorization)}
     data = json.dumps(body).encode("utf-8") if body is not None else None
-    if data is not None: headers["Content-Type"] = "application/json"
-    if idempotency_key: headers["Idempotency-Key"] = idempotency_key
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    if idempotency_key:
+        headers["Idempotency-Key"] = idempotency_key
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
         return json.loads(resp.read().decode("utf-8"))
@@ -60,16 +82,32 @@ def _claims(authorization: Optional[str]) -> Dict[str, Any]:
 def project(decision: Mapping[str, Any]) -> Dict[str, Any]:
     state = str(decision.get("decision_state") or "")
     status = "pending" if state in _PENDING else state
-    return {"id": decision.get("decision_id"), "outcome": decision.get("decision"), "status": status, "state": status, **decision}
+    return {
+        "id": decision.get("decision_id"),
+        "outcome": decision.get("decision"),
+        "status": status,
+        "state": status,
+        **decision,
+    }
 
 
-def list_decisions(authorization: Optional[str], *, state: Optional[str] = None, outcome: Optional[str] = None, pending_only: bool = False) -> List[Dict[str, Any]]:
+def list_decisions(
+    authorization: Optional[str],
+    *,
+    state: Optional[str] = None,
+    outcome: Optional[str] = None,
+    pending_only: bool = False,
+) -> List[Dict[str, Any]]:
     ws = {p.strip().lower() for p in str(state or "").split(",") if p.strip()}
     wo = {p.strip().lower() for p in str(outcome or "").split(",") if p.strip()}
-    return [it for it in (project(x) for x in call_owner("GET", "/api/governance/approvals", authorization))
-            if (not pending_only or it["status"] == "pending")
-            and (not ws or str(it.get("decision_state")).lower() in ws or it["status"] in ws)
-            and (not wo or str(it.get("outcome") or "").lower() in wo)]
+    raw_decisions = call_owner("GET", "/api/governance/approvals", authorization)
+    return [
+        it
+        for it in (project(x) for x in raw_decisions)
+        if (not pending_only or it["status"] == "pending")
+        and (not ws or str(it.get("decision_state")).lower() in ws or it["status"] in ws)
+        and (not wo or str(it.get("outcome") or "").lower() in wo)
+    ]
 
 
 def get_decision(authorization: Optional[str], decision_id: str) -> Dict[str, Any]:
@@ -85,6 +123,10 @@ def propose(authorization: Optional[str], payload: Mapping[str, Any], idempotenc
 def decide(authorization: Optional[str], decision_id: str, params: Mapping[str, Any], idempotency_key: str) -> Dict[str, Any]:
     if any(params.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
         raise UnsupportedApprovalAction("named stage approvals are unsupported; votes must target whole approval")
+    for k in ("outcome", "decision", "action", "verb", "action_id", "actionId"):
+        v_check = params.get(k)
+        if v_check is not None and not isinstance(v_check, str):
+            raise InvalidApprovalRequest(f"Invalid {k} carrier type: must be a string")
     raw_v = [re.sub(r"[^a-z0-9]", "", str(params.get(k) or "").lower()) for k in ("outcome", "decision", "action", "verb", "action_id", "actionId")]
     if any(v in {"requestrevision", "requestapprovalrevision", "requestchanges", "requestchange"} for v in raw_v if v) or params.get("revision_notes") or params.get("revisionNotes"):
         raise RetiredApprovalAction("RequestApprovalRevision is retired; use RejectDecision with notes")
@@ -106,7 +148,10 @@ def decide(authorization: Optional[str], decision_id: str, params: Mapping[str, 
     version = params.get("expected_version", params.get("expectedVersion"))
     if isinstance(version, bool) or not isinstance(version, int) or version < 0:
         raise InvalidApprovalRequest("expected_version")
-    rationale = next((str(params[k]).strip() for k in ("rationale", "memo", "approval_notes", "rejection_reason", "notes") if str(params.get(k) or "").strip()), "")
+    rationale = next(
+        (str(params[k]).strip() for k in ("rationale", "memo", "approval_notes", "rejection_reason", "notes") if str(params.get(k) or "").strip()),
+        "",
+    )
     if not rationale:
         raise InvalidApprovalRequest("rationale")
     claims = _claims(authorization)
@@ -115,7 +160,17 @@ def decide(authorization: Optional[str], decision_id: str, params: Mapping[str, 
     role = params.get("actor_role") or (held[0] if len(held) == 1 else None)
     if not role or role not in _ACTOR_ROLES:
         raise InvalidApprovalRequest("actor_role")
-    body = {"expected_version": version, "actor_role": role, "actor_id": claims.get("sub"),
-            "outcome": verb, "rationale": rationale,
-            **{k: params[k] for k in ("conditions", "evidence_refs", "session_id", "candidate_digest", "proof_digest", "expires_at") if params.get(k) is not None}}
+    optional_fields = {
+        k: params[k]
+        for k in ("conditions", "evidence_refs", "session_id", "candidate_digest", "proof_digest", "expires_at")
+        if params.get(k) is not None
+    }
+    body = {
+        "expected_version": version,
+        "actor_role": role,
+        "actor_id": claims.get("sub"),
+        "outcome": verb,
+        "rationale": rationale,
+        **optional_fields,
+    }
     return project(call_owner("POST", f"/api/governance/approvals/{urllib.parse.quote(decision_id, safe='')}/decide", authorization, body=body, idempotency_key=idempotency_key))

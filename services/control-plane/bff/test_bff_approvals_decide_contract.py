@@ -656,3 +656,77 @@ def test_previously_supported_conditional_vote_remains_supported(client, owner):
     assert owner.calls[0][2]["outcome"] == "approved_with_conditions"
 
 
+@pytest.mark.parametrize("field", ["action_id", "actionId"])
+def test_malformed_action_carrier_is_rejected_before_cleanup(command_client, owner, field):
+    response = command_client.post(
+        "/bff/v1/commands",
+        headers={
+            "Authorization": "Bearer " + jwt("rev-1", "tenant-a", "operator", "governance_reviewer"),
+            "Idempotency-Key": "synthetic-carrier-types",
+        },
+        json={
+            "command": "ReviewAction", "action": "approve",
+            "target": {"type": "ApprovalDecision", "id": "a1"},
+            "params": {"decision_id": "a1", "expected_version": 1, "approval_notes": "reviewed", field: ["stage"]},
+            "audit_context": {"reason": "review"},
+        },
+    )
+    assert response.status_code in (422, 501), (response.status_code, owner.calls)
+    assert not owner.calls
+
+
+@pytest.mark.parametrize("value", ["HumanGateApprove", "RequestReview"])
+def test_generic_review_cannot_hide_conflicting_domain_action(command_client, owner, value):
+    response = command_client.post(
+        "/bff/v1/commands",
+        headers={
+            "Authorization": "Bearer " + jwt("rev-1", "tenant-a", "operator", "governance_reviewer"),
+            "Idempotency-Key": "synthetic-conflicting-domain",
+        },
+        json={
+            "command": "ReviewAction", "action": "approve",
+            "target": {"type": "Review", "id": "a1"},
+            "params": {"decision_id": "a1", "expected_version": 1, "approval_notes": "reviewed", "action_id": value},
+            "audit_context": {"reason": "review"},
+        },
+    )
+    assert response.status_code in (422, 501), (response.status_code, owner.calls)
+    assert not owner.calls
+
+
+@pytest.mark.parametrize("carrier", ["action", "action_id", "actionId"])
+def test_conditional_wrapper_preserves_owner_outcome(command_client, owner, carrier):
+    params = {"decision_id": "a1", "expected_version": 1, "approval_notes": "reviewed", "conditions": ["limit exposure"]}
+    body = {"command": "ReviewAction", "target": {"type": "ApprovalDecision", "id": "a1"},
+            "params": params, "audit_context": {"reason": "review"}}
+    if carrier == "action":
+        body[carrier] = "approved_with_conditions"
+    else:
+        params[carrier] = "approved_with_conditions"
+    auth = {"Authorization": "Bearer " + jwt("rev-1", "tenant-a", "operator", "governance_reviewer"), "Idempotency-Key": f"conditional-{carrier}"}
+    response = command_client.post("/bff/v1/commands", headers=auth, json=body)
+    assert response.status_code in (200, 201, 202), response.text
+    assert owner.calls[-1][2]["outcome"] == "approved_with_conditions", owner.calls
+
+
+@pytest.mark.parametrize("entry", ["adapter", "executor"])
+@pytest.mark.parametrize("command,opposite", [("ApproveDecision", "reject"), ("RejectDecision", "approve")])
+def test_stored_command_conflicting_decision_cannot_vote(owner, entry, command, opposite):
+    from services.control_plane.bff.command_adapters.governance_adapter import GovernanceCommandAdapter
+    from services.control_plane.bff.command_executor import execute_command
+    from services.control_plane.bff.models import CommandType
+
+    params = {"decision_id": "a1", "expected_version": 1, "approval_notes": "reviewed",
+              "rejection_reason": "reviewed", "decision": opposite}
+    try:
+        if entry == "adapter":
+            GovernanceCommandAdapter().execute("conflict", command, params, auth_token=headers()["Authorization"])
+        else:
+            execute_command("conflict", CommandType(command), params, auth_token=headers()["Authorization"])
+    except Exception:
+        pass
+    assert owner.calls == [], owner.calls
+    assert owner.rows["a1"]["version"] == 1
+
+
+

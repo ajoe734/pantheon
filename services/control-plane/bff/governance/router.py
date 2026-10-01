@@ -65,12 +65,7 @@ def _default_snapshot_meta(snapshot_at: str) -> Dict[str, Any]:
     return {"snapshot_at": snapshot_at}
 
 
-def _default_dataset_surface_status(
-    dataset: str, *, snapshot_at: str, source: Optional[str] = None, **kwargs: Any
-) -> Dict[str, Any]:
-    return GovernanceService._default_dataset_surface_status(
-        dataset, snapshot_at=snapshot_at, source=source, **kwargs
-    )
+_default_dataset_surface_status = GovernanceService._default_dataset_surface_status
 
 
 def _default_read_surface_meta(
@@ -164,82 +159,42 @@ def create_governance_router(
             identity, refs, redact_fn=_redact, capabilities_fn=_capabilities
         )
 
-    def _redact_review_queue_items(
-        identity: Any, items: List[Dict[str, Any]]
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        total_redacted = 0
-        redacted_items: List[Dict[str, Any]] = []
+    def _redact_review_queue_items(identity: Any, items: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], int]:
+        total, res = 0, []
         for item in items:
-            if not isinstance(item, dict):
-                redacted_items.append(item)
-                continue
-            item_copy = copy.deepcopy(item)
-            review_summary = dict(item_copy.get("review_summary") or {})
-            raw_refs = list(review_summary.get("evidence_refs") or [])
-            if raw_refs:
-                processed_refs, count = _safe_redact(identity, raw_refs)
-                review_summary["evidence_refs"] = processed_refs
-                total_redacted += count
-                item_copy["review_summary"] = review_summary
-            redacted_items.append(item_copy)
-        return redacted_items, total_redacted
+            it = copy.deepcopy(item) if isinstance(item, dict) else item
+            if isinstance(it, dict) and it.get("review_summary"):
+                refs = list((it["review_summary"] or {}).get("evidence_refs") or [])
+                if refs:
+                    proc, cnt = _safe_redact(identity, refs)
+                    it["review_summary"] = {**it["review_summary"], "evidence_refs": proc}
+                    total += cnt
+            res.append(it)
+        return res, total
 
-    def _redact_evidence_field_items(
-        identity: Any, items: List[Any], *, field: str = "evidence_refs"
-    ) -> Tuple[List[Any], int]:
-        """Redact a top-level evidence-ref list field on each item in ``items``.
-
-        Shared by every handler whose response is a flat list of dicts that
-        may carry a ``field`` (default ``evidence_refs``) list directly on
-        the item -- approval decisions/queue items, audit events, ledger
-        entries, and transcript events all share this shape.
-        """
-        total_redacted = 0
-        redacted_items: List[Any] = []
+    def _redact_evidence_field_items(identity: Any, items: List[Any], *, field: str = "evidence_refs") -> Tuple[List[Any], int]:
+        total, res = 0, []
         for item in items:
-            if not isinstance(item, dict):
-                redacted_items.append(item)
-                continue
-            item_copy = copy.deepcopy(item)
-            raw_refs = item_copy.get(field)
-            if isinstance(raw_refs, list) and raw_refs:
-                processed_refs, count = _safe_redact(identity, raw_refs)
-                item_copy[field] = processed_refs
-                total_redacted += count
-            redacted_items.append(item_copy)
-        return redacted_items, total_redacted
+            it = copy.deepcopy(item) if isinstance(item, dict) else item
+            if isinstance(it, dict) and isinstance(it.get(field), list) and it[field]:
+                proc, cnt = _safe_redact(identity, it[field])
+                it[field] = proc
+                total += cnt
+            res.append(it)
+        return res, total
 
-    def _redact_consultation_metadata_evidence(
-        identity: Any, items: List[Any]
-    ) -> Tuple[List[Any], int]:
-        """Redact ``metadata.consultation.evidence_refs`` on session-shaped dicts.
-
-        Consultation session/participant/outcome records carry evidence refs
-        nested under ``metadata.consultation.evidence_refs`` rather than at
-        the top level (see ``ports/operations_consultation.py``).
-        """
-        total_redacted = 0
-        redacted_items: List[Any] = []
+    def _redact_consultation_metadata_evidence(identity: Any, items: List[Any]) -> Tuple[List[Any], int]:
+        total, res = 0, []
         for item in items:
-            if not isinstance(item, dict):
-                redacted_items.append(item)
-                continue
-            item_copy = copy.deepcopy(item)
-            metadata = item_copy.get("metadata")
-            if isinstance(metadata, dict):
-                consult = metadata.get("consultation")
-                if isinstance(consult, dict):
-                    raw_refs = consult.get("evidence_refs")
-                    if isinstance(raw_refs, list) and raw_refs:
-                        processed_refs, count = _safe_redact(identity, raw_refs)
-                        consult = dict(consult)
-                        consult["evidence_refs"] = processed_refs
-                        metadata = dict(metadata)
-                        metadata["consultation"] = consult
-                        item_copy["metadata"] = metadata
-                        total_redacted += count
-            redacted_items.append(item_copy)
-        return redacted_items, total_redacted
+            it = copy.deepcopy(item) if isinstance(item, dict) else item
+            if isinstance(it, dict) and isinstance(it.get("metadata"), dict):
+                consult = it["metadata"].get("consultation")
+                if isinstance(consult, dict) and isinstance(consult.get("evidence_refs"), list) and consult["evidence_refs"]:
+                    proc, cnt = _safe_redact(identity, consult["evidence_refs"])
+                    it["metadata"] = {**it["metadata"], "consultation": {**consult, "evidence_refs": proc}}
+                    total += cnt
+            res.append(it)
+        return res, total
 
     resolved_service = governance_service
 
@@ -1083,25 +1038,13 @@ def create_governance_router(
         if app_c and rej_c:
             _fail(422, "VALIDATION_FAILED", "Conflicting action and decision", "URL action and body decision conflict", precondition_failed="conflicting_decision")
         vote_verb = "approved_with_conditions" if any("condition" in v for v in app_c) else ("approve" if app_c else ("reject" if rej_c else None))
-        if vote_verb:
-            clean_id = review_id.strip()
-            params = dict(payload)
-            params["decision"] = vote_verb
-            key = _idempotency_key(idempotency_key, x_idempotency_key, required=False)
-            result = await _forward(approval_owner.decide, authorization, clean_id, params, key)
-            _publish_decision(clean_id, result, identity)
-            return JSONResponse(status_code=202, content=result)
-        try:
-            return await _service().submit_governance_action(
-                action_kind="review",
-                target_id=review_id.strip(),
-                action_id=action_id.strip(),
-                payload=payload,
-                identity=identity,
-                idempotency_key=_idempotency_key(idempotency_key, x_idempotency_key),
-            )
-        except RuntimeError:
-            _fail(409, "IDEMPOTENCY_CONFLICT", "Idempotency key conflict", "The key is bound to another payload")
+        clean_id = review_id.strip()
+        params = dict(payload)
+        params["decision"] = vote_verb
+        key = _idempotency_key(idempotency_key, x_idempotency_key, required=False)
+        result = await _forward(approval_owner.decide, authorization, clean_id, params, key)
+        _publish_decision(clean_id, result, identity)
+        return JSONResponse(status_code=202, content=result)
 
     @router.get("/bff/reviews/{review_id}/validators")
     async def bff_review_validators(
