@@ -1,6 +1,7 @@
-from services.evolution import dispatch_outbox as approval_gate
 """Explicit governance transport fixture for lifecycle/receipt regression suites."""
 import pytest
+
+from services.evolution import dispatch_outbox as approval_gate
 
 from services.governance.test_approval_authority import (
     SnapshotApprovalReader, approval_snapshot,

@@ -2,30 +2,49 @@
   "task_id": "EVOLUTION-EXECUTE-APPROVAL-001",
   "owner": "Codex",
   "reviewer": "Claude",
-  "scope": "Proposal execute and rollback-followthrough HTTP receipt convergence",
-  "authority": "ApprovalEvidence.require_valid via the configured evolution ApprovalReader and stored approval_decision_id",
-  "binding": ["tenant_id", "target_type=evolution_execute", "target_id=decision_id", "target_version", "risk_level", "subject.proposal_id", "subject.proposal_content_digest=_immutable_decision_fingerprint(decision)"],
-  "behavior": "Invalid/missing approval returns 403; unavailable governance returns 503; no controller dispatch, receipt readback or decision mutation on rejection. Request actor_role grants no authority; execution is recorded as evolution_controller.",
-  "configuration": ["EVOLUTION_GOVERNANCE_BASE_URL", "EVOLUTION_GOVERNANCE_SERVICE_TOKEN or EVOLUTION_GOVERNANCE_SERVICE_TOKEN_FILE", "EVOLUTION_GOVERNANCE_TIMEOUT_SECONDS (default 5)"],
+  "scope": "Follow-up to merged PR #6047: worker pre-submit approval and shared execute/rollback convergence predicate",
+  "authority": "dispatch_outbox.require_execution_approval: ApprovalEvidence.require_valid via configured_approval_reader(\"evolution\")",
+  "binding": [
+    "tenant_id",
+    "target_type=evolution_execute",
+    "target_id=decision_id",
+    "target_version",
+    "risk_level",
+    "subject.proposal_id",
+    "subject.proposal_content_digest=immutable_decision_fingerprint(proposal)"
+  ],
+  "behavior": "Worker compares durable intent with current proposal and routing boundary, then re-reads Governance immediately before adapter.submit. Invalid/unavailable approval has zero submit, readback, convergence or compensation calls; proposal stays approved. API execute and rollback-followthrough reuse this predicate and retain 403/503 mappings. Body actor_role grants no authority.",
+  "configuration": [
+    "EVOLUTION_GOVERNANCE_BASE_URL",
+    "EVOLUTION_GOVERNANCE_SERVICE_TOKEN or EVOLUTION_GOVERNANCE_SERVICE_TOKEN_FILE",
+    "EVOLUTION_GOVERNANCE_TIMEOUT_SECONDS (default 5)"
+  ],
   "validation": [
     {
-      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/evolution/test_evolution_service.py --tb=short",
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/evolution/test_dispatch_worker.py services/evolution/test_evolution_service.py --tb=short",
       "exit_code": 0,
-      "result": "123 passed"
+      "result": "176 passed"
     },
     {
-      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/evolution/test_dispatch_worker.py services/evolution/test_evo_005_rollback_followthrough.py services/evolution/test_l12_evo_001_downstream_integration.py services/governance/test_approval_targets.py services/governance/test_approval_authority.py -k 'not TestRollbackFollowthroughRuntimeManagerIntegration' --tb=short",
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/evolution/test_evo_005_rollback_followthrough.py services/evolution/test_l12_evo_001_downstream_integration.py services/governance/test_approval_targets.py services/governance/test_approval_authority.py -k 'not TestRollbackFollowthroughRuntimeManagerIntegration' --tb=short",
       "exit_code": 0,
-      "result": "145 passed, 7 deselected"
+      "result": "123 passed, 7 deselected"
     }
   ],
-  "test_boundary": "Lifecycle suites explicitly inject transport snapshots, preserving real ApprovalEvidence validation. Three success cases exercise the actual HTTP reader against a local test server. Invalid cases cover both execute routes and assert unchanged decisions and zero downstream/controller calls.",
+  "test_boundary": "31 new worker cases: 16 invalid approvals with no effects, 11 stale intent bindings, revocation before in-flight retry, and 3 actual HTTP reader outcomes (200/403/503). HTTP success proves Governance read before submit and independent convergence re-read. Existing API suites retain forged-body-role and rollback rejection coverage. Temporary stores/scripted downstream are not hosted acceptance.",
   "baseline_limitations": [
     "Unmodified pre-task source e4a81afd5 reproduced TestRollbackFollowthroughRuntimeManagerIntegration: 5 failed, 2 passed (exit 1). Four failures lack RuntimeManager human_gate_decision; one is a RuntimeBindingError exception identity mismatch. That 7-test class is excluded from the passing batch.",
     "Full evolution collection failed (exit 2): test_threshold_sweep_worker.py imports an incident client requiring PANTHEON_RUNTIME_MANAGER_URL. A baseline collect-only command reproduced this failure (exit 2).",
     "Baseline commands: timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/evolution/test_evo_005_rollback_followthrough.py::TestRollbackFollowthroughRuntimeManagerIntegration --tb=short; timeout 30 .venv-pantheon/bin/python3 -m pytest -q services/evolution/test_threshold_sweep_worker.py --collect-only --tb=short"
   ],
-  "production_net_lines": 29,
+  "production_net_lines": 23,
   "production_net_line_budget": 60,
-  "not_claimed": ["Independent reviewer approval", "Deployment or hosted acceptance", "Strict JWT authentication", "Changes to downstream dispatch scheduling or runtime rollback authorization"]
+  "not_claimed": [
+    "Independent reviewer approval",
+    "Deployment or hosted acceptance",
+    "Strict JWT authentication",
+    "Governance human vote from Evolution /approve",
+    "Downstream runtime rollback authorization"
+  ],
+  "configuration_blocker": "docker-compose.yml omits EVOLUTION_GOVERNANCE_BASE_URL, EVOLUTION_GOVERNANCE_SERVICE_TOKEN(_FILE), and timeout wiring for both evolution and evolution-dispatch-worker. File is outside task artifacts; Human/Ops must add its scope before configuration repair. Missing configuration fails closed; deployment is unverified."
 }
