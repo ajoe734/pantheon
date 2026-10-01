@@ -50,7 +50,7 @@
         "bff_path": {
           "type": "string",
           "minLength": 1,
-          "description": "BFF endpoint path for this widget's data (e.g. /bff/agora/signals)."
+          "description": "BFF endpoint path for this widget's data (e.g. /bff/agora/trading-room)."
         },
         "query_params": {
           "type": "object",

@@ -4,7 +4,7 @@
     "bundle_path": "services/control-plane/specs/agora/bundle_index.json",
     "bundle_version": "1.0",
     "frozen_by": "AG-XR-001",
-    "bundle_index_sha256": "a53a5498b8999aea121462ff44e14c9ea8a14cf6b28c2d1b5f44ecdaf3185ea1"
+    "bundle_index_sha256": "836786dce7c868fc3c07a5765a95a62358b8e44acc4ddd0e2fa0ab52d57d2bfb"
   },
   "files": {
     "specs/agora/v2/widget_spec_v2.schema.json": "d360a17a9762d69e6a5e2c87921117bb85ee34d972fd8034f8904df6facb993f",
