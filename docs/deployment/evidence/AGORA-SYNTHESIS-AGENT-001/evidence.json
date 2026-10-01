@@ -16,8 +16,12 @@
   },
   "tests": {
     "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/interaction services/control-plane/bff/tests/test_agora_persona_interactions.py services/control-plane/bff/tests/test_pint_013* services/control-plane/bff/tests/test_pint_003*",
-    "result": "80 passed, 11 skipped (PostgreSQL without DSN), exit 0"
+    "result": "82 passed, 11 skipped (PostgreSQL without DSN), exit 0"
   },
-  "not_run": "Criterion 7 real dev acceptance (live two-persona interaction, refresh readback, one failed synthesis call) NOT run: no dev/provider access. Requires dev operator evidence; source approval must not mark the whole task done.",
-  "production_net_lines": 85
+  "not_run": "AC7 hosted acceptance deferred to centralized post-merge hosted acceptance (external_wait); not a premerge gate.",
+  "production_net_lines": 85,
+  "compose_wiring": {
+    "change": "agora-interaction-worker gains existing PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL, PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN (reference, no default) and _AUTH_REQUIRED, same as operator-bff; no new service/credential",
+    "test": "test_compose_worker_env_wires_openclaw_client_and_adapter_service_auth parses docker-compose.yml, builds OpenClawOpsClient from worker env, asserts URL and X-Pantheon-Service-Token header; adapter acceptance and full-evidence wire-schema readback covered by test_synthesis_schema_accepted_by_real_adapter_validator and test_selected_evidence_resolves_to_supplied_records_and_matches_wire_schema"
+  }
 }

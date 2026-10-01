@@ -1214,3 +1214,22 @@ def test_selected_evidence_resolves_to_supplied_records_and_matches_wire_schema(
     root = pathlib.Path(__file__).resolve().parents[3] / "specs/agora/v10/persona_interaction_daily.schema.json"
     schema = json.loads(root.read_text())
     jsonschema.validate(synthesis, {"$ref": "#/definitions/InteractionSynthesis", "definitions": schema["definitions"]})
+
+
+def test_compose_worker_env_wires_openclaw_client_and_adapter_service_auth(monkeypatch):
+    yaml = pytest.importorskip("yaml")
+    import pathlib, re
+    compose = yaml.safe_load((pathlib.Path(__file__).resolve().parents[5] / "docker-compose.yml").read_text())
+    services = compose["services"]
+    env = services["agora-interaction-worker"]["environment"]
+    ref = "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN"
+    assert env[ref] == services["operator-bff"]["environment"][ref]  # same token reference, no new credential
+    assert env["PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL"] == services["operator-bff"]["environment"]["PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL"]
+    monkeypatch.setenv("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", "deploy-secret")
+    for k, v in env.items():
+        if k.startswith("PANTHEON_OPENCLAW_"):
+            monkeypatch.setenv(k, re.sub(r"\$\{(\w+):-([^}]*)\}", lambda m: os.environ.get(m.group(1)) or m.group(2), str(v)))
+    client = OpenClawOpsClient()
+    assert client.configured and client._base_url == "http://openclaw-gateway-adapter:8104"
+    path = "/api/openclaw-adapter/agents/persona-opinion/ensure"
+    assert client._assistant_service_headers(path) == {"X-Pantheon-Service-Token": "deploy-secret"}
