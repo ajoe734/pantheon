@@ -11876,6 +11876,68 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             succeeded_calls,
         )
 
+    def _closeout_with_approved_branch(self, approved_branch: str) -> dict:
+        approved_head = "a" * 40
+        binding = {
+            "pr": 152,
+            "head_sha": approved_head,
+            "head_branch": approved_branch,
+            "base": "dev",
+        }
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "artifacts": [],
+            ai_status.APPROVAL_BINDING_KEY: binding,
+            ai_status.GITHUB_REVIEW_BRIDGE_KEY: {
+                **binding,
+                "decision": "approve",
+                "mode": "pull_request_review",
+                "github_review_id": 99,
+                "review_proof_ref": f"refs/tags/pantheon-review/approve/{approved_head}",
+            },
+        }
+        responses = {
+            ("rev-parse", "--abbrev-ref", "HEAD"): "task/REG-002",
+            ("rev-parse", "HEAD"): "d" * 40,
+            ("rev-parse", approved_head): approved_head,
+            ("show", "-s", "--format=%s", approved_head): "REG-002: deliver reviewed fix",
+            ("show", "-s", "--format=%P", approved_head): approved_head,
+            ("show", "-s", "--format=%b", approved_head): (
+                "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n"
+            ),
+            ("show", "-s", "--format=%an", approved_head): "Codex",
+            ("show", "-s", "--format=%ae", approved_head): "codex@example.com",
+            ("status", "--porcelain"): "",
+            ("remote",): "origin",
+            ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): "",
+            ("fetch", "origin", "dev"): "",
+            ("rev-parse", "--verify", "origin/dev"): "d" * 40,
+        }
+        with (
+            mock.patch.object(
+                ai_status, "run_git_command", side_effect=lambda args, **_: responses[tuple(args)]
+            ),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+        ):
+            return ai_status.collect_done_delivery_metadata(task, "Codex")
+
+    def test_collect_done_accepts_approved_replacement_branch_of_the_task(self) -> None:
+        delivery = self._closeout_with_approved_branch("task/REG-002-v2")
+
+        self.assertEqual(delivery["commit"], "a" * 40)
+        self.assertEqual(delivery["commit_source"], "canonical_approved_head")
+
+    def test_collect_done_rejects_approved_branch_of_another_task(self) -> None:
+        for approved_branch in ("task/REG-0021", "task/OTHER-001-v2", "task/REG-002-vnext"):
+            with self.subTest(approved_branch=approved_branch):
+                with self.assertRaisesRegex(
+                    SystemExit, "delivery branch does not match canonical approved"
+                ):
+                    self._closeout_with_approved_branch(approved_branch)
+
     def test_collect_done_uses_authored_parent_for_exact_base_merge_tip(self) -> None:
         approved_head = "a" * 40
         authored_parent = "b" * 40
