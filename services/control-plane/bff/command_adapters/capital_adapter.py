@@ -15,8 +15,6 @@ from .base import (
     build_domain_receipt,
     capital_url,
     http_request_json,
-    internal_url,
-    utc_now,
 )
 
 log = logging.getLogger(__name__)
@@ -72,12 +70,8 @@ class CapitalCommandAdapter(DomainCommandAdapter):
         action_id = str(params.get("action_id") or "").strip()
         entity_id = str(params.get("entity_id") or params.get("pool_id") or params.get("rebalance_id") or params.get("binding_id") or params.get("persona_id") or "").strip()
 
-        if command_type == "ApprovedApply" or action_id.lower() == "apply":
-            return self._execute_rebalance_apply(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "EmergencyContainment" or action_id.lower() == "emergencycontainment":
+        if command_type == "EmergencyContainment" or action_id.lower() == "emergencycontainment":
             return self._execute_containment(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "ApprovePool" or (entity_type in {"capitalpool", "capital-pool"} and action_id.lower() in {"approve", "approvepool"}):
-            return self._execute_approve_pool(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif entity_type in {"capitalpool", "capital-pool"}:
             return self._execute_capital_pool_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif entity_type == "rebalance" or command_type in {"RebalanceProposal", "PatchRebalance"}:
@@ -90,48 +84,6 @@ class CapitalCommandAdapter(DomainCommandAdapter):
                 action_id=action_id,
                 entity_type=entity_type,
             )
-
-    def _execute_approve_pool(
-        self,
-        command_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        pool_id = str(params.get("pool_id") or params.get("entity_id") or "").strip()
-        if not pool_id:
-            raise ValueError("ApprovePool requires pool_id.")
-        memo = str(params.get("memo") or "Approve capital pool").strip()
-        payload: Dict[str, Any] = {"memo": memo}
-        if params.get("confirm_token"):
-            payload["confirm_token"] = str(params["confirm_token"])
-
-        url = internal_url(f"/api/internal/v1/capital-pools/{quote(pool_id, safe='')}/approve")
-        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
-        
-        # Authoritative readback from Capital service
-        readback = None
-        try:
-            readback = http_request_json(capital_url(f"/api/capital-pools/{quote(pool_id, safe='')}"), method="GET", auth_token=auth_token, mfa_token=mfa_token)
-        except Exception:
-            pass
-
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="CapitalPool",
-            entity_id=pool_id,
-            action_id="ApprovePool",
-            status="accepted",
-            dispatch_path=url,
-            domain_receipt=body,
-            authoritative_readback=readback,
-            extra={
-                "pool_id": pool_id,
-                "state": body.get("state", "approved"),
-                "audit_id": body.get("audit_id"),
-                "approved_at": body.get("approved_at") or utc_now(),
-            },
-        )
 
     def _execute_capital_pool_action(
         self,
@@ -236,54 +188,6 @@ class CapitalCommandAdapter(DomainCommandAdapter):
                 entity_type="Rebalance",
             )
 
-    def _execute_rebalance_apply(
-        self,
-        command_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        entity_id = str(params.get("entity_id") or "").strip()
-        requested_rebalance_id = str(params.get("rebalance_id") or "").strip()
-        rebalance_id = entity_id or requested_rebalance_id
-        if not rebalance_id:
-            raise ValueError("ApprovedApply requires a trusted rebalance_id")
-        approval_ref = str(params.get("approval_ref") or "auto-approved").strip()
-
-        payload = {
-            "command_id": command_id,
-            "idempotency_key": str(params.get("idempotency_key") or command_id),
-            "request_hash": str(params.get("request_hash") or ""),
-            "approval_ref": approval_ref,
-            "actor_id": str(params.get("actor_id") or "operator-bff"),
-            "actor_role": str(params.get("actor_role") or "operator"),
-            "proposal_version": params.get("proposal_version"),
-        }
-        url = capital_url(f"/api/rebalances/{quote(rebalance_id, safe='')}/apply")
-        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
-        
-        # Readback
-        readback = None
-        try:
-            readback = http_request_json(capital_url(f"/api/rebalances/{quote(rebalance_id, safe='')}"), method="GET", auth_token=auth_token, mfa_token=mfa_token)
-        except Exception:
-            pass
-
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="Rebalance",
-            entity_id=rebalance_id,
-            action_id="apply",
-            status=body.get("status") or "applied",
-            dispatch_path=url,
-            domain_receipt=body,
-            authoritative_readback=readback,
-            extra={
-                "approval_ref": approval_ref,
-                "rebalance_id": rebalance_id,
-            },
-        )
-
     def _execute_containment(
         self,
         command_id: str,
@@ -296,7 +200,7 @@ class CapitalCommandAdapter(DomainCommandAdapter):
         persona_id = entity_id or requested_persona_id
         if not persona_id:
             raise ValueError("EmergencyContainment requires a trusted Persona identity")
-        two_man_signature_id = str(params.get("two_man_signature_id") or params.get("twoManSignatureId") or "sig-emergency-ops").strip()
+        two_man_signature_id = params["two_man_signature_id"]
 
         payload = {
             key: value

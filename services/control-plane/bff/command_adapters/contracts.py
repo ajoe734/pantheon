@@ -341,6 +341,75 @@ def normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorComma
         ) from exc
 
 
+# wrapper -> {canonical command: extra short verbs}; the canonical name itself is always accepted.
+_WRAPPER_CANONICALS = {
+    "RuntimeAction": {
+        "StartRuntime": ("start",),
+        "PauseRuntime": ("pause",),
+        "PauseExecution": (),
+        "PausePaperRuntime": (),
+        "ResumePaperRuntime": ("resume", "unpause"),
+        "ExecuteRollback": ("rollback",),
+        "HardRollback": (),
+        "ActivateKillSwitch": ("killswitch",),
+        "IssueRiskOff": (),
+        "IssueSafeMode": (),
+        "ApproveRollback": (),
+        "RejectRollback": (),
+        "RestartPaperRuntime": (),
+        "RestartTelemetryBridge": (),
+        "TerminateStalePaperMonitoringSession": (),
+        "StartPaperMonitoringSession": (),
+        "ProbeTelemetryIngest": (),
+    },
+    "RebalanceAction": {"ApprovedApply": ("apply",), "RebalanceProposal": ("propose", "create")},
+    "CapitalPoolAction": {"ApprovePool": ("approve",)},
+    "DeploymentAction": {
+        "ApproveDeployment": ("approve",),
+        "EscalateDiff": (),
+        "CreateDeployment": ("create",),
+        "PatchDeployment": ("patch", "update"),
+    },
+    "PersonaAction": {
+        "PromoteCandidate": ("promote",),
+        "AdvanceLifecycle": (),
+        "EmergencyContainment": (),
+        "Observe": (),
+        "Demote": (),
+    },
+    "ReviewAction": {
+        "RequestReview": ("review",),
+        "ApproveDecision": ("approve",),
+        "RejectDecision": ("reject",),
+        "RequestApprovalRevision": ("requestrevision",),
+        "RecordSponsorDecision": ("sponsordecision",),
+    },
+    "RiskAlertAction": {"AlertAcknowledge": ("acknowledge", "ack")},
+}
+_WRAPPER_VERB_ALIASES = {
+    (wrapper, re.sub(r"[^a-z0-9]", "", verb.lower())): canonical
+    for wrapper, commands in _WRAPPER_CANONICALS.items()
+    for canonical, verbs in commands.items()
+    for verb in (canonical, *verbs)
+}
+
+
+def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Replace a wrapper command by the canonical command its verb maps to."""
+    params = payload.get("params")
+    params = params if isinstance(params, dict) else {}
+    verb = payload.get("action") or params.get("action_id") or params.get("actionId")
+    verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())
+    canonical = _WRAPPER_VERB_ALIASES.get((payload.get("command"), verb))
+    if canonical is None:
+        return payload
+    return {
+        **{k: v for k, v in payload.items() if k != "action"},
+        "command": canonical,
+        "params": {k: v for k, v in params.items() if k not in ("action_id", "actionId")},
+    }
+
+
 def foundation_environment_scope() -> EnvironmentScope:
     raw = os.getenv("PANTHEON_ENV", "dev").strip().lower()
     if "live" in raw:

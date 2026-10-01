@@ -69,17 +69,17 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         action_id = str(params.get("action_id") or command_type or "").strip()
         entity_id = str(params.get("decision_id") or params.get("gate_id") or params.get("committee_id") or params.get("review_id") or params.get("entity_id") or "").strip()
 
-        if command_type == "ApproveDecision" or action_id.lower() in {"approve", "approvedecision"}:
+        if command_type == "ApproveDecision":
             return self._execute_decision_action(command_id, entity_id, "approve", params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "RejectDecision" or action_id.lower() in {"reject", "rejectdecision"}:
+        elif command_type == "RejectDecision":
             return self._execute_decision_action(command_id, entity_id, "reject", params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "RequestApprovalRevision" or action_id.lower() in {"requestrevision", "requestapprovalrevision", "request-revision"}:
+        elif command_type == "RequestApprovalRevision":
             return self._execute_decision_action(command_id, entity_id, "request-revision", params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type.startswith("HumanGate") or action_id.lower().startswith("humangate"):
             return self._execute_human_gate_action(command_id, entity_id, command_type or action_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "RecordSponsorDecision" or action_id.lower() in {"recordsponsordecision", "sponsor-decision"}:
+        elif command_type == "RecordSponsorDecision":
             return self._execute_sponsor_decision(command_id, entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"ReviewAction", "RequestReview"} or action_id.lower() in {"requestreview", "review"}:
+        elif command_type in {"ReviewAction", "RequestReview"}:
             return self._execute_review_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         else:
             raise ActionUnavailableError(
