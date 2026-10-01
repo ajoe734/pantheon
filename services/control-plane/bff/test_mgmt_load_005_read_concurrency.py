@@ -332,59 +332,6 @@ def test_evidence_timeout_returns_degraded_envelope_without_hanging() -> None:
     assert surface["reason"] == "read_timeout"
 
 
-def test_approvals_slow_read_completes_without_hanging() -> None:
-    """``/bff/approvals`` (governance.router) carries the real MGMT-LOAD-005
-    isolation wrapper: ``create_governance_router`` defaults
-    ``run_management_read`` to the real wrapper when the caller does not
-    override it, so a slow store read within the wait budget is offloaded
-    to a worker thread and the real (non-degraded) pending items are
-    returned once it completes.
-    """
-
-    def slow_list_approval_queue_items(**_kwargs):
-        time.sleep(0.2)
-        return [{"decision_id": "should-appear", "decision_state": "pending", "tenant_id": "tenant-a"}]
-
-    with _isolated_bff() as (client, store):
-        store.list_approval_queue_items = slow_list_approval_queue_items
-        started = time.monotonic()
-        response = client.get("/bff/approvals", headers=HEADERS)
-        elapsed = time.monotonic() - started
-
-    assert response.status_code == 200, response.text
-    assert elapsed >= 0.2
-    assert elapsed < 1.0, f"approvals route took {elapsed:.3f}s; it should still complete promptly after the slow read"
-    payload = response.json()
-    assert payload["items"] == [{"decision_id": "should-appear", "decision_state": "pending", "tenant_id": "tenant-a"}]
-    assert payload["count"] == 1
-
-
-def test_approvals_timeout_returns_degraded_envelope_without_hanging() -> None:
-    """A slow Approvals read that exceeds the wait budget must degrade to an
-    explicit timeout envelope instead of hanging or returning stale data.
-    """
-
-    def slow_list_approval_queue_items(**_kwargs):
-        time.sleep(0.6)
-        return [{"decision_id": "should-not-appear", "decision_state": "pending"}]
-
-    with patch.dict(os.environ, {"PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS": "0.05"}):
-        with _isolated_bff() as (client, store):
-            store.list_approval_queue_items = slow_list_approval_queue_items
-            started = time.monotonic()
-            response = client.get("/bff/approvals", headers=HEADERS)
-            elapsed = time.monotonic() - started
-
-    assert response.status_code == 200, response.text
-    assert elapsed < 0.4, f"approvals route took {elapsed:.3f}s; it should degrade near the timeout budget"
-    payload = response.json()
-    assert payload["items"] == []
-    assert payload["count"] == 0
-    surface = payload["meta"]["surfaces"]["approvals"]
-    assert surface["status"] == "degraded"
-    assert surface["reason"] == "read_timeout"
-
-
 def test_human_inbox_returns_normal_payload_when_fast() -> None:
     with _isolated_bff() as (client, _store):
         response = client.get("/bff/management/human-inbox", headers=HEADERS)

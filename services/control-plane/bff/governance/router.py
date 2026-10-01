@@ -8,14 +8,19 @@ slice switches to this router.
 from __future__ import annotations
 
 import copy
+import json
+import urllib.error
 import uuid
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from ..models import safe_redact_evidence_refs
+from . import approval_owner
+from .approval_owner import InvalidApprovalRequest, UnsupportedApprovalAction
 from .service import GovernanceService, SubmitAction, page_slice, split_csv, utc_now_rfc3339
 
 
@@ -123,24 +128,17 @@ def create_governance_router(
     meta_staleness: Optional[Callable[[], Any]] = None,
     redact_evidence_refs: Optional[Callable[..., Tuple[List[Dict[str, Any]], int]]] = None,
     capabilities_for_identity: Optional[Callable[[Any], Any]] = None,
-    submit_action: Optional["SubmitAction"] = None,
     publish_event: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
     get_interventions: Optional[Callable[[], List[Dict[str, Any]]]] = None,
     read_surface_state: Optional[Callable[[], str]] = None,
+    submit_action: Optional["SubmitAction"] = None,
     governance_service: Optional[GovernanceService] = None,
     reject_body_idempotency_key: Optional[Callable[[Dict[str, Any]], None]] = None,
     command_store: Optional[Any] = None,
-    run_management_read: Optional[Callable[..., Any]] = None,
 ) -> APIRouter:
     """Build the exact 35-route Governance domain router."""
 
     router = APIRouter()
-    if run_management_read is None:
-        try:
-            from ..personas.routes.common import run_management_read as _default_rmr
-            run_management_read = _default_rmr
-        except Exception:
-            run_management_read = None
     _get_store = (
         (lambda: read_surface() if callable(read_surface) else read_surface)
         if read_surface is not None
@@ -253,13 +251,13 @@ def create_governance_router(
                 current_store,
                 utc_now=_now,
                 page_slice_fn=_page,
-                submit_action=submit_action,
                 publish_event=publish_event,
                 get_interventions=get_interventions,
                 dataset_surface_status=_surface,
                 redact_evidence_refs=_redact,
                 capabilities_for_identity=_capabilities,
                 read_surface_state=_read_surface_state,
+                submit_action=submit_action,
                 command_store=command_store,
             )
         return resolved_service
@@ -282,18 +280,25 @@ def create_governance_router(
         (_require_operator if operator else _require_read)(identity)
         return identity
 
-    def _require_approver(identity: Any) -> None:
-        roles = set(getattr(identity, "roles", set()) or set())
-        if not {"approver", "admin"}.intersection(roles):
-            _fail(
-                403,
-                "FORBIDDEN",
-                "Approval decision requires 'approver' or 'admin' role",
-                "Operator does not hold the required role",
-                precondition_failed="role_check",
-            )
+    async def _forward(call: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Run one owner call; the owner's status/body is relayed, never reinterpreted."""
+        try:
+            return await run_in_threadpool(call, *args, **kwargs)
+        except urllib.error.HTTPError as exc:
+            try:
+                content = json.loads(exc.read().decode("utf-8"))
+            except Exception:
+                content = {"detail": f"Governance owner returned HTTP {exc.code}"}
+            raise HTTPException(status_code=exc.code, detail=content.get("detail", content)) from exc
+        except UnsupportedApprovalAction as exc:
+            _fail(501, "NOT_IMPLEMENTED", str(exc), "Unsupported approval action", precondition_failed="unsupported_action")
+        except InvalidApprovalRequest as exc:
+            field = str(exc)
+            _fail(422, "VALIDATION_FAILED", f"{field} is required or invalid", f"Invalid approval decision field: {field}", precondition_failed=field)
+        except (urllib.error.URLError, OSError, RuntimeError):
+            _fail(503, "DEPENDENCY_UNAVAILABLE", "Governance approval owner unavailable", "Governance approval owner unreachable")
 
-    def _idempotency_key(primary: Optional[str], alternate: Optional[str]) -> str:
+    def _idempotency_key(primary: Optional[str], alternate: Optional[str], *, required: bool = False) -> str:
         first = str(primary or "").strip()
         second = str(alternate or "").strip()
         if first and second and first != second:
@@ -304,6 +309,8 @@ def create_governance_router(
                 "Idempotency-Key and X-Idempotency-Key must match when both are provided",
                 precondition_failed="idempotency_key",
             )
+        if required and not (first or second):
+            _fail(422, "VALIDATION_FAILED", "Idempotency-Key is required", "Approval writes need a stable Idempotency-Key", precondition_failed="idempotency_key")
         return first or second or str(uuid.uuid4())
 
     def _not_found(label: str, resource_id: str) -> None:
@@ -362,80 +369,43 @@ def create_governance_router(
         state: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        identity = _identity(authorization)
-        decisions = _service().list_approval_decisions(outcome=outcome, state=state, identity=identity)
+        identity = _extract(authorization)
+        decisions = await _forward(approval_owner.list_decisions, authorization, state=state, outcome=outcome)
         redacted_decisions, total_redacted = _redact_evidence_field_items(identity, decisions)
-        snapshot_at = _now()
         meta = _read_meta(
             "approval_decisions",
             "approval_decision_list",
-            snapshot_at=snapshot_at,
+            snapshot_at=_now(),
             total=len(redacted_decisions),
         )
         meta["redacted_evidence_count"] = total_redacted
-        return {
-            "data": redacted_decisions,
-            "meta": meta,
-        }
+        return {"data": redacted_decisions, "meta": meta}
 
-    @router.post("/api/v1/approval-decisions", status_code=202)
+    @router.post("/api/v1/approval-decisions", status_code=201)
     async def create_approval_decision(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
-        x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
     ) -> Any:
-        identity = _identity(authorization, operator=True)
-        _require_approver(identity)
-        key = _idempotency_key(idempotency_key, x_idempotency_key)
-        dry_run = str(x_dry_run or "").strip().lower() in {"1", "true", "yes"}
-        correlation_id = str(x_correlation_id or "").strip() or str(uuid.uuid4())
-        try:
-            result = _service().create_approval_decision(
-                payload,
-                identity=identity,
-                idempotency_key=key,
-                dry_run=dry_run,
-                correlation_id=correlation_id,
-            )
-        except ValueError as exc:
-            field = str(exc)
-            _fail(422, "VALIDATION_FAILED", f"{field} is invalid", f"Invalid or missing {field}", precondition_failed=field)
-        except RuntimeError:
-            _fail(409, "IDEMPOTENCY_CONFLICT", "Idempotency key conflict", "The key is bound to another payload", precondition_failed="idempotency_conflict")
-        return JSONResponse(status_code=200 if dry_run else 202, content=result)
+        _extract(authorization)
+        if str(x_dry_run or "").strip().lower() in {"1", "true", "yes"}:
+            _fail(501, "NOT_IMPLEMENTED", "Dry-run is not supported by the Governance owner", "Unsupported approval action", precondition_failed="unsupported_action")
+        key = _idempotency_key(idempotency_key, x_idempotency_key, required=True)
+        return await _forward(approval_owner.propose, authorization, payload, key)
 
     @router.get("/api/v1/approval-decisions/{decision_id}")
     async def get_approval_decision_detail(
         decision_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        identity = _identity(authorization)
-        snapshot_at = _now()
-        decision = _service().get_approval_detail(decision_id, identity)
-        surface = _surface(
-            "approval_decisions",
-            snapshot_at=snapshot_at,
-            source=_service().dataset_source("approval_decisions"),
-        )
-        if decision is None:
-            if surface.get("status") == "unavailable":
-                _fail(503, "DEPENDENCY_UNAVAILABLE", "Approval decision unavailable", "Approval decision read surface is unavailable")
-            _not_found("Approval decision", decision_id)
+        identity = _extract(authorization)
+        decision = await _forward(approval_owner.get_decision, authorization, decision_id)
         redacted, total_redacted = _redact_evidence_field_items(identity, [decision])
-        meta = _read_meta(
-            "approval_decisions",
-            "approval_decision_detail",
-            snapshot_at=snapshot_at,
-            surface=surface,
-        )
+        meta = _read_meta("approval_decisions", "approval_decision_detail", snapshot_at=_now())
         meta["redacted_evidence_count"] = total_redacted
-        return {
-            "data": redacted[0],
-            "meta": meta,
-        }
+        return {"data": redacted[0], "meta": meta}
 
     # 4-12. Consultation workbench, requests, committees, and memos ----
 
@@ -1018,36 +988,13 @@ def create_governance_router(
     async def list_bff_approvals(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        identity = _identity(authorization)
-        snapshot_at = _now()
-        if run_management_read is not None:
-            try:
-                items = await run_management_read(lambda: _service().list_pending_approvals(identity))
-            except Exception:
-                return {
-                    "items": [],
-                    "count": 0,
-                    "generated_at": snapshot_at,
-                    "meta": {
-                        "surfaces": {
-                            "approvals": {
-                                "status": "degraded",
-                                "dataset": "approvals",
-                                "source": "management_read_timeout",
-                                "reason": "read_timeout",
-                                "message": "Approval queue read timed out under concurrent read fanout; degraded empty response returned.",
-                                "staleness": {"served_from": "timeout_degraded", "last_known_at": snapshot_at},
-                            },
-                        },
-                    },
-                }
-        else:
-            items = _service().list_pending_approvals(identity)
+        identity = _extract(authorization)
+        items = await _forward(approval_owner.list_decisions, authorization, pending_only=True)
         redacted_items, total_redacted = _redact_evidence_field_items(identity, items)
         return {
             "items": redacted_items,
             "count": len(redacted_items),
-            "generated_at": snapshot_at,
+            "generated_at": _now(),
             "meta": {"redacted_evidence_count": total_redacted},
         }
 
@@ -1206,18 +1153,15 @@ def create_governance_router(
         approval_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        identity = _identity(authorization)
+        identity = _extract(authorization)
         clean_id = approval_id.strip()
-        refs = _service().approval_evidence(clean_id, identity)
-        decision = _service().get_approval_detail(clean_id, identity)
-        if refs is None or decision is None:
-            _not_found("Approval decision", approval_id)
-        processed, redacted_count = _safe_redact(identity, refs)
+        decision = await _forward(approval_owner.get_decision, authorization, clean_id)
+        processed, redacted_count = _safe_redact(identity, list(decision.get("evidence_refs") or []))
         return {
             "approval_id": clean_id,
             "evidence": processed,
-            "correlation_id": decision.get("correlation_id") or decision.get("decision_id") or decision.get("id") or clean_id,
-            "audit_ref": decision.get("audit_ref") or {"target_type": "ApprovalDecision", "target_id": clean_id, "href": f"/bff/audit/entities/ApprovalDecision/{clean_id}"},
+            "correlation_id": decision.get("decision_id") or clean_id,
+            "audit_ref": {"target_type": "ApprovalDecision", "target_id": clean_id, "href": f"/bff/audit/entities/ApprovalDecision/{clean_id}"},
             "meta": {"snapshot_at": _now(), "redacted_count": redacted_count, "staleness": _staleness()},
         }
 
@@ -1228,10 +1172,8 @@ def create_governance_router(
         approval_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        identity = _identity(authorization)
-        detail = _service().get_approval_detail(approval_id, identity)
-        if detail is None:
-            _not_found("Approval decision", approval_id)
+        identity = _extract(authorization)
+        detail = await _forward(approval_owner.get_decision, authorization, approval_id.strip())
         redacted, total_redacted = _redact_evidence_field_items(identity, [detail])
         meta = _snapshot(_now())
         meta["redacted_evidence_count"] = total_redacted
@@ -1247,29 +1189,17 @@ def create_governance_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Any:
-        identity = _identity(authorization, operator=True)
-        _require_approver(identity)
+        identity = _extract(authorization)
         clean_id = approval_id.strip()
-        if _service().get_approval_detail(clean_id, identity) is None:
-            _not_found("Approval decision", clean_id)
-        try:
-            decision = _service().validate_decision(payload)
-            result = await _service().submit_governance_action(
-                action_kind="approval",
-                target_id=clean_id,
-                action_id=decision,
-                payload={**payload, "decision_id": clean_id},
-                identity=identity,
-                idempotency_key=_idempotency_key(idempotency_key, x_idempotency_key),
-            )
-        except ValueError as exc:
-            field = str(exc)
-            _fail(422, "VALIDATION_FAILED", f"{field} is required or invalid", f"Invalid approval decision field: {field}", precondition_failed=field)
-        except RuntimeError:
-            _fail(409, "IDEMPOTENCY_CONFLICT", "Idempotency key conflict", "The key is bound to another payload")
+        result = await _forward(approval_owner.decide, authorization, clean_id, payload,
+                                _idempotency_key(idempotency_key, x_idempotency_key, required=True))
         if publish_event is not None:
-            publish_event("approval.stage.changed" if decision in {"request_revision", "request_changes", "escalate", "freeze"} else "approval.decided", {"approval_id": clean_id, "decision": decision, "actor_id": getattr(identity, "operator_id", None)})
-        return result
+            publish_event(
+                "approval.decided" if result.get("decision_state") == "decided" else "approval.stage.changed",
+                {"approval_id": clean_id, "decision_state": result.get("decision_state"), "version": result.get("version"),
+                 "actor_id": getattr(identity, "operator_id", None)},
+            )
+        return JSONResponse(status_code=202, content=result)
 
     @router.post("/bff/approvals/batch-decide", status_code=202)
     async def bff_approvals_batch_decide(
@@ -1278,15 +1208,14 @@ def create_governance_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> JSONResponse:
-        identity = _identity(authorization, operator=True)
-        _require_approver(identity)
+        _extract(authorization)
         _reject_body_idempotency_key(payload)
         decisions = payload.get("decisions") if isinstance(payload.get("decisions"), list) else None
         if not decisions:
             _fail(422, "VALIDATION_FAILED", "decisions must be a non-empty list", "The decisions field must contain at least one item", precondition_failed="decisions")
         if len(decisions) > 50:
             _fail(422, "VALIDATION_FAILED", "batch-decide accepts at most 50 items", f"Received {len(decisions)} items", precondition_failed="decisions")
-        batch_key = _idempotency_key(idempotency_key, x_idempotency_key)
+        batch_key = _idempotency_key(idempotency_key, x_idempotency_key, required=True)
         results: List[Dict[str, Any]] = []
         for index, item in enumerate(decisions):
             if not isinstance(item, dict) or not str(item.get("id") or "").strip():
@@ -1294,25 +1223,11 @@ def create_governance_router(
                 continue
             item_id = str(item["id"]).strip()
             try:
-                decision = _service().validate_decision(item)
-                if _service().get_approval_detail(item_id, identity) is None:
-                    raise LookupError(item_id)
-                command = await _service().submit_governance_action(
-                    action_kind="approval",
-                    target_id=item_id,
-                    action_id=decision,
-                    payload={**item, "decision_id": item_id},
-                    identity=identity,
-                    idempotency_key=f"{batch_key}::{index}::{item_id}",
-                )
-                data = command.get("data", {}) if isinstance(command, dict) else {}
-                results.append({"index": index, "id": item_id, "status": "accepted", "command_id": data.get("command_id"), "commandId": data.get("commandId")})
-            except LookupError:
-                results.append({"index": index, "id": item_id, "status": "failed", "error": {"code": "RESOURCE_NOT_FOUND", "message": f"approval_id={item_id!r} does not exist"}})
-            except ValueError as exc:
-                results.append({"index": index, "id": item_id, "status": "failed", "error": {"code": "VALIDATION_FAILED", "message": f"{exc} is required or invalid"}})
-            except RuntimeError:
-                results.append({"index": index, "id": item_id, "status": "failed", "error": {"code": "IDEMPOTENCY_CONFLICT", "message": "idempotency key conflict"}})
+                owner = await _forward(approval_owner.decide, authorization, item_id, item, f"{batch_key}::{index}::{item_id}")
+                results.append({"index": index, "id": item_id, "status": "accepted", "result": owner})
+            except HTTPException as exc:
+                detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+                results.append({"index": index, "id": item_id, "status": "failed", "http_status": exc.status_code, "error": detail.get("error", detail)})
         accepted = sum(item["status"] == "accepted" for item in results)
         failed = len(results) - accepted
         status = "accepted" if not failed else "partial" if accepted else "failed"

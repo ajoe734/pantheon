@@ -264,10 +264,12 @@ class HttpGovernanceApprovalVerifier:
     """
 
     def __init__(
-        self, *, base_url: str, service_token: str, timeout_seconds: float = 5.0
+        self, *, base_url: str, service_token: str, timeout_seconds: float = 5.0,
+        token_provider: Callable[[], str] | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._service_token = service_token
+        self._token_provider = token_provider
         self._timeout_seconds = timeout_seconds
 
     def verify_persona_lifecycle_decision(
@@ -286,6 +288,7 @@ class HttpGovernanceApprovalVerifier:
         )
         try:
             ApprovalReader(base_url=self._base_url, service_token=self._service_token,
+                           token_provider=self._token_provider,
                            timeout_seconds=self._timeout_seconds).verify(
                 decision_id, expected={
                     'tenant_id': tenant_id,
@@ -317,6 +320,7 @@ class HttpGovernanceApprovalVerifier:
             return False
         try:
             ApprovalReader(base_url=self._base_url, service_token=self._service_token,
+                           token_provider=self._token_provider,
                            timeout_seconds=self._timeout_seconds).verify(
                 approval_decision_id, expected={
                     'tenant_id': tenant_id, 'persona_id': persona_id,
@@ -1504,14 +1508,18 @@ def build_training_target_approval_verifier() -> TrainingTargetApprovalVerifier 
     base_url = str(
         os.getenv("PERSONA_TRAINING_TARGET_GOVERNANCE_BASE_URL") or ""
     ).strip()
-    service_token = str(
-        os.getenv("PERSONA_GOVERNANCE_SERVICE_TOKEN")
-        or ""
-    ).strip()
-    if not base_url or not service_token:
+    from services.service_token_file import configured_service_token
+
+    variable = "PERSONA_GOVERNANCE_SERVICE_TOKEN"
+    if not base_url or not (
+        str(os.getenv(variable) or "").strip() or str(os.getenv(variable + "_FILE") or "").strip()
+    ):
         return None
+    # Read per call so issuer rotation applies; a configured unreadable file
+    # fails closed instead of falling back to the env secret.
     return HttpGovernanceApprovalVerifier(
-        base_url=base_url, service_token=service_token,
+        base_url=base_url, service_token="",
+        token_provider=lambda: configured_service_token(variable),
         timeout_seconds=float(os.getenv("PERSONA_GOVERNANCE_TIMEOUT_SECONDS", "5")),
     )
 

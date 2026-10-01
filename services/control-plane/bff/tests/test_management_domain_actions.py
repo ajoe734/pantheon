@@ -514,25 +514,6 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
         self.assertEqual(result["status"], "executed")
         self.assertEqual(result["authoritative_readback"]["state"], "approved")
 
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_governance_decision_approve(self, mock_post):
-        mock_post.return_value = {
-            "decision_state": "approved",
-            "audit_id": "aud-gov-01",
-        }
-
-        result = execute_command(
-            "cmd-gov-dec-01",
-            CommandType.APPROVE_DECISION,
-            {
-                "decision_id": "dec-xyz",
-                "approval_notes": "All criteria met",
-            },
-        )
-
-        self.assertEqual(result["status"], "approved")
-        self.assertEqual(result["decision_state"], "approved")
-
 
 class TestUnavailableActionsAndSafetyPosture(unittest.TestCase):
     """Verifies that unsafe/unbacked capability actions fail closed with typed errors."""

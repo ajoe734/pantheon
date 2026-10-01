@@ -1352,7 +1352,12 @@ def require_final_command_preconditions(
         )
 
     approval_decision_id = _precondition_value(payload, params, _APPROVAL_EVIDENCE_FIELDS)
-    owner_verifies_approval = cmd.command == CommandType.ADVANCE_LIFECYCLE
+    owner_verifies_approval = cmd.command in (
+        CommandType.ADVANCE_LIFECYCLE,
+        CommandType.APPROVE_DECISION,
+        CommandType.REJECT_DECISION,
+        CommandType.REQUEST_APPROVAL_REVISION,
+    )
     if getattr(entry, "requires_approval", False) and not owner_verifies_approval and not approval_decision_id:
         raise _final_precondition_error(
             cmd=cmd,
@@ -1998,15 +2003,6 @@ def _validate_approve_decision(params: Dict[str, Any], identity: OperatorIdentit
             "Missing required params for ApproveDecision",
             f"Missing fields: {sorted(missing)}",
         )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _err(
-            403,
-            ErrorCode.FORBIDDEN,
-            "ApproveDecision requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
 
 
 def _validate_reject_decision(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
@@ -2026,15 +2022,6 @@ def _validate_reject_decision(params: Dict[str, Any], identity: OperatorIdentity
             "RejectDecision requires a non-empty rejection_reason",
             "rejection_reason must be a non-empty string",
         )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _err(
-            403,
-            ErrorCode.FORBIDDEN,
-            "RejectDecision requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
 
 
 def _validate_request_approval_revision(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
@@ -2053,15 +2040,6 @@ def _validate_request_approval_revision(params: Dict[str, Any], identity: Operat
             ErrorCode.VALIDATION_FAILED,
             "RequestApprovalRevision requires non-empty revision_notes",
             "revision_notes must be a non-empty string",
-        )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _err(
-            403,
-            ErrorCode.FORBIDDEN,
-            "RequestApprovalRevision requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
         )
 
 
