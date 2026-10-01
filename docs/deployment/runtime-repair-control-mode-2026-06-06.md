@@ -15,4 +15,4 @@ zero trades alone does not indicate a liveness failure. There is no separate
 BFF start or runtime-repair control path.
 
 Implementation: `services/paper_fleet_reconciler/paper_fleet_reconciler.py`
-(`reconcile_once`, `_start_worker`, `_stop_worker`).
+(`reconcile_once`, `_start_worker`, `_terminate_worker`).

@@ -1160,6 +1160,28 @@ def test_unmapped_wrapper_is_rejected_before_storage(command) -> None:
         assert store._get_all_commands() == []
 
 
+@pytest.mark.parametrize("verb", ["start", "restart"])
+def test_unavailable_runtime_verb_has_no_downstream_dispatch(verb, monkeypatch) -> None:
+    from services.control_plane.bff.command_adapters import runtime_adapter
+
+    def unexpected_dispatch(*args, **kwargs):
+        pytest.fail("Unavailable runtime action attempted downstream dispatch")
+
+    monkeypatch.setattr(runtime_adapter, "http_request_json", unexpected_dispatch)
+    with tempfile.TemporaryDirectory() as td:
+        store, _svc, client = _mounted_service(td)
+        response = client.post("/bff/v1/commands", headers={**HEADERS, "Idempotency-Key": "runtime-verb-1"}, json={
+            "command": "RuntimeAction", "action": verb,
+            "target": {"type": "Runtime", "id": "runtime-1"},
+            "params": {}, "audit_context": {"reason": "runtime recovery"},
+        })
+        assert response.status_code == 202, response.text
+        record = store._get_all_commands()[0]
+        assert record["type"] == "RuntimeAction"
+        assert record["status"] == CommandStatus.FAILED.value
+        assert record["error"]["code"] == "ACTION_UNAVAILABLE"
+
+
 @pytest.mark.parametrize("body", [
     {"command": "PauseRuntime"},
     {"command": "RuntimeAction", "action": "pause"},
