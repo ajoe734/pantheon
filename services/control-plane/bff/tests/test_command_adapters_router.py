@@ -897,7 +897,6 @@ _ALIAS_PARAMS: Dict[str, Dict[str, Any]] = {
     "RejectDecision": {"decision_id": "alias-target-1", "rejection_reason": "alias equivalence"},
     "RequestApprovalRevision": {"decision_id": "alias-target-1", "revision_notes": "alias equivalence"},
     "RecordSponsorDecision": {"committee_id": "alias-target-1", "sponsor_decision": "approved", "rationale_ref": "ref-1"},
-    "RemediateSentinelIntervention": {"intervention_id": "alias-target-1", "remediation_action": "resolve"},
     "HumanGateApprove": {"human_gate_item_id": "alias-target-1", "decision": "approve"},
     "HumanGateReject": {"human_gate_item_id": "alias-target-1", "decision": "reject"},
     "HumanGateRequestMoreEvidence": {"human_gate_item_id": "alias-target-1", "decision": "request_more_evidence"},
@@ -1112,7 +1111,6 @@ def test_ranking_adapter_existing_canonical_alias_parity(params, expected) -> No
 _DISPATCH_CASES = [
     ("RuntimeAction", "start", "StartRuntime", "/runtimes/alias-target-1/start"),
     ("PersonaAction", "advance_lifecycle", "AdvanceLifecycle", "/personas/alias-target-1/advance-lifecycle"),
-    ("V5InterventionAction", "remediate", "RemediateSentinelIntervention", "/sentinel/interventions/alias-target-1/remediate"),
     ("RuntimeAction", "RestartPaperRuntime", "RestartPaperRuntime", "/paper-runtimes/alias-target-1/restart"),
     ("RuntimeAction", "RestartTelemetryBridge", "RestartTelemetryBridge", "/paper-runtimes/alias-target-1/telemetry-bridge/restart"),
     ("RuntimeAction", "TerminateStalePaperMonitoringSession", "TerminateStalePaperMonitoringSession", "/monitoring-sessions/alias-target-1/terminate-stale"),

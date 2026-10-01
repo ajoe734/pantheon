@@ -1065,7 +1065,7 @@ def test_execute_governed_tool_denies_non_allowlisted_action() -> None:
 def test_execute_governed_tool_denies_shell_action() -> None:
     """Shell-like or arbitrary action_ids are not in the allowlist."""
     import pytest
-    for action_id in ("shell", "exec", "bash", "StartRuntime", "RemediateSentinelIntervention"):
+    for action_id in ("shell", "exec", "bash", "StartRuntime"):
         with pytest.raises(ToolNotAllowedError):
             execute_governed_tool(
                 action_id=action_id,
@@ -1234,7 +1234,6 @@ def test_allowlist_does_not_contain_critical_actions() -> None:
         "ActivateKillSwitch",
         "LiquidateAll",
         "HardRollback",
-        "RemediateSentinelIntervention",
         "StartRuntime",
         "IssueRiskOff",
         "IssueSafeMode",

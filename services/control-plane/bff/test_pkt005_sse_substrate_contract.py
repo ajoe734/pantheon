@@ -56,8 +56,6 @@ FINAL_CHANNEL_CATALOG = (
     "journal",
     "postmortem",
     "loop",
-    "sentinel",
-    "intervention",
     "audit",
     "system",
 )
@@ -319,12 +317,12 @@ def test_replay_unavailable_uses_final_error_envelope_with_resync_metadata() -> 
     assert error["details"]["replaySupported"] is True
     assert error["details"]["replayWindowEvents"] == 500
     assert error["details"]["replayStore"] == "in-memory"
-    assert error["details"]["resyncRoutes"] == ["/bff/approvals", "/bff/v5/interventions"]
+    assert error["details"]["resyncRoutes"] == ["/bff/approvals"]
 
 
 def test_approval_and_ask_stream_routes_publish_replay_metadata_headers() -> None:
     for channel, resync in [
-        ("approval", "/bff/approvals,/bff/v5/interventions"),
+        ("approval", "/bff/approvals"),
         (
             "ask",
             (
@@ -371,7 +369,7 @@ def test_execute_plans_sse_compatibility_aliases_share_replay_headers() -> None:
         ("/bff/sse/command-center/kpi", "ranking"),
         ("/bff/sse/command-center/events", "loop"),
         ("/bff/sse/jobs/job-final-sse-001/progress", "tool"),
-        ("/bff/sse/alerts", "sentinel"),
+        ("/bff/sse/alerts", "system"),
         ("/bff/sse/incidents/inc-final-sse-001/timeline", "journal"),
         ("/bff/sse/deployment/events", "artifact"),
         ("/bff/sse/review/updates", "approval"),

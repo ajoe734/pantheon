@@ -63,17 +63,6 @@ class ManagementDeltaTestReadPorts(ReadSurfacePorts):
     def _get_dataset(self, name: str) -> dict[str, Any] | list[Any]:
         return self._data.setdefault(name, [])
 
-    def list_sentinel_findings(self, **kwargs: Any) -> Any:
-        ds = self._get_dataset("sentinel_findings")
-        return list(ds.values()) if isinstance(ds, dict) else list(ds)
-
-    def list_findings(self, **kwargs: Any) -> Any:
-        return self.list_sentinel_findings(**kwargs)
-
-    def list_v5_interventions(self, **kwargs: Any) -> list[dict[str, Any]]:
-        ds = self._get_dataset("v5_interventions")
-        return list(ds.values()) if isinstance(ds, dict) else list(ds)
-
     def list_runtime_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
         ds = self._data.get("runtime_instances") or self._data.get("runtime_bindings") or self._data.get("runtimes") or []
         return list(ds.values()) if isinstance(ds, dict) else list(ds)
@@ -200,8 +189,8 @@ class ManagementDeltaTestReadPorts(ReadSurfacePorts):
 # `core.app_factory.build_bff_app` (the same factory main.py uses for CORS,
 # security headers, and error-handler wiring) instead of importing main.py
 # itself. Every route under test here
-# (sentinel-pulse, persona-league/*, incident-timeline, loop-throughput,
-# hiq-backlog, intervention-stream, quarterly-ranking/*, governance-ledger,
+# (persona-league/*, incident-timeline, loop-throughput,
+# hiq-backlog, quarterly-ranking/*, governance-ledger,
 # cost-attribution) is registered by one of these four router factories, not
 # by main.py directly.
 # ---------------------------------------------------------------------------
@@ -272,145 +261,6 @@ def _fresh_client(td: str, *, fallback: bool = True) -> TestClient:
     client = TestClient(_build_app(store, command_store=command_store), raise_server_exceptions=False)
     client.store = store  # type: ignore[attr-defined]
     return client
-
-
-def _sentinel_pulse_client() -> TestClient:
-    store = ManagementDeltaTestReadPorts(allow_fallback=False)
-    findings = [
-        {
-            "id": "finding-critical",
-            "finding_id": "finding-critical",
-            "kind": "hiq_sentinel",
-            "status": "open",
-            "severity": "critical",
-            "title": "Sentinel capital breach",
-            "summary": "Critical sentinel finding for runtime-alpha",
-            "runtime_id": "runtime-alpha",
-            "incident_id": "incident-alpha",
-            "triggered_at": "2026-05-24T08:00:00Z",
-        },
-        {
-            "id": "finding-low",
-            "finding_id": "finding-low",
-            "kind": "strategy_drift",
-            "status": "resolved",
-            "severity": "low",
-            "title": "Resolved strategy drift",
-            "triggered_at": "2026-05-23T08:00:00Z",
-        },
-    ]
-    interventions = [
-        {
-            "id": "intv-critical",
-            "intervention_id": "intv-critical",
-            "finding_id": "finding-critical",
-            "kind": "hiq_sentinel",
-            "status": "pending",
-            "severity": "critical",
-            "summary": "Review sentinel remediation",
-            "triggered_at": "2026-05-24T08:05:00Z",
-        }
-    ]
-
-    def list_sentinel_findings(
-        *,
-        kind: str | None = None,
-        status: str | None = None,
-        severity: str | None = None,
-    ) -> tuple[bool, list[dict[str, Any]]]:
-        rows = list(findings)
-        if kind:
-            rows = [row for row in rows if row["kind"] == kind]
-        if status:
-            rows = [row for row in rows if row["status"] == status]
-        if severity:
-            rows = [row for row in rows if row["severity"] == severity]
-        return True, rows
-
-    def list_v5_interventions(
-        *,
-        status: str | None = None,
-        kind: str | None = None,
-    ) -> list[dict[str, Any]]:
-        rows = list(interventions)
-        if status:
-            rows = [row for row in rows if row["status"] == status]
-        if kind:
-            rows = [row for row in rows if row["kind"] == kind]
-        return rows
-
-    def dataset_source(dataset: str, **_: Any) -> str:
-        if dataset in {"sentinel_findings", "v5_interventions"}:
-            return "canonical"
-        return "missing"
-
-    store.list_sentinel_findings = list_sentinel_findings
-    store.list_v5_interventions = list_v5_interventions
-    store.dataset_source = dataset_source
-    return _client_for(store)
-
-
-def test_sentinel_pulse_composes_findings_and_interventions() -> None:
-    client = _sentinel_pulse_client()
-
-    response = client.get(
-        "/bff/management/sentinel-pulse",
-        headers=HEADERS,
-        params={"severity": "critical", "q": "runtime-alpha", "page_size": 5},
-    )
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    data = body["data"]
-
-    assert data["id"] == "management-sentinel-pulse"
-    assert set(body) == {"data", "page_info", "meta"}
-    assert "items" not in body
-    assert "findings" not in body
-    assert "summary" not in body
-    assert body["page_info"] == {"next_page_token": None, "total": 1, "page_size": 5}
-
-    finding = data["items"][0]
-    assert finding["finding_id"] == "finding-critical"
-    assert finding["severity"] == "critical"
-    assert finding["source_refs"]["runtime_id"] == "runtime-alpha"
-    assert finding["links"]["finding"] == "/bff/v5/sentinel/findings/finding-critical"
-
-    assert data["related"]["interventions"][0]["intervention_id"] == "intv-critical"
-    assert data["summary"]["finding_count"] == 1
-    assert data["summary"]["active_finding_count"] == 1
-    assert data["summary"]["critical_finding_count"] == 1
-    assert data["summary"]["pending_intervention_count"] == 1
-    assert data["summary"]["highest_severity"] == "critical"
-    assert data["summary"]["policy"] == "read_only_sentinel_pulse"
-    assert body["meta"]["surfaces"]["management_sentinel_pulse"]["source"] == "bff_composed"
-    assert body["meta"]["surfaces"]["sentinel_findings"]["source"] == "canonical"
-    assert body["meta"]["surfaces"]["v5_interventions"]["source"] == "canonical"
-    assert "GET /bff/v5/sentinel/findings" in body["meta"]["composition_sources"]
-
-
-def test_sentinel_pulse_requires_auth() -> None:
-    client = _sentinel_pulse_client()
-
-    response = client.get("/bff/management/sentinel-pulse")
-
-    assert response.status_code == 401, response.text
-
-
-def test_sentinel_pulse_cors_preflight() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client = _fresh_client(td)
-        response = client.options(
-            "/bff/management/sentinel-pulse",
-            headers={
-                "Origin": LOVABLE_ORIGIN,
-                "Access-Control-Request-Method": "GET",
-                "Access-Control-Request-Headers": "authorization",
-            },
-        )
-
-        assert response.status_code in {200, 204}
-        assert response.headers.get("access-control-allow-origin") == LOVABLE_ORIGIN
 
 
 def test_persona_league_heatmap() -> None:
@@ -730,125 +580,42 @@ def test_loop_throughput_cors_preflight_and_openapi() -> None:
 
 def _hiq_backlog_client() -> TestClient:
     store = ManagementDeltaTestReadPorts(allow_fallback=False)
-    sentinel_findings = [
+    store.list_approval_queue_items = lambda **_: []
+    store._data["incidents"] = [
         {
-            "finding_id": "sf-hiq-open-high",
+            "incident_id": "inc-hiq-open-high",
             "kind": "hiq_sentinel",
             "status": "open",
             "severity": "high",
-            "title": "HiQ sentinel risk alert",
-            "description": "Sentinel found a high-risk HIQ condition.",
+            "title": "HiQ risk incident",
             "created_at": "2026-05-24T10:10:00Z",
-            "runtime_id": "runtime-alpha",
-            "incident_id": "inc-hiq-open-high",
         },
         {
-            "finding_id": "sf-loop-open",
+            "incident_id": "inc-loop-open",
             "kind": "loop_anomaly",
             "status": "open",
             "severity": "medium",
-            "title": "Loop anomaly",
             "created_at": "2026-05-24T10:00:00Z",
-        },
-    ]
-    store.list_approval_queue_items = lambda **_: []
-    store.list_sentinel_findings = lambda **_: (True, list(sentinel_findings))
-
-    def dataset_source(dataset: str, **_: Any) -> str:
-        if dataset in {"sentinel_findings", "v5_interventions"}:
-            return "service_store"
-        return "missing"
-
-    store.dataset_source = dataset_source
-    store._data["v5_interventions"] = [
-        {
-            "intervention_id": "intv-hiq-critical",
-            "kind": "hiq_sentinel",
-            "status": "pending",
-            "target_type": "Runtime",
-            "target_id": "runtime-alpha",
-            "triggered_at": "2026-05-24T11:00:00Z",
-            "triggered_by": "sentinel",
-            "description": "Critical HIQ sentinel intervention.",
-            "correlation_id": "corr-hiq-critical",
-        },
-        {
-            "intervention_id": "intv-risk-high",
-            "kind": "risk_breach",
-            "status": "escalated",
-            "severity": "high",
-            "target_type": "CapitalPool",
-            "target_id": "pool-alpha",
-            "triggered_at": "2026-05-24T10:30:00Z",
-            "triggered_by": "risk-radar",
-            "description": "Risk breach waiting for operator review.",
-        },
-        {
-            "intervention_id": "intv-loop-anomaly",
-            "kind": "loop_anomaly",
-            "status": "pending",
-            "target_type": "LoopRun",
-            "target_id": "loop-alpha",
-            "triggered_at": "2026-05-24T10:40:00Z",
-        },
-        {
-            "intervention_id": "intv-hiq-remediated",
-            "kind": "hiq_sentinel",
-            "status": "remediated",
-            "target_type": "Runtime",
-            "target_id": "runtime-beta",
-            "triggered_at": "2026-05-24T09:30:00Z",
         },
     ]
     return _client_for(store)
 
 
-def test_hiq_backlog_composes_open_hiq_interventions_and_findings() -> None:
+def test_hiq_backlog_composes_open_incidents() -> None:
     client = _hiq_backlog_client()
 
-    response = client.get(
-        "/bff/management/hiq-backlog",
-        headers=HEADERS,
-        params={"page_size": 10},
-    )
+    response = client.get("/bff/management/hiq-backlog", headers=HEADERS, params={"page_size": 10})
 
     assert response.status_code == 200, response.text
     body = response.json()
     data = body["data"]
     items = data["items"]
-    summary = data["summary"]
-    ids = {item["source_id"] for item in items}
 
     assert data["id"] == "management-hiq-backlog"
     assert set(body.keys()) == {"data", "page_info", "meta"}
-    assert "rows" not in data
-    assert "backlog" not in data
-    assert ids == {"intv-hiq-critical", "intv-risk-high", "sf-hiq-open-high"}
-    assert summary["backlog_count"] == 3
-    assert summary["intervention_count"] == 2
-    assert summary["sentinel_finding_count"] == 1
-    assert summary["by_kind"]["hiq_sentinel"] == 2
-    assert summary["by_kind"]["risk_breach"] == 1
-    assert body["meta"]["policy"] == "read_only_hiq_backlog"
-    assert body["meta"]["surfaces"]["hiq_backlog"]["source"] == "bff_composed"
-    assert "GET /bff/v5/interventions" in body["meta"]["composition_sources"]
-    assert "GET /bff/v5/sentinel/findings" in body["meta"]["composition_sources"]
-    assert "GET /bff/management/human-inbox" in body["meta"]["composition_sources"]
-
-    intervention = next(item for item in items if item["source_id"] == "intv-hiq-critical")
-    assert intervention["priority"] == "critical"
-    assert intervention["links"]["source"] == "/bff/v5/interventions/intv-hiq-critical"
-    assert intervention["links"]["human_inbox"] == (
-        "/bff/management/human-inbox/intervention:intv-hiq-critical"
-    )
-    assert intervention["allowed_actions"]["canRemediate"] is True
-    assert "humanInbox" not in intervention["links"]
-    assert "allowedActions" not in intervention
-    assert "backlogId" not in intervention
-    assert "sourceType" not in intervention
-    assert "sourceRefs" not in intervention
-    assert "sourceRecord" not in intervention
-    assert "source_record" not in intervention
+    assert {item["source_id"] for item in items} == {"inc-hiq-open-high", "inc-loop-open"}
+    assert all(item["source_type"] == "incident" for item in items)
+    assert items[0]["id"].startswith("incident:")
 
 
 def test_hiq_backlog_filters_and_requires_auth() -> None:
@@ -860,13 +627,13 @@ def test_hiq_backlog_filters_and_requires_auth() -> None:
     response = client.get(
         "/bff/management/hiq-backlog",
         headers=HEADERS,
-        params={"kind": "hiq_sentinel", "status": "pending", "source_type": "intervention"},
+        params={"kind": "hiq_sentinel", "source_type": "incident"},
     )
 
     assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["data"]["summary"]["backlog_count"] == 1
-    assert body["data"]["items"][0]["source_id"] == "intv-hiq-critical"
+    items = response.json()["data"]["items"]
+    assert [item["source_id"] for item in items] == ["inc-hiq-open-high"]
+
 
 
 def test_hiq_backlog_cors_preflight_and_openapi() -> None:
@@ -886,151 +653,6 @@ def test_hiq_backlog_cors_preflight_and_openapi() -> None:
     schema = client.get("/openapi.json").json()
     assert "/bff/management/hiq-backlog" in schema["paths"]
     assert "get" in schema["paths"]["/bff/management/hiq-backlog"]
-
-
-def _intervention_stream_client() -> TestClient:
-    store = ManagementDeltaTestReadPorts(allow_fallback=False)
-    audit_events = [
-        {
-            "entry_id": "audit-intv-alpha-decision",
-            "actor": "operator-jane",
-            "action_type": "intervention.decide",
-            "target_type": "Intervention",
-            "target_id": "intv-alpha",
-            "timestamp": "2026-05-24T11:10:00Z",
-            "outcome": "accepted",
-            "audit_context": {
-                "intervention_id": "intv-alpha",
-                "persona_id": "persona-alpha",
-                "reason": "Operator accepted intervention remediation.",
-            },
-        }
-    ]
-    store.list_governance_audit_events = lambda **_: list(audit_events)
-
-    def dataset_source(dataset: str, **_: Any) -> str:
-        if dataset in {"v5_interventions", "governance_audit_events"}:
-            return "service_store"
-        return "missing"
-
-    store.dataset_source = dataset_source
-    store._data["v5_interventions"] = [
-        {
-            "intervention_id": "intv-alpha",
-            "kind": "hiq_sentinel",
-            "status": "pending",
-            "persona_id": "persona-alpha",
-            "runtime_id": "runtime-alpha",
-            "target_type": "Persona",
-            "target_id": "persona-alpha",
-            "triggered_at": "2026-05-24T11:00:00Z",
-            "triggered_by": "sentinel",
-            "description": "Alpha persona needs HIQ review.",
-        },
-        {
-            "intervention_id": "intv-beta",
-            "kind": "risk_breach",
-            "status": "escalated",
-            "persona_id": "persona-beta",
-            "runtime_id": "runtime-beta",
-            "target_type": "Persona",
-            "target_id": "persona-beta",
-            "triggered_at": "2026-05-24T10:30:00Z",
-            "triggered_by": "risk-radar",
-            "description": "Beta persona risk breach escalated.",
-        },
-        {
-            "intervention_id": "intv-old",
-            "kind": "hiq_sentinel",
-            "status": "pending",
-            "persona_id": "persona-old",
-            "triggered_at": "2026-05-22T09:00:00Z",
-        },
-    ]
-    return _client_for(store, utc_now_fn=lambda: "2026-05-24T12:00:00Z")
-
-
-def test_intervention_stream_returns_recent_persona_events() -> None:
-    client = _intervention_stream_client()
-
-    response = client.get(
-        "/bff/management/intervention-stream",
-        headers=HEADERS,
-        params={"page_size": 10},
-    )
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    data = body["data"]
-    items = data["items"]
-    summary = data["summary"]
-
-    assert data["id"] == "management-intervention-stream"
-    assert set(body.keys()) == {"data", "page_info", "meta"}
-    assert "rows" not in data
-    assert "events" not in data
-    assert "stream" not in data
-    assert all("eventId" not in item for item in items)
-    assert all("eventSource" not in item for item in items)
-    assert all("sourceRefs" not in item for item in items)
-    assert all("streamSequence" not in item for item in items)
-    assert [item["intervention_id"] for item in items] == [
-        "intv-alpha",
-        "intv-alpha",
-        "intv-beta",
-    ]
-    assert [item["stream_sequence"] for item in items] == [1, 2, 3]
-    assert all("sourceRecord" not in item for item in items)
-    assert all("source_record" not in item for item in items)
-    assert summary["event_count"] == 3
-    assert summary["intervention_count"] == 2
-    assert summary["persona_count"] == 2
-    assert summary["by_persona"]["persona-alpha"] == 2
-    assert summary["by_persona"]["persona-beta"] == 1
-    assert summary["window_hours"] == 24
-    assert summary["latest_at"] == "2026-05-24T11:10:00Z"
-    assert body["meta"]["policy"] == "read_only_intervention_stream"
-    assert body["meta"]["surfaces"]["intervention_stream"]["source"] == "bff_composed"
-    assert "GET /bff/v5/interventions" in body["meta"]["composition_sources"]
-    assert "GET /bff/audit" in body["meta"]["composition_sources"]
-
-
-def test_intervention_stream_filters_and_requires_auth() -> None:
-    client = _intervention_stream_client()
-
-    anonymous = client.get("/bff/management/intervention-stream")
-    assert anonymous.status_code == 401, anonymous.text
-
-    response = client.get(
-        "/bff/management/intervention-stream",
-        headers=HEADERS,
-        params={"persona_id": "persona-beta", "status": "escalated"},
-    )
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["data"]["summary"]["event_count"] == 1
-    assert body["data"]["items"][0]["intervention_id"] == "intv-beta"
-    assert body["data"]["items"][0]["persona_id"] == "persona-beta"
-
-
-def test_intervention_stream_cors_preflight_and_openapi() -> None:
-    client = _intervention_stream_client()
-    response = client.options(
-        "/bff/management/intervention-stream",
-        headers={
-            "Origin": LOVABLE_ORIGIN,
-            "Access-Control-Request-Method": "GET",
-            "Access-Control-Request-Headers": "Authorization, X-Correlation-Id",
-        },
-    )
-
-    assert response.status_code in {200, 204}
-    assert response.headers["access-control-allow-origin"] == LOVABLE_ORIGIN
-
-    schema = client.get("/openapi.json").json()
-    assert "/bff/management/intervention-stream" in schema["paths"]
-    assert "get" in schema["paths"]["/bff/management/intervention-stream"]
 
 
 def test_quarterly_ranking_drilldown_returns_persona_contribution_breakdown() -> None:
@@ -1097,21 +719,10 @@ def test_quarterly_ranking_drilldown_accepts_cors_preflight() -> None:
         assert "authorization" in response.headers["access-control-allow-headers"].lower()
 
 
-def test_governance_ledger_unifies_approval_intervention_and_override_sources() -> None:
+def test_governance_ledger_unifies_approval_and_override_sources() -> None:
     with tempfile.TemporaryDirectory() as td:
         client = _fresh_client(td)
         store = client.store  # type: ignore[attr-defined]
-        store._data["v5_interventions"] = [
-            {
-                "intervention_id": "intv-ledger-001",
-                "kind": "hiq_sentinel",
-                "status": "pending",
-                "target_type": "Runtime",
-                "target_id": "runtime-ledger-001",
-                "triggered_at": "2026-05-24T13:30:00Z",
-                "description": "Ledger intervention fixture.",
-            }
-        ]
         store._data.setdefault("governance_audit_events", []).append(
             {
                 "entry_id": "audit-override-001",
@@ -1148,7 +759,6 @@ def test_governance_ledger_unifies_approval_intervention_and_override_sources() 
         assert body["page_info"]["total"] == summary["ledger_count"]
         assert body["page_info"]["page_size"] == 200
         assert summary["approval_count"] >= 1
-        assert summary["intervention_count"] >= 1
         assert summary["override_count"] == 1
         assert summary["by_source_type"]["override"] == 1
         assert summary["policy"] == "read_only_governance_ledger"
@@ -1156,9 +766,7 @@ def test_governance_ledger_unifies_approval_intervention_and_override_sources() 
         assert body["meta"]["surfaces"]["governance_ledger"]["source"] == "bff_composed"
         assert "GET /bff/audit" in body["meta"]["composition_sources"]
         assert "GET /bff/approvals" in body["meta"]["composition_sources"]
-        assert "GET /bff/v5/interventions" in body["meta"]["composition_sources"]
         assert any(item["source_type"] == "approval" for item in items)
-        assert any(item["source_type"] == "intervention" for item in items)
         assert any(item["source_type"] == "override" for item in items)
         assert all("ledgerId" not in item for item in items)
         assert all("sourceType" not in item for item in items)

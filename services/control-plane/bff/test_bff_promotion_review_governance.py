@@ -316,12 +316,6 @@ class PromotionReviewTestReadPorts(ReadSurfacePorts):
     def list_approval_queue_items(self, **kwargs: Any) -> list[dict[str, Any]]:
         return []
 
-    def list_v5_interventions(self, **kwargs: Any) -> list[dict[str, Any]]:
-        return []
-
-    def list_sentinel_findings(self, **kwargs: Any) -> tuple[bool, list[dict[str, Any]]]:
-        return (False, [])
-
     def list_authoritative_paper_runtime_monitoring_sessions(self) -> list[dict[str, Any]]:
         return []
 
@@ -671,8 +665,6 @@ def test_quarterly_recommendation_submit_creates_promotion_review_inbox_item(mon
         for method_name in (
             "list_governance_review_queue_items",
             "list_approval_queue_items",
-            "list_v5_interventions",
-            "list_sentinel_findings",
         ):
             monkeypatch.setattr(store, method_name, fail_if_ranking_is_rebuilt)
 
@@ -1433,8 +1425,7 @@ def test_hiq_backlog_remains_available_after_human_inbox_surface_extension(monke
     with _isolated_client() as (client, store, command_store):
         monkeypatch.setattr(store, "list_governance_review_queue_items", lambda **_: [])
         monkeypatch.setattr(store, "list_approval_queue_items", lambda **_: [])
-        monkeypatch.setattr(store, "list_v5_interventions", lambda **_: [])
-        monkeypatch.setattr(store, "list_sentinel_findings", lambda **_: (True, []))
+        monkeypatch.setattr(store, "list_incidents", lambda **_: [])
         monkeypatch.setattr(store, "list_personas", lambda *_args, **_kwargs: [])
 
         response = client.get(

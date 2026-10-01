@@ -2,7 +2,6 @@
 
 Acceptance criteria verified:
 - 6 families each have ≥1 non-empty fixture
-- v5 intervention links to governed remediation skeleton
 - agora session is active and has an sse_topic
 - research ticket links to analysis via experiment
 - runtime fixture is paper-canary with fail_closed=true
@@ -77,16 +76,6 @@ class FixturePackBTestReadPorts(ReadSurfacePorts):
             return ds.get(str(decision_id or ""))
         return next((d for d in ds if d.get("id") == decision_id or d.get("decision_id") == decision_id), None)
 
-    def list_v5_interventions(self, **kwargs: Any) -> list[dict[str, Any]]:
-        ds = self._get_dataset("v5_interventions")
-        return list(ds.values()) if isinstance(ds, dict) else list(ds)
-
-    def get_v5_intervention(self, intv_id: str | None) -> dict[str, Any] | None:
-        ds = self._get_dataset("v5_interventions")
-        if isinstance(ds, dict):
-            return ds.get(str(intv_id or ""))
-        return next((i for i in ds if i.get("id") == intv_id or i.get("intervention_id") == intv_id), None)
-
     def list_agora_signals(self, **kwargs: Any) -> list[dict[str, Any]]:
         ds = self._get_dataset("agora_signals")
         return list(ds.values()) if isinstance(ds, dict) else list(ds)
@@ -143,22 +132,8 @@ def _list_payload_count(payload: dict) -> int:
 def test_fixture_pack_b_declares_all_required_families() -> None:
     payload = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     assert payload["policy"]["paper_canary_truth_impact"] == "none"
-    for family in ("evolution", "research", "artifacts", "v5_interventions", "agora", "runtimes"):
+    for family in ("evolution", "research", "artifacts", "agora", "runtimes"):
         assert payload["families"][family], f"Family '{family}' must be non-empty"
-
-
-def test_fixture_pack_b_v5_intervention_has_remediation_skeleton() -> None:
-    payload = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
-    interventions = payload["datasets"]["v5_interventions"]
-    assert interventions, "v5_interventions must have ≥1 entry"
-    for intv_id, intv in interventions.items():
-        assert intv.get("kind"), f"{intv_id}: missing kind"
-        assert intv.get("status"), f"{intv_id}: missing status"
-        assert intv.get("triggered_at"), f"{intv_id}: missing triggered_at"
-        assert "remediation_skeleton" in intv, f"{intv_id}: missing governed remediation_skeleton"
-        skel = intv["remediation_skeleton"]
-        assert skel.get("two_man_rule_enforced") is True, f"{intv_id}: two_man_rule_enforced must be true"
-        assert skel.get("remediation_actions_available"), f"{intv_id}: remediation_actions_available must be non-empty"
 
 
 def test_fixture_pack_b_agora_session_is_active_with_sse_topic() -> None:
@@ -204,20 +179,6 @@ def test_pack_b_evolution_live_list_returns_non_empty() -> None:
             data = resp.json()
             items = data.get("data") or data.get("items") or []
             assert len(items) >= 1, "evolution-decisions must return ≥1 record"
-
-
-def test_pack_b_v5_interventions_live_list_returns_non_empty() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        with mock.patch.dict(os.environ, SERVICE_ENV_BLANKS, clear=False):
-            client = _fresh_pack_b_client(td)
-            resp = client.get("/bff/v5/interventions", headers=HEADERS)
-            assert resp.status_code == 200, f"/bff/v5/interventions: {resp.text}"
-            body = resp.json()
-            assert body["count"] >= 1, "v5/interventions must return ≥1 record"
-            assert any(
-                item["intervention_id"] == "intv-pack-b-001"
-                for item in body["items"]
-            )
 
 
 def test_pack_b_agora_signals_live_list_returns_non_empty() -> None:

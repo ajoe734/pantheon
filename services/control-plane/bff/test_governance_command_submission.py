@@ -340,7 +340,6 @@ class _Harness:
             create_control_loops_router(
                 read_surface=lambda: self.read_store,
                 submit_sem_command=self.command_adapter_service.sem_command_response,
-                submit_final_command_admission=self.command_adapter_service.submit_command_admission,
                 reject_body_idempotency_key=_reject_body_idempotency_key,
                 extract_identity=_extract_identity,
                 require_read_role=require_read_role,

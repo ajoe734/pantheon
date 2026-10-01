@@ -2,7 +2,7 @@
   "task_id": "BFF-TEST-ARCH-001",
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
-  "total_test_files": 390,
+  "total_test_files": 387,
   "migrated_in_task_count": 33,
   "composition_allowlist": [
     "auth/test_composition_root_smoke.py",
@@ -1402,20 +1402,6 @@
       "rationale": "Already decoupled from main composition globals"
     },
     {
-      "file": "test_sent001_sentinel_findings_contract.py",
-      "layer": "router",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
-    },
-    {
-      "file": "test_sentinel_healthreason_rule_coverage.py",
-      "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
-    },
-    {
       "file": "test_settings_contract.py",
       "layer": "router",
       "imports_main": false,
@@ -1540,13 +1526,6 @@
       "imports_main": false,
       "disposition": "MIGRATED",
       "rationale": "Migrated suite: decoupled from main composition root and enforced by AST checks"
-    },
-    {
-      "file": "test_v5_interventions.py",
-      "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
     },
     {
       "file": "test_w3_surfaces.py",

@@ -28,8 +28,8 @@ finer-grained per-contributor timeout/capacity story (a `persona_readiness`
 surface independently timing out with `meta.partial=True` while sibling
 surfaces stay populated). Tracing the real `/bff/management/human-inbox`
 route (management_read_models/service.py::get_human_inbox) shows each of
-its six contributor blocks (approvals, governance reviews, interventions,
-sentinel findings, persona readiness, promotion reviews) reads directly
+its contributor blocks (approvals, governance reviews, incidents,
+persona readiness, promotion reviews) reads directly
 from `store`/the command log inline, with no per-contributor async
 offload, timeout, or `meta.partial` computation at all -- only the whole
 `get_human_inbox` call is offloaded/bounded as a single unit. Building

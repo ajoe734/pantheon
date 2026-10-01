@@ -67,9 +67,7 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("GET", "/bff/management/governance-ledger"),
     ("GET", "/bff/management/hiq-backlog"),
     ("GET", "/bff/management/loop-throughput"),
-    ("GET", "/bff/management/intervention-stream"),
     ("GET", "/bff/management/persona-intent"),
-    ("GET", "/bff/management/sentinel-pulse"),
     ("GET", "/bff/management/strategy-allocation"),
     ("GET", "/bff/management/capital-flow"),
     ("GET", "/bff/management/risk-radar"),
@@ -115,14 +113,10 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("GET", "/bff/v5/control-room"),
     ("GET", "/bff/v5/execution/persona-health"),
     ("GET", "/bff/v5/execution/strategy-health"),
-    ("GET", "/bff/v5/interventions"),
-    ("GET", "/bff/v5/interventions/{id}"),
     ("GET", "/bff/v5/loop-inventory"),
     ("GET", "/bff/v5/loop-inventory/{id}"),
     ("GET", "/bff/v5/loop-runs"),
     ("GET", "/bff/v5/loop-runs/{id}"),
-    ("GET", "/bff/v5/sentinel/findings"),
-    ("GET", "/bff/v5/sentinel/findings/{id}"),
     ("PATCH", "/bff/agora/journal/{id}"),
     ("PATCH", "/bff/artifacts/{id}"),
     ("PATCH", "/bff/capital-pools/{id}"),
@@ -163,20 +157,12 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("POST", "/bff/rebalances"),
     ("POST", "/bff/strategies"),
     ("POST", "/bff/switch-tenant"),
-    ("POST", "/bff/v5/interventions/{id}/claim"),
-    ("POST", "/bff/v5/interventions/{id}/decide"),
-    ("POST", "/bff/v5/interventions/{id}/escalate"),
-    ("POST", "/bff/v5/interventions/{id}/release"),
     ("POST", "/bff/v5/interventions/{id}/two-man-sign"),
-    ("POST", "/bff/v5/sentinel/findings/{id}/status"),
-    ("POST", "/bff/v5/sentinel/remediation/build"),
-    ("POST", "/bff/v5/sentinel/remediation/{actionId}/execute"),
 }
 
 LIVE_PROBE_CONCRETE_ROUTES = [
     ("GET", "/bff/approvals"),
     ("POST", "/bff/mcp-servers/server-alpha/import-tools"),
-    ("GET", "/bff/v5/interventions"),
     ("GET", "/bff/me"),
     ("POST", "/bff/auth/refresh"),
     ("POST", "/bff/logout"),
@@ -200,9 +186,7 @@ LIVE_PROBE_CONCRETE_ROUTES = [
     ("GET", "/bff/management/governance-ledger"),
     ("GET", "/bff/management/hiq-backlog"),
     ("GET", "/bff/management/loop-throughput"),
-    ("GET", "/bff/management/intervention-stream"),
     ("GET", "/bff/management/persona-intent"),
-    ("GET", "/bff/management/sentinel-pulse"),
     ("GET", "/bff/management/strategy-allocation"),
     ("GET", "/bff/management/capital-flow"),
     ("GET", "/bff/management/risk-radar"),
@@ -247,8 +231,6 @@ LIVE_PROBE_CONCRETE_ROUTES = [
     ("GET", "/bff/agora/ask/sessions"),
     ("GET", "/bff/v5/loop-inventory"),
     ("GET", "/bff/v5/loop-runs"),
-    ("GET", "/bff/v5/sentinel/findings"),
-    ("POST", "/bff/v5/interventions/intv_001/decide"),
     ("GET", "/bff/v5/execution/persona-health"),
 ]
 
@@ -285,7 +267,6 @@ def _isolated_final_read_models(*, fallback: bool = True) -> Iterator[TestClient
         original_mcp_tools = dict(bff_main._MCP_TOOL_REGISTRY)
         original_tools = dict(bff_main._TOOL_REGISTRY)
         original_skills = dict(bff_main._SKILL_REGISTRY)
-        original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
 
         formula_data = {
             "id": "formula-alpha",
@@ -430,7 +411,6 @@ def _isolated_final_read_models(*, fallback: bool = True) -> Iterator[TestClient
         bff_main._MCP_TOOL_REGISTRY.clear()
         bff_main._TOOL_REGISTRY.clear()
         bff_main._SKILL_REGISTRY.clear()
-        bff_main._V5_INTERVENTIONS_STORE.clear()
         try:
             if fallback:
                 bff_main._MCP_SERVER_REGISTRY["server-alpha"] = {
@@ -458,18 +438,6 @@ def _isolated_final_read_models(*, fallback: bool = True) -> Iterator[TestClient
                     "name": "Skill Alpha",
                     "status": "active",
                 }
-                bff_main._V5_INTERVENTIONS_STORE.append(
-                    {
-                        "intervention_id": "intv_001",
-                        "kind": "risk_breach",
-                        "status": "pending",
-                        "target_type": "Runtime",
-                        "target_id": "runtime-042",
-                        "triggered_at": "2026-05-09T00:00:00Z",
-                        "triggered_by": "sentinel",
-                        "description": "Seed final detail matrix intervention",
-                    }
-                )
             yield TestClient(bff_main.app, raise_server_exceptions=False)
         finally:
             bff_main.read_store = original_store
@@ -482,7 +450,6 @@ def _isolated_final_read_models(*, fallback: bool = True) -> Iterator[TestClient
             bff_main._TOOL_REGISTRY.update(original_tools)
             bff_main._SKILL_REGISTRY.clear()
             bff_main._SKILL_REGISTRY.update(original_skills)
-            bff_main._V5_INTERVENTIONS_STORE[:] = original_interventions
 
 
 def _payload_records(payload: dict) -> list[dict]:
@@ -583,26 +550,6 @@ def test_execute_plans_management_board_pack_client_exports_are_present() -> Non
     assert "ManagementLoopThroughputResponse" in management_ts
     assert "managementLoopThroughputPath" in management_ts
     assert "fetchManagementLoopThroughput" in management_ts
-    assert "managementInterventionStream: () => `${BASE}/management/intervention-stream`" in paths_ts
-    assert "ManagementInterventionStreamQuery" in management_ts
-    assert "ManagementInterventionStreamResponse" in management_ts
-    assert "managementInterventionStreamPath" in management_ts
-    assert "fetchManagementInterventionStream" in management_ts
-
-
-def test_execute_plans_management_sentinel_pulse_client_exports_are_present() -> None:
-    repo_root = BFF_DIR.parents[2]
-    if not (repo_root / "execute-plans").exists():
-        import pytest
-        pytest.skip("execute-plans checkout not found next to repo root")
-    paths_ts = (repo_root / "execute-plans/src/lib/bff-v1/paths.ts").read_text()
-    management_ts = (repo_root / "execute-plans/src/lib/bff-v1/management.ts").read_text()
-
-    assert "managementSentinelPulse: () => `${BASE}/management/sentinel-pulse`" in paths_ts
-    assert "ManagementSentinelPulseQuery" in management_ts
-    assert "ManagementSentinelPulseResponse" in management_ts
-    assert "managementSentinelPulsePath" in management_ts
-    assert "fetchManagementSentinelPulse" in management_ts
 
 
 def test_execute_plans_live_probe_catalog_no_longer_404s_anonymously() -> None:
@@ -653,7 +600,6 @@ def test_execute_plans_final_seeded_detail_paths_use_read_model_dtos(monkeypatch
         ("/bff/tools", "/bff/tools/{id}", "tool_id"),
         ("/bff/incidents", "/bff/incidents/{id}", "incident_id"),
         ("/bff/alerts", "/bff/alerts/{id}", "alert_id"),
-        ("/bff/v5/interventions", "/bff/v5/interventions/{id}", "intervention_id"),
     ]
 
     with _isolated_final_read_models() as client:

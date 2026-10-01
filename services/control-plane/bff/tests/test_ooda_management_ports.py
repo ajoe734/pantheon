@@ -2,7 +2,7 @@
 
 Validates:
 1. OodaPacketsPort with existing OodaLoopStore / OodaJsonlAppendStore and mock providers
-2. InterventionsPort and SynthesisConflictLogsPort
+2. SynthesisConflictLogsPort
 3. ManagementReviewQueuePort explicit compositions and allowedActions derivation
 4. OodaManagementDomainPort combined interface
 5. Five Management read models with narrow injected dependencies
@@ -26,7 +26,6 @@ if str(OODA_DIR) not in sys.path:
     pass
 
 from services.control_plane.bff.ports.ooda_management import (
-    InterventionsPort,
     ManagementReviewQueuePort,
     OodaManagementDomainPort,
     OodaPacketsPort,
@@ -167,50 +166,6 @@ class TestOodaPacketsPort:
         assert status["status"] == "unavailable"
         assert port.list_ooda_packets() == []
         assert port.get_ooda_packet("any") is None
-
-
-# ---------------------------------------------------------------------------
-# 2. InterventionsPort Tests
-# ---------------------------------------------------------------------------
-
-class TestInterventionsPort:
-    def test_interventions_filtering_and_retrieval(self):
-        data = [
-            {
-                "intervention_id": "int-1",
-                "kind": "circuit_breaker",
-                "status": "triggered",
-                "triggered_at": "2026-08-28T00:01:00Z",
-            },
-            {
-                "intervention_id": "int-2",
-                "kind": "manual_override",
-                "status": "resolved",
-                "triggered_at": "2026-08-28T00:02:00Z",
-            },
-        ]
-        port = InterventionsPort(records_provider=lambda: data)
-        assert port.get_surface_status()["status"] == "ok"
-
-        # List all sorted by triggered_at desc
-        all_ints = port.list_interventions()
-        assert len(all_ints) == 2
-        assert all_ints[0]["intervention_id"] == "int-2"
-
-        # Filter by kind
-        cb = port.list_interventions(kind="circuit_breaker")
-        assert len(cb) == 1
-        assert cb[0]["intervention_id"] == "int-1"
-
-        # Filter by status
-        res = port.list_interventions(status="resolved")
-        assert len(res) == 1
-        assert res[0]["intervention_id"] == "int-2"
-
-        # Get intervention
-        assert port.get_intervention("int-1")["kind"] == "circuit_breaker"
-        assert port.get_intervention("non-existent") is None
-        assert port.get_intervention(None) is None
 
 
 # ---------------------------------------------------------------------------
@@ -397,15 +352,12 @@ class TestOodaManagementDomainPort:
     def test_combined_port_delegations(self):
         port = OodaManagementDomainPort(
             ooda_port=OodaPacketsPort(records_provider=lambda: [{"packet_id": "ooda-1", "created_at": "2026-08-28T00:00:00Z"}]),
-            interventions_port=InterventionsPort(records_provider=lambda: [{"intervention_id": "int-1", "triggered_at": "2026-08-28T00:00:00Z"}]),
             synthesis_conflict_logs_port=SynthesisConflictLogsPort(records_provider=lambda: [{"log_id": "log-1", "timestamp": "2026-08-28T00:00:00Z"}]),
             review_queue_port=ManagementReviewQueuePort(),
         )
 
         assert len(port.list_ooda_packets()) == 1
         assert port.get_ooda_packet("ooda-1")["packet_id"] == "ooda-1"
-        assert len(port.list_interventions()) == 1
-        assert port.get_intervention("int-1")["intervention_id"] == "int-1"
         assert len(port.list_synthesis_conflict_logs()) == 1
         assert port.get_synthesis_conflict_log("log-1")["log_id"] == "log-1"
         assert port.list_governance_review_queue_items() == []

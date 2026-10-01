@@ -9,30 +9,20 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 
 from control_loops.router import create_control_loops_router
 from control_loops.service import ControlLoopsService
 from management_read_models import loop_truth as loop_truth_projection
-from models import CommandType, OperatorIdentity
+from models import OperatorIdentity
 
 
 EXPECTED_ROUTES = {
     ("GET", "/bff/ooda/packets"),
     ("GET", "/bff/ooda/packets/{packet_id}"),
-    ("GET", "/bff/v5/interventions"),
-    ("POST", "/bff/v5/interventions/{intervention_id}/remediate"),
-    ("POST", "/bff/v5/interventions/{id}/decide"),
-    ("POST", "/bff/v5/interventions/{id}/claim"),
-    ("POST", "/bff/v5/interventions/{id}/escalate"),
-    ("POST", "/bff/v5/interventions/{id}/release"),
     ("POST", "/bff/v5/interventions/{id}/two-man-sign"),
-    ("POST", "/bff/v5/sentinel/findings/{id}/status"),
-    ("POST", "/bff/v5/sentinel/remediation/build"),
-    ("POST", "/bff/v5/sentinel/remediation/{actionId}/execute"),
-    ("GET", "/bff/v5/sentinel/findings"),
     ("GET", "/bff/v5/loop-inventory"),
     ("GET", "/bff/v5/loop-health"),
     ("GET", "/bff/v5/loop-health/{loop_id}"),
@@ -41,9 +31,7 @@ EXPECTED_ROUTES = {
     ("POST", "/bff/v5/downstream-health/dlq/replay"),
     ("GET", "/bff/v5/loop-runs"),
     ("GET", "/bff/v5/loop-runs/{loop_run_id}"),
-    ("GET", "/bff/v5/sentinel/findings/{finding_id}"),
     ("GET", "/bff/v5/control-room"),
-    ("GET", "/bff/v5/interventions/{intervention_id}"),
 }
 
 READ_HEADERS = {"Authorization": "Bearer reader:viewer:mfa::tenant-a"}
@@ -64,8 +52,8 @@ REVIEW_EVIDENCE = {
         "execute-plans",
     ],
     "acceptance": {
-        "route_decorators": 24,
-        "handlers": 21,
+        "route_decorators": 12,
+        "handlers": 12,
         "reverse_main_import": False,
         "reusable_loop_contracts_preserved": True,
         "local_command_ledger": False,
@@ -87,7 +75,7 @@ REVIEW_EVIDENCE = {
     },
     "assembly_handoff": (
         "main.py remains the sole current runtime owner; Main Assembly must remove the "
-        "24 inventoried legacy decorators and then include this prepared router."
+        "12 inventoried legacy decorators and then include this prepared router."
     ),
 }
 
@@ -97,8 +85,7 @@ class MockReadStore:
         self.sources = {
             "ooda_packets": "service_store",
             "loop_runs": "service_store",
-            "sentinel_findings": "service_store",
-            "incidents": "missing",
+            "incidents": "service_store",
         }
         self.ooda_packets = [
             {
@@ -116,25 +103,7 @@ class MockReadStore:
                 "act": {"live_capital_side_effects": False},
             },
         ]
-        self.interventions = [
-            {
-                "intervention_id": "intv-1",
-                "kind": "hiq_sentinel",
-                "status": "pending",
-                "target_type": "Runtime",
-                "target_id": "runtime-1",
-                "triggered_at": "2026-08-30T12:00:00Z",
-                "description": "controller drift",
-            }
-        ]
-        self.sentinel_findings = [
-            {
-                "id": "finding-1",
-                "kind": "loop_anomaly",
-                "status": "open",
-                "severity": "high",
-            }
-        ]
+        self.incidents = [{"id": "inc-1", "status": "open"}]
         self.loop_runs = [
             {"id": "loop-run-1", "loop_run_id": "loop-run-1", "status": "running"},
             {"id": "loop-run-2", "loop_run_id": "loop-run-2", "status": "completed"},
@@ -153,38 +122,8 @@ class MockReadStore:
     def get_ooda_packet(self, packet_id: str) -> Optional[Dict[str, Any]]:
         return next((item for item in self.ooda_packets if item["packet_id"] == packet_id), None)
 
-    def list_v5_interventions(
-        self,
-        status: Optional[str] = None,
-        kind: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        records = list(self.interventions)
-        if status:
-            records = [record for record in records if record["status"] == status]
-        if kind:
-            records = [record for record in records if record["kind"] == kind]
-        return records
-
-    def list_sentinel_findings(
-        self,
-        kind: Optional[str] = None,
-        status: Optional[str] = None,
-        severity: Optional[str] = None,
-    ) -> tuple[bool, List[Dict[str, Any]]]:
-        records = list(self.sentinel_findings)
-        if kind:
-            records = [record for record in records if record["kind"] == kind]
-        if status:
-            records = [record for record in records if record["status"] == status]
-        if severity:
-            records = [record for record in records if record["severity"] == severity]
-        return True, records
-
-    def get_sentinel_finding(self, finding_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
-        return True, next(
-            (item for item in self.sentinel_findings if item["id"] == finding_id),
-            None,
-        )
+    def list_incidents(self) -> List[Dict[str, Any]]:
+        return list(self.incidents)
 
     def list_loop_runs(self) -> tuple[bool, List[Dict[str, Any]]]:
         return True, list(self.loop_runs)
@@ -247,7 +186,6 @@ class MockCommandOwners:
     def __init__(self) -> None:
         self.receipts: Dict[str, Dict[str, Any]] = {}
         self.sem_calls: List[Dict[str, Any]] = []
-        self.final_calls: List[Dict[str, Any]] = []
 
     @staticmethod
     def _key(kwargs: Dict[str, Any]) -> str:
@@ -279,27 +217,6 @@ class MockCommandOwners:
         self.sem_calls.append(dict(kwargs))
         return self._receipt(kwargs["command_type"], kwargs)
 
-    def submit_final(self, **kwargs: Any) -> Dict[str, Any]:
-        self.final_calls.append(dict(kwargs))
-        payload = kwargs["payload"]
-        command = payload["command"]
-        params = payload.get("params") or {}
-        if command == "RemediateSentinelIntervention":
-            signature = params.get("twoManSignatureId") or params.get("two_man_signature_id")
-            if not signature:
-                raise HTTPException(status_code=409, detail="two-man signature required")
-            if not kwargs.get("x_confirm_token") or not (
-                params.get("approvalId") or params.get("approval_id")
-            ):
-                raise HTTPException(status_code=428, detail="confirmation evidence required")
-        if command == "DecideV5Intervention" and params.get("decision") not in {
-            "approve",
-            "reject",
-            "defer",
-            "dismiss",
-        }:
-            raise HTTPException(status_code=422, detail="invalid decision")
-        return self._receipt(command, kwargs)
 
 
 def _extract_identity(authorization: Optional[str]) -> OperatorIdentity:
@@ -333,7 +250,6 @@ def _client() -> tuple[TestClient, MockDownstreamHealthMonitor]:
             service=service,
             extract_identity=_extract_identity,
             submit_sem_command=commands.submit_sem,
-            submit_final_command_admission=commands.submit_final,
         )
     )
     return TestClient(app), monitor
@@ -359,14 +275,14 @@ def _ast_decorated_routes(path: Path, owner: str) -> Counter[tuple[str, str, str
     return routes
 
 
-def test_router_registers_exact_24_catalogued_decorators() -> None:
+def test_router_registers_exact_12_catalogued_decorators() -> None:
     router = create_control_loops_router()
     actual = {
         (method, route.path)
         for route in router.routes
         for method in getattr(route, "methods", set())
     }
-    assert len(router.routes) == 24
+    assert len(router.routes) == 12
     assert actual == EXPECTED_ROUTES
 
 
@@ -389,7 +305,7 @@ def test_ast_route_inventory_proves_single_owner_across_assembly_handoff() -> No
     }
 
     # Assembly handoff completed: control_loops.router is mounted via core/app_factory.py,
-    # and main.py removed all 24 legacy decorators so there is single ownership.
+    # and main.py removed all 12 legacy decorators so there is single ownership.
     app_factory_source = (bff_root / "core" / "app_factory.py").read_text(encoding="utf-8")
     assert "create_control_loops_router" in app_factory_source
 
@@ -398,8 +314,8 @@ def test_review_evidence_manifest_matches_task_acceptance() -> None:
     assert REVIEW_EVIDENCE["task_id"] == "OPGAP-BE-CONTROL-LOOPS-V2-20260830"
     assert REVIEW_EVIDENCE["reviewer"] == "Antigravity2"
     assert REVIEW_EVIDENCE["acceptance"] == {
-        "route_decorators": 24,
-        "handlers": 21,
+        "route_decorators": 12,
+        "handlers": 12,
         "reverse_main_import": False,
         "reusable_loop_contracts_preserved": True,
         "local_command_ledger": False,
@@ -439,9 +355,9 @@ def test_uncomposed_write_route_fails_closed() -> None:
         create_control_loops_router(service=service, extract_identity=_extract_identity)
     )
     response = TestClient(app).post(
-        "/bff/v5/sentinel/findings/finding-1/status",
+        "/bff/v5/interventions/sig-1/two-man-sign",
         headers=OPERATOR_HEADERS,
-        json={"status": "resolved"},
+        json={"twoManSignatureId": "sig-1", "command": "X", "target": {"type": "Runtime", "id": "r1"}},
     )
     assert response.status_code == 503
     assert response.json()["detail"]["error"]["details"]["precondition_failed"] == (
@@ -466,113 +382,10 @@ def test_ooda_list_detail_pagination_and_fail_closed_flag(monkeypatch) -> None:
     assert disabled.status_code == 503
 
 
-def test_intervention_list_detail_and_decision_idempotency() -> None:
-    client, _ = _client()
-    listed = client.get("/bff/v5/interventions", headers=READ_HEADERS)
-    assert listed.status_code == 200, listed.text
-    assert listed.json()["items"][0]["intervention_id"] == "intv-1"
-
-    detail = client.get("/bff/v5/interventions/intv-1", headers=READ_HEADERS)
-    assert detail.status_code == 200, detail.text
-    assert detail.json()["data"]["intervention_id"] == "intv-1"
-
-    headers = {**OPERATOR_HEADERS, "Idempotency-Key": "decide-intv-1"}
-    first = client.post(
-        "/bff/v5/interventions/intv-1/decide",
-        headers=headers,
-        json={"decision": "defer", "reason": "more observation"},
-    )
-    second = client.post(
-        "/bff/v5/interventions/intv-1/decide",
-        headers=headers,
-        json={"decision": "defer", "reason": "more observation"},
-    )
-    assert first.status_code == second.status_code == 202
-    assert first.json()["data"]["command"] == "DecideV5Intervention"
-    assert second.json()["data"]["commandId"] == first.json()["data"]["commandId"]
-    assert second.json()["meta"]["idempotency"]["replayed"] is True
-    command_owner = client.app.state.command_owners
-    assert command_owner.final_calls[-1]["payload"]["command"] == "DecideV5Intervention"
-    assert command_owner.final_calls[-1]["include_durable_meta"] is True
-
-    invalid = client.post(
-        "/bff/v5/interventions/intv-1/decide",
-        headers={**OPERATOR_HEADERS, "Idempotency-Key": "invalid-decision"},
-        json={"decision": "invented"},
-    )
-    assert invalid.status_code == 422
 
 
-def test_remediation_requires_guards_and_accepts_bound_evidence() -> None:
-    client, _ = _client()
-    missing = client.post(
-        "/bff/v5/interventions/intv-1/remediate",
-        headers=OPERATOR_HEADERS,
-        json={"remediation_action": "resolve"},
-    )
-    assert missing.status_code == 409
-
-    accepted = client.post(
-        "/bff/v5/interventions/intv-1/remediate",
-        headers={
-            **OPERATOR_HEADERS,
-            "Idempotency-Key": "remediate-intv-1",
-            "X-Confirm-Token": "confirm-1",
-        },
-        json={
-            "remediation_action": "resolve",
-            "twoManSignatureId": "signature-1",
-            "approvalId": "approval-1",
-            "reason": "guarded repair",
-        },
-    )
-    assert accepted.status_code == 202, accepted.text
-    assert accepted.json()["data"]["command"] == "RemediateSentinelIntervention"
 
 
-def test_sentinel_reads_filters_and_typed_commands() -> None:
-    client, _ = _client()
-    listed = client.get(
-        "/bff/v5/sentinel/findings?kind=loop_anomaly&severity=high",
-        headers=READ_HEADERS,
-    )
-    assert listed.status_code == 200, listed.text
-    assert [item["id"] for item in listed.json()["items"]] == ["finding-1"]
-
-    invalid = client.get(
-        "/bff/v5/sentinel/findings?severity=impossible",
-        headers=READ_HEADERS,
-    )
-    assert invalid.status_code == 400
-
-    detail = client.get("/bff/v5/sentinel/findings/finding-1", headers=READ_HEADERS)
-    assert detail.status_code == 200
-    assert detail.json()["data"]["severity"] == "high"
-
-    status = client.post(
-        "/bff/v5/sentinel/findings/finding-1/status",
-        headers={**READ_HEADERS, "Idempotency-Key": "finding-status-1"},
-        json={"status": "resolved"},
-    )
-    build = client.post(
-        "/bff/v5/sentinel/remediation/build",
-        headers={**READ_HEADERS, "Idempotency-Key": "remediation-build-1"},
-        json={"finding_id": "finding-1"},
-    )
-    execute = client.post(
-        "/bff/v5/sentinel/remediation/remediation-1/execute",
-        headers={**READ_HEADERS, "Idempotency-Key": "remediation-execute-1"},
-        json={"reason": "approved remediation"},
-    )
-    assert status.json()["data"]["command"] == "SentinelFindingStatus"
-    assert build.json()["data"]["command"] == "SentinelRemediationBuild"
-    assert execute.json()["data"]["command"] == "SentinelRemediationExecute"
-    command_owner = client.app.state.command_owners
-    assert [call["command_type"] for call in command_owner.sem_calls[-3:]] == [
-        CommandType.SENTINEL_FINDING_STATUS,
-        CommandType.SENTINEL_REMEDIATION_BUILD,
-        CommandType.SENTINEL_REMEDIATION_EXECUTE,
-    ]
 
 
 def test_loop_inventory_and_health_preserve_reusable_truth_contracts() -> None:
@@ -634,11 +447,6 @@ def test_loop_runs_control_room_and_downstream_replay() -> None:
 def test_openapi_exposes_control_loop_filter_and_scope_parameters() -> None:
     client, _ = _client()
     spec = client.get("/openapi.json").json()
-    finding_params = {
-        parameter["name"]
-        for parameter in spec["paths"]["/bff/v5/sentinel/findings"]["get"]["parameters"]
-    }
-    assert {"kind", "status", "severity", "authorization"}.issubset(finding_params)
     health_params = {
         parameter["name"]
         for parameter in spec["paths"]["/bff/v5/loop-health"]["get"]["parameters"]
