@@ -151,6 +151,19 @@ class FakeProvider:
             "json_events": [{"type": "item.completed", "item": {"text": text}}],
         }}}
 
+    def invoke_structured_extraction(self, *, prompt, extraction_schema, **kwargs):
+        self.synthesis_calls = getattr(self, "synthesis_calls", 0) + 1
+        opinions = json.loads(prompt[prompt.index("[{"):])
+        ids = [o["opinion_id"] for o in opinions]
+        labels = {o["conclusion"] for o in opinions}
+        status = ("more_research_required" if "insufficient_evidence" in labels
+                  else "no_consensus" if len(labels) > 1 else "recommendation")
+        disagreements = ([{"opinion_ids": ids, "cause": "conflicting reasons", "detail": "provider judged"}]
+                         if status == "no_consensus" else [])
+        return {"status": "ok", "data": {"output": {"structured_data": {
+            "status": status, "summary": f"provider synthesis: {status}", "agreements": [],
+            "disagreements": disagreements, "evidence_refs": []}}}}
+
 
 def test_partial_retry_only_calls_latest_retryable_persona_and_reuses_persisted_opinion(monkeypatch):
     provider = FakeProvider(fail_personas={"risk"})
@@ -352,7 +365,7 @@ def test_durable_opinions_debate_and_synthesis_flow(monkeypatch):
     consult_card = next(card for card in cards if card["card_type"] == "consult_result")
     assert consult_card["status"] == "completed"
     assert consult_card["payload"]["status"] == "recommendation"
-    assert "provider rationale for ready" in consult_card["summary"]
+    assert "provider synthesis: recommendation" in consult_card["summary"]
 
 
 def test_durable_opinions_no_consensus_flow(monkeypatch):
