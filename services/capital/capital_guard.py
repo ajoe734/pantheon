@@ -84,8 +84,7 @@ def project_contexts(*, allocations: Sequence[Any] = (), lines: Sequence[Any] = 
             if _val(l, k) is not None: _finite_scale(_val(l, k), k)
     res = {str(_val(a, "allocation_id")): dict(a) if isinstance(a, Mapping) else a.__dict__.copy() for a in allocations if _val(a, "allocation_id")}
     for l in lines:
-        aid = _val(l, "allocation_id")
-        if not aid: continue
+        aid = _val(l, "allocation_id") or _val(l, "capital_sleeve_id") or _val(l, "persona_id") or str(id(l))
         key, cur, tw = str(aid), res.get(str(aid)), _val(l, "target_weight")
         if cur:
             l_st, cur_st = _val(l, "stage"), cur.get("stage")
@@ -96,7 +95,7 @@ def project_contexts(*, allocations: Sequence[Any] = (), lines: Sequence[Any] = 
             target = res[key] = dict(l) if isinstance(l, Mapping) else l.__dict__.copy()
         if tw is not None: target["current_weight"] = target["target_weight"] = float(tw)
         if _val(l, "persona_id"): target["persona_id"] = _val(l, "persona_id")
-        for k in ("asset_classes", "strategy_family", "liquidity", "drawdown_pct"):
+        for k in ("asset_classes", "strategy_family", "liquidity", "drawdown_pct", "capital_scale_pct", "gross_scale_pct"):
             if _val(l, k) is not None: target[k] = _val(l, k)
     weights: dict[str, float] = {}
     for a in res.values():
@@ -104,22 +103,24 @@ def project_contexts(*, allocations: Sequence[Any] = (), lines: Sequence[Any] = 
         weights[p] = weights.get(p, 0.0) + float(tw if tw is not None else (a.get("current_weight") or 0))
     gross = sum(abs(w) for w in weights.values())
     facts: dict[str, Any] = {"target_weights": weights, "gross_exposure": gross, "net_exposure": sum(weights.values()), "leverage": gross, "turnover": sum(abs(float(_val(l, "delta", 0) or 0)) for l in lines)}
-    acs = sorted({ac for a in res.values() for ac in (_val(a, "asset_classes") if isinstance(_val(a, "asset_classes"), (list, tuple, set)) else ([_val(a, "asset_classes")] if _val(a, "asset_classes") else [])) if ac})
-    if acs: facts["asset_classes"] = tuple(acs)
-    fams = {str(_val(a, "strategy_family") or "").strip() for a in res.values()} - {""}
-    if len(fams) == 1: facts["strategy_family"] = next(iter(fams))
-    liq = next((_val(a, "liquidity") for a in res.values() if _val(a, "liquidity")), None)
-    if liq: facts["liquidity"] = liq
-    dd = next((_val(a, "drawdown_pct") for a in res.values() if _val(a, "drawdown_pct") is not None), None)
-    if dd is not None: facts["drawdown_pct"] = dd
     s = STAGE_DEPLOYMENT_SCOPE.get(str(stage).strip().lower(), stage) if stage else None
-    stages = sorted(({line_deployment_scope(a) for a in res.values()} - {None}) | ({s} if s else set()), key=lambda x: str(x or ""))
-    canary_lines = [l for l in lines if (line_deployment_scope(l) or (line_deployment_scope(res.get(str(_val(l, "allocation_id")))) if _val(l, "allocation_id") else None) or s) == "canary"]
-    contexts = [
-        {"stage": st, **facts, **({k: _finite_scale(_val(l, k), k) for k in ("capital_scale_pct", "gross_scale_pct") if _val(l, k) is not None} if l else {})}
-        for st in stages for l in (canary_lines if st == "canary" and canary_lines else [None])
-    ]
-    return contexts or [facts]
+    if not res: return [{"stage": s, **facts}] if s else [facts]
+    contexts: list[dict[str, Any]] = []
+    for a in res.values():
+        st = line_deployment_scope(a) or s
+        ctx: dict[str, Any] = {**facts, "stage": st} if st else {**facts}
+        acs = _val(a, "asset_classes")
+        if acs not in (None, "", (), [], {}):
+            ctx["asset_classes"] = tuple(sorted(str(x) for x in acs if x)) if isinstance(acs, (list, tuple, set)) else (str(acs),)
+        fam = str(_val(a, "strategy_family") or "").strip()
+        if fam: ctx["strategy_family"] = fam
+        if _val(a, "liquidity") is not None: ctx["liquidity"] = _val(a, "liquidity")
+        if _val(a, "drawdown_pct") is not None: ctx["drawdown_pct"] = float(_val(a, "drawdown_pct"))
+        if st == "canary":
+            for k in ("capital_scale_pct", "gross_scale_pct"):
+                if _val(a, k) is not None: ctx[k] = _finite_scale(_val(a, k), k)
+        contexts.append(ctx)
+    return contexts
 
 
 def is_paper_operation(*, pool: Any, target_type: str, binding: Any = None, allocations: Sequence[Any] = (), proposal_lines: Sequence[Any] = ()) -> bool:

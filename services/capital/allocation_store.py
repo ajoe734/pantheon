@@ -725,6 +725,8 @@ class AllocationAuthorityStore:
                         "updated_at": now,
                     }
                 )
+                for k in ("asset_classes", "strategy_family", "liquidity", "drawdown_pct", "capital_scale_pct", "gross_scale_pct"):
+                    if line.get(k) is not None: allocation[k] = line[k]
                 allocation_readback.append(_deepcopy(allocation))
 
             receipt = {

@@ -415,3 +415,33 @@ def test_require_risk_policy_allows_with_valid_observed_liquidity_and_drawdown()
     _guard(policy=lambda ref: policy).authorize(**{**KW, "contexts": [context]})
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+def test_require_risk_policy_evaluates_multiple_contexts_order_invariant(reverse):
+    policy = {
+        "risk_policy_id": "risk-main",
+        "liquidity_constraints": {"min_avg_daily_volume": 1000000},
+        "drawdown_actions": {"risk_off": 0.05},
+        "allowed_asset_classes": ["equity"],
+        "allowed_strategy_families": ["momentum"],
+    }
+    c_good = {"stage": "live", "gross_exposure": 0.5, "liquidity": {"avg_daily_volume": 2000000}, "drawdown_pct": 0.02, "asset_classes": ("equity",), "strategy_family": "momentum"}
+    c_bad = {"stage": "live", "gross_exposure": 0.5, "liquidity": {"avg_daily_volume": 500}, "drawdown_pct": 0.02, "asset_classes": ("equity",), "strategy_family": "momentum"}
+    contexts = [c_bad, c_good] if reverse else [c_good, c_bad]
+    with pytest.raises(CapitalGuardError, match="Risk policy rejected"):
+        _guard(policy=lambda ref: policy).authorize(**{**KW, "contexts": contexts})
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_require_risk_policy_missing_fact_on_any_context_fails_closed(reverse):
+    policy = {
+        "risk_policy_id": "risk-main",
+        "drawdown_actions": {"risk_off": 0.05},
+    }
+    c_good = {"stage": "live", "gross_exposure": 0.5, "drawdown_pct": 0.02}
+    c_missing = {"stage": "live", "gross_exposure": 0.5}
+    contexts = [c_missing, c_good] if reverse else [c_good, c_missing]
+    with pytest.raises(CapitalGuardError, match="drawdown_pct unavailable"):
+        _guard(policy=lambda ref: policy).authorize(**{**KW, "contexts": contexts})
+
+
+

@@ -380,4 +380,92 @@ def test_rebalance_applies_with_valid_observed_policy(client, monkeypatch):
     assert allocs["count"] == 1
 
 
+@pytest.mark.parametrize("dimension", ["liquidity", "drawdown", "asset_classes", "strategy_family"])
+@pytest.mark.parametrize("missing", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_all_allocations_need_valid_observations(client, monkeypatch, dimension, missing, reverse):
+    c, _ = client
+    assert c.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    assert c.post("/api/bindings", json=_binding_payload()).status_code == 201
+    assert c.post("/api/bindings", json=_binding_payload(binding_id="binding-beta", persona_id="persona-beta", capital_sleeve_id="sleeve-beta")).status_code == 201
+    policy, good, bad = {
+        "liquidity": ({"liquidity_constraints": {"min_avg_daily_volume": 1000000}}, {"liquidity": {"avg_daily_volume": 2000000}}, {"liquidity": {"avg_daily_volume": 1}}),
+        "drawdown": ({"drawdown_actions": {"risk_off": 0.05}}, {"drawdown_pct": 0.01}, {"drawdown_pct": 0.5}),
+        "asset_classes": ({"allowed_asset_classes": ["equity"]}, {"asset_classes": ["equity"]}, {"asset_classes": ["crypto"]}),
+        "strategy_family": ({"allowed_strategy_families": ["momentum"]}, {"strategy_family": "momentum"}, {"strategy_family": "reversion"}),
+    }[dimension]
+    base = _rebalance_payload()["lines"][0]
+    good_line = {**base, **good}
+    bad_line = {**base, "persona_id": "persona-beta", "capital_sleeve_id": "sleeve-beta", **({} if missing else bad)}
+    lines = [bad_line, good_line] if reverse else [good_line, bad_line]
+    assert c.post("/api/rebalances", json=_rebalance_payload(lines=lines)).status_code == 201
+    monkeypatch.setattr(sys.modules["services.capital.main"].capital_guard, "_policy_loader", lambda ref: {"risk_policy_id": ref, **policy})
+    response = c.post("/api/rebalances/rb-001/apply", json=_apply_payload())
+    count = c.get("/api/allocations?capital_pool_id=pool-001").json()["count"]
+    assert (response.status_code, count) == (403, 0), f"{dimension=} {missing=} {reverse=} actual={(response.status_code, count)}"
+
+
+def test_all_allocations_apply_when_every_line_satisfies_policy(client, monkeypatch):
+    c, _ = client
+    assert c.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    assert c.post("/api/bindings", json=_binding_payload()).status_code == 201
+    assert c.post("/api/bindings", json=_binding_payload(binding_id="binding-beta", persona_id="persona-beta", capital_sleeve_id="sleeve-beta")).status_code == 201
+    policy = {
+        "liquidity_constraints": {"min_avg_daily_volume": 1000000},
+        "drawdown_actions": {"risk_off": 0.05},
+        "allowed_asset_classes": ["equity"],
+        "allowed_strategy_families": ["momentum"],
+    }
+    base = _rebalance_payload()["lines"][0]
+    good_common = {"liquidity": {"avg_daily_volume": 2000000}, "drawdown_pct": 0.01, "asset_classes": ["equity"], "strategy_family": "momentum"}
+    line_alpha = {**base, **good_common}
+    line_beta = {**base, "persona_id": "persona-beta", "capital_sleeve_id": "sleeve-beta", **good_common}
+    assert c.post("/api/rebalances", json=_rebalance_payload(lines=[line_alpha, line_beta])).status_code == 201
+    monkeypatch.setattr(sys.modules["services.capital.main"].capital_guard, "_policy_loader", lambda ref: {"risk_policy_id": ref, **policy})
+    response = c.post("/api/rebalances/rb-001/apply", json=_apply_payload())
+    assert response.status_code == 200, response.text
+    allocs = c.get("/api/allocations?capital_pool_id=pool-001").json()
+    assert allocs["count"] == 2
+
+
+@pytest.mark.parametrize("retained_valid", [True, False])
+def test_retained_allocation_evaluated_on_subsequent_rebalance(client, monkeypatch, retained_valid):
+    c, _ = client
+    assert c.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    assert c.post("/api/bindings", json=_binding_payload()).status_code == 201
+    assert c.post("/api/bindings", json=_binding_payload(binding_id="binding-beta", persona_id="persona-beta", capital_sleeve_id="sleeve-beta")).status_code == 201
+    base = _rebalance_payload()["lines"][0]
+    line1 = {
+        **base,
+        "liquidity": {"avg_daily_volume": 2000000 if retained_valid else 1},
+        "drawdown_pct": 0.01,
+        "asset_classes": ["equity"],
+        "strategy_family": "momentum",
+    }
+    assert c.post("/api/rebalances", json=_rebalance_payload(lines=[line1])).status_code == 201
+    assert c.post("/api/rebalances/rb-001/apply", json=_apply_payload()).status_code == 200
+    assert c.get("/api/allocations?capital_pool_id=pool-001").json()["count"] == 1
+
+    policy = {"liquidity_constraints": {"min_avg_daily_volume": 1000000}}
+    monkeypatch.setattr(sys.modules["services.capital.main"].capital_guard, "_policy_loader", lambda ref: {"risk_policy_id": ref, **policy})
+
+    line2 = {
+        **base,
+        "persona_id": "persona-beta",
+        "capital_sleeve_id": "sleeve-beta",
+        "liquidity": {"avg_daily_volume": 3000000},
+        "drawdown_pct": 0.01,
+        "asset_classes": ["equity"],
+        "strategy_family": "momentum",
+    }
+    assert c.post("/api/rebalances", json=_rebalance_payload(rebalance_id="rb-002", lines=[line2])).status_code == 201
+    response = c.post("/api/rebalances/rb-002/apply", json=_apply_payload(rebalance_id="rb-002", command_id="cmd-apply-002"))
+    count = c.get("/api/allocations?capital_pool_id=pool-001").json()["count"]
+    if retained_valid:
+        assert (response.status_code, count) == (200, 2)
+    else:
+        assert (response.status_code, count) == (403, 1)
+
+
+
 

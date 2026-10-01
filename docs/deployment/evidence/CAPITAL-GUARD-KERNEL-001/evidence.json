@@ -189,7 +189,18 @@
       "5": "Maintained net production lines <= 250 (diff budget checked against d18956ba9ca239c6b6c2ea029bd3885eeb2166b9)"
     }
   },
-  "verification_run": "pytest services/capital + governance approval tests + route regressions: 276 passed, 1 skipped, 1 warning"
+  "review_rework_13": {
+    "head_reviewed": "52b77a0182e89cf1f71866ec72f499cb46107381",
+    "items": {
+      "1": "In services/capital/capital_guard.py project_contexts, evaluate each resulting allocation individually with its own observations (asset_classes, strategy_family, liquidity, drawdown_pct, canary scale), instead of collapsing first available observations across lines with next() or union sets",
+      "2": "In services/capital/capital_guard.py project_contexts, preserve pool/owner aggregate facts (weights, gross/net exposure, leverage, turnover) across contexts while keeping allocation-specific facts scoped to each allocation, failing closed on missing facts on any resulting allocation",
+      "3": "In services/capital/allocation_store.py apply_rebalance, persist observation fields (asset_classes, strategy_family, liquidity, drawdown_pct, canary scale) on authoritative allocations so retained allocations are preserved and evaluated on subsequent rebalances",
+      "4": "Added permanent regressions in services/capital/test_capital_guard_routes.py covering order-invariant evaluations across dimensions (liquidity, drawdown, asset_classes, strategy_family) with reverse and missing flags, retained allocation evaluation on subsequent rebalance, positive multi-line apply, and unit tests in test_capital_guard.py",
+      "5": "Maintained net production lines <= 250 (diff budget checked against d18956ba9ca239c6b6c2ea029bd3885eeb2166b9)"
+    }
+  },
+  "verification_run": "pytest services/capital + governance approval tests + route regressions: 295 passed, 1 skipped, 1 warning"
 }
+
 
 
