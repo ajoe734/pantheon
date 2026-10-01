@@ -7,6 +7,8 @@ Manager client, auth guards, and response helpers when it mounts the router.
 """
 from __future__ import annotations
 
+import json
+import urllib.error
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -18,6 +20,7 @@ from services.control_plane.bff.models import ErrorCode
 from .service import (
     CapitalAuthorityUnavailable,
     CapitalNotFound,
+    CapitalOperationRetired,
     CapitalService,
     CapitalValidationError,
     capital_pool_id,
@@ -94,7 +97,34 @@ def _resolve_idempotency_key(
     return first or second
 
 
+def _owner_actor_role(identity: Any) -> str:
+    """Role asserted to the owner: one the verified identity actually holds, never an injected one."""
+    roles = set(getattr(identity, "roles", set()) or set())
+    return next((role for role in ("operator", "approver", "admin") if role in roles), "")
+
+
+_OWNER_HTTP_ERRORS = {
+    400: ErrorCode.VALIDATION_FAILED, 401: ErrorCode.AUTH_REQUIRED, 403: ErrorCode.FORBIDDEN,
+    404: ErrorCode.RESOURCE_NOT_FOUND, 409: ErrorCode.RESOURCE_CONFLICT, 422: ErrorCode.VALIDATION_FAILED,
+}
+
+
 def _error_for_capital_exception(exc: Exception, bff_error: Callable[..., Exception]) -> Exception:
+    if isinstance(exc, urllib.error.HTTPError):
+        code = _OWNER_HTTP_ERRORS.get(exc.code)
+        if code is None:
+            return bff_error(503 if exc.code >= 500 else 502, ErrorCode.DEPENDENCY_UNAVAILABLE, "Capital owner request failed", f"owner returned HTTP {exc.code}")
+        try:
+            detail = json.loads(exc.read().decode("utf-8")).get("detail")
+        except Exception:
+            detail = None
+        return bff_error(exc.code, code, "Capital owner rejected the request", str(detail or exc.reason))
+    if isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError)):
+        return bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Capital authority unavailable", str(exc))
+    if isinstance(exc, CapitalOperationRetired):
+        return bff_error(410, ErrorCode.OPERATION_NOT_ALLOWED, "Capital operation retired", str(exc))
+    if isinstance(exc, ValueError):
+        return bff_error(422, ErrorCode.VALIDATION_FAILED, "Capital request validation failed", str(exc))
     if isinstance(exc, CapitalNotFound):
         return bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Capital resource not found", str(exc))
     if isinstance(exc, CapitalValidationError):
@@ -170,25 +200,23 @@ def create_capital_router(
         except Exception as exc:
             raise _error_for_capital_exception(exc, bff_error) from exc
 
-    def _write_or_error(operation: str, payload: Dict[str, Any], *, actor_id: str, target_id: Optional[str] = None) -> Dict[str, Any]:
-        try:
-            return service.write(operation, payload, actor_id=actor_id, target_id=target_id)
-        except Exception as exc:
-            raise _error_for_capital_exception(exc, bff_error) from exc
-
     def _idempotent_write(
-        operation: str, payload: Dict[str, Any], *, actor_id: str, key: str, target_id: Optional[str] = None
+        operation: str, payload: Dict[str, Any], *, identity: Any, authorization: Optional[str], key: str, target_id: Optional[str] = None
     ) -> Tuple[Dict[str, Any], bool]:
+        actor_id = _identity_id(identity)
         try:
             replay = service.idempotent(actor_id=actor_id, key=key, operation=operation, payload=payload)
             if replay is not None:
                 return replay, True
-            result = _write_or_error(operation, payload, actor_id=actor_id, target_id=target_id)
+            result = service.write(
+                operation, payload, actor_id=actor_id, actor_role=_owner_actor_role(identity),
+                auth_token=authorization, key=key, target_id=target_id,
+            )
             service.remember(actor_id=actor_id, key=key, operation=operation, payload=payload, response=result)
             return result, False
+        except HTTPException:
+            raise
         except Exception as exc:
-            if isinstance(exc, HTTPException):
-                raise exc
             raise _error_for_capital_exception(exc, bff_error) from exc
 
     # 1. Legacy Capital Pool read surface.
@@ -248,7 +276,7 @@ def create_capital_router(
         if not name:
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Capital pool name is required", "name must be a non-empty string")
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("create_pool", payload, actor_id=_identity_id(identity), key=key)
+        result, replayed = _idempotent_write("create_pool", payload, identity=identity, authorization=authorization, key=key)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     # 5. BFF Capital Pool detail.
@@ -271,7 +299,7 @@ def create_capital_router(
         require_operator_role(identity)
         _pool_or_error(pool_id)
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("patch_pool", payload, actor_id=_identity_id(identity), key=key, target_id=pool_id)
+        result, replayed = _idempotent_write("patch_pool", payload, identity=identity, authorization=authorization, key=key, target_id=pool_id)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     # 7. Capital pool action command.
@@ -290,7 +318,7 @@ def create_capital_router(
         if not str(action_id).strip():
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Capital pool action is required")
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("pool_action", {**payload, "action_id": action_id}, actor_id=_identity_id(identity), key=key, target_id=pool_id)
+        result, replayed = _idempotent_write("pool_action", {**payload, "action_id": action_id}, identity=identity, authorization=authorization, key=key, target_id=pool_id)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     # 8. Evaluate one policy snapshot before a rebalance proposal is admitted.
@@ -305,40 +333,6 @@ def create_capital_router(
         except Exception as exc:
             raise _error_for_capital_exception(exc, bff_error) from exc
         return _readback_response(evaluation, meta={"snapshot_at": utc_now(), "allocation_digest": evaluation["allocation_digest"]})
-
-    # 9. Record an ApprovedApply decision for a rebalance.
-    @router.post("/bff/rebalances/{rebalance_id}/approve", status_code=201)
-    async def bff_approve_rebalance_apply(
-        rebalance_id: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        roles = set(getattr(identity, "roles", set()) or set())
-        if not {"approver", "admin"}.intersection(roles):
-            raise bff_error(403, ErrorCode.FORBIDDEN, "Rebalance approval requires approver authority")
-        _rebalance_or_error(rebalance_id)
-        key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("approve_rebalance", payload, actor_id=_identity_id(identity), key=key, target_id=rebalance_id)
-        return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
-
-    # 10. Record a second distinct rebalance signature through the owner.
-    @router.post("/bff/rebalances/{rebalance_id}/two-man-sign", status_code=202)
-    async def bff_sign_rebalance_apply(
-        rebalance_id: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_operator_role(identity)
-        _rebalance_or_error(rebalance_id)
-        key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("sign_rebalance", payload, actor_id=_identity_id(identity), key=key, target_id=rebalance_id)
-        return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     # 11. Rebalance list.
     @router.get("/bff/rebalances")
@@ -375,7 +369,7 @@ def create_capital_router(
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "capital_pool_id is required")
         _pool_or_error(pool_id)
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("create_rebalance", payload, actor_id=_identity_id(identity), key=key)
+        result, replayed = _idempotent_write("create_rebalance", payload, identity=identity, authorization=authorization, key=key)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     # 13. Apply an already admitted rebalance proposal through the capital owner.
@@ -391,7 +385,7 @@ def create_capital_router(
         require_operator_role(identity)
         _rebalance_or_error(rebalance_id)
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("apply_rebalance", payload, actor_id=_identity_id(identity), key=key, target_id=rebalance_id)
+        result, replayed = _idempotent_write("apply_rebalance", payload, identity=identity, authorization=authorization, key=key, target_id=rebalance_id)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     # 14. Rebalance detail.
@@ -421,7 +415,7 @@ def create_capital_router(
         if not str(action_id).strip():
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Rebalance action is required")
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("rebalance_action", {**payload, "action_id": action_id}, actor_id=_identity_id(identity), key=key, target_id=rebalance_id)
+        result, replayed = _idempotent_write("rebalance_action", {**payload, "action_id": action_id}, identity=identity, authorization=authorization, key=key, target_id=rebalance_id)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     def _portfolio_or_error() -> List[Dict[str, Any]]:
@@ -577,7 +571,7 @@ def create_capital_router(
         require_operator_role(identity)
         _rebalance_or_error(rebalance_id)
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("patch_rebalance", payload, actor_id=_identity_id(identity), key=key, target_id=rebalance_id)
+        result, replayed = _idempotent_write("patch_rebalance", payload, identity=identity, authorization=authorization, key=key, target_id=rebalance_id)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     return router

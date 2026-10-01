@@ -102,6 +102,10 @@ class CapitalAuthorityUnavailable(CapitalServiceError):
     """A write was requested but no Capital write authority is available."""
 
 
+class CapitalOperationRetired(CapitalServiceError):
+    """The operation has no Capital owner endpoint and is retired, not simulated."""
+
+
 def stable_digest(value: Any) -> str:
     """Return a stable digest for allocation and rebalance lineage records."""
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
@@ -195,29 +199,7 @@ def _read_collection(store: Any, method_name: str, **kwargs: Any) -> List[Dict[s
     return [deepcopy(dict(item)) for item in (value or []) if isinstance(item, Mapping)]
 
 
-def _call_write(method: Callable[..., Any], payload: Dict[str, Any], context: Dict[str, Any]) -> Any:
-    """Call common Capital authority shapes without requiring a monolith adapter.
-
-    The authority is intentionally tried with named envelope forms before a
-    positional payload.  A TypeError caused by a signature mismatch is safe to
-    retry; other authority failures remain visible to the router.
-    """
-    attempts = (
-        lambda: method(payload=payload, **context),
-        lambda: method(body=payload, **context),
-        lambda: method(request=payload, **context),
-        lambda: method(payload, **context),
-        lambda: method(payload),
-        lambda: method(**payload),
-    )
-    signature_error: Optional[TypeError] = None
-    for attempt in attempts:
-        try:
-            return attempt()
-        except TypeError as exc:
-            signature_error = exc
-    assert signature_error is not None
-    raise signature_error
+_OWNER_OPERATIONS = frozenset({"create_pool", "pool_action", "create_rebalance", "apply_rebalance"})
 
 
 @dataclass
@@ -235,10 +217,6 @@ class CapitalService:
         if store is None:
             raise CapitalAuthorityUnavailable("Capital read store is unavailable")
         return store
-
-    def _authority(self) -> Any:
-        authority = self.get_capital_authority() if self.get_capital_authority else None
-        return authority if authority is not None else self._store()
 
     def list_pools(
         self, *, status: Optional[str] = None, risk_policy_ref: Optional[str] = None
@@ -313,35 +291,15 @@ class CapitalService:
                 "response": deepcopy(dict(response)),
             }
 
-    def write(self, operation: str, payload: Dict[str, Any], *, actor_id: str, target_id: Optional[str] = None) -> Dict[str, Any]:
-        """Delegate mutation to the Capital owner and preserve its readback shape."""
-        authority = self._authority()
-        method_names = {
-            "create_pool": ("create_capital_pool", "create_pool"),
-            "patch_pool": ("patch_capital_pool", "update_capital_pool", "patch_pool"),
-            "pool_action": ("capital_pool_action", "apply_capital_pool_action", "pool_action"),
-            "create_rebalance": ("create_rebalance",),
-            "patch_rebalance": ("patch_rebalance", "update_rebalance"),
-            "apply_rebalance": ("apply_rebalance", "apply_rebalance_proposal"),
-            "approve_rebalance": ("approve_rebalance", "approve_rebalance_apply"),
-            "sign_rebalance": ("sign_rebalance", "sign_rebalance_apply"),
-            "rebalance_action": ("rebalance_action", "apply_rebalance_action"),
-        }.get(operation, ())
-        context = {"actor_id": actor_id, "requested_at": self.utc_now()}
-        if target_id:
-            context["target_id"] = target_id
-            if operation in {"patch_pool", "pool_action"}:
-                context["pool_id"] = target_id
-            else:
-                context["rebalance_id"] = target_id
-        for method_name in method_names:
-            method = getattr(authority, method_name, None)
-            if callable(method):
-                result = _call_write(method, payload, context)
-                return deepcopy(dict(result)) if isinstance(result, Mapping) else {"result": result}
-        raise CapitalAuthorityUnavailable(
-            f"Capital authority does not expose a supported {operation} mutation method"
-        )
+    def write(self, operation: str, payload: Dict[str, Any], **context: Any) -> Dict[str, Any]:
+        """Forward a mutation to the injected Capital owner writer and return its readback."""
+        if operation not in _OWNER_OPERATIONS:
+            raise CapitalOperationRetired(f"{operation} has no Capital owner operation and is retired")
+        authority = self.get_capital_authority() if self.get_capital_authority else None
+        method = getattr(authority, operation, None)
+        if not callable(method):
+            raise CapitalAuthorityUnavailable(f"Capital owner writer does not expose {operation}")
+        return deepcopy(dict(method(payload, **context)))
 
     def evaluate_allocation_policy(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
         policy_version = str(payload.get("allocation_policy_version") or payload.get("policy_version") or "").strip()

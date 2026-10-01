@@ -246,7 +246,6 @@ _FINAL_COMMAND_TARGET_TYPES: Dict[CommandType, Tuple[ObjectType, ...]] = {
     CommandType.HUMAN_GATE_EXTEND_TTL: (ObjectType.HUMAN_GATE_ITEM,),
     CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: (ObjectType.RANKING,),
     CommandType.PAUSE_RUNTIME: (ObjectType.RUNTIME, ObjectType.RUNTIME_BINDING),
-    CommandType.APPROVE_POOL: (ObjectType.CAPITAL_POOL,),
     CommandType.CAPITAL_POOL_ACTION: (ObjectType.CAPITAL_POOL,),
     CommandType.PAUSE_PAPER_RUNTIME: (ObjectType.RUNTIME,),
     CommandType.RESUME_PAPER_RUNTIME: (ObjectType.RUNTIME,),

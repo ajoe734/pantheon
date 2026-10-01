@@ -1,13 +1,17 @@
 """Capital Domain Command Adapter.
 
-Routes capital pool, rebalance, binding, and emergency containment actions
-to the authoritative Capital Service and internal API owner endpoints.
+``CapitalOwnerWriter`` is the single BFF -> Capital owner forwarder.  The REST
+router (injected through ``core/app_factory.py``), the canonical command
+executor and this adapter all delegate to it, so every write carries the
+caller's verified JWT and the owner remains the only decision point for
+approval, risk policy and paper/live classification.
 """
 from __future__ import annotations
 
-import logging
 from typing import Any, Dict, Optional
 from urllib.parse import quote
+
+from services.control_plane.bff.capital.service import CapitalValidationError, stable_digest
 
 from .base import (
     ActionUnavailableError,
@@ -17,11 +21,97 @@ from .base import (
     http_request_json,
 )
 
-log = logging.getLogger(__name__)
+# Fields the caller may never assert: identity, tenant and idempotency are bound by the BFF/owner.
+_BOUND_FIELDS = frozenset({"id", "actor_id", "actor_role", "tenant_id", "idempotency_key", "request_hash"})
+_POOL_ACTION_STATUS = {"pause": "paused", "freeze": "paused", "activate": "active", "resume": "active", "retire": "retired"}
+
+
+def _executor() -> Any:
+    from services.control_plane.bff import command_executor
+
+    return command_executor
+
+
+def _request_hash(payload: Dict[str, Any]) -> str:
+    return stable_digest({k: v for k, v in payload.items() if k not in {"idempotency_key", "request_hash"}})
+
+
+def _owner_body(payload: Dict[str, Any], actor_id: str, actor_role: str, key: str) -> Dict[str, Any]:
+    body = {k: v for k, v in payload.items() if k not in _BOUND_FIELDS}
+    body.update(actor_id=actor_id, actor_role=actor_role)
+    if key:
+        body.update(idempotency_key=key, request_hash=_request_hash(payload))
+    return body
+
+
+class CapitalOwnerWriter:
+    """Forward pool, binding, rebalance and containment writes to the Capital owner."""
+
+    def create_pool(self, payload, *, actor_id, actor_role, auth_token=None, key="", **_) -> Dict[str, Any]:
+        pool_id = str(payload.get("pool_id") or payload.get("id") or "").strip()
+        if not pool_id:
+            raise CapitalValidationError("pool_id is required")
+        body = {**_owner_body(payload, actor_id, actor_role, key), "pool_id": pool_id}
+        return _executor().create_capital_pool(body, auth_token=auth_token)
+
+    def pool_action(self, payload, *, actor_id, actor_role, target_id, auth_token=None, **_) -> Dict[str, Any]:
+        action = str(payload.get("action_id") or "").strip()
+        status = _POOL_ACTION_STATUS.get(action.lower())
+        if status is None:
+            raise ActionUnavailableError(
+                f"CapitalPool action {action!r} is not supported by Capital authority.",
+                action_id=action,
+                entity_type="CapitalPool",
+            )
+        return self._set_status(
+            f"/api/capital-pools/{quote(target_id, safe='')}",
+            {"status": status, "approval_decision_id": payload.get("approval_decision_id")},
+            actor_id, actor_role, auth_token,
+        )
+
+    def activate_binding(self, payload, *, actor_id, actor_role, target_id, auth_token=None, **_) -> Dict[str, Any]:
+        path = f"/api/bindings/{quote(target_id, safe='')}"
+        body = {"actor_id": actor_id, "actor_role": actor_role, "approval_decision_id": payload.get("approval_decision_id")}
+        http_request_json(capital_url(f"{path}/activate"), method="POST", payload=body, auth_token=auth_token)
+        return http_request_json(capital_url(path), auth_token=auth_token)
+
+    def binding_status(self, payload, *, actor_id, actor_role, target_id, auth_token=None, **_) -> Dict[str, Any]:
+        return self._set_status(
+            f"/api/bindings/{quote(target_id, safe='')}", {"status": payload.get("status")},
+            actor_id, actor_role, auth_token,
+        )
+
+    def create_rebalance(self, payload, *, actor_id, actor_role, auth_token=None, key="", **_) -> Dict[str, Any]:
+        body = _owner_body(payload, actor_id, actor_role, key)
+        body.setdefault("capital_pool_id", payload.get("pool_id"))
+        if payload.get("id") and not payload.get("rebalance_id"):
+            body["rebalance_id"] = payload["id"]
+        return _executor().create_capital_rebalance_proposal(body, auth_token=auth_token)
+
+    def apply_rebalance(self, payload, *, actor_id, actor_role, target_id, auth_token=None, key="", **_) -> Dict[str, Any]:
+        params = {
+            "entity_type": "Rebalance",
+            "entity_id": target_id,
+            "idempotency_key": key,
+            "request_hash": _request_hash(payload),
+            "approval_ref": payload.get("approval_ref") or "",
+            "proposal_version": payload.get("proposal_version"),
+            "actor_id": actor_id,
+            "actor_role": actor_role,
+        }
+        return _executor()._execute_approved_rebalance_apply(
+            str(payload.get("command_id") or key), params, auth_token=auth_token
+        )
+
+    @staticmethod
+    def _set_status(path: str, fields: Dict[str, Any], actor_id: str, actor_role: str, auth_token: Optional[str]) -> Dict[str, Any]:
+        body = {"actor_id": actor_id, "actor_role": actor_role, **fields}
+        http_request_json(capital_url(f"{path}/status"), method="PATCH", payload=body, auth_token=auth_token)
+        return http_request_json(capital_url(path), auth_token=auth_token)
 
 
 class CapitalCommandAdapter(DomainCommandAdapter):
-    """Adapter for Capital Service authority commands."""
+    """Adapter for stored Capital Service authority commands."""
 
     _HANDLED_COMMANDS = {
         "CapitalPoolAction",
@@ -30,8 +120,6 @@ class CapitalCommandAdapter(DomainCommandAdapter):
         "PatchRebalance",
         "ApprovedApply",
         "EmergencyContainment",
-        "ApprovePool",
-        "LiquidateAll",
     }
 
     _HANDLED_ENTITIES = {
@@ -42,6 +130,8 @@ class CapitalCommandAdapter(DomainCommandAdapter):
         "personacapitalbinding",
         "persona-capital-binding",
     }
+
+    writer = CapitalOwnerWriter()
 
     def can_handle(self, command_type: str, entity_type: str, action_id: str) -> bool:
         normalized_cmd = str(command_type or "").strip()
@@ -68,215 +158,91 @@ class CapitalCommandAdapter(DomainCommandAdapter):
     ) -> Dict[str, Any]:
         entity_type = str(params.get("entity_type") or "").strip().lower().replace("_", "-")
         action_id = str(params.get("action_id") or "").strip()
-        entity_id = str(params.get("entity_id") or params.get("pool_id") or params.get("rebalance_id") or params.get("binding_id") or params.get("persona_id") or "").strip()
+        entity_id = str(params.get("entity_id") or params.get("pool_id") or params.get("rebalance_id") or params.get("binding_id") or "").strip()
 
         if command_type == "EmergencyContainment":
-            return self._execute_containment(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif entity_type in {"capitalpool", "capital-pool"}:
-            return self._execute_capital_pool_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif entity_type == "rebalance" or command_type in {"RebalanceProposal", "PatchRebalance"}:
-            return self._execute_rebalance_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif entity_type in {"binding", "personacapitalbinding", "persona-capital-binding"}:
-            return self._execute_binding_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        else:
-            raise ActionUnavailableError(
-                f"Capital adapter cannot route entity_type={entity_type!r} action_id={action_id!r}",
-                action_id=action_id,
-                entity_type=entity_type,
-            )
+            return _executor()._execute_emergency_containment_authority(command_id, params, auth_token=auth_token)
+        if command_type == "ApprovedApply":
+            return _executor()._execute_approved_rebalance_apply(command_id, params, auth_token=auth_token)
+        if entity_type in {"capitalpool", "capital-pool"}:
+            return self._pool(command_id, entity_id, action_id, params, auth_token)
+        if entity_type == "rebalance" or command_type in {"RebalanceProposal", "PatchRebalance"}:
+            return self._rebalance(command_id, action_id, params, auth_token)
+        if entity_type in {"binding", "personacapitalbinding", "persona-capital-binding"}:
+            return self._binding(command_id, entity_id, action_id, params, auth_token)
+        raise ActionUnavailableError(
+            f"Capital adapter cannot route entity_type={entity_type!r} action_id={action_id!r}",
+            action_id=action_id,
+            entity_type=entity_type,
+        )
 
-    def _execute_capital_pool_action(
-        self,
-        command_id: str,
-        pool_id: str,
-        action_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    @staticmethod
+    def _ctx(params: Dict[str, Any], auth_token: Optional[str]) -> Dict[str, Any]:
+        return {
+            "actor_id": str(params.get("actor_id") or ""),
+            "actor_role": str(params.get("actor_role") or ""),
+            "key": str(params.get("idempotency_key") or ""),
+            "auth_token": auth_token,
+        }
+
+    def _pool(self, command_id, pool_id, action_id, params, auth_token) -> Dict[str, Any]:
         if not pool_id:
             raise ValueError("CapitalPool action requires a non-empty entity_id (pool_id).")
-
-        status_map = {
-            "pause": "paused",
-            "freeze": "paused",
-            "activate": "active",
-            "resume": "active",
-            "retire": "retired",
-            "adjust_budget": "active",
-            "update_budget": "active",
-        }
-        target_status = status_map.get(action_id.lower())
-        if not target_status and action_id.lower() not in {"update", "patch"}:
-            raise ActionUnavailableError(
-                f"CapitalPool action {action_id!r} is not supported by Capital authority.",
-                action_id=action_id,
-                entity_type="CapitalPool",
-            )
-
-        patch_payload = {
-            "status": target_status or params.get("status", "active"),
-            "reason": params.get("reason") or params.get("note") or f"Operator action {action_id}",
-        }
-        if "budget" in params:
-            patch_payload["budget"] = params["budget"]
-
-        url = capital_url(f"/api/capital-pools/{quote(pool_id, safe='')}/status")
-        body = http_request_json(url, method="PATCH", payload=patch_payload, auth_token=auth_token, mfa_token=mfa_token)
-
-        # Authoritative readback
-        readback = http_request_json(capital_url(f"/api/capital-pools/{quote(pool_id, safe='')}"), method="GET", auth_token=auth_token, mfa_token=mfa_token)
-
+        readback = self.writer.pool_action(
+            {**params, "action_id": action_id}, target_id=pool_id, **self._ctx(params, auth_token)
+        )
         return build_domain_receipt(
             command_id=command_id,
             entity_type="CapitalPool",
             entity_id=pool_id,
             action_id=action_id,
             status="executed",
-            dispatch_path=url,
-            domain_receipt=body,
+            dispatch_path=capital_url(f"/api/capital-pools/{quote(pool_id, safe='')}/status"),
+            domain_receipt=readback,
             authoritative_readback=readback,
-            extra={
-                "pool_id": pool_id,
-                "pool_state": readback.get("status") if isinstance(readback, dict) else target_status,
-            },
+            extra={"pool_id": pool_id, "pool_state": readback.get("status")},
         )
 
-    def _execute_rebalance_action(
-        self,
-        command_id: str,
-        rebalance_id: str,
-        action_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        if action_id.lower() in {"propose", "rebalanceproposal", "create"}:
-            payload = {
-                "command_id": command_id,
-                "pool_id": params.get("pool_id") or params.get("capital_pool_id") or "default-pool",
-                "proposed_by": params.get("proposed_by") or params.get("actor_id") or "operator",
-                "allocations": params.get("allocations") or {},
-                "reason": params.get("reason") or "Operator rebalance proposal",
-            }
-            url = capital_url("/api/rebalances")
-            body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
-            target_rebalance_id = str(body.get("rebalance_id") or body.get("id") or "").strip()
-            
-            readback = None
-            if target_rebalance_id:
-                try:
-                    readback = http_request_json(capital_url(f"/api/rebalances/{quote(target_rebalance_id, safe='')}"), method="GET", auth_token=auth_token, mfa_token=mfa_token)
-                except Exception:
-                    pass
-
-            return build_domain_receipt(
-                command_id=command_id,
-                entity_type="Rebalance",
-                entity_id=target_rebalance_id,
-                action_id="RebalanceProposal",
-                status="created",
-                dispatch_path=url,
-                domain_receipt=body,
-                authoritative_readback=readback,
-                extra={"rebalance_id": target_rebalance_id},
-            )
-        else:
+    def _rebalance(self, command_id, action_id, params, auth_token) -> Dict[str, Any]:
+        if action_id.lower() not in {"propose", "rebalanceproposal", "create"}:
             raise ActionUnavailableError(
-                f"Rebalance action {action_id!r} is not supported. Use 'apply' for approved apply.",
+                f"Rebalance action {action_id!r} is not supported by Capital authority; "
+                "only proposal creation and ApprovedApply are owner operations.",
                 action_id=action_id,
                 entity_type="Rebalance",
             )
-
-    def _execute_containment(
-        self,
-        command_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        entity_id = str(params.get("entity_id") or "").strip()
-        requested_persona_id = str(params.get("persona_id") or "").strip()
-        persona_id = entity_id or requested_persona_id
-        if not persona_id:
-            raise ValueError("EmergencyContainment requires a trusted Persona identity")
-        two_man_signature_id = params["two_man_signature_id"]
-
-        payload = {
-            key: value
-            for key, value in params.items()
-            if key not in {"command_id", "entity_type", "entity_id", "action_id", "actor_id", "actor_role"}
-        }
-        payload.update({
-            "command_id": command_id,
-            "idempotency_key": str(params.get("idempotency_key") or command_id),
-            "request_hash": str(params.get("request_hash") or ""),
-            "persona_id": persona_id,
-            "two_man_signature_id": two_man_signature_id,
-            "entity_type": "Persona",
-            "entity_id": persona_id,
-            "actor_id": str(params.get("actor_id") or "operator-bff"),
-            "actor_role": str(params.get("actor_role") or "operator"),
-        })
-
-        url = capital_url("/api/containments")
-        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
-        containment_state = str(body.get("containment_state") or body.get("state") or "frozen").strip()
-
+        body = self.writer.create_rebalance(params, **self._ctx(params, auth_token))
+        rebalance_id = str(body.get("rebalance_id") or body.get("id") or "").strip()
         return build_domain_receipt(
             command_id=command_id,
-            entity_type="Persona",
-            entity_id=persona_id,
-            action_id="EmergencyContainment",
-            status=body.get("status") or "applied",
-            dispatch_path=url,
+            entity_type="Rebalance",
+            entity_id=rebalance_id,
+            action_id="RebalanceProposal",
+            status="created",
+            dispatch_path=capital_url("/api/rebalances"),
             domain_receipt=body,
-            authoritative_readback={"containment_state": containment_state, "persona_id": persona_id},
-            extra={
-                "containment": True,
-                "containment_state": containment_state,
-                "risk_direction": "decrease_only",
-                "two_man_signature_id": two_man_signature_id,
-            },
+            authoritative_readback=body,
+            extra={"rebalance_id": rebalance_id},
         )
 
-    def _execute_binding_action(
-        self,
-        command_id: str,
-        binding_id: str,
-        action_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    def _binding(self, command_id, binding_id, action_id, params, auth_token) -> Dict[str, Any]:
         if not binding_id:
             raise ValueError("Binding action requires binding_id.")
-
+        ctx = self._ctx(params, auth_token)
         if action_id.lower() == "activate":
-            url = capital_url(f"/api/bindings/{quote(binding_id, safe='')}/activate")
-            payload = {
-                "actor_id": str(params.get("actor_id") or "operator"),
-                "reason": str(params.get("reason") or "Operator activation"),
-            }
-            body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
+            readback = self.writer.activate_binding(params, target_id=binding_id, **ctx)
         else:
-            url = capital_url(f"/api/bindings/{quote(binding_id, safe='')}/status")
-            payload = {
-                "status": params.get("status") or action_id,
-                "reason": params.get("reason") or f"Action {action_id}",
-            }
-            body = http_request_json(url, method="PATCH", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
-
-        readback = http_request_json(capital_url(f"/api/bindings/{quote(binding_id, safe='')}"), method="GET", auth_token=auth_token, mfa_token=mfa_token)
-
+            readback = self.writer.binding_status(
+                {"status": params.get("status") or action_id}, target_id=binding_id, **ctx
+            )
         return build_domain_receipt(
             command_id=command_id,
             entity_type="PersonaCapitalBinding",
             entity_id=binding_id,
             action_id=action_id,
             status="executed",
-            dispatch_path=url,
-            domain_receipt=body,
+            dispatch_path=capital_url(f"/api/bindings/{quote(binding_id, safe='')}"),
+            domain_receipt=readback,
             authoritative_readback=readback,
             extra={"binding_id": binding_id},
         )

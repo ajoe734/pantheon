@@ -1494,9 +1494,12 @@ def mount_bff_routers(
 
     # 32: Capital
     from ..capital.router import create_capital_router
+    from ..command_adapters.capital_adapter import CapitalOwnerWriter
+    capital_owner_writer = CapitalOwnerWriter()
     app.include_router(
         create_capital_router(
             read_surface=app_deps.read_surface,
+            get_capital_authority=lambda: capital_owner_writer,
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),
             require_operator_role=_dep("_require_operator_role"),
