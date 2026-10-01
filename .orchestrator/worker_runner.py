@@ -35,6 +35,7 @@ from common import (  # noqa: E402 - worker_runner must bootstrap its sibling mo
     canonical_task_state_lock_file,
     durable_write_bytes,
     read_regular_file_bytes,
+    task_branch_matches,
     worker_process_generation_id,
     first_symlink_component as _first_symlink_component,
     git_toplevel as _git_toplevel,
@@ -386,16 +387,14 @@ def _append_leased_git_metadata_mounts(
     # The task's rewritten replacement branches (`<branch>-v<N>`, which the
     # auto-integrator delivers like the branch itself) stay writable so a later
     # run can continue one; every other task's branch stays read-only.
-    own_refs = re.compile(
-        re.escape(re.sub(r"-v[0-9]+$", "", branch_ref)) + r"(?:-v[0-9]+)?"
-    )
+    canonical_ref = re.sub(r"-v[0-9]+$", "", branch_ref)
     heads_root = common_dir / "refs" / "heads"
     if heads_root.is_dir():
         for candidate in heads_root.rglob("*"):
             if not candidate.is_file():
                 continue
             relative_ref = candidate.relative_to(common_dir).as_posix()
-            if not own_refs.fullmatch(relative_ref):
+            if not task_branch_matches(relative_ref, canonical_ref):
                 protected.append(candidate)
 
     # Parent protections are installed before the selected nested gitdir is
