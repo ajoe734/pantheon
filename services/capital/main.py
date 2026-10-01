@@ -142,7 +142,9 @@ def _current_tenant() -> Optional[str]:
 
 
 def _tenant_match(obj: Any, tenant: Optional[str]) -> bool:
-    tid = getattr(obj, "tenant_id", None) or (getattr(obj, "metadata", None) or {}).get("tenant_id")
+    tid = getattr(obj, "tenant_id", None)
+    if tid is None:  # JSON-store records carry only the server-stamped metadata tenant
+        tid = (getattr(obj, "metadata", None) or {}).get("tenant_id")
     return bool(tid and (tenant is None or tid == tenant))
 
 
@@ -453,12 +455,12 @@ class CapitalBoundaryService:
             if not pool and " pool " in msg and " already has " in msg:
                 pool = msg.split(" pool ", 1)[1].split(" already has ", 1)[0].strip().strip("'\"")
             conf = next((b for b in self.binding_store.list(capital_pool_id=pool, status="active", role="live_owner") if not binding or b.binding_id != binding.binding_id), None) if pool else None
-            if not conf or not _tenant_match(conf, caller_tenant):
+            if not conf or not caller_tenant or not _tenant_match(conf, caller_tenant):
                 raise type(exc)(f"Single-live-owner rule violated: pool {pool!r} already has an active live_owner binding. Revoke or suspend it before activating a new live_owner.") from exc
         if "Capital sleeve identity is already bound:" in msg:
             pool, sleeve = (binding.capital_pool_id, str(getattr(binding, "capital_sleeve_id", "") or "").strip()) if binding else (None, "")
             conf = next((b for b in self.binding_store.list(capital_pool_id=pool) if (not binding or b.binding_id != binding.binding_id) and str(getattr(b, "capital_sleeve_id", "") or "").strip() == sleeve), None) if pool and sleeve else None
-            if not conf or not _tenant_match(conf, caller_tenant):
+            if not conf or not caller_tenant or not _tenant_match(conf, caller_tenant):
                 safe_msg = f"Capital sleeve identity is already bound: pool={pool!r}, sleeve={sleeve!r}" if pool and sleeve else (msg.split(", binding=")[0] if ", binding=" in msg else msg)
                 raise type(exc)(safe_msg) from exc
 

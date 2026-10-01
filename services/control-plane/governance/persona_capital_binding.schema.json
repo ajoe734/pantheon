@@ -64,8 +64,8 @@
       "description": "Lifecycle status of this binding."
     },
     "approval_decision_id": {
-      "type": "string",
-      "description": "ApprovalDecision that authorised this binding (required before activation)."
+      "type": ["string", "null"],
+      "description": "ApprovalDecision that authorised this binding; required before activation except for the genuine paper_owner/paper binding."
     },
     "created_at": {
       "type": "string",
