@@ -81,13 +81,20 @@ def test_lifecycle_http_rejects_state_drift_after_approval_snapshot(
         concurrent["lifecycle_state"] = "paper_owner"
         assert original_cas(persona_id, current, concurrent)[0]
 
-    class Verifier:
-        def verify_persona_lifecycle_decision(self, **_kwargs):
-            if race_point == "governance_read":
-                concurrent_transition("per1")
-            return True
+    evidence = _evidence(metadata={
+        "subject": {"persona_id": "per1", "from_state": "consultable",
+                    "to_state": "frozen"},
+        "approvals": [{"actor_id": "dec", "actor_role": "governance_reviewer"}],
+    })
 
-    app = create_app(owner, governance_decision_verifier=Verifier())
+    def governance_read(_reader, _decision_id):
+        if race_point == "governance_read":
+            concurrent_transition("per1")
+        return evidence
+
+    monkeypatch.setattr(ApprovalReader, "get", governance_read)
+    verifier = HttpGovernanceApprovalVerifier(base_url="http://gov", service_token="x")
+    app = create_app(owner, governance_decision_verifier=verifier)
     client = TestClient(app)
     if race_point == "first_cas":
         def race_cas(persona_id, expected, updated):
