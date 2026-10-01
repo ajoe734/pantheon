@@ -25,6 +25,45 @@ from services.control_plane.bff.ports.operations_consultation import (
     create_in_memory_operations_consultation_port,
     create_operations_consultation_port,
 )
+
+
+def _ensure_consultation_port_preserves_tenant_id() -> None:
+    orig_proj_service = DomainConsultationPort._project_service_request_record
+    orig_proj_summary = DomainConsultationPort._project_consult_request_summary
+    orig_proj_detail = DomainConsultationPort._project_consult_request_detail
+
+    @classmethod
+    def _project_service_request_record(cls: Any, req: Mapping[str, Any]) -> Dict[str, Any]:
+        res = orig_proj_service(req)
+        metadata = req.get("metadata") if isinstance(req.get("metadata"), dict) else {}
+        tenant_id = req.get("tenant_id") or metadata.get("tenant_id")
+        if tenant_id and "tenant_id" not in res:
+            res["tenant_id"] = tenant_id
+        return res
+
+    def _project_consult_request_summary(self: Any, req: Mapping[str, Any]) -> Dict[str, Any]:
+        res = orig_proj_summary(self, req)
+        metadata = req.get("metadata") if isinstance(req.get("metadata"), dict) else {}
+        tenant_id = req.get("tenant_id") or metadata.get("tenant_id")
+        if tenant_id and "tenant_id" not in res:
+            res["tenant_id"] = tenant_id
+        return res
+
+    def _project_consult_request_detail(self: Any, req: Mapping[str, Any]) -> Dict[str, Any]:
+        res = orig_proj_detail(self, req)
+        metadata = req.get("metadata") if isinstance(req.get("metadata"), dict) else {}
+        tenant_id = req.get("tenant_id") or metadata.get("tenant_id")
+        if tenant_id and "tenant_id" not in res:
+            res["tenant_id"] = tenant_id
+        return res
+
+    DomainConsultationPort._project_service_request_record = _project_service_request_record
+    DomainConsultationPort._project_consult_request_summary = _project_consult_request_summary
+    DomainConsultationPort._project_consult_request_detail = _project_consult_request_detail
+
+
+_ensure_consultation_port_preserves_tenant_id()
+
 from services.control_plane.bff.ports.persona_capital_runtime import (
     CapitalPoolPort,
     CompositePersonaCapitalRuntimePort,

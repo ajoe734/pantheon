@@ -1475,7 +1475,6 @@ class DomainConsultationPort:
             "request_id": req.get("request_id"),
             "status": status,
             "from_persona_id": req.get("from_persona_id"),
-            "tenant_id": req.get("tenant_id") or metadata.get("tenant_id"),
             "target_type": req.get("target_type"),
             "target_ref": req.get("target_ref") or req.get("target_id"),
             "task": req.get("task") or metadata.get("task") or "",
@@ -2002,13 +2001,10 @@ class DomainConsultationPort:
         can_cancel = self._consult_request_can_cancel(req)
         task_full = str(req.get("task") or "")
         task_summary = task_full[:120] + ("…" if len(task_full) > 120 else "")
-        metadata = req.get("metadata") if isinstance(req.get("metadata"), dict) else {}
-        tenant_id = req.get("tenant_id") or metadata.get("tenant_id")
         return {
             "request_id": req.get("request_id"),
             "status": status,
             "from_persona_id": req.get("from_persona_id"),
-            "tenant_id": tenant_id,
             "target_type": req.get("target_type"),
             "target_ref": req.get("target_ref"),
             "task_summary": task_summary,
@@ -2026,8 +2022,6 @@ class DomainConsultationPort:
         status = str(req.get("status") or "created")
         can_cancel = self._consult_request_can_cancel(req)
         linked_session_id = req.get("linked_session_id")
-        metadata = req.get("metadata") if isinstance(req.get("metadata"), dict) else {}
-        tenant_id = req.get("tenant_id") or metadata.get("tenant_id")
         r2s_status = str(req.get("request_to_session_status") or "pending_session")
         session_route_href = (
             f"/api/v1/consultations/{linked_session_id}" if linked_session_id else None
@@ -2036,7 +2030,6 @@ class DomainConsultationPort:
             "request_id": req.get("request_id"),
             "status": status,
             "from_persona_id": req.get("from_persona_id"),
-            "tenant_id": tenant_id,
             "target_type": req.get("target_type"),
             "target_ref": req.get("target_ref"),
             "task": req.get("task"),
