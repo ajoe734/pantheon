@@ -75,17 +75,6 @@ def _is_obs_missing(limit: str, val: Any, obs: Any) -> bool:
     return False if limit in _STRING_LIMITS else any(not _is_finite_num(v) for v in (obs.values() if isinstance(obs, Mapping) else [obs]))
 
 
-def _enrich_context_from_meta(ctx: dict[str, Any], meta: Mapping[str, Any], stage: Optional[str] = None) -> None:
-    acs, fam = meta.get("asset_classes"), str(meta.get("strategy_family") or "").strip()
-    if acs not in (None, "", (), [], {}): ctx["asset_classes"] = tuple(sorted(str(x) for x in acs if x)) if isinstance(acs, (list, tuple, set)) else (str(acs),)
-    if fam: ctx["strategy_family"] = fam
-    for k in ("liquidity", "drawdown_pct"):
-        if meta.get(k) is not None: ctx[k] = float(meta[k]) if k == "drawdown_pct" else meta[k]
-    if stage == "canary":
-        for k in ("capital_scale_pct", "gross_scale_pct"):
-            if meta.get(k) is not None: ctx[k] = _finite_scale(meta[k], k)
-
-
 def project_contexts(
     *, allocations: Sequence[Any] = (), lines: Sequence[Any] = (), stage: Optional[str] = None,
     binding: Any = None, bindings: Sequence[Any] = (), pool: Any = None,
@@ -117,32 +106,27 @@ def project_contexts(
     all_b = ([binding] if binding else []) + list(bindings)
     b_map = {_val(b, "binding_id"): b for b in all_b if _val(b, "binding_id")}
     b_map.update({(_val(b, "persona_id"), _val(b, "capital_sleeve_id")): b for b in all_b if _val(b, "persona_id") and _val(b, "capital_sleeve_id")})
-    p_meta = dict(_val(pool, "metadata") or {}) if pool else {}
 
     seen = {id(binding), _val(binding, "binding_id")} - {None} if binding else set()
     contexts: list[dict[str, Any]] = []
     for a in res.values():
         b = b_map.get(_val(a, "binding_id")) or b_map.get((_val(a, "persona_id"), _val(a, "capital_sleeve_id")))
-        meta, st = {**p_meta, **(dict(_val(b, "metadata") or {}) if b else {})}, line_deployment_scope(a) or (line_deployment_scope(b) if b else None) or (s if not binding else None)
-        ctx = {**facts, "stage": st} if st else dict(facts)
-        _enrich_context_from_meta(ctx, meta, st)
-        contexts.append(ctx)
+        st = line_deployment_scope(a) or (line_deployment_scope(b) if b else None) or (s if not binding else None)
+        contexts.append({**facts, "stage": st} if st else dict(facts))
 
     def _add_b(b: Any, st_override: Optional[str] = None) -> None:
         st = line_deployment_scope(b) or st_override
-        ctx = {**facts, "stage": st} if st else dict(facts)
-        _enrich_context_from_meta(ctx, {**p_meta, **dict(_val(b, "metadata") or {})}, st)
-        contexts.append(ctx)
+        contexts.append({**facts, "stage": st} if st else dict(facts))
 
-    if binding: _add_b(binding, s)
+    if binding:
+        _add_b(binding, s)
     for b in bindings:
         bid = _val(b, "binding_id")
         if _val(b, "status") == "active" and id(b) not in seen and (not bid or bid not in seen):
-            seen.update((id(b), bid)); _add_b(b)
+            seen.update((id(b), bid))
+            _add_b(b)
     if not contexts:
-        ctx = {"stage": s, **facts} if s else dict(facts)
-        _enrich_context_from_meta(ctx, p_meta, s)
-        contexts.append(ctx)
+        contexts.append({"stage": s, **facts} if s else dict(facts))
     return contexts
 
 
