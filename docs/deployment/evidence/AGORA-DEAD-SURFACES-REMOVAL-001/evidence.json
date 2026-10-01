@@ -7,22 +7,22 @@
   "reviewer": "Codex",
   "budget_summary": {
     "production": {
-      "additions": 453,
-      "deletions": 7255,
-      "net": -6802
+      "additions": 423,
+      "deletions": 7142,
+      "net": -6719
     },
     "test": {
-      "additions": 89,
-      "deletions": 5110,
-      "net": -5021
+      "additions": 83,
+      "deletions": 4709,
+      "net": -4626
     },
     "docs_evidence": {
-      "additions": 176,
-      "deletions": 88,
-      "net": 88
+      "additions": 181,
+      "deletions": 38,
+      "net": 143
     },
     "requirement": "net production lines <= -3000",
-    "achieved": "net production lines = -6802"
+    "achieved": "net production lines = -6719"
   },
   "preserved_surfaces": [
     "/bff/agora/me",
