@@ -1,7 +1,7 @@
 """Durable worker wiring Workshop conversation to the reconstruction engine.
 
-Per AGORA-WORKSHOP-CORE-20260813 the reconstruction algorithm in
-``reconstruction.py`` is unchanged.  This module is the one worker path that
+Semantic interpretation belongs to the restricted agent; typed validation
+belongs to ``reconstruction.py``. This module is the one worker path that
 every caller (message admission and the explicit ``/reconstruct`` endpoint)
 goes through: it derives the current conversation/version identity, invokes
 the existing engine, and persists exactly one effective result per workshop
@@ -13,8 +13,9 @@ request, the same pattern ``interaction/runner.py`` uses for persona
 invocations.  There is no cross-process lease; durability comes from the
 workshop card being written to the durable store (Postgres in production)
 before the caller's response is returned, and idempotent convergence comes
-from the deterministic engine plus the create-then-readback Registry draft
-call being safe to repeat.
+from a versioned completed-card replay and deterministic Registry draft ID.
+Provider calls are at-least-once across concurrent requests or crashes, not
+exactly-once. They are data-only and cannot execute financial actions.
 """
 from __future__ import annotations
 
@@ -22,7 +23,8 @@ import hashlib
 from typing import Any, Dict, List, Optional
 
 from .operations import CanonicalOperationError, WorkshopCanonicalOperations
-from .reconstruction import StrategyReconstructionResult, reconstruct_strategy_from_events
+from .reconstruction import StrategyReconstructionResult
+from .semantic_provider import ENGINE_VERSION, ReconstructionProviderError, reconstruct_strategy_with_agent
 
 RECONSTRUCTION_CARD_TYPE = "strategy_reconstruction"
 
@@ -74,12 +76,12 @@ def _registry_draft_payload(
     version_parts = str(base_entry.get("version") or "").split(".")
     if len(version_parts) != 3 or not all(part.isdigit() for part in version_parts):
         return None
-    base_doc = dict((base_entry.get("metadata") or {}).get("strategy_spec") or {})
-    if not base_doc:
+    draft_doc = dict((result.draft_proposal or {}).get("strategy_spec") or {})
+    if not draft_doc or draft_doc.get("strategy_id") != strategy_id:
         return None
     version_parts[2] = str(int(version_parts[2]) + 1)
     next_version = ".".join(version_parts)
-    digest = hashlib.sha256(f"{workshop_id}:{sequence_no}".encode("utf-8")).hexdigest()[:20]
+    digest = hashlib.sha256(f"{ENGINE_VERSION}:{tenant_id}:{workshop_id}:{sequence_no}".encode("utf-8")).hexdigest()[:20]
     return {
         "registry_id": f"reg-ws-recon-{digest}",
         "strategy_id": strategy_id,
@@ -95,12 +97,8 @@ def _registry_draft_payload(
             "based_on_sequence_no": sequence_no,
             "completeness_grade": result.completeness.grade,
         },
-        # The reconstruction engine assesses completeness; it does not
-        # synthesize a new StrategySpec document (that would be a second
-        # reconstruction model, explicitly out of scope).  The draft carries
-        # the base document forward unmodified, annotated with reconstruction
-        # lineage, so a human or a later governed patch can act on it.
-        "strategy_spec": base_doc,
+        # Persist the validated semantic proposal, never the unchanged base.
+        "strategy_spec": draft_doc,
     }
 
 
@@ -176,6 +174,8 @@ def run_reconstruction_worker(
     session = session if session is not None else store.get_session(workshop_id)
     if session is None:
         raise ValueError(f"workshop not found: {workshop_id}")
+    if session.get("tenant_id") != tenant_id or session.get("user_id") != user_id:
+        raise ValueError("workshop reconstruction scope mismatch")
 
     events = store.list_events(workshop_id)
     sequence_no = max((int(event.get("sequence_no", 0)) for event in events), default=0)
@@ -188,6 +188,7 @@ def run_reconstruction_worker(
     if (
         existing is not None
         and existing.get("status") == "completed"
+        and existing_payload.get("engine_version") == ENGINE_VERSION
         and int(existing_payload.get("based_on_sequence_no", -1)) == sequence_no
         and (not any(event.get("private_content_ref") for event in events)
              or existing_payload.get("private_content_reader_version") == 1)
@@ -218,12 +219,21 @@ def run_reconstruction_worker(
         "allowed_actions": {},
     })
 
-    result = reconstruct_strategy_from_events(
-        workshop_id=workshop_id,
-        sequence_no=sequence_no,
-        events=events,
-        messages_content=messages_content,
-    )
+    try:
+        result = reconstruct_strategy_with_agent(
+            workshop_id=workshop_id, sequence_no=sequence_no, events=events,
+            messages_content=messages_content, tenant_id=tenant_id, user_id=user_id,
+        )
+    except ReconstructionProviderError:
+        store.record_workshop_card({
+            "card_id": card_id, "card_type": RECONSTRUCTION_CARD_TYPE,
+            "workshop_id": workshop_id, "status": "failed",
+            "title": "Semantic reconstruction unavailable",
+            "payload": {"based_on_sequence_no": sequence_no, "job_status": "failed",
+                        "engine_version": ENGINE_VERSION},
+            "evidence_refs": [], "allowed_actions": {},
+        })
+        raise
     registry_draft_ref = _maybe_create_registry_draft(
         canonical=canonical,
         session=session,
@@ -235,6 +245,7 @@ def run_reconstruction_worker(
     )
     result_dict = result.model_dump(mode="json")
     completed_payload = {
+        "engine_version": ENGINE_VERSION,
         "private_content_reader_version": 1,
         "reconstruction": result_dict,
         "based_on_sequence_no": sequence_no,

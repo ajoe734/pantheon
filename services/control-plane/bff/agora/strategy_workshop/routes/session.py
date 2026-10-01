@@ -24,6 +24,7 @@ from ..operations import CanonicalOperationError, bind_workshop_authorization
 from ..readiness import build_readiness_assessment as _build_readiness_assessment
 from ..cards import _build_workshop_cards, _merge_cards
 from ..runner import run_reconstruction_worker
+from ..semantic_provider import ReconstructionProviderError
 from ..schemas import (
     WorkshopCompletenessSnapshotRequest,
     WorkshopCreateRequest,
@@ -786,6 +787,8 @@ def build_session_router(
         except PrivateContentError as exc:
             raise bff_error(exc.http_status, exc.error_code,
                             "Workshop message content is unavailable", "private_content_store") from None
+        except ReconstructionProviderError as exc:
+            raise bff_error(exc.status_code, exc.error_code, str(exc), "structured_provider") from None
         return {
             "data": outcome["result"],
             "meta": {

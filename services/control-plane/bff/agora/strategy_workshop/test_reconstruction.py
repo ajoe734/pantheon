@@ -33,13 +33,12 @@ def test_strategy_reconstruction_from_basic_messages() -> None:
     assert result.workshop_id == workshop_id
     assert result.based_on_sequence_no == 2
 
-    # Check block statuses
-    assert result.strategy_map.universe.status != "missing"
-    assert result.strategy_map.signal_definition.status != "missing"
-    assert result.strategy_map.risk_controls.status != "missing"
-
-    # Check facts and Next Best Question
-    assert len(result.explicit_facts) > 0
+    # The validator does not interpret messages or invent semantic facts.
+    assert result.strategy_map.universe.status == "missing"
+    assert result.strategy_map.signal_definition.status == "missing"
+    assert result.strategy_map.risk_controls.status == "missing"
+    assert result.completeness.grade == "insufficient"
+    assert result.explicit_facts == []
     assert result.next_best_question is not None
     assert isinstance(result.next_best_question.text, str)
     assert len(result.next_best_question.resolves) > 0
@@ -59,7 +58,7 @@ def test_strategy_reconstruction_nbq_uniqueness_and_completeness_derivation() ->
     )
 
     assert result.completeness.grade == "insufficient"
-    assert "Missing core strategy hypothesis" in result.completeness.blockers
+    assert "Semantic reconstruction unavailable" in result.completeness.blockers
     assert result.next_best_question is not None
     # NBQ must resolve hypothesis
     assert "hypothesis.summary" in result.next_best_question.resolves
