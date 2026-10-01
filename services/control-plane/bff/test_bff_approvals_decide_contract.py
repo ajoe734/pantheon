@@ -173,9 +173,10 @@ def test_unsupported_verbs_are_explicit_and_never_become_votes(client, owner, pa
     assert len(owner.calls) == calls
 
 
-def test_revision_is_retired_with_410_and_no_owner_call(client, owner):
+@pytest.mark.parametrize("verb", ["request_revision", "requestrevision", "RequestApprovalRevision"])
+def test_revision_is_retired_with_410_and_no_owner_call(client, owner, verb):
     calls_before = len(owner.calls)
-    response = client.post("/bff/approvals/a1/decide", json=vote(decision="request_revision"), headers=headers(key="rev"))
+    response = client.post("/bff/approvals/a1/decide", json=vote(decision=verb), headers=headers(key=f"rev-{verb}"))
     assert response.status_code == 410
     detail = response.json()["detail"]["error"]
     assert detail["code"] == "VALIDATION_FAILED"
@@ -316,3 +317,58 @@ def test_batch_decide_returns_owner_result_unrewritten(client, owner):
     response = client.post("/bff/approvals/batch-decide", headers=headers(key="batch2"), json={"decisions": [{"id": "a1", **vote()}]})
     result = response.json()["results"][0]["result"]
     assert result["version"] == 2 and result["decision_state"] == "under_review"
+
+
+@pytest.fixture()
+def review_client(tmp_path):
+    from services.control_plane.bff.command_adapters.service import CommandAdapterService
+    from services.control_plane.bff.command_queue import CommandStore
+    from services.control_plane.bff.governance.router import create_governance_router
+    from services.control_plane.bff.models import OperatorIdentity
+
+    store = CommandStore(str(tmp_path / "review-store.jsonl"))
+    identity = OperatorIdentity(operator_id="rev-1", roles=["operator", "governance_reviewer"], mfa_verified=True, claims={"tenant_id": "tenant-a"})
+    svc = CommandAdapterService(command_store=store, read_surface=None, extract_identity=lambda *a, **k: identity)
+    app = FastAPI()
+    app.include_router(create_governance_router(extract_identity=lambda *a, **k: identity, submit_action=svc.submit_governance_action, command_store=store))
+    return TestClient(app, raise_server_exceptions=False), store
+
+
+@pytest.mark.parametrize("verb", ["request_revision", "requestrevision", "RequestApprovalRevision"])
+def test_review_action_routes_retire_revision_with_410(review_client, owner, verb):
+    client, store = review_client
+    calls_before = len(owner.calls)
+    res = client.post(f"/bff/reviews/a1/actions/{verb}", headers=headers(key=f"r-{verb}"), json={"expected_version": 1, "notes": "rework"})
+    assert res.status_code == 410
+    assert len(owner.calls) == calls_before
+    assert len(store._get_all_commands()) == 0
+
+
+def test_review_action_routes_forward_votes_and_deny_cross_tenant(review_client, owner):
+    client, store = review_client
+    calls_before = len(owner.calls)
+    res = client.post("/bff/reviews/a1/actions/approve", headers=headers(key="r-approve"), json={"expected_version": 1, "notes": "looks good"})
+    assert res.status_code == 202
+    assert len(owner.calls) == calls_before + 1
+    assert len(store._get_all_commands()) == 0
+
+    cross = client.post("/bff/reviews/b1/actions/approve", headers=headers(key="r-cross"), json={"expected_version": 1, "notes": "cross"})
+    assert cross.status_code == 404
+
+
+@pytest.mark.parametrize("cmd", ["request_revision", "requestrevision", "request_approval_revision", "RequestApprovalRevision"])
+def test_direct_revision_commands_return_410(command_client, owner, cmd):
+    calls_before = len(owner.calls)
+    res = command_client.post("/bff/v1/commands", headers=headers(role="operator", key=f"c-{cmd}"),
+                              json={"command": cmd, "target": {"type": "ApprovalDecision", "id": "a1"}, "params": {"decision_id": "a1"}, "audit_context": {"reason": "review"}})
+    assert res.status_code == 410
+    assert len(owner.calls) == calls_before
+
+
+@pytest.mark.parametrize("field", ["action", "decision", "action_id"])
+def test_wrapped_review_action_revision_returns_410(command_client, owner, field):
+    calls_before = len(owner.calls)
+    res = command_client.post("/bff/v1/commands", headers=headers(role="operator", key=f"w-{field}"),
+                              json={"command": "ReviewAction", "target": {"type": "Review", "id": "a1"}, "params": {"decision_id": "a1", field: "requestrevision", "notes": "rework"}, "audit_context": {"reason": "review"}})
+    assert res.status_code == 410
+    assert len(owner.calls) == calls_before

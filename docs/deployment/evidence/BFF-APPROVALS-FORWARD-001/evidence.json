@@ -22,10 +22,10 @@
     "decide on PROPOSED runs accept_review inside the same execute_command callback"
   ],
   "validation": {
-    "services/control-plane/bff/test_bff_approvals_decide_contract.py": "18 passed against stub Governance HTTP owner (asserting RequestApprovalRevision retired with 410 naming RejectDecision with notes, zero owner calls, zero store insertion)",
+    "services/control-plane/bff/test_bff_approvals_decide_contract.py": "31 passed against stub Governance HTTP owner (asserting RequestApprovalRevision retired with 410 naming RejectDecision with notes, zero owner calls, zero store insertion; mounted review routes forward retained votes to owner with cross-tenant denial and return 410 before admission on retired revision verbs)",
     "services/control-plane/bff/test_command_executor.py": "29 passed (asserting RequestApprovalRevision retired with 410, zero owner calls in execute_command and execute_command_with_status)",
     "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py": "3 passed (approval SSE publishing following owner result, retired revision publishes nothing with 410)",
-    "services/control-plane/bff/tests/test_command_adapters_router.py": "test_request_approval_revision_is_retired_with_410 and test_zero_reverse_main_imports passed",
+    "services/control-plane/bff/tests/test_command_adapters_router.py": "624 passed (full suite including test_request_approval_revision_is_retired_with_410 and test_zero_reverse_main_imports)",
     "services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py": "6 passed",
     "services/persona/test_lifecycle_approval_verifier.py": "13 passed",
     "services/persona/test_training_target_owner.py": "14 passed",

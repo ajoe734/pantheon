@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import urllib.error
 import uuid
 from datetime import datetime
@@ -281,7 +282,6 @@ def create_governance_router(
         return identity
 
     async def _forward(call: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        """Run one owner call; the owner's status/body is relayed, never reinterpreted."""
         try:
             return await run_in_threadpool(call, *args, **kwargs)
         except urllib.error.HTTPError as exc:
@@ -290,78 +290,47 @@ def create_governance_router(
             except Exception:
                 content = {"detail": f"Governance owner returned HTTP {exc.code}"}
             raise HTTPException(status_code=exc.code, detail=content.get("detail", content)) from exc
-        except RetiredApprovalAction as exc:
+        except RetiredApprovalAction:
             _fail(410, "VALIDATION_FAILED", "RequestApprovalRevision is retired", "Use RejectDecision with notes", precondition_failed="retired_action")
         except UnsupportedApprovalAction as exc:
             _fail(501, "NOT_IMPLEMENTED", str(exc), "Unsupported approval action", precondition_failed="unsupported_action")
         except InvalidApprovalRequest as exc:
-            field = str(exc)
-            _fail(422, "VALIDATION_FAILED", f"{field} is required or invalid", f"Invalid approval decision field: {field}", precondition_failed=field)
+            _fail(422, "VALIDATION_FAILED", f"{exc} is required or invalid", f"Invalid approval decision field: {exc}", precondition_failed=str(exc))
         except (urllib.error.URLError, OSError, RuntimeError):
             _fail(503, "DEPENDENCY_UNAVAILABLE", "Governance approval owner unavailable", "Governance approval owner unreachable")
 
     def _idempotency_key(primary: Optional[str], alternate: Optional[str], *, required: bool = False) -> str:
-        first = str(primary or "").strip()
-        second = str(alternate or "").strip()
+        first, second = str(primary or "").strip(), str(alternate or "").strip()
         if first and second and first != second:
-            _fail(
-                422,
-                "VALIDATION_FAILED",
-                "Conflicting idempotency headers",
-                "Idempotency-Key and X-Idempotency-Key must match when both are provided",
-                precondition_failed="idempotency_key",
-            )
+            _fail(422, "VALIDATION_FAILED", "Conflicting idempotency headers", "Idempotency-Key and X-Idempotency-Key must match when both are provided", precondition_failed="idempotency_key")
         if required and not (first or second):
             _fail(422, "VALIDATION_FAILED", "Idempotency-Key is required", "Approval writes need a stable Idempotency-Key", precondition_failed="idempotency_key")
         return first or second or str(uuid.uuid4())
 
+    def _publish_decision(aid: str, res: Dict[str, Any], ident: Any) -> None:
+        if publish_event is not None:
+            publish_event("approval.decided" if res.get("decision_state") == "decided" else "approval.stage.changed",
+                          {"approval_id": aid, "decision_state": res.get("decision_state"), "version": res.get("version"), "actor_id": getattr(ident, "operator_id", None)})
+
     def _not_found(label: str, resource_id: str) -> None:
-        _fail(
-            404,
-            "RESOURCE_NOT_FOUND",
-            f"{label} not found",
-            f"{label} {resource_id} does not exist",
-        )
+        _fail(404, "RESOURCE_NOT_FOUND", f"{label} not found", f"{label} {resource_id} does not exist")
 
     def _paged(
-        items: List[Dict[str, Any]],
-        *,
-        page_token: Optional[str],
-        page_size: int,
-        surface_key: str,
-        dataset: str,
+        items: List[Dict[str, Any]], *, page_token: Optional[str], page_size: int, surface_key: str, dataset: str,
     ) -> Dict[str, Any]:
         snapshot_at = _now()
         surface = _surface(dataset, snapshot_at=snapshot_at, source=_service().dataset_source(dataset))
-        if surface.get("status") == "unavailable":
-            page_items, next_token = [], None
-        else:
-            page_items, next_token = _page(items, page_token, page_size)
+        page_items, next_token = ([], None) if surface.get("status") == "unavailable" else _page(items, page_token, page_size)
         meta = _snapshot(snapshot_at)
         surfaces = {surface_key: surface}
-        if surface_key == "governance_review_queue":
-            surfaces["review_queue"] = surface
-            surfaces["allowedActions"] = {
-                "status": surface.get("status", "ok"),
-                "available": surface.get("status") != "unavailable",
-                "snapshot_at": snapshot_at,
-            }
-        elif surface_key == "governance_approval_queue":
-            surfaces["approval_queue"] = surface
-            surfaces["allowedActions"] = {
-                "status": surface.get("status", "ok"),
-                "available": surface.get("status") != "unavailable",
-                "snapshot_at": snapshot_at,
-            }
+        if surface_key in {"governance_review_queue", "governance_approval_queue"}:
+            surfaces["review_queue" if surface_key == "governance_review_queue" else "approval_queue"] = surface
+            surfaces["allowedActions"] = {"status": surface.get("status", "ok"), "available": surface.get("status") != "unavailable", "snapshot_at": snapshot_at}
         meta["surfaces"] = surfaces
         staleness = _staleness()
         if staleness is not None:
             meta["staleness"] = staleness
-        return {
-            "items": page_items,
-            "page_info": {"next_page_token": next_token, "total": len(items), "page_size": page_size},
-            "meta": meta,
-        }
+        return {"items": page_items, "page_info": {"next_page_token": next_token, "total": len(items), "page_size": page_size}, "meta": meta}
 
     # 1-3. Approval decisions ------------------------------------------
 
@@ -1102,6 +1071,24 @@ def create_governance_router(
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Any:
         identity = _identity(authorization, operator=True)
+        clean_action = re.sub(r"[^a-z0-9]", "", str(action_id or "").strip().lower())
+        clean_payload = re.sub(r"[^a-z0-9]", "", str(payload.get("decision") or payload.get("action") or "").strip().lower())
+        if (
+            clean_action in {"requestrevision", "requestapprovalrevision"}
+            or clean_payload in {"requestrevision", "requestapprovalrevision"}
+            or payload.get("revision_notes")
+            or payload.get("revisionNotes")
+        ):
+            _fail(410, "VALIDATION_FAILED", "RequestApprovalRevision is retired", "Use RejectDecision with notes", precondition_failed="retired_action")
+        vote_verb = clean_action if clean_action in {"approve", "approved", "reject", "rejected"} else (clean_payload if clean_payload in {"approve", "approved", "reject", "rejected"} else None)
+        if vote_verb:
+            clean_id = review_id.strip()
+            params = dict(payload)
+            params.setdefault("decision", vote_verb)
+            key = _idempotency_key(idempotency_key, x_idempotency_key, required=False)
+            result = await _forward(approval_owner.decide, authorization, clean_id, params, key)
+            _publish_decision(clean_id, result, identity)
+            return JSONResponse(status_code=202, content=result)
         try:
             return await _service().submit_governance_action(
                 action_kind="review",
@@ -1195,12 +1182,7 @@ def create_governance_router(
         clean_id = approval_id.strip()
         result = await _forward(approval_owner.decide, authorization, clean_id, payload,
                                 _idempotency_key(idempotency_key, x_idempotency_key, required=True))
-        if publish_event is not None:
-            publish_event(
-                "approval.decided" if result.get("decision_state") == "decided" else "approval.stage.changed",
-                {"approval_id": clean_id, "decision_state": result.get("decision_state"), "version": result.get("version"),
-                 "actor_id": getattr(identity, "operator_id", None)},
-            )
+        _publish_decision(clean_id, result, identity)
         return JSONResponse(status_code=202, content=result)
 
     @router.post("/bff/approvals/batch-decide", status_code=202)

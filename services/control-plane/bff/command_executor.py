@@ -10,6 +10,7 @@ import json
 import http.client
 import logging
 import os
+import re
 import urllib.request
 import urllib.error
 import uuid
@@ -1483,7 +1484,14 @@ def execute_command(
     Returns the result payload on success.
     Raises Exception on any failure (caller should catch and record as FAILED).
     """
-    if command_type == CommandType.REQUEST_APPROVAL_REVISION or getattr(command_type, "value", command_type) == "RequestApprovalRevision":
+    norm_cmd = re.sub(r"[^a-z0-9]", "", getattr(command_type, "value", str(command_type)).lower())
+    action_val = str(params.get("action") or params.get("decision") or params.get("action_id") or "").lower()
+    norm_action = re.sub(r"[^a-z0-9]", "", action_val)
+    if (
+        norm_cmd in {"requestapprovalrevision", "requestrevision"}
+        or norm_action in {"requestapprovalrevision", "requestrevision"}
+        or bool(params.get("revision_notes") or params.get("revisionNotes"))
+    ):
         raise HTTPException(
             status_code=410,
             detail={

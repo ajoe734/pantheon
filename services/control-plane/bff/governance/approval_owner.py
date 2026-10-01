@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -36,7 +37,6 @@ class InvalidApprovalRequest(ValueError):
 
 def owner_url(path: str) -> str:
     from ..command_adapters.base import governance_approval_url
-
     return governance_approval_url(path)
 
 
@@ -46,23 +46,15 @@ def bearer(authorization: Optional[str]) -> str:
 
 
 def call_owner(
-    method: str,
-    path: str,
-    authorization: Optional[str],
-    *,
-    body: Optional[Mapping[str, Any]] = None,
-    idempotency_key: Optional[str] = None,
+    method: str, path: str, authorization: Optional[str], *,
+    body: Optional[Mapping[str, Any]] = None, idempotency_key: Optional[str] = None,
     query: Optional[Mapping[str, Any]] = None,
 ) -> Any:
-    """Forward one call; ``urllib.error.HTTPError`` carries the owner's status/body."""
-    url = owner_url(path)
-    params = {key: value for key, value in (query or {}).items() if value not in (None, "")}
-    if params:
-        url += "?" + urllib.parse.urlencode(params)
+    params = {k: v for k, v in (query or {}).items() if v not in (None, "")}
+    url = owner_url(path) + (("?" + urllib.parse.urlencode(params)) if params else "")
     headers = {"Accept": "application/json", "Authorization": bearer(authorization)}
-    data = None
-    if body is not None:
-        data = json.dumps(body).encode("utf-8")
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    if data is not None:
         headers["Content-Type"] = "application/json"
     if idempotency_key:
         headers["Idempotency-Key"] = idempotency_key
@@ -72,7 +64,6 @@ def call_owner(
 
 
 def _claims(authorization: Optional[str]) -> Dict[str, Any]:
-    """Unverified claims, used only to fill body defaults; the owner verifies the JWT."""
     try:
         segment = bearer(authorization).split(" ", 1)[1].split(".")[1]
         return json.loads(base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4)))
@@ -81,27 +72,19 @@ def _claims(authorization: Optional[str]) -> Dict[str, Any]:
 
 
 def project(decision: Mapping[str, Any]) -> Dict[str, Any]:
-    """Thin FE aliases over the owner DTO; first vote (under_review) reads as pending."""
     state = str(decision.get("decision_state") or "")
-    return {
-        "id": decision.get("decision_id"),
-        "outcome": decision.get("decision"),
-        "status": "pending" if state in _PENDING else state,
-        "state": "pending" if state in _PENDING else state,
-        **decision,
-    }
+    status = "pending" if state in _PENDING else state
+    return {"id": decision.get("decision_id"), "outcome": decision.get("decision"), "status": status, "state": status, **decision}
 
 
-def list_decisions(authorization: Optional[str], *, state: Optional[str] = None, outcome: Optional[str] = None,
-                   pending_only: bool = False) -> List[Dict[str, Any]]:
-    wanted_states = {part.strip().lower() for part in str(state or "").split(",") if part.strip()}
-    wanted_outcomes = {part.strip().lower() for part in str(outcome or "").split(",") if part.strip()}
-    items = [project(item) for item in call_owner("GET", "/api/governance/approvals", authorization)]
+def list_decisions(authorization: Optional[str], *, state: Optional[str] = None, outcome: Optional[str] = None, pending_only: bool = False) -> List[Dict[str, Any]]:
+    ws = {p.strip().lower() for p in str(state or "").split(",") if p.strip()}
+    wo = {p.strip().lower() for p in str(outcome or "").split(",") if p.strip()}
     return [
-        item for item in items
-        if (not pending_only or item["status"] == "pending")
-        and (not wanted_states or str(item.get("decision_state")).lower() in wanted_states or item["status"] in wanted_states)
-        and (not wanted_outcomes or str(item.get("outcome") or "").lower() in wanted_outcomes)
+        it for it in (project(x) for x in call_owner("GET", "/api/governance/approvals", authorization))
+        if (not pending_only or it["status"] == "pending")
+        and (not ws or str(it.get("decision_state")).lower() in ws or it["status"] in ws)
+        and (not wo or str(it.get("outcome") or "").lower() in wo)
     ]
 
 
@@ -116,9 +99,8 @@ def propose(authorization: Optional[str], payload: Mapping[str, Any], idempotenc
 
 
 def decide(authorization: Optional[str], decision_id: str, params: Mapping[str, Any], idempotency_key: str) -> Dict[str, Any]:
-    """Forward one human vote; the owner moves PROPOSED→UNDER_REVIEW→DECIDED inside one CAS."""
     raw_candidates = [str(params.get(k) or "").strip().lower() for k in ("outcome", "decision", "action")]
-    if any(v in {"request_revision", "requestrevision", "request_approval_revision"} for v in raw_candidates) or params.get("revision_notes"):
+    if any(re.sub(r"[^a-z0-9]", "", v) in {"requestrevision", "requestapprovalrevision"} for v in raw_candidates) or params.get("revision_notes") or params.get("revisionNotes"):
         raise RetiredApprovalAction("RequestApprovalRevision is retired; use RejectDecision with notes")
     verbs = {_OUTCOMES.get(v, v) for v in raw_candidates if v}
     if len(verbs) > 1:
@@ -129,21 +111,18 @@ def decide(authorization: Optional[str], decision_id: str, params: Mapping[str, 
     version = params.get("expected_version", params.get("expectedVersion"))
     if isinstance(version, bool) or not isinstance(version, int) or version < 0:
         raise InvalidApprovalRequest("expected_version")
-    rationale = next((str(params[key]).strip() for key in ("rationale", "memo", "approval_notes", "rejection_reason", "notes")
-                      if str(params.get(key) or "").strip()), "")
+    rationale = next((str(params[k]).strip() for k in ("rationale", "memo", "approval_notes", "rejection_reason", "notes") if str(params.get(k) or "").strip()), "")
     if not rationale:
         raise InvalidApprovalRequest("rationale")
     claims = _claims(authorization)
     roles = claims.get("roles") if isinstance(claims.get("roles"), list) else []
-    held = [role for role in _ACTOR_ROLES if role in roles]
+    held = [r for r in _ACTOR_ROLES if r in roles]
     role = params.get("actor_role") or (held[0] if len(held) == 1 else None)
     if not role:
         raise InvalidApprovalRequest("actor_role")
     body = {
         "expected_version": version, "actor_role": role, "actor_id": claims.get("sub"),
         "outcome": verb, "rationale": rationale,
+        **{k: params[k] for k in ("conditions", "evidence_refs", "session_id", "candidate_digest", "proof_digest", "expires_at") if params.get(k) is not None}
     }
-    body.update({key: params[key] for key in ("conditions", "evidence_refs", "session_id", "candidate_digest",
-                                              "proof_digest", "expires_at") if params.get(key) is not None})
-    path = f"/api/governance/approvals/{urllib.parse.quote(decision_id, safe='')}/decide"
-    return project(call_owner("POST", path, authorization, body=body, idempotency_key=idempotency_key))
+    return project(call_owner("POST", f"/api/governance/approvals/{urllib.parse.quote(decision_id, safe='')}/decide", authorization, body=body, idempotency_key=idempotency_key))

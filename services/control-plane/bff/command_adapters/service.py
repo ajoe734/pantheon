@@ -459,9 +459,7 @@ class CommandAdapterService:
             )
 
     def get_action_catalog(self, identity: Optional[OperatorIdentity] = None) -> BffActionCatalogResponse:
-        catalog = get_action_catalog()
-        filtered = [entry for entry in catalog.catalog if entry.action_id != "RequestApprovalRevision"]
-        return BffActionCatalogResponse(catalog=filtered)
+        return BffActionCatalogResponse(catalog=[e for e in get_action_catalog().catalog if e.action_id != "RequestApprovalRevision"])
 
     def get_command_status(self, command_id: str, identity: Optional[OperatorIdentity] = None) -> CommandStatusResponse:
         clean_id = str(command_id or "").strip()
@@ -897,6 +895,9 @@ class CommandAdapterService:
         caller) with exactly these keyword arguments.
         """
         _reject_body_idempotency_key(payload)
+        verbs = {re.sub(r"[^a-z0-9]", "", str(v).lower()) for v in (action_id, payload.get("decision"), payload.get("action")) if v}
+        if {"requestrevision", "requestapprovalrevision"}.intersection(verbs) or payload.get("revision_notes") or payload.get("revisionNotes"):
+            raise self._raise_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
         entity_type, command_type = ObjectType.REVIEW, CommandType.REVIEW_ACTION
         resolved_key = str(idempotency_key or "").strip()
         request_hash = _stable_json_hash(

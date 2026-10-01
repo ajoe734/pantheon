@@ -439,25 +439,25 @@ def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         return payload
     params = payload.get("params", {})
     action_params = params if isinstance(params, dict) else {}
-    verb = action or action_params.get("action_id") or action_params.get("actionId")
+    norm_cmd = re.sub(r"[^a-z0-9]", "", command.lower())
+    if norm_cmd in {"requestapprovalrevision", "requestrevision"}:
+        raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
+    if bool(action_params.get("revision_notes") or action_params.get("revisionNotes") or payload.get("revision_notes") or payload.get("revisionNotes")):
+        raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
+    raw_review_verb = None
+    if command == "ReviewAction":
+        raw_review_verb = next((v for v in (action, payload.get("decision"), payload.get("verb"), action_params.get("action"), action_params.get("decision"), action_params.get("action_id"), action_params.get("actionId"), action_params.get("verb"), action_params.get("outcome")) if isinstance(v, str) and v.strip()), None)
+        if re.sub(r"[^a-z0-9]", "", str(raw_review_verb or "").lower()) in {"requestrevision", "requestapprovalrevision"}:
+            raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
+    verb = action or action_params.get("action_id") or action_params.get("actionId") or raw_review_verb
     verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())
     if command == "Observe" or (command == "PersonaAction" and verb == "observe"):
         raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "Observe is retired", "Use Persona read routes")
-    if (
-        command in {"RequestApprovalRevision", "request_approval_revision"}
-        or (command == "ReviewAction" and verb in {"requestrevision", "request_revision", "requestapprovalrevision"})
-        or (isinstance(params, dict) and bool(params.get("revision_notes")))
-    ):
-        raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
-    canonical = ("AdvanceLifecycle" if command in {"PromoteCandidate", "Demote"}
-                 else _WRAPPER_VERB_ALIASES.get((command, verb)))
+    canonical = "AdvanceLifecycle" if command in {"PromoteCandidate", "Demote"} else _WRAPPER_VERB_ALIASES.get((command, verb))
     if canonical is None:
         return payload
-    return {
-        **{k: v for k, v in payload.items() if k != "action"},
-        "command": canonical,
-        "params": {k: v for k, v in params.items() if k not in ("action_id", "actionId")} if isinstance(params, dict) else params,
-    }
+    cleaned = {k: v for k, v in params.items() if k not in ("action_id", "actionId")} if isinstance(params, dict) else params
+    return {**{k: v for k, v in payload.items() if k != "action"}, "command": canonical, "params": cleaned}
 
 
 def foundation_environment_scope() -> EnvironmentScope:
