@@ -220,16 +220,6 @@ def test_mutation_route_ownership_mapping_contract() -> None:
     )
 
     manifest = load_ownership_manifest(DEFAULT_MANIFEST)
-    # Filter out legacy write routes retired in BFF-CANONICAL-COMMAND-API-RETIREMENT-001
-    # that remain in the ownership inventory
-    retired_routes = {
-        "POST /api/v1/operator/commands",
-        "POST /bff/actions/{param}/{param}/{param}",
-    }
-    manifest["mutation_routes"] = [
-        r for r in manifest.get("mutation_routes", [])
-        if r.get("route") not in retired_routes
-    ]
     errors = validate_mutation_routes(manifest)
     assert not errors, (
         f"Mounted mutation routes failed ownership validation:\n"

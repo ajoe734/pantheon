@@ -1,0 +1,79 @@
+{
+  "task_id": "DIRECT-BFF-OWNERSHIP-001",
+  "pull_request": "https://github.com/ajoe734/pantheon/pull/6094",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "independent_review": "pending; canonical handoff binds this committed manifest to the exact PR head",
+  "original_head": "9b8d1c9ce4b4a60e1dc6a277381572d3b13c6135",
+  "source_head": "c1399e92ebafa9180ac5926aae19faf1efbb6aaa",
+  "base_sha": "e32ab2785e09a47eee00ab5a48acc543863547e2",
+  "history": "Append-only merge adopts PR6094 and receipt-only PR6095. Original authorship retained. Original Human/Ops reviewer trailer was a target, not approval.",
+  "scope": "Mounted inventory, ownership tests and evidence only; no product-router changes.",
+  "reconciliation": {
+    "original_base_rows": 249,
+    "removed_unmounted_rows": 44,
+    "added_servant_draft_row": 1,
+    "current_inventory_rows": 206,
+    "missing_rows": 0,
+    "stale_rows": 0,
+    "duplicate_rows": 0,
+    "additional_rows_removed_after_receipt_merge": 0,
+    "retained_410_routes": "Mounted retirement handlers remain in the manifest. Returning 410 does not remove a route.",
+    "servant_owner": "AgoraResearchService.create_workshop_plan",
+    "servant_store_factory": "agora.research.store.make_research_plan_store",
+    "servant_outbox_subject": null
+  },
+  "validation": [
+    {
+      "command": "timeout 180 env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /tmp/clean-bff-venv/bin/python scripts/check_product_ownership.py --check --dump",
+      "exit_status": 0,
+      "stats": {
+        "aggregates": 24,
+        "mutation_routes": 206,
+        "workers": 21,
+        "symbol_dispositions": 225
+      },
+      "local_log": "/tmp/DIRECT-BFF-OWNERSHIP-001-initial-cli.log",
+      "log_sha256": "e1d576f286afdded4dfa42289225ebdb3c551610019863d54e8a67c210756a0d"
+    },
+    {
+      "command": "timeout 240 env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /tmp/clean-bff-venv/bin/python -m pytest -q --disable-warnings scripts/test_check_product_ownership.py services/control-plane/bff/test_architecture_boundaries.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_read_store_service_clients.py services/control-plane/bff/tests/test_journal_runtime_contract.py",
+      "exit_status": 0,
+      "passed": 78,
+      "subtests_passed": 2,
+      "warnings": 189,
+      "seconds": 91.76,
+      "local_log": "/tmp/DIRECT-BFF-OWNERSHIP-001-focused.log",
+      "log_sha256": "b7bcdea4d03f1f26afbe6d1b5d3b22c88d58f2f0679c57e5abe56075fba05717"
+    },
+    {
+      "command": "timeout 180 env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /tmp/clean-bff-venv/bin/python -m pytest -q --disable-warnings --tb=short services/control-plane/bff/tests/test_bff_main_composition.py::test_all_canonical_domain_routers_mounted services/control-plane/bff/tests/test_bff_main_composition.py::test_training_v3_router_mounted services/control-plane/bff/tests/test_bff_main_composition.py::test_zero_unreferenced_dead_functions_in_main_py services/control-plane/bff/tests/test_bff_main_composition.py::test_main_py_zero_lambda_read_store_service_locator_seams",
+      "exit_status": 1,
+      "failed": 4,
+      "warnings": 3,
+      "seconds": 8.71,
+      "local_log": "/tmp/DIRECT-BFF-OWNERSHIP-001-baseline.log",
+      "log_sha256": "e2f88c29e0990cdae7b1cd21e6cc99727f9f86bfe718de1a1abd85744fe01922"
+    }
+  ],
+  "baseline_failures": [
+    "test_all_canonical_domain_routers_mounted",
+    "test_training_v3_router_mounted",
+    "test_zero_unreferenced_dead_functions_in_main_py",
+    "test_main_py_zero_lambda_read_store_service_locator_seams"
+  ],
+  "baseline_explanation": "The four known composition failures reproduce on source_head: legacy operator route expected, removed training factory expected, 70 unreferenced main functions, and 3 lambda read_store seams. The composition test and all production code are byte-identical to base_sha; assertions are unchanged. This is not a full BFF suite pass.",
+  "production_net_lines": 0,
+  "local_checks": [
+    "git diff --check origin/dev HEAD: exit 0",
+    "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD: exit 0",
+    "python3 scripts/git/diff_budget.py --base origin/dev --change-class corrective --budget 0: exit 0"
+  ],
+  "environment_note": "System python3 lacks pytest; validation used the existing /tmp/clean-bff-venv (pytest 9.1.1). No dependency files were changed.",
+  "limitations": [
+    "Only documentation/evidence changed after source_head validation; exact delivery head is frozen by canonical handoff.",
+    "Review and merge are pending at evidence preparation; no approval or CI result is fabricated.",
+    "No frontend validation, hosted/SSH/deployment/data actions in this adoption. Historical README observations do not establish current hosted truth.",
+    "Route coverage does not prove downstream execution, durable storage selection, or twelve-loop closure."
+  ]
+}
