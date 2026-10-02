@@ -48,10 +48,14 @@ formulas are unchanged and are read-only evidence.
   evidence refs), so changed content never silently attaches to an old request.
 - On verified same-content replay (HTTP 200/201) or HTTP 409 with matching readback
   (`GET /api/governance/approvals/{decision_id}` confirming identical tenant, target,
-  and content digest), the request merges as deduped.
+  target_type, target_version, and content digest), the request is verified (created if
+  HTTP 201, deduped if HTTP 200 or 409 replay).
+- Incomplete HTTP 201 with unverified or failed readback retains its hourly reservation
+  and pending retry identity as an uncertain/possibly-created outcome.
 - Content, version, and CAS conflicts without matching readback remain unresolved:
-  pending retry identity is preserved, no `governance_request` is published as
-  accepted, and the run is recorded as visibly degraded (`status: degraded`).
+  non-creation is established, releasing the hourly reservation slot while preserving
+  pending retry identity; no `governance_request` is published as accepted, and the run
+  is recorded as visibly degraded (`status: degraded`).
 - A degraded run (evidence, an unavailable ranking surface or source, missing
   refs, agent or output unavailable, or unresolved conflicts) is recorded in
   `last_run` and creates nothing.

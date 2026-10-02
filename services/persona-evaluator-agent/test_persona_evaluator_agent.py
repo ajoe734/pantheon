@@ -50,6 +50,7 @@ def _fetch(items, recs, *, snapshot="snap-1", ranking_down=False, agent_down=Fal
                 return {
                     "decision_id": dec_id, "tenant_id": "t1", "target_id": rec0.get("persona_id", "p1"),
                     "target_type": "persona_lifecycle_transition",
+                    "target_version": snapshot,
                     "proposal_content_digest": dig,
                     "_http_status": 200,
                 }
@@ -59,6 +60,8 @@ def _fetch(items, recs, *, snapshot="snap-1", ranking_down=False, agent_down=Fal
                 "decision_id": data["decision_id"],
                 "tenant_id": data.get("tenant_id", "t1"),
                 "target_id": data.get("target_id", "p1"),
+                "target_type": data.get("target_type", "persona_lifecycle_transition"),
+                "target_version": data.get("target_version", snapshot),
                 "proposal_content_digest": data.get("proposal_content_digest"),
                 "_http_status": status,
             }
@@ -353,3 +356,47 @@ def test_incomplete_200_is_not_verified_same_content_replay(tmp_path):
     assert result["deduped"] == 0, "missing owner identity/content was fabricated from local defaults"
     saved = pea.Store(tmp_path / "state.json").load()
     assert saved["requests"]["p1|frozen"].get("pending")
+
+
+def test_incomplete_create_keeps_hourly_reservation(tmp_path):
+    attempted = []
+    for n in range(5):
+        ids = [f"p{n * 5 + i}" for i in range(5)]
+        fallback, _ = _fetch([_item(p) for p in ids], [_rec(p) for p in ids],
+                             snapshot=f"snap-{n}", readback_404=True)
+        def fetch(url, data=None, **kwargs):
+            if "/api/governance/approvals" in url and data is not None:
+                attempted.append(data["decision_id"])
+                return {"_http_status": 201}
+            return fallback(url, data=data, **kwargs)
+        _run(tmp_path, fetch, now=NOW + n * 30)
+    assert len(set(attempted)) <= pea.MAX_PER_HOUR
+
+
+def test_owner_response_must_match_target_type_and_version(tmp_path):
+    fallback, _ = _fetch([_item("p1")], [_rec("p1")], readback_404=True)
+    def fetch(url, data=None, **kwargs):
+        if "/api/governance/approvals" in url and data is not None:
+            return {**data, "_http_status": 200, "target_type": "capital_allocation",
+                    "target_version": "different-snapshot"}
+        return fallback(url, data=data, **kwargs)
+    out = _run(tmp_path, fetch)
+    assert out["deduped"] == 0
+    state = pea.Store(tmp_path / "state.json").load()
+    assert state["requests"]["p1|frozen"].get("pending")
+    assert state["results"][f"{QUARTER}|snap-1"]["items"][0]["governance_request"] is None
+
+
+def test_readback_resolved_201_is_treated_as_created(tmp_path):
+    fallback, log = _fetch([_item("p1")], [_rec("p1")])
+    def fetch(url, data=None, **kwargs):
+        if "/api/governance/approvals" in url and data is not None:
+            return {"_http_status": 201}
+        return fallback(url, data=data, **kwargs)
+    out = _run(tmp_path, fetch)
+    assert out["created"] == 1
+    assert out["deduped"] == 0
+    state = pea.Store(tmp_path / "state.json").load()
+    assert len(state["created"]) == 1
+    assert "pending" not in state["requests"]["p1|frozen"]
+    assert state["results"][f"{QUARTER}|snap-1"]["items"][0]["governance_request"] is not None

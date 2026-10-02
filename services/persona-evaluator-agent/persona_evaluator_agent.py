@@ -326,15 +326,19 @@ def run_once(
             except Exception:
                 skipped += 1  # outcome unknown: slot and pending identity stay reserved
                 continue
-            req_digest = entry["pending"]["body"]["proposal_content_digest"]
+            req_body = entry["pending"]["body"]
+            req_digest = req_body["proposal_content_digest"]
             dec_id, pid = entry["decision_id"], rec["persona_id"]
             status = resp.get("_http_status", 201) if isinstance(resp, dict) else 201
-            match = lambda d: isinstance(d, dict) and d.get("decision_id") == dec_id and d.get("tenant_id") == tenant and d.get("target_id") == pid and d.get("proposal_content_digest") == req_digest
+            match = lambda d: (isinstance(d, dict) and d.get("decision_id") == dec_id and d.get("tenant_id") == tenant
+                               and d.get("target_id") == pid and d.get("proposal_content_digest") == req_digest
+                               and d.get("target_type") == req_body["target_type"]
+                               and d.get("target_version") == req_body["target_version"])
             if match(resp) and status in (200, 201):
                 is_created, verified = (status == 201), True
             else:
                 rb = readback_lifecycle(dec_id, governance_url=governance_url, token=governance_token, fetch=fetch)
-                is_created, verified = False, match(rb) and rb.get("_http_status", 200) in (200, 201)
+                is_created, verified = (status == 201), match(rb) and rb.get("_http_status", 200) in (200, 201)
             if verified:
                 if is_created:
                     created += 1
@@ -354,7 +358,8 @@ def run_once(
             else:
                 conflicts += 1
                 skipped += 1
-                state["created"].pop()
+                if status != 201 and status < 500:
+                    state["created"].pop()
                 entry["conflict"] = {"status": status, "detail": (resp.get("detail") if isinstance(resp, dict) else str(resp)), "at": now()}
 
     store.update(apply)
