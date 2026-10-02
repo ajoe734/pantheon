@@ -52,8 +52,20 @@ deployment scope, `paper_ledger` allocations and no active canary/live binding.
 A pool metadata label is necessary but never sufficient, and no body flag or
 environment field can exempt canary/live work. Ownership is the formal `tenant_id`; a
 legacy row whose formal tenant is blank is never adopted from metadata and fails
-closed (JSON-store records created by this service carry the server-stamped
-metadata tenant).
+closed, including an explicit null or empty formal field. Only isolated legacy
+JSON entities without a formal field use this service's server-stamped metadata
+tenant; PG rows and PG record adapters never promote metadata to ownership.
+
+`RiskPolicy.from_mapping` validates and parses configured limits once, including
+legacy aliases, and rejects malformed/nonfinite values. For pool activation,
+binding activation and rebalance apply, the existing evaluator also requires
+every applicable configured observation before normalization. An empty pool
+defers allocation-specific limits until there is a stage; canary scale limits
+apply only to canary contexts. Owner projections supply weights, gross/net
+exposure, leverage, turnover and stage. There is currently no authenticated
+liquidity, drawdown or canary-scale observation source in these owner paths:
+configured limits on those dimensions remain unavailable and deny risk increase.
+Caller metadata, including purported timestamps, is never such a source.
 
 BFF and other callers remain façades or consumers. They must not mutate the
 underlying JSON stores directly.

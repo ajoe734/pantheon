@@ -91,12 +91,12 @@ def _fetch_records(records: Any, key_field: str) -> list[tuple[str, Any, str | N
     if hasattr(records, "_connect"):
         with records._connect() as conn:
             return conn.execute(f"SELECT record_id, payload, tenant_id FROM {records.table}").fetchall()
-    return [(r.get(key_field), r, (r.get("metadata") or {}).get("tenant_id") or r.get("tenant_id")) for r in records.list_all()]
+    return [(r.get(key_field), r, r.get("tenant_id")) for r in records.list_all()]
 
 
 def _put_record(records: Any, record_id: str, payload_dict: dict[str, Any], tenant_id: str | None) -> None:
     if not hasattr(records, "_connect"):
-        return records.put(record_id, payload_dict)
+        return records.put(record_id, {**payload_dict, "tenant_id": tenant_id})
     with records._connect() as conn:
         conn.execute(
             f"INSERT INTO {records.table} (record_id, payload, updated_at, tenant_id) VALUES (%s, %s::jsonb, now(), %s) "
