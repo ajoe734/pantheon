@@ -13583,7 +13583,14 @@ def recover_lost_worker_lease(
             config, worker, task, state=status,
             activity_events=recent_governance_activity_events(config),
         )
-        if decision.get("action") != "terminate":
+        # "preserve" protects a process that may still be running. A finished
+        # runner whose process generation is gone has nothing left to preserve
+        # for a task already done at its generation; holding it would keep a
+        # dead "running" worker (and its slot) forever.
+        runner_gone = bool(worker.get("runner_finished_at")) and not (
+            worker_process_generation_is_current(worker)
+        )
+        if decision.get("action") != "terminate" and not runner_gone:
             return False
         if drain:
             drain["status"] = "consumed"

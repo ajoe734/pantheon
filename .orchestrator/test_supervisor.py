@@ -7549,6 +7549,42 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
                     self.assertEqual(stale_runtime["promotion"]["receipts"][worker["run_id"]]["status"], "consumed")
                     self.assertFalse(any(call.args[1].get("type") == "worker_lost_lease" for call in activity.call_args_list))
 
+    def _done_task_with_preserved_worker(self, worker: dict[str, object]) -> bool:
+        status = supervisor.load_status(self.config)
+        status["tasks"][0]["status"] = "done"
+        supervisor.write_status(self.config, status, source="test-task-done")
+        state = self._state()
+        self._store_started(state, worker)
+        with mock.patch.object(
+            supervisor,
+            "active_worker_governance_lease_decision",
+            return_value={"action": "preserve", "reason_code": "missing_or_ambiguous_task_truth"},
+        ):
+            return supervisor.recover_lost_worker_lease(
+                self.config, state, worker,
+                reason_kind="worker_process_missing", reason="worker disappeared",
+            )
+
+    def test_finished_runner_on_done_task_releases_preserved_lease(self):
+        worker = self._worker()
+        worker["runner_finished_at"] = "2026-08-28T10:03:00Z"
+        with mock.patch.object(supervisor, "worker_pid_start_ticks", return_value=None):
+            self.assertTrue(self._done_task_with_preserved_worker(worker))
+        self.assertEqual(worker["status"], "superseded")
+        self.assertTrue(worker["lease_fenced_at"])
+
+    def test_done_task_preserves_lease_while_runner_may_still_run(self):
+        for finished, start_ticks in ((None, None), ("2026-08-28T10:03:00Z", 5678)):
+            with self.subTest(finished=finished, start_ticks=start_ticks):
+                worker = self._worker()
+                if finished:
+                    worker["runner_finished_at"] = finished
+                with mock.patch.object(
+                    supervisor, "worker_pid_start_ticks", return_value=start_ticks
+                ):
+                    self.assertFalse(self._done_task_with_preserved_worker(worker))
+                self.assertEqual(worker["status"], "running")
+
     def test_invalid_drain_uses_ordinary_recovery_without_stranding_admission(self):
         state = self._state()
         worker = self._worker()
