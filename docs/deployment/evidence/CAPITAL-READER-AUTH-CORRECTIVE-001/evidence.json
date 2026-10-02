@@ -46,14 +46,14 @@
     "inbound_authority": "authenticate_capital_request accepts method parameter (defaults to POST); for GET/HEAD methods, allowed_services is resolved from CAPITAL_ALLOWED_READER_SERVICES (falling back to CAPITAL_ALLOWED_CALLER_SERVICES / control-plane-bff); mutations continue to strictly require CAPITAL_ALLOWED_CALLER_SERVICES.",
     "deploy_authority": "_capital_request_headers(tenant_id) uses only the scoped reader principal RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN or DEPLOYMENT_CAPITAL_SERVICE_TOKEN (env or _FILE via configured_service_token) and raises DeployAuthorityUnavailableError otherwise. capital_fetch is capital_fetch_json when injected, else the authenticated default; the caller's generic fetch_json is never used for Capital.",
     "promotion_authority": "verify_promotion_authorities accepts and forwards capital_fetch_json.",
-    "credentials": "Added RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN and DEPLOYMENT_CAPITAL_SERVICE_TOKEN under READERS for service runtime-manager with role capital-reader in scripts/issue_dev_paper_principals.py and wired to compose services in docker-compose.yml.",
+    "credentials": "Added RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN and DEPLOYMENT_CAPITAL_SERVICE_TOKEN under READERS for service runtime-manager with role capital-reader in scripts/issue_dev_paper_principals.py and wired to compose services in docker-compose.yml. Fix for review P1: services.deployment.environment now carries DEPLOYMENT_CAPITAL_SERVICE_TOKEN and _FILE so the compose renewal contract passes.",
     "known_followup": "deployment-outbox-consumer presents the runtime-manager reader identity (non-blocking coordinator note on PR 6089); a dedicated reader principal can follow separately."
   },
   "verification": {
     "passed": [
       {
-        "command": "PYTHONDONTWRITEBYTECODE=1 /tmp/clean-bff-venv/bin/python -m pytest -q -p no:cacheprovider services/capital/ services/runtime-manager/test_deploy_authority.py services/runtime-manager/test_paper_scope_deploy_authority.py services/runtime-manager/test_promotion_authority.py services/runtime-manager/test_p0_tw_paper_activate_authority_contract.py services/deployment/test_outbox_consumer_worker.py services/deployment/test_l12_mfc_r4_deploy_001_contract.py scripts/test_issue_dev_paper_principals.py",
-        "result": "366 passed, 2 failed (baseline, see below) in 113.80s; exit 1 only from the two baseline failures"
+        "command": "PYTHONDONTWRITEBYTECODE=1 /tmp/clean-bff-venv/bin/python -m pytest -q -p no:cacheprovider services/capital/ services/runtime-manager/test_deploy_authority.py services/runtime-manager/test_paper_scope_deploy_authority.py services/runtime-manager/test_promotion_authority.py services/runtime-manager/test_p0_tw_paper_activate_authority_contract.py services/deployment/test_outbox_consumer_worker.py services/deployment/test_l12_mfc_r4_deploy_001_contract.py scripts/test_issue_dev_paper_principals.py scripts/test_dev_paper_principal_renewal.py",
+        "result": "386 passed, 2 failed (baseline, see below) in 113.89s; exit 1 only from the two baseline failures"
       },
       {
         "command": "PYTHONDONTWRITEBYTECODE=1 /tmp/clean-bff-venv/bin/python -m pytest -q -p no:cacheprovider services/runtime-manager/test_deploy_authority.py",
@@ -70,6 +70,10 @@
       {
         "command": "git diff --cached --check",
         "result": "clean"
+      },
+      {
+        "command": "pytest -q scripts/test_dev_paper_principal_renewal.py scripts/test_issue_dev_paper_principals.py",
+        "result": "48 passed in 8.04s, exit 0"
       }
     ],
     "baseline_failures": [
@@ -89,7 +93,7 @@
       "python": "/tmp/clean-bff-venv (3.12)"
     },
     "checksums": {
-      "docker-compose.yml": "78239cee1b8e42eb955afd72c0d2e5195cf131a201ec49a18bbdbe10cccf54af",
+      "docker-compose.yml": "28e8bee2d948cae7225a9a551ea682c08191bc0b63f69efb442f62f8f28ee92e",
       "scripts/issue_dev_paper_principals.py": "5d38e144308fa6992b9aa6ba219d50383e29b6b1ff4212c3e93b21c4094685aa",
       "scripts/test_issue_dev_paper_principals.py": "efd67dfd9057a2e8d856aeff3696d271da975f350284d56d99620b5eb1c8b84e",
       "services/capital/contract.md": "bb2ba53f75976f1002b08a45f39db377ef756d68f582b59d4fe1b49a22705bfa",
