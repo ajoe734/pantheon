@@ -1,0 +1,43 @@
+{
+  "task_id": "BFF-RECEIPT-ONLY-ROUTES-002",
+  "source_head": "cfaa6341cd1f87aa344fa3e7a312cb50c7b73efc",
+  "base_sha": "775647a932b03be708116a0aaf0cf38a26810432",
+  "environment": "local isolated owners; no hosted deployment or live capital actions",
+  "production_net_lines": -958,
+  "independent_review": "pending; canonical handoff binds this manifest to the exact PR head",
+  "changes": [
+    "Retired rollback approval, unsupported human gates, Ranking/Formula writes, AuditExport and unimplemented capability probes with 410 before admission; removed fake receipts and process-local action idempotency maps.",
+    "Resource actions translate into canonical durable admission; original caller auth reaches owners, tenant claims bind replay hashes, and downstream_verified requires owner readback.",
+    "Default AppDependencies reads Capital, Deployment, Runtime Manager, Ranking and Evolution owners; legacy approval queue and ledger share Governance. Browser-session credentials are captured after validation.",
+    "Governance source URL is separate from Evolution; Trade Journal command-owner URL is wired as an environment reference, without inventing a deployed endpoint."
+  ],
+  "validation": [
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_receipt_owner_routes.py services/control-plane/bff/tests/test_receipt_default_reads.py services/control-plane/bff/tests/test_command_admission_single_owner.py services/control-plane/bff/tests/test_evolution_program_action_receipts.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+      "passed": 71,
+      "exit_status": 0
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_receipt_only_retirement.py services/control-plane/bff/tests/test_receipt_governance_routes.py services/control-plane/bff/tests/test_receipt_research_routes.py services/control-plane/bff/tests/test_confirm_token_lifecycle.py",
+      "passed": 29,
+      "exit_status": 0
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_capital_owner_forwarding.py",
+      "passed": 15,
+      "exit_status": 0
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_capital_runtime_ports.py",
+      "passed": 22,
+      "exit_status": 0
+    }
+  ],
+  "validation_total": 137,
+  "diff_check": "git diff origin/dev --check: exit 0",
+  "limitations": [
+    "Legacy test_bff_approvals_decide_contract.py::test_review_action_routes_forward_votes_and_deny_cross_tenant still asserts zero CommandStore entries; canonical admission intentionally creates one. Its last bounded run stopped with 23 passed/1 failed. Replacement mounted contract is test_receipt_governance_routes.py; the legacy top-level test is outside this task artifact scope.",
+    "Exploratory whole-composition tests were not all green (legacy route/source-topology and receipt expectations). No full-suite pass is claimed. An exploratory combined owner batch timed out (exit 124), then was split into bounded batches; timeout is not counted passed.",
+    "Hosted FE/BFF acceptance is deferred to the authorized batch deployment. Trade Journal endpoint availability and deployed identity are not asserted."
+  ]
+}
