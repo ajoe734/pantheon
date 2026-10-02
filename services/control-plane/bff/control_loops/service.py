@@ -490,21 +490,28 @@ class ControlLoopsService:
             and (item.get("controller_health") or {}).get("current_record_accepted") is True
         )
         catalog = loop_inventory_meta()
+        complete = available and bool(items) and accepted == len(items)
         meta = payload.setdefault("meta", {})
         surfaces = meta.setdefault("surfaces", {})
         surfaces["loop_health"] = self._surface(
             "loop_health", source=source, available=available
         )
-        if not available:
-            # The twelve catalog rows remain useful as registry metadata, but
-            # must never be promoted to current controller truth.
+        if not complete:
+            # Store availability (or one accepted row) cannot certify every
+            # returned loop. Registry-only and rejected rows remain degraded.
             surfaces["loop_health"]["status"] = "degraded"
         surfaces["loop_health"].update(
             {
                 "truth_level": "controller_store" if accepted else "registry_metadata",
-                "accepted_live": bool(accepted),
+                "accepted_live": complete,
             }
         )
+        # Compatibility metadata describes the same durable source, never a
+        # second local-snapshot read or a fallback that could manufacture truth.
+        surfaces["loop_health_snapshots"] = {
+            "status": surfaces["loop_health"]["status"],
+            "source": source,
+        }
         surfaces["loop_inventory"] = {
             "status": "ok",
             "source": "bff_local_registry",
@@ -515,12 +522,20 @@ class ControlLoopsService:
             {
                 "catalog": catalog,
                 "truth_labels": truth_label_payload(),
+                "truth_source_policy": {
+                    "non_live_source_types": ["seed_fixture", "snapshot", "registry", "scheduled"],
+                },
+                "composite_overlay_inventory": [
+                    item for item in list_loop_inventory_entries()
+                    if item.get("classification") == "composite_overlay"
+                ],
                 "coverage": {
                     "loop_count": len(items),
-                    "canonical_loop_count": catalog["inventory_counts"]["canonical_loop_count"],
+                    **catalog["inventory_counts"],
                     "controller_health_record_count": accepted,
                     "raw_health_record_count": raw_count,
                     "controller_health_records_available": available,
+                    "accepted_controller_health_records_available": bool(accepted),
                 },
                 "scope": {
                     "tenant_id": tenant_id,
