@@ -202,8 +202,8 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
             raise ValueError("RecordSponsorDecision requires committee_id.")
 
         payload = {
-            "sponsor_decision": params.get("sponsor_decision") or params.get("decision") or "ratified",
-            "sponsor_notes": params.get("sponsor_notes") or params.get("notes") or "Sponsor ratified consultation decision",
+            "sponsor_decision": params.get("sponsor_decision") or params.get("decision"),
+            "rationale_ref": params.get("rationale_ref"),
             "command_id": command_id,
         }
         url = internal_url(f"/api/internal/v1/consultations/committees/{quote(target_committee_id, safe='')}/sponsor-decision")

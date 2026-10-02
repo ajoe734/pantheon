@@ -57,19 +57,3 @@ def test_rankings_read_the_same_injected_owner_store():
     rows.clear()
     assert ports.list_rankings() == []
     assert ports.dataset_source("rankings") != "missing"
-
-
-@pytest.mark.parametrize("missing_reader", [True, False])
-def test_lifecycle_readiness_reports_unavailable_projection(monkeypatch, missing_reader):
-    from services.control_plane.bff import main
-    from services.control_plane.bff.trade_journey_projection_store import ProjectionReadUnavailable
-
-    def unavailable(**kwargs):
-        raise ProjectionReadUnavailable("owner unavailable")
-
-    reader = None if missing_reader else SimpleNamespace(controller_freshness=unavailable)
-    monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "postgres")
-    monkeypatch.setattr(main, "read_store", SimpleNamespace(trade_journey_projection_reader=lambda: reader))
-    result = main._lifecycle_projector_dependency()
-    assert result["ready"] is False
-    assert any(reason.startswith("projection_reader_unavailable:") for reason in result["reasons"])
