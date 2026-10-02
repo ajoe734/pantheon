@@ -57,19 +57,22 @@
     "file": "scripts/test_deploy_nonprod_vm.py",
     "tests": [
       "test_verify_exact_component_deployment_paper_signal_producer_unhealthy_prevents_activation",
-      "test_verify_exact_component_deployment_paper_signal_producer_healthy_admits_pair"
+      "test_verify_exact_component_deployment_paper_signal_producer_healthy_admits_pair",
+      "test_paper_signal_producer_binding_recovery_and_health_lifecycle"
     ],
     "guarantees": [
       "Unhealthy paper-signal-producer immediately fails closed, records verification failure in backend-components-receipt.json, and allows compensation restore rather than activating candidate pair.",
-      "Healthy paper-signal-producer passes gate, produces verified backend components receipt with status=passed and all_passed=true, admitting candidate pair."
+      "Healthy paper-signal-producer passes gate, produces verified backend components receipt with status=passed and all_passed=true, admitting candidate pair.",
+      "Degraded binding caching under empty bindings (skipping producer.tick per paper_signal_producer.py:1123) and supported recovery procedures (restart container with clean state or replacement with valid active binding via lines 876-884) are substantiated and proven."
     ]
   },
   "coordinator_action_required": {
     "actor": "Human/Ops",
-    "action": "Retire or clean up the 9 stale paper bindings on the dev VM via runtime-manager API (/api/runtime-bindings/<binding_id>/retire) or database cleanup so paper-signal-producer only discovers valid active paper bindings (or zero active bindings, which produces status: ok); alternatively, execute deployment with BOOTSTRAP_EMPTY_HOST=true with predecessor pair."
+    "action": "Retire or clean up the 9 stale paper bindings on the dev VM via runtime-manager API (/api/runtime-bindings/<binding_id>/retire) or database cleanup, followed by paper-signal-producer container restart (or activating at least one valid active paper binding) so paper-signal-producer initializes/recovers with status: ok.",
+    "external_hold": "Preserve external hold with the existing release owner until genuine hosted remediation on the dev VM. Workers have no VM or SSH access, no Compose grant, no deployment trigger, and no second release lane. Diagnosis, regression tests, and fail-closed exact-artifact rollback are verified in source; hosted pair activation remains held until release coordinator executes binding retirement and restart on dev VM."
   },
   "verification": {
-    "test_deploy_nonprod_vm": "46 passed, 2 skipped",
+    "test_deploy_nonprod_vm": "47 passed, 2 skipped",
     "test_deploy_nonprod_bootstrap_contract": "65 passed",
     "test_deploy_nonprod_artifact_restore": "48 passed",
     "test_openclaw_credential_probe": "6 passed",

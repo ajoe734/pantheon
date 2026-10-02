@@ -122,15 +122,22 @@ In `scripts/test_deploy_nonprod_vm.py`:
    Proves that when `paper-signal-producer` reports `health=unhealthy`, `verify_exact_component_deployment` fails closed, records the failure in `backend-components-receipt.json`, and allows compensation rollback instead of activating the candidate pair.
 2. `test_verify_exact_component_deployment_paper_signal_producer_healthy_admits_pair`:
    Proves that when `paper-signal-producer` is healthy, `verify_exact_component_deployment` succeeds and admits the pair.
+3. `test_paper_signal_producer_binding_recovery_and_health_lifecycle`:
+   Substantiates and proves the degraded caching behavior and the supported recovery procedures:
+   - When a binding fails metadata schema validation (`source_dataset_refs: None`), `paper-signal-producer` records the binding as degraded, publishes `status: degraded`, and fails healthcheck (`check_worker_health` exit 1).
+   - When all bindings are retired in the database (`bindings = []`), `paper_signal_producer.py:1123` skips `producer.tick()`. This keeps the degraded bindings cached in memory in an un-restarted process.
+   - Proves Supported Recovery Procedure A: When the container restarts with 0 active bindings, the producer initializes with clean state, writes `status: ok`, and passes healthcheck (exit 0).
+   - Proves Supported Recovery Procedure B: When stale degraded bindings are replaced with an active valid binding, `producer.tick()` executes lines 876-884, purges the non-existent binding IDs from `self._degraded_by_binding`, clears degraded bindings to `{}`, and dynamically restores `status: ok` (healthcheck exit 0).
 
 ---
 
-## 6. Specific Coordinator Action Runbook
+## 6. Specific Coordinator Action Runbook & External Hold
 
 To unblock deployment without bypassing gates or inventing source hacks:
 
-1. **Option A: Retire 9 Legacy Paper Bindings (Recommended)**
-   The release coordinator must retire or clean up the 9 stale bindings from the dev VM database:
+### 6.1 Supported Recovery Procedures
+1. **Procedure A: Retire 9 Legacy Paper Bindings & Restart Container (Recommended)**
+   The release coordinator retires or cleans up the 9 stale bindings from the dev VM database:
    - `rb-8b36da8734534f298923e6fbb5f3eea7`
    - `rb-e3eafebeda57401b8ecdac6481e09fe7`
    - `rb-40419c598d5c436f9a735b3b7c5ccdf3`
@@ -140,18 +147,28 @@ To unblock deployment without bypassing gates or inventing source hacks:
    - `rb-d3a8e143ed464a40a7d26511c962c622`
    - `rb-69bfc2859ff14ff88a5006c78dcc4999`
    - `rb-30092281a9294185928793fd8d31761e`
-   Using the runtime-manager API (`POST /api/runtime-bindings/<binding_id>/retire`) or database cleanup. Once retired, `paper-signal-producer` will find 0 degraded bindings, publish `status: ok`, and pass healthcheck.
+   Using the runtime-manager API (`POST /api/runtime-bindings/<binding_id>/retire`) or database cleanup.
+   Then restart `paper-signal-producer` (`docker compose restart paper-signal-producer` or stack deployment container recreate).
+   On restart, the producer begins with clean state, discovers 0 active bindings, publishes `status: ok`, and passes the Docker healthcheck.
 
-2. **Option B: Bootstrap Predecessor Deployment**
-   Trigger deployment with `BOOTSTRAP_EMPTY_HOST=true` and valid predecessor artifacts, re-initializing the paper binding state cleanly.
+2. **Procedure B: Retire Legacy Bindings & Activate Valid Binding**
+   Retire the 9 stale bindings and activate at least one valid paper binding with valid metadata. On tick, `producer.tick()` will execute lines 876-884, purge the stale degraded bindings from memory, and restore `status: ok` without a container restart.
+
+*Note on BOOTSTRAP_EMPTY_HOST*: Previously suggested `BOOTSTRAP_EMPTY_HOST=true` is invalid on an existing host because `nonprod-deploy.yml:368-382` requires `deployment.json` to return HTTP 404 and does not reset the database. It has been removed.
+
+### 6.2 External Hold with Existing Release Owner
+Per Acceptance 2 and Acceptance 4:
+- Workers have no dev VM or SSH access, no Compose grant, no deployment trigger, and no second release lane.
+- Diagnosis, regression tests, and exact-artifact rollback preservation are verified and delivered into `dev`.
+- Hosted nonprod deployment and pair activation remain on external hold with the existing release owner until the dev VM database remediation is executed.
 
 ---
 
 ## 7. Verification Evidence
 
-- `scripts/test_deploy_nonprod_vm.py`: 46 passed, 2 skipped
+- `scripts/test_deploy_nonprod_vm.py`: 47 passed, 2 skipped
 - `scripts/test_deploy_nonprod_bootstrap_contract.py`: 65 passed
 - `scripts/test_deploy_nonprod_artifact_restore.py`: 48 passed
-- Total deploy tests: 159 passed, 2 skipped in 40.48s
+- Total deploy tests: 160 passed, 2 skipped in ~42s
 - `tests/test_openclaw_credential_probe.py`: 6 passed
 - `services/openclaw-gateway-adapter`: 570 passed, 4 skipped in 168.35s

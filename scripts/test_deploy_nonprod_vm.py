@@ -917,6 +917,128 @@ verify_exact_component_deployment paper-signal-producer || printf 'rollback\\n' 
     assert comp["status"] == "running"
 
 
+def test_paper_signal_producer_binding_recovery_and_health_lifecycle(tmp_path: Path) -> None:
+    """DEV-READINESS-RECOVERY-20261002 recovery regression: prove degraded caching and supported binding recovery procedures."""
+    from datetime import datetime, timezone
+    from services.execution.lean_runtime.paper_signal_producer import (
+        BindingRef,
+        PaperSignalProducer,
+        SignalDecisionUnavailable,
+        SmokeStrategy,
+    )
+    from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+    from services.worker_health import healthcheck as check_worker_health
+
+    stores: dict[str, InMemoryPendingSignalStore] = {}
+
+    def store_for(binding: Any) -> InMemoryPendingSignalStore:
+        bid = getattr(binding, "binding_id", "")
+        if not bid and isinstance(binding, dict):
+            bid = binding.get("binding_id", "")
+        return stores.setdefault(bid, InMemoryPendingSignalStore())
+
+    class FaultyStrategy(SmokeStrategy):
+        def __call__(self, binding: Any, now_iso: str) -> list[dict[str, Any]]:
+            bid = getattr(binding, "binding_id", "")
+            if bid == "rb-stale-001":
+                raise SignalDecisionUnavailable(
+                    "artifact_unavailable",
+                    "Metadata schema validation failed at lineage.source_dataset_refs: None is not of type array",
+                )
+            return super().__call__(binding, now_iso)
+
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    stale_binding = BindingRef(binding_id="rb-stale-001", strategy_id="strat-001")
+    producer = PaperSignalProducer(store_for=store_for, strategy=FaultyStrategy())
+
+    # 1. Stale binding fails artifact loading: degraded recorded in producer
+    counts = producer.tick([stale_binding], now_iso)
+    assert counts.get("rb-stale-001") == 0
+    assert "rb-stale-001" in producer.degraded_bindings
+    health_file = tmp_path / "paper-producer-health.json"
+    health_payload = {
+        "worker_name": "paper_signal_producer",
+        "status": "degraded",
+        "ticks": 1,
+        "last_failure_at": now_iso,
+        "last_failure_reason": f"rb-stale-001: {producer.degraded_bindings['rb-stale-001']}",
+        "active_binding_count": 1,
+        "degraded_binding_count": 1,
+        "degraded_bindings": producer.degraded_bindings,
+        "execution_mode": "paper",
+        "live_capital_enabled": False,
+        "live_order_submission_enabled": False,
+    }
+    health_file.write_text(json.dumps(health_payload), encoding="utf-8")
+    assert check_worker_health(
+        health_file=str(health_file),
+        interval_seconds=60,
+        worker_name="paper_signal_producer",
+        expected={"execution_mode": "paper", "live_capital_enabled": False, "live_order_submission_enabled": False},
+    ) == 1
+
+    # 2. When bindings become empty (retired in db), paper_signal_producer.py:1123 skips producer.tick,
+    #    leaving prior degraded bindings cached in the running process.
+    empty_bindings: list[Any] = []
+    skipped_counts = producer.tick(empty_bindings, now_iso) if empty_bindings else {}
+    assert skipped_counts == {}
+    assert "rb-stale-001" in producer.degraded_bindings  # Caching confirmed: retiring alone does not clear running cache
+
+    # 3. Supported Recovery Procedure A: Container restart / fresh producer with 0 active bindings
+    restarted_producer = PaperSignalProducer(store_for=store_for, strategy=FaultyStrategy())
+    restarted_counts = restarted_producer.tick(empty_bindings, now_iso) if empty_bindings else {}
+    assert restarted_counts == {}
+    assert restarted_producer.degraded_bindings == {}
+    health_payload_restarted = {
+        "worker_name": "paper_signal_producer",
+        "status": "ok",
+        "ticks": 1,
+        "last_success_at": now_iso,
+        "last_failure_reason": None,
+        "active_binding_count": 0,
+        "degraded_binding_count": 0,
+        "degraded_bindings": {},
+        "execution_mode": "paper",
+        "live_capital_enabled": False,
+        "live_order_submission_enabled": False,
+    }
+    health_file.write_text(json.dumps(health_payload_restarted), encoding="utf-8")
+    assert check_worker_health(
+        health_file=str(health_file),
+        interval_seconds=60,
+        worker_name="paper_signal_producer",
+        expected={"execution_mode": "paper", "live_capital_enabled": False, "live_order_submission_enabled": False},
+    ) == 0
+
+    # 4. Supported Recovery Procedure B: Replacement with valid active binding purges degraded cache in tick (lines 876-884)
+    valid_binding = BindingRef(binding_id="rb-valid-002", strategy_id="strat-002")
+    active_bindings = [valid_binding]
+    valid_counts = producer.tick(active_bindings, now_iso) if active_bindings else {}
+    assert valid_counts.get("rb-valid-002") == 1
+    assert "rb-stale-001" not in producer.degraded_bindings
+    assert producer.degraded_bindings == {}
+    health_payload_valid = {
+        "worker_name": "paper_signal_producer",
+        "status": "ok",
+        "ticks": 2,
+        "last_success_at": now_iso,
+        "last_failure_reason": None,
+        "active_binding_count": 1,
+        "degraded_binding_count": 0,
+        "degraded_bindings": {},
+        "execution_mode": "paper",
+        "live_capital_enabled": False,
+        "live_order_submission_enabled": False,
+    }
+    health_file.write_text(json.dumps(health_payload_valid), encoding="utf-8")
+    assert check_worker_health(
+        health_file=str(health_file),
+        interval_seconds=60,
+        worker_name="paper_signal_producer",
+        expected={"execution_mode": "paper", "live_capital_enabled": False, "live_order_submission_enabled": False},
+    ) == 0
+
+
 def test_verify_exact_component_receipt_write_failure_reaches_rollback_caller(
     tmp_path: Path,
 ) -> None:
