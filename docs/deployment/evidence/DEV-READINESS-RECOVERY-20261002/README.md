@@ -123,11 +123,11 @@ In `scripts/test_deploy_nonprod_vm.py`:
 2. `test_verify_exact_component_deployment_paper_signal_producer_healthy_admits_pair`:
    Proves that when `paper-signal-producer` is healthy, `verify_exact_component_deployment` succeeds and admits the pair.
 3. `test_paper_signal_producer_binding_recovery_and_health_lifecycle`:
-   Substantiates and proves the degraded caching behavior and the supported recovery procedures:
-   - When a binding fails metadata schema validation (`source_dataset_refs: None`), `paper-signal-producer` records the binding as degraded, publishes `status: degraded`, and fails healthcheck (`check_worker_health` exit 1).
-   - When all bindings are retired in the database (`bindings = []`), `paper_signal_producer.py:1123` skips `producer.tick()`. This keeps the degraded bindings cached in memory in an un-restarted process.
-   - Proves Supported Recovery Procedure A: When the container restarts with 0 active bindings, the producer initializes with clean state, writes `status: ok`, and passes healthcheck (exit 0).
-   - Proves Supported Recovery Procedure B: When stale degraded bindings are replaced with an active valid binding, `producer.tick()` executes lines 876-884, purges the non-existent binding IDs from `self._degraded_by_binding`, clears degraded bindings to `{}`, and dynamically restores `status: ok` (healthcheck exit 0).
+   Substantiates and proves the degraded caching behavior and supported recovery procedures by driving the bounded production loop (`main()`, `write_health()`, and `healthcheck()`) with controlled binding and strategy dependencies:
+   - When a binding fails metadata schema validation (`source_dataset_refs: None`), `paper-signal-producer` marks the binding as degraded, writes `status: degraded` to the health file, and fails healthcheck (`healthcheck()` exit 1).
+   - When all bindings are retired in the database (`bindings = []`), `paper_signal_producer.py:1123` skips `producer.tick()`. This keeps the degraded bindings cached in memory in an un-restarted process, and `write_health()` continues to record `status: degraded` (healthcheck exit 1).
+   - Proves Supported Recovery Procedure A: When the container restarts with 0 active bindings, production `main()` writes startup `status: starting`, discovers 0 active bindings, transitions to `status: ok` via `write_health()`, and passes healthcheck (`healthcheck()` exit 0).
+   - Proves Supported Recovery Procedure B: When stale degraded bindings are replaced with an active valid binding, `producer.tick()` executes lines 876-884 in the production loop, purges the non-existent binding IDs from `self._degraded_by_binding`, clears degraded bindings to `{}`, and dynamically restores `status: ok` via `write_health()` (healthcheck exit 0).
 
 ---
 
@@ -156,19 +156,23 @@ To unblock deployment without bypassing gates or inventing source hacks:
 
 *Note on BOOTSTRAP_EMPTY_HOST*: Previously suggested `BOOTSTRAP_EMPTY_HOST=true` is invalid on an existing host because `nonprod-deploy.yml:368-382` requires `deployment.json` to return HTTP 404 and does not reset the database. It has been removed.
 
-### 6.2 External Hold with Existing Release Owner
-Per Acceptance 2 and Acceptance 4:
-- Workers have no dev VM or SSH access, no Compose grant, no deployment trigger, and no second release lane.
-- Diagnosis, regression tests, and exact-artifact rollback preservation are verified and delivered into `dev`.
-- Hosted nonprod deployment and pair activation remain on external hold with the existing release owner until the dev VM database remediation is executed.
+### 6.2 Canonical External Hold with Existing Release Coordinator
+Per Acceptance Criterion 2:
+> *"If the cause is genuinely hosted configuration only then preserve a specific evidence-backed coordinator action and remain blocked until real resolution; do not invent a source patch."*
+
+And per Acceptance Criterion 4:
+- Workers have no dev VM or SSH access, no Compose grant, no deployment trigger, no database cleanup authority, and no second release lane.
+- The root cause is strictly hosted configuration on the dev VM database (9 legacy paper bindings with `source_dataset_refs: null`). No synthetic source patch is permitted.
+- The task branch preserves regression coverage, verified diagnosis, and fail-closed rollback guarantees, but delivery remains on canonical external hold (`waiting_for=Human/Ops`) until the release coordinator executes the database remediation and container restart on the dev VM.
+- PR #6097 carries this regression evidence; it is not merged into `dev` until hosted resolution is authenticated.
 
 ---
 
 ## 7. Verification Evidence
 
-- `scripts/test_deploy_nonprod_vm.py`: 47 passed, 2 skipped
+- `scripts/test_deploy_nonprod_vm.py`: 45 passed, 2 skipped
 - `scripts/test_deploy_nonprod_bootstrap_contract.py`: 65 passed
 - `scripts/test_deploy_nonprod_artifact_restore.py`: 48 passed
-- Total deploy tests: 160 passed, 2 skipped in ~42s
+- Total deploy tests: 158 passed, 2 skipped in ~42s
 - `tests/test_openclaw_credential_probe.py`: 6 passed
 - `services/openclaw-gateway-adapter`: 570 passed, 4 skipped in 168.35s

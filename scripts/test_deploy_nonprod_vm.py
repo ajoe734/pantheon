@@ -917,29 +917,45 @@ verify_exact_component_deployment paper-signal-producer || printf 'rollback\\n' 
     assert comp["status"] == "running"
 
 
-def test_paper_signal_producer_binding_recovery_and_health_lifecycle(tmp_path: Path) -> None:
+def test_paper_signal_producer_binding_recovery_and_health_lifecycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """DEV-READINESS-RECOVERY-20261002 recovery regression: prove degraded caching and supported binding recovery procedures."""
-    from datetime import datetime, timezone
+    import json
+    from typing import Any
     from services.execution.lean_runtime.paper_signal_producer import (
         BindingRef,
-        PaperSignalProducer,
         SignalDecisionUnavailable,
         SmokeStrategy,
+        healthcheck,
+        main,
     )
     from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
-    from services.worker_health import healthcheck as check_worker_health
 
     stores: dict[str, InMemoryPendingSignalStore] = {}
 
-    def store_for(binding: Any) -> InMemoryPendingSignalStore:
-        bid = getattr(binding, "binding_id", "")
-        if not bid and isinstance(binding, dict):
-            bid = binding.get("binding_id", "")
-        return stores.setdefault(bid, InMemoryPendingSignalStore())
+    def mock_redis_store_factory(signal_store_url: str):
+        def store_for(binding_or_id: Any):
+            if isinstance(binding_or_id, str):
+                bid = binding_or_id
+            else:
+                bid = getattr(binding_or_id, "binding_id", "")
+                if not bid and isinstance(binding_or_id, dict):
+                    bid = binding_or_id.get("binding_id", "")
+            return stores.setdefault(bid, InMemoryPendingSignalStore())
+
+        return store_for
+
+    monkeypatch.setattr(
+        "services.execution.lean_runtime.paper_signal_producer._redis_store_factory",
+        mock_redis_store_factory,
+    )
 
     class FaultyStrategy(SmokeStrategy):
         def __call__(self, binding: Any, now_iso: str) -> list[dict[str, Any]]:
-            bid = getattr(binding, "binding_id", "")
+            bid = getattr(binding, "binding_id", "") or (
+                binding.get("binding_id", "") if isinstance(binding, dict) else ""
+            )
             if bid == "rb-stale-001":
                 raise SignalDecisionUnavailable(
                     "artifact_unavailable",
@@ -947,96 +963,102 @@ def test_paper_signal_producer_binding_recovery_and_health_lifecycle(tmp_path: P
                 )
             return super().__call__(binding, now_iso)
 
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    monkeypatch.setattr(
+        "services.execution.lean_runtime.paper_signal_producer._runner_strategy",
+        lambda: FaultyStrategy(),
+    )
+
+    monkeypatch.setenv("SIGNAL_STORE_URL", "redis://signal-store:6379")
+    monkeypatch.setenv("PAPER_PRODUCER_INTERVAL_SECONDS", "0.01")
+    monkeypatch.setenv("PANTHEON_LIVE_BROKER_ENABLED", "false")
+    monkeypatch.setenv("PANTHEON_CANARY_EXECUTION_ENABLED", "false")
+    monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", "http://mock-manager")
+
     stale_binding = BindingRef(binding_id="rb-stale-001", strategy_id="strat-001")
-    producer = PaperSignalProducer(store_for=store_for, strategy=FaultyStrategy())
 
-    # 1. Stale binding fails artifact loading: degraded recorded in producer
-    counts = producer.tick([stale_binding], now_iso)
-    assert counts.get("rb-stale-001") == 0
-    assert "rb-stale-001" in producer.degraded_bindings
-    health_file = tmp_path / "paper-producer-health.json"
-    health_payload = {
-        "worker_name": "paper_signal_producer",
-        "status": "degraded",
-        "ticks": 1,
-        "last_failure_at": now_iso,
-        "last_failure_reason": f"rb-stale-001: {producer.degraded_bindings['rb-stale-001']}",
-        "active_binding_count": 1,
-        "degraded_binding_count": 1,
-        "degraded_bindings": producer.degraded_bindings,
-        "execution_mode": "paper",
-        "live_capital_enabled": False,
-        "live_order_submission_enabled": False,
-    }
-    health_file.write_text(json.dumps(health_payload), encoding="utf-8")
-    assert check_worker_health(
-        health_file=str(health_file),
-        interval_seconds=60,
-        worker_name="paper_signal_producer",
-        expected={"execution_mode": "paper", "live_capital_enabled": False, "live_order_submission_enabled": False},
-    ) == 1
+    # 1. Drive production loop with stale binding on tick 1, followed by empty bindings (retired in DB) on tick 2.
+    #    Proves metadata schema failure causes degraded status, and retiring bindings alone leaves degraded state
+    #    cached in the running process (skipping producer.tick per line 1123).
+    health_file_degraded = tmp_path / "paper-producer-degraded-health.json"
+    monkeypatch.setenv("PAPER_PRODUCER_HEALTH_FILE", str(health_file_degraded))
+    monkeypatch.setenv("PAPER_PRODUCER_MAX_TICKS", "2")
 
-    # 2. When bindings become empty (retired in db), paper_signal_producer.py:1123 skips producer.tick,
-    #    leaving prior degraded bindings cached in the running process.
-    empty_bindings: list[Any] = []
-    skipped_counts = producer.tick(empty_bindings, now_iso) if empty_bindings else {}
-    assert skipped_counts == {}
-    assert "rb-stale-001" in producer.degraded_bindings  # Caching confirmed: retiring alone does not clear running cache
+    phase1_calls = 0
 
-    # 3. Supported Recovery Procedure A: Container restart / fresh producer with 0 active bindings
-    restarted_producer = PaperSignalProducer(store_for=store_for, strategy=FaultyStrategy())
-    restarted_counts = restarted_producer.tick(empty_bindings, now_iso) if empty_bindings else {}
-    assert restarted_counts == {}
-    assert restarted_producer.degraded_bindings == {}
-    health_payload_restarted = {
-        "worker_name": "paper_signal_producer",
-        "status": "ok",
-        "ticks": 1,
-        "last_success_at": now_iso,
-        "last_failure_reason": None,
-        "active_binding_count": 0,
-        "degraded_binding_count": 0,
-        "degraded_bindings": {},
-        "execution_mode": "paper",
-        "live_capital_enabled": False,
-        "live_order_submission_enabled": False,
-    }
-    health_file.write_text(json.dumps(health_payload_restarted), encoding="utf-8")
-    assert check_worker_health(
-        health_file=str(health_file),
-        interval_seconds=60,
-        worker_name="paper_signal_producer",
-        expected={"execution_mode": "paper", "live_capital_enabled": False, "live_order_submission_enabled": False},
-    ) == 0
+    def mock_fetch_phase1(url: str, token: str | None = None, *, raise_on_error: bool = False):
+        nonlocal phase1_calls
+        phase1_calls += 1
+        if phase1_calls == 1:
+            return [stale_binding]
+        return []
 
-    # 4. Supported Recovery Procedure B: Replacement with valid active binding purges degraded cache in tick (lines 876-884)
+    monkeypatch.setattr(
+        "services.execution.lean_runtime.paper_signal_producer.fetch_eligible_paper_bindings",
+        mock_fetch_phase1,
+    )
+
+    exit_code_degraded = main()
+    assert exit_code_degraded == 0
+    payload_degraded = json.loads(health_file_degraded.read_text(encoding="utf-8"))
+    assert payload_degraded["status"] == "degraded"
+    assert payload_degraded["ticks"] == 2
+    assert "rb-stale-001" in payload_degraded["degraded_bindings"]
+    assert healthcheck() == 1
+
+    # 2. Supported Recovery Procedure A: Fresh container restart with 0 active bindings.
+    #    Exercises production startup health transition: writes starting, tick 1 with 0 bindings,
+    #    transitions to status=ok, and healthcheck passes.
+    health_file_restarted = tmp_path / "paper-producer-restarted-health.json"
+    monkeypatch.setenv("PAPER_PRODUCER_HEALTH_FILE", str(health_file_restarted))
+    monkeypatch.setenv("PAPER_PRODUCER_MAX_TICKS", "1")
+    monkeypatch.setattr(
+        "services.execution.lean_runtime.paper_signal_producer.fetch_eligible_paper_bindings",
+        lambda url, token=None, *, raise_on_error=False: [],
+    )
+
+    exit_code_restarted = main()
+    assert exit_code_restarted == 0
+    payload_restarted = json.loads(health_file_restarted.read_text(encoding="utf-8"))
+    assert payload_restarted["status"] == "ok"
+    assert payload_restarted["ticks"] == 1
+    assert payload_restarted["active_binding_count"] == 0
+    assert payload_restarted["degraded_binding_count"] == 0
+    assert payload_restarted["degraded_bindings"] == {}
+    assert healthcheck() == 0
+
+    # 3. Supported Recovery Procedure B: Replacement with valid active binding.
+    #    Drives bounded production loop where tick 1 degrades stale binding, then tick 2 receives
+    #    valid active binding. Producer purges stale degraded bindings from memory on tick (lines 876-884),
+    #    transitions status=ok via production write_health, and healthcheck passes without restart.
+    health_file_valid = tmp_path / "paper-producer-valid-health.json"
+    monkeypatch.setenv("PAPER_PRODUCER_HEALTH_FILE", str(health_file_valid))
+    monkeypatch.setenv("PAPER_PRODUCER_MAX_TICKS", "2")
+
     valid_binding = BindingRef(binding_id="rb-valid-002", strategy_id="strat-002")
-    active_bindings = [valid_binding]
-    valid_counts = producer.tick(active_bindings, now_iso) if active_bindings else {}
-    assert valid_counts.get("rb-valid-002") == 1
-    assert "rb-stale-001" not in producer.degraded_bindings
-    assert producer.degraded_bindings == {}
-    health_payload_valid = {
-        "worker_name": "paper_signal_producer",
-        "status": "ok",
-        "ticks": 2,
-        "last_success_at": now_iso,
-        "last_failure_reason": None,
-        "active_binding_count": 1,
-        "degraded_binding_count": 0,
-        "degraded_bindings": {},
-        "execution_mode": "paper",
-        "live_capital_enabled": False,
-        "live_order_submission_enabled": False,
-    }
-    health_file.write_text(json.dumps(health_payload_valid), encoding="utf-8")
-    assert check_worker_health(
-        health_file=str(health_file),
-        interval_seconds=60,
-        worker_name="paper_signal_producer",
-        expected={"execution_mode": "paper", "live_capital_enabled": False, "live_order_submission_enabled": False},
-    ) == 0
+    phase3_calls = 0
+
+    def mock_fetch_phase3(url: str, token: str | None = None, *, raise_on_error: bool = False):
+        nonlocal phase3_calls
+        phase3_calls += 1
+        if phase3_calls == 1:
+            return [stale_binding]
+        return [valid_binding]
+
+    monkeypatch.setattr(
+        "services.execution.lean_runtime.paper_signal_producer.fetch_eligible_paper_bindings",
+        mock_fetch_phase3,
+    )
+
+    exit_code_valid = main()
+    assert exit_code_valid == 0
+    payload_valid = json.loads(health_file_valid.read_text(encoding="utf-8"))
+    assert payload_valid["status"] == "ok"
+    assert payload_valid["ticks"] == 2
+    assert payload_valid["active_binding_count"] == 1
+    assert payload_valid["degraded_binding_count"] == 0
+    assert payload_valid["degraded_bindings"] == {}
+    assert "rb-stale-001" not in payload_valid["degraded_bindings"]
+    assert healthcheck() == 0
 
 
 def test_verify_exact_component_receipt_write_failure_reaches_rollback_caller(
