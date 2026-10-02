@@ -508,6 +508,42 @@ class TestExecutionProjection(unittest.TestCase):
         self.assertEqual(projection.metadata["deployment_stage"], "canary")
         self.assertNotIn("promotion_state", projection.metadata)
 
+    def test_projection_omits_null_registry_lineage_fields(self):
+        # Registry API serializes absent Lineage fields as null; the promoted
+        # artifact metadata schema types them as arrays/strings.
+        entry = approved_registry_entry()
+        entry["lineage"] = {
+            "parent_registry_ids": None,
+            "source_run_ids": ["replication-run-001"],
+            "source_dataset_refs": None,
+            "source_strategy_spec_id": None,
+        }
+        plan = self.planner.create_plan(
+            plan_id="plan-paper-003",
+            approval_decision_id="approval-001",
+            approval_decision=approved_decision(),
+            registry_entry=entry,
+            capital_pool_id="pool-001",
+            sponsor_persona_id="persona-ops",
+            target_stage=DeploymentStage.PAPER,
+            rollback=rollback_ref(),
+        )
+
+        projection = self.planner.build_execution_projection(plan, entry)
+        self.assertEqual(projection.metadata["lineage"], {"source_run_ids": ["replication-run-001"]})
+
+        import json
+        from jsonschema import Draft7Validator
+
+        schema = json.loads(
+            (GOVERNANCE_DIR.parents[1] / "registry" / "lineage" / "promoted_artifact_metadata.schema.json").read_text()
+        )
+        lineage_errors = [
+            error for error in Draft7Validator(schema).iter_errors(projection.metadata)
+            if list(error.absolute_path)[:1] == ["lineage"]
+        ]
+        self.assertEqual(lineage_errors, [])
+
 
 class TestDeploymentPlanSerialization(unittest.TestCase):
     def test_roundtrip_dict(self):
