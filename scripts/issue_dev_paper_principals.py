@@ -32,6 +32,8 @@ READERS = {
     "GOVERNANCE_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-governance-registry-reader", "registry-reader"),
     "RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-runtime-approval-reader", "approval_reader"),
     "RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-runtime-registry-reader", "registry-reader"),
+    "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN": ("runtime-manager", "capital-reader"),
+    "DEPLOYMENT_CAPITAL_SERVICE_TOKEN": ("runtime-manager", "capital-reader"),
     "PERSONA_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-persona-approval-reader", "approval_reader"),
     "CAPITAL_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-capital-approval-reader", "approval_reader"),
     "EVOLUTION_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-evolution-approval-reader", "approval_reader"),
@@ -45,10 +47,14 @@ WRITERS = {
     ),
 }
 CONSUMER_FILES = {
-    "deployment": ("DEPLOYMENT_REGISTRY_SERVICE_TOKEN", "DEPLOYMENT_GOVERNANCE_SERVICE_TOKEN"),
+    "deployment": (
+        "DEPLOYMENT_REGISTRY_SERVICE_TOKEN",
+        "DEPLOYMENT_GOVERNANCE_SERVICE_TOKEN",
+        "DEPLOYMENT_CAPITAL_SERVICE_TOKEN",
+    ),
     "registry": ("REGISTRY_GOVERNANCE_SERVICE_TOKEN",),
     "governance": ("GOVERNANCE_REGISTRY_SERVICE_TOKEN",),
-    "runtime-manager": ("RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN", "RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN"),
+    "runtime-manager": ("RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN", "RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN", "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN"),
     "persona": ("PERSONA_GOVERNANCE_SERVICE_TOKEN",),
     "capital": ("CAPITAL_GOVERNANCE_SERVICE_TOKEN",),
     "evolution": ("EVOLUTION_GOVERNANCE_SERVICE_TOKEN",),

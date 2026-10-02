@@ -1042,6 +1042,7 @@ async def enforce_capital_mutation_authority(request: Request, call_next):
         return await call_next(request)
     try:
         authority = authenticate_capital_request(
+            method=request.method,
             authorization=request.headers.get("Authorization"),
             tenant_id=request.headers.get("X-Tenant-Id"),
             actor_service=request.headers.get("X-Pantheon-Service"),

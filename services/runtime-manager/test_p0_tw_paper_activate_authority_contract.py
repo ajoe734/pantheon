@@ -372,6 +372,17 @@ def test_canonical_track_c_sequence_satisfies_runtime_deploy_authority() -> None
         "allowed_deployment_scope": "paper",
         "runtime_id": "runtime-tw-equity-paper",
     }
+    fetcher = _fetcher(
+        plan=plan,
+        registry_view={
+            "entry": registry_entry,
+            "deployment_stage": "none",
+        },
+        approval=approval,
+        pool=pool,
+        admissibility=admissibility,
+        binding=binding,
+    )
     report = deploy_authority.verify_deploy_authorities(
         deploy_request,
         deployment_base_url="http://deployment.contract",
@@ -380,17 +391,8 @@ def test_canonical_track_c_sequence_satisfies_runtime_deploy_authority() -> None
         capital_base_url="http://capital.contract",
         approval_reader=SnapshotApprovalReader(approval),
         registry_fetch_json=lambda url, timeout: {"entry": registry_entry, "deployment_stage": "none"},
-        fetch_json=_fetcher(
-            plan=plan,
-            registry_view={
-                "entry": registry_entry,
-                "deployment_stage": "none",
-            },
-            approval=approval,
-            pool=pool,
-            admissibility=admissibility,
-            binding=binding,
-        ),
+        fetch_json=fetcher,
+        capital_fetch_json=fetcher,
         now=datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc),
     )
 
