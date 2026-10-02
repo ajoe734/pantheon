@@ -215,6 +215,7 @@ def _verify(request, fetch, actor_id):
         capital_base_url="http://capital:8092",
         fetch_json=fetch,
         registry_fetch_json=fetch,
+        capital_fetch_json=fetch,
         approval_reader=SnapshotApprovalReader(lambda: fetch("http://governance/api/governance/approvals/" + request["approval_decision_id"], 5)),
         now=datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc),
     )

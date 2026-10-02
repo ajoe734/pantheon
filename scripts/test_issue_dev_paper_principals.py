@@ -170,3 +170,6 @@ def test_deploy_and_compose_connect_authorized_environment_without_embedded_toke
     assert "DISTILLATION_REGISTRY_SERVICE_TOKEN_FILE" in compose["strategy-distillation-worker"]["environment"]
     assert "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN" in compose["alpha-replication-worker"]["environment"]
     assert "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE" in compose["alpha-replication-worker"]["environment"]
+    assert "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN" in compose["runtime-manager"]["environment"]
+    assert "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN_FILE" in compose["runtime-manager"]["environment"]
+    assert "CAPITAL_ALLOWED_READER_SERVICES" in compose["capital"]["environment"]
