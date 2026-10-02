@@ -1,5 +1,32 @@
 # Direct BFF ownership reconciliation
 
+## Current delivery reconciliation — 2026-10-02
+
+PR [#6094](https://github.com/ajoe734/pantheon/pull/6094) is adopted by the
+canonical task with owner Codex and independent reviewer Codex2. Original
+head `9b8d1c9ce4b4a60e1dc6a277381572d3b13c6135` is preserved as an ancestor;
+anchor `c1399e92ebafa9180ac5926aae19faf1efbb6aaa` composes it with receipt-only
+PR #6095 on dev `e32ab2785e09a47eee00ab5a48acc543863547e2` without rewriting history.
+The original `Reviewer: Human/Ops` trailer was a requested target, not approval.
+
+The current CLI accepts all 206 normalized mounted mutation routes, with zero
+missing, stale or duplicate rows. Receipt-only handlers that still mount and
+return HTTP 410 remain inventoried; retirement of execution is not unmounting.
+No additional rows need removal after composing the original repair with the
+receipt change. The servant proposal still creates a draft through the store
+factory; neither owner execution nor hosted Postgres persistence is asserted.
+
+Current validation and the four reproduced composition failure baselines are
+recorded in `evidence.json`. The baseline composition test and all production
+code are unchanged from the dev base. Production delta is zero. The owner
+manifest is prepared for exact-head independent review; approval and merge
+must be established by canonical review and GitHub evidence, not this note.
+No frontend rerun, deployment, SSH, hosted probing or data action was performed
+in this adoption. The earlier frontend and hosted observations below are
+historical evidence only and do not describe current hosted acceptance.
+
+## Original implementation record (preserved)
+
 Scope: operator-authorized direct implementation, without supervisor or auto-worker dispatch. This is a bounded repair in the six-area closeout, **not overall completion**.
 
 ## Source and reproduced failure
