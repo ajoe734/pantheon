@@ -24,7 +24,6 @@ from agora.interaction.persona_client import build_canonical_persona_client
 from agora.interaction.store import InteractionLifecycleStore
 from agora.interaction.worker import AgoraInteractionWorker
 from agora.research.dispatcher import (
-    ResearchDispatcher,
     build_authentic_adapter_registry,
     build_canonical_research_backend_clients,
 )
@@ -153,13 +152,6 @@ def main() -> int:
     )
     dataset_router._STORE = dataset_store
 
-    research_dispatcher = ResearchDispatcher(
-        store=research_store,
-        adapter_registry=adapter_registry,
-        publish_progress_fn=publish_research_progress,
-        dataset_store=dataset_store,
-    )
-
     tenant_id = args.tenant_id or os.getenv("PANTHEON_TENANT_ID")
 
     worker = AgoraInteractionWorker(
@@ -168,7 +160,7 @@ def main() -> int:
         read_store=read_store,
         proposal_store=proposal_store,
         research_store=research_store,
-        research_dispatcher=research_dispatcher,
+        research_dispatcher=None,
         dataset_store=dataset_store,
         worker_id=os.getenv("PANTHEON_AGORA_WORKER_ID", "agora-interaction-worker"),
     )

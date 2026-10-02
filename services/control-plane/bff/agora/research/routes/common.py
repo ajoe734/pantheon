@@ -1164,8 +1164,8 @@ def _run_projection_with_defaults(run: Dict[str, Any], store: Optional[Any] = No
         "workshop_id": run.get("workshop_id", ""),
         "strategy_id": run.get("strategy_id", ""),
         "strategy_spec_registry_id": run.get("strategy_spec_registry_id", ""),
-        "stage_id": run["stage_id"],
-        "stage_type": run["stage_type"],
+        "stage_id": run.get("stage_id", ""),
+        "stage_type": run.get("stage_type", ""),
         "execution_status": run.get("execution_status", "queued"),
         "outcome": run.get("outcome", "pending"),
         "progress": dict(run.get("progress") or {

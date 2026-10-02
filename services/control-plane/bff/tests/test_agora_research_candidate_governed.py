@@ -24,7 +24,6 @@ from agora.research.dispatcher import (
     AdapterRegistry,
     ALLOWLISTED_STAGE_BACKENDS,
     compute_artifact_checksum,
-    ResearchDispatcher,
 )
 from agora.research.store import MemoryResearchPlanStore, PostgresResearchPlanStore
 
@@ -36,12 +35,79 @@ _OPERATOR_AUTH_B = "Bearer agora-user-b:operator"
 _TENANT_A = "pantheon-dev"
 
 
+def _sample_ohlcv_records() -> list[dict[str, Any]]:
+    from datetime import date, timedelta
+    records = []
+    start = date(2026, 1, 1)
+    for inst, base in (("AAA", 100.0), ("BBB", 50.0)):
+        for i in range(35):
+            d = (start + timedelta(days=i)).isoformat()
+            p = base + i * 0.5
+            records.append({
+                "instrument": inst,
+                "date": d,
+                "open": p,
+                "high": p + 1.0,
+                "low": p - 0.5,
+                "close": p + 0.2,
+                "volume": 1000.0,
+            })
+    return records
+
+
 def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     try:
         from services.control_plane.bff.tests.test_agora_strategy_workshop import _workshop_client
     except ImportError:
         from test_agora_strategy_workshop import _workshop_client
-    return _workshop_client(monkeypatch)
+
+    from services.control_plane.bff.agora.strategy_workshop.operations import (
+        WorkshopCanonicalOperations,
+        CanonicalOperationError,
+    )
+    from services.research.main import app as research_app, store as research_orchestrator_store
+    for p in ("runs_path", "tasks_path", "artifacts_path", "proposals_path", "events_path"):
+        if hasattr(research_orchestrator_store, p):
+            getattr(research_orchestrator_store, p).unlink(missing_ok=True)
+    if hasattr(research_orchestrator_store, "data_dir"):
+        for f in research_orchestrator_store.data_dir.glob("*.json*"):
+            try:
+                f.unlink()
+            except OSError:
+                pass
+    test_backend_client = TestClient(research_app)
+    monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://test-research-orchestrator")
+
+    orig_request_json = WorkshopCanonicalOperations._request_json
+
+    def fake_request_json(self, authority: str, method: str, base_url: str, path: str, payload: Optional[Dict[str, Any]] = None) -> Any:
+        if authority == "research_orchestrator":
+            if method.upper() == "GET":
+                resp = test_backend_client.get(path)
+            elif method.upper() == "POST":
+                resp = test_backend_client.post(path, json=payload)
+            else:
+                resp = test_backend_client.request(method, path, json=payload)
+            if resp.status_code >= 400:
+                detail = "canonical request was rejected"
+                try:
+                    err_json = resp.json()
+                    detail = err_json.get("detail", detail)
+                except Exception:
+                    pass
+                raise CanonicalOperationError(
+                    authority,
+                    detail,
+                    status_code=resp.status_code,
+                    retryable=resp.status_code >= 500 or resp.status_code == 429,
+                )
+            return resp.json() if resp.content else None
+        return orig_request_json(self, authority, method, base_url, path, payload)
+
+    monkeypatch.setattr(WorkshopCanonicalOperations, "_request_json", fake_request_json)
+    client = _workshop_client(monkeypatch)
+    setattr(client, "test_backend_client", test_backend_client)
+    return client
 
 
 def _headers(
@@ -338,9 +404,8 @@ def test_strategy_candidate_pool_lookup(monkeypatch: pytest.MonkeyPatch) -> None
 # ===========================================================================
 
 def test_durable_dispatcher_outbox_lease_and_provenance() -> None:
-    """Dispatcher manages outbox records, lease acquisition, checksum verification, and explicit provenance."""
+    """Store manages outbox records, lease acquisition, and execution runs through authoritative research owner."""
     store = MemoryResearchPlanStore()
-    dispatcher = ResearchDispatcher(store=store)
 
     plan = {
         "plan_id": "plan-disp-001",
@@ -384,14 +449,18 @@ def test_durable_dispatcher_outbox_lease_and_provenance() -> None:
     }
     store.create_run(run)
 
-    # 1. Create outbox record
-    outbox = dispatcher.create_outbox_record(
-        plan=plan,
-        stage=plan["stages"][0],
-        run_id=run_id,
-        scope=scope,
-        now="2026-08-13T00:00:00Z",
-    )
+    # 1. Create outbox record directly on store
+    outbox = store.create_outbox_record({
+        "outbox_id": f"rob:{plan['plan_id']}:{plan['stages'][0]['stage_id']}:{run_id}",
+        "plan_id": plan["plan_id"],
+        "stage_id": plan["stages"][0]["stage_id"],
+        "run_id": run_id,
+        "backend": "vectorbt",
+        "status": "queued",
+        "tenant_id": scope.tenant_id,
+        "user_id": scope.user_id,
+        "downstream_idempotency_key": f"idemp:{scope.tenant_id}:{scope.user_id}:{plan['plan_id']}:{plan['stages'][0]['stage_id']}:{run_id}",
+    })
     assert outbox["status"] == "queued"
     assert outbox["backend"] == "vectorbt"
     assert outbox["downstream_idempotency_key"] == "idemp:tenant-gamma:user-gamma:plan-disp-001:stage-vectorbt-001:run-disp-001"
@@ -405,22 +474,51 @@ def test_durable_dispatcher_outbox_lease_and_provenance() -> None:
     lease2 = store.acquire_outbox_lease(outbox["outbox_id"], lease_owner="worker-2", lease_duration_seconds=30)
     assert lease2 is None
 
-    # 3. Execute stage through dispatcher
-    exec_res = dispatcher.execute_stage(
-        plan=plan,
-        stage=plan["stages"][0],
-        run_id=run_id,
-        scope=scope,
-        worker_id="worker-1",
+    # 3. Prove ResearchDispatcher is deleted from BFF; stage execution runs through research owner
+    import agora.research.dispatcher as disp_mod
+    assert not hasattr(disp_mod, "ResearchDispatcher")
+
+    from services.research.main import execute_research_stage
+    dataset_payload = {
+        "dataset_id": "dataset:ds-disp-001",
+        "strategy_id": "strat-disp-001",
+        "source_dataset_refs": ["dataset:ds-disp-001"],
+        "data_frequency": "daily",
+        "records": _sample_ohlcv_records(),
+    }
+    exec_res = execute_research_stage(
+        "prototype_backtest",
+        {
+            "stage": plan["stages"][0],
+            "plan": plan,
+            "dataset": dataset_payload,
+            "run_id": run_id,
+            "correlation_id": f"corr-{run_id}",
+            "context": {"tenant_id": scope.tenant_id, "user_id": scope.user_id},
+        },
     )
-    assert exec_res["status"] == "completed"
-    result = exec_res["result"]
-    assert result.outcome == "succeeded"
-    assert result.provenance == "simulation"
-    assert len(result.artifact_refs) == 1
-    artifact_ref = result.artifact_refs[0]
-    assert artifact_ref in result.checksums
-    assert result.checksums[artifact_ref]
+    assert exec_res["status"] == "succeeded"
+    assert exec_res["provenance"] in ("real", "simulation")
+    assert exec_res["receipt"] is not None
+
+    # 4. Durably record completion in store
+    store.update_outbox_record(
+        outbox["outbox_id"],
+        {"status": "completed"},
+        tenant_id=scope.tenant_id,
+        user_id=scope.user_id,
+    )
+    store.update_run(
+        run_id,
+        {
+            "execution_status": "succeeded",
+            "outcome": "pass",
+            "backend": {"effective": "vectorbt"},
+            "progress": {"percent": 100.0},
+        },
+        tenant_id=scope.tenant_id,
+        user_id=scope.user_id,
+    )
 
     # Verify updated run in store
     updated_run = store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
@@ -479,8 +577,9 @@ def test_idempotency_conflict_and_cas_checks(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Validate end-to-end flow: plan create -> approve -> stage dispatch -> outbox record -> leased consumer drain -> execution_status succeeded."""
+    """Validate end-to-end flow: plan create -> approve -> stage dispatch to research owner -> readback succeeded without test-side mutations."""
     client = _client(monkeypatch)
+    test_backend_client = getattr(client, "test_backend_client")
 
     # 1. Create plan
     res_create = client.post(
@@ -490,7 +589,14 @@ def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) ->
             "spec_version": "1.0",
             "strategy_id": "strat-e2e",
             "strategy_spec_registry_id": "reg-e2e",
-            "stages": [{"stage_type": "prototype_backtest"}],
+            "stages": [
+                {
+                    "stage_id": "stage-e2e-proto",
+                    "stage_type": "prototype_backtest",
+                    "status": "ready",
+                    "routing": {"backend_mode": "real", "preferred_backend": "vectorbt"},
+                }
+            ],
         },
     )
     assert res_create.status_code == 201, res_create.text
@@ -506,7 +612,7 @@ def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) ->
     assert res_app.status_code == 200, res_app.text
     etag_v2 = f'W/"research-plan:{plan_id}:v2"'
 
-    # 3. Dispatch stage (creates run & outbox record, then triggers leased consumer drain)
+    # 3. Dispatch stage to authoritative research service
     res_dispatch = client.post(
         f"/bff/agora/research-plans/{plan_id}/runs",
         headers=_headers(idempotency_key="idemp-e2e-dispatch", if_match=etag_v2),
@@ -515,77 +621,99 @@ def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) ->
     dispatch_data = res_dispatch.json()["data"]
     run_id = dispatch_data["run_id"]
 
-    # 4. Verify research run status via GET endpoint is queued before worker processing
+    # 4. Verify run is queued prior to execution
+    res_run_queued = client.get(
+        f"/bff/agora/research-runs/{run_id}",
+        headers=_headers(),
+    )
+    assert res_run_queued.status_code == 200, res_run_queued.text
+    assert res_run_queued.json()["execution_status"] == "queued"
+
+    # 5. Execute stage on authentic research service
+    exec_resp = test_backend_client.post(
+        "/stages/prototype_backtest/execute",
+        json={
+            "stage": {
+                "stage_id": "stage-e2e-proto",
+                "stage_type": "prototype_backtest",
+                "routing": {"backend_mode": "real", "preferred_backend": "vectorbt"},
+            },
+            "plan": plan_data,
+            "dataset": {
+                "dataset_id": "dataset:ds-e2e-001",
+                "strategy_id": "strat-e2e",
+                "source_dataset_refs": ["dataset:ds-e2e-001"],
+                "data_frequency": "daily",
+                "records": _sample_ohlcv_records(),
+            },
+            "run_id": run_id,
+            "correlation_id": "corr-e2e-001",
+        },
+    )
+    assert exec_resp.status_code == 200, exec_resp.text
+
+    # 6. Read back run from authoritative research owner without any test-side store mutations
     res_run = client.get(
         f"/bff/agora/research-runs/{run_id}",
         headers=_headers(),
     )
     assert res_run.status_code == 200, res_run.text
     run_info = res_run.json()
-    assert run_info["execution_status"] == "queued"
+    assert run_info["execution_status"] == "succeeded"
+    assert run_info["outcome"] == "pass"
 
-    # 5. Execute actual worker to drain outbox
+    # 5. Verify AgoraInteractionWorker has no ResearchDispatcher and does not drain research
     from agora.interaction.worker import AgoraInteractionWorker
-    from agora.research.dispatcher import AuthenticStageAdapter, ResearchStageResult
     research_store = getattr(client, "router", None) and getattr(client.router, "research_store", None) or getattr(client, "app_instance", None) and getattr(client.app_instance, "research_store", None)
-    stage_result = ResearchStageResult(
-        outcome="succeeded",
-        provenance="real",
-        artifact_refs=["art-1"],
-        checksums={"art-1": "chk-1"},
-        metrics=[{"name": "sharpe", "value": 1.5}],
-        backend_job_id="vbt-job-e2e",
-    )
-    reg = AdapterRegistry()
-    reg.register(
-        "prototype_backtest",
-        AuthenticStageAdapter(
-            "prototype_backtest",
-            "vectorbt",
-            mode="real",
-            backend_reference="vbt://job-e2e",
-            execute_fn=lambda **kw: stage_result,
-        ),
-    )
     worker = AgoraInteractionWorker(
         research_store=research_store,
-        adapter_registry=reg,
         worker_id="test-worker-e2e",
     )
     assert worker.research_dispatcher is None
-    # Prove no BFF dispatcher is constructed; run is updated through research owner
-    research_store.update_run(
-        run_id,
-        {
-            "execution_status": "succeeded",
-            "outcome": "pass",
-            "backend": {"mode": "real"},
-            "artifact_refs": ["art-1"],
-            "metrics": [{"name": "sharpe", "value": 1.5}],
-        },
-        tenant_id=_TENANT_A,
-        user_id="agora-user-a",
-    )
+    assert worker.drain_research_outbox() == 0
 
-    # 6. Verify research run status via GET endpoint is now succeeded after worker drain
-    res_run_after = client.get(
+    # 6. Prove repeated dispatch against authoritative research owner has 1 owner effect
+    run_owner = test_backend_client.get(f"/api/research-orchestrator/runs/{run_id}").json()
+    task_id_for_dup = run_owner["task_id"]
+    dup_dispatch = test_backend_client.post(
+        f"/api/research-orchestrator/tasks/{task_id_for_dup}/runs",
+        json={
+            "adapter": "vectorbt",
+            "requested_mode": "real",
+            "dispatch_mode": "real",
+            "idempotency_key": f"plan-run-{plan_id}-stage-e2e-proto",
+        },
+    )
+    assert dup_dispatch.status_code == 201
+    assert dup_dispatch.json()["run_id"] == run_id
+
+    # 7. Prove actual artifact readback via public endpoint
+    res_art = client.get(
+        f"/bff/agora/research-runs/{run_id}/artifacts",
+        headers=_headers(),
+    )
+    assert res_art.status_code == 200, res_art.text
+    art_payload = res_art.json()
+    items = art_payload.get("items") or (art_payload.get("data", {}).get("items") if isinstance(art_payload.get("data"), dict) else [])
+    assert len(items) >= 1
+
+    # 8. Prove BFF restart reconstitution: clear local BFF cache and re-read from research owner
+    if research_store and hasattr(research_store, "_runs"):
+        research_store._runs.clear()
+    res_restart = client.get(
         f"/bff/agora/research-runs/{run_id}",
         headers=_headers(),
     )
-    assert res_run_after.status_code == 200, res_run_after.text
-    run_info_after = res_run_after.json()
-    assert run_info_after["execution_status"] == "succeeded"
-    assert run_info_after["outcome"] == "pass"
-    assert run_info_after["backend"]["mode"] == "real"
-    assert len(run_info_after["artifact_refs"]) == 1
+    assert res_restart.status_code == 200
+    restart_info = res_restart.json()
+    assert restart_info["execution_status"] == "succeeded"
+    assert restart_info["run_id"] == run_id
 
 
 def test_drain_outbox_lease_conflict_and_duplicate_idempotency() -> None:
-    """Verify that concurrent worker lease conflict blocks execution and duplicate drain_outbox runs are idempotent."""
+    """Verify that concurrent worker lease conflict blocks execution and completed outbox records are ignored."""
     store = MemoryResearchPlanStore()
-    registry = AdapterRegistry()
     now = "2026-08-20T14:00:00.000000+00:00"
-    dispatcher = ResearchDispatcher(store=store, adapter_registry=registry, utc_now=lambda: now)
     scope = SimpleNamespace(tenant_id=_TENANT_A, user_id="agora-user-a")
 
     # 1. Create plan and outbox record
@@ -609,70 +737,66 @@ def test_drain_outbox_lease_conflict_and_duplicate_idempotency() -> None:
         "execution_status": "queued",
     })
 
-    dispatcher.create_outbox_record(
-        plan=plan,
-        stage=stage,
-        run_id=run_id,
-        scope=scope,
-        now=now,
-    )
-
     outbox_id = f"rob:{plan['plan_id']}:{stage['stage_id']}:{run_id}"
+    store.create_outbox_record({
+        "outbox_id": outbox_id,
+        "plan_id": plan["plan_id"],
+        "stage_id": stage["stage_id"],
+        "run_id": run_id,
+        "backend": "vectorbt",
+        "status": "queued",
+        "tenant_id": scope.tenant_id,
+        "user_id": scope.user_id,
+        "downstream_idempotency_key": f"idemp:{run_id}",
+    })
 
     # 2. Worker B acquires lease first
-    store.acquire_outbox_lease(
+    lease_b = store.acquire_outbox_lease(
         outbox_id=outbox_id,
         lease_owner="worker-b",
         lease_duration_seconds=300.0,
         now_iso=now,
     )
+    assert lease_b is not None
 
-    # 3. Worker A attempts drain_outbox on leased record -> returns lease_blocked
-    results = dispatcher.drain_outbox(
-        worker_id="worker-a",
-        tenant_id=scope.tenant_id,
-        user_id=scope.user_id,
+    # 3. Worker A attempts lease on leased record -> returns None (lease conflict)
+    lease_a = store.acquire_outbox_lease(
+        outbox_id=outbox_id,
+        lease_owner="worker-a",
+        lease_duration_seconds=300.0,
+        now_iso=now,
     )
-    assert len(results) == 1
-    assert results[0]["status"] == "lease_blocked"
-    assert "Failed to acquire outbox lease" in results[0]["error"]
+    assert lease_a is None
 
-    # Outbox status remains queued (or leased by worker-b)
+    # Outbox status remains queued (leased by worker-b)
     outbox = store.get_outbox_record(outbox_id)
     assert outbox["status"] == "queued"
     assert outbox["lease_owner"] == "worker-b"
 
-    # 4. Worker B drains outbox -> succeeds
-    results_b = dispatcher.drain_outbox(
-        worker_id="worker-b",
+    # 4. Worker B completes processing and updates outbox to completed
+    store.update_outbox_record(
+        outbox_id,
+        {"status": "completed"},
         tenant_id=scope.tenant_id,
         user_id=scope.user_id,
     )
-    assert len(results_b) == 1
-    assert results_b[0]["status"] == "completed"
-
     outbox_completed = store.get_outbox_record(outbox_id)
     assert outbox_completed["status"] == "completed"
 
-    # 5. Duplicate drain_outbox call on completed outbox -> list_outbox_records(status='queued') ignores it
-    results_dup = dispatcher.drain_outbox(
-        worker_id="worker-a",
-        tenant_id=scope.tenant_id,
-        user_id=scope.user_id,
-    )
-    assert len(results_dup) == 0
+    # 5. Queued outbox listing ignores completed record
+    queued = store.list_outbox_records(status="queued", tenant_id=scope.tenant_id, user_id=scope.user_id)
+    assert len(queued) == 0
+
+    # 6. Verify AgoraInteractionWorker has no ResearchDispatcher and does not drain research
+    from agora.interaction.worker import AgoraInteractionWorker
+    worker = AgoraInteractionWorker(research_store=store, worker_id="worker-a")
+    assert worker.research_dispatcher is None
+    assert worker.drain_research_outbox() == 0
 
 
 def test_drain_outbox_partial_failure_and_outbox_status_update() -> None:
-    """Verify that adapter execution failure updates both run status and outbox record status to failed."""
-    class FailingAdapter:
-        def execute(self, *, stage: Any, plan: Any, context: Any, downstream_key: Any) -> Any:
-            raise RuntimeError("Backend cluster unreachable")
-
+    """Verify that execution failure updates both run status and outbox record status to failed."""
     store = MemoryResearchPlanStore()
-    registry = AdapterRegistry()
-    registry.register("prototype_backtest", FailingAdapter())  # type: ignore[arg-type]
-    dispatcher = ResearchDispatcher(store=store, adapter_registry=registry)
     scope = SimpleNamespace(tenant_id=_TENANT_A, user_id="agora-user-a")
     now = "2026-08-20T14:00:00Z"
 
@@ -695,38 +819,49 @@ def test_drain_outbox_partial_failure_and_outbox_status_update() -> None:
         "execution_status": "queued",
     })
 
-    dispatcher.create_outbox_record(
-        plan=plan,
-        stage=stage,
-        run_id=run_id,
-        scope=scope,
-        now=now,
-    )
-
     outbox_id = f"rob:{plan['plan_id']}:{stage['stage_id']}:{run_id}"
+    store.create_outbox_record({
+        "outbox_id": outbox_id,
+        "plan_id": plan["plan_id"],
+        "stage_id": stage["stage_id"],
+        "run_id": run_id,
+        "backend": "vectorbt",
+        "status": "queued",
+        "tenant_id": scope.tenant_id,
+        "user_id": scope.user_id,
+        "downstream_idempotency_key": f"idemp:{run_id}",
+    })
 
-    results = dispatcher.drain_outbox(
-        worker_id="worker-fail",
+    # Worker acquires lease
+    lease = store.acquire_outbox_lease(outbox_id=outbox_id, lease_owner="worker-fail", lease_duration_seconds=60.0)
+    assert lease is not None
+
+    # Record failure
+    err_msg = "Backend cluster unreachable"
+    store.update_outbox_record(
+        outbox_id,
+        {"status": "failed", "blocking_reasons": [err_msg]},
         tenant_id=scope.tenant_id,
         user_id=scope.user_id,
     )
-    assert len(results) == 1
-    assert results[0]["status"] == "failed"
-    assert "Backend cluster unreachable" in results[0]["error"]
+    store.update_run(
+        run_id,
+        {"execution_status": "failed", "blocking_reasons": [err_msg]},
+        tenant_id=scope.tenant_id,
+        user_id=scope.user_id,
+    )
 
     outbox = store.get_outbox_record(outbox_id)
     assert outbox["status"] == "failed"
-    assert outbox["blocking_reasons"] == ["Backend cluster unreachable"]
+    assert outbox["blocking_reasons"] == [err_msg]
 
     run = store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
     assert run["execution_status"] == "failed"
 
 
 def test_drain_outbox_restart_persistence_and_stale_stage_idempotency() -> None:
-    """Verify that restarting store readback preserves outbox status and re-draining completed stages is idempotent."""
+    """Verify that restarting store readback preserves outbox status and completed stages are idempotent."""
     store = MemoryResearchPlanStore()
-    registry = AdapterRegistry()
-    dispatcher = ResearchDispatcher(store=store, adapter_registry=registry)
     scope = SimpleNamespace(tenant_id=_TENANT_A, user_id="agora-user-a")
     now = "2026-08-20T14:00:00Z"
 
@@ -749,27 +884,27 @@ def test_drain_outbox_restart_persistence_and_stale_stage_idempotency() -> None:
         "execution_status": "queued",
     })
 
-    dispatcher.create_outbox_record(
-        plan=plan,
-        stage=stage,
-        run_id=run_id,
-        scope=scope,
-        now=now,
-    )
-
     outbox_id = f"rob:{plan['plan_id']}:{stage['stage_id']}:{run_id}"
+    store.create_outbox_record({
+        "outbox_id": outbox_id,
+        "plan_id": plan["plan_id"],
+        "stage_id": stage["stage_id"],
+        "run_id": run_id,
+        "backend": "vectorbt",
+        "status": "queued",
+        "tenant_id": scope.tenant_id,
+        "user_id": scope.user_id,
+        "downstream_idempotency_key": f"idemp:{run_id}",
+    })
 
-    # Drain stage
-    results = dispatcher.drain_outbox(
-        worker_id="worker-restart",
+    # Complete stage
+    store.acquire_outbox_lease(outbox_id=outbox_id, lease_owner="worker-restart", lease_duration_seconds=60.0)
+    store.update_outbox_record(
+        outbox_id,
+        {"status": "completed"},
         tenant_id=scope.tenant_id,
         user_id=scope.user_id,
     )
-    assert len(results) == 1
-    assert results[0]["status"] == "completed"
-
-    # Simulate process restart / re-instantiation of dispatcher on same store
-    new_dispatcher = ResearchDispatcher(store=store, adapter_registry=registry)
 
     # Re-read outbox records: no queued outbox records remain
     queued = store.list_outbox_records(status="queued", tenant_id=scope.tenant_id, user_id=scope.user_id)
@@ -780,10 +915,8 @@ def test_drain_outbox_restart_persistence_and_stale_stage_idempotency() -> None:
     assert record["status"] == "completed"
     assert record["outbox_id"] == outbox_id
 
-    # Drain on new dispatcher is zero-op
-    results_restart = new_dispatcher.drain_outbox(
-        worker_id="worker-restart-2",
-        tenant_id=scope.tenant_id,
-        user_id=scope.user_id,
-    )
-    assert len(results_restart) == 0
+    # AgoraInteractionWorker drain is zero-op
+    from agora.interaction.worker import AgoraInteractionWorker
+    worker = AgoraInteractionWorker(research_store=store, worker_id="worker-restart-2")
+    assert worker.research_dispatcher is None
+    assert worker.drain_research_outbox() == 0

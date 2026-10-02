@@ -26,7 +26,6 @@ from agora.research.dispatcher import (
     AuthenticResearchBackendClient,
     AuthenticStageAdapter,
     DefaultAllowlistedAdapter,
-    ResearchDispatcher,
     ResearchStageResult,
     build_authentic_adapter_registry,
     build_canonical_research_backend_clients,

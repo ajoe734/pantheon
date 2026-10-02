@@ -89,10 +89,10 @@ class AgoraInteractionWorker:
         self.read_store = read_store
         self.client_factory = client_factory
         self.proposal_store = proposal_store
-        self.dataset_store = dataset_store or (getattr(research_dispatcher, "dataset_store", None) if research_dispatcher else None)
+        self.dataset_store = dataset_store
         self.adapter_registry = adapter_registry
-        self.research_dispatcher = research_dispatcher
-        self.research_store = research_store or (getattr(self.research_dispatcher, "store", None) if self.research_dispatcher else None)
+        self.research_dispatcher = None
+        self.research_store = research_store
         self.worker_id = worker_id or os.getenv(
             "PANTHEON_AGORA_WORKER_ID", f"agora-worker-{uuid.uuid4().hex[:12]}"
         )
@@ -122,24 +122,8 @@ class AgoraInteractionWorker:
         user_id: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> int:
-        """Drain queued research outbox records via research dispatcher."""
-        if self.research_dispatcher is None:
-            return 0
-        try:
-            drained = self.research_dispatcher.drain_outbox(
-                worker_id=self.worker_id,
-                tenant_id=tenant_id,
-                user_id=user_id,
-                limit=limit,
-            )
-            count = len(drained) if isinstance(drained, list) else int(drained or 0)
-            if count > 0:
-                with self._lock:
-                    self._metrics["completed_count"] += count
-            return count
-        except Exception as exc:
-            logger.warning("Failed draining research outbox: %s", exc)
-            return 0
+        """Deprecated: research execution belongs to the authoritative Research service owner."""
+        return 0
 
     def drain_outbox(
         self,

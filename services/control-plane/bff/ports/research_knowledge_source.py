@@ -475,7 +475,10 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             return None
         self._research_write_owner_resolved = True
         try:
-            from ..research.client import ResearchServiceClient, resolve_orchestrator_base_url
+            try:
+                from ..research.client import ResearchServiceClient, resolve_orchestrator_base_url
+            except (ImportError, ValueError):
+                from services.control_plane.bff.research.client import ResearchServiceClient, resolve_orchestrator_base_url
             url = resolve_orchestrator_base_url()
             self._research_write_owner = ResearchServiceClient(base_url=url) if url else None
         except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure means "unavailable"
@@ -560,14 +563,14 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
 
     def create_research_note(self, note: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         owner = self._get_research_write_owner()
-        if owner is not None and hasattr(owner, "create_research_note"):
-            return owner.create_research_note(note)
-        note_id = str(note.get("note_id") or "").strip()
-        if not note_id:
-            return None
-        payload = json.loads(json.dumps(note))
-        self._notes[note_id] = payload
-        return json.loads(json.dumps(payload))
+        if owner is None or not hasattr(owner, "create_research_note"):
+            raise ResearchWriteOwnerUnavailableError(
+                "Research write owner is not configured; cannot create a research note."
+            )
+        result = owner.create_research_note(note)
+        if isinstance(result, dict) and "note_id" in result:
+            self._notes[str(result["note_id"])] = dict(result)
+        return result
 
     # -------------------------------------------------------------------------
     # Knowledge & Evidence: Evidence Refs (KW-03)
@@ -1969,37 +1972,22 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         created_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         write_owner = self._get_research_write_owner()
-        if write_owner is not None and hasattr(write_owner, "create_research_ticket"):
-            return write_owner.create_research_ticket(title=title, description=description, priority=priority, owner=owner, actor_id=actor_id, created_at=created_at)
-        timestamp = created_at or _utc_now_rfc3339()
-        ticket_id = f"rt-{timestamp[:10].replace('-', '')}-{len(self._tickets) + 1:03d}"
-        while ticket_id in self._tickets:
-            ticket_id = f"rt-{timestamp[:10].replace('-', '')}-{len(self._tickets) + 2:03d}"
-
-        ticket = {
-            "ticket_id": ticket_id,
-            "title": title,
-            "description": description,
-            "status": "open",
-            "priority": priority,
-            "owner": owner,
-            "created_at": timestamp,
-            "updated_at": timestamp,
-            "closed_at": None,
-            "archived_at": None,
-            "lifecycle_history": [
-                {
-                    "from_status": None,
-                    "to_status": "open",
-                    "transitioned_at": timestamp,
-                    "transitioned_by": actor_id,
-                }
-            ],
-            "linked_experiments": [],
-            "linked_artifacts": [],
-        }
-        self._tickets[ticket_id] = ticket
-        return self._project_research_ticket_detail(ticket)
+        if write_owner is None or not hasattr(write_owner, "create_research_ticket"):
+            raise ResearchWriteOwnerUnavailableError(
+                "Research write owner is not configured; cannot create a research ticket."
+            )
+        result = write_owner.create_research_ticket(
+            title=title,
+            description=description,
+            priority=priority,
+            owner=owner,
+            actor_id=actor_id,
+            created_at=created_at,
+        )
+        if isinstance(result, dict) and "ticket_id" in result:
+            self._tickets[str(result["ticket_id"])] = dict(result)
+            return self._project_research_ticket_detail(result)
+        return result
 
     def patch_research_ticket(
         self,
@@ -2010,44 +1998,15 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         updated_at: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         write_owner = self._get_research_write_owner()
-        if write_owner is not None and hasattr(write_owner, "patch_research_ticket"):
-            return write_owner.patch_research_ticket(ticket_id, patch=patch, actor_id=actor_id, updated_at=updated_at)
-        ticket = self._tickets.get(str(ticket_id))
-        if ticket is None or not isinstance(ticket, dict):
-            return None
-
-        timestamp = updated_at or _utc_now_rfc3339()
-        editable = {"title", "description", "priority", "owner"}
-        for f in editable:
-            if f in patch:
-                ticket[f] = patch[f]
-
-        next_status = patch.get("status")
-        if next_status is not None and next_status != ticket.get("status"):
-            prev_status = ticket.get("status")
-            ticket["status"] = next_status
-            if next_status == "closed":
-                ticket["closed_at"] = timestamp
-                ticket["archived_at"] = None
-            elif next_status == "archived":
-                ticket["archived_at"] = timestamp
-                if ticket.get("closed_at") is None:
-                    ticket["closed_at"] = timestamp
-            else:
-                if next_status in {"open", "in_progress"}:
-                    ticket["closed_at"] = None
-                if next_status != "archived":
-                    ticket["archived_at"] = None
-            ticket.setdefault("lifecycle_history", []).append(
-                {
-                    "from_status": prev_status,
-                    "to_status": next_status,
-                    "transitioned_at": timestamp,
-                    "transitioned_by": actor_id,
-                }
+        if write_owner is None or not hasattr(write_owner, "patch_research_ticket"):
+            raise ResearchWriteOwnerUnavailableError(
+                f"Research write owner is not configured; cannot patch research ticket {ticket_id!r}."
             )
-        ticket["updated_at"] = timestamp
-        return self._project_research_ticket_detail(ticket)
+        result = write_owner.patch_research_ticket(ticket_id, patch=patch, actor_id=actor_id, updated_at=updated_at)
+        if isinstance(result, dict) and "ticket_id" in result:
+            self._tickets[str(result["ticket_id"])] = dict(result)
+            return self._project_research_ticket_detail(result)
+        return result
 
     # -------------------------------------------------------------------------
     # Research Analyses (RW-03)

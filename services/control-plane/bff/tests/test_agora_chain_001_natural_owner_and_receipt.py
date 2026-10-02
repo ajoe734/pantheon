@@ -30,7 +30,6 @@ from agora.interaction.worker import AgoraInteractionWorker
 from agora.research.dispatcher import (
     AuthenticResearchBackendClient,
     AuthenticStageAdapter,
-    ResearchDispatcher,
 )
 from agora.research.receipt import resolve_run_provenance
 from agora.research.routes.common import (
@@ -43,6 +42,10 @@ try:
     from agora.strategy_workshop import MemoryWorkshopStore
 except ImportError:
     from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
+from services.control_plane.bff.agora.strategy_workshop.operations import (
+    WorkshopCanonicalOperations,
+    CanonicalOperationError,
+)
 from services.research.tests.test_research_orchestrator_http_service import _load_service_module
 
 
@@ -361,6 +364,35 @@ def test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch:
     # 5. Connect authentic research backend adapter to bff_main.research_dispatcher
     backend_app = _load_service_module().app
     test_backend_client = TestClient(backend_app)
+    monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://test-research-orchestrator")
+
+    orig_request_json = WorkshopCanonicalOperations._request_json
+
+    def fake_request_json(self, authority: str, method: str, base_url: str, path: str, payload: Optional[Dict[str, Any]] = None) -> Any:
+        if authority == "research_orchestrator":
+            if method.upper() == "GET":
+                resp = test_backend_client.get(path)
+            elif method.upper() == "POST":
+                resp = test_backend_client.post(path, json=payload)
+            else:
+                resp = test_backend_client.request(method, path, json=payload)
+            if resp.status_code >= 400:
+                detail = "canonical request was rejected"
+                try:
+                    err_json = resp.json()
+                    detail = err_json.get("detail", detail)
+                except Exception:
+                    pass
+                raise CanonicalOperationError(
+                    authority,
+                    detail,
+                    status_code=resp.status_code,
+                    retryable=resp.status_code >= 500 or resp.status_code == 429,
+                )
+            return resp.json() if resp.content else None
+        return orig_request_json(self, authority, method, base_url, path, payload)
+
+    monkeypatch.setattr(WorkshopCanonicalOperations, "_request_json", fake_request_json)
 
     def service_transport(req: Any) -> bytes:
         resp = test_backend_client.post(
@@ -404,6 +436,20 @@ def test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch:
     assert initial_run["execution_status"] == "queued"
     assert initial_run["correlation_id"] == "trace-natural-interaction-001"
 
+    # Repeated dispatch to authoritative research owner has one owner effect (returns existing run without duplication)
+    task_id_for_dup = str(initial_run.get("task_id") or f"task-{run_id}")
+    dup_dispatch = test_backend_client.post(
+        f"/api/research-orchestrator/tasks/{task_id_for_dup}/runs",
+        json={
+            "adapter": "vectorbt",
+            "requested_mode": "real",
+            "dispatch_mode": "real",
+            "idempotency_key": f"plan-run-{plan_id}-stage-natural-proto",
+        },
+    )
+    assert dup_dispatch.status_code == 201
+    assert dup_dispatch.json()["run_id"] == run_id
+
     # 7. Execute stage directly on authentic research service endpoint
     exec_resp = test_backend_client.post(
         "/stages/prototype_backtest/execute",
@@ -429,36 +475,24 @@ def test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch:
     assert exec_resp.status_code == 200, exec_resp.text
     exec_data = exec_resp.json()
 
-    research_store.update_run(
-        run_id,
-        {
-            "execution_status": "succeeded",
-            "outcome": "pass",
-            "correlation_id": "trace-natural-interaction-001",
-            "metrics": exec_data.get("metrics") or [{"metric": "return", "value": 0.05, "provenance": "real"}],
-            "artifact_refs": exec_data.get("artifact_refs") or [
-                {
-                    "artifact_id": exec_data.get("artifact_id"),
-                    "digest": exec_data.get("artifact_digest", "sha256:abc"),
-                    "backend_reference": exec_data.get("backend_reference"),
-                }
-            ],
-            "backend": {"mode": "real"},
-            "provenance": exec_data.get("provenance", "real"),
-        },
-        tenant_id="pantheon-dev",
-        user_id="agora-test-user",
+    # 8. Verify executed run and authentic owner receipt via public readback without test-side mutation
+    res_run_after = client.get(
+        f"/bff/agora/research-runs/{run_id}",
+        headers=auth,
     )
-    if exec_data.get("receipt"):
-        research_store.record_execution_receipt(exec_data["receipt"])
+    assert res_run_after.status_code == 200, res_run_after.text
+    run_proj = res_run_after.json()
+    assert run_proj is not None
+    assert run_proj["execution_status"] == "succeeded"
+    assert run_proj["outcome"] == "pass"
+    assert len(run_proj.get("metrics") or []) > 0
+    assert len(run_proj.get("artifact_refs") or []) > 0
 
-    # 8. Verify executed run and authentic owner receipt
     completed_run = research_store.get_run(run_id)
     assert completed_run is not None
     assert completed_run["execution_status"] == "succeeded"
     assert completed_run["outcome"] == "pass"
     assert completed_run["correlation_id"] == "trace-natural-interaction-001"
-    assert len(completed_run["metrics"]) > 0
 
     receipt = research_store.get_execution_receipt(run_id)
     assert receipt is not None
@@ -568,6 +602,63 @@ def test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch:
         assert c["has_real_receipt"] is False
         assert c["provenance"] != "real"
 
+    # Actual artifact readback via BFF endpoint
+    art_resp = client.get(
+        f"/bff/agora/research-runs/{run_id}/artifacts",
+        headers=auth,
+    )
+    art_payload = art_resp.json()
+    owner_artifacts = art_payload.get("items") if isinstance(art_payload, dict) else art_payload
+    assert len(owner_artifacts) > 0
+    assert any((a.get("artifact_id") if isinstance(a, dict) else a) == owner_artifact_id for a in owner_artifacts)
+
+    # BFF restart reconstitution: clear local store run and verify re-read from research owner
+    if hasattr(research_store, "runs") and isinstance(research_store.runs, dict):
+        research_store.runs.clear()
+    restart_resp = client.get(
+        f"/bff/agora/research-runs/{run_id}",
+        headers=auth,
+    )
+    assert restart_resp.status_code == 200, restart_resp.text
+    reconstituted_run = restart_resp.json()
+    assert reconstituted_run["execution_status"] == "succeeded"
+    assert reconstituted_run["outcome"] == "pass"
+    assert len(reconstituted_run.get("artifact_refs") or []) > 0
+
+    # Failed backend fails unavailable (503) without silent stub fallback
+    monkeypatch.setenv("AGORA_RESEARCH_VECTORBT_UNAVAILABLE", "1")
+    unavail_plan_resp = client.post(
+        f"/bff/agora/workshops/{workshop_id}/research-plans",
+        headers={**auth, "Idempotency-Key": "plan-unavail-create-001"},
+        json={
+            "spec_version": "1.0",
+            "strategy_id": "strat-unavail-001",
+            "strategy_spec_registry_id": "ssr-unavail-001",
+            "stages": [
+                {
+                    "stage_id": "stage-unavail-proto",
+                    "stage_type": "prototype_backtest",
+                    "input_refs": ["dataset:ds-natural-ohlcv-001"],
+                    "status": "ready",
+                    "routing": {"backend_mode": "real", "preferred_backend": "vectorbt"},
+                }
+            ],
+        },
+    )
+    unavail_plan_id = unavail_plan_resp.json()["data"]["plan_id"]
+    unavail_etag = unavail_plan_resp.headers.get("etag") or unavail_plan_resp.json()["meta"]["etag"]
+    app_unavail = client.post(
+        f"/bff/agora/research-plans/{unavail_plan_id}/approve",
+        headers={**auth, "Idempotency-Key": "plan-unavail-approve-001", "If-Match": unavail_etag},
+    )
+    app_unavail_etag = app_unavail.headers.get("etag") or app_unavail.json()["meta"]["etag"]
+    unavail_resp = client.post(
+        f"/bff/agora/research-plans/{unavail_plan_id}/runs",
+        headers={**auth, "Idempotency-Key": "plan-unavail-run-001", "If-Match": app_unavail_etag},
+    )
+    assert unavail_resp.status_code == 503, unavail_resp.text
+    monkeypatch.delenv("AGORA_RESEARCH_VECTORBT_UNAVAILABLE", raising=False)
+
 
 def test_unknown_dataset_fails_closed_on_public_route_dispatch_and_drain(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unknown dataset reference must fail closed end-to-end through public route dispatch and drain."""
@@ -636,6 +727,35 @@ def test_unknown_dataset_fails_closed_on_public_route_dispatch_and_drain(monkeyp
     # Connect authentic research backend adapter
     backend_app = _load_service_module().app
     test_backend_client = TestClient(backend_app)
+    monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://test-research-orchestrator")
+
+    orig_request_json_neg = WorkshopCanonicalOperations._request_json
+
+    def fake_request_json_neg(self, authority: str, method: str, base_url: str, path: str, payload: Optional[Dict[str, Any]] = None) -> Any:
+        if authority == "research_orchestrator":
+            if method.upper() == "GET":
+                resp = test_backend_client.get(path)
+            elif method.upper() == "POST":
+                resp = test_backend_client.post(path, json=payload)
+            else:
+                resp = test_backend_client.request(method, path, json=payload)
+            if resp.status_code >= 400:
+                detail = "canonical request was rejected"
+                try:
+                    err_json = resp.json()
+                    detail = err_json.get("detail", detail)
+                except Exception:
+                    pass
+                raise CanonicalOperationError(
+                    authority,
+                    detail,
+                    status_code=resp.status_code,
+                    retryable=resp.status_code >= 500 or resp.status_code == 429,
+                )
+            return resp.json() if resp.content else None
+        return orig_request_json_neg(self, authority, method, base_url, path, payload)
+
+    monkeypatch.setattr(WorkshopCanonicalOperations, "_request_json", fake_request_json_neg)
 
     def service_transport(req: Any) -> bytes:
         resp = test_backend_client.post(

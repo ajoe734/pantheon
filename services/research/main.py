@@ -833,6 +833,24 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
     rejected = False
     rejection = None
     request_text = _request_text(body)
+    supported_stage_backends = {"vectorbt", "statsmodels", "quantlib", "prototype_backtest", "econometric_validation", "derivatives_pricing_risk"}
+    is_stage_backend = adapter in supported_stage_backends
+    if is_stage_backend:
+        backend_name = ALLOWLISTED_STAGE_BACKENDS.get(adapter, adapter)
+        if (
+            os.getenv(f"AGORA_RESEARCH_{backend_name.upper()}_UNAVAILABLE") == "1"
+            or os.getenv(f"AGORA_RESEARCH_{adapter.upper()}_UNAVAILABLE") == "1"
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail=f"Backend execution owner for adapter '{adapter}' ({backend_name}) is currently unavailable",
+            )
+        if backend_name not in {"vectorbt", "statsmodels", "quantlib"} and requested_mode in ("real", "simulation"):
+            raise HTTPException(
+                status_code=503,
+                detail=f"Backend execution owner for adapter '{adapter}' ({backend_name}) is absent or not configured",
+            )
+
     if any(token in request_text for token in ("registry_write", "direct_registry_write", "promote_to_registry")):
         rejected = True
         rejection = {
@@ -849,7 +867,7 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
             "rejected_at": timestamp,
             "rejected_by": "research-orchestrator-service",
         }
-    elif adapter not in STUB_ADAPTERS and adapter not in CAPABILITY_REGISTRY:
+    elif adapter not in STUB_ADAPTERS and adapter not in CAPABILITY_REGISTRY and not is_stage_backend:
         rejected = True
         rejection = {
             "reason": "unknown_adapter",
@@ -868,7 +886,7 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
             "rejected_at": timestamp,
             "rejected_by": "research-orchestrator-service",
         }
-    elif adapter in PRODUCTION_ADAPTERS or requested_mode in PRODUCTION_MODES:
+    elif not is_stage_backend and (adapter in PRODUCTION_ADAPTERS or requested_mode in PRODUCTION_MODES):
         rejected = True
         rejection = {
             "reason": "production_adapter_disabled",
@@ -876,7 +894,7 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
             "rejected_at": timestamp,
             "rejected_by": "research-orchestrator-service",
         }
-    if not rejected and dispatch_mode not in STUB_ADAPTERS and not (OFFLINE_GATE_ENABLED and adapter in OFFLINE_ADAPTERS and requested_mode == "offline" and dispatch_mode == "offline"):
+    if not rejected and dispatch_mode not in STUB_ADAPTERS and not is_stage_backend and not (OFFLINE_GATE_ENABLED and adapter in OFFLINE_ADAPTERS and requested_mode == "offline" and dispatch_mode == "offline"):
         rejected = True
         rejection = {
             "reason": "dispatch_mode_disabled",
@@ -919,6 +937,10 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         status = "dispatched"
         summary = f"Offline-gated adapter '{adapter}' dispatched to research-worker-gateway (gateway_job_id={gateway_ref.get('gateway_job_id') if gateway_ref else None})."
         events.append(_event(timestamp, "run_dispatched", summary, body.actor_id, run_id, events))
+    elif is_stage_backend:
+        status = "queued"
+        summary = f"Stage execution adapter '{adapter}' queued for authentic dispatch."
+        events.append(_event(timestamp, "run_queued", summary, body.actor_id, run_id, events))
     else:
         status = "queued"
         summary = "Stub research orchestration run queued for bounded dispatch."
@@ -1784,6 +1806,15 @@ def execute_research_stage(
     exec_storage_path = store.data_dir / "stage_executions.json"
     cached_result = store._get_record(exec_storage_path, idempotency_key)
     if cached_result is not None:
+        run_record = store.get_run(run_id)
+        if run_record and isinstance(run_record, dict) and run_record.get("status") != "completed":
+            run_record["status"] = "completed"
+            run_record["completed_at"] = cached_result.get("receipt", {}).get("completed_at") or utc_now()
+            run_record["metrics"] = cached_result.get("metrics") or []
+            run_record["provenance"] = cached_result.get("provenance") or "real"
+            run_record["receipt"] = cached_result.get("receipt")
+            run_record["artifact_refs"] = cached_result.get("artifact_refs") or []
+            store.put_run(run_record)
         return cached_result
 
     executor = str(
@@ -2037,6 +2068,9 @@ def execute_research_stage(
     if run_record and isinstance(run_record, dict):
         run_record["status"] = "completed"
         run_record["completed_at"] = now_iso
+        run_record["metrics"] = metrics
+        run_record["provenance"] = provenance
+        run_record["receipt"] = receipt
         existing_artifacts = list(run_record.get("artifact_refs") or [])
         if not any(a.get("artifact_id") == artifact_id for a in existing_artifacts if isinstance(a, dict)):
             existing_artifacts.append(artifact_ref_entry)

@@ -2669,12 +2669,6 @@ def _persona_strategy_match_action_response(
             rks = getattr(read_store, "research_knowledge_source", None)
             creator = getattr(rks, "create_research_ticket", None) if rks else None
         if creator is None:
-            try:
-                from services.research.write_owner import build_research_write_owner
-                creator = getattr(build_research_write_owner(), "create_research_ticket", None)
-            except Exception:
-                creator = None
-        if creator is None:
             raise _bff_error(
                 503,
                 ErrorCode.DEPENDENCY_UNAVAILABLE,

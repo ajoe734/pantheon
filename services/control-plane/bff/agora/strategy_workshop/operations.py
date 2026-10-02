@@ -75,7 +75,9 @@ class WorkshopCanonicalOperations:
         consultation_base_url: Optional[str] = None,
         approval_resolver: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
         timeout_seconds: Optional[float] = None,
+        transport: Optional[Callable[..., Any]] = None,
     ) -> None:
+        self.transport = transport
         self.registry_base_url = (
             registry_base_url
             or os.getenv("PANTHEON_REGISTRY_API_URL")
@@ -118,6 +120,8 @@ class WorkshopCanonicalOperations:
         path: str,
         payload: Optional[Dict[str, Any]] = None,
     ) -> Any:
+        if self.transport is not None:
+            return self.transport(authority, method, base_url, path, payload)
         url = self._url(base_url, path, authority)
         body = None
         headers = {"Accept": "application/json"}
@@ -354,6 +358,24 @@ class WorkshopCanonicalOperations:
                 "authoritative research run readback id mismatch",
             )
         return value
+
+    def cancel_research_run(self, run_id: str, *, reason: Optional[str] = None) -> Dict[str, Any]:
+        return self._request_json(
+            "research_orchestrator",
+            "POST",
+            self.research_base_url,
+            f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}/cancel",
+            {"reason": reason or "Research run canceled by operator."},
+        )
+
+    def get_research_artifacts(self, run_id: str) -> List[Dict[str, Any]]:
+        value = self._request_json(
+            "research_orchestrator",
+            "GET",
+            self.research_base_url,
+            f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}/artifacts",
+        )
+        return value if isinstance(value, list) else []
 
     # -- Consultation Service --------------------------------------------
 

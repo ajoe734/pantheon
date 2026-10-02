@@ -20,6 +20,8 @@ from services.control_plane.bff.agora.strategy_workshop.store import (
 )
 from services.control_plane.bff.agora.dataset_extraction.extractor import AgoraDatasetStore
 from services.control_plane.bff.agora.trading_room.store import TradingRoomStore
+from services.control_plane.bff.research.client import resolve_orchestrator_base_url
+from services.research.main import ALLOWLISTED_STAGE_BACKENDS
 
 from .routes.common import (
     CandidateDiscussionRequest,
@@ -374,21 +376,109 @@ class AgoraResearchService:
                 "all_stages_dispatched_or_blocked",
             )
         now = self.utc_now()
-        task_id = ""
-        run_id = ""
-        r_url = os.getenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL") or os.getenv("RESEARCH_ORCHESTRATOR_URL") or os.getenv("RESEARCH_ORCHESTRATOR_API_URL")
-        if r_url:
-            try:
-                from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
-                actor = getattr(scope, "user_id", "operator") or "operator"
-                task_p = {"title": plan.get("title") or f"Plan {plan_id}", "objective": plan.get("objective") or f"Execution {plan_id}", "source_refs": [{"type": "research_plan", "id": plan_id}, {"type": "strategy", "id": plan.get("strategy_id")}], "constraints": {"environment": "research"}, "actor_id": actor, "idempotency_key": f"plan-task-{plan_id}"}
-                run_p = {"adapter": dispatch_stage.get("framework") or dispatch_stage.get("backend") or "stub", "requested_mode": "stub", "dispatch_mode": "stub", "input_refs": [{"type": "research_plan", "id": plan_id}, {"type": "stage", "id": dispatch_stage["stage_id"]}], "parameters": dispatch_stage.get("parameters") or {}, "actor_id": actor, "idempotency_key": f"plan-run-{plan_id}-{dispatch_stage['stage_id']}"}
-                dispatched = WorkshopCanonicalOperations(research_base_url=r_url).dispatch_research_run(task_payload=task_p, run_payload=run_p)
-                task_id, run_id = str(dispatched.get("task_id") or ""), str(dispatched.get("run_id") or "")
-            except Exception as exc:
-                log.warning("Research orchestrator dispatch error: %s", exc)
-        run_id = run_id or str(uuid.uuid4())
-        task_id = task_id or str(plan.get("task_id") or f"task-{run_id}")
+        r_url = resolve_orchestrator_base_url()
+        if not r_url:
+            raise self.bff_error(
+                503,
+                self._error_code("DEPENDENCY_UNAVAILABLE"),
+                "Research orchestrator service is not configured (missing PANTHEON_RESEARCH_ORCHESTRATOR_API_URL)",
+                plan_id,
+            )
+
+        routing = dispatch_stage.get("routing") or {}
+        stage_type = str(dispatch_stage.get("stage_type") or "")
+        preferred_backend = str(
+            routing.get("preferred_backend")
+            or ALLOWLISTED_STAGE_BACKENDS.get(stage_type)
+            or dispatch_stage.get("framework")
+            or dispatch_stage.get("backend")
+            or "stub"
+        ).strip().lower()
+        backend_mode = str(routing.get("backend_mode") or "real").strip().lower()
+
+        # Check unavailable environment flags and supported backends without downgrading
+        if (
+            os.getenv(f"AGORA_RESEARCH_{stage_type.upper()}_UNAVAILABLE") == "1"
+            or os.getenv(f"AGORA_RESEARCH_{preferred_backend.upper()}_UNAVAILABLE") == "1"
+        ):
+            raise self.bff_error(
+                503,
+                self._error_code("DEPENDENCY_UNAVAILABLE"),
+                f"Backend execution owner for stage '{stage_type}' ({preferred_backend}) is currently unavailable",
+                plan_id,
+            )
+
+        supported_real_backends = {"vectorbt", "statsmodels", "quantlib"}
+        if backend_mode in ("real", "simulation") and preferred_backend not in supported_real_backends and preferred_backend not in ("stub",):
+            raise self.bff_error(
+                503,
+                self._error_code("DEPENDENCY_UNAVAILABLE"),
+                f"Backend execution owner for stage '{stage_type}' ({preferred_backend}) is absent or not configured",
+                plan_id,
+            )
+
+        from services.control_plane.bff.agora.strategy_workshop.operations import (
+            WorkshopCanonicalOperations,
+            CanonicalOperationError,
+        )
+
+        actor = getattr(scope, "user_id", "operator") or "operator"
+        task_p = {
+            "title": plan.get("title") or f"Plan {plan_id}",
+            "objective": plan.get("objective") or f"Execution {plan_id}",
+            "source_refs": [
+                {"type": "research_plan", "id": plan_id},
+                {"type": "strategy", "id": plan.get("strategy_id")},
+            ],
+            "constraints": {"environment": "research"},
+            "actor_id": actor,
+            "idempotency_key": f"plan-task-{plan_id}",
+        }
+        run_p = {
+            "adapter": preferred_backend,
+            "requested_mode": backend_mode,
+            "dispatch_mode": backend_mode,
+            "input_refs": [
+                {"type": "research_plan", "id": plan_id},
+                {"type": "stage", "id": dispatch_stage["stage_id"]},
+            ],
+            "parameters": dispatch_stage.get("parameters") or {},
+            "actor_id": actor,
+            "idempotency_key": f"plan-run-{plan_id}-{dispatch_stage['stage_id']}",
+        }
+
+        try:
+            dispatched = WorkshopCanonicalOperations(research_base_url=r_url).dispatch_research_run(
+                task_payload=task_p,
+                run_payload=run_p,
+            )
+        except CanonicalOperationError as exc:
+            status_code = exc.status_code if exc.status_code and exc.status_code >= 400 else 503
+            raise self.bff_error(
+                status_code,
+                self._error_code("DEPENDENCY_UNAVAILABLE"),
+                f"Research orchestrator dispatch failed: {exc}",
+                plan_id,
+            ) from exc
+        except Exception as exc:
+            raise self.bff_error(
+                503,
+                self._error_code("DEPENDENCY_UNAVAILABLE"),
+                f"Research orchestrator dispatch error: {exc}",
+                plan_id,
+            ) from exc
+
+        task_obj = dispatched.get("task") if isinstance(dispatched.get("task"), dict) else {}
+        run_obj = dispatched.get("run") if isinstance(dispatched.get("run"), dict) else {}
+        task_id = str(task_obj.get("task_id") or task_obj.get("id") or dispatched.get("task_id") or "").strip()
+        run_id = str(run_obj.get("run_id") or run_obj.get("id") or dispatched.get("run_id") or "").strip()
+        if not task_id or not run_id:
+            raise self.bff_error(
+                502,
+                self._error_code("DEPENDENCY_UNAVAILABLE"),
+                "Authoritative research orchestrator returned invalid task or run IDs",
+                plan_id,
+            )
 
         run = _build_run_projection(
             plan=plan,
@@ -399,14 +489,13 @@ class AgoraResearchService:
         )
         run["task_id"] = task_id
         self.store.create_run(run)
-        if self.dispatcher is not None and hasattr(self.dispatcher, "create_outbox_record"):
-            self.dispatcher.create_outbox_record(plan=plan, stage=dispatch_stage, run_id=run_id, scope=scope, now=now)
         updated_stages = [
             {**s, "status": "queued"} if s["stage_id"] == dispatch_stage["stage_id"] else s
             for s in plan.get("stages", [])
         ]
         plan_run_ids = list(plan.get("run_ids") or [])
-        plan_run_ids.append(run_id)
+        if run_id not in plan_run_ids:
+            plan_run_ids.append(run_id)
         self.store.update_plan(
             plan_id,
             {
@@ -447,67 +536,178 @@ class AgoraResearchService:
         }
 
     def get_run(self, run_id: str, *, scope: Any) -> Optional[Dict[str, Any]]:
-        raw_run = self.store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
+        raw_run = self.store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id) if hasattr(self.store, "get_run") else None
+        r_url = resolve_orchestrator_base_url()
+        if r_url:
+            try:
+                from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
+                owner_run = WorkshopCanonicalOperations(research_base_url=r_url).get_research_run(run_id)
+                if owner_run and isinstance(owner_run, dict):
+                    owner_status = str(owner_run.get("status") or "").lower()
+                    status_map = {
+                        "completed": "succeeded",
+                        "failed": "failed",
+                        "rejected": "failed",
+                        "canceled": "cancelled",
+                        "cancelled": "cancelled",
+                    }
+                    mapped_status = status_map.get(owner_status, owner_status or "queued")
+                    mapped_outcome = "pass" if owner_status == "completed" else ("fail" if owner_status in ("failed", "rejected") else None)
+                    owner_user_id = str(owner_run.get("created_by") or owner_run.get("user_id") or "").strip()
+                    if owner_user_id and getattr(scope, "user_id", None) and owner_user_id != scope.user_id:
+                        return None
+
+                    if raw_run is None:
+                        plan_id = "plan-unknown"
+                        stage_id = "stage-unknown"
+                        for ref in owner_run.get("input_refs") or []:
+                            if isinstance(ref, dict):
+                                if ref.get("type") == "research_plan" and ref.get("id"):
+                                    plan_id = str(ref.get("id"))
+                                elif ref.get("type") == "stage" and ref.get("id"):
+                                    stage_id = str(ref.get("id"))
+                        st_type = owner_run.get("stage_type") or owner_run.get("adapter") or "prototype_backtest"
+                        ws_id = ""
+                        strat_id = ""
+                        reg_id = ""
+                        if self.store and hasattr(self.store, "get_plan") and plan_id != "plan-unknown":
+                            try:
+                                stored_plan = self.store.get_plan(plan_id)
+                                if stored_plan:
+                                    ws_id = stored_plan.get("workshop_id", "")
+                                    strat_id = stored_plan.get("strategy_id", "")
+                                    reg_id = stored_plan.get("strategy_spec_registry_id", "")
+                                    for stg in stored_plan.get("stages", []):
+                                        if stg.get("stage_id") == stage_id:
+                                            st_type = stg.get("stage_type") or st_type
+                                            break
+                            except Exception:
+                                pass
+                        raw_run = {
+                            "run_id": run_id,
+                            "task_id": owner_run.get("task_id") or f"task-{run_id}",
+                            "plan_id": plan_id,
+                            "stage_id": stage_id,
+                            "stage_type": st_type,
+                            "workshop_id": ws_id,
+                            "strategy_id": strat_id,
+                            "strategy_spec_registry_id": reg_id,
+                            "tenant_id": scope.tenant_id,
+                            "user_id": owner_user_id or scope.user_id,
+                            "execution_status": mapped_status,
+                            "outcome": mapped_outcome,
+                            "artifact_refs": owner_run.get("artifact_refs") or [],
+                            "metrics": owner_run.get("metrics") or [],
+                            "backend": {"mode": owner_run.get("requested_mode") or owner_run.get("dispatch_mode") or "real"},
+                            "provenance": owner_run.get("provenance") or "real",
+                            "created_at": owner_run.get("created_at") or self.utc_now(),
+                            "updated_at": owner_run.get("updated_at") or self.utc_now(),
+                        }
+                        if owner_run.get("receipt") and hasattr(self.store, "record_execution_receipt"):
+                            self.store.record_execution_receipt(owner_run["receipt"])
+                        if hasattr(self.store, "create_run"):
+                            self.store.create_run(raw_run)
+                    else:
+                        raw_run["execution_status"] = mapped_status
+                        raw_run["outcome"] = mapped_outcome
+                        if owner_run.get("artifact_refs"):
+                            raw_run["artifact_refs"] = owner_run["artifact_refs"]
+                        if owner_run.get("metrics"):
+                            raw_run["metrics"] = owner_run["metrics"]
+                        if owner_run.get("provenance"):
+                            raw_run["provenance"] = owner_run["provenance"]
+                            if isinstance(raw_run.get("backend"), dict):
+                                raw_run["backend"]["mode"] = owner_run["provenance"]
+                        if owner_run.get("receipt") and hasattr(self.store, "record_execution_receipt"):
+                            self.store.record_execution_receipt(owner_run["receipt"])
+                        if hasattr(self.store, "update_run"):
+                            self.store.update_run(run_id, raw_run, tenant_id=scope.tenant_id, user_id=scope.user_id)
+            except Exception as exc:
+                log.warning("Research orchestrator get_run readback error: %s", exc)
+
         if raw_run is None:
+            return None
+        if raw_run.get("user_id") and getattr(scope, "user_id", None) and raw_run.get("user_id") != scope.user_id:
+            return None
+        if raw_run.get("tenant_id") and getattr(scope, "tenant_id", None) and raw_run.get("tenant_id") != scope.tenant_id:
             return None
         return _run_projection_with_defaults(raw_run, store=self.store)
 
     def get_run_or_404(self, run_id: str, *, scope: Any) -> Dict[str, Any]:
-        raw_run = self.store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id) if hasattr(self.store, "get_run") else None
-        if raw_run is None or (raw_run.get("tenant_id") and raw_run.get("tenant_id") != scope.tenant_id) or (raw_run.get("user_id") and raw_run.get("user_id") != scope.user_id):
+        run = self.get_run(run_id, scope=scope)
+        if run is None or (run.get("tenant_id") and run.get("tenant_id") != scope.tenant_id) or (run.get("user_id") and run.get("user_id") != scope.user_id):
             raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), "Research run not found", run_id)
-        return raw_run
+        return run
 
     def cancel_run(self, run_id: str, *, scope: Any) -> Dict[str, Any]:
-        raw_run = self.store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
-        if raw_run is None:
+        raw_run = self.store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id) if hasattr(self.store, "get_run") else None
+        r_url = resolve_orchestrator_base_url()
+        if r_url:
+            try:
+                from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
+                WorkshopCanonicalOperations(research_base_url=r_url).cancel_research_run(run_id)
+            except Exception as exc:
+                log.warning("Research orchestrator cancel_run error: %s", exc)
+        if raw_run is None and not r_url:
             raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), f"Research run '{run_id}' not found", run_id)
-        cancellable_statuses = {"queued", "dispatching", "running"}
-        current = raw_run.get("execution_status")
-        if current not in cancellable_statuses:
-            raise self.bff_error(
-                409, self._error_code("RESOURCE_CONFLICT"),
-                f"Run in status '{current}' cannot be cancelled",
-                f"cancellable statuses: {sorted(cancellable_statuses)}",
-            )
         now = self.utc_now()
-        self.store.update_run(
-            run_id,
-            {
-                "execution_status": "cancelled",
-                "progress": {
-                    **raw_run.get("progress", {}),
-                    "phase": "cancelled",
-                    "message": "Run cancellation accepted",
+        if raw_run is not None:
+            cancellable_statuses = {"queued", "dispatching", "running"}
+            current = raw_run.get("execution_status")
+            if current not in cancellable_statuses:
+                raise self.bff_error(
+                    409, self._error_code("RESOURCE_CONFLICT"),
+                    f"Run in status '{current}' cannot be cancelled",
+                    f"cancellable statuses: {sorted(cancellable_statuses)}",
+                )
+            self.store.update_run(
+                run_id,
+                {
+                    "execution_status": "cancelled",
+                    "progress": {
+                        **raw_run.get("progress", {}),
+                        "phase": "cancelled",
+                        "message": "Run cancellation accepted",
+                        "updated_at": now,
+                    },
+                    "completed_at": now,
                     "updated_at": now,
                 },
-                "completed_at": now,
-                "updated_at": now,
-            },
-            tenant_id=scope.tenant_id,
-            user_id=scope.user_id,
-        )
-        publish_research_progress(
-            raw_run.get("workshop_id", ""),
-            run_id,
-            float(raw_run.get("progress", {}).get("percent", 0)),
-            "Run cancellation accepted",
-            phase="cancelled",
-            utc_now_fn=self.utc_now,
-        )
-        self.store.record_audit_action({
-            "action_type": "research_run.cancel",
-            "tenant_id": scope.tenant_id,
-            "user_id": scope.user_id,
-            "subject_type": "research_run",
-            "subject_id": run_id,
-        })
+                tenant_id=scope.tenant_id,
+                user_id=scope.user_id,
+            )
+            publish_research_progress(
+                raw_run.get("workshop_id", ""),
+                run_id,
+                float(raw_run.get("progress", {}).get("percent", 0)),
+                "Run cancellation accepted",
+                phase="cancelled",
+                utc_now_fn=self.utc_now,
+            )
+            self.store.record_audit_action({
+                "action_type": "research_run.cancel",
+                "tenant_id": scope.tenant_id,
+                "user_id": scope.user_id,
+                "subject_type": "research_run",
+                "subject_id": run_id,
+            })
         return {"run_id": run_id, "execution_status": "cancelled"}
 
     def get_run_artifacts(self, run_id: str, *, scope: Any) -> List[Dict[str, Any]]:
-        raw_run = self.store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
-        if raw_run is None:
+        raw_run = self.store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id) if hasattr(self.store, "get_run") else None
+        r_url = resolve_orchestrator_base_url()
+        if r_url:
+            try:
+                from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
+                owner_artifacts = WorkshopCanonicalOperations(research_base_url=r_url).get_research_artifacts(run_id)
+                if owner_artifacts:
+                    return owner_artifacts
+            except Exception as exc:
+                log.warning("Research orchestrator get_run_artifacts error: %s", exc)
+        if raw_run is None and not r_url:
             raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), f"Research run '{run_id}' not found", run_id)
+        if raw_run is None:
+            return []
         artifact_refs = raw_run.get("artifact_refs") or []
         evidence_refs = raw_run.get("evidence_refs") or []
         return (
