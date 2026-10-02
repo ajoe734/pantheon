@@ -3565,7 +3565,6 @@ def _command_response_dry_run_meta(idempotency_key: str) -> Dict[str, Any]:
             "replayed": False,
         },
     }
-_GOV_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 
 from .command_adapters.service import CommandAdapterService as _CommandAdapterService
 
@@ -3580,7 +3579,6 @@ _command_adapter_service = _CommandAdapterService(
     validators=_VALIDATORS,
     process_command_task=lambda cmd_id: _process_command_stub(cmd_id),
     check_read_surface_state=_check_read_surface_state,
-    gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
     publish_event=lambda event_type, data: _publish_event(
         _sse_buffers["audit"],
         _sse_subscribers["audit"],

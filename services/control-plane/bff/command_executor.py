@@ -50,9 +50,8 @@ def _internal_url(path: str) -> str:
     return f"{base}{path}"
 
 
-def _governance_url(path: str) -> str:
+def _evolution_url(path: str) -> str:
     base = _configured_base_url(
-        "PANTHEON_GOVERNANCE_API_URL",
         "PANTHEON_EVOLUTION_API_URL",
     )
     return f"{base}{path}"
@@ -790,7 +789,7 @@ def _execute_approve_evolution_decision(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch ApproveEvolutionDecision to the governance-owned evolution API."""
+    """Dispatch ApproveEvolutionDecision to the Evolution owner API."""
     decision_id = str(params.get("evolution_decision_id") or "").strip()
     approval_action = str(params.get("approval_action") or "").strip().lower()
     if not decision_id:
@@ -814,7 +813,7 @@ def _execute_approve_evolution_decision(
     if note:
         payload["note"] = note
 
-    url = _governance_url(f"/api/evolution/proposals/{decision_id}/{approval_action}")
+    url = _evolution_url(f"/api/evolution/proposals/{decision_id}/{approval_action}")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     return {
         "command_id": command_id,
@@ -830,7 +829,7 @@ def _execute_evolution_action(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch ExecuteEvolutionAction to the governance-owned evolution API."""
+    """Dispatch ExecuteEvolutionAction to the Evolution owner API."""
     decision_id = str(params.get("evolution_decision_id") or "").strip()
     if not decision_id:
         raise ValueError("ExecuteEvolutionAction requires evolution_decision_id.")
@@ -841,6 +840,8 @@ def _execute_evolution_action(
         "actor_role": _evolution_actor_role(actor_role),
     }
     for optional_key in (
+        "execution_receipt",
+        "tenant_id",
         "has_active_runtime",
         "active_binding_id",
         "freeze_mode",
@@ -855,7 +856,7 @@ def _execute_evolution_action(
     if note:
         payload["note"] = note
 
-    url = _governance_url(f"/api/evolution/proposals/{decision_id}/execute")
+    url = _evolution_url(f"/api/evolution/proposals/{decision_id}/execute")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     execution_result = body.get("execution_result") or {}
 
@@ -896,7 +897,7 @@ def _execute_approve_mutation(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch ApproveMutation to the governance-owned evolution API."""
+    """Dispatch ApproveMutation to the Evolution owner API."""
     decision_id = str(params.get("decision_id") or params.get("evolution_decision_id") or "").strip()
     if not decision_id:
         raise ValueError("ApproveMutation requires decision_id.")
@@ -913,7 +914,7 @@ def _execute_approve_mutation(
     if note:
         payload["note"] = note
 
-    url = _governance_url(f"/api/evolution/proposals/{decision_id}/approve")
+    url = _evolution_url(f"/api/evolution/proposals/{decision_id}/approve")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     committed_at = body.get("updated_at") or body.get("decided_at") or _utc_now()
     return {
@@ -932,7 +933,7 @@ def _execute_reject_mutation(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch RejectMutation to the governance-owned evolution API."""
+    """Dispatch RejectMutation to the Evolution owner API."""
     decision_id = str(params.get("decision_id") or params.get("evolution_decision_id") or "").strip()
     if not decision_id:
         raise ValueError("RejectMutation requires decision_id.")
@@ -949,7 +950,7 @@ def _execute_reject_mutation(
     if note:
         payload["note"] = note
 
-    url = _governance_url(f"/api/evolution/proposals/{decision_id}/reject")
+    url = _evolution_url(f"/api/evolution/proposals/{decision_id}/reject")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     committed_at = body.get("updated_at") or body.get("decided_at") or _utc_now()
     return {
@@ -968,7 +969,7 @@ def _execute_review_mutation(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch ReviewMutation to the governance-owned evolution API."""
+    """Dispatch ReviewMutation to the Evolution owner API."""
     decision_id = str(params.get("decision_id") or params.get("evolution_decision_id") or "").strip()
     if not decision_id:
         raise ValueError("ReviewMutation requires decision_id.")
@@ -986,7 +987,7 @@ def _execute_review_mutation(
     if note:
         payload["note"] = note
 
-    url = _governance_url(f"/api/evolution/proposals/{decision_id}/review")
+    url = _evolution_url(f"/api/evolution/proposals/{decision_id}/review")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     committed_at = body.get("updated_at") or body.get("decided_at") or _utc_now()
     return {
@@ -1005,7 +1006,7 @@ def _execute_execute_mutation(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch ExecuteMutation to the governance-owned evolution API."""
+    """Dispatch ExecuteMutation to the Evolution owner API."""
     decision_id = str(params.get("decision_id") or params.get("evolution_decision_id") or "").strip()
     if not decision_id:
         raise ValueError("ExecuteMutation requires decision_id.")
@@ -1016,6 +1017,8 @@ def _execute_execute_mutation(
         "actor_role": _evolution_actor_role(actor_role),
     }
     for optional_key in (
+        "execution_receipt",
+        "tenant_id",
         "has_active_runtime",
         "active_binding_id",
         "freeze_mode",
@@ -1030,7 +1033,7 @@ def _execute_execute_mutation(
     if note:
         payload["note"] = note
 
-    url = _governance_url(f"/api/evolution/proposals/{decision_id}/execute")
+    url = _evolution_url(f"/api/evolution/proposals/{decision_id}/execute")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     execution_result = body.get("execution_result") or {}
     committed_at = body.get("updated_at") or execution_result.get("executed_at") or _utc_now()

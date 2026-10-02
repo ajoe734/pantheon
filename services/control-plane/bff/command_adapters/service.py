@@ -337,10 +337,6 @@ class CommandAdapterService:
         self._process_command_task = process_command_task or (lambda cmd_id: _process_command_stub(cmd_id, command_store=self.command_store, read_store=self.read_store))
         self._submit_command_admission = submit_command_admission or self.submit_command_admission
 
-        self._gov_bff_idempotency: Dict[str, Dict[str, Any]] = (
-            gov_bff_idempotency if gov_bff_idempotency is not None else {}
-        )
-
     @property
     def command_store(self) -> Any:
         if self._get_command_store is not None:
@@ -847,6 +843,9 @@ class CommandAdapterService:
         payload: Dict[str, Any], identity: OperatorIdentity,
         idempotency_key: str, authorization: Optional[str] = None,
     ) -> JSONResponse:
+        payload = {**payload, "decision_id": target_id}
+        if action_id in {"reject", "rejected"}:
+            payload.setdefault("rejection_reason", payload.get("memo") or payload.get("reason"))
         return self.submit_resource_action(
             ObjectType.REVIEW, target_id, action_id, idempotency_key,
             identity, payload, CommandType.REVIEW_ACTION, authorization=authorization,
@@ -873,6 +872,8 @@ class CommandAdapterService:
         authorization: Optional[str] = None, action_id: Optional[str] = None,
     ) -> JSONResponse:
         """Translate resource routes into the canonical durable admission."""
+        from .retired import reject_retired_command
+        reject_retired_command(command_type.value)
         if command_type in {
             CommandType.CONFIRM_TOKEN_CREATE, CommandType.CONFIRM_TOKEN_REDEEM,
             CommandType.CONFIRM_TOKEN_DELETE,
@@ -1015,6 +1016,18 @@ class CommandAdapterService:
         data["deleted"] = True
         return JSONResponse(status_code=202, content=content)
 
+    def _existing_confirmation(self, key, request_hash, identity):
+        record = self.command_store.get_command_by_idempotency_key(
+            key, operator_id=identity.operator_id,
+        )
+        if record is None:
+            return None
+        stored_hash = (record.get("foundation") or {}).get("idempotency_record", {}).get("request_hash")
+        if stored_hash != request_hash:
+            raise self._raise_error(409, ErrorCode.IDEMPOTENCY_CONFLICT,
+                                    "Idempotency key conflict", "Use the original confirmation payload")
+        return record["params"]
+
     def submit_command_confirmation(
         self,
         payload: Dict[str, Any],
@@ -1055,23 +1068,13 @@ class CommandAdapterService:
             )
 
         req_hash = _stable_json_hash({"command_id": original_command_id, "confirm_token": confirm_token})
-        existing = self._gov_bff_idempotency.get(resolved_key)
-        if existing is not None:
-            if existing.get("request_hash") != req_hash:
-                raise self._raise_error(
-                    409,
-                    ErrorCode.IDEMPOTENCY_CONFLICT,
-                    "Idempotency key already used with a different payload",
-                    f"Key {resolved_key!r} is bound to a different confirmation request",
-                    precondition_failed="idempotency_conflict",
-                    suggestion="Use a new Idempotency-Key or resubmit the original confirmation unchanged",
-                )
-            return existing["result"]
+        existing = self._existing_confirmation(resolved_key, req_hash, identity)
 
-        self.raise_if_confirm_token_expired(confirm_token)
+        if existing is None:
+            self.raise_if_confirm_token_expired(confirm_token)
         staleness_warning = self.check_read_surface_state()
-        confirmation_id = str(uuid.uuid4())
-        confirmed_at = self._utc_now()
+        confirmation_id = existing["confirmation_id"] if existing else str(uuid.uuid4())
+        confirmed_at = existing["confirmed_at"] if existing else self._utc_now()
         self.record_command_confirmation_redeem(
             token_id=confirm_token,
             command_id=original_command_id,
@@ -1097,7 +1100,6 @@ class CommandAdapterService:
                 "read_surface_state": staleness_warning.read_surface_state,
                 "message": staleness_warning.message,
             }
-        self._gov_bff_idempotency[resolved_key] = {"request_hash": req_hash, "result": result}
         return result
 
     def get_command_confirmation_status(self, token: str, identity: OperatorIdentity) -> Dict[str, Any]:
@@ -1208,19 +1210,10 @@ class CommandAdapterService:
             )
 
         req_hash = _stable_json_hash({"command_id": command_id, "confirm_token": token})
-        existing = self._gov_bff_idempotency.get(resolved_key)
-        if existing is not None:
-            if existing.get("request_hash") != req_hash:
-                raise self._raise_error(
-                    409,
-                    ErrorCode.IDEMPOTENCY_CONFLICT,
-                    "Idempotency key already used with a different payload",
-                    f"Key {resolved_key!r} is bound to a different confirmation request",
-                    precondition_failed="idempotency_conflict",
-                    suggestion="Use a new Idempotency-Key or resubmit the original confirmation unchanged",
-                    correlation_id=correlation_id,
-                )
-            return existing["result"]
+        existing = self._existing_confirmation(resolved_key, req_hash, identity)
+        if existing:
+            confirmation_id = existing["confirmation_id"]
+            snapshot_at = existing["confirmed_at"]
 
         self.record_command_confirmation_redeem(
             token_id=token,
@@ -1260,7 +1253,6 @@ class CommandAdapterService:
                 "evidenceKind": "command.confirm",
             },
         }
-        self._gov_bff_idempotency[resolved_key] = {"request_hash": req_hash, "result": result}
         return result
 
     def submit_command_admission(
@@ -1932,4 +1924,3 @@ async def process_command(
 
 
 _process_command_stub = process_command
-

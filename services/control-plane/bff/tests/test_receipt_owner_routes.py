@@ -99,8 +99,9 @@ def owner(tmp_path, monkeypatch):
 
 @pytest.fixture
 def mounted(owner, tmp_path):
-    ports = create_read_surface_ports()
+    from services.control_plane.bff.bootstrap.dependencies import AppDependencies
     store = CommandStore(str(tmp_path / "commands.jsonl"))
+    ports = AppDependencies.create_default(command_store=store).read_surface
     svc = CommandAdapterService(command_store=store, read_surface=ports, extract_identity=identity)
     app = FastAPI()
     app.add_middleware(OwnerReadContextMiddleware)

@@ -1,10 +1,4 @@
-"""Capabilities, Tools, MCP Servers, and Skills Domain Command Adapter.
-
-Enforces strict production safety for capability actions:
-- Safe diagnostic actions (health_check, test_connection) execute live probes.
-- Unsafe runtime mutations (execute, publish, edit) fail closed with explicit
-  ActionUnavailableError rather than emitting generic admission success.
-"""
+"""Capabilities without a real probe or write owner are retired."""
 from __future__ import annotations
 
 import logging
@@ -34,14 +28,6 @@ class CapabilitiesCommandAdapter(DomainCommandAdapter):
         "mcpserver",
         "mcp-server",
         "skill",
-    }
-
-    _SAFE_PROBE_ACTIONS = {
-        "health_check",
-        "test_connection",
-        "probe",
-        "status",
-        "ping",
     }
 
     def can_handle(self, command_type: str, entity_type: str, action_id: str) -> bool:

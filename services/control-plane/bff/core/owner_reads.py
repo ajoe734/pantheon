@@ -3,7 +3,7 @@ from contextvars import ContextVar
 from typing import Optional
 
 from ..command_adapters.base import (
-    capital_url, deployment_url, evolution_url, http_request_json, internal_url,
+    capital_url, deployment_url, evolution_url, http_request_json, get_base_url,
 )
 from ..governance import approval_owner
 
@@ -62,7 +62,10 @@ def create_owner_domain_ports(persona_store=None, ranking_store=None):
             plans_provider=lambda: read_records(deployment_url, "/api/deployment/plans"),
         ),
         runtime_port=RuntimePort(
-            runtime_bindings_provider=lambda: read_records(internal_url, "/api/runtime-bindings", "bindings"),
+            runtime_bindings_provider=lambda: read_records(
+                lambda path: get_base_url("PANTHEON_RUNTIME_MANAGER_URL") + path,
+                "/api/runtime-bindings", "bindings",
+            ),
         ),
         ranking_port=RankingProjectionPort(
             rankings_reader=rankings,

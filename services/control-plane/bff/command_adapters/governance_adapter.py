@@ -72,6 +72,8 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        from .retired import reject_retired_command
+        reject_retired_command(command_type)
         action_id = str(params.get("action_id") or command_type or "").strip()
         entity_id = str(params.get("decision_id") or params.get("gate_id") or params.get("committee_id") or params.get("review_id") or params.get("entity_id") or "").strip()
 
@@ -165,21 +167,12 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
 
         from .retired import reject_retired_command
         reject_retired_command(action_name)
-        verb_map = {
-            "HumanGateApprove": "approve",
-            "HumanGateReject": "reject",
-            "HumanGateRequestMoreEvidence": "request-evidence",
-            "HumanGateRevoke": "revoke",
-            "HumanGateExtendTtl": "extend-ttl",
-        }
-        subpath = verb_map.get(action_name, action_name.lower().replace("humangate", ""))
+        subpath = "revoke"
         payload = {
             "command_id": command_id,
             "operator_id": params.get("operator_id") or params.get("actor_id") or "operator",
             "reason": params.get("reason") or f"Human gate {action_name}",
         }
-        if "additional_ttl_seconds" in params:
-            payload["additional_ttl_seconds"] = params["additional_ttl_seconds"]
 
         url = governance_url(f"/api/governance/human-gates/{quote(target_gate_id, safe='')}/{subpath}")
         body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
@@ -192,7 +185,7 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
             status=body.get("status") or "executed",
             dispatch_path=url,
             domain_receipt=body,
-            authoritative_readback={"gate_id": target_gate_id, "state": body.get("state") or subpath},
+            authoritative_readback=body,
             extra={"gate_id": target_gate_id},
         )
 
@@ -224,7 +217,7 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
             status=body.get("status") or "recorded",
             dispatch_path=url,
             domain_receipt=body,
-            authoritative_readback={"committee_id": target_committee_id, "status": "ratified"},
+            authoritative_readback=body,
             extra={"committee_id": target_committee_id},
         )
 

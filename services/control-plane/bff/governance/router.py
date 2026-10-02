@@ -270,9 +270,10 @@ def create_governance_router(
 
     def _paged(
         items: List[Dict[str, Any]], *, page_token: Optional[str], page_size: int, surface_key: str, dataset: str,
+        source: Optional[str] = None,
     ) -> Dict[str, Any]:
         snapshot_at = _now()
-        surface = _surface(dataset, snapshot_at=snapshot_at, source=_service().dataset_source(dataset))
+        surface = _surface(dataset, snapshot_at=snapshot_at, source=source or _service().dataset_source(dataset))
         page_items, next_token = ([], None) if surface.get("status") == "unavailable" else _page(items, page_token, page_size)
         meta = _snapshot(snapshot_at)
         surfaces = {surface_key: surface}
@@ -627,6 +628,7 @@ def create_governance_router(
             page_size=page_size,
             surface_key="governance_approval_queue",
             dataset="approval_queue_items",
+            source="service_client",
         )
         redacted_page, total_redacted = _redact_evidence_field_items(identity, response["items"])
         response["items"] = redacted_page
@@ -1021,10 +1023,10 @@ def create_governance_router(
         if any(v in {"requestrevision", "requestapprovalrevision", "requestchanges", "requestchange"} for v in candidates) or payload.get("revision_notes") or payload.get("revisionNotes"):
             _fail(410, "VALIDATION_FAILED", "RequestApprovalRevision is retired", "Use RejectDecision with notes", precondition_failed="retired_action")
         if any(payload.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
-            _fail(501, "NOT_IMPLEMENTED", "named stage approvals are unsupported", "Unsupported approval action", precondition_failed="unsupported_action")
+            _fail(410, "ACTION_RETIRED", "Named stage approvals have no owner; use /bff/approvals/{decision_id}/decide", "Unsupported approval action", precondition_failed="unsupported_action")
         unsupported = [v for v in candidates if v not in {"approve", "approved", "reject", "rejected", "approvedwithconditions", "approvewithconditions"}]
         if unsupported:
-            _fail(501, "NOT_IMPLEMENTED", f"approval action {unsupported[0]!r} has no Governance owner transition", "Unsupported approval action", precondition_failed="unsupported_action")
+            _fail(410, "ACTION_RETIRED", f"approval action {unsupported[0]!r} has no owner; use /bff/approvals/{{decision_id}}/decide", "Unsupported approval action", precondition_failed="unsupported_action")
         app_c = [v for v in candidates if v in {"approve", "approved", "approvedwithconditions", "approvewithconditions"}]
         rej_c = [v for v in candidates if v in {"reject", "rejected"}]
         if app_c and rej_c:
@@ -1033,7 +1035,7 @@ def create_governance_router(
         clean_id = review_id.strip()
         params = dict(payload)
         params["decision"] = vote_verb
-        key = _idempotency_key(idempotency_key, x_idempotency_key, required=False)
+        key = _idempotency_key(idempotency_key, x_idempotency_key, required=True)
         return await _service().submit_governance_action(
             action_kind="review", target_id=clean_id, action_id=vote_verb,
             payload=params, identity=identity, idempotency_key=key,

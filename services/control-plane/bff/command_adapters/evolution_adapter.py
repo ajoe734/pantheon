@@ -18,7 +18,6 @@ from .base import (
     DomainCommandAdapter,
     build_domain_receipt,
     evolution_url,
-    governance_url,
     http_request_json as _base_http_request_json,
     utc_now,
 )
@@ -148,7 +147,7 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
         if "approval_decision_id" in params:
             payload["approval_decision_id"] = params["approval_decision_id"]
 
-        url = governance_url(f"/api/evolution/proposals/{quote(target_id, safe='')}/{subpath}")
+        url = evolution_url(f"/api/evolution/proposals/{quote(target_id, safe='')}/{subpath}")
         body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
 
         return build_domain_receipt(
@@ -159,7 +158,7 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
             status=body.get("decision_state") or subpath,
             dispatch_path=url,
             domain_receipt=body,
-            authoritative_readback={"decision_id": target_id, "decision_state": body.get("decision_state") or subpath},
+            authoritative_readback=body,
             extra={
                 "evolution_decision_id": target_id,
                 "decision_state": body.get("decision_state"),
@@ -184,7 +183,12 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
             "actor_role": "operator",
             "note": params.get("note") or params.get("rationale") or "Operator execute mutation",
         }
-        url = governance_url(f"/api/evolution/proposals/{quote(target_id, safe='')}/execute")
+        for key in ("execution_receipt", "tenant_id", "has_active_runtime", "active_binding_id",
+                    "freeze_mode", "rollback_action_type", "fallback_artifact_id",
+                    "fallback_artifact_version", "force_stage_freeze"):
+            if key in params:
+                payload[key] = params[key]
+        url = evolution_url(f"/api/evolution/proposals/{quote(target_id, safe='')}/execute")
         body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
 
         return build_domain_receipt(
@@ -195,7 +199,7 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
             status=body.get("decision_state") or "executed",
             dispatch_path=url,
             domain_receipt=body,
-            authoritative_readback={"decision_id": target_id, "decision_state": body.get("decision_state") or "executed"},
+            authoritative_readback=body,
             extra={
                 "evolution_decision_id": target_id,
                 "execution_result": body.get("execution_result"),
