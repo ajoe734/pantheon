@@ -1,0 +1,116 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "CAPITAL-READER-AUTH-CORRECTIVE-001",
+  "title": "Let deployment authority read Capital without widening write access",
+  "owner": "Claude",
+  "reviewer": "Codex2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "corrective",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "3add1c08ba7baada51d6e12ff5563cb317974d90",
+  "delivery_branch": "task/CAPITAL-READER-AUTH-CORRECTIVE-001-v2",
+  "continuation_of": {
+    "pr": 6089,
+    "fleet_head": "259f6d2f6ee5abfa2dbba23d5439687b78d898c3",
+    "reason": "Unused clean continuation: the published task branch was rewritten twice and its subjects exceeded 72 characters; this branch carries the complete task diff without rewriting history."
+  },
+  "scope": {
+    "owned": [
+      "Establish CAPITAL_ALLOWED_READER_SERVICES in services/capital/inbound_authority.py for GET/HEAD reads while preserving CAPITAL_ALLOWED_CALLER_SERVICES for mutations",
+      "Pass request method in services/capital/main.py inbound middleware without altering concurrent BFF-CAPITAL-FORWARD-002 changes",
+      "Wire capital read authorization headers (X-Pantheon-Service, Authorization: Bearer, X-Tenant-Id) in services/runtime-manager/deploy_authority.py and ensure capital_fetch defaults strictly to authenticated Capital transport without falling back to unauthenticated deployment generic fetch_json",
+      "Add RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN and DEPLOYMENT_CAPITAL_SERVICE_TOKEN to READERS in scripts/issue_dev_paper_principals.py and compose environment in docker-compose.yml",
+      "Regression test coverage in services/capital/test_reader_authority.py, services/runtime-manager/test_deploy_authority.py, services/runtime-manager/test_paper_scope_deploy_authority.py, and scripts/test_issue_dev_paper_principals.py",
+      "Contract documentation update in services/capital/contract.md"
+    ],
+    "not_changing": [
+      "Mutation authority (POST, PUT, PATCH, DELETE) remains strictly limited to CAPITAL_ALLOWED_CALLER_SERVICES (control-plane-bff)",
+      "Tenant isolation: cross-tenant and missing-tenant requests remain strictly rejected with 403/400",
+      "No changes to production JSON storage models, risk policy evaluation, or trading engine runtime"
+    ],
+    "composes_with": [
+      "CAPITAL-TENANT-COLUMN-001 tenant-scoping baseline",
+      "BFF-CAPITAL-FORWARD-002 concurrent main.py modifications"
+    ]
+  },
+  "failure_reproduction": {
+    "case": "Dev root deploy run 36941309903 (BE 3d21f1f9d / FE 638c809b) failed at the paper baseline and auto-rolled back. Read-only DB evidence: bff.persona_provisioning persona-0f94f05389a7e092b469 terminal_reason=deployment_saga_failed; saga note: deploy authority rejected: authoritative read http://capital:8092/api/capital-pools/pool-persona-paper-... returned HTTP 400. Since #6032 (0eed84e49) every Capital /api/ route authenticates, while deploy_authority read Capital through a header-less fetch (400 TENANT_REQUIRED).",
+    "review_findings_addressed": [
+      "PR 6089 c632daeec P1: production outbox caller passed fetch_json and bypassed authenticated Capital reads -> capital reads now use capital_fetch_json or the authenticated default only.",
+      "PR 6089 2bf2fcf90 P1: promotion and TW paper activation contracts failed with 'Capital scoped read principal required' -> promotion_authority forwards capital_fetch_json and both contracts inject their Capital double explicitly; no function-name based fallback.",
+      "PR 6089 2bf2fcf90 P2: commit subjects over 72 characters -> new continuation commits use compliant subjects; published history untouched.",
+      "Coordinator note: no borrowed principal -> PANTHEON_DEPLOYMENT_SERVICE_TOKEN / PANTHEON_CAPITAL_SERVICE_TOKEN fallbacks removed; test_capital_reads_never_borrow_the_deployment_principal."
+    ]
+  },
+  "implementation": {
+    "inbound_authority": "authenticate_capital_request accepts method parameter (defaults to POST); for GET/HEAD methods, allowed_services is resolved from CAPITAL_ALLOWED_READER_SERVICES (falling back to CAPITAL_ALLOWED_CALLER_SERVICES / control-plane-bff); mutations continue to strictly require CAPITAL_ALLOWED_CALLER_SERVICES.",
+    "deploy_authority": "_capital_request_headers(tenant_id) uses only the scoped reader principal RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN or DEPLOYMENT_CAPITAL_SERVICE_TOKEN (env or _FILE via configured_service_token) and raises DeployAuthorityUnavailableError otherwise. capital_fetch is capital_fetch_json when injected, else the authenticated default; the caller's generic fetch_json is never used for Capital.",
+    "promotion_authority": "verify_promotion_authorities accepts and forwards capital_fetch_json.",
+    "credentials": "Added RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN and DEPLOYMENT_CAPITAL_SERVICE_TOKEN under READERS for service runtime-manager with role capital-reader in scripts/issue_dev_paper_principals.py and wired to compose services in docker-compose.yml. Fix for review P1: services.deployment.environment now carries DEPLOYMENT_CAPITAL_SERVICE_TOKEN and _FILE so the compose renewal contract passes.",
+    "known_followup": "deployment-outbox-consumer presents the runtime-manager reader identity (non-blocking coordinator note on PR 6089); a dedicated reader principal can follow separately."
+  },
+  "verification": {
+    "passed": [
+      {
+        "command": "PYTHONDONTWRITEBYTECODE=1 /tmp/clean-bff-venv/bin/python -m pytest -q -p no:cacheprovider services/capital/ services/runtime-manager/test_deploy_authority.py services/runtime-manager/test_paper_scope_deploy_authority.py services/runtime-manager/test_promotion_authority.py services/runtime-manager/test_p0_tw_paper_activate_authority_contract.py services/deployment/test_outbox_consumer_worker.py services/deployment/test_l12_mfc_r4_deploy_001_contract.py scripts/test_issue_dev_paper_principals.py scripts/test_dev_paper_principal_renewal.py",
+        "result": "386 passed, 2 failed (baseline, see below) in 113.89s; exit 1 only from the two baseline failures"
+      },
+      {
+        "command": "PYTHONDONTWRITEBYTECODE=1 /tmp/clean-bff-venv/bin/python -m pytest -q -p no:cacheprovider services/runtime-manager/test_deploy_authority.py",
+        "result": "40 passed in 8.46s, exit 0"
+      },
+      {
+        "command": "python3 scripts/git/diff_budget.py --base 3add1c08ba7baada51d6e12ff5563cb317974d90 --head HEAD --change-class corrective --budget 60",
+        "result": "production +57/-6 net +51 <= 60; test +593/-11 net +582; docs/evidence counted separately"
+      },
+      {
+        "command": "python3 scripts/git/check_commit_trailers.py --range 3add1c08ba7baada51d6e12ff5563cb317974d90..HEAD --task-id CAPITAL-READER-AUTH-CORRECTIVE-001",
+        "result": "exit 0"
+      },
+      {
+        "command": "git diff --cached --check",
+        "result": "clean"
+      },
+      {
+        "command": "pytest -q scripts/test_dev_paper_principal_renewal.py scripts/test_issue_dev_paper_principals.py",
+        "result": "48 passed in 8.04s, exit 0"
+      }
+    ],
+    "baseline_failures": [
+      {
+        "test": "services/deployment/test_l12_mfc_r4_deploy_001_contract.py::test_verify_deploy_authorities_end_to_end_identity_exactness",
+        "reason": "DeployAuthorityUnavailableError: Registry scoped read principal required",
+        "identical_on_base": "3add1c08ba7baada51d6e12ff5563cb317974d90"
+      },
+      {
+        "test": "services/deployment/test_l12_mfc_r4_deploy_001_contract.py::test_verify_deploy_authorities_fails_on_unapproved_or_mismatched_approval",
+        "reason": "Regex pattern did not match: 'Registry scoped read principal required'",
+        "identical_on_base": "3add1c08ba7baada51d6e12ff5563cb317974d90"
+      }
+    ],
+    "not_claimed": "No hosted verification; the next root deployment through nonprod-deploy.yml is the hosted check.",
+    "runner": {
+      "python": "/tmp/clean-bff-venv (3.12)"
+    },
+    "checksums": {
+      "docker-compose.yml": "28e8bee2d948cae7225a9a551ea682c08191bc0b63f69efb442f62f8f28ee92e",
+      "scripts/issue_dev_paper_principals.py": "5d38e144308fa6992b9aa6ba219d50383e29b6b1ff4212c3e93b21c4094685aa",
+      "scripts/test_issue_dev_paper_principals.py": "efd67dfd9057a2e8d856aeff3696d271da975f350284d56d99620b5eb1c8b84e",
+      "services/capital/contract.md": "bb2ba53f75976f1002b08a45f39db377ef756d68f582b59d4fe1b49a22705bfa",
+      "services/capital/inbound_authority.py": "3a7e54f5d7838477de1cc4513210c626b78643d32a8700b601fae4c0ef743bb0",
+      "services/capital/main.py": "eb1bab543062f348748712f950035f40c989db4e66b32143cd6156ccebcd62df",
+      "services/capital/test_reader_authority.py": "40793f60d356831fb9495a9cba3b08e484c1463b9f2f011c34e2e9552a7219ca",
+      "services/runtime-manager/deploy_authority.py": "1e0e640eb69e359ef20791e7f745120e54d3b69dd8a175e2a005c3857f5a0698",
+      "services/runtime-manager/promotion_authority.py": "21efd467613c2651b6cb5ee0d28d62895fca4b7a71b6e58021b2d106654c3369",
+      "services/runtime-manager/test_deploy_authority.py": "2218a85bb95540de094c941435b4ba2c95f760df23eb2268306092304311e3f1",
+      "services/runtime-manager/test_p0_tw_paper_activate_authority_contract.py": "3014e35e73d36f6bac3af33f10d83f5e54a71176d691b42b899c8b406058e820",
+      "services/runtime-manager/test_paper_scope_deploy_authority.py": "51bc76f02efddc4b744f3ad269dfcf0f39bf26e8d6b9a5c564a65f5d2b99fed7",
+      "services/runtime-manager/test_promotion_authority.py": "2381199fa6b18425990f61b3fbc97c64843ba24a322d39a77485d671a532ca2d"
+    }
+  },
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Codex2",
+    "note": "Verify read/write authority separation, scoped reader principal with no borrowed fallback, explicit capital_fetch_json threading for promotion and contracts, tenant isolation unchanged, budget <= 60, and the two L12 baseline failures."
+  }
+}
