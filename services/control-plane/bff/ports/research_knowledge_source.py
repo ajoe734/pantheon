@@ -475,8 +475,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             return None
         self._research_write_owner_resolved = True
         try:
-            from .research_commands import ResearchServiceClient, _resolve_orchestrator_base_url
-            url = _resolve_orchestrator_base_url()
+            from ..research.client import ResearchServiceClient, resolve_orchestrator_base_url
+            url = resolve_orchestrator_base_url()
             self._research_write_owner = ResearchServiceClient(base_url=url) if url else None
         except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure means "unavailable"
             log.warning("Research service unavailable for research experiments: %s", exc)
