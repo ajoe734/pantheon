@@ -1,0 +1,78 @@
+{
+  "task_id": "DEV-READINESS-RECOVERY-20261002",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "title": "Repair the evidenced nonprod readiness failure without bypassing gates",
+  "timestamp": "2026-10-02T13:58:30Z",
+  "summary": "Diagnosed terminal failure in Actions run 37006617043 during nonprod dev VM deployment under shared environment lease. Bound the actual failing check to verify_exact_component_deployment in scripts/deploy_nonprod_vm.sh where component paper-signal-producer was reported unhealthy. Discovered root cause: 9 legacy paper bindings on dev VM failed artifact loading due to schema mismatch ('lineage.source_dataset_refs: None is not of type array'). Reproduced in isolated process. Preserved strict gates and exact-artifact compensation. Added failure and recovery regression tests in scripts/test_deploy_nonprod_vm.py. Formulated specific evidence-backed coordinator action for dev VM database binding retirement.",
+  "inspected_run": {
+    "run_id": "37006617043",
+    "workflow": "dev Pantheon Nonprod Deploy",
+    "job_id": "110836290615",
+    "failing_step": "Deploy dev VM stack under lease",
+    "failing_check": "verify_exact_component_deployment (scripts/deploy_nonprod_vm.sh:3920)",
+    "terminal_error": "[remote-deploy] required component(s) unhealthy or unknown: paper-signal-producer: health=unhealthy",
+    "exit_code": 75,
+    "compensation_action": "Sealed exact-artifact BFF restore succeeded and verified, safely reverting to prior baseline without activating candidate pair."
+  },
+  "failing_component": {
+    "service": "paper-signal-producer",
+    "status": "running",
+    "restart_count": 0,
+    "health": "unhealthy",
+    "exit_code": 0,
+    "oom_killed": false
+  },
+  "root_cause_analysis": {
+    "mechanism": "paper-signal-producer discovered 9 active paper bindings from runtime-manager (rb-8b36da8734534f298923e6fbb5f3eea7, rb-e3eafebeda57401b8ecdac6481e09fe7, rb-40419c598d5c436f9a735b3b7c5ccdf3, rb-9572f7b0cf9745c29ddafdc03cde136e, rb-b1f9532ba83043a3a8ef39ea95711f31, rb-8794cd13cdd649febc55c9957f0b3ba4, rb-d3a8e143ed464a40a7d26511c962c622, rb-69bfc2859ff14ff88a5006c78dcc4999, rb-30092281a9294185928793fd8d31761e). Each binding failed artifact loading with: 'Metadata schema validation failed at lineage.source_dataset_refs: None is not of type array'. The schema services/registry/lineage/promoted_artifact_metadata.schema.json requires lineage.source_dataset_refs to be an array, rejecting null. All 9 bindings degraded, setting health status to 'degraded'. check_worker_health in services/worker_health.py failed (exit 1) because status != 'ok', marking the container unhealthy.",
+    "classification": "Hosted configuration defect. The dev VM runtime-manager database and Object Store contain 9 historical legacy paper bindings from 2026-09-13 whose metadata carries source_dataset_refs: null."
+  },
+  "disproven_hypotheses": [
+    {
+      "observation": "curl connection failure to 127.0.0.1:18789 and subsequent HTTP 503",
+      "disproof": "Transient polling checks during scripts/openclaw-configure-shared-model-pool.sh while the gateway restarted after model-pool configuration. Both openclaw-gateway (port 18789) and openclaw-gateway-adapter (port 18104) were healthy (Up and healthy) prior to post-up verification gates."
+    },
+    {
+      "observation": "Historical snapshot failure from older run 36954831846",
+      "disproof": "source-ingest was healthy and returned HTTP 200 OK for /api/source-ingest/snapshots/latest?symbol=SPY across all requests in run 37006617043."
+    }
+  ],
+  "isolated_reproduction": {
+    "schema": "services/registry/lineage/promoted_artifact_metadata.schema.json",
+    "validator": "jsonschema.Draft7Validator",
+    "input_sample": {
+      "registry_id": "art-test-001",
+      "strategy_id": "strat-test-001",
+      "version": "1.0.0",
+      "artifact_type": "strategy_spec",
+      "checksum": "abcdef0123456789",
+      "created_at": "2026-09-13T00:00:00Z",
+      "lineage": {
+        "source_dataset_refs": null
+      }
+    },
+    "reproduced_error": "Metadata schema validation failed at lineage.source_dataset_refs: None is not of type 'array'"
+  },
+  "regressions": {
+    "file": "scripts/test_deploy_nonprod_vm.py",
+    "tests": [
+      "test_verify_exact_component_deployment_paper_signal_producer_unhealthy_prevents_activation",
+      "test_verify_exact_component_deployment_paper_signal_producer_healthy_admits_pair"
+    ],
+    "guarantees": [
+      "Unhealthy paper-signal-producer immediately fails closed, records verification failure in backend-components-receipt.json, and allows compensation restore rather than activating candidate pair.",
+      "Healthy paper-signal-producer passes gate, produces verified backend components receipt with status=passed and all_passed=true, admitting candidate pair."
+    ]
+  },
+  "coordinator_action_required": {
+    "actor": "Human/Ops",
+    "action": "Retire or clean up the 9 stale paper bindings on the dev VM via runtime-manager API (/api/runtime-bindings/<binding_id>/retire) or database cleanup so paper-signal-producer only discovers valid active paper bindings (or zero active bindings, which produces status: ok); alternatively, execute deployment with BOOTSTRAP_EMPTY_HOST=true with predecessor pair."
+  },
+  "verification": {
+    "test_deploy_nonprod_vm": "46 passed, 2 skipped",
+    "test_deploy_nonprod_bootstrap_contract": "65 passed",
+    "test_deploy_nonprod_artifact_restore": "48 passed",
+    "test_openclaw_credential_probe": "6 passed",
+    "services_openclaw_gateway_adapter": "570 passed, 4 skipped"
+  }
+}

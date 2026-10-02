@@ -744,6 +744,179 @@ verify_exact_component_deployment agora-interaction-worker
     assert "required component(s) unhealthy" in proc.stderr or "mismatched image revision" in proc.stderr
 
 
+def test_verify_exact_component_deployment_paper_signal_producer_unhealthy_prevents_activation(
+    tmp_path: Path,
+) -> None:
+    """DEV-READINESS-RECOVERY-20261002 regression: unhealthy paper-signal-producer fails closed before activation."""
+    import os
+
+    func_def = _extract_verify_exact_component_deployment_func()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    mock_docker = bin_dir / "docker"
+    mock_docker.write_text(
+        """#!/usr/bin/env bash
+if [[ "$1" == "compose" ]]; then
+  if [[ " $* " == *" images -q "* ]]; then
+    echo "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  else
+    echo "cid_paper_1"
+  fi
+elif [[ "$1" == "inspect" ]]; then
+  fmt="$3"
+  if [[ "$fmt" == "{{.State.Status}}" ]]; then
+    echo "running"
+  elif [[ "$fmt" == "{{.RestartCount}}" ]]; then
+    echo "0"
+  elif [[ "$fmt" == *"{{.State.Health.Status}}"* ]]; then
+    echo "unhealthy"
+  elif [[ "$fmt" == "{{.Config.Image}}" ]]; then
+    echo "pantheon-paper-signal-producer:latest"
+  elif [[ "$fmt" == "{{.Image}}" ]]; then
+    echo "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  elif [[ "$fmt" == *"org.opencontainers.image.revision"* ]]; then
+    echo "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+  elif [[ "$fmt" == *"{{json .Config.Cmd}}"* ]]; then
+    echo '["python", "-m", "services.execution.lean_runtime.paper_signal_producer"]'
+  fi
+fi
+""",
+        encoding="utf-8",
+    )
+    mock_docker.chmod(0o755)
+    _write_mock_git(bin_dir, "7a9674ea259bbac883e42f3ee217b3e8f68170fe")
+
+    receipt_path = tmp_path / "backend-components-receipt.json"
+    rollback_marker = tmp_path / "rollback-called"
+    runner_script = tmp_path / "run_verifier_paper_unhealthy.sh"
+    runner_script.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{func_def}
+
+export PATH="{bin_dir}:$PATH"
+export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
+export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
+export GIT_SHA="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+
+verify_exact_component_deployment paper-signal-producer || printf 'rollback\\n' >"{rollback_marker}"
+""",
+        encoding="utf-8",
+    )
+    runner_script.chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+
+    proc = subprocess.run(
+        ["bash", str(runner_script)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert proc.returncode == 0
+    assert (tmp_path / "rollback-called").exists(), "unhealthy paper-signal-producer must trigger rollback handler"
+    assert "required component(s) unhealthy or unknown: paper-signal-producer: health=unhealthy" in proc.stderr
+    assert receipt_path.exists()
+    receipt_data = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt_data["status"] == "failed"
+    assert receipt_data["all_passed"] is False
+    assert "paper-signal-producer: health=unhealthy" in receipt_data["verification_failures"]["unhealthy"]
+
+
+def test_verify_exact_component_deployment_paper_signal_producer_healthy_admits_pair(
+    tmp_path: Path,
+) -> None:
+    """DEV-READINESS-RECOVERY-20261002 recovery regression: healthy paper-signal-producer passes gate and generates verified receipt."""
+    import os
+
+    func_def = _extract_verify_exact_component_deployment_func()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    mock_docker = bin_dir / "docker"
+    mock_docker.write_text(
+        """#!/usr/bin/env bash
+if [[ "$1" == "compose" ]]; then
+  if [[ " $* " == *" images -q "* ]]; then
+    echo "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  else
+    echo "cid_paper_1"
+  fi
+elif [[ "$1" == "inspect" ]]; then
+  fmt="$3"
+  if [[ "$fmt" == "{{.State.Status}}" ]]; then
+    echo "running"
+  elif [[ "$fmt" == "{{.RestartCount}}" ]]; then
+    echo "0"
+  elif [[ "$fmt" == *"{{.State.Health.Status}}"* ]]; then
+    echo "healthy"
+  elif [[ "$fmt" == "{{.Config.Image}}" ]]; then
+    echo "pantheon-paper-signal-producer:latest"
+  elif [[ "$fmt" == "{{.Image}}" ]]; then
+    echo "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  elif [[ "$fmt" == *"org.opencontainers.image.revision"* ]]; then
+    echo "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+  elif [[ "$fmt" == *"{{json .Config.Cmd}}"* ]]; then
+    echo '["python", "-m", "services.execution.lean_runtime.paper_signal_producer"]'
+  fi
+fi
+""",
+        encoding="utf-8",
+    )
+    mock_docker.chmod(0o755)
+    _write_mock_git(bin_dir, "7a9674ea259bbac883e42f3ee217b3e8f68170fe")
+
+    receipt_path = tmp_path / "backend-components-receipt.json"
+    rollback_marker = tmp_path / "rollback-called"
+    runner_script = tmp_path / "run_verifier_paper_healthy.sh"
+    runner_script.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{func_def}
+
+export PATH="{bin_dir}:$PATH"
+export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
+export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
+export GIT_SHA="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+
+verify_exact_component_deployment paper-signal-producer || printf 'rollback\\n' >"{rollback_marker}"
+""",
+        encoding="utf-8",
+    )
+    runner_script.chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+
+    proc = subprocess.run(
+        ["bash", str(runner_script)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert proc.returncode == 0
+    assert not (tmp_path / "rollback-called").exists(), "healthy paper-signal-producer must not trigger rollback"
+    assert "backend component receipt written atomically" in proc.stdout
+    assert receipt_path.exists()
+    receipt_data = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt_data["status"] == "passed"
+    assert receipt_data["all_passed"] is True
+    assert "paper-signal-producer" in receipt_data["services"]
+    comp = receipt_data["services"]["paper-signal-producer"]
+    assert comp["health"] == "healthy"
+    assert comp["status"] == "running"
+
+
 def test_verify_exact_component_receipt_write_failure_reaches_rollback_caller(
     tmp_path: Path,
 ) -> None:
