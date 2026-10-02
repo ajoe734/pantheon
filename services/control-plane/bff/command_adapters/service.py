@@ -885,6 +885,10 @@ class CommandAdapterService:
                 server_generated_target=server_generated_target, terminal_on_persist=True,
             )
         _reject_body_idempotency_key(payload)
+        if authorization is None:
+            # Legacy resource handlers already authenticate this same request.
+            from ..core.owner_reads import authorization as request_authorization
+            authorization = request_authorization.get()
         background = BackgroundTasks()
         if server_generated_target:
             # Stable across replay; the owner still allocates its own resource identity.
@@ -1388,12 +1392,11 @@ class CommandAdapterService:
             raise foundation_bff_error(exc, foundation_context=foundation_context) from exc
 
         stored_params = stored_command_params(cmd, identity, payload)
-        tenant_id = identity.claims.get("tenant_id")
-        asserted_tenant = stored_params.get("tenant_id")
-        if asserted_tenant and asserted_tenant != tenant_id:
-            raise self._raise_error(403, ErrorCode.FORBIDDEN, "Tenant mismatch", "Use the authenticated tenant")
+        claims = getattr(identity, "claims", None) or {}
+        tenant_id = claims.get("tenant_id") or claims.get("tenantId") or claims.get("tid")
         if tenant_id:
-            stored_params["tenant_id"] = tenant_id
+            # Preserve an explicit scope assertion for the owner to authorize.
+            stored_params.setdefault("tenant_id", tenant_id)
         stored_params["idempotency_key"] = resolved_key
         stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
         canonicalize_validated_precondition_evidence(

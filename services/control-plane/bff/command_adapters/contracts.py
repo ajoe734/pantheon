@@ -623,9 +623,9 @@ def build_foundation_command_context(
         runtime_id=cmd.target.id if cmd.target.type == ObjectType.RUNTIME else None,
         attributes=route_metadata,
     )
-    tenant_id = None
+    claims = getattr(identity, "claims", None) or {}
+    tenant_id = str(claims.get("tenant_id") or claims.get("tenantId") or claims.get("tid") or "").strip()
     if cmd.command == CommandType.ADVANCE_LIFECYCLE:
-        tenant_id = str(identity.claims.get("tenant_id") or "").strip()
         if not tenant_id:
             raise _bff_error(
                 403, ErrorCode.FORBIDDEN, "Authenticated tenant required",

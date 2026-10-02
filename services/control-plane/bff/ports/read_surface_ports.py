@@ -493,7 +493,8 @@ class ReadSurfacePorts:
         }
         if dataset in owner_ports:
             status = owner_ports[dataset].get_surface_status()
-            return "missing" if status["status"] == "unavailable" else status["source"]
+            source = status.get("bindings_source") if dataset in {"bindings", "persona_bindings"} else status["source"]
+            return "missing" if source in {None, "missing", "unavailable"} else source
         if dataset in {"rankings", "ranking_formulas", "rebalances", "capital_allocations", "containments", "evolution_programs", "evolution_decisions"}:
             port = self.persona_capital_runtime.evolution if dataset.startswith("evolution_") else self.persona_capital_runtime.ranking
             status = port.get_surface_status()["surfaces"][dataset]
@@ -1316,6 +1317,7 @@ def create_read_surface_ports(
     operations_consultation: Optional[OperationsConsultationPort] = None,
     persona_capital_runtime: Optional[Union[CompositePersonaCapitalRuntimePort, PersonaCapitalRuntimeDomainPort]] = None,
     persona_registry_store: Optional[Any] = None,
+    ranking_store: Optional[Any] = None,
     ooda_management: Optional[OodaManagementDomainPort] = None,
     research_knowledge_source: Optional[ResearchKnowledgeSourcePort] = None,
     lifecycle_telemetry_governance: Optional[CompositeLifecycleTelemetryGovernancePort] = None,
@@ -1330,7 +1332,7 @@ def create_read_surface_ports(
     from ..core.owner_reads import approval_records, create_owner_domain_ports
     if persona_capital_runtime is None:
         persona_capital_runtime = create_owner_domain_ports(
-            persona_registry_store, kwargs.get("ranking_store"),
+            persona_registry_store, ranking_store,
         )
     if ooda_management is None:
         ooda_management = OodaManagementDomainPort(review_queue_port=ManagementReviewQueuePort(

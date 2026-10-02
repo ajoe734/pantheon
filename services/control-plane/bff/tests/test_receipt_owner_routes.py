@@ -32,7 +32,7 @@ def owner(tmp_path, monkeypatch):
     state = tmp_path / "owner.json"
     state.write_text(json.dumps({"plans": {}, "programs": {
         "program-a": {"program_id": "program-a", "status": "active", "tenant_id": "tenant-a"},
-    }, "writes": 0}))
+    }, "proposals": {"proposal-a": {"decision_id": "proposal-a", "decision_state": "approved", "tenant_id": "tenant-a"}}, "gates": {}, "writes": 0}))
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -49,6 +49,8 @@ def owner(tmp_path, monkeypatch):
                     return self.send_json(200, [r for r in data["plans"].values() if r["tenant_id"] == tenant])
                 if path == "/api/evolution/programs":
                     return self.send_json(200, {"items": [r for r in data["programs"].values() if r["tenant_id"] == tenant]})
+                if path == "/api/evolution/proposals":
+                    return self.send_json(200, [r for r in data["proposals"].values() if r["tenant_id"] == tenant])
                 row = data["plans"].get(path.split("/")[-1])
                 return self.send_json(200, row) if row and row["tenant_id"] == tenant else self.send_json(404, {})
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -60,6 +62,13 @@ def owner(tmp_path, monkeypatch):
                 if row["tenant_id"] != tenant:
                     return self.send_json(404, {})
                 row["status"] = body["status"]
+            elif path == "/api/evolution/proposals/proposal-a/execute":
+                row = data["proposals"]["proposal-a"]
+                if row["tenant_id"] != tenant:
+                    return self.send_json(404, {})
+                if body.get("execution_receipt") != {"plane": "research", "record_id": "run-a"}:
+                    return self.send_json(422, {})
+                row["decision_state"] = "executed"
             elif path == "/api/evolution/programs/program-a/actions/pause_program":
                 row = data["programs"]["program-a"]
                 if row["tenant_id"] != tenant:
@@ -130,6 +139,8 @@ def mounted(owner, tmp_path):
             svc.submit_resource_action(ObjectType.EVOLUTION_PROGRAM, entity_id, action_id, key,
                                        ident, payload, CommandType.EVOLUTION_PROGRAM_ACTION, **ctx),
     ))
+    from services.control_plane.bff.command_adapters.router import create_command_adapters_router
+    app.include_router(create_command_adapters_router(service=svc))
     return TestClient(app), store, ports
 
 
@@ -167,3 +178,56 @@ def test_program_owner_effect_and_default_refresh(mounted, owner):
     assert client.post(url, json={}, headers=headers).status_code == 202
     assert json.loads(owner.read_text())["writes"] == 1
     assert client.post(url, json={}, headers={**headers, "Authorization": "Bearer tenant-b"}).status_code == 404
+
+
+def test_proposal_execute_preserves_owner_receipt_and_replays(mounted, owner, monkeypatch):
+    client, store, ports = mounted
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_API_URL", "http://must-not-route-to-governance.invalid")
+    headers = {"Authorization": "Bearer tenant-a", "Idempotency-Key": "proposal-execute"}
+    payload = {"command": "ExecuteEvolutionAction", "target": {"type": "EvolutionDecision", "id": "proposal-a"},
+               "params": {"action_type": "retrain", "evolution_decision_id": "proposal-a", "execution_receipt": {"plane": "research", "record_id": "run-a"}},
+               "audit_context": {"reason": "Owner verifies execution evidence"}}
+    result = client.post("/bff/v1/commands", json=payload, headers=headers)
+    assert result.status_code == 202, result.text
+    record = store.get_command_by_idempotency_key("proposal-execute", operator_id="tenant-a")
+    assert record["status"] == "executed", record
+    assert record["audit"]["downstream_verified"] is True
+    assert json.loads(owner.read_text())["proposals"]["proposal-a"]["decision_state"] == "executed"
+    assert client.post("/bff/v1/commands", json=payload, headers=headers).status_code == 202
+    assert json.loads(owner.read_text())["writes"] == 1
+
+
+def test_same_operator_cannot_replay_another_tenant_receipt(owner, tmp_path):
+    from services.control_plane.bff.command_adapters.router import create_command_adapters_router
+    def shared_operator(auth, **kwargs):
+        result = identity(auth)
+        result.operator_id = "shared-operator"
+        return result
+    store = CommandStore(str(tmp_path / "tenant-commands.jsonl"))
+    app = FastAPI()
+    app.include_router(create_command_adapters_router(service=CommandAdapterService(
+        command_store=store, extract_identity=shared_operator,
+    )))
+    client = TestClient(app)
+    payload = {"command": "CreateDeployment", "target": {"type": "Deployment", "id": "plan-a"},
+               "params": {}, "audit_context": {"reason": "tenant scoped admission"}}
+    headers = {"Authorization": "Bearer tenant-a", "Idempotency-Key": "shared-key"}
+    assert client.post("/bff/v1/commands", json=payload, headers=headers).status_code == 202
+    other = client.post("/bff/v1/commands", json=payload, headers={**headers, "Authorization": "Bearer tenant-b"})
+    assert other.status_code == 409, other.text
+    assert json.loads(owner.read_text())["writes"] == 1
+
+
+def test_default_composition_forwards_validated_browser_session(owner, tmp_path):
+    from services.control_plane.bff.bootstrap.dependencies import AppDependencies
+    from services.control_plane.bff.core.app_factory import compose_bff_app
+    deps = AppDependencies.create_default(command_store=CommandStore(str(tmp_path / "cookie-commands.jsonl")))
+    app = compose_bff_app(app_deps=deps, _extract_identity=identity, dev_login_enabled=lambda: True,
+                          validate_session=lambda token: identity("Bearer " + token), origin_allowed=lambda origin: False)
+    client = TestClient(app)
+    client.cookies.set("pantheon_session", "tenant-a")
+    result = client.get("/bff/evolution-programs/program-a")
+    assert result.status_code == 200, result.text
+    assert result.json()["data"]["program_id"] == "program-a"
+    client.cookies.set("pantheon_session", "invalid")
+    assert client.get("/bff/evolution-programs/program-a").status_code == 401

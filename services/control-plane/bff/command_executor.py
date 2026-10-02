@@ -816,6 +816,7 @@ def _execute_approve_evolution_decision(
     url = _evolution_url(f"/api/evolution/proposals/{decision_id}/{approval_action}")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     return {
+        "authoritative_readback": body,
         "command_id": command_id,
         "evolution_decision_id": body.get("decision_id", decision_id),
         "approval_action": approval_action,
@@ -882,6 +883,7 @@ def _execute_evolution_action(
         _write_to_governance("/api/governance/freeze-orders", freeze_payload, auth_token=auth_token, mfa_token=mfa_token)
 
     return {
+        "authoritative_readback": body,
         "command_id": command_id,
         "evolution_decision_id": body.get("decision_id", decision_id),
         "action_type": body.get("action_type") or params.get("action_type"),
@@ -918,6 +920,7 @@ def _execute_approve_mutation(
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     committed_at = body.get("updated_at") or body.get("decided_at") or _utc_now()
     return {
+        "authoritative_readback": body,
         "command_id": command_id,
         "command_accepted": True,
         "decision_id": body.get("decision_id", decision_id),
@@ -954,6 +957,7 @@ def _execute_reject_mutation(
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     committed_at = body.get("updated_at") or body.get("decided_at") or _utc_now()
     return {
+        "authoritative_readback": body,
         "command_id": command_id,
         "command_accepted": True,
         "decision_id": body.get("decision_id", decision_id),
@@ -991,6 +995,7 @@ def _execute_review_mutation(
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     committed_at = body.get("updated_at") or body.get("decided_at") or _utc_now()
     return {
+        "authoritative_readback": body,
         "command_id": command_id,
         "command_accepted": True,
         "decision_id": body.get("decision_id", decision_id),
@@ -1060,6 +1065,7 @@ def _execute_execute_mutation(
         _write_to_governance("/api/governance/freeze-orders", freeze_payload, auth_token=auth_token, mfa_token=mfa_token)
 
     return {
+        "authoritative_readback": body,
         "command_id": command_id,
         "command_accepted": True,
         "decision_id": body.get("decision_id", decision_id),

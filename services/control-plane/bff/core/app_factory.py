@@ -920,6 +920,9 @@ def mount_bff_routers(
             utc_now=_dep("utc_now"),
         ),
     )
+    for helper in ("_gov_bff_action_command", "_capital_bff_action_command", "_evol_exp_bff_action_command"):
+        dependencies.setdefault(helper, command_adapter_service.submit_resource_action)
+    dependencies.setdefault("_sem_command_response", command_adapter_service.sem_command_response)
     app.include_router(
         create_assistant_router(
             build_context_pack=_dep("_assistant_build_context_pack"),
@@ -1735,7 +1738,9 @@ def compose_bff_app(
         app_deps = AppDependencies.create_default()
 
     from .owner_reads import OwnerReadContextMiddleware
-    app.add_middleware(OwnerReadContextMiddleware)
+    from starlette.middleware import Middleware
+    # Read the bearer header after the browser-session middleware validates cookies.
+    app.user_middleware.append(Middleware(OwnerReadContextMiddleware))
     mount_bff_routers(app, app_deps=app_deps, **dependencies)
 
     try:
