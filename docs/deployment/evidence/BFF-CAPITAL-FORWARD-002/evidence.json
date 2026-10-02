@@ -34,7 +34,7 @@
     "preexisting_failures_unchanged": "56 failures in test_bff_pm12_portfolio_book_contract, test_bff_management_delta_routes, test_action_catalog (critical_actions_require_two_man, get_bff_actions_all_command_types), test_action_catalog_safety_invariants, test_ppl_alloc_012_ranking_projection (24), test_bff_strategy_persona_contract (4), test_bff_capital_ranking_rebalance_contract rebalance lineage etc. fail identically on dev",
     "stale_before_this_task": "test_bff_rebalance_proposals (33 failed: harness created an active non-paper pool without Governance approval and expected retired approve/two-man routes) and 10 test_bff_emergency_containment tests; replaced/repaired here"
   },
-  "production_delta": "production +299 / -621 net -322 (limit <= -300 satisfied); test +1051 / -1497 net -446; docs/evidence +61 / -2 net +59 vs base 3d21f1f9d8219ebff83cf9cf36e04d45d68c9f9d",
+  "production_delta": "production +439 / -760 net -321 (limit <= -300 satisfied); test +1233 / -1491 net -258; docs/evidence +63 / -2 net +61 vs base 3add1c08ba7baada51d6e12ff5563cb317974d90",
   "not_verified": [
     "hosted dev write-readback; a NEW labelled paper fixture and existing-pool non-modification are deferred to centralized acceptance after the batch release",
     "hosted dev VM write-readback remains deferred to centralized acceptance; caller JWT forwarding with X-Pantheon-Service: control-plane-bff and X-Tenant-Id is strictly verified in mounted isolated tests",

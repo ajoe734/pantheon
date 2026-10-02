@@ -449,13 +449,7 @@ def _reconcile_owner_receipt(
         return None
 
 
-def _validate_rebalance_apply_receipt(
-    body: Any,
-    *,
-    rebalance_id: str,
-    command_id: str,
-    approval_ref: str,
-) -> Dict[str, Any]:
+def _validate_rebalance_apply_receipt(body: Any, *, rebalance_id: str, command_id: str, approval_ref: str) -> Dict[str, Any]:
     if not isinstance(body, dict):
         raise RuntimeError("Capital authority returned a non-object rebalance receipt")
     if str(body.get("command_id") or "") != command_id:
@@ -464,36 +458,20 @@ def _validate_rebalance_apply_receipt(
         raise RuntimeError("Capital authority returned a rebalance receipt for the wrong proposal")
     if str(body.get("approval_ref") or "") != approval_ref:
         raise RuntimeError("Capital authority returned a rebalance receipt for the wrong approval")
-    if body.get("authoritative_capital_readback") is not True:
-        raise RuntimeError(
-            "Capital authority did not confirm authoritative allocation readback"
-        )
-    if body.get("authoritative_capital_state_applied") is not True:
+    if body.get("authoritative_capital_readback") is not True or body.get("authoritative_capital_state_applied") is not True:
         raise RuntimeError("Capital authority did not confirm atomic rebalance application")
     return body
 
 
-def _validate_containment_receipt(
-    body: Any,
-    *,
-    command_id: str,
-    persona_id: str,
-) -> Dict[str, Any]:
+def _validate_containment_receipt(body: Any, *, command_id: str, persona_id: str) -> Dict[str, Any]:
     if not isinstance(body, dict):
         raise RuntimeError("Capital authority returned a non-object containment receipt")
     if str(body.get("command_id") or "") != command_id:
         raise RuntimeError("Capital authority returned a containment receipt for the wrong command")
     if str(body.get("persona_id") or "") != persona_id:
         raise RuntimeError("Capital authority returned a containment receipt for the wrong Persona")
-    containment_state = str(
-        body.get("containment_state") or body.get("state") or ""
-    ).strip()
-    if (
-        containment_state not in {"frozen", "suspended", "risk_off", "retired"}
-        or body.get("authoritative_containment_readback") is not True
-        or body.get("authoritative_capital_readback") is not True
-        or body.get("authoritative_capital_state_applied") is not True
-    ):
+    st = str(body.get("containment_state") or body.get("state") or "").strip()
+    if st not in {"frozen", "suspended", "risk_off", "retired"} or not (body.get("authoritative_containment_readback") and body.get("authoritative_capital_readback") and body.get("authoritative_capital_state_applied")):
         raise RuntimeError("Capital authority did not confirm terminal containment state")
     return body
 

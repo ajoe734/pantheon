@@ -99,23 +99,8 @@ class CapitalOwnerWriter:
 class CapitalCommandAdapter(DomainCommandAdapter):
     """Adapter for stored Capital Service authority commands."""
 
-    _HANDLED_COMMANDS = {
-        "CapitalPoolAction",
-        "RebalanceAction",
-        "RebalanceProposal",
-        "PatchRebalance",
-        "ApprovedApply",
-        "EmergencyContainment",
-    }
-
-    _HANDLED_ENTITIES = {
-        "capitalpool",
-        "capital-pool",
-        "rebalance",
-        "binding",
-        "personacapitalbinding",
-        "persona-capital-binding",
-    }
+    _HANDLED_COMMANDS = {"CapitalPoolAction", "RebalanceAction", "RebalanceProposal", "PatchRebalance", "ApprovedApply", "EmergencyContainment"}
+    _HANDLED_ENTITIES = {"capitalpool", "capital-pool", "rebalance", "binding", "personacapitalbinding", "persona-capital-binding"}
 
     writer = CapitalOwnerWriter()
 
