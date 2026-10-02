@@ -82,10 +82,7 @@ def _capital_url(path: str) -> str:
     Rebalance and containment execution must terminate at the Capital service;
     the BFF command store is an audit/receipt surface, not capital authority.
     """
-    base = _configured_base_url(
-        "PANTHEON_CAPITAL_API_URL",
-        "PANTHEON_CAPITAL_SERVICE_URL",
-    )
+    base = _configured_base_url("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL")
     return f"{base}{path}"
 
 
@@ -431,6 +428,39 @@ def _reconcile_owner_receipt(
         return None
 
 
+def _post_owner_with_reconcile(
+    path: str,
+    payload: Dict[str, Any],
+    *,
+    kind: str,
+    command_id: str,
+    validate: Any,
+    auth_token: Optional[str] = None,
+    **kw: Any,
+) -> Dict[str, Any]:
+    try:
+        body = _post_json(_capital_url(path), payload, auth_token=auth_token, **kw)
+    except Exception as exc:
+        if not _owner_post_may_have_committed(exc):
+            raise
+        try:
+            reconciled = _reconcile_owner_receipt(kind, command_id, validate, auth_token, **kw)
+        except Exception:
+            raise exc
+        if reconciled is None:
+            raise exc
+        body = {**reconciled, "owner_receipt_reconciled": True}
+    return validate(body)
+
+
+def _validate_owner_receipt(body: Any, command_id: str, kind: str) -> Dict[str, Any]:
+    if not isinstance(body, dict):
+        raise RuntimeError(f"Capital authority returned a non-object {kind} receipt")
+    if str(body.get("command_id") or "") != command_id:
+        raise RuntimeError(f"Capital authority returned a {kind} receipt for the wrong command")
+    return body
+
+
 def _validate_rebalance_apply_receipt(
     body: Any,
     *,
@@ -438,10 +468,7 @@ def _validate_rebalance_apply_receipt(
     command_id: str,
     approval_ref: str,
 ) -> Dict[str, Any]:
-    if not isinstance(body, dict):
-        raise RuntimeError("Capital authority returned a non-object rebalance receipt")
-    if str(body.get("command_id") or "") != command_id:
-        raise RuntimeError("Capital authority returned a rebalance receipt for the wrong command")
+    body = _validate_owner_receipt(body, command_id, "rebalance")
     if str(body.get("rebalance_id") or "") != rebalance_id:
         raise RuntimeError("Capital authority returned a rebalance receipt for the wrong proposal")
     if str(body.get("approval_ref") or "") != approval_ref:
@@ -452,10 +479,7 @@ def _validate_rebalance_apply_receipt(
 
 
 def _validate_containment_receipt(body: Any, *, command_id: str, persona_id: str) -> Dict[str, Any]:
-    if not isinstance(body, dict):
-        raise RuntimeError("Capital authority returned a non-object containment receipt")
-    if str(body.get("command_id") or "") != command_id:
-        raise RuntimeError("Capital authority returned a containment receipt for the wrong command")
+    body = _validate_owner_receipt(body, command_id, "containment")
     if str(body.get("persona_id") or "") != persona_id:
         raise RuntimeError("Capital authority returned a containment receipt for the wrong Persona")
     st = str(body.get("containment_state") or body.get("state") or "").strip()
@@ -638,60 +662,50 @@ def _execute_rollback(
     }
 
 
-def _execute_rollback_decision(
-    command_id: str,
-    params: Dict[str, Any],
-    action: str,
-    note_field: str,
-    auth_token: Optional[str] = None,
-    mfa_token: Optional[str] = None,
-) -> Dict[str, Any]:
-    rollback_id = str(params.get("rollback_id") or "").strip()
-    if not rollback_id:
-        raise ValueError(f"{action.capitalize()}Rollback requires rollback_id.")
-    body = _post_json(
-        _internal_url(f"/api/internal/v1/rollbacks/{rollback_id}/{action}"),
-        {note_field: params.get(note_field)},
-        auth_token=auth_token,
-        mfa_token=mfa_token,
-    )
-    try:
-        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
-    except Exception:
-        actor_id, actor_role = _extract_actor_id(auth_token), "operator"
-    timestamp = _utc_now()
-    state = f"{action}d"
-    gov_payload = {
-        "rollback_id": rollback_id,
-        "id": rollback_id,
-        "status": body.get("status") or state,
-        "actor": actor_role,
-        "identity": actor_id,
-        "updated_at": timestamp,
-        f"{state}_at": body.get(f"{state}_at") or timestamp,
-        "source_command_id": command_id,
-        "transition_actor": actor_role,
-        "transition_identity": actor_id,
-        "transition_source_command_id": command_id,
-        note_field: params.get(note_field),
-    }
-    _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
-    return {
-        "command_id": command_id,
-        "rollback_id": body.get("rollback_id", rollback_id),
-        "decision": body.get("decision", state),
-        "status": body.get("status") or state,
-        "audit_id": body.get("audit_id"),
-        f"{state}_at": body.get(f"{state}_at"),
-    }
-
-
 def _execute_approve_rollback(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Dispatch ApproveRollback to the rollback authority endpoint."""
-    return _execute_rollback_decision(command_id, params, "approve", "approval_notes", auth_token=auth_token, mfa_token=mfa_token)
+    rollback_id = str(params.get("rollback_id") or "").strip()
+    if not rollback_id:
+        raise ValueError("ApproveRollback requires rollback_id.")
+    payload = {
+        "approval_notes": params.get("approval_notes"),
+    }
+    url = _internal_url(f"/api/internal/v1/rollbacks/{rollback_id}/approve")
+    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+
+    try:
+        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    except Exception:
+        actor_id = _extract_actor_id(auth_token)
+        actor_role = "operator"
+    timestamp = _utc_now()
+    gov_payload = {
+        "rollback_id": rollback_id,
+        "id": rollback_id,
+        "status": body.get("status") or "approved",
+        "actor": actor_role,
+        "identity": actor_id,
+        "updated_at": timestamp,
+        "approved_at": body.get("approved_at") or timestamp,
+        "source_command_id": command_id,
+        "transition_actor": actor_role,
+        "transition_identity": actor_id,
+        "transition_source_command_id": command_id,
+        "approval_notes": params.get("approval_notes"),
+    }
+    _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
+
+    return {
+        "command_id": command_id,
+        "rollback_id": body.get("rollback_id", rollback_id),
+        "decision": body.get("decision", "approved"),
+        "status": body.get("status") or "approved",
+        "audit_id": body.get("audit_id"),
+        "approved_at": body.get("approved_at"),
+    }
 
 
 def _execute_reject_rollback(
@@ -699,7 +713,45 @@ def _execute_reject_rollback(
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Dispatch RejectRollback to the rollback authority endpoint."""
-    return _execute_rollback_decision(command_id, params, "reject", "rejection_reason", auth_token=auth_token, mfa_token=mfa_token)
+    rollback_id = str(params.get("rollback_id") or "").strip()
+    if not rollback_id:
+        raise ValueError("RejectRollback requires rollback_id.")
+    payload = {
+        "rejection_reason": params.get("rejection_reason"),
+    }
+    url = _internal_url(f"/api/internal/v1/rollbacks/{rollback_id}/reject")
+    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+
+    try:
+        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    except Exception:
+        actor_id = _extract_actor_id(auth_token)
+        actor_role = "operator"
+    timestamp = _utc_now()
+    gov_payload = {
+        "rollback_id": rollback_id,
+        "id": rollback_id,
+        "status": body.get("status") or "rejected",
+        "actor": actor_role,
+        "identity": actor_id,
+        "updated_at": timestamp,
+        "rejected_at": body.get("rejected_at") or timestamp,
+        "source_command_id": command_id,
+        "transition_actor": actor_role,
+        "transition_identity": actor_id,
+        "transition_source_command_id": command_id,
+        "rejection_reason": params.get("rejection_reason"),
+    }
+    _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
+
+    return {
+        "command_id": command_id,
+        "rollback_id": body.get("rollback_id", rollback_id),
+        "decision": body.get("decision", "rejected"),
+        "status": body.get("status") or "rejected",
+        "audit_id": body.get("audit_id"),
+        "rejected_at": body.get("rejected_at"),
+    }
 
 
 def _execute_activate_kill_switch(
@@ -916,49 +968,40 @@ def _execute_evolution_action(
     }
 
 
-def _execute_mutation_decision(
-    command_id: str,
-    params: Dict[str, Any],
-    action: str,
-    auth_token: Optional[str] = None,
-    mfa_token: Optional[str] = None,
+def _execute_approve_mutation(
+    command_id: str, params: Dict[str, Any],
+    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Dispatch ApproveMutation to the governance-owned evolution API."""
     decision_id = str(params.get("decision_id") or params.get("evolution_decision_id") or "").strip()
     if not decision_id:
-        raise ValueError(f"{action.capitalize()}Mutation requires decision_id.")
+        raise ValueError("ApproveMutation requires decision_id.")
+
     actor_id, actor_role = _actor_context(params, auth_token=auth_token)
-    payload: Dict[str, Any] = {"actor_id": actor_id, "actor_role": actor_role}
+    payload: Dict[str, Any] = {
+        "actor_id": actor_id,
+        "actor_role": actor_role,
+    }
     approval_decision_id = params.get("approval_decision_id")
     if approval_decision_id:
         payload["approval_decision_id"] = approval_decision_id
     note = params.get("note") or params.get("rationale")
     if note:
         payload["note"] = note
-    body = _post_json(
-        _governance_url(f"/api/evolution/proposals/{decision_id}/{action}"),
-        payload,
-        auth_token=auth_token,
-        mfa_token=mfa_token,
-    )
-    state = f"{action}d"
+
+    url = _governance_url(f"/api/evolution/proposals/{decision_id}/approve")
+    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    committed_at = body.get("updated_at") or body.get("decided_at") or _utc_now()
     return {
         "command_id": command_id,
         "command_accepted": True,
         "decision_id": body.get("decision_id", decision_id),
-        "new_state": body.get("decision_state", state),
-        "decision_state": body.get("decision_state", state),
+        "new_state": body.get("decision_state", "approved"),
+        "decision_state": body.get("decision_state", "approved"),
         "approval_decision_id": body.get("approval_decision_id"),
         "risk_level": body.get("risk_level"),
-        "committed_at": body.get("updated_at") or body.get("decided_at") or _utc_now(),
+        "committed_at": committed_at,
     }
-
-
-def _execute_approve_mutation(
-    command_id: str, params: Dict[str, Any],
-    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Dispatch ApproveMutation to the governance-owned evolution API."""
-    return _execute_mutation_decision(command_id, params, "approve", auth_token=auth_token, mfa_token=mfa_token)
 
 
 def _execute_reject_mutation(
@@ -966,7 +1009,35 @@ def _execute_reject_mutation(
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Dispatch RejectMutation to the governance-owned evolution API."""
-    return _execute_mutation_decision(command_id, params, "reject", auth_token=auth_token, mfa_token=mfa_token)
+    decision_id = str(params.get("decision_id") or params.get("evolution_decision_id") or "").strip()
+    if not decision_id:
+        raise ValueError("RejectMutation requires decision_id.")
+
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    payload: Dict[str, Any] = {
+        "actor_id": actor_id,
+        "actor_role": actor_role,
+    }
+    approval_decision_id = params.get("approval_decision_id")
+    if approval_decision_id:
+        payload["approval_decision_id"] = approval_decision_id
+    note = params.get("note") or params.get("rationale")
+    if note:
+        payload["note"] = note
+
+    url = _governance_url(f"/api/evolution/proposals/{decision_id}/reject")
+    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    committed_at = body.get("updated_at") or body.get("decided_at") or _utc_now()
+    return {
+        "command_id": command_id,
+        "command_accepted": True,
+        "decision_id": body.get("decision_id", decision_id),
+        "new_state": body.get("decision_state", "rejected"),
+        "decision_state": body.get("decision_state", "rejected"),
+        "approval_decision_id": body.get("approval_decision_id"),
+        "risk_level": body.get("risk_level"),
+        "committed_at": committed_at,
+    }
 
 
 def _execute_review_mutation(
@@ -1075,6 +1146,37 @@ def _execute_execute_mutation(
     }
 
 
+def _target_entity(params: Dict[str, Any], entity_type: str, id_param: str) -> str:
+    entity_id = str(params.get("entity_id") or "").strip()
+    req_id = str(params.get(id_param) or "").strip()
+    cmd_name = "ApprovedApply" if entity_type == "Rebalance" else "EmergencyContainment"
+    if entity_id and req_id and entity_id != req_id:
+        raise ValueError(f"{cmd_name} {id_param} does not match trusted target identity")
+    if str(params.get("entity_type") or entity_type) != entity_type:
+        raise ValueError(f"{cmd_name} requires trusted entity_type={entity_type}")
+    target_id = entity_id or req_id
+    if not target_id:
+        label = "rebalance_id" if id_param == "rebalance_id" else "Persona identity"
+        raise ValueError(f"{cmd_name} requires a trusted {label}")
+    return target_id
+
+
+def _base_owner_payload(command_id: str, params: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    payload: Dict[str, Any] = {
+        "command_id": command_id,
+        "idempotency_key": str(params.get("idempotency_key") or command_id),
+        "request_hash": str(params.get("request_hash") or ""),
+        "actor_id": str(params.get("actor_id") or "operator-bff"),
+        "actor_role": str(params.get("actor_role") or "operator"),
+    }
+    kw: Dict[str, Any] = {}
+    if params.get("tenant_id"):
+        tid = str(params["tenant_id"]).strip()
+        payload["tenant_id"] = tid
+        kw["tenant_id"] = tid
+    return payload, kw
+
+
 def _execute_approved_rebalance_apply(
     command_id: str,
     params: Dict[str, Any],
@@ -1082,61 +1184,24 @@ def _execute_approved_rebalance_apply(
     mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Atomically apply the server-persisted proposal at Capital authority."""
-    entity_id = str(params.get("entity_id") or "").strip()
-    requested_rebalance_id = str(params.get("rebalance_id") or "").strip()
-    if entity_id and requested_rebalance_id and entity_id != requested_rebalance_id:
-        raise ValueError("ApprovedApply rebalance_id does not match trusted target identity")
-    if str(params.get("entity_type") or "Rebalance") != "Rebalance":
-        raise ValueError("ApprovedApply requires trusted entity_type=Rebalance")
-    rebalance_id = entity_id or requested_rebalance_id
-    if not rebalance_id:
-        raise ValueError("ApprovedApply requires a trusted rebalance_id")
+    rebalance_id = _target_entity(params, "Rebalance", "rebalance_id")
     approval_ref = str(params.get("approval_ref") or params.get("approval_decision_id") or "").strip()
     if params.get("approval_required") and not approval_ref:
         raise ValueError("ApprovedApply requires approval_ref")
 
-    payload = {
-        "command_id": command_id,
-        "idempotency_key": str(params.get("idempotency_key") or command_id),
-        "request_hash": str(params.get("request_hash") or ""),
-        "approval_ref": approval_ref,
-        "actor_id": str(params.get("actor_id") or "operator-bff"),
-        "actor_role": str(params.get("actor_role") or "operator"),
-        "proposal_version": params.get("proposal_version"),
-    }
-    if params.get("tenant_id"):
-        payload["tenant_id"] = str(params["tenant_id"]).strip()
-    kw = {"tenant_id": str(params["tenant_id"]).strip()} if params.get("tenant_id") else {}
-    try:
-        body = _post_json(
-            _capital_url(f"/api/rebalances/{quote(rebalance_id, safe='')}/apply"),
-            payload,
-            auth_token=auth_token,
-            **kw,
-        )
-    except Exception as exc:
-        if not _owner_post_may_have_committed(exc):
-            raise
-        try:
-            reconciled = _reconcile_owner_receipt(
-                "rebalances",
-                command_id,
-                lambda receipt: _validate_rebalance_apply_receipt(
-                    receipt, rebalance_id=rebalance_id, command_id=command_id, approval_ref=approval_ref
-                ),
-                auth_token,
-                **kw,
-            )
-        except Exception:
-            raise exc
-        if reconciled is None:
-            raise exc
-        body = {**reconciled, "owner_receipt_reconciled": True}
-    body = _validate_rebalance_apply_receipt(
-        body,
-        rebalance_id=rebalance_id,
+    payload, kw = _base_owner_payload(command_id, params)
+    payload["approval_ref"] = approval_ref
+    payload["proposal_version"] = params.get("proposal_version")
+    body = _post_owner_with_reconcile(
+        f"/api/rebalances/{quote(rebalance_id, safe='')}/apply",
+        payload,
+        kind="rebalances",
         command_id=command_id,
-        approval_ref=approval_ref,
+        validate=lambda receipt: _validate_rebalance_apply_receipt(
+            receipt, rebalance_id=rebalance_id, command_id=command_id, approval_ref=approval_ref
+        ),
+        auth_token=auth_token,
+        **kw,
     )
     return {
         **body,
@@ -1158,69 +1223,32 @@ def _execute_emergency_containment_authority(
     mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Persist a risk-decreasing containment terminal state at Capital authority."""
-    entity_id = str(params.get("entity_id") or "").strip()
-    requested_persona_id = str(params.get("persona_id") or "").strip()
-    if entity_id and requested_persona_id and entity_id != requested_persona_id:
-        raise ValueError("EmergencyContainment persona_id does not match trusted target identity")
-    if str(params.get("entity_type") or "Persona") != "Persona":
-        raise ValueError("EmergencyContainment requires trusted entity_type=Persona")
-    persona_id = entity_id or requested_persona_id
-    if not persona_id:
-        raise ValueError("EmergencyContainment requires a trusted Persona identity")
+    persona_id = _target_entity(params, "Persona", "persona_id")
     two_man_signature_id = str(params.get("two_man_signature_id") or "").strip()
     if not two_man_signature_id:
         raise ValueError("EmergencyContainment requires validated two-man evidence")
 
-    # Admission already validates the risk-decreasing-only contract.  Send the
-    # admitted fields plus trusted command identity; the owner validates again.
-    payload = {
-        key: value
-        for key, value in params.items()
-        if key
-        not in {
-            "command_id",
-            "entity_type",
-            "entity_id",
-            "action_id",
-            "actor_id",
-            "actor_role",
-        }
-    }
-    payload.update(
-        {
-            "command_id": command_id,
-            "idempotency_key": str(params.get("idempotency_key") or command_id),
-            "request_hash": str(params.get("request_hash") or ""),
-            "persona_id": persona_id,
-            "two_man_signature_id": two_man_signature_id,
-            "entity_type": "Persona",
-            "entity_id": persona_id,
-            "actor_id": str(params.get("actor_id") or "operator-bff"),
-            "actor_role": str(params.get("actor_role") or "operator"),
-        }
+    payload, kw = _base_owner_payload(command_id, params)
+    for k, v in params.items():
+        if k not in {"command_id", "entity_type", "entity_id", "action_id", "actor_id", "actor_role", "tenant_id"}:
+            payload.setdefault(k, v)
+    payload.update({
+        "persona_id": persona_id,
+        "two_man_signature_id": two_man_signature_id,
+        "entity_type": "Persona",
+        "entity_id": persona_id,
+    })
+    body = _post_owner_with_reconcile(
+        "/api/containments",
+        payload,
+        kind="containments",
+        command_id=command_id,
+        validate=lambda receipt: _validate_containment_receipt(
+            receipt, command_id=command_id, persona_id=persona_id
+        ),
+        auth_token=auth_token,
+        **kw,
     )
-    if params.get("tenant_id"):
-        payload["tenant_id"] = str(params["tenant_id"]).strip()
-    kw = {"tenant_id": str(params["tenant_id"]).strip()} if params.get("tenant_id") else {}
-    try:
-        body = _post_json(_capital_url("/api/containments"), payload, auth_token=auth_token, **kw)
-    except Exception as exc:
-        if not _owner_post_may_have_committed(exc):
-            raise
-        try:
-            reconciled = _reconcile_owner_receipt(
-                "containments",
-                command_id,
-                lambda receipt: _validate_containment_receipt(receipt, command_id=command_id, persona_id=persona_id),
-                auth_token,
-                **kw,
-            )
-        except Exception:
-            raise exc
-        if reconciled is None:
-            raise exc
-        body = {**reconciled, "owner_receipt_reconciled": True}
-    body = _validate_containment_receipt(body, command_id=command_id, persona_id=persona_id)
     containment_state = str(
         body.get("containment_state") or body.get("state") or ""
     ).strip()

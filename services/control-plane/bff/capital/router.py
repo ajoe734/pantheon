@@ -92,16 +92,12 @@ def _caller_allowed_tenants(identity: Any) -> Tuple[List[str], bool]:
         return [], False
     claims = getattr(identity, "claims", None) or {}
     raw: List[str] = []
-    for k in ("allowed_tenants", "allowedTenants", "tenant_ids", "tenantIds", "tenants"):
+    for k in ("allowed_tenants", "allowedTenants", "tenant_ids", "tenantIds", "tenants", "tenant_id", "tenantId", "tenant.id", "tenant", "tid"):
         val = getattr(identity, k, None) or (claims.get(k) if isinstance(claims, dict) else None)
         if isinstance(val, (list, tuple, set)):
             raw.extend(str(item).strip() for item in val if str(item).strip())
         elif isinstance(val, str) and val.strip():
             raw.extend(t.strip() for t in val.split(",") if t.strip())
-    for k in ("tenant_id", "tenantId", "tenant.id", "tenant", "tid"):
-        val = getattr(identity, k, None) or (claims.get(k) if isinstance(claims, dict) else None)
-        if val and isinstance(val, str) and val.strip():
-            raw.append(val.strip())
     return [t for t in dict.fromkeys(raw) if t and t != "*"], ("*" in raw)
 
 
@@ -161,17 +157,13 @@ def _error_for_capital_exception(exc: Exception, bff_error: Callable[..., Except
         except Exception:
             detail = None
         return bff_error(exc.code, code, "Capital owner rejected the request", str(detail or exc.reason))
-    if isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException, json.JSONDecodeError)):
+    if isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException, json.JSONDecodeError, CapitalAuthorityUnavailable)):
         return bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Capital authority unavailable", str(exc))
-    if isinstance(exc, ValueError):
-        return bff_error(422, ErrorCode.VALIDATION_FAILED, "Capital request validation failed", str(exc))
     if isinstance(exc, CapitalNotFound):
         return bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Capital resource not found", str(exc))
-    if isinstance(exc, CapitalValidationError):
+    if isinstance(exc, (ValueError, CapitalValidationError)):
         code = ErrorCode.IDEMPOTENCY_CONFLICT if "Idempotency key" in str(exc) else ErrorCode.VALIDATION_FAILED
         return bff_error(409 if code == ErrorCode.IDEMPOTENCY_CONFLICT else 422, code, "Capital request validation failed", str(exc))
-    if isinstance(exc, CapitalAuthorityUnavailable):
-        return bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Capital authority unavailable", str(exc))
     if isinstance(exc, RuntimeError):  # owner answered, but not with the record that was requested
         return bff_error(502, ErrorCode.UPSTREAM_ERROR, "Capital owner returned an unexpected result", str(exc))
     return exc
@@ -230,6 +222,19 @@ def create_capital_router(
         utc_now=utc_now,
     )
 
+    def _require_read(authorization: Optional[str]) -> Any:
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        return identity
+
+    def _require_operator(authorization: Optional[str]) -> Any:
+        identity = extract_identity(authorization)
+        require_operator_role(identity)
+        return identity
+
+    def _meta(snapshot_at: str, dataset: str, surface_key: str, total: Optional[int] = None) -> Dict[str, Any]:
+        return _surface_meta(snapshot_at=snapshot_at, dataset=dataset, surface_key=surface_key, dataset_surface_status=dataset_surface_status, snapshot_meta=snapshot_meta, total=total)
+
     def _pool_or_error(pool_id: str) -> Dict[str, Any]:
         try:
             return service.get_pool(pool_id)
@@ -257,6 +262,16 @@ def create_capital_router(
         except Exception as exc:
             raise _error_for_capital_exception(exc, bff_error) from exc
 
+    def _mutate(
+        op: str, payload: Dict[str, Any], *, identity: Any, authorization: Optional[str],
+        x_tenant_id: Optional[str], idempotency_key: Optional[str], x_idempotency_key: Optional[str],
+        target_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        tid = _resolve_tenant(identity, x_tenant_id or payload.get("tenant_id"), bff_error)
+        key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
+        result, replayed = _idempotent_write(op, payload, identity=identity, authorization=authorization, key=key, target_id=target_id, tenant_id=tid)
+        return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
+
     # 1. Legacy Capital Pool read surface.
     @router.get("/api/v1/capital-pools")
     async def list_capital_pools(
@@ -266,28 +281,23 @@ def create_capital_router(
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
+        _require_read(authorization)
         snapshot_at = utc_now()
         try:
             pools = service.list_pools(status=status, risk_policy_ref=risk_policy_ref)
         except Exception as exc:
             raise _error_for_capital_exception(exc, bff_error) from exc
         items, next_page_token = page_slice(pools, page_token, page_size)
-        meta = _surface_meta(snapshot_at=snapshot_at, dataset="capital_pools", surface_key="capital_pools", dataset_surface_status=dataset_surface_status, snapshot_meta=snapshot_meta, total=len(pools))
-        return _readback_response(items, meta=meta, items=items, next_page_token=next_page_token)
+        return _readback_response(items, meta=_meta(snapshot_at, "capital_pools", "capital_pools", total=len(pools)), items=items, next_page_token=next_page_token)
 
     # 2. Legacy Capital Pool detail surface.
     @router.get("/api/v1/capital-pools/{pool_id}")
     async def get_capital_pool(
         pool_id: str, authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        pool = _pool_or_error(pool_id)
+        _require_read(authorization)
         snapshot_at = utc_now()
-        meta = _surface_meta(snapshot_at=snapshot_at, dataset="capital_pools", surface_key="capital_pool", dataset_surface_status=dataset_surface_status, snapshot_meta=snapshot_meta)
-        return _readback_response(pool, meta=meta)
+        return _readback_response(_pool_or_error(pool_id), meta=_meta(snapshot_at, "capital_pools", "capital_pool"))
 
     # 3. BFF Capital Pool list.
     @router.get("/bff/capital-pools")
@@ -309,15 +319,10 @@ def create_capital_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_operator_role(identity)
-        name = str(payload.get("name") or "").strip()
-        if not name:
+        identity = _require_operator(authorization)
+        if not str(payload.get("name") or "").strip():
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Capital pool name is required", "name must be a non-empty string")
-        tid = _resolve_tenant(identity, x_tenant_id or payload.get("tenant_id"), bff_error)
-        key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("create_pool", payload, identity=identity, authorization=authorization, key=key, tenant_id=tid)
-        return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
+        return _mutate("create_pool", payload, identity=identity, authorization=authorization, x_tenant_id=x_tenant_id, idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key)
 
     # 5. BFF Capital Pool detail.
     @router.get("/bff/capital-pools/{pool_id}")
@@ -337,23 +342,18 @@ def create_capital_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_operator_role(identity)
+        identity = _require_operator(authorization)
         _pool_or_error(pool_id)
         if not str(action_id).strip():
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Capital pool action is required")
-        tid = _resolve_tenant(identity, x_tenant_id or payload.get("tenant_id"), bff_error)
-        key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("pool_action", {**payload, "action_id": action_id}, identity=identity, authorization=authorization, key=key, target_id=pool_id, tenant_id=tid)
-        return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
+        return _mutate("pool_action", {**payload, "action_id": action_id}, identity=identity, authorization=authorization, x_tenant_id=x_tenant_id, idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key, target_id=pool_id)
 
     # 8. Evaluate one policy snapshot before a rebalance proposal is admitted.
     @router.post("/bff/management/allocation-policy/evaluate")
     async def bff_evaluate_persona_allocation_policy(
         payload: Dict[str, Any] = Body(...), authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
+        _require_read(authorization)
         try:
             evaluation = service.evaluate_allocation_policy(payload)
         except Exception as exc:
@@ -369,16 +369,14 @@ def create_capital_router(
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
+        _require_read(authorization)
         snapshot_at = utc_now()
         try:
             rows = service.list_rebalances(status=status, capital_pool_id_value=capital_pool_id)
         except Exception as exc:
             raise _error_for_capital_exception(exc, bff_error) from exc
         items, next_page_token = page_slice(rows, page_token, page_size)
-        meta = _surface_meta(snapshot_at=snapshot_at, dataset="rebalances", surface_key="rebalances", dataset_surface_status=dataset_surface_status, snapshot_meta=snapshot_meta, total=len(rows))
-        return _readback_response(items, meta=meta, items=items, next_page_token=next_page_token)
+        return _readback_response(items, meta=_meta(snapshot_at, "rebalances", "rebalances", total=len(rows)), items=items, next_page_token=next_page_token)
 
     # 12. Create a rebalance proposal through the owner.
     @router.post("/bff/rebalances", status_code=201)
@@ -389,16 +387,12 @@ def create_capital_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_operator_role(identity)
+        identity = _require_operator(authorization)
         pool_id = str(payload.get("capital_pool_id") or payload.get("pool_id") or "").strip()
         if not pool_id:
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "capital_pool_id is required")
         _pool_or_error(pool_id)
-        tid = _resolve_tenant(identity, x_tenant_id or payload.get("tenant_id"), bff_error)
-        key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("create_rebalance", payload, identity=identity, authorization=authorization, key=key, tenant_id=tid)
-        return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
+        return _mutate("create_rebalance", payload, identity=identity, authorization=authorization, x_tenant_id=x_tenant_id, idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key)
 
     # 13. Apply an already admitted rebalance proposal through the capital owner.
     @router.post("/bff/rebalances/{rebalance_id}/apply", status_code=202)
@@ -410,8 +404,7 @@ def create_capital_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_operator_role(identity)
+        identity = _require_operator(authorization)
         _rebalance_or_error(rebalance_id)
         if not str(x_confirm_token or "").strip():
             raise bff_error(428, ErrorCode.CONFIRMATION_REQUIRED, "Confirmation token is required before this action can be accepted", "CONFIRM_TOKEN_MISSING")
@@ -427,20 +420,16 @@ def create_capital_router(
                 x_trace_id=request.headers.get("X-Trace-Id"), x_correlation_id=request.headers.get("X-Correlation-Id"), x_request_id=request.headers.get("X-Request-Id"),
                 idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key, source_route="POST /bff/rebalances/{rebalance_id}/apply", include_durable_meta=True,
             )
-        key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("apply_rebalance", payload, identity=identity, authorization=authorization, key=key, target_id=rebalance_id, tenant_id=tid)
-        return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
+        return _mutate("apply_rebalance", payload, identity=identity, authorization=authorization, x_tenant_id=x_tenant_id, idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key, target_id=rebalance_id)
 
     # 14. Rebalance detail.
     @router.get("/bff/rebalances/{rebalance_id}")
     async def bff_get_rebalance(
         rebalance_id: str, authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        row = _rebalance_or_error(rebalance_id)
-        meta = _surface_meta(snapshot_at=utc_now(), dataset="rebalances", surface_key="rebalance", dataset_surface_status=dataset_surface_status, snapshot_meta=snapshot_meta)
-        return _readback_response(row, meta=meta)
+        _require_read(authorization)
+        snapshot_at = utc_now()
+        return _readback_response(_rebalance_or_error(rebalance_id), meta=_meta(snapshot_at, "rebalances", "rebalance"))
 
     def _portfolio_or_error() -> List[Dict[str, Any]]:
         try:
@@ -448,20 +437,22 @@ def create_capital_router(
         except Exception as exc:
             raise _error_for_capital_exception(exc, bff_error) from exc
 
+    def _project_allocations(
+        capital_pool_id: Optional[str] = None, *, include_risk_limits: bool = False
+    ) -> List[Dict[str, Any]]:
+        rows = [r for r in _portfolio_or_error() if not capital_pool_id or r["capital_pool_id"] == capital_pool_id]
+        return [
+            {**alloc, "capital_pool_id": r["capital_pool_id"], **({"risk_limits": r["risk_limits"]} if include_risk_limits else {})}
+            for r in rows for alloc in r["allocations"]
+        ]
+
     # 16. Strategy allocation projection.
     @router.get("/bff/management/strategy-allocation")
     async def bff_management_strategy_allocation(
         capital_pool_id: Optional[str] = None, authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        rows = _portfolio_or_error()
-        if capital_pool_id:
-            rows = [row for row in rows if row["capital_pool_id"] == capital_pool_id]
-        allocations = [
-            {**allocation, "capital_pool_id": row["capital_pool_id"], "risk_limits": row["risk_limits"]}
-            for row in rows for allocation in row["allocations"]
-        ]
+        _require_read(authorization)
+        allocations = _project_allocations(capital_pool_id, include_risk_limits=True)
         return _readback_response(allocations, meta={"snapshot_at": utc_now(), "total": len(allocations), "policy": "read_only_strategy_allocation"}, items=allocations)
 
     # 17. Capital flow projection from rebalance records.
@@ -469,8 +460,7 @@ def create_capital_router(
     async def bff_management_capital_flow(
         capital_pool_id: Optional[str] = None, authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
+        _require_read(authorization)
         try:
             rows = service.list_rebalances(capital_pool_id_value=capital_pool_id)
         except Exception as exc:
@@ -489,8 +479,7 @@ def create_capital_router(
     async def bff_management_portfolio_book(
         authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
+        _require_read(authorization)
         rows = _portfolio_or_error()
         return _readback_response({"pools": rows, "pool_count": len(rows)}, meta={"snapshot_at": utc_now(), "policy": "read_only_portfolio_book"})
 
@@ -499,8 +488,7 @@ def create_capital_router(
     async def bff_management_portfolio_book_pools(
         authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
+        _require_read(authorization)
         rows = _portfolio_or_error()
         pools = [row["pool"] for row in rows]
         return _readback_response(pools, meta={"snapshot_at": utc_now(), "total": len(pools)}, items=pools)
@@ -510,8 +498,7 @@ def create_capital_router(
     async def bff_management_portfolio_book_exposure(
         authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
+        _require_read(authorization)
         rows = _portfolio_or_error()
         exposure = [{
             "capital_pool_id": row["capital_pool_id"],
@@ -526,12 +513,8 @@ def create_capital_router(
     async def bff_management_portfolio_book_holdings(
         capital_pool_id: Optional[str] = None, authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        rows = _portfolio_or_error()
-        if capital_pool_id:
-            rows = [row for row in rows if row["capital_pool_id"] == capital_pool_id]
-        holdings = [{**allocation, "capital_pool_id": row["capital_pool_id"]} for row in rows for allocation in row["allocations"]]
+        _require_read(authorization)
+        holdings = _project_allocations(capital_pool_id)
         return _readback_response(holdings, meta={"snapshot_at": utc_now(), "total": len(holdings)}, items=holdings)
 
     # 22. Positions reuse allocation facts but retain the capital risk boundary.
@@ -539,12 +522,8 @@ def create_capital_router(
     async def bff_management_portfolio_book_positions(
         capital_pool_id: Optional[str] = None, authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        rows = _portfolio_or_error()
-        if capital_pool_id:
-            rows = [row for row in rows if row["capital_pool_id"] == capital_pool_id]
-        positions = [{**allocation, "capital_pool_id": row["capital_pool_id"], "risk_limits": row["risk_limits"]} for row in rows for allocation in row["allocations"]]
+        _require_read(authorization)
+        positions = _project_allocations(capital_pool_id, include_risk_limits=True)
         return _readback_response(positions, meta={"snapshot_at": utc_now(), "total": len(positions)}, items=positions)
 
     # 23. Cost attribution is a read-only projection; the BFF never invents costs.
@@ -552,16 +531,12 @@ def create_capital_router(
     async def bff_management_cost_attribution(
         capital_pool_id: Optional[str] = None, authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        rows = _portfolio_or_error()
-        if capital_pool_id:
-            rows = [row for row in rows if row["capital_pool_id"] == capital_pool_id]
-        costs = []
-        for row in rows:
-            for allocation in row["allocations"]:
-                cost = first_present(allocation, "cost", "cost_amount", "commission", "fees")
-                costs.append({"capital_pool_id": row["capital_pool_id"], "allocation": allocation, "cost": cost if cost is not None else 0})
+        _require_read(authorization)
+        rows = [r for r in _portfolio_or_error() if not capital_pool_id or r["capital_pool_id"] == capital_pool_id]
+        costs = [
+            {"capital_pool_id": r["capital_pool_id"], "allocation": alloc, "cost": cost if (cost := first_present(alloc, "cost", "cost_amount", "commission", "fees")) is not None else 0}
+            for r in rows for alloc in r["allocations"]
+        ]
         return _readback_response(costs, meta={"snapshot_at": utc_now(), "total": len(costs), "policy": "read_only_cost_attribution"}, items=costs)
 
     # 24. Compact operator board pack assembled solely from capital readbacks.
@@ -569,8 +544,7 @@ def create_capital_router(
     async def bff_management_board_pack(
         authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_read_role(identity)
+        _require_read(authorization)
         rows = _portfolio_or_error()
         try:
             rebalances = service.list_rebalances()
@@ -583,7 +557,7 @@ def create_capital_router(
         return _readback_response(data, meta={"snapshot_at": utc_now(), "policy": "read_only_capital_board_pack"})
 
     async def retired_write(authorization: Optional[str] = Header(default=None)) -> Dict[str, Any]:
-        require_operator_role(extract_identity(authorization))
+        _require_operator(authorization)
         raise bff_error(410, ErrorCode.OPERATION_NOT_ALLOWED, "Capital operation retired", "Capital has no owner endpoint for this write")
 
     # No Capital owner endpoint exists for these writes: they are retired, never simulated.

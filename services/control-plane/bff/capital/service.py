@@ -16,13 +16,6 @@ from threading import RLock
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 
-def run_management_read(*args: Any, **kwargs: Any) -> Any:
-    try:
-        from ..personas.routes.common import run_management_read as _rmr
-    except (ImportError, ValueError):
-        from personas.routes.common import run_management_read as _rmr
-    return _rmr(*args, **kwargs)
-
 
 
 def _pm12_semantic_json_value(value: Any) -> Any:
@@ -136,23 +129,19 @@ def pool_risk_limits(pool: Mapping[str, Any]) -> Dict[str, Any]:
 
 def normalize_pool(pool: Mapping[str, Any]) -> Dict[str, Any]:
     result = deepcopy(dict(pool))
-    identifier = capital_pool_id(result)
-    if identifier:
-        result.setdefault("id", identifier)
-        result.setdefault("pool_id", identifier)
-        result.setdefault("capital_pool_id", identifier)
+    if identifier := capital_pool_id(result):
+        for k in ("id", "pool_id", "capital_pool_id"):
+            result.setdefault(k, identifier)
     result["risk_limits"] = pool_risk_limits(result)
     return result
 
 
 def normalize_rebalance(rebalance: Mapping[str, Any]) -> Dict[str, Any]:
     result = deepcopy(dict(rebalance))
-    identifier = rebalance_id(result)
-    if identifier:
+    if identifier := rebalance_id(result):
         result.setdefault("id", identifier)
         result.setdefault("rebalance_id", identifier)
-    pool_id = str(first_present(result, "capital_pool_id", "pool_id", "target_pool_id") or "").strip()
-    if pool_id:
+    if pool_id := str(first_present(result, "capital_pool_id", "pool_id", "target_pool_id") or "").strip():
         result.setdefault("capital_pool_id", pool_id)
     return result
 
@@ -214,48 +203,53 @@ class CapitalService:
     def list_pools(
         self, *, status: Optional[str] = None, risk_policy_ref: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        pools = _read_collection(
-            self._store(), "list_capital_pools", status=status, risk_policy_ref=risk_policy_ref
+        pools = filter_records(
+            _read_collection(self._store(), "list_capital_pools", status=status, risk_policy_ref=risk_policy_ref),
+            status=status,
+            risk_policy_ref=risk_policy_ref,
         )
-        pools = filter_records(pools, status=status, risk_policy_ref=risk_policy_ref)
-        return sorted((normalize_pool(pool) for pool in pools), key=capital_pool_id)
+        return sorted((normalize_pool(p) for p in pools), key=capital_pool_id)
+
+    def _get_entity(
+        self,
+        entity_id: str,
+        method: str,
+        list_fn: Callable[[], List[Dict[str, Any]]],
+        id_fn: Callable[[Mapping[str, Any]], str],
+        normalize_fn: Callable[[Mapping[str, Any]], Dict[str, Any]],
+        label: str,
+    ) -> Dict[str, Any]:
+        clean_id = str(entity_id or "").strip()
+        if not clean_id:
+            raise CapitalNotFound(f"{label} id is required")
+        getter = getattr(self._store(), method, None)
+        item = getter(clean_id) if callable(getter) else None
+        if isinstance(item, Mapping):
+            return normalize_fn(item)
+        for candidate in list_fn():
+            if id_fn(candidate) == clean_id:
+                return candidate
+        raise CapitalNotFound(f"{label} {clean_id} does not exist")
 
     def get_pool(self, pool_id: str) -> Dict[str, Any]:
-        clean_id = str(pool_id or "").strip()
-        if not clean_id:
-            raise CapitalNotFound("Capital pool id is required")
-        store = self._store()
-        getter = getattr(store, "get_capital_pool", None)
-        pool = getter(clean_id) if callable(getter) else None
-        if isinstance(pool, Mapping):
-            return normalize_pool(pool)
-        for candidate in self.list_pools():
-            if capital_pool_id(candidate) == clean_id:
-                return candidate
-        raise CapitalNotFound(f"Capital pool {clean_id} does not exist")
+        return self._get_entity(
+            pool_id, "get_capital_pool", self.list_pools, capital_pool_id, normalize_pool, "Capital pool"
+        )
 
     def list_rebalances(
         self, *, status: Optional[str] = None, capital_pool_id_value: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        rows = _read_collection(
-            self._store(), "list_rebalances", status=status, capital_pool_id=capital_pool_id_value
+        rows = filter_records(
+            _read_collection(self._store(), "list_rebalances", status=status, capital_pool_id=capital_pool_id_value),
+            status=status,
+            capital_pool_id_value=capital_pool_id_value,
         )
-        rows = filter_records(rows, status=status, capital_pool_id_value=capital_pool_id_value)
-        return sorted((normalize_rebalance(row) for row in rows), key=rebalance_id)
+        return sorted((normalize_rebalance(r) for r in rows), key=rebalance_id)
 
     def get_rebalance(self, requested_id: str) -> Dict[str, Any]:
-        clean_id = str(requested_id or "").strip()
-        if not clean_id:
-            raise CapitalNotFound("Rebalance id is required")
-        store = self._store()
-        getter = getattr(store, "get_rebalance", None)
-        row = getter(clean_id) if callable(getter) else None
-        if isinstance(row, Mapping):
-            return normalize_rebalance(row)
-        for candidate in self.list_rebalances():
-            if rebalance_id(candidate) == clean_id:
-                return candidate
-        raise CapitalNotFound(f"Rebalance {clean_id} does not exist")
+        return self._get_entity(
+            requested_id, "get_rebalance", self.list_rebalances, rebalance_id, normalize_rebalance, "Rebalance"
+        )
 
     def allocations(self, *, capital_pool_id_value: Optional[str] = None) -> List[Dict[str, Any]]:
         rows = _read_collection(

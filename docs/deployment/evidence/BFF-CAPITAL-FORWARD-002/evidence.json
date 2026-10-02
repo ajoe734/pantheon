@@ -28,6 +28,7 @@
     "tests/test_remaining_main_seam_composition.py + test_bff_b2_list_detail_facade.py": "Cleanly pass together (test_remaining_main_seam_composition resets persona_service._PERSONA_PROVISIONING_STORE in fixture teardown, eliminating the 40 singleton fixture setup errors; combined 7-file test batch 148 passed cleanly exit 0).",
     "tests/test_bff_emergency_containment.py": "28 passed (fakes migrated to the CapitalOwnerWriter interface; containment harness no longer mutates the shared harness class or global catalog)",
     "/tmp/test_cf002_independent_review.py": "2 passed exit 0: independent review rejection probes test_rest_ambiguous_tenant and test_generic_active_rejection_preserved pass cleanly.",
+    "/tmp/test_cf002_review_regressions.py": "2 passed exit 0: rejection grounds verified resolved -- RejectRollback preserves rejected state and rejected_at timestamp, RejectMutation preserves rejected decision_state and committed_at without truncation.",
     "pg formal tenant retention (services/capital/test_service.py::test_pg_*)": "8 passed vs disposable postgres:16 (127.0.0.1:15432): pool update_status/patch and paper binding activate/update_status keep valid tenant-a and blank/unknown tenant (no metadata backfill) across PG save+reload; raw log /tmp/cf002-pg.log.",
     "known unrelated failures": "test_action_catalog::test_critical_actions_require_two_man and 3 capital ranking contract tests also fail on dev d61575a59; test_get_bff_actions_all_command_types (RequestApprovalRevision retired by merged approvals work) fails on this branch and is not caused by this task"
   },
@@ -36,7 +37,7 @@
     "preexisting_failures_unchanged": "56 failures in test_bff_pm12_portfolio_book_contract, test_bff_management_delta_routes, test_action_catalog (critical_actions_require_two_man, get_bff_actions_all_command_types), test_action_catalog_safety_invariants, test_ppl_alloc_012_ranking_projection (24), test_bff_strategy_persona_contract (4), test_bff_capital_ranking_rebalance_contract rebalance lineage etc. fail identically on dev",
     "stale_before_this_task": "test_bff_rebalance_proposals (33 failed: harness created an active non-paper pool without Governance approval and expected retired approve/two-man routes) and 10 test_bff_emergency_containment tests; replaced/repaired here"
   },
-  "production_delta": "production +592 / -896 net -304 (limit <= -300 satisfied with 0 violations); test +1520 / -1491 net +29; docs/evidence +65 / -2 net +63 vs base 67118cb232a0602778cea2aa7ab62f26f190ebde",
+  "production_delta": "production +699 / -1007 net -308 (limit <= -300 satisfied with 0 violations); test +1520 / -1491 net +29; docs/evidence +66 / -2 net +64 vs base 67118cb232a0602778cea2aa7ab62f26f190ebde",
   "not_verified": [
     "hosted dev write-readback; a NEW labelled paper fixture and existing-pool non-modification are deferred to centralized acceptance after the batch release",
     "hosted dev VM write-readback remains deferred to centralized acceptance; caller JWT forwarding with X-Pantheon-Service: control-plane-bff and X-Tenant-Id is strictly verified in mounted isolated tests",
