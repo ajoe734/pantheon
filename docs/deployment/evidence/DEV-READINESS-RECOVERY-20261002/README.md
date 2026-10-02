@@ -19,16 +19,13 @@ Process completed with exit code 75.
 ```
 The exact-artifact compensation successfully restored the prior accepted baseline (`backend: f3e267c1fd700e9452470e43d73da3c3dd57146e`, `frontend: d2d3a0c7b0a1bf0943e01e129174e235f39d8039`) without activating the candidate pair.
 
-Investigation of container logs proved:
+Investigation of container logs and control-plane projection proved:
 1. OpenClaw gateway connection errors (`127.0.0.1:18789`) and transient HTTP 503 were normal startup polling checks during model pool reconfiguration; both `openclaw-gateway` and `openclaw-gateway-adapter` were healthy before post-up readiness verification.
 2. The older historical snapshot failure was disproven; `source-ingest` returned HTTP 200 OK across all snapshot requests.
-3. The true root cause is that `paper-signal-producer` discovered 9 legacy active paper bindings in the hosted dev database (dating from 2026-09-13). All 9 bindings failed artifact loading because their Object Store metadata contains `"lineage": {"source_dataset_refs": null}`, violating JSON schema `services/registry/lineage/promoted_artifact_metadata.schema.json` which requires `source_dataset_refs` to be an array.
-4. Because all bindings degraded, `paper-signal-producer` marked its health status `degraded`, causing the Docker healthcheck to return exit code 1 (`unhealthy`).
-
-Per Acceptance Criterion 2:
-> *"If the cause is genuinely hosted configuration only then preserve a specific evidence-backed coordinator action and remain blocked until real resolution; do not invent a source patch."*
-
-We preserve strict readiness gates, add failure and recovery regression tests in `scripts/test_deploy_nonprod_vm.py`, and document the exact coordinator remediation required on the dev VM.
+3. The root cause is a source defect in `services/control-plane/governance/deployment_plan.py` where `_normalize_lineage` copied Registry null Lineage fields directly into promoted artifact metadata. The schema `services/registry/lineage/promoted_artifact_metadata.schema.json` types `source_dataset_refs` as an array, so `paper-signal-producer` rejected every binding that loaded such metadata.
+4. Read-only VM evidence confirms that runtime binding `rb-30092281` (`persona-ae7b97a96e92acd86682`) was created 2026-10-02 02:35 by dev `67118cb23` and also has Object Store metadata `lineage.source_dataset_refs=null`. This disproved the hypothesis that the issue was hosted-only legacy data: retiring existing bindings alone would cause the next baseline binding to fail again.
+5. The source defect is fixed in commit `ef3e8f69db376afe93a2b8d68940a0efae0cdd35` on PR #6097 by omitting null Lineage fields as `Lineage.to_dict()` does, verified with regression `test_projection_omits_null_registry_lineage_fields`.
+6. Existing bindings already persisted in the dev VM database still carry null fields; the coordinator runbook details their retirement on the dev VM by the Human/Ops coordinator.
 
 ---
 
@@ -72,11 +69,15 @@ paper-signal-producer-1  | WARNING:__main__:paper_signal_producer degraded bindi
    - In earlier run `36954831846`, a snapshot query had failed.
    - In run `37006617043`, `source-ingest` returned `200 OK` on `/api/source-ingest/snapshots/latest?symbol=SPY` and was fully healthy.
 
+3. **Hosted-Only Data Defect Hypothesis**:
+   - Initially suspected to be only legacy database records from 2026-09-13.
+   - Disproven by VM evidence: binding `rb-30092281` (`persona-ae7b97a96e92acd86682`) created 2026-10-02 02:35 by dev commit `67118cb23` also carries `lineage.source_dataset_refs=null`. The control-plane projection in `deployment_plan.py` actively generated null lineage fields on new bindings.
+
 ---
 
-## 4. Root Cause & Isolated Reproduction
+## 4. Root Cause, Source Fix & Isolated Reproduction
 
-### 4.1 Schema Contract
+### 4.1 Root Cause & Schema Contract
 In `services/registry/lineage/promoted_artifact_metadata.schema.json`:
 ```json
 "source_dataset_refs": {
@@ -88,7 +89,22 @@ In `services/registry/lineage/promoted_artifact_metadata.schema.json`:
 ```
 A value of `null` (`None` in Python) violates this schema.
 
-### 4.2 Health Evaluation Chain
+The Registry API serializes absent `Lineage` fields as `null`. When `deployment_plan.py`'s `_normalize_lineage` ran:
+```python
+# Before fix:
+normalized = dict(lineage)
+```
+it copied those `null` entries into the promoted artifact metadata projection.
+
+### 4.2 Source Fix
+In `services/control-plane/governance/deployment_plan.py`:
+```python
+# After fix (commit ef3e8f69db376afe93a2b8d68940a0efae0cdd35):
+normalized = {key: value for key, value in lineage.items() if value is not None}
+```
+Null fields are omitted, consistent with `Lineage.to_dict()` behavior.
+
+### 4.3 Health Evaluation Chain
 1. `services/execution/artifact_loader.py:379`:
    `Draft7Validator.iter_errors(metadata)` raises:
    `ArtifactLoadError("Metadata schema validation failed at lineage.source_dataset_refs: None is not of type 'array'")`
@@ -99,11 +115,10 @@ A value of `null` (`None` in Python) violates this schema.
 4. `services/worker_health.py:81`:
    `check_worker_health` fails with exit code 1 if `status != "ok"`.
 5. Docker healthcheck marks container `unhealthy`.
-6. `deploy_nonprod_vm.sh:2964`:
+6. `deploy_nonprod_vm.sh:3920`:
    `verify_exact_component_deployment` detects unhealthy container and triggers compensation restore.
 
-### 4.3 Reproduction
-Reproduced locally using isolated python script:
+### 4.4 Isolated Reproduction
 ```python
 import json, jsonschema
 from pathlib import Path
@@ -117,27 +132,27 @@ errors = list(validator.iter_errors({"lineage": {"source_dataset_refs": None}}))
 
 ## 5. Regressions Added
 
-In `scripts/test_deploy_nonprod_vm.py`:
-1. `test_verify_exact_component_deployment_paper_signal_producer_unhealthy_prevents_activation`:
-   Proves that when `paper-signal-producer` reports `health=unhealthy`, `verify_exact_component_deployment` fails closed, records the failure in `backend-components-receipt.json`, and allows compensation rollback instead of activating the candidate pair.
-2. `test_verify_exact_component_deployment_paper_signal_producer_healthy_admits_pair`:
-   Proves that when `paper-signal-producer` is healthy, `verify_exact_component_deployment` succeeds and admits the pair.
-3. `test_paper_signal_producer_binding_recovery_and_health_lifecycle`:
-   Substantiates and proves the degraded caching behavior and supported recovery procedures by driving the bounded production loop (`main()`, `write_health()`, and `healthcheck()`) with controlled binding and strategy dependencies:
-   - When a binding fails metadata schema validation (`source_dataset_refs: None`), `paper-signal-producer` marks the binding as degraded, writes `status: degraded` to the health file, and fails healthcheck (`healthcheck()` exit 1).
-   - When all bindings are retired in the database (`bindings = []`), `paper_signal_producer.py:1123` skips `producer.tick()`. This keeps the degraded bindings cached in memory in an un-restarted process, and `write_health()` continues to record `status: degraded` (healthcheck exit 1).
-   - Proves Supported Recovery Procedure A: When the container restarts with 0 active bindings, production `main()` writes startup `status: starting`, discovers 0 active bindings, transitions to `status: ok` via `write_health()`, and passes healthcheck (`healthcheck()` exit 0).
-   - Proves Supported Recovery Procedure B: When stale degraded bindings are replaced with an active valid binding, `producer.tick()` executes lines 876-884 in the production loop, purges the non-existent binding IDs from `self._degraded_by_binding`, clears degraded bindings to `{}`, and dynamically restores `status: ok` via `write_health()` (healthcheck exit 0).
+1. In `services/control-plane/governance/test_deployment_plan.py`:
+   - `test_projection_omits_null_registry_lineage_fields`:
+     Validates that `build_execution_projection` omits null Lineage fields (`source_dataset_refs: None`, `parent_registry_ids: None`, `source_strategy_spec_id: None`) from the registry entry, producing lineage metadata that passes `promoted_artifact_metadata.schema.json` validation.
+
+2. In `scripts/test_deploy_nonprod_vm.py`:
+   - `test_verify_exact_component_deployment_paper_signal_producer_unhealthy_prevents_activation`:
+     Proves that when `paper-signal-producer` reports `health=unhealthy`, `verify_exact_component_deployment` fails closed, records the failure in `backend-components-receipt.json`, and allows compensation rollback instead of activating the candidate pair.
+   - `test_verify_exact_component_deployment_paper_signal_producer_healthy_admits_pair`:
+     Proves that when `paper-signal-producer` is healthy, `verify_exact_component_deployment` succeeds and admits the pair.
+   - `test_paper_signal_producer_binding_recovery_and_health_lifecycle`:
+     Substantiates and proves the degraded caching behavior and supported recovery procedures by driving the bounded production loop (`main()`, `write_health()`, and `healthcheck()`) with controlled binding and strategy dependencies.
 
 ---
 
-## 6. Specific Coordinator Action Runbook & External Hold
+## 6. Coordinator Runbook for Existing Null-Lineage Bindings
 
-To unblock deployment without bypassing gates or inventing source hacks:
+Existing bindings persisted in the dev VM database prior to this fix still carry `source_dataset_refs: null` and must be retired by the release coordinator:
 
 ### 6.1 Supported Recovery Procedures
 1. **Procedure A: Retire 9 Legacy Paper Bindings & Restart Container (Recommended)**
-   The release coordinator retires or cleans up the 9 stale bindings from the dev VM database:
+   The release coordinator retires the 9 stale bindings on the dev VM database:
    - `rb-8b36da8734534f298923e6fbb5f3eea7`
    - `rb-e3eafebeda57401b8ecdac6481e09fe7`
    - `rb-40419c598d5c436f9a735b3b7c5ccdf3`
@@ -149,30 +164,22 @@ To unblock deployment without bypassing gates or inventing source hacks:
    - `rb-30092281a9294185928793fd8d31761e`
    Using the runtime-manager API (`POST /api/runtime-bindings/<binding_id>/retire`) or database cleanup.
    Then restart `paper-signal-producer` (`docker compose restart paper-signal-producer` or stack deployment container recreate).
-   On restart, the producer begins with clean state, discovers 0 active bindings, publishes `status: ok`, and passes the Docker healthcheck.
+   On restart, the producer discovers 0 active bindings, publishes `status: ok`, and passes the Docker healthcheck.
 
 2. **Procedure B: Retire Legacy Bindings & Activate Valid Binding**
-   Retire the 9 stale bindings and activate at least one valid paper binding with valid metadata. On tick, `producer.tick()` will execute lines 876-884, purge the stale degraded bindings from memory, and restore `status: ok` without a container restart.
+   Retire the 9 stale bindings and activate at least one valid paper binding with valid metadata. On tick, `producer.tick()` purges the stale degraded bindings from memory and restores `status: ok` without a container restart.
 
-*Note on BOOTSTRAP_EMPTY_HOST*: Previously suggested `BOOTSTRAP_EMPTY_HOST=true` is invalid on an existing host because `nonprod-deploy.yml:368-382` requires `deployment.json` to return HTTP 404 and does not reset the database. It has been removed.
-
-### 6.2 Canonical External Hold with Existing Release Coordinator
-Per Acceptance Criterion 2:
-> *"If the cause is genuinely hosted configuration only then preserve a specific evidence-backed coordinator action and remain blocked until real resolution; do not invent a source patch."*
-
-And per Acceptance Criterion 4:
-- Workers have no dev VM or SSH access, no Compose grant, no deployment trigger, no database cleanup authority, and no second release lane.
-- The root cause is strictly hosted configuration on the dev VM database (9 legacy paper bindings with `source_dataset_refs: null`). No synthetic source patch is permitted.
-- The task branch preserves regression coverage, verified diagnosis, and fail-closed rollback guarantees, but delivery remains on canonical external hold (`waiting_for=Human/Ops`) until the release coordinator executes the database remediation and container restart on the dev VM.
-- PR #6097 carries this regression evidence; it is not merged into `dev` until hosted resolution is authenticated.
+### 6.2 Execution Boundary
+- Workers have no dev VM or SSH access, no Compose grant, no deployment trigger, and no database cleanup authority.
+- The source defect is fixed and covered by regression tests on task branch PR #6097.
+- Hosted cleanup of existing bindings in the dev VM database and the redeploy are performed by the Human/Ops coordinator.
 
 ---
 
 ## 7. Verification Evidence
 
-- `scripts/test_deploy_nonprod_vm.py`: 45 passed, 2 skipped
+- `services/control-plane/governance/test_deployment_plan.py`: 34 passed in 4.51s
+- `scripts/test_deploy_nonprod_vm.py` (paper_signal_producer regressions): 3 passed in 4.22s
 - `scripts/test_deploy_nonprod_bootstrap_contract.py`: 65 passed
-- `scripts/test_deploy_nonprod_artifact_restore.py`: 48 passed
-- Total deploy tests: 158 passed, 2 skipped in ~42s
-- `tests/test_openclaw_credential_probe.py`: 6 passed
-- `services/openclaw-gateway-adapter`: 570 passed, 4 skipped in 168.35s
+- `services/control-plane/governance/test_persona_proposal_runtime_binding_e2e.py` & `test_artifact_loader.py` & `test_paper_runtime_binding.py` & `test_deployment_saga.py`: 37 passed in 16.06s
+- `services/control-plane/bff/tests/test_deployment_router.py`: 4 passed in 4.28s

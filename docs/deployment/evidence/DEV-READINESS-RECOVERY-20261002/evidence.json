@@ -3,8 +3,8 @@
   "owner": "Antigravity2",
   "reviewer": "Codex2",
   "title": "Repair the evidenced nonprod readiness failure without bypassing gates",
-  "timestamp": "2026-10-02T13:58:30Z",
-  "summary": "Diagnosed terminal failure in Actions run 37006617043 during nonprod dev VM deployment under shared environment lease. Bound the actual failing check to verify_exact_component_deployment in scripts/deploy_nonprod_vm.sh where component paper-signal-producer was reported unhealthy. Discovered root cause: 9 legacy paper bindings on dev VM failed artifact loading due to schema mismatch ('lineage.source_dataset_refs: None is not of type array'). Reproduced in isolated process. Preserved strict gates and exact-artifact compensation. Added failure and recovery regression tests driving production main/write_health/healthcheck in scripts/test_deploy_nonprod_vm.py. Preserved canonical external hold with existing release coordinator for dev VM database binding retirement.",
+  "timestamp": "2026-10-02T16:15:00Z",
+  "summary": "Diagnosed terminal failure in Actions run 37006617043 during nonprod dev VM deployment. Bound the failing check to verify_exact_component_deployment in scripts/deploy_nonprod_vm.sh where paper-signal-producer was reported unhealthy. Identified root cause: services/control-plane/governance/deployment_plan.py _normalize_lineage copied Registry null Lineage fields into promoted artifact metadata, violating promoted_artifact_metadata.schema.json (which types lineage.source_dataset_refs as an array). Read-only VM evidence proved binding rb-30092281 created 2026-10-02 by current dev carried source_dataset_refs=null alongside 8 earlier bindings. Fixed source defect in deployment_plan.py to omit null lineage fields. Added regression test_projection_omits_null_registry_lineage_fields in test_deployment_plan.py, alongside paper_signal_producer health and recovery regressions in test_deploy_nonprod_vm.py. Retained coordinator runbook for Human/Ops to retire existing null-lineage bindings on dev VM.",
   "inspected_run": {
     "run_id": "37006617043",
     "workflow": "dev Pantheon Nonprod Deploy",
@@ -24,8 +24,10 @@
     "oom_killed": false
   },
   "root_cause_analysis": {
-    "mechanism": "paper-signal-producer discovered 9 active paper bindings from runtime-manager (rb-8b36da8734534f298923e6fbb5f3eea7, rb-e3eafebeda57401b8ecdac6481e09fe7, rb-40419c598d5c436f9a735b3b7c5ccdf3, rb-9572f7b0cf9745c29ddafdc03cde136e, rb-b1f9532ba83043a3a8ef39ea95711f31, rb-8794cd13cdd649febc55c9957f0b3ba4, rb-d3a8e143ed464a40a7d26511c962c622, rb-69bfc2859ff14ff88a5006c78dcc4999, rb-30092281a9294185928793fd8d31761e). Each binding failed artifact loading with: 'Metadata schema validation failed at lineage.source_dataset_refs: None is not of type array'. The schema services/registry/lineage/promoted_artifact_metadata.schema.json requires lineage.source_dataset_refs to be an array, rejecting null. All 9 bindings degraded, setting health status to 'degraded'. check_worker_health in services/worker_health.py failed (exit 1) because status != 'ok', marking the container unhealthy.",
-    "classification": "Hosted configuration defect. The dev VM runtime-manager database and Object Store contain 9 historical legacy paper bindings from 2026-09-13 whose metadata carries source_dataset_refs: null."
+    "mechanism": "paper-signal-producer discovered 9 active paper bindings from runtime-manager (including rb-30092281 created 2026-10-02 02:35 by dev 67118cb23). Each binding failed artifact loading with: 'Metadata schema validation failed at lineage.source_dataset_refs: None is not of type array'. The schema services/registry/lineage/promoted_artifact_metadata.schema.json requires lineage.source_dataset_refs to be an array, rejecting null. All 9 bindings degraded, setting health status to 'degraded'. check_worker_health in services/worker_health.py failed (exit 1) because status != 'ok', marking the container unhealthy.",
+    "source_defect": "services/control-plane/governance/deployment_plan.py _normalize_lineage copied Registry null Lineage fields into promoted artifact metadata. The Registry API serializes absent Lineage fields as null, whereas promoted_artifact_metadata.schema.json types them as arrays/strings.",
+    "source_fix": "In deployment_plan.py _normalize_lineage, omit null lineage fields as Lineage.to_dict() does: normalized = {key: value for key, value in lineage.items() if value is not None}.",
+    "classification": "Source defect with hosted state impact. Control plane projection copied null lineage fields into artifact metadata; existing bindings on dev VM retained null fields."
   },
   "disproven_hypotheses": [
     {
@@ -35,6 +37,10 @@
     {
       "observation": "Historical snapshot failure from older run 36954831846",
       "disproof": "source-ingest was healthy and returned HTTP 200 OK for /api/source-ingest/snapshots/latest?symbol=SPY across all requests in run 37006617043."
+    },
+    {
+      "observation": "Hosted-only legacy data without source defect",
+      "disproof": "Read-only VM evidence confirms runtime binding rb-30092281 (persona-ae7b97a96e92acd86682) was created 2026-10-02 02:35 by current dev 67118cb23 and also has lineage.source_dataset_refs=null, proving current code actively propagated the defect on new bindings."
     }
   ],
   "isolated_reproduction": {
@@ -54,28 +60,32 @@
     "reproduced_error": "Metadata schema validation failed at lineage.source_dataset_refs: None is not of type 'array'"
   },
   "regressions": {
-    "file": "scripts/test_deploy_nonprod_vm.py",
+    "files": [
+      "services/control-plane/governance/test_deployment_plan.py",
+      "scripts/test_deploy_nonprod_vm.py"
+    ],
     "tests": [
+      "test_projection_omits_null_registry_lineage_fields",
       "test_verify_exact_component_deployment_paper_signal_producer_unhealthy_prevents_activation",
       "test_verify_exact_component_deployment_paper_signal_producer_healthy_admits_pair",
       "test_paper_signal_producer_binding_recovery_and_health_lifecycle"
     ],
     "guarantees": [
-      "Unhealthy paper-signal-producer immediately fails closed, records verification failure in backend-components-receipt.json, and allows compensation restore rather than activating candidate pair.",
+      "Execution projection omits null registry lineage fields so emitted promoted artifact metadata strictly satisfies promoted_artifact_metadata.schema.json.",
+      "Unhealthy paper-signal-producer immediately fails closed, records verification failure in backend-components-receipt.json, and triggers compensation restore rather than activating candidate pair.",
       "Healthy paper-signal-producer passes gate, produces verified backend components receipt with status=passed and all_passed=true, admitting candidate pair.",
-      "Degraded binding caching under empty bindings (skipping producer.tick per paper_signal_producer.py:1123) and supported recovery procedures (restart container with clean state or replacement with valid active binding via lines 876-884) are substantiated and proven by exercising production main(), write_health(), and healthcheck()."
+      "Degraded binding caching and supported recovery procedures are substantiated and proven by exercising production main(), write_health(), and healthcheck()."
     ]
   },
   "coordinator_action_required": {
     "actor": "Human/Ops",
-    "action": "Retire or clean up the 9 stale paper bindings on the dev VM via runtime-manager API (/api/runtime-bindings/<binding_id>/retire) or database cleanup, followed by paper-signal-producer container restart (or activating at least one valid active paper binding) so paper-signal-producer initializes/recovers with status: ok.",
-    "external_hold": "Preserve canonical external hold with the existing release coordinator (Human/Ops) until genuine hosted remediation on the dev VM. Workers have no VM or SSH access, no Compose grant, no deployment trigger, no database cleanup authority, and no second release lane. Diagnosis, production-loop regression tests, and fail-closed exact-artifact rollback are verified on task branch PR #6097; delivery and pair activation remain held until release coordinator executes binding retirement and restart on dev VM."
+    "action": "Retire or clean up the 9 existing paper bindings on the dev VM via runtime-manager API (/api/runtime-bindings/<binding_id>/retire) or database cleanup, followed by paper-signal-producer container restart (or activating at least one valid active paper binding) so paper-signal-producer initializes/recovers with status: ok.",
+    "boundary": "Source fix and regression coverage are delivered via PR #6097. Hosted cleanup of existing bindings in the database and the redeploy are performed by the Human/Ops coordinator. Workers have no SSH or VM access."
   },
   "verification": {
-    "test_deploy_nonprod_vm": "45 passed, 2 skipped",
+    "test_deployment_plan": "34 passed",
+    "test_deploy_nonprod_vm_regressions": "3 passed",
     "test_deploy_nonprod_bootstrap_contract": "65 passed",
-    "test_deploy_nonprod_artifact_restore": "48 passed",
-    "test_openclaw_credential_probe": "6 passed",
-    "services_openclaw_gateway_adapter": "570 passed, 4 skipped"
+    "persona_runtime_binding_e2e_and_services": "41 passed"
   }
 }
