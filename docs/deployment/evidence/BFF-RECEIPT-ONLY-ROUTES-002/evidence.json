@@ -1,7 +1,7 @@
 {
   "task_id": "BFF-RECEIPT-ONLY-ROUTES-002",
-  "source_head": "dce62dd2c0cd870102b1ccf15801c0ff599526eb",
-  "base_sha": "66bd4e431db07403c10e0660b91cf4b5cfaed00a",
+  "source_head": "57a52b36e758335e0613ab34c8a4077ce0decc90",
+  "base_sha": "6bf0f7195f6dc6a5e42f685b2b860302e47e9747",
   "environment": "local isolated owners; no hosted deployment or live capital actions",
   "production_net_lines": -1009,
   "independent_review": "pending; canonical handoff binds this manifest to the exact PR head",
@@ -49,7 +49,7 @@
   "validation_total": 368,
   "diff_check": "git diff origin/dev --check: exit 0",
   "limitations": [
-    "No full BFF suite pass is claimed. Six listed bounded batches completed with exit 0. An exploratory full composition batch returned exit 1 (7 failures/44 passes); three task-affected retirement expectations were corrected and passed in the listed focused batch. The four remaining architecture failures were reproduced on clean origin/dev 66bd4e431 (exit 1), without modifying or removing assertions.",
+    "No full BFF suite pass is claimed. The six initial batches completed with exit 0 on initial_validation_source_head; two post-merge batches completed with exit 0 on source_head. The intervening dev merge changed no BFF source. An exploratory full composition batch returned exit 1 (7 failures/44 passes); three task-affected retirement expectations were corrected and passed in the listed focused batch. The four remaining architecture failures were reproduced on clean origin/dev 66bd4e431 (exit 1), without modifying or removing assertions.",
     "Validation uses local isolated owners; no hosted or SSH operations. Source merge does not establish hosted FE/BFF acceptance, Trade Journal endpoint availability, or deployed identity. Research remains the downstream implementation owner."
   ],
   "diff_budget": "python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget -300: exit 0; production +466/-1475 = -1009",
@@ -60,5 +60,19 @@
     "test_zero_unreferenced_dead_functions_in_main_py",
     "test_main_py_zero_lambda_read_store_service_locator_seams"
   ],
-  "baseline_validation": "In a clean git archive of origin/dev 66bd4e431, timeout 90 /tmp/clean-bff-venv/bin/python -m pytest -q with the four baseline_failures node ids under services/control-plane/bff/tests/test_bff_main_composition.py: 4 failed, exit 1."
+  "baseline_validation": "In a clean git archive of origin/dev 66bd4e431, timeout 90 /tmp/clean-bff-venv/bin/python -m pytest -q with the four baseline_failures node ids under services/control-plane/bff/tests/test_bff_main_composition.py: 4 failed, exit 1.",
+  "initial_validation_source_head": "dce62dd2c0cd870102b1ccf15801c0ff599526eb",
+  "post_merge_validation": [
+    {
+      "command": "timeout 180 /tmp/clean-bff-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_receipt_governance_routes.py services/control-plane/bff/tests/test_receipt_only_retirement.py services/control-plane/bff/tests/test_receipt_default_reads.py services/control-plane/bff/tests/test_receipt_owner_routes.py services/control-plane/bff/tests/test_receipt_research_routes.py services/control-plane/bff/tests/test_bff_main_composition.py::test_lifecycle_readiness_reports_unavailable_projection",
+      "passed": 86,
+      "exit_status": 0
+    },
+    {
+      "command": "timeout 90 /tmp/clean-bff-venv/bin/python -m pytest -q services/control-plane/governance/test_deployment_plan.py",
+      "passed": 34,
+      "subtests_passed": 3,
+      "exit_status": 0
+    }
+  ]
 }
