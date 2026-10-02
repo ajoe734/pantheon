@@ -163,6 +163,8 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         if not target_gate_id:
             raise ValueError(f"{action_name} requires gate_id.")
 
+        from .retired import reject_retired_command
+        reject_retired_command(action_name)
         verb_map = {
             "HumanGateApprove": "approve",
             "HumanGateReject": "reject",

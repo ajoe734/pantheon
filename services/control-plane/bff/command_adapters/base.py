@@ -80,7 +80,7 @@ def internal_url(path: str) -> str:
 
 
 def governance_url(path: str) -> str:
-    base = get_base_url("PANTHEON_GOVERNANCE_API_URL", "PANTHEON_EVOLUTION_API_URL")
+    base = get_base_url("PANTHEON_GOVERNANCE_API_URL", "PANTHEON_GOVERNANCE_APPROVAL_API_URL")
     return f"{base}{path}"
 
 

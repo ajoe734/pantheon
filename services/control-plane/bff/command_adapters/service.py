@@ -1960,9 +1960,8 @@ async def process_command(
     audit["executor"] = "command_executor"
     if result:
         audit["downstream_verified"] = bool(
-            result.get("downstream_verified")
+            result.get("authoritative_readback")
             or result.get("authoritative_capital_readback")
-            or result.get("dispatch_path") != "bff_action_adapter"
         )
     if error:
         audit["failure_reason"] = error.get("message", "")

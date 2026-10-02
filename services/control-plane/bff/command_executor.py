@@ -666,92 +666,16 @@ def _execute_approve_rollback(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch ApproveRollback to the rollback authority endpoint."""
-    rollback_id = str(params.get("rollback_id") or "").strip()
-    if not rollback_id:
-        raise ValueError("ApproveRollback requires rollback_id.")
-    payload = {
-        "approval_notes": params.get("approval_notes"),
-    }
-    url = _internal_url(f"/api/internal/v1/rollbacks/{rollback_id}/approve")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-
-    try:
-        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
-    except Exception:
-        actor_id = _extract_actor_id(auth_token)
-        actor_role = "operator"
-    timestamp = _utc_now()
-    gov_payload = {
-        "rollback_id": rollback_id,
-        "id": rollback_id,
-        "status": body.get("status") or "approved",
-        "actor": actor_role,
-        "identity": actor_id,
-        "updated_at": timestamp,
-        "approved_at": body.get("approved_at") or timestamp,
-        "source_command_id": command_id,
-        "transition_actor": actor_role,
-        "transition_identity": actor_id,
-        "transition_source_command_id": command_id,
-        "approval_notes": params.get("approval_notes"),
-    }
-    _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
-
-    return {
-        "command_id": command_id,
-        "rollback_id": body.get("rollback_id", rollback_id),
-        "decision": body.get("decision", "approved"),
-        "status": body.get("status") or "approved",
-        "audit_id": body.get("audit_id"),
-        "approved_at": body.get("approved_at"),
-    }
+    from .command_adapters.retired import reject_retired_command
+    reject_retired_command("ApproveRollback")
 
 
 def _execute_reject_rollback(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch RejectRollback to the rollback authority endpoint."""
-    rollback_id = str(params.get("rollback_id") or "").strip()
-    if not rollback_id:
-        raise ValueError("RejectRollback requires rollback_id.")
-    payload = {
-        "rejection_reason": params.get("rejection_reason"),
-    }
-    url = _internal_url(f"/api/internal/v1/rollbacks/{rollback_id}/reject")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-
-    try:
-        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
-    except Exception:
-        actor_id = _extract_actor_id(auth_token)
-        actor_role = "operator"
-    timestamp = _utc_now()
-    gov_payload = {
-        "rollback_id": rollback_id,
-        "id": rollback_id,
-        "status": body.get("status") or "rejected",
-        "actor": actor_role,
-        "identity": actor_id,
-        "updated_at": timestamp,
-        "rejected_at": body.get("rejected_at") or timestamp,
-        "source_command_id": command_id,
-        "transition_actor": actor_role,
-        "transition_identity": actor_id,
-        "transition_source_command_id": command_id,
-        "rejection_reason": params.get("rejection_reason"),
-    }
-    _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
-
-    return {
-        "command_id": command_id,
-        "rollback_id": body.get("rollback_id", rollback_id),
-        "decision": body.get("decision", "rejected"),
-        "status": body.get("status") or "rejected",
-        "audit_id": body.get("audit_id"),
-        "rejected_at": body.get("rejected_at"),
-    }
+    from .command_adapters.retired import reject_retired_command
+    reject_retired_command("RejectRollback")
 
 
 def _execute_activate_kill_switch(

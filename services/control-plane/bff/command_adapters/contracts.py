@@ -430,7 +430,10 @@ _WRAPPER_VERB_ALIASES = {
 
 def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Replace a wrapper command by the canonical command its verb maps to."""
+    from .retired import reject_retired_command
     command = payload.get("command")
+    if isinstance(command, str):
+        reject_retired_command(command)
     action = payload.get("action")
     # Leave invalid action types intact for OperatorCommand's schema rejection.
     if not isinstance(command, str) or (action is not None and not isinstance(action, str)):
@@ -488,6 +491,8 @@ def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     if command == "Observe" or (command == "PersonaAction" and verb == "observe"):
         raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "Observe is retired", "Use Persona read routes")
     canonical = "AdvanceLifecycle" if command in {"PromoteCandidate", "Demote"} else (command if norm_c in {"approvedecision", "rejectdecision"} else _WRAPPER_VERB_ALIASES.get((command, verb)))
+    if canonical is not None:
+        reject_retired_command(canonical)
     if canonical is None:
         return payload
     cleaned = {k: v for k, v in params.items() if k not in ("action_id", "actionId")} if isinstance(params, dict) else params
