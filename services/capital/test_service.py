@@ -347,6 +347,95 @@ def test_verified_operator_runs_paper_status_lifecycle_and_other_roles_are_denie
     assert foreign.status_code == 404  # another tenant cannot see or activate this binding
 
 
+def test_forwarded_operator_jwt_tenant_normalization_and_rejections(strict_client):
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    test_client, _ = strict_client
+
+    def operator_headers(allowed_tenants, header_tenant=None):
+        token = encode_jwt_hs256(
+            {
+                "sub": "op-review",
+                "client_id": "bff-dev-operator",
+                "roles": ["operator"],
+                "allowed_tenants": list(allowed_tenants),
+                "exp": int(time.time()) + 300,
+            },
+            secret="capital-test-secret",
+        )
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "X-Pantheon-Service": "control-plane-bff",
+        }
+        if header_tenant is not None:
+            headers["X-Tenant-Id"] = header_tenant
+        return headers
+
+    pool_payload = _pool_payload(
+        pool_id="pool-op-no-tenant",
+        actor_id="op-review",
+        actor_role="operator",
+        metadata={"execution_context": "paper"},
+    )
+    res_no_tenant = test_client.post(
+        "/api/capital-pools",
+        json=pool_payload,
+        headers=operator_headers(["*"]),
+    )
+    assert res_no_tenant.status_code == 400
+    assert res_no_tenant.json()["error"]["code"] == "TENANT_REQUIRED"
+
+    res_wildcard_tenant = test_client.post(
+        "/api/capital-pools",
+        json=pool_payload,
+        headers=operator_headers(["*"], header_tenant="*"),
+    )
+    assert res_wildcard_tenant.status_code == 400
+    assert res_wildcard_tenant.json()["error"]["code"] == "TENANT_REQUIRED"
+
+    res_multi_no_tenant = test_client.post(
+        "/api/capital-pools",
+        json=pool_payload,
+        headers=operator_headers(["tenant-a", "tenant-b"]),
+    )
+    assert res_multi_no_tenant.status_code == 400
+    assert res_multi_no_tenant.json()["error"]["code"] == "TENANT_REQUIRED"
+
+    res_forbidden = test_client.post(
+        "/api/capital-pools",
+        json=pool_payload,
+        headers=operator_headers(["tenant-a"], header_tenant="tenant-b"),
+    )
+    assert res_forbidden.status_code == 403
+    assert res_forbidden.json()["error"]["code"] == "TENANT_SCOPE_FORBIDDEN"
+
+    res_concrete = test_client.post(
+        "/api/capital-pools",
+        json=_pool_payload(
+            pool_id="pool-op-concrete",
+            actor_id="op-review",
+            actor_role="operator",
+            metadata={"execution_context": "paper"},
+        ),
+        headers=operator_headers(["*"], header_tenant="tenant-review"),
+    )
+    assert res_concrete.status_code == 201
+    assert res_concrete.json()["tenant_id"] == "tenant-review"
+
+    res_inferred = test_client.post(
+        "/api/capital-pools",
+        json=_pool_payload(
+            pool_id="pool-op-inferred",
+            actor_id="op-review",
+            actor_role="operator",
+            metadata={"execution_context": "paper"},
+        ),
+        headers=operator_headers(["tenant-single"]),
+    )
+    assert res_inferred.status_code == 201
+    assert res_inferred.json()["tenant_id"] == "tenant-single"
+
+
 def test_operator_cannot_activate_a_live_binding_without_governance_approval(strict_client):
     test_client, headers_for = strict_client
     operator = headers_for(["operator"], "operator-1")

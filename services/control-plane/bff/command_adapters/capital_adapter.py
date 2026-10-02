@@ -35,7 +35,10 @@ def _token_tenant(token: Optional[str]) -> Optional[str]:
     try:
         raw = str(token or "").removeprefix("Bearer ").strip().split(".")[1]
         claims = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
-        return str(claims.get("tenant_id") or (claims.get("allowed_tenants") or [None])[0] or "").strip() or None
+        tid = str(claims.get("tenant_id") or "").strip()
+        if tid and tid != "*": return tid
+        allowed = [str(t).strip() for t in claims.get("allowed_tenants") or [] if str(t).strip() and str(t).strip() != "*"]
+        return allowed[0] if len(allowed) == 1 and claims.get("allowed_tenants") == [allowed[0]] else None
     except Exception:
         return None
 
@@ -124,19 +127,12 @@ class CapitalCommandAdapter(DomainCommandAdapter):
     writer = CapitalOwnerWriter()
 
     def can_handle(self, command_type: str, entity_type: str, action_id: str) -> bool:
-        normalized_cmd = str(command_type or "").strip()
-        normalized_entity = str(entity_type or "").strip().lower().replace("_", "-")
-        normalized_action = str(action_id or "").strip().lower().replace("_", "-")
-        if normalized_cmd in self._HANDLED_COMMANDS:
+        cmd = str(command_type or "").strip()
+        ent = str(entity_type or "").strip().lower().replace("_", "-")
+        act = str(action_id or "").strip().lower().replace("_", "-")
+        if cmd in self._HANDLED_COMMANDS or ent in self._HANDLED_ENTITIES:
             return True
-        if normalized_entity in self._HANDLED_ENTITIES:
-            return True
-        if normalized_entity == "persona" and (
-            normalized_cmd == "EmergencyContainment"
-            or normalized_action in {"emergencycontainment", "emergency-containment", "containment"}
-        ):
-            return True
-        return False
+        return ent == "persona" and (cmd == "EmergencyContainment" or act in {"emergencycontainment", "emergency-containment", "containment"})
 
     def execute(
         self,
