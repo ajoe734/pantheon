@@ -725,12 +725,18 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
 
     # Safe callables
     if name in {"_page_slice", "page_slice_fn", "page_slice"}:
-        return lambda *a, **kw: ([], 0, False)
+        from ..research.routes.common import _default_page_slice
+        return _default_page_slice
     if name in {"_snapshot_meta", "snapshot_meta", "snapshot_meta_fn"}:
         from ..models import utc_now
         return lambda *a, **kw: {"snapshot_at": utc_now()}
+    if name in {"_dataset_surface_status", "dataset_surface_status", "dataset_surface_status_fn"}:
+        from ..research.routes.common import format_dataset_surface_status
+        def owner_surface(dataset, **kwargs):
+            kwargs.setdefault("source", app_deps.read_surface.dataset_source(dataset))
+            return format_dataset_surface_status(dataset, **kwargs)
+        return owner_surface
     if name in {
-        "_dataset_surface_status", "dataset_surface_status", "dataset_surface_status_fn",
         "_composed_surface_status", "composed_surface_status",
         "_composed_dataset_surface_status", "composed_dataset_surface_status",
     }:
@@ -801,7 +807,10 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
     if name in {"_alert_target_ref", "_incident_detail_href", "_deployment_review_href"}:
         return lambda *a, **kw: ""
     if name in {"_deprecated_bff_path_response", "deprecated_bff_path_response"}:
-        return lambda *a, **kw: {}
+        from starlette.responses import JSONResponse
+        return lambda *, route, replacement: JSONResponse(status_code=410, content={
+            "error": {"code": "ACTION_RETIRED", "route": route, "replacement": replacement},
+        })
     if name in {"_management_ai_conversation_store", "conv_store"}:
         return lambda: None
     if name in {"_assistant_ask_enabled", "assistant_ask_enabled"}:
@@ -911,6 +920,9 @@ def mount_bff_routers(
             utc_now=_dep("utc_now"),
         ),
     )
+    for helper in ("_gov_bff_action_command", "_capital_bff_action_command", "_evol_exp_bff_action_command"):
+        dependencies.setdefault(helper, command_adapter_service.submit_resource_action)
+    dependencies.setdefault("_sem_command_response", command_adapter_service.sem_command_response)
     app.include_router(
         create_assistant_router(
             build_context_pack=_dep("_assistant_build_context_pack"),
@@ -1067,7 +1079,7 @@ def mount_bff_routers(
             raise_if_read_surface_unavailable=_dep("_raise_if_read_surface_unavailable"),
             reject_body_idempotency_key=_dep("_reject_body_idempotency_key"),
             resolve_final_idempotency_key=_dep("_resolve_final_idempotency_key"),
-            submit_job_action=lambda job_id, action_id, resolved_key, identity, payload: _dep("_evol_exp_bff_action_command")(
+            submit_job_action=lambda job_id, action_id, resolved_key, identity, payload, **context: command_adapter_service.submit_resource_action(
                 entity_type=ObjectType.JOB,
                 entity_id=job_id,
                 action_id=action_id,
@@ -1075,6 +1087,7 @@ def mount_bff_routers(
                 identity=identity,
                 payload=payload,
                 command_type=CommandType.JOB_ACTION,
+                **context,
             ),
         )
     )
@@ -1124,7 +1137,7 @@ def mount_bff_routers(
             meta_staleness=_dep("_meta_staleness"),
             mutation_review_projection=_dep("_mutation_review_projection"),
             program_commands=lambda: _dep("_evolution_program_commands", lambda: evolution_program_commands),
-            submit_program_action=lambda entity_type, entity_id, action_id, resolved_key, identity, payload: _dep("_gov_bff_action_command")(
+            submit_program_action=lambda entity_type, entity_id, action_id, resolved_key, identity, payload, **context: command_adapter_service.submit_resource_action(
                 ObjectType.EVOLUTION_PROGRAM,
                 entity_id,
                 action_id,
@@ -1132,6 +1145,7 @@ def mount_bff_routers(
                 identity,
                 payload or {},
                 CommandType.EVOLUTION_PROGRAM_ACTION,
+                **context,
             ),
         )
     )
@@ -1149,7 +1163,7 @@ def mount_bff_routers(
             page_slice=_dep("_page_slice"),
             snapshot_meta=_dep("_snapshot_meta"),
             dataset_surface_status=_dep("_dataset_surface_status"),
-            submit_experiment_action=lambda entity_type, entity_id, action_id, resolved_key, identity, payload: _dep("_gov_bff_action_command")(
+            submit_experiment_action=lambda entity_type, entity_id, action_id, resolved_key, identity, payload, **context: command_adapter_service.submit_resource_action(
                 ObjectType.EXPERIMENT,
                 entity_id,
                 action_id,
@@ -1157,6 +1171,7 @@ def mount_bff_routers(
                 identity,
                 payload or {},
                 CommandType.EXPERIMENT_ACTION,
+                **context,
             ),
             include_prepared_subrouters=True,
         )
@@ -1264,13 +1279,13 @@ def mount_bff_routers(
         resolve_final_idempotency_key=_dep("_resolve_final_idempotency_key"),
         reject_body_idempotency_key=_dep("_reject_body_idempotency_key"),
         request_dry_run_requested=_dep("_request_dry_run_requested"),
-        gov_bff_idempotency=_dep("_GOV_BFF_IDEMPOTENCY"),
+        gov_bff_idempotency={},
         publish_event=_dep("_publish_event"),
         sse_buffers=sse_buffers,
         sse_subscribers=sse_subscribers,
         gov_bff_action_command=_dep("_gov_bff_action_command"),
         deprecated_bff_path_response=_dep("_deprecated_bff_path_response"),
-        sem_command_response=_dep("_sem_command_response"),
+        sem_command_response=command_adapter_service.sem_command_response,
         stream_generic_events=_dep("stream_generic_events"),
         surface_degradation_reason=_dep("_surface_degradation_reason"),
     )
@@ -1382,7 +1397,7 @@ def mount_bff_routers(
             resolve_final_idempotency_key=_dep("_resolve_final_idempotency_key"),
             reject_body_idempotency_key=_dep("_reject_body_idempotency_key"),
             submit_action_command=_dep("_gov_bff_action_command"),
-            submit_sem_command=_dep("_sem_command_response"),
+            submit_sem_command=command_adapter_service.sem_command_response,
             handle_sse_stream=_dep("_handle_sse_stream"),
             run_management_read=_dep("run_management_read"),
             request_dry_run_requested=_dep("_request_dry_run_requested"),
@@ -1559,7 +1574,7 @@ def mount_bff_routers(
             read_surface=app_deps.read_surface,
             loop_truth_adapter=_dep("loop_truth"),
             downstream_health_monitor=_dep("downstream_health_monitor"),
-            submit_sem_command=_dep("_sem_command_response"),
+            submit_sem_command=command_adapter_service.sem_command_response,
             reject_body_idempotency_key=_dep("_reject_body_idempotency_key"),
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),
@@ -1722,6 +1737,10 @@ def compose_bff_app(
         from ..bootstrap.dependencies import AppDependencies
         app_deps = AppDependencies.create_default()
 
+    from .owner_reads import OwnerReadContextMiddleware
+    from starlette.middleware import Middleware
+    # Read the bearer header after the browser-session middleware validates cookies.
+    app.user_middleware.append(Middleware(OwnerReadContextMiddleware))
     mount_bff_routers(app, app_deps=app_deps, **dependencies)
 
     try:

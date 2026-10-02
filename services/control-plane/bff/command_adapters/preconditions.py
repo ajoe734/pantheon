@@ -1269,6 +1269,9 @@ def require_final_command_preconditions(
     owner_verifies_approval = cmd.command in (
         CommandType.ADVANCE_LIFECYCLE,
         CommandType.APPROVED_APPLY,
+        # Evolution re-reads Governance approval and the downstream terminal receipt.
+        CommandType.EXECUTE_EVOLUTION_ACTION,
+        CommandType.EXECUTE_MUTATION,
         CommandType.APPROVE_DECISION,
         CommandType.REJECT_DECISION,
     )

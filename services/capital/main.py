@@ -69,7 +69,7 @@ try:
         build_capital_pool_store,
     )
     from .write_authority import is_authorized, matrix_as_list
-    from .capital_guard import CapitalGuard, STAGE_DEPLOYMENT_SCOPE, line_deployment_scope, line_increases_risk, line_is_paper_scope
+    from .capital_guard import CapitalGuard, _tenant_of, STAGE_DEPLOYMENT_SCOPE, line_deployment_scope, line_increases_risk, line_is_paper_scope
     from . import inbound_authority as _inbound_mod
     from .inbound_authority import (
         CapitalInboundAuthority,
@@ -115,7 +115,7 @@ except ImportError:
         build_capital_pool_store,
     )
     from write_authority import is_authorized, matrix_as_list  # type: ignore
-    from capital_guard import CapitalGuard, STAGE_DEPLOYMENT_SCOPE, line_deployment_scope, line_increases_risk, line_is_paper_scope  # type: ignore
+    from capital_guard import CapitalGuard, _tenant_of, STAGE_DEPLOYMENT_SCOPE, line_deployment_scope, line_increases_risk, line_is_paper_scope  # type: ignore
     import inbound_authority as _inbound_mod  # type: ignore
     from inbound_authority import (  # type: ignore
         CapitalInboundAuthority,
@@ -179,8 +179,7 @@ def _current_tenant() -> Optional[str]:
 
 
 def _tenant_match(obj: Any, tenant: Optional[str]) -> bool:
-    tid = getattr(obj, "tenant_id", None)
-    tid = (getattr(obj, "metadata", None) or {}).get("tenant_id") if tid is None else tid
+    tid = _tenant_of(obj)
     return bool(tid and (tenant is None or tid == tenant))
 
 
@@ -1100,9 +1099,9 @@ CAPITAL_HTTP_ERRORS = (
 
 
 def _pool_body(pool: CapitalPool, *, idempotent_replay: bool = False) -> CapitalPoolBody:
-    return CapitalPoolBody(**pool.to_dict(), tenant_id=getattr(pool, "tenant_id", None) or (pool.metadata or {}).get("tenant_id"), idempotent_replay=idempotent_replay, approval_digest=pool_digest(pool))
+    return CapitalPoolBody(**pool.to_dict(), tenant_id=_tenant_of(pool), idempotent_replay=idempotent_replay, approval_digest=pool_digest(pool))
 def _binding_body(binding: PersonaCapitalBinding, *, idempotent_replay: bool = False) -> PersonaCapitalBindingBody:
-    return PersonaCapitalBindingBody(**binding.to_dict(), tenant_id=getattr(binding, "tenant_id", None) or (binding.metadata or {}).get("tenant_id"), idempotent_replay=idempotent_replay, approval_digest=binding_digest(binding))
+    return PersonaCapitalBindingBody(**binding.to_dict(), tenant_id=_tenant_of(binding), idempotent_replay=idempotent_replay, approval_digest=binding_digest(binding))
 def _rebalance_body(record: Dict[str, Any]) -> RebalanceBody:
     return RebalanceBody(**record, plan_digest=plan_digest(record))
 

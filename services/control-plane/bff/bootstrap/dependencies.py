@@ -94,6 +94,7 @@ class AppDependencies:
 
         resolved_read_surface = read_surface or create_read_surface_ports(
             persona_registry_store=resolved_persona_write_owner,
+            ranking_store=resolved_ranking_write_owner._store,
         )
         if not isinstance(resolved_read_surface, ReadSurfacePorts):
             raise TypeError(

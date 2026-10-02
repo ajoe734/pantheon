@@ -518,23 +518,8 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        rollback_id = str(params.get("rollback_id") or params.get("entity_id") or "").strip()
-        if not rollback_id:
-            raise ValueError("ApproveRollback requires rollback_id.")
-        payload = {"approval_notes": params.get("approval_notes", "Approved by operator")}
-        url = internal_url(f"/api/internal/v1/rollbacks/{quote(rollback_id, safe='')}/approve")
-        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="Rollback",
-            entity_id=rollback_id,
-            action_id="ApproveRollback",
-            status=body.get("status") or "approved",
-            dispatch_path=url,
-            domain_receipt=body,
-            authoritative_readback={"rollback_id": rollback_id, "status": "approved"},
-            extra={"rollback_id": rollback_id},
-        )
+        from .retired import reject_retired_command
+        reject_retired_command("ApproveRollback")
 
     def _execute_reject_rollback(
         self,
@@ -543,23 +528,8 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        rollback_id = str(params.get("rollback_id") or params.get("entity_id") or "").strip()
-        if not rollback_id:
-            raise ValueError("RejectRollback requires rollback_id.")
-        payload = {"rejection_reason": params.get("rejection_reason", "Rejected by operator")}
-        url = internal_url(f"/api/internal/v1/rollbacks/{quote(rollback_id, safe='')}/reject")
-        body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="Rollback",
-            entity_id=rollback_id,
-            action_id="RejectRollback",
-            status=body.get("status") or "rejected",
-            dispatch_path=url,
-            domain_receipt=body,
-            authoritative_readback={"rollback_id": rollback_id, "status": "rejected"},
-            extra={"rollback_id": rollback_id},
-        )
+        from .retired import reject_retired_command
+        reject_retired_command("RejectRollback")
 
     def _execute_kill_switch(
         self,

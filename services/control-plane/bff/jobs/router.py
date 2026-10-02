@@ -180,6 +180,6 @@ def create_jobs_router(
                 "Job not found",
                 f"Job {job_id} does not exist",
             )
-        return submit_job_action(job_id, action_id, resolved_key, identity, payload)
+        return submit_job_action(job_id, action_id, resolved_key, identity, payload, authorization=authorization)
 
     return router

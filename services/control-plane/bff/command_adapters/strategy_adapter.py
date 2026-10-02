@@ -1034,22 +1034,8 @@ class StrategyCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        target_id = formula_id or str(params.get("formula_id") or "").strip()
-        if not target_id:
-            raise ValueError("RankingFormulaAction requires formula_id.")
-
-        new_status = "published" if action_id.lower() == "publish" else ("deprecated" if action_id.lower() == "deprecate" else "updated")
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="RankingFormula",
-            entity_id=target_id,
-            action_id=action_id,
-            status=new_status,
-            dispatch_path="ranking_formula_registry",
-            domain_receipt={"formula_id": target_id, "status": new_status},
-            authoritative_readback={"formula_id": target_id, "status": new_status},
-            extra={"formula_id": target_id},
-        )
+        from .retired import reject_retired_command
+        reject_retired_command("RankingFormulaAction")
 
     def _execute_ranking_action(
         self,
@@ -1060,15 +1046,5 @@ class StrategyCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        target_id = ranking_id or str(params.get("ranking_id") or "rankings-current").strip()
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="Ranking",
-            entity_id=target_id,
-            action_id=action_id,
-            status="submitted" if "submit" in action_id.lower() else "executed",
-            dispatch_path="ranking_governance_authority",
-            domain_receipt={"ranking_id": target_id, "action": action_id, "accepted": True},
-            authoritative_readback={"ranking_id": target_id, "status": "active"},
-            extra={"ranking_id": target_id},
-        )
+        from .retired import reject_retired_command
+        reject_retired_command("RankingAction")

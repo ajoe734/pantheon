@@ -362,10 +362,15 @@ def test_review_action_routes_forward_votes_and_deny_cross_tenant(review_client,
     res = client.post("/bff/reviews/a1/actions/approve", headers=headers(key="r-approve"), json={"expected_version": 1, "notes": "looks good"})
     assert res.status_code == 202
     assert len(owner.calls) == calls_before + 1
-    assert len(store._get_all_commands()) == 0
+    assert len(store._get_all_commands()) == 1
+    assert store._get_all_commands()[0]["status"] == "executed"
 
     cross = client.post("/bff/reviews/b1/actions/approve", headers=headers(key="r-cross"), json={"expected_version": 1, "notes": "cross"})
-    assert cross.status_code == 404
+    assert cross.status_code == 202
+    rejected = store.get_command_by_idempotency_key("r-cross", operator_id="rev-1")
+    assert rejected["status"] == "failed"
+    assert rejected["error"]["downstream_status"] == 404
+    assert owner.rows["b1"]["version"] == 1
 
 
 @pytest.mark.parametrize("cmd", ["request_revision", "requestrevision", "request_approval_revision", "RequestApprovalRevision", "request_changes", "requestchanges"])
@@ -452,7 +457,7 @@ def test_unsupported_url_action_cannot_be_reinterpreted_as_vote(review_client, o
     client, store = review_client
     response = client.post(f'/bff/reviews/a1/actions/{verb}', headers=headers(key=f'independent-url-{verb}'),
                            json=vote())
-    assert response.status_code in (422, 501) and not owner.calls, (
+    assert response.status_code == 410 and not owner.calls, (
         response.status_code, owner.calls, owner.rows['a1'], response.text)
 
 

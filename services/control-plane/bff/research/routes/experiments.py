@@ -142,10 +142,10 @@ def create_research_experiments_router(
                 "Experiment actions are not wired",
                 "submit_experiment_action was not injected into create_research_experiments_router",
             )
-        try:
-            res = submit_experiment_action(ObjectType.EXPERIMENT.value, clean_id, action_id, resolved_key, identity, payload)
-        except TypeError:
-            res = submit_experiment_action(ObjectType.EXPERIMENT.value, clean_id, action_id, identity, payload)
+        res = submit_experiment_action(
+            ObjectType.EXPERIMENT.value, clean_id, action_id, resolved_key, identity,
+            payload, authorization=authorization,
+        )
         return res.model_dump(mode="json") if hasattr(res, "model_dump") else res
 
     @router.get("/bff/experiments/{experiment_id}/logs")

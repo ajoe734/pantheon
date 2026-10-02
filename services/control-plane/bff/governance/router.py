@@ -270,9 +270,10 @@ def create_governance_router(
 
     def _paged(
         items: List[Dict[str, Any]], *, page_token: Optional[str], page_size: int, surface_key: str, dataset: str,
+        source: Optional[str] = None,
     ) -> Dict[str, Any]:
         snapshot_at = _now()
-        surface = _surface(dataset, snapshot_at=snapshot_at, source=_service().dataset_source(dataset))
+        surface = _surface(dataset, snapshot_at=snapshot_at, source=source or _service().dataset_source(dataset))
         page_items, next_token = ([], None) if surface.get("status") == "unavailable" else _page(items, page_token, page_size)
         meta = _snapshot(snapshot_at)
         surfaces = {surface_key: surface}
@@ -616,17 +617,18 @@ def create_governance_router(
     ) -> Dict[str, Any]:
         identity = _identity(authorization)
         resolved_state = decision_state if decision_state is not None else state
-        items = _service().list_approval_queue(
-            decision_types=split_csv(decision_type),
-            risk_levels=split_csv(risk_level),
-            decision_states=split_csv(resolved_state),
-        )
+        items = await _forward(approval_owner.list_decisions, authorization, state=resolved_state)
+        if decision_type:
+            items = [i for i in items if i.get("decision_type") in split_csv(decision_type)]
+        if risk_level:
+            items = [i for i in items if i.get("risk_level") in split_csv(risk_level)]
         response = _paged(
             items,
             page_token=page_token,
             page_size=page_size,
             surface_key="governance_approval_queue",
             dataset="approval_queue_items",
+            source="service_client",
         )
         redacted_page, total_redacted = _redact_evidence_field_items(identity, response["items"])
         response["items"] = redacted_page
@@ -932,7 +934,9 @@ def create_governance_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = _identity(authorization)
+        decisions = await _forward(approval_owner.list_decisions, authorization)
         response = _service().governance_ledger(
+            approval_records=decisions,
             source_type=source_type,
             status=status,
             q=q,
@@ -979,19 +983,9 @@ def create_governance_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Any:
-        identity = _identity(authorization, operator=True)
-        review_id = str(payload.get("review_id") or payload.get("id") or uuid.uuid4())
-        try:
-            return await _service().submit_governance_action(
-                action_kind="review",
-                target_id=review_id,
-                action_id="submit",
-                payload=payload,
-                identity=identity,
-                idempotency_key=_idempotency_key(idempotency_key, x_idempotency_key),
-            )
-        except RuntimeError:
-            _fail(409, "IDEMPOTENCY_CONFLICT", "Idempotency key conflict", "The key is bound to another payload")
+        _identity(authorization, operator=True)
+        _fail(410, "ACTION_RETIRED", "Review creation has no executing owner",
+              "Use /bff/approvals for Governance decisions")
 
     @router.get("/bff/reviews/{review_id}")
     async def bff_get_review(
@@ -1029,10 +1023,10 @@ def create_governance_router(
         if any(v in {"requestrevision", "requestapprovalrevision", "requestchanges", "requestchange"} for v in candidates) or payload.get("revision_notes") or payload.get("revisionNotes"):
             _fail(410, "VALIDATION_FAILED", "RequestApprovalRevision is retired", "Use RejectDecision with notes", precondition_failed="retired_action")
         if any(payload.get(k) not in (None, "") for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
-            _fail(501, "NOT_IMPLEMENTED", "named stage approvals are unsupported", "Unsupported approval action", precondition_failed="unsupported_action")
+            _fail(410, "ACTION_RETIRED", "Named stage approvals have no owner; use /bff/approvals/{decision_id}/decide", "Unsupported approval action", precondition_failed="unsupported_action")
         unsupported = [v for v in candidates if v not in {"approve", "approved", "reject", "rejected", "approvedwithconditions", "approvewithconditions"}]
         if unsupported:
-            _fail(501, "NOT_IMPLEMENTED", f"approval action {unsupported[0]!r} has no Governance owner transition", "Unsupported approval action", precondition_failed="unsupported_action")
+            _fail(410, "ACTION_RETIRED", f"approval action {unsupported[0]!r} has no owner; use /bff/approvals/{{decision_id}}/decide", "Unsupported approval action", precondition_failed="unsupported_action")
         app_c = [v for v in candidates if v in {"approve", "approved", "approvedwithconditions", "approvewithconditions"}]
         rej_c = [v for v in candidates if v in {"reject", "rejected"}]
         if app_c and rej_c:
@@ -1041,10 +1035,12 @@ def create_governance_router(
         clean_id = review_id.strip()
         params = dict(payload)
         params["decision"] = vote_verb
-        key = _idempotency_key(idempotency_key, x_idempotency_key, required=False)
-        result = await _forward(approval_owner.decide, authorization, clean_id, params, key)
-        _publish_decision(clean_id, result, identity)
-        return JSONResponse(status_code=202, content=result)
+        key = _idempotency_key(idempotency_key, x_idempotency_key, required=True)
+        return await _service().submit_governance_action(
+            action_kind="review", target_id=clean_id, action_id=vote_verb,
+            payload=params, identity=identity, idempotency_key=key,
+            authorization=authorization,
+        )
 
     @router.get("/bff/reviews/{review_id}/validators")
     async def bff_review_validators(
