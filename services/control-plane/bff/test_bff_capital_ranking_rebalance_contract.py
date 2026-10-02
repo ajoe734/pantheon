@@ -451,7 +451,7 @@ def test_bff_capital_pool_detail_404_unknown() -> None:
 
 
 
-def test_bff_capital_pool_patch_requires_idempotency_key() -> None:
+def test_bff_capital_pool_patch_is_retired_without_owner_endpoint() -> None:
     with tempfile.TemporaryDirectory() as td:
         client = _fresh_client(td)
         resp = client.patch(
@@ -459,12 +459,8 @@ def test_bff_capital_pool_patch_requires_idempotency_key() -> None:
             json={"status": "suspended"},
             headers=HEADERS,
         )
-        # Contract: capital/service.py:297, capital/router.py:102 requires Idempotency-Key
-        assert resp.status_code == 422, resp.text
-        err = _error(resp)
-        assert err["code"] == "VALIDATION_FAILED"
-        assert err["details"]["reason"] == "Idempotency-Key is required"
-
+        assert resp.status_code == 410, resp.text
+        assert _error(resp)["code"] == "OPERATION_NOT_ALLOWED"
 
 
 def test_bff_capital_pool_detail_with_seed_data() -> None:
