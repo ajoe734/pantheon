@@ -388,3 +388,62 @@ def test_capital_writes_fail_closed_without_an_owner_mutation_method() -> None:
         headers={"Idempotency-Key": "no-owner-1"},
     )
     assert response.status_code == 503
+
+
+def test_rest_mounted_tenant_resolution_coverage() -> None:
+    store = _CapitalStore()
+
+    class _Identity:
+        def __init__(self, allowed_tenants, tenant_id=""):
+            self.operator_id = "op-test"
+            self.roles = {"operator", "admin"}
+            self.claims = {"allowed_tenants": allowed_tenants, "tenant_id": tenant_id}
+
+    # 1. Ambiguous caller with multiple allowed tenants
+    ambiguous_client = _client_with_auth(store, lambda _: _Identity(["tenant-a", "tenant-b"]))
+    endpoints = [
+        ("post", "/bff/capital-pools", {"id": "pool-ambig", "name": "Pool Ambig"}, "pool-ambig-k"),
+        ("post", "/bff/capital-pools/pool-paper/actions/pause", {}, "pool-action-ambig-k"),
+        ("post", "/bff/rebalances", {"capital_pool_id": "pool-paper", "allocations": []}, "rebalance-ambig-k"),
+        ("post", "/bff/rebalances/rebalance-1/apply", {}, "rebalance-apply-ambig-k"),
+    ]
+
+    # Without X-Tenant-Id -> 400 for all write endpoints
+    for method, path, payload, key in endpoints:
+        headers = {"Idempotency-Key": key, "X-Confirm-Token": "confirm-valid"}
+        resp = getattr(ambiguous_client, method)(path, json=payload, headers=headers)
+        assert resp.status_code == 400, f"Expected 400 without X-Tenant-Id on {path}, got {resp.status_code}"
+
+    # With forbidden X-Tenant-Id -> 403 for all write endpoints
+    for method, path, payload, key in endpoints:
+        headers = {"Idempotency-Key": f"{key}-forbidden", "X-Confirm-Token": "confirm-valid", "X-Tenant-Id": "tenant-forbidden"}
+        resp = getattr(ambiguous_client, method)(path, json=payload, headers=headers)
+        assert resp.status_code == 403, f"Expected 403 on {path}, got {resp.status_code}"
+
+    # With allowed explicit X-Tenant-Id: tenant-b -> succeeds and passes tenant_id to store
+    for method, path, payload, key in endpoints:
+        headers = {"Idempotency-Key": f"{key}-b", "X-Confirm-Token": "confirm-valid", "X-Tenant-Id": "tenant-b"}
+        resp = getattr(ambiguous_client, method)(path, json=payload, headers=headers)
+        assert resp.status_code in {201, 202}, f"Expected success on {path}, got {resp.status_code}: {resp.text}"
+        _, ctx = store.calls[-1]
+        assert ctx.get("tenant_id") == "tenant-b"
+
+    # 2. Wildcard caller
+    wildcard_client = _client_with_auth(store, lambda _: _Identity(["*"]))
+    # Without X-Tenant-Id -> 400
+    resp = wildcard_client.post("/bff/capital-pools", json={"id": "p-wild", "name": "Wild"}, headers={"Idempotency-Key": "w-1"})
+    assert resp.status_code == 400
+    # With X-Tenant-Id: * -> 400
+    resp = wildcard_client.post("/bff/capital-pools", json={"id": "p-wild", "name": "Wild"}, headers={"Idempotency-Key": "w-2", "X-Tenant-Id": "*"})
+    assert resp.status_code == 400
+    # With concrete X-Tenant-Id: any-tenant -> 201
+    resp = wildcard_client.post("/bff/capital-pools", json={"id": "p-wild", "name": "Wild"}, headers={"Idempotency-Key": "w-3", "X-Tenant-Id": "any-tenant"})
+    assert resp.status_code == 201
+    assert store.calls[-1][1].get("tenant_id") == "any-tenant"
+
+    # 3. Unambiguous single tenant caller
+    single_client = _client_with_auth(store, lambda _: _Identity(["tenant-single"]))
+    resp = single_client.post("/bff/capital-pools", json={"id": "p-single", "name": "Single"}, headers={"Idempotency-Key": "s-1"})
+    assert resp.status_code == 201
+    assert store.calls[-1][1].get("tenant_id") == "tenant-single"
+

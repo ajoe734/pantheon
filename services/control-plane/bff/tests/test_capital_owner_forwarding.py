@@ -417,3 +417,35 @@ def test_headers_transport_preserves_timeout() -> None:
         assert base.http_request_json_with_headers("http://isolated.invalid/metadata", timeout=7) == (200, {}, {})
         assert transport.call_args.kwargs["timeout"] == 7
 
+
+def test_stored_binding_active_status_rejection_preserved_and_idempotent_reconciled(tmp_path: Path) -> None:
+    with CapitalBffAuthorityHarness(tmp_path) as harness:
+        _paper_pool(harness, "pool-active-test")
+        _binding("binding-p2-test", "pool-active-test", role="paper_owner", scope="paper")
+        # Activate paper binding
+        act_res = _binding_command(harness, "binding-p2-test", "activate", "act-p2-test")
+        assert act_res["status"] == "executed"
+        assert _owner_binding(harness, "binding-p2-test")["status"] == "active"
+
+        # Direct PATCH /api/bindings/{id}/status with status: active is prohibited (must use POST activate)
+        direct = harness.capital_client.patch(
+            "/api/bindings/binding-p2-test/status",
+            json={"actor_id": "op-2", "actor_role": "operator", "status": "active"},
+        )
+        assert direct.status_code == 400
+        assert "Use POST" in direct.json().get("detail", "")
+
+        # Stored PersonaAction update_status with status: active must fail, preserving owner rejection
+        res_prohibited = _binding_command(harness, "binding-p2-test", "update_status", "prohibited-active-k", status="active")
+        assert res_prohibited["status"] == "failed", "Prohibited active status update must fail, not report executed"
+
+        # Suspend the binding
+        res_suspend = _binding_command(harness, "binding-p2-test", "update_status", "suspend-k", status="suspended")
+        assert res_suspend["status"] == "executed"
+        assert _owner_binding(harness, "binding-p2-test")["status"] == "suspended"
+
+        # Second update_status to suspended: same-status idempotent outcome reconciles to executed
+        res_idempotent_same = _binding_command(harness, "binding-p2-test", "update_status", "suspend-k-2", status="suspended")
+        assert res_idempotent_same["status"] == "executed"
+        assert res_idempotent_same["result"]["authoritative_readback"]["status"] == "suspended"
+

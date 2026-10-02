@@ -143,11 +143,16 @@ def authenticate_capital_request(*, method: str = "POST", authorization: Optiona
                 ctx = _inbound_mod.validate_request_auth(authorization=authorization, required_roles=roles, mfa_required=False, env=_inbound_mod._auth_env())
                 if not _inbound_mod._claim_strings(ctx.claims, ("service", "service_id", "serviceId")):
                     clean_t, allowed_t = str(tenant_id or "").strip(), _inbound_mod._claim_strings(ctx.claims, _inbound_mod._TENANT_CLAIMS)
-                    if ctx.token_kind == "structured": allowed_t.extend(_inbound_mod._csv(os.getenv("CAPITAL_PERMISSIVE_ALLOWED_TENANTS")))
-                    if not allowed_t: raise CapitalInboundAuthorityError("TENANT_CLAIM_REQUIRED", "Verified caller token does not contain tenant authority", 403)
-                    clean_t = allowed_t[0] if (not clean_t and len(allowed_t) == 1 and allowed_t[0] != "*") else clean_t
-                    if not clean_t or clean_t == "*": raise CapitalInboundAuthorityError("TENANT_REQUIRED", "X-Tenant-Id is required for Capital mutations", 400)
-                    if "*" not in allowed_t and clean_t not in allowed_t: raise CapitalInboundAuthorityError("TENANT_SCOPE_FORBIDDEN", "Requested tenant is outside the verified caller scope", 403)
+                    if ctx.token_kind == "structured":
+                        allowed_t.extend(_inbound_mod._csv(os.getenv("CAPITAL_PERMISSIVE_ALLOWED_TENANTS")))
+                    if not allowed_t:
+                        raise CapitalInboundAuthorityError("TENANT_CLAIM_REQUIRED", "Verified caller token does not contain tenant authority", 403)
+                    if not clean_t and len(allowed_t) == 1 and allowed_t[0] != "*":
+                        clean_t = allowed_t[0]
+                    if not clean_t or clean_t == "*":
+                        raise CapitalInboundAuthorityError("TENANT_REQUIRED", "X-Tenant-Id is required for Capital mutations", 400)
+                    if "*" not in allowed_t and clean_t not in allowed_t:
+                        raise CapitalInboundAuthorityError("TENANT_SCOPE_FORBIDDEN", "Requested tenant is outside the verified caller scope", 403)
                     del_actor = str(ctx.claims.get("delegated_actor_id") or ctx.claims.get("operator_id") or ctx.claims.get("user_id") or "").strip() or None
                     return CapitalInboundAuthority(actor_id=ctx.actor_id, actor_service=clean_svc, tenant_id=clean_t, roles=ctx.roles, token_kind=ctx.token_kind, delegated_actor_id=del_actor)
         raise exc
@@ -167,8 +172,10 @@ def plan_digest(proposal: Dict[str, Any]) -> str:
 
 
 def _current_tenant() -> Optional[str]:
-    try: return current_authority().tenant_id
-    except RuntimeError: return None
+    try:
+        return current_authority().tenant_id
+    except RuntimeError:
+        return None
 
 
 def _tenant_match(obj: Any, tenant: Optional[str]) -> bool:

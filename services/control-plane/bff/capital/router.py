@@ -87,22 +87,41 @@ def _identity_id(identity: Any) -> str:
     return str(getattr(identity, "operator_id", None) or getattr(identity, "id", None) or "operator-1")
 
 
-def _identity_tenant(identity: Any) -> Optional[str]:
+def _caller_allowed_tenants(identity: Any) -> Tuple[List[str], bool]:
     if identity is None:
-        return None
-    for a in ("tenant_id", "tenant"):
-        if getattr(identity, a, None):
-            return str(getattr(identity, a)).strip() or None
-    c = getattr(identity, "claims", None) or {}
-    for k in ("tenant_id", "tenantId", "tenant.id", "tenant"):
-        if c.get(k):
-            return str(c[k]).strip() or None
-    for k in ("allowed_tenants", "tenant_ids", "tenantIds", "tenants"):
-        v = c.get(k)
-        if isinstance(v, (list, tuple)) and v:
-            return str(v[0]).strip() or None
-        if isinstance(v, str) and v.strip():
-            return v.split(",")[0].strip() or None
+        return [], False
+    claims = getattr(identity, "claims", None) or {}
+    raw: List[str] = []
+    for k in ("allowed_tenants", "allowedTenants", "tenant_ids", "tenantIds", "tenants"):
+        val = getattr(identity, k, None) or (claims.get(k) if isinstance(claims, dict) else None)
+        if isinstance(val, (list, tuple, set)):
+            raw.extend(str(item).strip() for item in val if str(item).strip())
+        elif isinstance(val, str) and val.strip():
+            raw.extend(t.strip() for t in val.split(",") if t.strip())
+    for k in ("tenant_id", "tenantId", "tenant.id", "tenant", "tid"):
+        val = getattr(identity, k, None) or (claims.get(k) if isinstance(claims, dict) else None)
+        if val and isinstance(val, str) and val.strip():
+            raw.append(val.strip())
+    return [t for t in dict.fromkeys(raw) if t and t != "*"], ("*" in raw)
+
+
+def _resolve_tenant(
+    identity: Any,
+    request_tenant: Optional[str],
+    bff_error: Callable[..., Exception],
+) -> Optional[str]:
+    concrete, has_wildcard = _caller_allowed_tenants(identity)
+    clean_req = str(request_tenant or "").strip() or None
+    if clean_req:
+        if clean_req == "*":
+            raise bff_error(400, ErrorCode.VALIDATION_FAILED, "Wildcard tenant cannot be targeted for Capital writes", "TENANT_REQUIRED")
+        if concrete and not has_wildcard and clean_req not in concrete:
+            raise bff_error(403, ErrorCode.FORBIDDEN, f"Tenant {clean_req!r} is outside the caller scope", "TENANT_SCOPE_FORBIDDEN")
+        return clean_req
+    if not has_wildcard and len(concrete) == 1:
+        return concrete[0]
+    if has_wildcard or len(concrete) > 1:
+        raise bff_error(400, ErrorCode.VALIDATION_FAILED, "X-Tenant-Id is required for Capital mutations", "TENANT_REQUIRED")
     return None
 
 
@@ -134,7 +153,11 @@ def _error_for_capital_exception(exc: Exception, bff_error: Callable[..., Except
         if code is None:
             return bff_error(503 if exc.code >= 500 else 502, ErrorCode.DEPENDENCY_UNAVAILABLE, "Capital owner request failed", f"owner returned HTTP {exc.code}")
         try:
-            detail = json.loads(exc.read().decode("utf-8")).get("detail")
+            payload = json.loads(exc.read().decode("utf-8"))
+            if isinstance(payload, dict):
+                detail = payload.get("detail") or (payload.get("error", {}) if isinstance(payload.get("error"), dict) else {}).get("message") or payload.get("error") or payload.get("message")
+            else:
+                detail = str(payload)
         except Exception:
             detail = None
         return bff_error(exc.code, code, "Capital owner rejected the request", str(detail or exc.reason))
@@ -219,14 +242,15 @@ def create_capital_router(
         except Exception as exc:
             raise _error_for_capital_exception(exc, bff_error) from exc
 
-    def _idempotent_write(operation: str, payload: Dict[str, Any], *, identity: Any, authorization: Optional[str], key: str, target_id: Optional[str] = None) -> Tuple[Dict[str, Any], bool]:
-        actor_id, tenant_id = _identity_id(identity), _identity_tenant(identity)
+    def _idempotent_write(operation: str, payload: Dict[str, Any], *, identity: Any, authorization: Optional[str], key: str, target_id: Optional[str] = None, tenant_id: Optional[str] = None) -> Tuple[Dict[str, Any], bool]:
+        actor_id = _identity_id(identity)
+        tid = tenant_id if tenant_id is not None else _resolve_tenant(identity, None, bff_error)
         try:
-            replay = service.idempotent(actor_id=actor_id, key=key, operation=operation, payload=payload, target_id=target_id, tenant_id=tenant_id)
+            replay = service.idempotent(actor_id=actor_id, key=key, operation=operation, payload=payload, target_id=target_id, tenant_id=tid)
             if replay is not None:
                 return replay, True
-            result = service.write(operation, payload, actor_id=actor_id, actor_role=_owner_actor_role(identity), auth_token=authorization, key=key, target_id=target_id, tenant_id=tenant_id)
-            service.remember(actor_id=actor_id, key=key, operation=operation, payload=payload, response=result, target_id=target_id, tenant_id=tenant_id)
+            result = service.write(operation, payload, actor_id=actor_id, actor_role=_owner_actor_role(identity), auth_token=authorization, key=key, target_id=target_id, tenant_id=tid)
+            service.remember(actor_id=actor_id, key=key, operation=operation, payload=payload, response=result, target_id=target_id, tenant_id=tid)
             return result, False
         except HTTPException:
             raise
@@ -281,6 +305,7 @@ def create_capital_router(
     async def bff_create_capital_pool(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
@@ -289,8 +314,9 @@ def create_capital_router(
         name = str(payload.get("name") or "").strip()
         if not name:
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Capital pool name is required", "name must be a non-empty string")
+        tid = _resolve_tenant(identity, x_tenant_id or payload.get("tenant_id"), bff_error)
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("create_pool", payload, identity=identity, authorization=authorization, key=key)
+        result, replayed = _idempotent_write("create_pool", payload, identity=identity, authorization=authorization, key=key, tenant_id=tid)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     # 5. BFF Capital Pool detail.
@@ -307,6 +333,7 @@ def create_capital_router(
         action_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
@@ -315,8 +342,9 @@ def create_capital_router(
         _pool_or_error(pool_id)
         if not str(action_id).strip():
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Capital pool action is required")
+        tid = _resolve_tenant(identity, x_tenant_id or payload.get("tenant_id"), bff_error)
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("pool_action", {**payload, "action_id": action_id}, identity=identity, authorization=authorization, key=key, target_id=pool_id)
+        result, replayed = _idempotent_write("pool_action", {**payload, "action_id": action_id}, identity=identity, authorization=authorization, key=key, target_id=pool_id, tenant_id=tid)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     # 8. Evaluate one policy snapshot before a rebalance proposal is admitted.
@@ -357,6 +385,7 @@ def create_capital_router(
     async def bff_create_rebalance(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
@@ -366,8 +395,9 @@ def create_capital_router(
         if not pool_id:
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "capital_pool_id is required")
         _pool_or_error(pool_id)
+        tid = _resolve_tenant(identity, x_tenant_id or payload.get("tenant_id"), bff_error)
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("create_rebalance", payload, identity=identity, authorization=authorization, key=key)
+        result, replayed = _idempotent_write("create_rebalance", payload, identity=identity, authorization=authorization, key=key, tenant_id=tid)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     # 13. Apply an already admitted rebalance proposal through the capital owner.
@@ -375,6 +405,7 @@ def create_capital_router(
     async def bff_apply_rebalance_proposal(
         rebalance_id: str, request: Request, background_tasks: BackgroundTasks,
         payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
@@ -384,10 +415,12 @@ def create_capital_router(
         _rebalance_or_error(rebalance_id)
         if not str(x_confirm_token or "").strip():
             raise bff_error(428, ErrorCode.CONFIRMATION_REQUIRED, "Confirmation token is required before this action can be accepted", "CONFIRM_TOKEN_MISSING")
+        tid = _resolve_tenant(identity, x_tenant_id or payload.get("tenant_id"), bff_error)
         cas = getattr(getattr(getattr(request, "app", None), "state", None), "command_adapter_service", None)
         if cas is not None:
             cmd = {"command": "ApprovedApply", "target": {"type": "Rebalance", "id": rebalance_id},
-                   "params": {"rebalance_id": rebalance_id, **{k: v for k, v in payload.items() if k not in {"audit_context", "reason"}}},
+                   "params": {"rebalance_id": rebalance_id, **({"tenant_id": tid} if tid else {}),
+                              **{k: v for k, v in payload.items() if k not in {"audit_context", "reason", "tenant_id"}}},
                    "audit_context": payload.get("audit_context") if "audit_context" in payload else {"reason": payload.get("reason")}}
             return cas.submit_command_admission(
                 background_tasks=background_tasks, payload=cmd, authorization=authorization, x_confirm_token=x_confirm_token,
@@ -395,7 +428,7 @@ def create_capital_router(
                 idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key, source_route="POST /bff/rebalances/{rebalance_id}/apply", include_durable_meta=True,
             )
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("apply_rebalance", payload, identity=identity, authorization=authorization, key=key, target_id=rebalance_id)
+        result, replayed = _idempotent_write("apply_rebalance", payload, identity=identity, authorization=authorization, key=key, target_id=rebalance_id, tenant_id=tid)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     # 14. Rebalance detail.

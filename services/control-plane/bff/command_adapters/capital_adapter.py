@@ -36,7 +36,8 @@ def _token_tenant(token: Optional[str]) -> Optional[str]:
         raw = str(token or "").removeprefix("Bearer ").strip().split(".")[1]
         claims = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
         tid = str(claims.get("tenant_id") or "").strip()
-        if tid and tid != "*": return tid
+        if tid and tid != "*":
+            return tid
         allowed = [str(t).strip() for t in claims.get("allowed_tenants") or [] if str(t).strip() and str(t).strip() != "*"]
         return allowed[0] if len(allowed) == 1 and claims.get("allowed_tenants") == [allowed[0]] else None
     except Exception:
@@ -64,11 +65,15 @@ def _owner_body(payload: Dict[str, Any], actor_id: str, actor_role: str, key: st
 class CapitalOwnerWriter:
     """Forward pool, binding, rebalance and containment writes to the Capital owner."""
 
+    @staticmethod
+    def _tenant(tenant_id: Optional[str], auth_token: Optional[str]) -> Optional[str]:
+        return str(tenant_id or "").strip() or _token_tenant(auth_token)
+
     def create_pool(self, payload, *, actor_id, actor_role, auth_token=None, key="", tenant_id=None, **_) -> Dict[str, Any]:
         pool_id = str(payload.get("pool_id") or payload.get("id") or "").strip()
         if not pool_id:
             raise CapitalValidationError("pool_id is required")
-        tenant = str(tenant_id or "").strip() or _token_tenant(auth_token)
+        tenant = self._tenant(tenant_id, auth_token)
         body = {**_owner_body(payload, actor_id, actor_role, key), "pool_id": pool_id}
         return _executor().create_capital_pool(body, auth_token=auth_token, **({"tenant_id": tenant} if tenant else {}))
 
@@ -77,17 +82,17 @@ class CapitalOwnerWriter:
         status = _POOL_ACTION_STATUS.get(action.lower())
         if status is None:
             raise ActionUnavailableError(f"CapitalPool action {action!r} is not supported by Capital authority.", action_id=action, entity_type="CapitalPool")
-        tenant = str(tenant_id or "").strip() or _token_tenant(auth_token)
+        tenant = self._tenant(tenant_id, auth_token)
         return self._set_status(f"/api/capital-pools/{quote(target_id, safe='')}", {"status": status, "approval_decision_id": payload.get("approval_decision_id")}, actor_id, actor_role, auth_token, tenant_id=tenant)
 
     def activate_binding(self, payload, *, actor_id, actor_role, target_id, auth_token=None, tenant_id=None, **_) -> Dict[str, Any]:
         path = f"/api/bindings/{quote(target_id, safe='')}"
-        tenant = str(tenant_id or "").strip() or _token_tenant(auth_token)
+        tenant = self._tenant(tenant_id, auth_token)
         http_request_json(capital_url(f"{path}/activate"), method="POST", payload={"actor_id": actor_id, "actor_role": actor_role, "approval_decision_id": payload.get("approval_decision_id")}, auth_token=auth_token, tenant_id=tenant)
         return http_request_json(capital_url(path), auth_token=auth_token, tenant_id=tenant)
 
     def binding_status(self, payload, *, actor_id, actor_role, target_id, auth_token=None, tenant_id=None, **_) -> Dict[str, Any]:
-        tenant = str(tenant_id or "").strip() or _token_tenant(auth_token)
+        tenant = self._tenant(tenant_id, auth_token)
         return self._set_status(f"/api/bindings/{quote(target_id, safe='')}", {"status": payload.get("status")}, actor_id, actor_role, auth_token, tenant_id=tenant)
 
     def create_rebalance(self, payload, *, actor_id, actor_role, auth_token=None, key="", tenant_id=None, **_) -> Dict[str, Any]:
@@ -95,14 +100,14 @@ class CapitalOwnerWriter:
         body.setdefault("capital_pool_id", payload.get("pool_id"))
         if payload.get("id") and not payload.get("rebalance_id"):
             body["rebalance_id"] = payload["id"]
-        tenant = str(tenant_id or "").strip() or _token_tenant(auth_token)
+        tenant = self._tenant(tenant_id, auth_token)
         return _executor().create_capital_rebalance_proposal(body, auth_token=auth_token, **({"tenant_id": tenant} if tenant else {}))
 
     def apply_rebalance(self, payload, *, actor_id, actor_role, target_id, auth_token=None, key="", tenant_id=None, **_) -> Dict[str, Any]:
         params = {"entity_type": "Rebalance", "entity_id": target_id, "idempotency_key": key, "request_hash": _request_hash(payload),
                   "approval_ref": payload.get("approval_ref") or payload.get("approval_decision_id") or "", "proposal_version": payload.get("proposal_version"),
                   "actor_id": actor_id, "actor_role": actor_role}
-        tenant = str(tenant_id or "").strip() or _token_tenant(auth_token)
+        tenant = self._tenant(tenant_id, auth_token)
         if tenant:
             params["tenant_id"] = tenant
         return _executor()._execute_approved_rebalance_apply(str(payload.get("command_id") or key), params, auth_token=auth_token)
@@ -113,8 +118,19 @@ class CapitalOwnerWriter:
         try:
             http_request_json(capital_url(f"{path}/status"), method="PATCH", payload=body, auth_token=auth_token, tenant_id=tenant_id)
         except urllib.error.HTTPError as exc:
-            if exc.code != 400 or http_request_json(capital_url(path), auth_token=auth_token, tenant_id=tenant_id).get("status") != fields.get("status"):
-                raise
+            target = fields.get("status")
+            if exc.code == 400 and target and not (path.startswith("/api/bindings") and target == "active"):
+                try:
+                    err_text = exc.read().decode("utf-8")
+                    if hasattr(exc, "fp") and hasattr(exc.fp, "seek"):
+                        exc.fp.seek(0)
+                except Exception:
+                    err_text = ""
+                if f"'{target}' -> '{target}'" in err_text:
+                    readback = http_request_json(capital_url(path), auth_token=auth_token, tenant_id=tenant_id)
+                    if readback.get("status") == target:
+                        return readback
+            raise
         return http_request_json(capital_url(path), auth_token=auth_token, tenant_id=tenant_id)
 
 
