@@ -241,7 +241,7 @@ def _normalize_lineage(lineage: Any) -> dict[str, Any]:
     if not isinstance(lineage, Mapping):
         return {}
 
-    normalized = dict(lineage)
+    normalized = {key: value for key, value in lineage.items() if value is not None}
     if "source_run_ids" not in normalized and normalized.get("source_run_id"):
         normalized["source_run_ids"] = [normalized["source_run_id"]]
     return normalized
