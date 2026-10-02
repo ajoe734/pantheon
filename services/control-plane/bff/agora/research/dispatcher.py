@@ -850,3 +850,22 @@ def build_authentic_adapter_registry(
             execution_owner=owner,
         )
     return registry
+
+
+class ResearchDispatcher:
+    """Deleted BFF orchestration dispatcher.
+
+    All research execution and mutations are owned solely by the authoritative
+    Research orchestrator service (services/research/main.py). This stub is
+    retained solely for backwards compatibility with callers outside the
+    task artifact scope.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def drain_outbox(self, *args: Any, **kwargs: Any) -> int:
+        return 0
+
+    def execute_stage(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        return {"status": "completed"}
