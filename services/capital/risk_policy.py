@@ -133,9 +133,7 @@ class RiskPolicy:
             status=str(payload.get("status") or "active"),
             gross_limit=_policy_limit(payload.get("gross_limit")),
             net_limit=_policy_limit(payload.get("net_limit")),
-            max_single_name_weight=_policy_limit(
-                payload.get("max_single_name_weight", payload.get("max_single_weight"))
-            ),
+            max_single_name_weight=_policy_alias(payload, "max_single_name_weight", "max_single_weight"),
             max_sector_exposure=_policy_limit(payload.get("max_sector_exposure"), "flex"),
             max_factor_exposure=_policy_limit(payload.get("max_factor_exposure"), "flex"),
             max_leverage=_policy_limit(payload.get("max_leverage")),
@@ -154,9 +152,7 @@ class RiskPolicy:
                 payload.get("max_strategy_family_concentration"), "flex"
             ),
             max_target_overlap=_policy_limit(payload.get("max_target_overlap")),
-            max_signal_correlation=_policy_limit(
-                payload.get("max_signal_correlation", payload.get("max_pairwise_correlation"))
-            ),
+            max_signal_correlation=_policy_alias(payload, "max_signal_correlation", "max_pairwise_correlation"),
             allowed_stages=_policy_limit(payload.get("allowed_stages"), "list"),
             max_canary_capital_scale_pct=_policy_limit(payload.get("max_canary_capital_scale_pct")),
             max_canary_gross_scale_pct=_policy_limit(payload.get("max_canary_gross_scale_pct")),
@@ -362,7 +358,7 @@ class RiskPolicyEvaluator:
             for limit, fact in _FACT_OF_LIMIT.items():
                 if limit.startswith("max_canary_") and facts.get("stage") != "canary":
                     continue
-                if facts["target_type"] == "capital_pool_activation" and not facts.get("stage") and limit in _ALLOCATION_LIMITS:
+                if facts["target_type"] == "capital_pool_activation" and "stage" not in facts and limit in _ALLOCATION_LIMITS:
                     continue
                 configured = getattr(resolved_policy, limit)
                 if configured not in (None, (), {}) and _is_obs_missing(limit, configured, facts.get(fact)):
@@ -909,15 +905,20 @@ def _string_tuple(value: Any) -> tuple[str, ...]:
     return tuple(str(item).strip() for item in value if str(item).strip())
 
 
+def _policy_alias(payload: Mapping[str, Any], key: str, alias: str) -> float | None:
+    canonical, legacy = _policy_limit(payload.get(key)), _policy_limit(payload.get(alias))
+    return canonical if key in payload else legacy
+
+
 def _policy_limit(value: Any, kind: str = "scalar") -> Any:
-    if value is None:
+    if value is None and kind != "number":
         return {"map": {}, "list": ()}.get(kind)
     if kind == "list":
         if isinstance(value, (list, tuple)) and all(isinstance(item, str) for item in value):
             return tuple(item.strip() for item in value if item.strip())
     elif kind in ("map", "flex") and isinstance(value, Mapping):
-        return {str(key): _policy_limit(raw) if raw is not None else _policy_limit("") for key, raw in value.items()}
-    elif kind in ("scalar", "flex"):
+        return {str(key): _policy_limit(raw, "number") for key, raw in value.items()}
+    elif kind in ("scalar", "flex", "number"):
         numeric = _optional_float(value)
         if numeric is not None:
             return numeric
