@@ -48,6 +48,25 @@ class RiskPolicyTargetType(str, Enum):
     RUNTIME_ACTION = "runtime_action"
 
 
+_FACT_OF_LIMIT = {
+    "allowed_stages": "stage", "max_single_name_weight": "target_weights", "gross_limit": "gross_exposure",
+    "net_limit": "net_exposure", "max_leverage": "leverage", "turnover_limit": "turnover",
+    "max_sector_exposure": "sector_exposures", "max_factor_exposure": "factor_exposures",
+    "max_strategy_family_concentration": "strategy_family_concentration",
+    "max_target_overlap": "target_overlap", "max_signal_correlation": "signal_correlation",
+    "max_canary_capital_scale_pct": "capital_scale_pct", "max_canary_gross_scale_pct": "gross_scale_pct",
+    "allowed_asset_classes": "asset_classes", "forbidden_asset_classes": "asset_classes",
+    "allowed_strategy_families": "strategy_family", "forbidden_strategy_families": "strategy_family",
+    "liquidity_constraints": "liquidity", "drawdown_actions": "drawdown_pct",
+}
+_STRING_LIMITS = frozenset({
+    "allowed_stages", "allowed_asset_classes", "forbidden_asset_classes",
+    "allowed_strategy_families", "forbidden_strategy_families",
+})
+_ALLOCATION_LIMITS = frozenset(
+    _STRING_LIMITS | {"liquidity_constraints", "drawdown_actions", "max_canary_capital_scale_pct", "max_canary_gross_scale_pct"}
+)
+
 _ACTIVE_POLICY_STATUSES = {"active"}
 _DRAW_DOWN_ACTIONS = ("liquidate", "risk_off", "warn")
 
@@ -98,6 +117,8 @@ class RiskPolicy:
         such as ``max_single_weight``.
         """
 
+        if not isinstance(payload, Mapping):
+            raise RiskPolicyError("Malformed risk policy: expected a mapping")
         risk_policy_id = _first_text(
             payload,
             "risk_policy_id",
@@ -110,36 +131,36 @@ class RiskPolicy:
             version=str(payload.get("version") or "v1"),
             name=_optional_text(payload.get("name")),
             status=str(payload.get("status") or "active"),
-            gross_limit=_optional_float(payload.get("gross_limit")),
-            net_limit=_optional_float(payload.get("net_limit")),
-            max_single_name_weight=_optional_float(
+            gross_limit=_policy_limit(payload.get("gross_limit")),
+            net_limit=_policy_limit(payload.get("net_limit")),
+            max_single_name_weight=_policy_limit(
                 payload.get("max_single_name_weight", payload.get("max_single_weight"))
             ),
-            max_sector_exposure=_normalize_limit_map(payload.get("max_sector_exposure")),
-            max_factor_exposure=_normalize_limit_map(payload.get("max_factor_exposure")),
-            max_leverage=_optional_float(payload.get("max_leverage")),
-            turnover_limit=_optional_float(payload.get("turnover_limit")),
-            liquidity_constraints=_mapping(payload.get("liquidity_constraints")),
-            drawdown_actions=_numeric_mapping(payload.get("drawdown_actions")),
-            pause_rules=_mapping(payload.get("pause_rules")),
-            liquidation_rules=_mapping(payload.get("liquidation_rules")),
-            allowed_order_types=_string_tuple(payload.get("allowed_order_types")),
-            allowed_time_in_force=_string_tuple(payload.get("allowed_time_in_force")),
-            allowed_asset_classes=_string_tuple(payload.get("allowed_asset_classes")),
-            forbidden_asset_classes=_string_tuple(payload.get("forbidden_asset_classes")),
-            allowed_strategy_families=_string_tuple(payload.get("allowed_strategy_families")),
-            forbidden_strategy_families=_string_tuple(payload.get("forbidden_strategy_families")),
-            max_strategy_family_concentration=_normalize_limit_map(
-                payload.get("max_strategy_family_concentration")
+            max_sector_exposure=_policy_limit(payload.get("max_sector_exposure"), "flex"),
+            max_factor_exposure=_policy_limit(payload.get("max_factor_exposure"), "flex"),
+            max_leverage=_policy_limit(payload.get("max_leverage")),
+            turnover_limit=_policy_limit(payload.get("turnover_limit")),
+            liquidity_constraints=_policy_limit(payload.get("liquidity_constraints"), "map"),
+            drawdown_actions=_policy_limit(payload.get("drawdown_actions"), "map"),
+            pause_rules=_policy_limit(payload.get("pause_rules"), "map"),
+            liquidation_rules=_policy_limit(payload.get("liquidation_rules"), "map"),
+            allowed_order_types=_policy_limit(payload.get("allowed_order_types"), "list"),
+            allowed_time_in_force=_policy_limit(payload.get("allowed_time_in_force"), "list"),
+            allowed_asset_classes=_policy_limit(payload.get("allowed_asset_classes"), "list"),
+            forbidden_asset_classes=_policy_limit(payload.get("forbidden_asset_classes"), "list"),
+            allowed_strategy_families=_policy_limit(payload.get("allowed_strategy_families"), "list"),
+            forbidden_strategy_families=_policy_limit(payload.get("forbidden_strategy_families"), "list"),
+            max_strategy_family_concentration=_policy_limit(
+                payload.get("max_strategy_family_concentration"), "flex"
             ),
-            max_target_overlap=_optional_float(payload.get("max_target_overlap")),
-            max_signal_correlation=_optional_float(
+            max_target_overlap=_policy_limit(payload.get("max_target_overlap")),
+            max_signal_correlation=_policy_limit(
                 payload.get("max_signal_correlation", payload.get("max_pairwise_correlation"))
             ),
-            allowed_stages=_string_tuple(payload.get("allowed_stages")),
-            max_canary_capital_scale_pct=_optional_float(payload.get("max_canary_capital_scale_pct")),
-            max_canary_gross_scale_pct=_optional_float(payload.get("max_canary_gross_scale_pct")),
-            kill_switch_triggers=_string_tuple(payload.get("kill_switch_triggers")),
+            allowed_stages=_policy_limit(payload.get("allowed_stages"), "list"),
+            max_canary_capital_scale_pct=_policy_limit(payload.get("max_canary_capital_scale_pct")),
+            max_canary_gross_scale_pct=_policy_limit(payload.get("max_canary_gross_scale_pct")),
+            kill_switch_triggers=_policy_limit(payload.get("kill_switch_triggers"), "list"),
             metadata=_mapping(payload.get("metadata")),
         )
 
@@ -334,6 +355,18 @@ class RiskPolicyEvaluator:
         context: RiskPolicyEvaluationContext | Mapping[str, Any],
     ) -> RiskPolicyEvaluation:
         resolved_policy = policy if isinstance(policy, RiskPolicy) else RiskPolicy.from_mapping(policy)
+        # Capital risk increases require all applicable facts before normalization can
+        # discard malformed values. Other consumers retain their target contracts.
+        facts = context.to_dict() if isinstance(context, RiskPolicyEvaluationContext) else context
+        if facts.get("target_type") in {"capital_pool_activation", "capital_binding_activation", "rebalance_apply"}:
+            for limit, fact in _FACT_OF_LIMIT.items():
+                if limit.startswith("max_canary_") and facts.get("stage") != "canary":
+                    continue
+                if facts["target_type"] == "capital_pool_activation" and not facts.get("stage") and limit in _ALLOCATION_LIMITS:
+                    continue
+                configured = getattr(resolved_policy, limit)
+                if configured not in (None, (), {}) and _is_obs_missing(limit, configured, facts.get(fact)):
+                    raise RiskPolicyError(f"Risk policy limit {limit} cannot be evaluated: {fact} unavailable")
         resolved_context = (
             context
             if isinstance(context, RiskPolicyEvaluationContext)
@@ -876,12 +909,34 @@ def _string_tuple(value: Any) -> tuple[str, ...]:
     return tuple(str(item).strip() for item in value if str(item).strip())
 
 
-def _normalize_limit_map(value: Any) -> Mapping[str, float] | float | None:
-    scalar = _optional_float(value)
-    if scalar is not None:
-        return scalar
-    mapped = _numeric_mapping(value)
-    return mapped or None
+def _policy_limit(value: Any, kind: str = "scalar") -> Any:
+    if value is None:
+        return {"map": {}, "list": ()}.get(kind)
+    if kind == "list":
+        if isinstance(value, (list, tuple)) and all(isinstance(item, str) for item in value):
+            return tuple(item.strip() for item in value if item.strip())
+    elif kind in ("map", "flex") and isinstance(value, Mapping):
+        return {str(key): _policy_limit(raw) if raw is not None else _policy_limit("") for key, raw in value.items()}
+    elif kind in ("scalar", "flex"):
+        numeric = _optional_float(value)
+        if numeric is not None:
+            return numeric
+    raise RiskPolicyError(f"Malformed risk policy {kind} limit: {value!r}")
+
+
+def _is_obs_missing(limit: str, limit_value: Any, obs: Any) -> bool:
+    if obs in (None, "", (), [], {}):
+        return True
+    if limit in _STRING_LIMITS:
+        return False
+    if limit == "liquidity_constraints":
+        if not isinstance(obs, Mapping):
+            return True
+        required = (("min_avg_daily_volume", "avg_daily_volume"), ("max_order_pct_adv", "order_pct_adv"))
+        if any(_optional_float(obs.get(o)) is None for k, o in required if k in limit_value):
+            return True
+    values = obs.values() if isinstance(obs, Mapping) else [obs]
+    return any(_optional_float(v) is None for v in values)
 
 
 def _limit_for_key(limit: Mapping[str, float] | float, key: str) -> float | None:

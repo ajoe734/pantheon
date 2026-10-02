@@ -10,40 +10,10 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 from services.governance.approval_authority import ApprovalInvalid, configured_approval_reader
 from services.capital.risk_policy import (
     RiskPolicy,
-    RiskPolicyEvaluationContext,
     RiskPolicyEvaluator,
     _optional_float,
 )
 
-_FACT_OF_LIMIT = {
-    "allowed_stages": "stage", "max_single_name_weight": "target_weights", "gross_limit": "gross_exposure",
-    "net_limit": "net_exposure", "max_leverage": "leverage", "turnover_limit": "turnover",
-    "max_sector_exposure": "sector_exposures", "max_factor_exposure": "factor_exposures",
-    "max_strategy_family_concentration": "strategy_family_concentration",
-    "max_target_overlap": "target_overlap", "max_signal_correlation": "signal_correlation",
-    "max_canary_capital_scale_pct": "capital_scale_pct", "max_canary_gross_scale_pct": "gross_scale_pct",
-    "allowed_asset_classes": "asset_classes", "forbidden_asset_classes": "asset_classes",
-    "allowed_strategy_families": "strategy_family", "forbidden_strategy_families": "strategy_family",
-    "liquidity_constraints": "liquidity", "drawdown_actions": "drawdown_pct",
-}
-_STRING_LIMITS = frozenset({
-    "allowed_stages", "allowed_asset_classes", "forbidden_asset_classes",
-    "allowed_strategy_families", "forbidden_strategy_families",
-})
-_ALLOCATION_LIMITS = frozenset(
-    _STRING_LIMITS | {"liquidity_constraints", "drawdown_actions", "max_canary_capital_scale_pct", "max_canary_gross_scale_pct"}
-)
-_RAW_LIMIT_KEYS = (
-    "gross_limit", "net_limit", "max_single_name_weight", "max_single_weight", "max_leverage",
-    "turnover_limit", "max_target_overlap", "max_signal_correlation", "max_pairwise_correlation",
-    "max_canary_capital_scale_pct", "max_canary_gross_scale_pct",
-)
-_RAW_LIST_KEYS = (
-    "allowed_stages", "allowed_asset_classes", "forbidden_asset_classes", "allowed_strategy_families",
-    "forbidden_strategy_families", "allowed_order_types", "allowed_time_in_force", "kill_switch_triggers",
-)
-_RAW_FLEX_MAP_KEYS = ("max_sector_exposure", "max_factor_exposure", "max_strategy_family_concentration")
-_RAW_MAP_KEYS = ("drawdown_actions", "liquidity_constraints", "pause_rules", "liquidation_rules")
 _SCOPE_RANK = {"paper": 0, "canary": 1, "live": 2}
 SAFE_MODE_OK = frozenset({"normal", "normal_restored"})
 STAGE_DEPLOYMENT_SCOPE = {f"{k}{s}": k for k in ("paper", "canary", "live") for s in ("", "_candidate", "_running")}
@@ -86,45 +56,6 @@ def _finite_scale(v: Any, name: str) -> float:
     if val is not None and val > 0:
         return val
     raise CapitalGuardError(f"Invalid {name}: {v!r} must be a positive finite number")
-
-
-def _validate_raw_policy(policy: Mapping[str, Any]) -> None:
-    def malformed(key: str) -> CapitalGuardError:
-        return CapitalGuardError(f"Malformed risk policy limit {key}: {policy[key]!r}")
-
-    if not isinstance(policy, Mapping):
-        raise CapitalGuardError(f"Malformed risk policy: {policy!r}")
-    for key in _RAW_LIMIT_KEYS:
-        if policy.get(key) is not None and _optional_float(policy[key]) is None:
-            raise malformed(key)
-    for key in _RAW_LIST_KEYS:
-        value = policy.get(key)
-        if value is not None and not (isinstance(value, (list, tuple)) and all(isinstance(i, str) for i in value)):
-            raise malformed(key)
-    for key in _RAW_FLEX_MAP_KEYS + _RAW_MAP_KEYS:
-        value = policy.get(key)
-        if value is None:
-            continue
-        if not isinstance(value, Mapping) and key in _RAW_MAP_KEYS:
-            raise malformed(key)
-        numbers = value.values() if isinstance(value, Mapping) else [value]
-        if any(_optional_float(n) is None for n in numbers):
-            raise malformed(key)
-
-
-def _is_obs_missing(limit: str, limit_value: Any, obs: Any) -> bool:
-    if obs in (None, "", (), [], {}):
-        return True
-    if limit in _STRING_LIMITS:
-        return False
-    if limit == "liquidity_constraints":
-        if not isinstance(obs, Mapping):
-            return True
-        required = (("min_avg_daily_volume", "avg_daily_volume"), ("max_order_pct_adv", "order_pct_adv"))
-        if any(_optional_float(obs.get(o)) is None for k, o in required if k in limit_value):
-            return True
-    values = obs.values() if isinstance(obs, Mapping) else [obs]
-    return any(_optional_float(v) is None for v in values)
 
 
 def _context(facts: Mapping[str, Any], stage: Optional[str]) -> dict[str, Any]:
@@ -257,13 +188,8 @@ def load_risk_policy(ref: str) -> Mapping[str, Any]:
 
 
 def _tenant_of(obj: Any) -> Optional[str]:
-    return getattr(obj, "tenant_id", None) or (getattr(obj, "metadata", None) or {}).get("tenant_id")
-
-
-def _skips_limit(limit: str, context: Mapping[str, Any], target_type: str) -> bool:
-    if limit in ("max_canary_capital_scale_pct", "max_canary_gross_scale_pct") and context.get("stage") != "canary":
-        return True
-    return target_type == "capital_pool_activation" and "stage" not in context and limit in _ALLOCATION_LIMITS
+    # Only isolated legacy JSON entities lack the formal ownership attribute.
+    return getattr(obj, "tenant_id", (getattr(obj, "metadata", None) or {}).get("tenant_id"))
 
 
 class CapitalGuard:
@@ -313,20 +239,12 @@ class CapitalGuard:
     ) -> None:
         ref = str(getattr(pool, "risk_policy_ref", None) or "").strip()
         try:
-            policy = self._policy_loader(ref)
-            _validate_raw_policy(policy)
-            parsed = RiskPolicy.from_mapping(policy)
+            policy = RiskPolicy.from_mapping(self._policy_loader(ref))
             for context in contexts:
-                for limit, fact in _FACT_OF_LIMIT.items():
-                    if _skips_limit(limit, context, target_type):
-                        continue
-                    configured = getattr(parsed, limit, None)
-                    if configured not in (None, (), {}) and _is_obs_missing(limit, configured, context.get(fact)):
-                        raise CapitalGuardError(f"Risk policy limit {limit} cannot be evaluated: {fact} unavailable")
-                result = RiskPolicyEvaluator().evaluate(policy, RiskPolicyEvaluationContext.from_mapping({
-                    "target_type": target_type, "target_id": target_id, "capital_pool_id": pool.pool_id,
-                    "risk_policy_ref": ref, **context,
-                }))
+                result = RiskPolicyEvaluator().evaluate(policy, {
+                    **context, "target_type": target_type, "target_id": target_id,
+                    "capital_pool_id": pool.pool_id, "risk_policy_ref": ref,
+                })
                 if result.rejected:
                     raise CapitalGuardError("Risk policy rejected: " + "; ".join(result.blocking_reasons))
         except CapitalGuardError:
