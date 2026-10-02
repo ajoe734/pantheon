@@ -130,16 +130,17 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 
-def authenticate_capital_request(*, authorization: Optional[str], tenant_id: Optional[str], actor_service: Optional[str], persistence_enforced: bool) -> CapitalInboundAuthority:
+def authenticate_capital_request(*, method: str = "POST", authorization: Optional[str], tenant_id: Optional[str], actor_service: Optional[str], persistence_enforced: bool) -> CapitalInboundAuthority:
     try:
-        return _inbound_mod._orig_auth(authorization=authorization, tenant_id=tenant_id, actor_service=actor_service, persistence_enforced=persistence_enforced)
+        return _inbound_mod._orig_auth(method=method, authorization=authorization, tenant_id=tenant_id, actor_service=actor_service, persistence_enforced=persistence_enforced)
     except CapitalInboundAuthorityError as exc:
         if exc.code == "ACTOR_SERVICE_MISMATCH" and actor_service:
             clean_svc = str(actor_service or "").strip()
-            if clean_svc in set(_inbound_mod._csv(os.getenv("CAPITAL_ALLOWED_CALLER_SERVICES", "control-plane-bff"))) or "*" in os.getenv("CAPITAL_ALLOWED_CALLER_SERVICES", ""):
-                from services.runtime_auth_inbound import validate_request_auth
+            is_read = str(method or "").upper() in {"GET", "HEAD"}
+            allowed_setting = (os.getenv("CAPITAL_ALLOWED_READER_SERVICES") if is_read else None) or os.getenv("CAPITAL_ALLOWED_CALLER_SERVICES", "control-plane-bff")
+            if clean_svc in set(_inbound_mod._csv(allowed_setting)) or "*" in os.getenv("CAPITAL_ALLOWED_CALLER_SERVICES", ""):
                 roles = tuple(_inbound_mod._csv(os.getenv("CAPITAL_ALLOWED_ROLES", "capital.admin,persona.admin,operator,approver,reviewer,admin,risk_owner,viewer,reader,capital-reader")))
-                ctx = validate_request_auth(authorization=authorization, required_roles=roles, mfa_required=False, env=_inbound_mod._auth_env())
+                ctx = _inbound_mod.validate_request_auth(authorization=authorization, required_roles=roles, mfa_required=False, env=_inbound_mod._auth_env())
                 if not _inbound_mod._claim_strings(ctx.claims, ("service", "service_id", "serviceId")):
                     clean_t, allowed_t = str(tenant_id or "").strip(), _inbound_mod._claim_strings(ctx.claims, _inbound_mod._TENANT_CLAIMS)
                     if allowed_t and ("*" in allowed_t or (clean_t and clean_t in allowed_t)):
@@ -168,8 +169,7 @@ def _current_tenant() -> Optional[str]:
 
 def _tenant_match(obj: Any, tenant: Optional[str]) -> bool:
     tid = getattr(obj, "tenant_id", None)
-    if tid is None:  # JSON-store records carry only the server-stamped metadata tenant
-        tid = (getattr(obj, "metadata", None) or {}).get("tenant_id")
+    tid = (getattr(obj, "metadata", None) or {}).get("tenant_id") if tid is None else tid
     return bool(tid and (tenant is None or tid == tenant))
 
 
