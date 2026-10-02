@@ -1,9 +1,9 @@
 {
   "task_id": "BFF-RECEIPT-ONLY-ROUTES-002",
-  "source_head": "f34d6cc7b804236e87fd98ecaef64bdae8acc9d4",
+  "source_head": "dce62dd2c0cd870102b1ccf15801c0ff599526eb",
   "base_sha": "66bd4e431db07403c10e0660b91cf4b5cfaed00a",
   "environment": "local isolated owners; no hosted deployment or live capital actions",
-  "production_net_lines": -946,
+  "production_net_lines": -1009,
   "independent_review": "pending; canonical handoff binds this manifest to the exact PR head",
   "changes": [
     "Retired rollback approval, unsupported human gates, Ranking/Formula writes, AuditExport and unimplemented capability probes with 410 before admission; removed fake receipts and process-local action idempotency maps.",
@@ -11,12 +11,13 @@
     "Default AppDependencies reads Capital, Deployment, Runtime Manager, Ranking and Evolution owners; legacy approval queue and ledger share Governance. Browser-session credentials are captured after validation.",
     "Governance source URL is separate from Evolution; Trade Journal command-owner URL is wired as an environment reference, without inventing a deployed endpoint.",
     "Recovered dry-run propagation and durable BFF-owned two-man evidence; updated affected smoke and Governance contracts for canonical admission and HTTP 410 retirement.",
-    "Imported ProjectionReadUnavailable in main.py; readiness regressions cover missing and unavailable projection readers after merging current dev."
+    "Readiness regressions use the existing genuine composition suite; architecture importer allowlist, ceiling and substantive assertions are unchanged. Retired Job/Ranking role contracts assert HTTP 410.",
+    "Deleted the local RECORD_SPONSOR_DECISION projection-write shortcut. Existing process_command -> executor -> GovernanceCommandAdapter -> Internal API -> Consultation owner path now receives rationale_ref. Persisted owner and unavailable-owner regressions prove verification follows owner response, never local writes."
   ],
   "validation": [
     {
-      "command": "timeout 60 /tmp/clean-bff-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_receipt_owner_routes.py services/control-plane/bff/tests/test_receipt_default_reads.py services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py",
-      "passed": 42,
+      "command": "timeout 90 /tmp/clean-bff-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_receipt_owner_routes.py services/control-plane/bff/tests/test_receipt_default_reads.py services/control-plane/bff/tests/test_bff_b1_007_security_hardening.py services/control-plane/bff/tests/test_bff_main_composition.py::test_lifecycle_readiness_reports_unavailable_projection services/control-plane/bff/tests/test_bff_main_composition.py::test_operator_token_keeps_handler_behavior services/control-plane/bff/tests/test_bff_main_composition.py::test_reviewer_token_cannot_execute_retired_ranking_action",
+      "passed": 50,
       "exit_status": 0
     },
     {
@@ -26,7 +27,7 @@
     },
     {
       "command": "timeout 90 /tmp/clean-bff-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_receipt_governance_routes.py services/control-plane/bff/tests/test_receipt_only_retirement.py services/control-plane/bff/tests/test_receipt_research_routes.py services/control-plane/bff/tests/test_confirm_token_lifecycle.py",
-      "passed": 29,
+      "passed": 31,
       "exit_status": 0
     },
     {
@@ -38,14 +39,26 @@
       "command": "timeout 60 /tmp/clean-bff-venv/bin/python -m services.control_plane.bff.smoke_test",
       "passed": 26,
       "exit_status": 0
+    },
+    {
+      "command": "timeout 180 /tmp/clean-bff-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "passed": 39,
+      "exit_status": 0
     }
   ],
-  "validation_total": 319,
+  "validation_total": 368,
   "diff_check": "git diff origin/dev --check: exit 0",
   "limitations": [
-    "No full BFF suite pass is claimed. These five bounded batches completed with exit 0 on the recorded source head; earlier-session validation is not counted here.",
+    "No full BFF suite pass is claimed. Six listed bounded batches completed with exit 0. An exploratory full composition batch returned exit 1 (7 failures/44 passes); three task-affected retirement expectations were corrected and passed in the listed focused batch. The four remaining architecture failures were reproduced on clean origin/dev 66bd4e431 (exit 1), without modifying or removing assertions.",
     "Validation uses local isolated owners; no hosted or SSH operations. Source merge does not establish hosted FE/BFF acceptance, Trade Journal endpoint availability, or deployed identity. Research remains the downstream implementation owner."
   ],
-  "diff_budget": "python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget -300: exit 0; production +464/-1410 = -946",
-  "scope_check": "All 36 changed files inspected and matched against the current governed artifact contract, including smoke_test.py and test_bff_approvals_decide_contract.py; no out-of-scope paths."
+  "diff_budget": "python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget -300: exit 0; production +466/-1475 = -1009",
+  "scope_check": "All 37 changed files matched the current governed artifact contract; no out-of-scope paths.",
+  "baseline_failures": [
+    "test_all_canonical_domain_routers_mounted",
+    "test_training_v3_router_mounted",
+    "test_zero_unreferenced_dead_functions_in_main_py",
+    "test_main_py_zero_lambda_read_store_service_locator_seams"
+  ],
+  "baseline_validation": "In a clean git archive of origin/dev 66bd4e431, timeout 90 /tmp/clean-bff-venv/bin/python -m pytest -q with the four baseline_failures node ids under services/control-plane/bff/tests/test_bff_main_composition.py: 4 failed, exit 1."
 }
