@@ -64,56 +64,6 @@ def _scope_loop_health_records(
     return scoped
 
 
-class _TestControlLoopsService(ControlLoopsService):
-    async def loop_health(
-        self,
-        identity: Any,
-        *,
-        requested_tenant: Optional[str],
-        requested_environment: Optional[str],
-    ) -> Dict[str, Any]:
-        res = await super().loop_health(
-            identity,
-            requested_tenant=requested_tenant,
-            requested_environment=requested_environment,
-        )
-        meta = res.setdefault("meta", {})
-        surfaces = meta.setdefault("surfaces", {})
-        loop_health_surface = surfaces.get("loop_health", {})
-
-        accepted = meta.get("coverage", {}).get("controller_health_record_count", 0)
-        if accepted == 0:
-            loop_health_surface["status"] = "degraded"
-            loop_health_surface["truth_level"] = "registry_metadata"
-
-        source = loop_health_surface.get("source", "missing")
-        surfaces["loop_health_snapshots"] = {
-            "status": loop_health_surface.get("status", "degraded"),
-            "source": source,
-        }
-
-        coverage = meta.setdefault("coverage", {})
-        coverage.setdefault("composite_overlay_count", 1)
-        coverage.setdefault("inventory_entry_count", 13)
-        coverage["accepted_controller_health_records_available"] = bool(accepted > 0)
-
-        meta["truth_source_policy"] = {
-            "non_live_source_types": [
-                "seed_fixture",
-                "snapshot",
-                "registry",
-                "scheduled",
-            ]
-        }
-
-        meta["composite_overlay_inventory"] = [
-            item
-            for item in loop_inventory_model.list_loop_inventory_entries()
-            if item.get("classification") == "composite_overlay"
-        ]
-        return res
-
-
 @contextmanager
 def _loop_health_client(
     *,
@@ -154,7 +104,7 @@ def _loop_health_client(
         else:
             store.dataset_source = lambda ds: "service_store" if ds == "loop_health" else "typed_store"
 
-        service = _TestControlLoopsService(
+        service = ControlLoopsService(
             read_store=store,
             loop_truth_adapter=loop_truth,
             downstream_health_monitor=None,

@@ -1,0 +1,28 @@
+{
+  "task_id": "BFF-CLOSURE-REGRESSION-20261002",
+  "base_sha": "799e40fc8c380137515e69b59b3fe7b617ee2c77",
+  "scope": "Repair loop-health metadata and remove test-only response rewriting; not overall six-workstream closure.",
+  "changes": [
+    "A reachable controller store no longer marks partial or rejected loop coverage healthy or accepted_live.",
+    "Detail admission remains per returned loop; unrelated records do not certify a rejected detail.",
+    "Production publishes overlay inventory, catalog-derived coverage, truth source policy and compatibility source metadata.",
+    "The contract suite mounts ControlLoopsService directly, without a subclass manufacturing response fields."
+  ],
+  "validation": {
+    "python": "3.12",
+    "command": "python3 -m pytest -q services/control-plane/bff/test_current_twelve_owner_truth.py services/control-plane/bff/test_loop_health_read_model_contract.py services/control-plane/bff/test_loop_inventory_read_model_contract.py services/control-plane/bff/tests/test_control_loops_router.py services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_journal_runtime_contract.py services/control-plane/bff/test_normalized_route_uniqueness.py --tb=short --disable-warnings",
+    "result": "183 passed, 3 warnings, 2 subtests passed",
+    "duration_seconds": 128.90,
+    "regressions": ["missing record", "healthy partial coverage", "stale record", "degraded worker", "undeclared controller", "overlay excluded from canonical records", "tenant and environment scope", "evidence redaction"],
+    "baseline_loop_failures": [
+      "test_positive_runtime_observations_respect_catalog_controller_admission: expected degraded, got ok",
+      "test_composite_overlay_per_persona_ooda_rejects_direct_controller_record: composite_overlay_inventory missing"
+    ]
+  },
+  "known_out_of_scope_baseline_failures": [
+    "test_mutation_route_ownership_mapping_contract: one mounted mutation absent and 42 retired routes remaining in the ownership inventory",
+    "test_no_undefined_call_symbols[main.py]: ProjectionReadUnavailable is unbound; main.py is concurrently owned by the active receipt/read-owner work"
+  ],
+  "hosted_acceptance": "not_performed",
+  "safety": "Local tests only. No VM, deployment, canonical task-state, credential, tenant data or real-capital mutation. No claim that all twelve controllers or the overall release are accepted."
+}
