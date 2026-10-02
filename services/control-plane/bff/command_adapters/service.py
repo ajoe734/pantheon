@@ -658,7 +658,7 @@ class CommandAdapterService:
             foundation_context=foundation_ctx,
         )
 
-    def _persist_confirm_token(
+    def _persist_local_evidence(
         self,
         *,
         command_type: CommandType,
@@ -870,6 +870,7 @@ class CommandAdapterService:
         status_code: int = 202, server_generated_target: bool = False,
         terminal_on_persist: bool = False, trusted_evidence_producer: Optional[str] = None,
         authorization: Optional[str] = None, action_id: Optional[str] = None,
+        dry_run: bool = False,
     ) -> JSONResponse:
         """Translate resource routes into the canonical durable admission."""
         from .retired import reject_retired_command
@@ -877,12 +878,18 @@ class CommandAdapterService:
         if command_type in {
             CommandType.CONFIRM_TOKEN_CREATE, CommandType.CONFIRM_TOKEN_REDEEM,
             CommandType.CONFIRM_TOKEN_DELETE,
-        }:
-            return self._persist_confirm_token(
+        } or (
+            command_type == CommandType.V5_INTERVENTION_ACTION
+            and terminal_on_persist
+            and trusted_evidence_producer == "bff.v5.intervention.two-man-sign"
+        ):
+            # These routes own durable BFF evidence, rather than downstream work.
+            return self._persist_local_evidence(
                 command_type=command_type, target_type=target_type, target_id=target_id,
                 payload=payload, identity=identity, idempotency_key=idempotency_key,
                 x_idempotency_key=x_idempotency_key, status_code=status_code,
                 server_generated_target=server_generated_target, terminal_on_persist=True,
+                trusted_evidence_producer=trusted_evidence_producer,
             )
         _reject_body_idempotency_key(payload)
         if authorization is None:
@@ -899,6 +906,7 @@ class CommandAdapterService:
             idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key,
             payload={
                 "command": command_type.value, "action": action_id,
+                **({"dryRun": True} if dry_run or _truthy_header(payload.get("dryRun") or payload.get("dry_run")) else {}),
                 "target": {"type": target_type.value, "id": target_id},
                 "params": dict(payload),
                 "audit_context": {"reason": str(payload.get("reason") or command_type.value)},

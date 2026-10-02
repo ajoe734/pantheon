@@ -12,7 +12,7 @@ Covers:
   - Kill-switch with invalid scope -> VALIDATION_FAILED
   - Concurrent modification detection -> RESOURCE_CONFLICT
   - Degraded read surface → staleness_warning in response
-  - All eight command types submit successfully with correct roles
+  - Supported command admission and retirement of local rollback approvals
 """
 
 from __future__ import annotations
@@ -53,6 +53,11 @@ class SmokeTestStore(ReadSurfacePorts):
     def __init__(self, data: Optional[dict[str, Any]] = None) -> None:
         super().__init__()
         self._data = data or {}
+
+    def dataset_source(self, dataset: str) -> str:
+        if dataset in self._data:
+            return "typed_store"
+        return super().dataset_source(dataset)
 
     def list_authoritative_paper_runtime_monitoring_sessions(self) -> list[dict[str, Any]]:
         return list(self._data.get("paper_runtime_monitoring_sessions", []))
@@ -263,7 +268,7 @@ class TestOperatorBFF(unittest.TestCase):
             resolve_final_idempotency_key=bff_main._resolve_final_idempotency_key,
             reject_body_idempotency_key=bff_main._reject_body_idempotency_key,
             request_dry_run_requested=bff_main._request_dry_run_requested,
-            gov_bff_idempotency=bff_main._GOV_BFF_IDEMPOTENCY,
+            gov_bff_idempotency={},
             publish_event=bff_main._publish_event,
             sse_buffers=bff_main._sse_buffers,
             sse_subscribers=bff_main._sse_subscribers,
@@ -685,7 +690,9 @@ class TestOperatorBFF(unittest.TestCase):
             },
             headers=_command_headers(APPROVER_TOKEN),
         )
-        self.assertEqual(r.status_code, 202, r.text)
+        self.assertEqual(r.status_code, 410, r.text)
+        self.assertIn("/bff/approvals/{decision_id}/decide", r.text)
+        self.assertEqual(command_store._get_all_commands(), [])
 
     def test_reject_rollback_submit(self):
         r = self.client.post(
@@ -702,7 +709,9 @@ class TestOperatorBFF(unittest.TestCase):
             },
             headers=_command_headers(APPROVER_TOKEN),
         )
-        self.assertEqual(r.status_code, 202, r.text)
+        self.assertEqual(r.status_code, 410, r.text)
+        self.assertIn("/bff/approvals/{decision_id}/decide", r.text)
+        self.assertEqual(command_store._get_all_commands(), [])
 
     def test_approve_evolution_decision_submit(self):
         self._seed_approval_decision(

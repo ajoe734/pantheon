@@ -231,3 +231,19 @@ def test_default_composition_forwards_validated_browser_session(owner, tmp_path)
     assert result.json()["data"]["program_id"] == "program-a"
     client.cookies.set("pantheon_session", "invalid")
     assert client.get("/bff/evolution-programs/program-a").status_code == 401
+
+
+@pytest.mark.parametrize("method,path,payload,extra_headers", [
+    ("POST", "/api/v1/deployment-plans", {}, {"X-Dry-Run": "true"}),
+    ("POST", "/bff/deployments", {"dryRun": True}, {}),
+    ("PATCH", "/bff/deployments/plan-a", {"dryRun": True, "status": "approved"}, {}),
+])
+def test_resource_dry_run_never_enqueues_or_writes_owner(mounted, owner, method, path, payload, extra_headers):
+    client, store, ports = mounted
+    response = client.request(method, path, json=payload, headers={
+        "Authorization": "Bearer tenant-a", "Idempotency-Key": "dry-run", **extra_headers,
+    })
+    assert response.status_code == 202, response.text
+    assert response.json()["meta"]["dryRun"] is True
+    assert store.get_command_by_idempotency_key("dry-run", operator_id="tenant-a") is None
+    assert json.loads(owner.read_text())["writes"] == 0

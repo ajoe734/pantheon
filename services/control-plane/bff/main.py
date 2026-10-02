@@ -5254,6 +5254,7 @@ def _sem_command_response(
     trusted_evidence_producer: Optional[str] = None,
     terminal_on_persist: bool = False,
     authorization: Optional[str] = None,
+    dry_run: bool = False,
 ) -> JSONResponse:
     return _command_adapter_service.sem_command_response(
         command_type=command_type,
@@ -5268,6 +5269,7 @@ def _sem_command_response(
         trusted_evidence_producer=trusted_evidence_producer,
         terminal_on_persist=terminal_on_persist,
         authorization=authorization,
+        dry_run=dry_run,
     )
 def _guarded_command_confirm_token_id(record: Dict[str, Any]) -> Optional[str]:
     entry = get_catalog_entry(str(record.get("type") or ""))

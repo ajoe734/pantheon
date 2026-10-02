@@ -209,6 +209,7 @@ def create_deployment_router(
             payload=payload, identity=identity, authorization=authorization,
             idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key,
             server_generated_target=not plan_id,
+            dry_run=str(x_dry_run or "").strip().lower() in {"1", "true", "yes"},
         )
 
     @router.get("/api/v1/deployment-plans/{plan_id}")
