@@ -88,7 +88,11 @@ def _http(url: str, *, data: Any = None, headers: dict[str, str] | None = None, 
     except urllib.error.HTTPError as exc:
         if exc.code != 409:
             raise
-        parsed, status = {}, 409
+        try:
+            parsed = json.loads(exc.read().decode() or "{}")
+        except Exception:
+            parsed = {}
+        status = 409
     if isinstance(parsed, dict):
         parsed["_http_status"] = status
     return parsed
@@ -205,12 +209,26 @@ def lifecycle_target(rec: dict[str, Any]) -> str | None:
     return to_state if to_state in LIFECYCLE_TRANSITIONS.get(rec["from_state"], set()) else None
 
 
+GOVERNANCE_APPROVALS_PATH = "/api/governance/approvals"
+
+
+def proposal_digest(rec: dict[str, Any]) -> str:
+    content = {
+        "persona_id": str(rec.get("persona_id") or ""),
+        "action_id": str(rec.get("action_id") or ""),
+        "from_state": str(rec.get("from_state") or ""),
+        "rationale": str(rec.get("rationale") or "").strip(),
+        "evidence_ref_ids": sorted(rec.get("evidence_ref_ids") or []),
+    }
+    return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+
+
 def lifecycle_request(
     rec: dict[str, Any], to_state: str, *, snapshot_id: str, tenant: str, actor: str
 ) -> dict[str, Any]:
-    """Deterministic per persona+target identity, so any replay (any snapshot, restart) is a no-op."""
-    key = hashlib.sha256(f"{rec['persona_id']}|{rec['from_state']}|{to_state}".encode()).hexdigest()
-    digest = hashlib.sha256(json.dumps(rec, sort_keys=True).encode()).hexdigest()
+    """Deterministic proposal identity bound to persona, target, content, and snapshot."""
+    digest = proposal_digest(rec)
+    key = hashlib.sha256(f"{rec['persona_id']}|{rec['from_state']}|{to_state}|{snapshot_id}|{digest}".encode()).hexdigest()
     return {"key": key, "body": {
         "decision_id": f"pev-{key[:40]}", "expected_version": 0,
         "target_type": "persona_lifecycle_transition", "target_id": rec["persona_id"],
@@ -225,9 +243,17 @@ def lifecycle_request(
 def propose_lifecycle(request: dict[str, Any], *, governance_url: str, token: str, fetch: Callable[..., Any] = _http) -> Any:
     """The only write: a governance proposal, always sent from a persisted request identity."""
     return fetch(
-        f"{governance_url}/api/governance/approvals", data=request["body"],
+        f"{governance_url}{GOVERNANCE_APPROVALS_PATH}", data=request["body"],
         headers={"Authorization": f"Bearer {token}", "Idempotency-Key": request["key"]},
     )
+
+
+def readback_lifecycle(decision_id: str, *, governance_url: str, token: str, fetch: Callable[..., Any] = _http) -> Any:
+    """Readback verification for conflict resolution: read-only confirmation of existing proposal."""
+    try:
+        return fetch(f"{governance_url}{GOVERNANCE_APPROVALS_PATH}/{decision_id}", headers={"Authorization": f"Bearer {token}"})
+    except Exception:
+        return None
 
 
 def run_once(
@@ -256,15 +282,15 @@ def run_once(
         return record
 
     run_id = f"persona-eval-{moment:%Y%m%dT%H%M%SZ}"
-    created = deduped = skipped = attempts = 0
+    created = deduped = skipped = attempts = conflicts = 0
 
     def apply(state: dict[str, Any]) -> None:
-        nonlocal created, deduped, skipped, attempts
-        entry = {"ranking_snapshot_id": snapshot_id, "run_id": run_id, "evaluated_at": moment.isoformat(),
-                 "provider": "openclaw", "items": recs}
+        nonlocal created, deduped, skipped, attempts, conflicts
+        entry_result = {"ranking_snapshot_id": snapshot_id, "run_id": run_id, "evaluated_at": moment.isoformat(),
+                        "provider": "openclaw", "items": recs}
         if reused:
-            entry.update({k: saved[k] for k in ("run_id", "evaluated_at")})
-        state["results"][f"{quarter}|{snapshot_id}"] = entry
+            entry_result.update({k: saved[k] for k in ("run_id", "evaluated_at")})
+        state["results"][f"{quarter}|{snapshot_id}"] = entry_result
         state["latest"][quarter] = snapshot_id
         stale = sorted((v["evaluated_at"], k) for k, v in state["results"].items() if k.startswith(f"{quarter}|"))
         for _, key in stale[:-MAX_SNAPSHOTS_KEPT]:  # admitted snapshots stay readable for replayed submits
@@ -275,18 +301,22 @@ def run_once(
             to_state = lifecycle_target(rec)
             if to_state is None:
                 continue  # advisory entry: persisted, never executable
+            digest = proposal_digest(rec)
             dedupe_key = f"{rec['persona_id']}|{to_state}"
             entry = state["requests"].get(dedupe_key)
             if entry and not entry.get("pending"):
-                deduped += 1
-                rec["governance_request"] = {"decision_id": entry["decision_id"], "to_state": to_state}
-                continue
+                if entry.get("content_digest") == digest:
+                    deduped += 1
+                    rec["governance_request"] = {"decision_id": entry["decision_id"], "to_state": to_state}
+                    continue
+                entry = None
             if attempts >= MAX_PER_RUN or len(state["created"]) >= MAX_PER_HOUR:
                 skipped += 1
                 continue
             if entry is None:  # identity persisted before the possibly-creating POST; unknown outcomes replay it
                 request = lifecycle_request(rec, to_state, snapshot_id=snapshot_id, tenant=tenant, actor=actor)
-                entry = {"decision_id": request["body"]["decision_id"], "at": now(), "pending": request}
+                entry = {"decision_id": request["body"]["decision_id"], "at": now(), "pending": request,
+                         "content_digest": digest, "to_state": to_state}
                 state["requests"][dedupe_key] = entry
             attempts += 1
             state["created"].append(now())
@@ -296,19 +326,54 @@ def run_once(
             except Exception:
                 skipped += 1  # outcome unknown: slot and pending identity stay reserved
                 continue
-            if resp.get("_http_status") == 201:
+            status = resp.get("_http_status", 201) if isinstance(resp, dict) else 201
+            req_digest = entry["pending"]["body"]["proposal_content_digest"]
+            is_owner_match = (
+                isinstance(resp, dict)
+                and resp.get("decision_id", entry["decision_id"]) == entry["decision_id"]
+                and resp.get("tenant_id", tenant) == tenant
+                and resp.get("target_id", rec["persona_id"]) == rec["persona_id"]
+                and resp.get("proposal_content_digest", req_digest) == req_digest
+            )
+            if status == 201 and is_owner_match:
                 created += 1
-            else:
+                entry.pop("pending", None)
+                entry["at"] = now()
+                rec["governance_request"] = {"decision_id": entry["decision_id"], "to_state": to_state}
+            elif status == 200 and is_owner_match:
                 deduped += 1
                 state["created"].pop()
-            entry.pop("pending")
-            entry["at"] = now()
-            rec["governance_request"] = {"decision_id": entry["decision_id"], "to_state": to_state}
+                entry.pop("pending", None)
+                entry["at"] = now()
+                rec["governance_request"] = {"decision_id": entry["decision_id"], "to_state": to_state}
+            else:
+                rb = readback_lifecycle(entry["decision_id"], governance_url=governance_url, token=governance_token, fetch=fetch)
+                if (
+                    isinstance(rb, dict)
+                    and rb.get("_http_status", 200) in (200, 201)
+                    and rb.get("decision_id") == entry["decision_id"]
+                    and rb.get("tenant_id") == tenant
+                    and rb.get("target_id") == rec["persona_id"]
+                    and rb.get("proposal_content_digest") == req_digest
+                ):
+                    deduped += 1
+                    state["created"].pop()
+                    entry.pop("pending", None)
+                    entry["at"] = now()
+                    rec["governance_request"] = {"decision_id": entry["decision_id"], "to_state": to_state}
+                else:
+                    conflicts += 1
+                    skipped += 1
+                    state["created"].pop()
+                    entry["conflict"] = {"status": status, "detail": (resp.get("detail") if isinstance(resp, dict) else str(resp)), "at": now()}
 
     store.update(apply)
-    record = {"status": "ok", "quarter": quarter, "ranking_snapshot_id": snapshot_id, "run_id": run_id,
+    status_label = "degraded" if conflicts > 0 else "ok"
+    record = {"status": status_label, "quarter": quarter, "ranking_snapshot_id": snapshot_id, "run_id": run_id,
               "reused": reused, "recommendations": len(recs), "created": created, "deduped": deduped,
               "skipped": skipped, "at": moment.isoformat()}
+    if conflicts > 0:
+        record["conflicts"] = conflicts
     store.update(lambda s: s.update(last_run=record))
     return record
 

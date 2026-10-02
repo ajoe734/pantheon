@@ -42,11 +42,18 @@ formulas are unchanged and are read-only evidence.
   hour (persisted; a slot and the exact request identity are reserved before the
   POST and kept when the outcome is unknown; later runs replay that identity
   even if the ranking snapshot changed).
-- Deduplicated per persona and target state for 7 days, plus a deterministic
-  decision id / `Idempotency-Key`, so a replay or a concurrent run merges (HTTP 409)
-  instead of creating a second request.
+- Deduplicated per persona and target state for 7 days when content matches.
+  Proposal identity (`Idempotency-Key` and `decision_id`) deterministically binds
+  persona, transition states, source snapshot, and content digest (rationale +
+  evidence refs), so changed content never silently attaches to an old request.
+- On verified same-content replay (HTTP 200/201) or HTTP 409 with matching readback
+  (`GET /api/governance/approvals/{decision_id}` confirming identical tenant, target,
+  and content digest), the request merges as deduped.
+- Content, version, and CAS conflicts without matching readback remain unresolved:
+  pending retry identity is preserved, no `governance_request` is published as
+  accepted, and the run is recorded as visibly degraded (`status: degraded`).
 - A degraded run (evidence, an unavailable ranking surface or source, missing
-  refs, agent or output unavailable) is recorded in
+  refs, agent or output unavailable, or unresolved conflicts) is recorded in
   `last_run` and creates nothing.
 
 ## Authority

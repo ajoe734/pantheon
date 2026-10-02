@@ -5,6 +5,8 @@ import sys
 import urllib.request
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import persona_evaluator_agent as pea  # noqa: E402
@@ -20,7 +22,7 @@ def _item(pid, state="paper_owner", score=20.0):
 
 
 def _fetch(items, recs, *, snapshot="snap-1", ranking_down=False, agent_down=False, status=201, log=None,
-           surfaces=None, gov_down=False):
+           surfaces=None, gov_down=False, conflict_detail=None, readback_404=False, readback_data=None):
     log = log if log is not None else []
 
     def fetch(url, data=None, headers=None, timeout=20):
@@ -36,7 +38,30 @@ def _fetch(items, recs, *, snapshot="snap-1", ranking_down=False, agent_down=Fal
         if "/api/governance/approvals" in url:
             if gov_down:
                 raise TimeoutError("timeout")
-            return {"decision_id": data["decision_id"], "_http_status": status}
+            if data is None and url.rstrip("/").split("/")[-1] != "approvals":
+                if readback_404:
+                    return {"detail": "Approval decision not found", "_http_status": 404}
+                if readback_data is not None:
+                    return readback_data
+                dec_id = url.rstrip("/").split("/")[-1]
+                rec0 = recs[0] if recs else {}
+                from_s = rec0.get("from_state") or (items[0].get("owner_lifecycle_state") if items else "paper_owner")
+                dig = pea.proposal_digest({**rec0, "from_state": from_s})
+                return {
+                    "decision_id": dec_id, "tenant_id": "t1", "target_id": rec0.get("persona_id", "p1"),
+                    "target_type": "persona_lifecycle_transition",
+                    "proposal_content_digest": dig,
+                    "_http_status": 200,
+                }
+            if status == 409:
+                return {"detail": conflict_detail or "Approval decision already exists", "_http_status": 409}
+            return {
+                "decision_id": data["decision_id"],
+                "tenant_id": data.get("tenant_id", "t1"),
+                "target_id": data.get("target_id", "p1"),
+                "proposal_content_digest": data.get("proposal_content_digest"),
+                "_http_status": status,
+            }
         raise AssertionError(url)
 
     return fetch, log
@@ -55,7 +80,7 @@ def _rec(pid, action="freeze_persona"):
 
 
 def _proposals(log):
-    return [d for u, d in log if "/api/governance/approvals" in u]
+    return [d for u, d in log if "/api/governance/approvals" in u and d is not None]
 
 
 def test_lifecycle_recommendation_creates_one_governance_request_and_saves_result(tmp_path):
@@ -188,3 +213,115 @@ def test_read_endpoint_serves_saved_result_with_token(tmp_path):
             assert exc.code == 401
     finally:
         server.shutdown()
+
+
+def test_http_preserves_409_response_detail(monkeypatch):
+    import io
+    import urllib.error
+
+    conflict_payload = {"detail": "Idempotency key has different command content"}
+    conflict_bytes = json.dumps(conflict_payload).encode()
+
+    def fake_urlopen(req, timeout=20):
+        fp = io.BytesIO(conflict_bytes)
+        raise urllib.error.HTTPError(req.full_url, 409, "Conflict", {}, fp)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    res = pea._http("http://gov/api/governance/approvals")
+    assert res.get("_http_status") == 409
+    assert res.get("detail") == "Idempotency key has different command content"
+
+
+@pytest.mark.parametrize("conflict_detail", [
+    "Idempotency key has different command content",
+    "Approval base version is stale",
+    "Competing approval command changed the base",
+    "Approval decision already exists",
+])
+def test_distinct_conflict_kinds_unresolved_and_preserve_pending(tmp_path, conflict_detail):
+    fetch, log = _fetch([_item("p1")], [_rec("p1")], status=409, conflict_detail=conflict_detail, readback_404=True)
+    out = _run(tmp_path, fetch)
+    assert out["status"] == "degraded"
+    assert out["created"] == 0
+    assert out["deduped"] == 0
+    assert out["skipped"] == 1
+    assert out["conflicts"] == 1
+    saved = pea.Store(tmp_path / "state.json").load()
+    assert saved["results"][f"{QUARTER}|snap-1"]["items"][0]["governance_request"] is None
+    entry = saved["requests"]["p1|frozen"]
+    assert entry.get("pending") is not None
+    assert entry.get("conflict") is not None
+    assert entry["conflict"]["detail"] == conflict_detail
+
+
+def test_verified_same_content_replay(tmp_path):
+    fetch, log = _fetch([_item("p1")], [_rec("p1")], status=200)
+    out = _run(tmp_path, fetch)
+    assert out["status"] == "ok"
+    assert out["created"] == 0
+    assert out["deduped"] == 1
+    saved = pea.Store(tmp_path / "state.json").load()
+    req = saved["results"][f"{QUARTER}|snap-1"]["items"][0]["governance_request"]
+    assert req is not None and req["to_state"] == "frozen"
+    entry = saved["requests"]["p1|frozen"]
+    assert "pending" not in entry
+
+
+def test_mismatched_readback_treated_as_conflict(tmp_path):
+    mismatched_readback = {
+        "decision_id": "pev-other", "tenant_id": "other_tenant", "target_id": "p1",
+        "proposal_content_digest": "different_digest", "_http_status": 200,
+    }
+    fetch, _ = _fetch([_item("p1")], [_rec("p1")], status=409, readback_data=mismatched_readback)
+    out = _run(tmp_path, fetch)
+    assert out["status"] == "degraded"
+    assert out["conflicts"] == 1
+    assert out["deduped"] == 0
+    saved = pea.Store(tmp_path / "state.json").load()
+    assert saved["results"][f"{QUARTER}|snap-1"]["items"][0]["governance_request"] is None
+    assert saved["requests"]["p1|frozen"].get("pending") is not None
+
+
+def test_changed_content_never_attaches_to_old_state_pair_request(tmp_path):
+    fetch1, _ = _fetch([_item("p1")], [_rec("p1", action="freeze_persona")])
+    out1 = _run(tmp_path, fetch1)
+    assert out1["created"] == 1
+    d1 = pea.Store(tmp_path / "state.json").load()["requests"]["p1|frozen"]["decision_id"]
+
+    rec2 = {**_rec("p1", action="freeze_persona"), "rationale": "changed: severe volatility breach"}
+    fetch2, log2 = _fetch([_item("p1")], [rec2], snapshot="snap-2")
+    out2 = _run(tmp_path, fetch2, now=NOW + 60)
+    assert out2["created"] == 1
+    assert out2["deduped"] == 0
+    d2 = pea.Store(tmp_path / "state.json").load()["requests"]["p1|frozen"]["decision_id"]
+    assert d2 != d1
+
+
+def test_changed_snapshot_after_retention_window_creates_new_proposal(tmp_path):
+    fetch1, _ = _fetch([_item("p1")], [_rec("p1")])
+    out1 = _run(tmp_path, fetch1, now=NOW)
+    assert out1["created"] == 1
+
+    fetch2, _ = _fetch([_item("p1")], [_rec("p1")], snapshot="snap-2")
+    out2 = _run(tmp_path, fetch2, now=NOW + pea.DEDUPE_TTL_SECONDS + 10)
+    assert out2["created"] == 1
+    assert out2["deduped"] == 0
+
+
+def test_restart_reloads_pending_identity_and_retries(tmp_path):
+    down_fetch, _ = _fetch([_item("p1")], [_rec("p1")], gov_down=True)
+    out1 = _run(tmp_path, down_fetch, now=NOW)
+    assert out1["created"] == 0
+    assert pea.Store(tmp_path / "state.json").load()["requests"]["p1|frozen"].get("pending") is not None
+
+    # Restart: instantiate fresh Store from disk
+    store2 = pea.Store(tmp_path / "state.json")
+    up_fetch, log = _fetch([_item("p1")], [_rec("p1")])
+    out2 = pea.run_once(
+        store=store2, bff_url="http://bff", bff_headers={}, adapter_url="http://ad",
+        adapter_token="t", governance_url="http://gov", governance_token="g", tenant="t1", actor="evaluator",
+        fetch=up_fetch, now=lambda: NOW + 30,
+    )
+    assert out2["created"] == 1
+    assert len(_proposals(log)) == 1
+    assert "pending" not in store2.load()["requests"]["p1|frozen"]
