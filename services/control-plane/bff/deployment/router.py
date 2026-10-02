@@ -200,139 +200,17 @@ def create_deployment_router(
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
         x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
     ):
-        """BFF write-gap P0-6: create a deployment plan (persona onboarding wizard step 3)."""
         identity = extract_identity(authorization)
         require_operator_role(identity)
-        reject_body_idempotency_key(payload)
-
-        fields = {
-            field: _deployment_plan_create_required_string(payload, field)
-            for field in _DEPLOYMENT_PLAN_CREATE_REQUIRED_FIELDS
-        }
-        deployment_mode = str(payload.get("deployment_mode") or "").strip().lower()
-        if deployment_mode not in _VALID_DEPLOYMENT_MODES:
-            raise bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "deployment_mode is invalid",
-                "deployment_mode must be one of: paper, live.",
-                precondition_failed="deployment_mode",
-            )
-        locked = bool(payload.get("locked", False))
-        _raise_if_deployment_artifact_not_approved(fields["artifact_id"])
-
-        resolved_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        correlation_id = str(x_correlation_id or "").strip() or str(uuid.uuid4())
-        response.headers["X-Correlation-Id"] = correlation_id
-        request_id = str(x_request_id or "").strip() or None
-        dry_run = request_dry_run_requested(x_dry_run)
-        request_hash = stable_json_hash(
-            {"route": "POST /api/v1/deployment-plans", "payload": payload}
+        plan_id = str(payload.get("plan_id") or payload.get("id") or "")
+        return sem_command_response(
+            command_type=CommandType.DEPLOYMENT_CREATE,
+            target_type=ObjectType.DEPLOYMENT, target_id=plan_id,
+            payload=payload, identity=identity, authorization=authorization,
+            idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key,
+            server_generated_target=not plan_id,
+            dry_run=str(x_dry_run or "").strip().lower() in {"1", "true", "yes"},
         )
-
-        if not dry_run:
-            existing = gov_bff_idempotency.get(resolved_key)
-            if existing is not None:
-                if existing.get("request_hash") != request_hash:
-                    raise bff_error(
-                        409,
-                        ErrorCode.IDEMPOTENCY_CONFLICT,
-                        "Idempotency key already used with a different payload",
-                        f"Key {resolved_key!r} is bound to a different request hash",
-                        precondition_failed="idempotency_conflict",
-                        suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-                    )
-                cached = existing["result"]
-                cached_meta = cached.get("meta") if isinstance(cached, dict) else {}
-                response.headers["X-Correlation-Id"] = str(
-                    cached_meta.get("correlationId") or correlation_id
-                )
-                return cached
-
-        snapshot_at = utc_now()
-        client_plan_id = str(payload.get("plan_id") or payload.get("id") or "").strip()
-        plan_id = client_plan_id or f"plan-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
-
-        if dry_run:
-            preview = {
-                "id": plan_id,
-                "binding_id": fields["binding_id"],
-                "artifact_id": fields["artifact_id"],
-                "deployment_mode": deployment_mode,
-                "status": "pending_approval",
-                "capital_pool_id": fields["capital_pool_id"],
-                "locked": locked,
-                "created_at": snapshot_at,
-            }
-            return JSONResponse(
-                status_code=200,
-                content=jsonable_encoder(
-                    {
-                        "data": preview,
-                        "meta": {
-                            "snapshot_at": snapshot_at,
-                            "dryRun": True,
-                            "correlationId": correlation_id,
-                            "requestId": request_id,
-                            "evidenceKind": "deployment_plan.create",
-                        },
-                    }
-                ),
-                headers={"X-Correlation-Id": correlation_id},
-            )
-
-        if service.queries.get_deployment_plan(plan_id) is not None:
-            raise bff_error(
-                409,
-                ErrorCode.RESOURCE_CONFLICT,
-                "Deployment plan id already exists",
-                f"Deployment plan {plan_id} already exists",
-                precondition_failed="plan_id",
-                suggestion="Replay with the original Idempotency-Key or choose a new plan id",
-                correlation_id=correlation_id,
-            )
-        record = service.commands.create_deployment_plan(
-            plan_id=plan_id,
-            binding_id=fields["binding_id"],
-            artifact_id=fields["artifact_id"],
-            deployment_mode=deployment_mode,
-            capital_pool_id=fields["capital_pool_id"],
-            actor_id=identity.operator_id,
-            created_at=snapshot_at,
-            params=payload.get("params") if isinstance(payload.get("params"), dict) else {},
-            locked=locked,
-        )
-        data = _project_deployment_plan_create_response(record)
-        persona_id = _deployment_plan_persona_id(fields["binding_id"])
-        surface = dataset_surface_status("deployment_plans", snapshot_at=snapshot_at)
-        meta = snapshot_meta(snapshot_at)
-        meta["surfaces"] = {"deployment_plans": surface}
-        meta["dryRun"] = False
-        meta["correlationId"] = correlation_id
-        meta["requestId"] = request_id
-        meta["evidenceKind"] = "deployment_plan.create"
-        meta["evidence_kind"] = "deployment_plan.create"
-
-        event_payload = {
-            "deployment_plan_id": data["id"],
-            "id": data["id"],
-            "binding_id": data["binding_id"],
-            "persona_id": persona_id,
-            "artifact_id": data["artifact_id"],
-            "deployment_mode": data["deployment_mode"],
-            "status": data["status"],
-            "created_at": data["created_at"],
-        }
-        publish_event(
-            sse_buffers["audit"],
-            sse_subscribers["audit"],
-            "deployment-plan.created",
-            event_payload,
-        )
-
-        result = {"data": data, "meta": meta}
-        gov_bff_idempotency[resolved_key] = {"request_hash": request_hash, "result": result}
-        return result
 
     @router.get("/api/v1/deployment-plans/{plan_id}")
     async def get_deployment_plan(plan_id: str, authorization: Optional[str] = Header(default=None)):
@@ -754,6 +632,7 @@ def create_deployment_router(
         client_provided_id = payload.get("deployment_id") or payload.get("deploymentId") or payload.get("id")
         deployment_id = str(client_provided_id or f"deployment-{uuid.uuid4().hex[:8]}")
         return sem_command_response(
+            authorization=authorization,
             command_type=CommandType.DEPLOYMENT_CREATE,
             target_type=ObjectType.DEPLOYMENT,
             target_id=deployment_id,
@@ -776,6 +655,7 @@ def create_deployment_router(
         identity = extract_identity(authorization)
         require_operator_role(identity)
         return sem_command_response(
+            authorization=authorization,
             command_type=CommandType.DEPLOYMENT_PATCH,
             target_type=ObjectType.DEPLOYMENT,
             target_id=deployment_id,

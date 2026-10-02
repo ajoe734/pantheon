@@ -8,27 +8,22 @@ Owns ranking formulas CRUD routes:
 
 Matrix item: ACG-01-012
   - Removes generic echo create route
-  - Provides durable validation, idempotency and persistence contract
+  - Retires formula writes without an executing owner
 """
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
-import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query, Request, Response
-from fastapi.encoders import jsonable_encoder
-from starlette.responses import JSONResponse
 
 from services.control_plane.bff.auth.policy import require_operator_role as _policy_require_operator_role
 from services.control_plane.bff.models import ErrorCode
+from ..command_adapters.retired import reject_retired_command
 
 log = logging.getLogger(__name__)
 
-_RANKING_FORMULA_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 
 
 def _default_utc_now() -> str:
@@ -91,11 +86,6 @@ def _default_require_read_role(identity: Any) -> None:
     pass
 
 
-def _stable_json_hash(payload: Any) -> str:
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
 def create_ranking_formulas_router(
     *,
     read_surface: Optional[Any] = None,
@@ -128,36 +118,6 @@ def create_ranking_formulas_router(
     _err = bff_error or _default_bff_error
     _utc_now = utc_now or _default_utc_now
     _snapshot_meta = snapshot_meta or _default_snapshot_meta
-
-    def _check_idempotency(operator_id: str, key: str, request_hash: str) -> Optional[Dict[str, Any]]:
-        if idempotency_check is not None:
-            return idempotency_check(operator_id, key, request_hash)
-        if not key:
-            return None
-        cache_key = f"{operator_id}:{key}"
-        entry = _RANKING_FORMULA_IDEMPOTENCY.get(cache_key)
-        if entry is None:
-            return None
-        if entry.get("request_hash") != request_hash:
-            raise _err(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key conflict: request payload differs from previous submission",
-                precondition_failed="idempotency_conflict",
-            )
-        return entry.get("result")
-
-    def _store_idempotency(operator_id: str, key: str, request_hash: str, result: Dict[str, Any]) -> None:
-        if idempotency_store is not None:
-            idempotency_store(operator_id, key, request_hash, result)
-            return
-        if not key:
-            return
-        cache_key = f"{operator_id}:{key}"
-        _RANKING_FORMULA_IDEMPOTENCY[cache_key] = {
-            "request_hash": request_hash,
-            "result": result,
-        }
 
     @router.get("/bff/ranking-formulas")
     async def bff_list_ranking_formulas(
@@ -234,78 +194,11 @@ def create_ranking_formulas_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
-        """Create a ranking formula with validation and idempotency."""
+        """Retired: formula creation has no executing owner."""
         identity = _extract_ident(authorization)
         _require_op(identity)
 
-        payload_dict = dict(payload or {})
-        if "idempotency_key" in payload_dict or "idempotencyKey" in payload_dict:
-            raise _err(
-                400,
-                ErrorCode.VALIDATION_FAILED,
-                "Idempotency keys must be provided via the Idempotency-Key header, not in the request body",
-                "Request body contained an idempotencyKey/idempotency_key field",
-                precondition_failed="body_idempotency_key",
-            )
-
-        resolved_key = str(idempotency_key or x_idempotency_key or "").strip()
-        request_hash = _stable_json_hash({"route": "POST /bff/ranking-formulas", "payload": payload_dict})
-
-        cached = _check_idempotency(getattr(identity, "operator_id", "op-user"), resolved_key, request_hash)
-        if cached is not None:
-            return JSONResponse(status_code=201, content=jsonable_encoder(cached))
-
-        name = str(payload_dict.get("name") or "").strip()
-        if not name:
-            raise _err(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "name is required",
-                "Ranking formula name must be a non-empty string",
-                precondition_failed="name",
-            )
-
-        description = str(payload_dict.get("description") or "").strip()
-        snapshot_at = _utc_now()
-        actor_id = getattr(identity, "operator_id", "op-user")
-
-        record: Dict[str, Any] = {}
-        if get_read_store is not None:
-            store = get_read_store()
-            if hasattr(store, "create_ranking_formula"):
-                record = store.create_ranking_formula(
-                    name=name,
-                    description=description,
-                    actor_id=actor_id,
-                    created_at=snapshot_at,
-                    params=payload_dict.get("params"),
-                )
-        if not record:
-            formula_id = f"rf-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:4]}"
-            record = {
-                "id": formula_id,
-                "formula_id": formula_id,
-                "name": name,
-                "description": description,
-                "status": "active",
-                "params": payload_dict.get("params") or {},
-                "created_at": snapshot_at,
-                "updated_at": snapshot_at,
-                "created_by": actor_id,
-            }
-
-        result = {
-            "data": record,
-            "meta": {
-                **_snapshot_meta(snapshot_at),
-                "surface": "ranking_formulas",
-                "surface_key": "ranking_formula_detail",
-                "idempotency": {"idempotencyKey": resolved_key} if resolved_key else {},
-            },
-        }
-
-        _store_idempotency(actor_id, resolved_key, request_hash, result)
-        return JSONResponse(status_code=201, content=jsonable_encoder(result))
+        reject_retired_command("RankingFormulaAction")
 
     @router.patch("/bff/ranking-formulas/{formula_id}")
     async def bff_patch_ranking_formula(
@@ -315,42 +208,11 @@ def create_ranking_formulas_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
-        """Patch a ranking formula."""
+        """Retired: formula mutation has no executing owner."""
         identity = _extract_ident(authorization)
         _require_op(identity)
 
-        clean_id = str(formula_id or "").strip()
-        actor_id = getattr(identity, "operator_id", "op-user")
-        snapshot_at = _utc_now()
-
-        record: Optional[Dict[str, Any]] = None
-        if get_read_store is not None:
-            store = get_read_store()
-            if hasattr(store, "patch_ranking_formula"):
-                record = store.patch_ranking_formula(clean_id, patch=payload, actor_id=actor_id)
-            elif hasattr(store, "get_ranking_formula"):
-                existing = store.get_ranking_formula(clean_id)
-                if existing is not None:
-                    record = {**existing, **payload, "updated_at": snapshot_at, "updated_by": actor_id}
-
-        if record is None:
-            raise _err(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                f"Ranking formula not found: {clean_id}",
-                precondition_failed="formula_id",
-            )
-
-        meta = {
-            **_snapshot_meta(snapshot_at),
-            "surface": "ranking_formulas",
-            "surface_key": "ranking_formula_detail",
-            "entity_id": clean_id,
-        }
-        return {
-            "data": record,
-            "meta": meta,
-        }
+        reject_retired_command("RankingFormulaAction")
 
     return router
 
@@ -485,11 +347,10 @@ def create_rankings_long_tail_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
-        """BFF: ranking formula action — routes through command/precondition machinery."""
-        return deprecated_bff_path_response(
-            route="/bff/ranking/formulas/{formula_id}/actions/{action_id}",
-            replacement="/bff/v1/commands",
-        )
+        identity = _extract_identity(authorization)
+        _require_op(identity)
+        from ..command_adapters.retired import reject_retired_command
+        reject_retired_command("RankingFormulaAction")
 
 
     @router.get("/bff/rankings")
@@ -550,28 +411,10 @@ def create_rankings_long_tail_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
-        """BFF: ranking action (full-spec long tail) — routes through command/precondition machinery."""
         identity = _extract_identity(authorization)
         _require_op(identity)
-        reject_body_idempotency_key(payload)
-        resolved_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        read_store = _get_read_store()
-        ranking = read_store.get_ranking(ranking_id)
-        if not ranking:
-            raise _err(
-                404, ErrorCode.RESOURCE_NOT_FOUND,
-                "Ranking not found",
-                f"Ranking {ranking_id} does not exist",
-            )
-        return capital_bff_action_command(
-            entity_type=object_type.RANKING,
-            entity_id=ranking_id,
-            action_id=action_id,
-            resolved_key=resolved_key,
-            identity=identity,
-            payload=payload,
-            command_type=command_type.RANKING_ACTION,
-        )
+        from ..command_adapters.retired import reject_retired_command
+        reject_retired_command("RankingAction")
 
     return router
 

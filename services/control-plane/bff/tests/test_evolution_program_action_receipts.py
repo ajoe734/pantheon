@@ -276,7 +276,7 @@ def test_adapter_propagates_503_on_connection_failure() -> None:
 def _build_test_app(read_store: _FakeReadStore, identity_factory=None):
     adapter = EvolutionCommandAdapter()
 
-    def submit_action(entity_type, entity_id, action_id, resolved_key, identity, payload):
+    def submit_action(entity_type, entity_id, action_id, resolved_key, identity, payload, *, authorization=None):
         actor_id = getattr(identity, "operator_id", "op-1")
         roles = getattr(identity, "roles", ["operator"])
         actor_role = "approver" if ("approver" in roles or "admin" in roles) else "operator"

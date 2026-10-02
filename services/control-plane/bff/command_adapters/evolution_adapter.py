@@ -18,54 +18,12 @@ from .base import (
     DomainCommandAdapter,
     build_domain_receipt,
     evolution_url,
-    governance_url,
     http_request_json as _base_http_request_json,
     utc_now,
 )
 
 
-def http_request_json(
-    url: str,
-    method: str = "POST",
-    payload: Optional[Dict[str, Any]] = None,
-    auth_token: Optional[str] = None,
-    mfa_token: Optional[str] = None,
-    timeout: Optional[int] = None,
-    headers: Optional[Dict[str, str]] = None,
-) -> Any:
-    """Execute HTTP request to domain service endpoint with custom header support."""
-    if not headers:
-        return _base_http_request_json(
-            url,
-            method=method,
-            payload=payload,
-            auth_token=auth_token,
-            mfa_token=mfa_token,
-            timeout=timeout,
-        )
-
-    req_timeout = timeout or 10
-    req_headers: Dict[str, str] = {"Accept": "application/json"}
-    data: Optional[bytes] = None
-
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-        req_headers["Content-Type"] = "application/json"
-
-    if auth_token:
-        req_headers["Authorization"] = f"Bearer {auth_token}" if not auth_token.startswith("Bearer ") else auth_token
-    if mfa_token:
-        req_headers["X-MFA-Token"] = mfa_token
-    if headers:
-        req_headers.update(headers)
-
-    req = urllib.request.Request(url, data=data, headers=req_headers, method=method.upper())
-    with urllib.request.urlopen(req, timeout=req_timeout) as resp:
-        raw = resp.read().decode("utf-8")
-        if raw:
-            return json.loads(raw)
-        return {}
-
+http_request_json = _base_http_request_json
 
 log = logging.getLogger(__name__)
 
@@ -189,7 +147,7 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
         if "approval_decision_id" in params:
             payload["approval_decision_id"] = params["approval_decision_id"]
 
-        url = governance_url(f"/api/evolution/proposals/{quote(target_id, safe='')}/{subpath}")
+        url = evolution_url(f"/api/evolution/proposals/{quote(target_id, safe='')}/{subpath}")
         body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
 
         return build_domain_receipt(
@@ -200,7 +158,7 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
             status=body.get("decision_state") or subpath,
             dispatch_path=url,
             domain_receipt=body,
-            authoritative_readback={"decision_id": target_id, "decision_state": body.get("decision_state") or subpath},
+            authoritative_readback=body,
             extra={
                 "evolution_decision_id": target_id,
                 "decision_state": body.get("decision_state"),
@@ -225,7 +183,12 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
             "actor_role": "operator",
             "note": params.get("note") or params.get("rationale") or "Operator execute mutation",
         }
-        url = governance_url(f"/api/evolution/proposals/{quote(target_id, safe='')}/execute")
+        for key in ("execution_receipt", "tenant_id", "has_active_runtime", "active_binding_id",
+                    "freeze_mode", "rollback_action_type", "fallback_artifact_id",
+                    "fallback_artifact_version", "force_stage_freeze"):
+            if key in params:
+                payload[key] = params[key]
+        url = evolution_url(f"/api/evolution/proposals/{quote(target_id, safe='')}/execute")
         body = http_request_json(url, method="POST", payload=payload, auth_token=auth_token, mfa_token=mfa_token)
 
         return build_domain_receipt(
@@ -236,7 +199,7 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
             status=body.get("decision_state") or "executed",
             dispatch_path=url,
             domain_receipt=body,
-            authoritative_readback={"decision_id": target_id, "decision_state": body.get("decision_state") or "executed"},
+            authoritative_readback=body,
             extra={
                 "evolution_decision_id": target_id,
                 "execution_result": body.get("execution_result"),

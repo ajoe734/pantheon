@@ -50,9 +50,8 @@ def _internal_url(path: str) -> str:
     return f"{base}{path}"
 
 
-def _governance_url(path: str) -> str:
+def _evolution_url(path: str) -> str:
     base = _configured_base_url(
-        "PANTHEON_GOVERNANCE_API_URL",
         "PANTHEON_EVOLUTION_API_URL",
     )
     return f"{base}{path}"
@@ -666,92 +665,16 @@ def _execute_approve_rollback(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch ApproveRollback to the rollback authority endpoint."""
-    rollback_id = str(params.get("rollback_id") or "").strip()
-    if not rollback_id:
-        raise ValueError("ApproveRollback requires rollback_id.")
-    payload = {
-        "approval_notes": params.get("approval_notes"),
-    }
-    url = _internal_url(f"/api/internal/v1/rollbacks/{rollback_id}/approve")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-
-    try:
-        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
-    except Exception:
-        actor_id = _extract_actor_id(auth_token)
-        actor_role = "operator"
-    timestamp = _utc_now()
-    gov_payload = {
-        "rollback_id": rollback_id,
-        "id": rollback_id,
-        "status": body.get("status") or "approved",
-        "actor": actor_role,
-        "identity": actor_id,
-        "updated_at": timestamp,
-        "approved_at": body.get("approved_at") or timestamp,
-        "source_command_id": command_id,
-        "transition_actor": actor_role,
-        "transition_identity": actor_id,
-        "transition_source_command_id": command_id,
-        "approval_notes": params.get("approval_notes"),
-    }
-    _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
-
-    return {
-        "command_id": command_id,
-        "rollback_id": body.get("rollback_id", rollback_id),
-        "decision": body.get("decision", "approved"),
-        "status": body.get("status") or "approved",
-        "audit_id": body.get("audit_id"),
-        "approved_at": body.get("approved_at"),
-    }
+    from .command_adapters.retired import reject_retired_command
+    reject_retired_command("ApproveRollback")
 
 
 def _execute_reject_rollback(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch RejectRollback to the rollback authority endpoint."""
-    rollback_id = str(params.get("rollback_id") or "").strip()
-    if not rollback_id:
-        raise ValueError("RejectRollback requires rollback_id.")
-    payload = {
-        "rejection_reason": params.get("rejection_reason"),
-    }
-    url = _internal_url(f"/api/internal/v1/rollbacks/{rollback_id}/reject")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-
-    try:
-        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
-    except Exception:
-        actor_id = _extract_actor_id(auth_token)
-        actor_role = "operator"
-    timestamp = _utc_now()
-    gov_payload = {
-        "rollback_id": rollback_id,
-        "id": rollback_id,
-        "status": body.get("status") or "rejected",
-        "actor": actor_role,
-        "identity": actor_id,
-        "updated_at": timestamp,
-        "rejected_at": body.get("rejected_at") or timestamp,
-        "source_command_id": command_id,
-        "transition_actor": actor_role,
-        "transition_identity": actor_id,
-        "transition_source_command_id": command_id,
-        "rejection_reason": params.get("rejection_reason"),
-    }
-    _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
-
-    return {
-        "command_id": command_id,
-        "rollback_id": body.get("rollback_id", rollback_id),
-        "decision": body.get("decision", "rejected"),
-        "status": body.get("status") or "rejected",
-        "audit_id": body.get("audit_id"),
-        "rejected_at": body.get("rejected_at"),
-    }
+    from .command_adapters.retired import reject_retired_command
+    reject_retired_command("RejectRollback")
 
 
 def _execute_activate_kill_switch(
@@ -866,7 +789,7 @@ def _execute_approve_evolution_decision(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch ApproveEvolutionDecision to the governance-owned evolution API."""
+    """Dispatch ApproveEvolutionDecision to the Evolution owner API."""
     decision_id = str(params.get("evolution_decision_id") or "").strip()
     approval_action = str(params.get("approval_action") or "").strip().lower()
     if not decision_id:
@@ -890,9 +813,10 @@ def _execute_approve_evolution_decision(
     if note:
         payload["note"] = note
 
-    url = _governance_url(f"/api/evolution/proposals/{decision_id}/{approval_action}")
+    url = _evolution_url(f"/api/evolution/proposals/{decision_id}/{approval_action}")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     return {
+        "authoritative_readback": body,
         "command_id": command_id,
         "evolution_decision_id": body.get("decision_id", decision_id),
         "approval_action": approval_action,
@@ -906,7 +830,7 @@ def _execute_evolution_action(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch ExecuteEvolutionAction to the governance-owned evolution API."""
+    """Dispatch ExecuteEvolutionAction to the Evolution owner API."""
     decision_id = str(params.get("evolution_decision_id") or "").strip()
     if not decision_id:
         raise ValueError("ExecuteEvolutionAction requires evolution_decision_id.")
@@ -917,6 +841,8 @@ def _execute_evolution_action(
         "actor_role": _evolution_actor_role(actor_role),
     }
     for optional_key in (
+        "execution_receipt",
+        "tenant_id",
         "has_active_runtime",
         "active_binding_id",
         "freeze_mode",
@@ -931,7 +857,7 @@ def _execute_evolution_action(
     if note:
         payload["note"] = note
 
-    url = _governance_url(f"/api/evolution/proposals/{decision_id}/execute")
+    url = _evolution_url(f"/api/evolution/proposals/{decision_id}/execute")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     execution_result = body.get("execution_result") or {}
 
@@ -957,6 +883,7 @@ def _execute_evolution_action(
         _write_to_governance("/api/governance/freeze-orders", freeze_payload, auth_token=auth_token, mfa_token=mfa_token)
 
     return {
+        "authoritative_readback": body,
         "command_id": command_id,
         "evolution_decision_id": body.get("decision_id", decision_id),
         "action_type": body.get("action_type") or params.get("action_type"),
@@ -972,7 +899,7 @@ def _execute_approve_mutation(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch ApproveMutation to the governance-owned evolution API."""
+    """Dispatch ApproveMutation to the Evolution owner API."""
     decision_id = str(params.get("decision_id") or params.get("evolution_decision_id") or "").strip()
     if not decision_id:
         raise ValueError("ApproveMutation requires decision_id.")
@@ -989,10 +916,11 @@ def _execute_approve_mutation(
     if note:
         payload["note"] = note
 
-    url = _governance_url(f"/api/evolution/proposals/{decision_id}/approve")
+    url = _evolution_url(f"/api/evolution/proposals/{decision_id}/approve")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     committed_at = body.get("updated_at") or body.get("decided_at") or _utc_now()
     return {
+        "authoritative_readback": body,
         "command_id": command_id,
         "command_accepted": True,
         "decision_id": body.get("decision_id", decision_id),
@@ -1008,7 +936,7 @@ def _execute_reject_mutation(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch RejectMutation to the governance-owned evolution API."""
+    """Dispatch RejectMutation to the Evolution owner API."""
     decision_id = str(params.get("decision_id") or params.get("evolution_decision_id") or "").strip()
     if not decision_id:
         raise ValueError("RejectMutation requires decision_id.")
@@ -1025,10 +953,11 @@ def _execute_reject_mutation(
     if note:
         payload["note"] = note
 
-    url = _governance_url(f"/api/evolution/proposals/{decision_id}/reject")
+    url = _evolution_url(f"/api/evolution/proposals/{decision_id}/reject")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     committed_at = body.get("updated_at") or body.get("decided_at") or _utc_now()
     return {
+        "authoritative_readback": body,
         "command_id": command_id,
         "command_accepted": True,
         "decision_id": body.get("decision_id", decision_id),
@@ -1044,7 +973,7 @@ def _execute_review_mutation(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch ReviewMutation to the governance-owned evolution API."""
+    """Dispatch ReviewMutation to the Evolution owner API."""
     decision_id = str(params.get("decision_id") or params.get("evolution_decision_id") or "").strip()
     if not decision_id:
         raise ValueError("ReviewMutation requires decision_id.")
@@ -1062,10 +991,11 @@ def _execute_review_mutation(
     if note:
         payload["note"] = note
 
-    url = _governance_url(f"/api/evolution/proposals/{decision_id}/review")
+    url = _evolution_url(f"/api/evolution/proposals/{decision_id}/review")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     committed_at = body.get("updated_at") or body.get("decided_at") or _utc_now()
     return {
+        "authoritative_readback": body,
         "command_id": command_id,
         "command_accepted": True,
         "decision_id": body.get("decision_id", decision_id),
@@ -1081,7 +1011,7 @@ def _execute_execute_mutation(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Dispatch ExecuteMutation to the governance-owned evolution API."""
+    """Dispatch ExecuteMutation to the Evolution owner API."""
     decision_id = str(params.get("decision_id") or params.get("evolution_decision_id") or "").strip()
     if not decision_id:
         raise ValueError("ExecuteMutation requires decision_id.")
@@ -1092,6 +1022,8 @@ def _execute_execute_mutation(
         "actor_role": _evolution_actor_role(actor_role),
     }
     for optional_key in (
+        "execution_receipt",
+        "tenant_id",
         "has_active_runtime",
         "active_binding_id",
         "freeze_mode",
@@ -1106,7 +1038,7 @@ def _execute_execute_mutation(
     if note:
         payload["note"] = note
 
-    url = _governance_url(f"/api/evolution/proposals/{decision_id}/execute")
+    url = _evolution_url(f"/api/evolution/proposals/{decision_id}/execute")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     execution_result = body.get("execution_result") or {}
     committed_at = body.get("updated_at") or execution_result.get("executed_at") or _utc_now()
@@ -1133,6 +1065,7 @@ def _execute_execute_mutation(
         _write_to_governance("/api/governance/freeze-orders", freeze_payload, auth_token=auth_token, mfa_token=mfa_token)
 
     return {
+        "authoritative_readback": body,
         "command_id": command_id,
         "command_accepted": True,
         "decision_id": body.get("decision_id", decision_id),

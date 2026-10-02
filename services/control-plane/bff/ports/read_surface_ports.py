@@ -483,6 +483,31 @@ class ReadSurfacePorts:
             # The incident owner can be down while list_incidents() swallows
             # the outage and returns []; surface its real availability.
             return self.lifecycle_telemetry_governance.dataset_source("incidents")
+        owner_ports = {
+            "personas": self.persona_capital_runtime.persona,
+            "capital_pools": self.persona_capital_runtime.capital,
+            "bindings": self.persona_capital_runtime.capital,
+            "persona_bindings": self.persona_capital_runtime.capital,
+            "deployment_plans": self.persona_capital_runtime.deployment,
+            "runtime_bindings": self.persona_capital_runtime.runtime,
+        }
+        if dataset in owner_ports:
+            status = owner_ports[dataset].get_surface_status()
+            source = status.get("bindings_source") if dataset in {"bindings", "persona_bindings"} else status["source"]
+            return "missing" if source in {None, "missing", "unavailable"} else source
+        if dataset in {"rankings", "ranking_formulas", "rebalances", "capital_allocations", "containments", "evolution_programs", "evolution_decisions"}:
+            port = self.persona_capital_runtime.evolution if dataset.startswith("evolution_") else self.persona_capital_runtime.ranking
+            status = port.get_surface_status()["surfaces"][dataset]
+            return "missing" if status["status"] == "unavailable" else status["source"]
+        if dataset in {"approval_decisions", "approval_queue_items", "governance_review_queue_items"}:
+            reader = self.ooda_management.review_queue._approval_decisions_reader
+            try:
+                if reader is None:
+                    return "missing"
+                reader()
+                return "service"
+            except Exception:
+                return "missing"
         if dataset in (
             "deployment_plans",
             "personas",
@@ -1292,6 +1317,7 @@ def create_read_surface_ports(
     operations_consultation: Optional[OperationsConsultationPort] = None,
     persona_capital_runtime: Optional[Union[CompositePersonaCapitalRuntimePort, PersonaCapitalRuntimeDomainPort]] = None,
     persona_registry_store: Optional[Any] = None,
+    ranking_store: Optional[Any] = None,
     ooda_management: Optional[OodaManagementDomainPort] = None,
     research_knowledge_source: Optional[ResearchKnowledgeSourcePort] = None,
     lifecycle_telemetry_governance: Optional[CompositeLifecycleTelemetryGovernancePort] = None,
@@ -1303,15 +1329,21 @@ def create_read_surface_ports(
     **kwargs: Any,
 ) -> ReadSurfacePorts:
     """Factory creating a production-grade composite ReadSurfacePorts instance."""
-    if persona_registry_store is not None:
-        if persona_capital_runtime is None:
-            persona_capital_runtime = PersonaCapitalRuntimeDomainPort(
-                persona_port=PersonaFleetPort(store=persona_registry_store),
-            )
-        if persona_training is None:
-            persona_training = PersonaTrainingDomainPort(
-                persona_port=PersonaRegistryReadsPort(store=persona_registry_store),
-            )
+    from ..core.owner_reads import approval_records, create_owner_domain_ports
+    if persona_capital_runtime is None:
+        persona_capital_runtime = create_owner_domain_ports(
+            persona_registry_store, ranking_store,
+        )
+    if ooda_management is None:
+        ooda_management = OodaManagementDomainPort(review_queue_port=ManagementReviewQueuePort(
+            deployment_plans_reader=persona_capital_runtime.list_deployment_plans,
+            evolution_decisions_reader=persona_capital_runtime.list_evolution_decisions,
+            approval_decisions_reader=approval_records,
+        ))
+    if persona_registry_store is not None and persona_training is None:
+        persona_training = PersonaTrainingDomainPort(
+            persona_port=PersonaRegistryReadsPort(store=persona_registry_store),
+        )
     return ReadSurfacePorts(
         operations_consultation=operations_consultation,
         persona_capital_runtime=persona_capital_runtime,
