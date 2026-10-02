@@ -630,31 +630,42 @@ def _build_authority_harness_app(
         )
     )
 
-    @app.post("/api/v1/bindings", status_code=201)
-    async def _create_binding(
-        payload: Dict[str, Any] = Body(...),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    ):
-        identity = extract_identity(authorization)
-        actor_id = str(getattr(identity, "operator_id", None) or getattr(identity, "id", None) or "operator-1")
-        body = dict(payload)
-        body.setdefault("actor_id", actor_id)
-        body.setdefault("actor_role", "operator")
-        if idempotency_key:
-            body.update(idempotency_key=idempotency_key, request_hash=_stable_json_hash(payload))
-        return command_executor.create_capital_binding(body, auth_token=authorization)
+    from services.control_plane.bff.runtime.router import create_runtime_router
+    def _owner_error(exc, **_):
+        raise HTTPException(status_code=getattr(exc, "code", 500), detail=getattr(exc, "reason", str(exc)))
+    _cap_idempotency: Dict[str, Dict[str, Any]] = {}
+    def _cap_check(op_id: str, key: str, req_hash: str, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        entry = _cap_idempotency.get(f"{op_id}\x00{tenant_id or ''}\x00{key}")
+        if entry is None:
+            return None
+        if entry.get("request_hash") != req_hash:
+            raise bff_error(409, ErrorCode.IDEMPOTENCY_CONFLICT, "Idempotency conflict")
+        return entry.get("result")
+    def _cap_store(op_id: str, key: str, req_hash: str, result: Any, tenant_id: Optional[str] = None) -> None:
+        _cap_idempotency[f"{op_id}\x00{tenant_id or ''}\x00{key}"] = {"request_hash": req_hash, "result": result}
 
-    @app.get("/api/v1/bindings")
-    async def _list_bindings():
-        return {"data": read_surface.list_bindings(), "meta": {}}
-
-    @app.get("/api/v1/bindings/{binding_id}")
-    async def _get_binding(binding_id: str):
-        for b in read_surface.list_bindings():
-            if b.get("binding_id") == binding_id or b.get("id") == binding_id:
-                return {"data": b, "meta": {}}
-        raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Binding not found")
+    app.include_router(
+        create_runtime_router(
+            read_surface=read_surface,
+            dependencies={
+                '_extract_identity': extract_identity,
+                '_require_operator_role': require_operator_role,
+                '_require_read_role': require_read_role,
+                '_reject_body_idempotency_key': lambda p: None,
+                '_resolve_final_idempotency_key': lambda a, b: a or b,
+                '_stable_json_hash': _stable_json_hash,
+                '_capital_bff_idempotency_check': _cap_check,
+                '_capital_bff_idempotency_store': _cap_store,
+                '_stable_capital_resource_id': lambda *a, **kw: kw.get('requested_id') or "b-auto",
+                '_capital_owner_role': lambda identity: "operator",
+                '_bff_error': bff_error,
+                '_raise_capital_owner_error': _owner_error,
+                'create_capital_binding': command_executor.create_capital_binding,
+                'utc_now': utc_now,
+                '_read_surface_meta': lambda *a, **kw: {},
+            },
+        )
+    )
 
     return app
 

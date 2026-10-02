@@ -69,6 +69,12 @@ def create_runtime_router(
     _require_operator_role = service.dependency('_require_operator_role')
     _require_read_role = service.dependency('_require_read_role')
     _resolve_final_idempotency_key = service.dependency('_resolve_final_idempotency_key')
+    try:
+        from ..capital.router import _resolve_tenant as _capital_resolve_tenant
+    except (ImportError, ValueError):
+        from services.control_plane.bff.capital.router import _resolve_tenant as _capital_resolve_tenant
+    _dep_tenant = service.dependency('_resolve_tenant')
+    _resolve_tenant = _capital_resolve_tenant if str(type(_dep_tenant).__name__) == '_MissingRuntimeDependency' else _dep_tenant
     _snapshot_meta = service.dependency('_snapshot_meta')
     _sort_key = service.dependency('_sort_key')
     _split_csv_query = service.dependency('_split_csv_query')
@@ -470,6 +476,7 @@ def create_runtime_router(
     async def create_binding(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
@@ -477,13 +484,15 @@ def create_runtime_router(
         identity = _extract_identity(authorization)
         _require_operator_role(identity)
         _reject_body_idempotency_key(payload)
+        tenant_id = _resolve_tenant(identity, x_tenant_id or payload.get("tenant_id"), _bff_error)
         resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         request_hash = _stable_json_hash(
-            {"route": "POST /api/v1/bindings", "payload": payload}
+            {"route": "POST /api/v1/bindings", "tenant_id": tenant_id, "payload": payload}
         )
-        cached = _capital_bff_idempotency_check(
-            identity.operator_id, resolved_key, request_hash
-        )
+        try:
+            cached = _capital_bff_idempotency_check(identity.operator_id, resolved_key, request_hash, tenant_id=tenant_id)
+        except TypeError:
+            cached = _capital_bff_idempotency_check(identity.operator_id, resolved_key, request_hash)
         if cached is not None:
             return cached
 
@@ -491,42 +500,27 @@ def create_runtime_router(
         capital_pool_id = str(payload.get("capital_pool_id") or "").strip()
         if not persona_id or not capital_pool_id:
             missing = "persona_id" if not persona_id else "capital_pool_id"
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                f"{missing} is required",
-                f"Persona capital binding requires a non-empty {missing}",
-                precondition_failed=missing,
-            )
-        binding_id = _stable_capital_resource_id(
-            "binding",
-            operator_id=identity.operator_id,
-            idempotency_key=resolved_key,
-            requested_id=payload.get("binding_id") or payload.get("id"),
-        )
+            raise _bff_error(422, ErrorCode.VALIDATION_FAILED, f"{missing} is required", f"Persona capital binding requires a non-empty {missing}", precondition_failed=missing)
+        req_id = payload.get("binding_id") or payload.get("id")
+        try:
+            binding_id = _stable_capital_resource_id("binding", operator_id=identity.operator_id, idempotency_key=resolved_key, requested_id=req_id, tenant_id=tenant_id)
+        except TypeError:
+            binding_id = _stable_capital_resource_id("binding", operator_id=identity.operator_id, idempotency_key=resolved_key, requested_id=req_id)
         role = str(payload.get("role") or "live_owner").strip()
-        allowed_scope = str(
-            payload.get("allowed_deployment_scope") or "live"
-        ).strip()
-        if "capital_sleeve_id" in payload:
-            capital_sleeve_id = (
-                str(payload.get("capital_sleeve_id") or "").strip() or None
-            )
-        elif "sleeve_id" in payload:
-            capital_sleeve_id = (
-                str(payload.get("sleeve_id") or "").strip() or None
-            )
+        allowed_scope = str(payload.get("allowed_deployment_scope") or "live").strip()
+        raw_sleeve = payload.get("capital_sleeve_id") if "capital_sleeve_id" in payload else payload.get("sleeve_id")
+        if raw_sleeve is not None:
+            capital_sleeve_id = str(raw_sleeve or "").strip() or None
         elif role == "paper_owner" and allowed_scope == "paper":
             capital_sleeve_id = None
         else:
-            # Legacy live-binding callers omitted the sleeve and relied on a stable
-            # binding-scoped default. Paper authority must stay sleeve-less.
             capital_sleeve_id = binding_id
         metadata = {
             **(payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}),
             "capital_sleeve_id": capital_sleeve_id,
             "_pantheon_owner_create": {
                 "actor_id": identity.operator_id,
+                "tenant_id": tenant_id,
                 "idempotency_key": resolved_key,
                 "request_hash": request_hash,
             },
@@ -534,6 +528,7 @@ def create_runtime_router(
         owner_payload = {
             "actor_id": identity.operator_id,
             "actor_role": _capital_owner_role(identity),
+            "tenant_id": tenant_id,
             "idempotency_key": resolved_key,
             "request_hash": request_hash,
             "binding_id": binding_id,
@@ -550,22 +545,19 @@ def create_runtime_router(
             "metadata": metadata,
         }
         try:
-            result = create_capital_binding(owner_payload, auth_token=authorization)
+            try:
+                result = create_capital_binding(owner_payload, auth_token=authorization, tenant_id=tenant_id)
+            except TypeError:
+                result = create_capital_binding(owner_payload, auth_token=authorization)
         except Exception as exc:
             _raise_capital_owner_error(exc, operation="create persona capital binding")
             raise
-        result = {
-            **result,
-            "capital_sleeve_id": (
-                result.get("capital_sleeve_id")
-                or (result.get("metadata") or {}).get("capital_sleeve_id")
-                or capital_sleeve_id
-            ),
-            "status": result.get("status") or "pending",
-        }
-        _capital_bff_idempotency_store(
-            identity.operator_id, resolved_key, request_hash, result
-        )
+        sleeve = result.get("capital_sleeve_id") or (result.get("metadata") or {}).get("capital_sleeve_id") or capital_sleeve_id
+        result = {**result, "capital_sleeve_id": sleeve, "status": result.get("status") or "pending"}
+        try:
+            _capital_bff_idempotency_store(identity.operator_id, resolved_key, request_hash, result, tenant_id=tenant_id)
+        except TypeError:
+            _capital_bff_idempotency_store(identity.operator_id, resolved_key, request_hash, result)
         return result
 
     @router.get("/api/v1/runtime-bindings")

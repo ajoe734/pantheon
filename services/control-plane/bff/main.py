@@ -3644,16 +3644,17 @@ _MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {}
 _TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {}
 _SKILL_REGISTRY: Dict[str, Dict[str, Any]] = {}
 _CAPITAL_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-def _capital_bff_idempotency_identity(operator_id: str, resolved_key: str) -> str:
-    return f"{operator_id}\x00{resolved_key}"
+def _capital_bff_idempotency_identity(operator_id: str, resolved_key: str, tenant_id: Optional[str] = None) -> str:
+    return f"{operator_id}\x00{tenant_id or ''}\x00{resolved_key}"
 def _capital_bff_idempotency_check(
     operator_id: str,
     resolved_key: str,
     request_hash: str,
+    tenant_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Return cached result on replay or raise 409 on conflict."""
     existing = _CAPITAL_BFF_IDEMPOTENCY.get(
-        _capital_bff_idempotency_identity(operator_id, resolved_key)
+        _capital_bff_idempotency_identity(operator_id, resolved_key, tenant_id=tenant_id)
     )
     if existing is None:
         return None
@@ -3672,9 +3673,10 @@ def _capital_bff_idempotency_store(
     resolved_key: str,
     request_hash: str,
     result: Any,
+    tenant_id: Optional[str] = None,
 ) -> None:
     _CAPITAL_BFF_IDEMPOTENCY[
-        _capital_bff_idempotency_identity(operator_id, resolved_key)
+        _capital_bff_idempotency_identity(operator_id, resolved_key, tenant_id=tenant_id)
     ] = {"request_hash": request_hash, "result": result}
 def _capital_bff_action_command(
     entity_type: ObjectType,

@@ -449,3 +449,118 @@ def test_stored_binding_active_status_rejection_preserved_and_idempotent_reconci
         assert res_idempotent_same["status"] == "executed"
         assert res_idempotent_same["result"]["authoritative_readback"]["status"] == "suspended"
 
+
+def test_binding_rest_preserves_explicit_tenant(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.control_plane.bff.auth.policy import create_auth_dependencies
+    from services.control_plane.bff.auth.handlers import _issue_token
+
+    with CapitalBffAuthorityHarness(tmp_path) as h:
+        secret = "isolated-review-secret-no-real-credentials"
+        for k, v in {
+            "PANTHEON_BFF_JWT_SECRET": secret,
+            "CAPITAL_JWT_SECRET": secret,
+            "CAPITAL_AUTH_DISABLED": "false",
+            "CAPITAL_AUTH_MODE": "strict",
+            "CAPITAL_ALLOWED_CALLER_SERVICES": "control-plane-bff",
+        }.items():
+            monkeypatch.setenv(k, v)
+        h.restart()
+        token = _issue_token(
+            {
+                "identity": "operator",
+                "subject": "review-op",
+                "roles": ["operator"],
+                "client_id": "bff-dev-operator",
+                "tenant_id": "",
+                "allowed_tenants": ["tenant-a", "tenant-b"],
+            },
+            create_auth_dependencies(),
+        )["access_token"]
+        headers = {"Authorization": f"Bearer {token}", "X-Tenant-Id": "tenant-b"}
+        pool = h.client.post(
+            "/bff/capital-pools",
+            json={
+                "pool_id": "review-tenant-pool",
+                "name": "Review pool",
+                "owner_id": "review-org",
+                "owner_type": "org",
+                "status": "suspended",
+            },
+            headers={**headers, "Idempotency-Key": "review-tenant-pool"},
+        )
+        assert pool.status_code == 201, pool.text
+        result = h.client.post(
+            "/api/v1/bindings",
+            json={
+                "binding_id": "review-tenant-binding",
+                "persona_id": "review-persona",
+                "capital_pool_id": "review-tenant-pool",
+                "role": "paper_owner",
+                "allowed_deployment_scope": "paper",
+            },
+            headers={**headers, "Idempotency-Key": "review-tenant-binding"},
+        )
+        assert result.status_code < 300, result.text
+
+
+def test_binding_replay_cannot_cross_tenant_authority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.control_plane.bff.auth.policy import create_auth_dependencies
+    from services.control_plane.bff.auth.handlers import _issue_token
+
+    with CapitalBffAuthorityHarness(tmp_path) as h:
+        secret = "isolated-review-secret-no-real-credentials"
+        for k, v in {
+            "PANTHEON_BFF_JWT_SECRET": secret,
+            "CAPITAL_JWT_SECRET": secret,
+            "CAPITAL_AUTH_DISABLED": "false",
+            "CAPITAL_AUTH_MODE": "strict",
+            "CAPITAL_ALLOWED_CALLER_SERVICES": "control-plane-bff",
+        }.items():
+            monkeypatch.setenv(k, v)
+        h.restart()
+
+        def _headers(tenant: str) -> Dict[str, str]:
+            token = _issue_token(
+                {
+                    "identity": "operator",
+                    "subject": "review-op",
+                    "roles": ["operator"],
+                    "client_id": "bff-dev-operator",
+                    "tenant_id": tenant,
+                    "allowed_tenants": [tenant],
+                },
+                create_auth_dependencies(),
+            )["access_token"]
+            return {"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant, "Idempotency-Key": "same-binding-key"}
+
+        a, b = _headers("tenant-a"), _headers("tenant-b")
+        pool = h.client.post(
+            "/bff/capital-pools",
+            json={
+                "pool_id": "review-cache-pool",
+                "name": "Review pool",
+                "owner_id": "review-org",
+                "owner_type": "org",
+                "status": "suspended",
+            },
+            headers={**a, "Idempotency-Key": "review-cache-pool"},
+        )
+        assert pool.status_code == 201, pool.text
+        body = {
+            "binding_id": "review-cache-binding",
+            "persona_id": "review-persona",
+            "capital_pool_id": "review-cache-pool",
+            "role": "paper_owner",
+            "allowed_deployment_scope": "paper",
+        }
+        first = h.client.post("/api/v1/bindings", json=body, headers=a)
+        assert first.status_code == 201, first.text
+        before = len(h.owner_calls)
+        replay = h.client.post("/api/v1/bindings", json=body, headers=b)
+        assert replay.status_code >= 400, {
+            "status": replay.status_code,
+            "body": replay.json(),
+            "new_owner_calls": len(h.owner_calls) - before,
+        }
+
+
