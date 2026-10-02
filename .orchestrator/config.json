@@ -662,10 +662,10 @@
     },
     "codex2-1": {
       "delivery_mode": "codex",
-      "account": "codex1",
+      "account": "lupinchen",
       "codex": {
         "cli": ".orchestrator/bin/codex",
-        "codex_home": "~/.codex2",
+        "codex_home": "~/.codex-lupin",
         "model": "gpt-6-astra",
         "model_reasoning_effort": "high",
         "ask_for_approval": "never",
