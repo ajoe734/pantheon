@@ -1,6 +1,5 @@
 {
   "task_id": "BFF-CLOSURE-REGRESSION-20261002",
-  "base_sha": "799e40fc8c380137515e69b59b3fe7b617ee2c77",
   "scope": "Repair loop-health metadata and remove test-only response rewriting; not overall six-workstream closure.",
   "changes": [
     "A reachable controller store no longer marks partial or rejected loop coverage healthy or accepted_live.",
@@ -8,21 +7,65 @@
     "Production publishes overlay inventory, catalog-derived coverage, truth source policy and compatibility source metadata.",
     "The contract suite mounts ControlLoopsService directly, without a subclass manufacturing response fields."
   ],
-  "validation": {
+  "hosted_acceptance": "not_performed",
+  "safety": "Local validation and governed source delivery only. No VM, deployment, credential, tenant data or real-capital mutation. Source delivery is not hosted acceptance or overall audit closure.",
+  "original_base_sha": "799e40fc8c380137515e69b59b3fe7b617ee2c77",
+  "original_validation": {
     "python": "3.12",
     "command": "python3 -m pytest -q services/control-plane/bff/test_current_twelve_owner_truth.py services/control-plane/bff/test_loop_health_read_model_contract.py services/control-plane/bff/test_loop_inventory_read_model_contract.py services/control-plane/bff/tests/test_control_loops_router.py services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_journal_runtime_contract.py services/control-plane/bff/test_normalized_route_uniqueness.py --tb=short --disable-warnings",
     "result": "183 passed, 3 warnings, 2 subtests passed",
-    "duration_seconds": 128.90,
-    "regressions": ["missing record", "healthy partial coverage", "stale record", "degraded worker", "undeclared controller", "overlay excluded from canonical records", "tenant and environment scope", "evidence redaction"],
+    "duration_seconds": 128.9,
+    "regressions": [
+      "missing record",
+      "healthy partial coverage",
+      "stale record",
+      "degraded worker",
+      "undeclared controller",
+      "overlay excluded from canonical records",
+      "tenant and environment scope",
+      "evidence redaction"
+    ],
     "baseline_loop_failures": [
       "test_positive_runtime_observations_respect_catalog_controller_admission: expected degraded, got ok",
       "test_composite_overlay_per_persona_ooda_rejects_direct_controller_record: composite_overlay_inventory missing"
     ]
   },
-  "known_out_of_scope_baseline_failures": [
+  "historical_out_of_scope_failures": [
     "test_mutation_route_ownership_mapping_contract: one mounted mutation absent and 42 retired routes remaining in the ownership inventory",
     "test_no_undefined_call_symbols[main.py]: ProjectionReadUnavailable is unbound; main.py is concurrently owned by the active receipt/read-owner work"
   ],
-  "hosted_acceptance": "not_performed",
-  "safety": "Local tests only. No VM, deployment, canonical task-state, credential, tenant data or real-capital mutation. No claim that all twelve controllers or the overall release are accepted."
+  "base_sha": "e32ab2785e09a47eee00ab5a48acc543863547e2",
+  "original_implementation_sha": "2b97145cfe8308c443668faeb31d0acbea26f36e",
+  "validated_source_sha": "4ba3a7cf16604b1c53a9e0dd424e0f9e6b8e00c3",
+  "delivery": {
+    "pr": 6093,
+    "method": "MERGE",
+    "history": "Append-only merge of original published implementation into current dev; original authorship retained. Three source/test files are byte-identical to original implementation.",
+    "review": "Pending genuine independent Claude review; prior timeouts are not approvals.",
+    "production_delta": {
+      "added": 20,
+      "deleted": 5,
+      "net": 15,
+      "limit": 100
+    }
+  },
+  "validation": {
+    "command": "timeout 300 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_current_twelve_owner_truth.py services/control-plane/bff/test_loop_health_read_model_contract.py services/control-plane/bff/test_loop_inventory_read_model_contract.py services/control-plane/bff/tests/test_control_loops_router.py services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_journal_runtime_contract.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_architecture_boundaries.py services/control-plane/bff/test_no_undefined_call_symbols.py --tb=short --disable-warnings",
+    "base": {
+      "exit_status": 1,
+      "result": "3 failed, 185 passed, 1 skipped, 96 warnings, 2 subtests passed",
+      "duration_seconds": 161.76,
+      "log_sha256": "b673da162cb83359750b97ebf731e452685ae8edbe112c254a6fb8a0f9a882ec"
+    },
+    "candidate": {
+      "exit_status": 1,
+      "result": "1 failed, 192 passed, 1 skipped, 96 warnings, 2 subtests passed",
+      "duration_seconds": 167.11,
+      "log_sha256": "e5b23d56f1789406cca3202867529e771a45fca0665ca00fceee543cd6ce5ccc"
+    },
+    "interpretation": "Both loop regressions are fixed; all eight original suites pass inside this batch. The full batch is NOT green: the same route ownership inventory failure remains on both base and candidate.",
+    "remaining_baseline_failure": "test_mutation_route_ownership_mapping_contract: one missing servant-proposal route and 42 retired routes still declared; existing PR6094 owns inventory reconciliation.",
+    "resolved_historical_failure": "test_no_undefined_call_symbols[main.py] passes on current base and candidate after receipt-owner PR6095; read_store.py case skips because the file was deleted.",
+    "static_checks": "git diff origin/dev HEAD --check and diff_budget.py --base origin/dev --change-class corrective --budget 100: exit 0."
+  }
 }
