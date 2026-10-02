@@ -564,3 +564,47 @@ def test_binding_replay_cannot_cross_tenant_authority(tmp_path: Path, monkeypatc
         }
 
 
+@pytest.mark.parametrize("route", ["/bff/capital-pools", "/api/v1/bindings"])
+def test_cached_write_requires_current_tenant_authority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route: str) -> None:
+    from services.control_plane.bff.auth.policy import create_auth_dependencies
+    from services.control_plane.bff.auth.handlers import _issue_token
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    with CapitalBffAuthorityHarness(tmp_path) as h:
+        for key, value in {
+            "PANTHEON_BFF_JWT_SECRET": "isolated-review-secret-no-real-credentials",
+            "CAPITAL_JWT_SECRET": "isolated-review-secret-no-real-credentials",
+            "CAPITAL_AUTH_DISABLED": "false",
+            "CAPITAL_AUTH_MODE": "strict",
+            "CAPITAL_ALLOWED_CALLER_SERVICES": "control-plane-bff",
+        }.items():
+            monkeypatch.setenv(key, value)
+        h.restart()
+        monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+        monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "false")
+
+        def headers(allowed: list[str]) -> Dict[str, str]:
+            token = _issue_token({
+                "identity": "operator", "subject": "review-op", "roles": ["operator"],
+                "client_id": "bff-dev-operator", "tenant_id": "", "allowed_tenants": allowed,
+            }, create_auth_dependencies())["access_token"]
+            return {"Authorization": f"Bearer {token}", "X-Tenant-Id": "tenant-a", "Idempotency-Key": "review-cache-key"}
+
+        authorized, unscoped = headers(["tenant-a"]), headers([])
+        pool = {"pool_id": "review-cache-pool", "name": "Review pool", "owner_id": "review-org", "owner_type": "org", "status": "suspended"}
+        response = h.client.post("/bff/capital-pools", json=pool, headers=authorized)
+        assert response.status_code == 201, response.text
+        body = pool
+        if route.endswith("bindings"):
+            body = {"binding_id": "review-cache-binding", "persona_id": "review-persona", "capital_pool_id": "review-cache-pool", "role": "paper_owner", "allowed_deployment_scope": "paper"}
+            response = h.client.post(route, json=body, headers=authorized)
+            assert response.status_code == 201, response.text
+        before = len(h.owner_calls)
+        replay = h.client.post(route, json=body, headers=unscoped)
+        fresh = h.client.post(route, json=body, headers={**unscoped, "Idempotency-Key": "new-key"})
+        assert fresh.status_code == 403, fresh.text
+        assert replay.status_code == 403, {"replay_status": replay.status_code, "replay_body": replay.json(), "fresh_status": fresh.status_code, "owner_calls": len(h.owner_calls) - before}
+
+
+

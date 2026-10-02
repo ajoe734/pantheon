@@ -484,7 +484,7 @@ def create_runtime_router(
         identity = _extract_identity(authorization)
         _require_operator_role(identity)
         _reject_body_idempotency_key(payload)
-        tenant_id = _resolve_tenant(identity, x_tenant_id or payload.get("tenant_id"), _bff_error)
+        tenant_id = _resolve_tenant(identity, x_tenant_id, _bff_error)
         resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         request_hash = _stable_json_hash(
             {"route": "POST /api/v1/bindings", "tenant_id": tenant_id, "payload": payload}

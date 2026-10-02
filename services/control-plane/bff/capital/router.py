@@ -111,7 +111,7 @@ def _resolve_tenant(
     if clean_req:
         if clean_req == "*":
             raise bff_error(400, ErrorCode.VALIDATION_FAILED, "Wildcard tenant cannot be targeted for Capital writes", "TENANT_REQUIRED")
-        if concrete and not has_wildcard and clean_req not in concrete:
+        if not has_wildcard and clean_req not in concrete:
             raise bff_error(403, ErrorCode.FORBIDDEN, f"Tenant {clean_req!r} is outside the caller scope", "TENANT_SCOPE_FORBIDDEN")
         return clean_req
     if not has_wildcard and len(concrete) == 1:
@@ -267,7 +267,7 @@ def create_capital_router(
         x_tenant_id: Optional[str], idempotency_key: Optional[str], x_idempotency_key: Optional[str],
         target_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        tid = _resolve_tenant(identity, x_tenant_id or payload.get("tenant_id"), bff_error)
+        tid = _resolve_tenant(identity, x_tenant_id, bff_error)
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
         result, replayed = _idempotent_write(op, payload, identity=identity, authorization=authorization, key=key, target_id=target_id, tenant_id=tid)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
@@ -408,7 +408,7 @@ def create_capital_router(
         _rebalance_or_error(rebalance_id)
         if not str(x_confirm_token or "").strip():
             raise bff_error(428, ErrorCode.CONFIRMATION_REQUIRED, "Confirmation token is required before this action can be accepted", "CONFIRM_TOKEN_MISSING")
-        tid = _resolve_tenant(identity, x_tenant_id or payload.get("tenant_id"), bff_error)
+        tid = _resolve_tenant(identity, x_tenant_id, bff_error)
         cas = getattr(getattr(getattr(request, "app", None), "state", None), "command_adapter_service", None)
         if cas is not None:
             cmd = {"command": "ApprovedApply", "target": {"type": "Rebalance", "id": rebalance_id},
