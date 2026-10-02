@@ -538,6 +538,7 @@ class PplRankingProjectionHarness:
             final_contract_idempotency=self.final_idempotency,
             gov_bff_idempotency=self.gov_idempotency,
         )
+        app.state.command_adapter_service = self.command_adapter_service
         app.include_router(
             create_command_adapters_router(service=self.command_adapter_service)
         )
@@ -968,9 +969,14 @@ class CapitalBffAuthorityHarness:
         parsed = urlsplit(request.full_url)
         auth = request.get_header("Authorization")
         self.owner_calls.append((request.get_method(), request.full_url, auth))
+        headers = {"Content-Type": "application/json", "X-Pantheon-Service": "control-plane-bff"}
+        for h in ("Authorization", "X-Pantheon-Service", "X-Tenant-Id"):
+            val = request.get_header(h)
+            if val:
+                headers[h] = val
         response = self.capital_client.request(
             request.get_method(), parsed.path, content=request.data,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
         )
         if response.status_code >= 400:
             raise HTTPError(request.full_url, response.status_code, response.reason_phrase, response.headers, BytesIO(response.content))
@@ -996,13 +1002,21 @@ class CapitalBffAuthorityHarness:
         payload: Dict[str, Any],
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         del mfa_token
         assert self.capital_client is not None
         self.owner_calls.append(("POST", url, auth_token))
         parsed = urlsplit(url)
         path = parsed.path + (f"?{parsed.query}" if parsed.query else "")
-        response = self.capital_client.post(path, json=payload)
+        headers: Dict[str, str] = {"Content-Type": "application/json", "X-Pantheon-Service": "control-plane-bff"}
+        if auth_token:
+            headers["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
+        resolved_tenant = tenant_id or payload.get("tenant_id")
+        if resolved_tenant:
+            headers["X-Tenant-Id"] = str(resolved_tenant).strip()
+        response = self.capital_client.post(path, json=payload, headers=headers)
         if response.status_code >= 400:
             raise HTTPError(
                 url,
@@ -1025,13 +1039,20 @@ class CapitalBffAuthorityHarness:
         url: str,
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> Any:
         del mfa_token
         assert self.capital_client is not None
         self.owner_calls.append(("GET", url, auth_token))
         parsed = urlsplit(url)
         path = parsed.path + (f"?{parsed.query}" if parsed.query else "")
-        response = self.capital_client.get(path)
+        headers: Dict[str, str] = {"Accept": "application/json", "X-Pantheon-Service": "control-plane-bff"}
+        if auth_token:
+            headers["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
+        if tenant_id:
+            headers["X-Tenant-Id"] = str(tenant_id).strip()
+        response = self.capital_client.get(path, headers=headers)
         if response.status_code >= 400:
             raise HTTPError(
                 url,

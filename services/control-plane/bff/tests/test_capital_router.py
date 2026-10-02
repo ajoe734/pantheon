@@ -119,6 +119,19 @@ def _client(store: _CapitalStore) -> TestClient:
     return TestClient(app)
 
 
+def _client_with_auth(store: _CapitalStore, extract_identity: Any) -> TestClient:
+    app = FastAPI()
+    app.include_router(
+        create_capital_router(
+            get_read_store=lambda: store,
+            get_capital_authority=lambda: store,
+            extract_identity=extract_identity,
+            utc_now=lambda: "2026-08-30T21:00:00Z",
+        )
+    )
+    return TestClient(app)
+
+
 def test_capital_router_registers_the_23_owner_backed_routes() -> None:
     router = create_capital_router()
     routes = {(method, route.path) for route in router.routes for method in route.methods}
@@ -237,9 +250,86 @@ def test_capital_and_rebalance_writes_are_owner_delegated_and_idempotent() -> No
     )
     assert created_rebalance.status_code == 201
 
-    applied = client.post("/bff/rebalances/rebalance-created/apply", json={}, headers={"Idempotency-Key": "rebalance-apply-1"})
+    # Missing confirmation token must be rejected with 428 without calling owner
+    missing_confirm = client.post(
+        "/bff/rebalances/rebalance-created/apply",
+        json={},
+        headers={"Idempotency-Key": "rebalance-apply-1"},
+    )
+    assert missing_confirm.status_code == 428
+    assert "CONFIRM_TOKEN_MISSING" in missing_confirm.text
+
+    applied = client.post(
+        "/bff/rebalances/rebalance-created/apply",
+        json={},
+        headers={"Idempotency-Key": "rebalance-apply-1", "X-Confirm-Token": "ct-apply-1"},
+    )
     assert applied.status_code == 202
     assert store.rebalances["rebalance-created"]["status"] == "applied"
+
+
+def test_capital_idempotency_binds_target_and_tenant_preserving_conflicts_and_isolation() -> None:
+    store = _CapitalStore()
+    client = _client(store)
+
+    # 1. Action on pool-paper
+    r1 = client.post(
+        "/bff/capital-pools/pool-paper/actions/pause",
+        json={},
+        headers={"Idempotency-Key": "idem-action-key"},
+    )
+    assert r1.status_code == 202
+    assert r1.json().get("meta", {}).get("replayed") is False
+    assert r1.json().get("data", {}).get("pool_id") == "pool-paper"
+
+    # Replay on same target and same payload replays cleanly
+    r1_replay = client.post(
+        "/bff/capital-pools/pool-paper/actions/pause",
+        json={},
+        headers={"Idempotency-Key": "idem-action-key"},
+    )
+    assert r1_replay.status_code == 202
+    assert r1_replay.json().get("meta", {}).get("replayed") is True
+
+    # 2. Cross-target conflict: Action on pool-paused with the same idempotency key must conflict (409)
+    # rather than silently returning the cached readback for pool-paper
+    r2_conflict = client.post(
+        "/bff/capital-pools/pool-paused/actions/pause",
+        json={},
+        headers={"Idempotency-Key": "idem-action-key"},
+    )
+    assert r2_conflict.status_code == 409
+    body_conflict = r2_conflict.json()
+    err = body_conflict.get("detail", {}).get("error") or body_conflict.get("error") or {}
+    assert err.get("code") == "IDEMPOTENCY_CONFLICT"
+
+    # 3. Cross-tenant isolation: different tenant identities with the same idempotency key are isolated
+    class _TenantIdentity:
+        def __init__(self, tenant_id: str):
+            self.operator_id = f"operator-{tenant_id}"
+            self.tenant_id = tenant_id
+            self.roles = {"admin", "operator"}
+
+    def _extract_tenant_identity(auth: Optional[str] = None):
+        t = (auth or "tenant-a").replace("Bearer ", "")
+        return _TenantIdentity(t)
+
+    tenant_client = _client_with_auth(store, _extract_tenant_identity)
+    res_ta = tenant_client.post(
+        "/bff/capital-pools/pool-paper/actions/pause",
+        json={},
+        headers={"Idempotency-Key": "shared-key", "Authorization": "Bearer tenant-a"},
+    )
+    assert res_ta.status_code == 202
+    assert res_ta.json().get("meta", {}).get("replayed") is False
+
+    res_tb = tenant_client.post(
+        "/bff/capital-pools/pool-paper/actions/pause",
+        json={},
+        headers={"Idempotency-Key": "shared-key", "Authorization": "Bearer tenant-b"},
+    )
+    assert res_tb.status_code == 202
+    assert res_tb.json().get("meta", {}).get("replayed") is False
 
 
 def test_operations_without_an_owner_endpoint_are_retired_not_simulated() -> None:

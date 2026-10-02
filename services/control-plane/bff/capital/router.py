@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from fastapi import APIRouter, Body, Header, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException, Query, Request
 
 from services.control_plane.bff.models import ErrorCode
 
@@ -85,6 +85,25 @@ def _default_bff_error(status_code: int, code: Any, message: str, reason: Option
 
 def _identity_id(identity: Any) -> str:
     return str(getattr(identity, "operator_id", None) or getattr(identity, "id", None) or "operator-1")
+
+
+def _identity_tenant(identity: Any) -> Optional[str]:
+    if identity is None:
+        return None
+    for a in ("tenant_id", "tenant"):
+        if getattr(identity, a, None):
+            return str(getattr(identity, a)).strip() or None
+    c = getattr(identity, "claims", None) or {}
+    for k in ("tenant_id", "tenantId", "tenant.id", "tenant"):
+        if c.get(k):
+            return str(c[k]).strip() or None
+    for k in ("allowed_tenants", "tenant_ids", "tenantIds", "tenants"):
+        v = c.get(k)
+        if isinstance(v, (list, tuple)) and v:
+            return str(v[0]).strip() or None
+        if isinstance(v, str) and v.strip():
+            return v.split(",")[0].strip() or None
+    return None
 
 
 def _resolve_idempotency_key(
@@ -200,19 +219,14 @@ def create_capital_router(
         except Exception as exc:
             raise _error_for_capital_exception(exc, bff_error) from exc
 
-    def _idempotent_write(
-        operation: str, payload: Dict[str, Any], *, identity: Any, authorization: Optional[str], key: str, target_id: Optional[str] = None
-    ) -> Tuple[Dict[str, Any], bool]:
-        actor_id = _identity_id(identity)
+    def _idempotent_write(operation: str, payload: Dict[str, Any], *, identity: Any, authorization: Optional[str], key: str, target_id: Optional[str] = None) -> Tuple[Dict[str, Any], bool]:
+        actor_id, tenant_id = _identity_id(identity), _identity_tenant(identity)
         try:
-            replay = service.idempotent(actor_id=actor_id, key=key, operation=operation, payload=payload)
+            replay = service.idempotent(actor_id=actor_id, key=key, operation=operation, payload=payload, target_id=target_id, tenant_id=tenant_id)
             if replay is not None:
                 return replay, True
-            result = service.write(
-                operation, payload, actor_id=actor_id, actor_role=_owner_actor_role(identity),
-                auth_token=authorization, key=key, target_id=target_id,
-            )
-            service.remember(actor_id=actor_id, key=key, operation=operation, payload=payload, response=result)
+            result = service.write(operation, payload, actor_id=actor_id, actor_role=_owner_actor_role(identity), auth_token=authorization, key=key, target_id=target_id, tenant_id=tenant_id)
+            service.remember(actor_id=actor_id, key=key, operation=operation, payload=payload, response=result, target_id=target_id, tenant_id=tenant_id)
             return result, False
         except HTTPException:
             raise
@@ -359,15 +373,27 @@ def create_capital_router(
     # 13. Apply an already admitted rebalance proposal through the capital owner.
     @router.post("/bff/rebalances/{rebalance_id}/apply", status_code=202)
     async def bff_apply_rebalance_proposal(
-        rebalance_id: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
+        rebalance_id: str, request: Request, background_tasks: BackgroundTasks,
+        payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None),
+        x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_operator_role(identity)
         _rebalance_or_error(rebalance_id)
+        if not str(x_confirm_token or "").strip():
+            raise bff_error(428, ErrorCode.CONFIRMATION_REQUIRED, "Confirmation token is required before this action can be accepted", "CONFIRM_TOKEN_MISSING")
+        cas = getattr(getattr(getattr(request, "app", None), "state", None), "command_adapter_service", None)
+        if cas is not None:
+            cmd = {"command": "ApprovedApply", "target": {"type": "Rebalance", "id": rebalance_id},
+                   "params": {"rebalance_id": rebalance_id, **{k: v for k, v in payload.items() if k not in {"audit_context", "reason"}}},
+                   "audit_context": payload.get("audit_context") if "audit_context" in payload else {"reason": payload.get("reason")}}
+            return cas.submit_command_admission(
+                background_tasks=background_tasks, payload=cmd, authorization=authorization, x_confirm_token=x_confirm_token,
+                x_trace_id=request.headers.get("X-Trace-Id"), x_correlation_id=request.headers.get("X-Correlation-Id"), x_request_id=request.headers.get("X-Request-Id"),
+                idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key, source_route="POST /bff/rebalances/{rebalance_id}/apply", include_durable_meta=True,
+            )
         key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
         result, replayed = _idempotent_write("apply_rebalance", payload, identity=identity, authorization=authorization, key=key, target_id=rebalance_id)
         return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})

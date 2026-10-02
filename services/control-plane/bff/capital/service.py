@@ -263,26 +263,26 @@ class CapitalService:
         )
         return filter_records(rows, capital_pool_id_value=capital_pool_id_value)
 
-    def idempotent(self, *, actor_id: str, key: str, operation: str, payload: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    @staticmethod
+    def _cache_entry(tenant_id: Optional[str], actor_id: str, op: str, key: str, payload: Mapping[str, Any], target_id: Optional[str]) -> Tuple[str, str]:
+        return f"{tenant_id or ''}:{actor_id}:{op}:{key}", stable_digest({"payload": payload, "target_id": str(target_id or ""), "tenant_id": str(tenant_id or "")})
+
+    def idempotent(self, *, actor_id: str, key: str, operation: str, payload: Mapping[str, Any], target_id: Optional[str] = None, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         if not key:
             raise CapitalValidationError("Idempotency-Key is required")
-        cache_key = f"{actor_id}:{operation}:{key}"
-        request_hash = stable_digest(payload)
+        ck, r_hash = self._cache_entry(tenant_id, actor_id, operation, key, payload, target_id)
         with self._lock:
-            saved = self._idempotency.get(cache_key)
+            saved = self._idempotency.get(ck)
             if saved is None:
                 return None
-            if saved["request_hash"] != request_hash:
+            if saved["request_hash"] != r_hash:
                 raise CapitalValidationError("Idempotency key was already used with a different request")
             return deepcopy(saved["response"])
 
-    def remember(self, *, actor_id: str, key: str, operation: str, payload: Mapping[str, Any], response: Mapping[str, Any]) -> None:
-        cache_key = f"{actor_id}:{operation}:{key}"
+    def remember(self, *, actor_id: str, key: str, operation: str, payload: Mapping[str, Any], response: Mapping[str, Any], target_id: Optional[str] = None, tenant_id: Optional[str] = None) -> None:
+        ck, r_hash = self._cache_entry(tenant_id, actor_id, operation, key, payload, target_id)
         with self._lock:
-            self._idempotency[cache_key] = {
-                "request_hash": stable_digest(payload),
-                "response": deepcopy(dict(response)),
-            }
+            self._idempotency[ck] = {"request_hash": r_hash, "response": deepcopy(dict(response))}
 
     def write(self, operation: str, payload: Dict[str, Any], **context: Any) -> Dict[str, Any]:
         """Forward a mutation to the injected Capital owner writer and return its readback."""

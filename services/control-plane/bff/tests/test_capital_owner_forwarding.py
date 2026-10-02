@@ -167,9 +167,16 @@ def test_viewer_cannot_write_and_forged_body_identity_is_not_forwarded(tmp_path:
         sent: Dict[str, Any] = {}
         post = command_executor._post_json
 
-        def spy(url: str, payload: Dict[str, Any], auth_token: Optional[str] = None, mfa_token: Optional[str] = None) -> Any:
+        def spy(
+            url: str,
+            payload: Dict[str, Any],
+            auth_token: Optional[str] = None,
+            mfa_token: Optional[str] = None,
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
             sent.update(payload)
-            return post(url, payload, auth_token, mfa_token)
+            return post(url, payload, auth_token, mfa_token, *args, **kwargs)
 
         command_executor._post_json = spy
         try:
@@ -244,3 +251,62 @@ def test_stored_containment_record_is_forwarded_with_the_caller_jwt(tmp_path: Pa
         assert [call[2].removeprefix("Bearer ") for call in contained] == ["op-2:operator"]
         owner = harness.capital_client.get(f"/api/containments/receipts/{command_id}")
         assert owner.status_code == 200 and owner.json()["persona_id"] == "p-live"
+
+
+def test_real_operator_jwt_forwarding_with_strict_capital_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    secret = "capital-bff-jwt-secret-testing-32bytes!!"
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    with CapitalBffAuthorityHarness(tmp_path) as harness:
+        monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", secret)
+        monkeypatch.setenv("CAPITAL_JWT_SECRET", secret)
+        monkeypatch.setenv("CAPITAL_AUTH_DISABLED", "false")
+        monkeypatch.setenv("CAPITAL_AUTH_MODE", "strict")
+        monkeypatch.setenv("CAPITAL_ALLOWED_CALLER_SERVICES", "control-plane-bff")
+        harness.restart()
+
+        from services.control_plane.bff.auth.policy import create_auth_dependencies
+        from services.control_plane.bff.auth.handlers import _issue_token
+
+        deps = create_auth_dependencies()
+        profile = {
+            "identity": "operator",
+            "subject": "op-verified-operator",
+            "roles": ["operator"],
+            "client_id": "bff-dev-operator",
+            "tenant_id": "tenant-real-dev",
+            "allowed_tenants": ["tenant-real-dev"],
+        }
+        tok = _issue_token(profile, deps)
+        token_str = tok["access_token"]
+        headers = {
+            "Authorization": f"Bearer {token_str}",
+            "Idempotency-Key": "create-pool-jwt",
+        }
+
+        body = {
+            "pool_id": "pool-jwt",
+            "name": "Pool via Real JWT",
+            "owner_id": "tenant-real-dev",
+            "owner_type": "org",
+            "metadata": {"execution_context": "paper"},
+        }
+        res = harness.client.post("/bff/capital-pools", json=body, headers=headers)
+        assert res.status_code == 201, res.text
+        assert res.json()["data"]["pool_id"] == "pool-jwt"
+
+        owner_pool = harness.capital_client.get(
+            "/api/capital-pools/pool-jwt",
+            headers={
+                "Authorization": f"Bearer {token_str}",
+                "X-Tenant-Id": "tenant-real-dev",
+                "X-Pantheon-Service": "control-plane-bff",
+            },
+        )
+        assert owner_pool.status_code == 200
+        assert owner_pool.json()["pool_id"] == "pool-jwt"
+
+        pool_calls = [c for c in harness.owner_calls if c[1].endswith("/api/capital-pools") and c[0] == "POST"]
+        assert any(c[2] == f"Bearer {token_str}" for c in pool_calls)
+        assert all("service:provisioning" not in str(c[2]) for c in harness.owner_calls)
+

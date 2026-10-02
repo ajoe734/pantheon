@@ -240,10 +240,14 @@ def _post_json(
     payload: Dict[str, Any],
     auth_token: Optional[str] = None,
     mfa_token: Optional[str] = None,
+    tenant_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """POST JSON to url and return parsed response. Raises on HTTP error."""
     data = json.dumps(payload).encode("utf-8")
-    headers: Dict[str, str] = {"Content-Type": "application/json"}
+    headers: Dict[str, str] = {"Content-Type": "application/json", "X-Pantheon-Service": "control-plane-bff"}
+    resolved_tenant = tenant_id or payload.get("tenant_id")
+    if resolved_tenant:
+        headers["X-Tenant-Id"] = str(resolved_tenant).strip()
     if auth_token:
         headers["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
     if mfa_token:
@@ -272,9 +276,12 @@ def _get_json(
     url: str,
     auth_token: Optional[str] = None,
     mfa_token: Optional[str] = None,
+    tenant_id: Optional[str] = None,
 ) -> Any:
     """GET JSON from an owner API for post-error receipt reconciliation."""
-    headers: Dict[str, str] = {"Accept": "application/json"}
+    headers: Dict[str, str] = {"Accept": "application/json", "X-Pantheon-Service": "control-plane-bff"}
+    if tenant_id:
+        headers["X-Tenant-Id"] = str(tenant_id).strip()
     if auth_token:
         headers["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
     if mfa_token:
@@ -367,57 +374,55 @@ _CAPITAL_BINDING_SEMANTIC_FIELDS = (
 )
 
 
-def create_capital_pool(payload: Dict[str, Any], auth_token: Optional[str] = None) -> Dict[str, Any]:
+def _reconcile_create(path: str, entity_id: str, id_key: str, name: str, payload: Dict[str, Any], fields: tuple[str, ...], auth_token: Optional[str], tenant_id: Optional[str]) -> Dict[str, Any]:
+    if not entity_id:
+        raise ValueError(f"{name} create requires a stable {id_key}")
+    kw = {"tenant_id": str(tenant_id).strip()} if tenant_id else {}
+    try:
+        body = _post_json(_capital_url(path), payload, auth_token=auth_token, **kw)
+    except Exception as exc:
+        if not _owner_post_may_have_committed(exc):
+            raise
+        try:
+            body = _get_json(_capital_url(f"{path}/{quote(entity_id, safe='')}"), auth_token=auth_token, **kw)
+        except Exception:
+            raise exc
+        if not _record_matches(body, payload, fields):
+            raise exc
+        body = {**body, "idempotent_replay": True}
+    if str(body.get(id_key) or body.get("id") or "").strip() != entity_id:
+        raise RuntimeError(f"Capital authority returned a {name.lower()} with the wrong stable identity")
+    if not _record_matches(body, payload, fields):
+        raise RuntimeError(f"Capital authority returned a {name.lower()} with mismatched create semantics")
+    return body
+
+
+def create_capital_pool(
+    payload: Dict[str, Any],
+    auth_token: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """Create a stable CapitalPool at its owner, reconciling ambiguous outcomes."""
-    pool_id = str(payload.get("pool_id") or "").strip()
-    if not pool_id:
-        raise ValueError("CapitalPool create requires a stable pool_id")
-    try:
-        body = _post_json(_capital_url("/api/capital-pools"), payload, auth_token=auth_token)
-    except Exception as exc:
-        if not _owner_post_may_have_committed(exc):
-            raise
-        try:
-            body = _get_json(_capital_url(f"/api/capital-pools/{quote(pool_id, safe='')}"), auth_token=auth_token)
-        except Exception:
-            raise exc
-        if not _record_matches(body, payload, _CAPITAL_POOL_SEMANTIC_FIELDS):
-            raise exc
-        body = {**body, "idempotent_replay": True}
-    if str(body.get("pool_id") or body.get("id") or "").strip() != pool_id:
-        raise RuntimeError("Capital authority returned a pool with the wrong stable identity")
-    if not _record_matches(body, payload, _CAPITAL_POOL_SEMANTIC_FIELDS):
-        raise RuntimeError("Capital authority returned a pool with mismatched create semantics")
-    return body
+    return _reconcile_create("/api/capital-pools", str(payload.get("pool_id") or "").strip(), "pool_id", "CapitalPool", payload, _CAPITAL_POOL_SEMANTIC_FIELDS, auth_token, tenant_id)
 
 
-def create_capital_binding(payload: Dict[str, Any], auth_token: Optional[str] = None) -> Dict[str, Any]:
+def create_capital_binding(
+    payload: Dict[str, Any],
+    auth_token: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """Create a stable PersonaCapitalBinding at its owner with GET reconciliation."""
-    binding_id = str(payload.get("binding_id") or "").strip()
-    if not binding_id:
-        raise ValueError("PersonaCapitalBinding create requires a stable binding_id")
-    try:
-        body = _post_json(_capital_url("/api/bindings"), payload, auth_token=auth_token)
-    except Exception as exc:
-        if not _owner_post_may_have_committed(exc):
-            raise
-        try:
-            body = _get_json(_capital_url(f"/api/bindings/{quote(binding_id, safe='')}"), auth_token=auth_token)
-        except Exception:
-            raise exc
-        if not _record_matches(body, payload, _CAPITAL_BINDING_SEMANTIC_FIELDS):
-            raise exc
-        body = {**body, "idempotent_replay": True}
-    if str(body.get("binding_id") or body.get("id") or "").strip() != binding_id:
-        raise RuntimeError("Capital authority returned a binding with the wrong stable identity")
-    if not _record_matches(body, payload, _CAPITAL_BINDING_SEMANTIC_FIELDS):
-        raise RuntimeError("Capital authority returned a binding with mismatched create semantics")
-    return body
+    return _reconcile_create("/api/bindings", str(payload.get("binding_id") or "").strip(), "binding_id", "PersonaCapitalBinding", payload, _CAPITAL_BINDING_SEMANTIC_FIELDS, auth_token, tenant_id)
 
 
-def create_capital_rebalance_proposal(payload: Dict[str, Any], auth_token: Optional[str] = None) -> Dict[str, Any]:
+def create_capital_rebalance_proposal(
+    payload: Dict[str, Any],
+    auth_token: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """Persist an auditable proposal through the Capital owner boundary."""
-    body = _post_json(_capital_url("/api/rebalances"), payload, auth_token=auth_token)
+    kw = {"tenant_id": str(tenant_id).strip()} if tenant_id else {}
+    body = _post_json(_capital_url("/api/rebalances"), payload, auth_token=auth_token, **kw)
     rebalance_id = str(body.get("rebalance_id") or body.get("id") or "").strip()
     if not rebalance_id:
         raise RuntimeError("Capital authority returned a proposal without rebalance_id")
@@ -425,11 +430,18 @@ def create_capital_rebalance_proposal(payload: Dict[str, Any], auth_token: Optio
 
 
 def _reconcile_owner_receipt(
-    kind: str, command_id: str, validate: Any, auth_token: Optional[str] = None
+    kind: str,
+    command_id: str,
+    validate: Any,
+    auth_token: Optional[str] = None,
+    tenant_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Read the owner's committed receipt (``rebalances``/``containments``) after an ambiguous POST."""
+    kw = {"tenant_id": str(tenant_id).strip()} if tenant_id else {}
     receipt = _get_json(
-        _capital_url(f"/api/{kind}/receipts/{quote(command_id, safe='')}"), auth_token=auth_token
+        _capital_url(f"/api/{kind}/receipts/{quote(command_id, safe='')}"),
+        auth_token=auth_token,
+        **kw,
     )
     try:
         return validate(receipt)
@@ -1160,7 +1172,7 @@ def _execute_approved_rebalance_apply(
     rebalance_id = entity_id or requested_rebalance_id
     if not rebalance_id:
         raise ValueError("ApprovedApply requires a trusted rebalance_id")
-    approval_ref = str(params.get("approval_ref") or "").strip()
+    approval_ref = str(params.get("approval_ref") or params.get("approval_decision_id") or "").strip()
     if params.get("approval_required") and not approval_ref:
         raise ValueError("ApprovedApply requires approval_ref")
 
@@ -1173,11 +1185,15 @@ def _execute_approved_rebalance_apply(
         "actor_role": str(params.get("actor_role") or "operator"),
         "proposal_version": params.get("proposal_version"),
     }
+    if params.get("tenant_id"):
+        payload["tenant_id"] = str(params["tenant_id"]).strip()
+    kw = {"tenant_id": str(params["tenant_id"]).strip()} if params.get("tenant_id") else {}
     try:
         body = _post_json(
             _capital_url(f"/api/rebalances/{quote(rebalance_id, safe='')}/apply"),
             payload,
             auth_token=auth_token,
+            **kw,
         )
     except Exception as exc:
         if not _owner_post_may_have_committed(exc):
@@ -1190,6 +1206,7 @@ def _execute_approved_rebalance_apply(
                     receipt, rebalance_id=rebalance_id, command_id=command_id, approval_ref=approval_ref
                 ),
                 auth_token,
+                **kw,
             )
         except Exception:
             raise exc
@@ -1263,8 +1280,11 @@ def _execute_emergency_containment_authority(
             "actor_role": str(params.get("actor_role") or "operator"),
         }
     )
+    if params.get("tenant_id"):
+        payload["tenant_id"] = str(params["tenant_id"]).strip()
+    kw = {"tenant_id": str(params["tenant_id"]).strip()} if params.get("tenant_id") else {}
     try:
-        body = _post_json(_capital_url("/api/containments"), payload, auth_token=auth_token)
+        body = _post_json(_capital_url("/api/containments"), payload, auth_token=auth_token, **kw)
     except Exception as exc:
         if not _owner_post_may_have_committed(exc):
             raise
@@ -1274,6 +1294,7 @@ def _execute_emergency_containment_authority(
                 command_id,
                 lambda receipt: _validate_containment_receipt(receipt, command_id=command_id, persona_id=persona_id),
                 auth_token,
+                **kw,
             )
         except Exception:
             raise exc

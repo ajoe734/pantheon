@@ -82,6 +82,16 @@ from services.control_plane.bff.personas.service import (
 )
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _restore_persona_provisioning_store():
+    from services.control_plane.bff.personas import service as persona_service
+    original = persona_service._PERSONA_PROVISIONING_STORE
+    try:
+        yield
+    finally:
+        persona_service._PERSONA_PROVISIONING_STORE = original
+
+
 # ---------------------------------------------------------------------------
 # Test Fakes
 # ---------------------------------------------------------------------------
@@ -485,6 +495,7 @@ class TestCapitalMountedComposition:
             "Idempotency-Key": "idem-reb-apply-001",
             "X-Operator-ID": "op-admin",
             "X-Operator-Role": "admin",
+            "X-Confirm-Token": "ct-reb-apply-001",
         }
         # Initial request
         res1 = client.post("/bff/rebalances/reb-1/apply", json={"reason": "rebalance 1"}, headers=headers)

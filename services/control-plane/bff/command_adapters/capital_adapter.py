@@ -49,67 +49,51 @@ def _owner_body(payload: Dict[str, Any], actor_id: str, actor_role: str, key: st
 class CapitalOwnerWriter:
     """Forward pool, binding, rebalance and containment writes to the Capital owner."""
 
-    def create_pool(self, payload, *, actor_id, actor_role, auth_token=None, key="", **_) -> Dict[str, Any]:
+    def create_pool(self, payload, *, actor_id, actor_role, auth_token=None, key="", tenant_id=None, **_) -> Dict[str, Any]:
         pool_id = str(payload.get("pool_id") or payload.get("id") or "").strip()
         if not pool_id:
             raise CapitalValidationError("pool_id is required")
+        tenant = str(tenant_id or "").strip() or None
         body = {**_owner_body(payload, actor_id, actor_role, key), "pool_id": pool_id}
-        return _executor().create_capital_pool(body, auth_token=auth_token)
+        return _executor().create_capital_pool(body, auth_token=auth_token, **({"tenant_id": tenant} if tenant else {}))
 
-    def pool_action(self, payload, *, actor_id, actor_role, target_id, auth_token=None, **_) -> Dict[str, Any]:
+    def pool_action(self, payload, *, actor_id, actor_role, target_id, auth_token=None, tenant_id=None, **_) -> Dict[str, Any]:
         action = str(payload.get("action_id") or "").strip()
         status = _POOL_ACTION_STATUS.get(action.lower())
         if status is None:
-            raise ActionUnavailableError(
-                f"CapitalPool action {action!r} is not supported by Capital authority.",
-                action_id=action,
-                entity_type="CapitalPool",
-            )
-        return self._set_status(
-            f"/api/capital-pools/{quote(target_id, safe='')}",
-            {"status": status, "approval_decision_id": payload.get("approval_decision_id")},
-            actor_id, actor_role, auth_token,
-        )
+            raise ActionUnavailableError(f"CapitalPool action {action!r} is not supported by Capital authority.", action_id=action, entity_type="CapitalPool")
+        return self._set_status(f"/api/capital-pools/{quote(target_id, safe='')}", {"status": status, "approval_decision_id": payload.get("approval_decision_id")}, actor_id, actor_role, auth_token, tenant_id=tenant_id)
 
-    def activate_binding(self, payload, *, actor_id, actor_role, target_id, auth_token=None, **_) -> Dict[str, Any]:
+    def activate_binding(self, payload, *, actor_id, actor_role, target_id, auth_token=None, tenant_id=None, **_) -> Dict[str, Any]:
         path = f"/api/bindings/{quote(target_id, safe='')}"
-        body = {"actor_id": actor_id, "actor_role": actor_role, "approval_decision_id": payload.get("approval_decision_id")}
-        http_request_json(capital_url(f"{path}/activate"), method="POST", payload=body, auth_token=auth_token)
-        return http_request_json(capital_url(path), auth_token=auth_token)
+        http_request_json(capital_url(f"{path}/activate"), method="POST", payload={"actor_id": actor_id, "actor_role": actor_role, "approval_decision_id": payload.get("approval_decision_id")}, auth_token=auth_token, tenant_id=tenant_id)
+        return http_request_json(capital_url(path), auth_token=auth_token, tenant_id=tenant_id)
 
-    def binding_status(self, payload, *, actor_id, actor_role, target_id, auth_token=None, **_) -> Dict[str, Any]:
-        return self._set_status(
-            f"/api/bindings/{quote(target_id, safe='')}", {"status": payload.get("status")},
-            actor_id, actor_role, auth_token,
-        )
+    def binding_status(self, payload, *, actor_id, actor_role, target_id, auth_token=None, tenant_id=None, **_) -> Dict[str, Any]:
+        return self._set_status(f"/api/bindings/{quote(target_id, safe='')}", {"status": payload.get("status")}, actor_id, actor_role, auth_token, tenant_id=tenant_id)
 
-    def create_rebalance(self, payload, *, actor_id, actor_role, auth_token=None, key="", **_) -> Dict[str, Any]:
+    def create_rebalance(self, payload, *, actor_id, actor_role, auth_token=None, key="", tenant_id=None, **_) -> Dict[str, Any]:
         body = _owner_body(payload, actor_id, actor_role, key)
         body.setdefault("capital_pool_id", payload.get("pool_id"))
         if payload.get("id") and not payload.get("rebalance_id"):
             body["rebalance_id"] = payload["id"]
-        return _executor().create_capital_rebalance_proposal(body, auth_token=auth_token)
+        tenant = str(tenant_id or "").strip() or None
+        return _executor().create_capital_rebalance_proposal(body, auth_token=auth_token, **({"tenant_id": tenant} if tenant else {}))
 
-    def apply_rebalance(self, payload, *, actor_id, actor_role, target_id, auth_token=None, key="", **_) -> Dict[str, Any]:
-        params = {
-            "entity_type": "Rebalance",
-            "entity_id": target_id,
-            "idempotency_key": key,
-            "request_hash": _request_hash(payload),
-            "approval_ref": payload.get("approval_ref") or "",
-            "proposal_version": payload.get("proposal_version"),
-            "actor_id": actor_id,
-            "actor_role": actor_role,
-        }
-        return _executor()._execute_approved_rebalance_apply(
-            str(payload.get("command_id") or key), params, auth_token=auth_token
-        )
+    def apply_rebalance(self, payload, *, actor_id, actor_role, target_id, auth_token=None, key="", tenant_id=None, **_) -> Dict[str, Any]:
+        params = {"entity_type": "Rebalance", "entity_id": target_id, "idempotency_key": key, "request_hash": _request_hash(payload),
+                  "approval_ref": payload.get("approval_ref") or payload.get("approval_decision_id") or "", "proposal_version": payload.get("proposal_version"),
+                  "actor_id": actor_id, "actor_role": actor_role}
+        tenant = str(tenant_id or "").strip() or None
+        if tenant:
+            params["tenant_id"] = tenant
+        return _executor()._execute_approved_rebalance_apply(str(payload.get("command_id") or key), params, auth_token=auth_token)
 
     @staticmethod
-    def _set_status(path: str, fields: Dict[str, Any], actor_id: str, actor_role: str, auth_token: Optional[str]) -> Dict[str, Any]:
+    def _set_status(path: str, fields: Dict[str, Any], actor_id: str, actor_role: str, auth_token: Optional[str], tenant_id: Optional[str] = None) -> Dict[str, Any]:
         body = {"actor_id": actor_id, "actor_role": actor_role, **fields}
-        http_request_json(capital_url(f"{path}/status"), method="PATCH", payload=body, auth_token=auth_token)
-        return http_request_json(capital_url(path), auth_token=auth_token)
+        http_request_json(capital_url(f"{path}/status"), method="PATCH", payload=body, auth_token=auth_token, tenant_id=tenant_id)
+        return http_request_json(capital_url(path), auth_token=auth_token, tenant_id=tenant_id)
 
 
 class CapitalCommandAdapter(DomainCommandAdapter):
