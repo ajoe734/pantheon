@@ -2670,8 +2670,12 @@ def _persona_strategy_match_action_response(
             creator = getattr(rks, "create_research_ticket", None) if rks else None
         if creator is None:
             try:
-                from services.research.write_owner import build_research_write_owner
-                creator = getattr(build_research_write_owner(), "create_research_ticket", None)
+                try:
+                    from ..research.client import ResearchServiceClient, resolve_orchestrator_base_url
+                except (ImportError, ValueError):
+                    from services.control_plane.bff.research.client import ResearchServiceClient, resolve_orchestrator_base_url
+                url = resolve_orchestrator_base_url()
+                creator = getattr(ResearchServiceClient(base_url=url), "create_research_ticket", None) if url else None
             except Exception:
                 creator = None
         if creator is None:

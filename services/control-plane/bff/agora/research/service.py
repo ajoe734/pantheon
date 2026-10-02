@@ -422,10 +422,26 @@ class AgoraResearchService:
             CanonicalOperationError,
         )
 
+        resolved_ds = dispatch_stage.get("dataset") or plan.get("dataset")
+        if not resolved_ds:
+            try:
+                from ..dispatcher import resolve_governed_dataset
+                resolved_ds = resolve_governed_dataset(
+                    dispatch_stage,
+                    plan,
+                    dataset_store=getattr(self, "dataset_store", None),
+                    tenant_id=getattr(scope, "tenant_id", None),
+                    user_id=getattr(scope, "user_id", None),
+                )
+            except Exception:
+                resolved_ds = None
+
         actor = getattr(scope, "user_id", "operator") or "operator"
         task_p = {
             "title": plan.get("title") or f"Plan {plan_id}",
             "objective": plan.get("objective") or f"Execution {plan_id}",
+            "tenant_id": getattr(scope, "tenant_id", None),
+            "user_id": getattr(scope, "user_id", None),
             "source_refs": [
                 {"type": "research_plan", "id": plan_id},
                 {"type": "strategy", "id": plan.get("strategy_id")},
@@ -434,15 +450,29 @@ class AgoraResearchService:
             "actor_id": actor,
             "idempotency_key": f"plan-task-{plan_id}",
         }
+        input_refs = [
+            {"type": "research_plan", "id": plan_id},
+            {"type": "stage", "id": dispatch_stage["stage_id"]},
+        ]
+        if resolved_ds and isinstance(resolved_ds, dict) and resolved_ds.get("dataset_id"):
+            input_refs.append({"type": "dataset", "id": resolved_ds["dataset_id"]})
+
         run_p = {
             "adapter": preferred_backend,
             "requested_mode": backend_mode,
             "dispatch_mode": backend_mode,
-            "input_refs": [
-                {"type": "research_plan", "id": plan_id},
-                {"type": "stage", "id": dispatch_stage["stage_id"]},
-            ],
-            "parameters": dispatch_stage.get("parameters") or {},
+            "tenant_id": getattr(scope, "tenant_id", None),
+            "user_id": getattr(scope, "user_id", None),
+            "input_refs": input_refs,
+            "parameters": {
+                **(dispatch_stage.get("parameters") or {}),
+                "stage": dispatch_stage,
+                "plan": plan,
+                "dataset": resolved_ds,
+                "tenant_id": getattr(scope, "tenant_id", None),
+                "user_id": getattr(scope, "user_id", None),
+                "correlation_id": f"corr-{plan_id}-{dispatch_stage['stage_id']}",
+            },
             "actor_id": actor,
             "idempotency_key": f"plan-run-{plan_id}-{dispatch_stage['stage_id']}",
         }
@@ -488,9 +518,26 @@ class AgoraResearchService:
             scope=scope,
         )
         run["task_id"] = task_id
+        owner_status = str(run_obj.get("status") or "").lower()
+        if owner_status == "completed":
+            run["execution_status"] = "succeeded"
+            run["outcome"] = "pass"
+            if run_obj.get("artifact_refs"):
+                run["artifact_refs"] = run_obj["artifact_refs"]
+            if run_obj.get("metrics"):
+                run["metrics"] = run_obj["metrics"]
+            if run_obj.get("receipt"):
+                run["receipt"] = run_obj["receipt"]
+                if hasattr(self.store, "record_execution_receipt"):
+                    self.store.record_execution_receipt(run_obj["receipt"])
+        elif owner_status in ("failed", "rejected"):
+            run["execution_status"] = "failed"
+            run["outcome"] = "fail"
+
         self.store.create_run(run)
+        stage_status = "succeeded" if owner_status == "completed" else ("failed" if owner_status in ("failed", "rejected") else "queued")
         updated_stages = [
-            {**s, "status": "queued"} if s["stage_id"] == dispatch_stage["stage_id"] else s
+            {**s, "status": stage_status} if s["stage_id"] == dispatch_stage["stage_id"] else s
             for s in plan.get("stages", [])
         ]
         plan_run_ids = list(plan.get("run_ids") or [])
@@ -553,8 +600,11 @@ class AgoraResearchService:
                     }
                     mapped_status = status_map.get(owner_status, owner_status or "queued")
                     mapped_outcome = "pass" if owner_status == "completed" else ("fail" if owner_status in ("failed", "rejected") else None)
-                    owner_user_id = str(owner_run.get("created_by") or owner_run.get("user_id") or "").strip()
+                    owner_user_id = str(owner_run.get("created_by") or owner_run.get("user_id") or (owner_run.get("parameters") or {}).get("user_id") or "").strip()
+                    owner_tenant_id = str(owner_run.get("tenant_id") or (owner_run.get("parameters") or {}).get("tenant_id") or "").strip()
                     if owner_user_id and getattr(scope, "user_id", None) and owner_user_id != scope.user_id:
+                        return None
+                    if owner_tenant_id and getattr(scope, "tenant_id", None) and owner_tenant_id != scope.tenant_id:
                         return None
 
                     if raw_run is None:
@@ -592,7 +642,7 @@ class AgoraResearchService:
                             "workshop_id": ws_id,
                             "strategy_id": strat_id,
                             "strategy_spec_registry_id": reg_id,
-                            "tenant_id": scope.tenant_id,
+                            "tenant_id": owner_tenant_id or scope.tenant_id,
                             "user_id": owner_user_id or scope.user_id,
                             "execution_status": mapped_status,
                             "outcome": mapped_outcome,
@@ -640,18 +690,32 @@ class AgoraResearchService:
         return run
 
     def cancel_run(self, run_id: str, *, scope: Any) -> Dict[str, Any]:
-        raw_run = self.store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id) if hasattr(self.store, "get_run") else None
+        raw_run = self.get_run_or_404(run_id, scope=scope)
         r_url = resolve_orchestrator_base_url()
         if r_url:
+            from services.control_plane.bff.agora.strategy_workshop.operations import (
+                CanonicalOperationError,
+                WorkshopCanonicalOperations,
+            )
             try:
-                from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
                 WorkshopCanonicalOperations(research_base_url=r_url).cancel_research_run(run_id)
+            except CanonicalOperationError as exc:
+                if exc.status_code == 404:
+                    raise self.bff_error(
+                        404, self._error_code("RESOURCE_NOT_FOUND"), exc.reason, run_id
+                    ) from exc
+                if exc.status_code == 409:
+                    raise self.bff_error(
+                        409, self._error_code("RESOURCE_CONFLICT"), exc.reason, run_id
+                    ) from exc
+                raise self.bff_error(
+                    503, self._error_code("UPSTREAM_UNAVAILABLE"), exc.reason, run_id
+                ) from exc
             except Exception as exc:
-                log.warning("Research orchestrator cancel_run error: %s", exc)
-        if raw_run is None and not r_url:
-            raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), f"Research run '{run_id}' not found", run_id)
-        now = self.utc_now()
-        if raw_run is not None:
+                raise self.bff_error(
+                    503, self._error_code("UPSTREAM_UNAVAILABLE"), str(exc), run_id
+                ) from exc
+        else:
             cancellable_statuses = {"queued", "dispatching", "running"}
             current = raw_run.get("execution_status")
             if current not in cancellable_statuses:
@@ -660,12 +724,14 @@ class AgoraResearchService:
                     f"Run in status '{current}' cannot be cancelled",
                     f"cancellable statuses: {sorted(cancellable_statuses)}",
                 )
+        now = self.utc_now()
+        if hasattr(self.store, "update_run"):
             self.store.update_run(
                 run_id,
                 {
                     "execution_status": "cancelled",
                     "progress": {
-                        **raw_run.get("progress", {}),
+                        **(raw_run.get("progress") or {}),
                         "phase": "cancelled",
                         "message": "Run cancellation accepted",
                         "updated_at": now,
@@ -676,14 +742,15 @@ class AgoraResearchService:
                 tenant_id=scope.tenant_id,
                 user_id=scope.user_id,
             )
-            publish_research_progress(
-                raw_run.get("workshop_id", ""),
-                run_id,
-                float(raw_run.get("progress", {}).get("percent", 0)),
-                "Run cancellation accepted",
-                phase="cancelled",
-                utc_now_fn=self.utc_now,
-            )
+        publish_research_progress(
+            raw_run.get("workshop_id", ""),
+            run_id,
+            float((raw_run.get("progress") or {}).get("percent", 0)),
+            "Run cancellation accepted",
+            phase="cancelled",
+            utc_now_fn=self.utc_now,
+        )
+        if hasattr(self.store, "record_audit_action"):
             self.store.record_audit_action({
                 "action_type": "research_run.cancel",
                 "tenant_id": scope.tenant_id,
@@ -694,7 +761,7 @@ class AgoraResearchService:
         return {"run_id": run_id, "execution_status": "cancelled"}
 
     def get_run_artifacts(self, run_id: str, *, scope: Any) -> List[Dict[str, Any]]:
-        raw_run = self.store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id) if hasattr(self.store, "get_run") else None
+        raw_run = self.get_run_or_404(run_id, scope=scope)
         r_url = resolve_orchestrator_base_url()
         if r_url:
             try:
@@ -704,10 +771,6 @@ class AgoraResearchService:
                     return owner_artifacts
             except Exception as exc:
                 log.warning("Research orchestrator get_run_artifacts error: %s", exc)
-        if raw_run is None and not r_url:
-            raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), f"Research run '{run_id}' not found", run_id)
-        if raw_run is None:
-            return []
         artifact_refs = raw_run.get("artifact_refs") or []
         evidence_refs = raw_run.get("evidence_refs") or []
         return (

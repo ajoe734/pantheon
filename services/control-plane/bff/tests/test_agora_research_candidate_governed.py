@@ -589,6 +589,13 @@ def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) ->
             "spec_version": "1.0",
             "strategy_id": "strat-e2e",
             "strategy_spec_registry_id": "reg-e2e",
+            "dataset": {
+                "dataset_id": "dataset:ds-e2e-001",
+                "strategy_id": "strat-e2e",
+                "source_dataset_refs": ["dataset:ds-e2e-001"],
+                "data_frequency": "daily",
+                "records": _sample_ohlcv_records(),
+            },
             "stages": [
                 {
                     "stage_id": "stage-e2e-proto",
@@ -612,7 +619,7 @@ def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) ->
     assert res_app.status_code == 200, res_app.text
     etag_v2 = f'W/"research-plan:{plan_id}:v2"'
 
-    # 3. Dispatch stage to authoritative research service
+    # 3. Dispatch stage to authoritative research service (executes autonomously to completion)
     res_dispatch = client.post(
         f"/bff/agora/research-plans/{plan_id}/runs",
         headers=_headers(idempotency_key="idemp-e2e-dispatch", if_match=etag_v2),
@@ -621,38 +628,7 @@ def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) ->
     dispatch_data = res_dispatch.json()["data"]
     run_id = dispatch_data["run_id"]
 
-    # 4. Verify run is queued prior to execution
-    res_run_queued = client.get(
-        f"/bff/agora/research-runs/{run_id}",
-        headers=_headers(),
-    )
-    assert res_run_queued.status_code == 200, res_run_queued.text
-    assert res_run_queued.json()["execution_status"] == "queued"
-
-    # 5. Execute stage on authentic research service
-    exec_resp = test_backend_client.post(
-        "/stages/prototype_backtest/execute",
-        json={
-            "stage": {
-                "stage_id": "stage-e2e-proto",
-                "stage_type": "prototype_backtest",
-                "routing": {"backend_mode": "real", "preferred_backend": "vectorbt"},
-            },
-            "plan": plan_data,
-            "dataset": {
-                "dataset_id": "dataset:ds-e2e-001",
-                "strategy_id": "strat-e2e",
-                "source_dataset_refs": ["dataset:ds-e2e-001"],
-                "data_frequency": "daily",
-                "records": _sample_ohlcv_records(),
-            },
-            "run_id": run_id,
-            "correlation_id": "corr-e2e-001",
-        },
-    )
-    assert exec_resp.status_code == 200, exec_resp.text
-
-    # 6. Read back run from authoritative research owner without any test-side store mutations
+    # 4. Read back run from authoritative research owner without any test-side store mutations
     res_run = client.get(
         f"/bff/agora/research-runs/{run_id}",
         headers=_headers(),

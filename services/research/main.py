@@ -50,6 +50,7 @@ from services.research.retrieval_influence import (
 
 PRODUCTION_ADAPTERS = {"openclaw", "qlib", "trl", "finrl", "rllib", "ray_tune", "wandb"}
 PRODUCTION_MODES = {"production", "paper", "canary", "live"}
+ALLOWED_STAGE_MODES = frozenset({"offline", "simulation", "fixture", "real", "stub", "handoff_only", "manual"})
 STUB_ADAPTERS = {"stub", "handoff_only", "manual"}
 ACTIVE_STATUSES = {"queued", "running", "dispatching"}
 FAIL_CLOSED_SCOPE = "capability_metadata_read_only"
@@ -886,7 +887,13 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
             "rejected_at": timestamp,
             "rejected_by": "research-orchestrator-service",
         }
-    elif not is_stage_backend and (adapter in PRODUCTION_ADAPTERS or requested_mode in PRODUCTION_MODES):
+    elif (
+        adapter in PRODUCTION_ADAPTERS
+        or requested_mode in PRODUCTION_MODES
+        or dispatch_mode in PRODUCTION_MODES
+        or requested_mode in ("live", "canary")
+        or dispatch_mode in ("live", "canary")
+    ):
         rejected = True
         rejection = {
             "reason": "production_adapter_disabled",
@@ -894,7 +901,15 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
             "rejected_at": timestamp,
             "rejected_by": "research-orchestrator-service",
         }
-    if not rejected and dispatch_mode not in STUB_ADAPTERS and not is_stage_backend and not (OFFLINE_GATE_ENABLED and adapter in OFFLINE_ADAPTERS and requested_mode == "offline" and dispatch_mode == "offline"):
+    elif is_stage_backend and (requested_mode not in ALLOWED_STAGE_MODES or dispatch_mode not in ALLOWED_STAGE_MODES):
+        rejected = True
+        rejection = {
+            "reason": "dispatch_mode_disabled",
+            "detail": f"Stage execution adapter '{adapter}' only supports allowed non-live modes: {sorted(ALLOWED_STAGE_MODES)}.",
+            "rejected_at": timestamp,
+            "rejected_by": "research-orchestrator-service",
+        }
+    if not rejected and not is_stage_backend and dispatch_mode not in STUB_ADAPTERS and not (OFFLINE_GATE_ENABLED and adapter in OFFLINE_ADAPTERS and requested_mode == "offline" and dispatch_mode == "offline"):
         rejected = True
         rejection = {
             "reason": "dispatch_mode_disabled",
@@ -961,6 +976,8 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         "input_refs": body.input_refs,
         "parameters": body.parameters,
         "created_by": body.actor_id,
+        "tenant_id": body.parameters.get("tenant_id") or getattr(body, "tenant_id", None) or task.get("tenant_id"),
+        "user_id": body.parameters.get("user_id") or body.actor_id or getattr(body, "user_id", None) or task.get("user_id"),
         "created_at": timestamp,
         "updated_at": timestamp,
         "idempotency_key": body.idempotency_key,
@@ -980,6 +997,58 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         store.append_event(event)
     if not rejected and "decision_id" in body.parameters and "target_artifact_id" in body.parameters:
         _trigger_retrain_execution(run["run_id"], body.parameters)
+    if not rejected and is_stage_backend and body.parameters.get("stage") and (body.parameters.get("dataset") or (body.parameters.get("plan") and body.parameters["plan"].get("dataset"))):
+        st_payload = body.parameters["stage"]
+        plan_payload = body.parameters.get("plan") or {}
+        ds_payload = body.parameters.get("dataset") or plan_payload.get("dataset")
+        corr_id = body.parameters.get("correlation_id") or f"corr-{run_id}"
+        st_type = st_payload.get("stage_type") or adapter
+        downstream_key = body.idempotency_key or f"stage:{st_type}:{run_id}"
+        try:
+            execute_research_stage(
+                st_type,
+                {
+                    "stage": st_payload,
+                    "plan": plan_payload,
+                    "dataset": ds_payload,
+                    "run_id": run_id,
+                    "correlation_id": corr_id,
+                    "downstream_key": downstream_key,
+                },
+            )
+            up_run = store.get_run(run_id)
+            if up_run and isinstance(up_run, dict):
+                run = up_run
+            for dep_stage in plan_payload.get("stages", []):
+                if dep_stage.get("stage_id") == st_payload.get("stage_id"):
+                    continue
+                deps = dep_stage.get("dependencies") or dep_stage.get("depends_on") or []
+                if (st_payload.get("stage_id") in deps or not deps) and dep_stage.get("status") in ("pending", "ready"):
+                    dep_type = dep_stage.get("stage_type") or adapter
+                    dep_ds = dep_stage.get("dataset") or ds_payload
+                    dep_key = f"stage:{dep_type}:{run_id}:{dep_stage.get('stage_id')}"
+                    try:
+                        execute_research_stage(
+                            dep_type,
+                            {
+                                "stage": dep_stage,
+                                "plan": plan_payload,
+                                "dataset": dep_ds,
+                                "run_id": run_id,
+                                "correlation_id": corr_id,
+                                "downstream_key": dep_key,
+                            },
+                        )
+                        up_run = store.get_run(run_id)
+                        if up_run and isinstance(up_run, dict):
+                            run = up_run
+                    except Exception as dep_exc:
+                        log.warning("Dependent stage execution error on %s: %s", dep_stage.get("stage_id"), dep_exc)
+        except Exception as exc:
+            log.warning("Research orchestrator stage execution error: %s", exc)
+            run["status"] = "failed"
+            run["error"] = str(exc)
+            store.put_run(run)
     return run
 
 
@@ -1774,6 +1843,37 @@ def execute_research_stage(
     if not correlation_id:
         raise HTTPException(status_code=400, detail="Missing required execution field: 'correlation_id'")
 
+    def _persist_failure(exc: Exception) -> None:
+        try:
+            rec = store.get_run(run_id)
+            if rec and isinstance(rec, dict) and str(rec.get("status") or "").lower() not in {"canceled", "cancelled"}:
+                rec["status"] = "failed"
+                rec["error"] = str(exc)
+                rec["updated_at"] = utc_now()
+                store.put_run(rec)
+        except Exception:
+            pass
+
+    run_record = store.get_run(run_id)
+    if run_record and isinstance(run_record, dict):
+        status_str = str(run_record.get("status") or "").lower()
+        if status_str in {"canceled", "cancelled", "rejected"}:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Research run '{run_id}' is in terminal status '{status_str}' and cannot execute stages",
+            )
+        rec_stage_id = run_record.get("stage_id")
+        if not rec_stage_id:
+            for ref in run_record.get("input_refs") or []:
+                if isinstance(ref, dict) and ref.get("type") == "stage" and ref.get("id"):
+                    rec_stage_id = str(ref["id"])
+                    break
+        if rec_stage_id and stage.get("stage_id") and rec_stage_id != stage.get("stage_id"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Stage identity mismatch: run '{run_id}' stage '{rec_stage_id}' != '{stage.get('stage_id')}'",
+            )
+
     if stage_type not in ALLOWLISTED_STAGE_TYPES:
         raise HTTPException(
             status_code=400,
@@ -1807,14 +1907,21 @@ def execute_research_stage(
     cached_result = store._get_record(exec_storage_path, idempotency_key)
     if cached_result is not None:
         run_record = store.get_run(run_id)
-        if run_record and isinstance(run_record, dict) and run_record.get("status") != "completed":
-            run_record["status"] = "completed"
-            run_record["completed_at"] = cached_result.get("receipt", {}).get("completed_at") or utc_now()
-            run_record["metrics"] = cached_result.get("metrics") or []
-            run_record["provenance"] = cached_result.get("provenance") or "real"
-            run_record["receipt"] = cached_result.get("receipt")
-            run_record["artifact_refs"] = cached_result.get("artifact_refs") or []
-            store.put_run(run_record)
+        if run_record and isinstance(run_record, dict):
+            status_str = str(run_record.get("status") or "").lower()
+            if status_str in {"canceled", "cancelled", "rejected"}:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Research run '{run_id}' is in terminal status '{status_str}' and cannot return cached execution",
+                )
+            if run_record.get("status") != "completed":
+                run_record["status"] = "completed"
+                run_record["completed_at"] = cached_result.get("receipt", {}).get("completed_at") or utc_now()
+                run_record["metrics"] = cached_result.get("metrics") or []
+                run_record["provenance"] = cached_result.get("provenance") or "real"
+                run_record["receipt"] = cached_result.get("receipt")
+                run_record["artifact_refs"] = cached_result.get("artifact_refs") or []
+                store.put_run(run_record)
         return cached_result
 
     executor = str(
@@ -1874,11 +1981,13 @@ def execute_research_stage(
                 {"metric": "total_trades", "value": float(agg_m.get("total_trades", 0)), "provenance": provenance},
             ]
         except (VectorbtWorkflowError, ValueError, KeyError) as exc:
+            _persist_failure(exc)
             raise HTTPException(
                 status_code=400,
                 detail=f"Governed input validation error for {stage_type}: {exc}",
             ) from exc
         except Exception as exc:
+            _persist_failure(exc)
             raise HTTPException(
                 status_code=503,
                 detail=f"Vectorbt execution owner failure: {exc}",
@@ -1922,11 +2031,13 @@ def execute_research_stage(
                 {"metric": "var_aic", "value": float(var_res.get("aic", -100.0)), "provenance": provenance},
             ]
         except (StatsmodelsWorkflowError, ValueError, KeyError) as exc:
+            _persist_failure(exc)
             raise HTTPException(
                 status_code=400,
                 detail=f"Governed input validation error for {stage_type}: {exc}",
             ) from exc
         except Exception as exc:
+            _persist_failure(exc)
             raise HTTPException(
                 status_code=503,
                 detail=f"Statsmodels execution owner failure: {exc}",
@@ -1993,11 +2104,13 @@ def execute_research_stage(
                     {"metric": "derivatives_pricing_delta", "value": 0.0, "provenance": provenance},
                 ]
         except (QuantLibWorkflowError, ValueError, KeyError) as exc:
+            _persist_failure(exc)
             raise HTTPException(
                 status_code=400,
                 detail=f"Governed input validation error for {stage_type}: {exc}",
             ) from exc
         except Exception as exc:
+            _persist_failure(exc)
             raise HTTPException(
                 status_code=503,
                 detail=f"QuantLib execution owner failure: {exc}",
@@ -2066,6 +2179,12 @@ def execute_research_stage(
 
     run_record = store.get_run(run_id)
     if run_record and isinstance(run_record, dict):
+        status_str = str(run_record.get("status") or "").lower()
+        if status_str in {"canceled", "cancelled", "rejected"}:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Research run '{run_id}' is in terminal status '{status_str}' and cannot be marked completed",
+            )
         run_record["status"] = "completed"
         run_record["completed_at"] = now_iso
         run_record["metrics"] = metrics

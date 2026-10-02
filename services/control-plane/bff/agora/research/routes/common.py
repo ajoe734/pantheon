@@ -13,7 +13,6 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from ..dispatcher import ALLOWLISTED_STAGE_BACKENDS
-ResearchDispatcher = None
 
 
 
@@ -456,6 +455,7 @@ class _StageRequest(BaseModel):
     output_refs: Optional[List[str]] = None
     parameters: Optional[Dict[str, Any]] = None
     blocking_reasons: Optional[List[str]] = None
+    dataset: Optional[Dict[str, Any]] = None
 
 
 class _ExecutionConstraintsRequest(BaseModel):
@@ -482,6 +482,7 @@ class ResearchPlanCreateRequest(BaseModel):
     stages: List[_StageRequest] = Field(min_length=1)
     budget: Optional[_PlanBudgetRequest] = None
     execution_constraints: Optional[_ExecutionConstraintsRequest] = None
+    dataset: Optional[Dict[str, Any]] = None
 
 
 class ServantResearchProposalRequest(BaseModel):
@@ -1383,6 +1384,8 @@ def _build_plan(
             normalized["parameters"] = stage.parameters
         if stage.blocking_reasons is not None:
             normalized["blocking_reasons"] = stage.blocking_reasons
+        if stage.dataset is not None:
+            normalized["dataset"] = stage.dataset
         stages.append(normalized)
 
     resolved_correlation = _resolve_originating_correlation(
@@ -1409,6 +1412,8 @@ def _build_plan(
         "lock_version": 1,
         "run_ids": [],
     }
+    if body.dataset:
+        plan["dataset"] = body.dataset
     if body.budget:
         plan["budget"] = body.budget.model_dump(exclude_none=True)
     if body.execution_constraints:
