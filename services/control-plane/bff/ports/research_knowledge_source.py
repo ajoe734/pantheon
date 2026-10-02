@@ -461,13 +461,13 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
     # ResearchWriteOwner binding (RW-04 Experiments)
     # -------------------------------------------------------------------------
     def _get_research_write_owner(self) -> Optional[Any]:
-        """Lazily resolve the canonical Postgres-backed ResearchWriteOwner.
+        """Lazily resolve the canonical Research write owner or Research service client.
 
-        Returns ``None`` (never raises) when the owner cannot be built, so
+        Returns ``None`` (never raises) when the owner cannot be resolved, so
         callers can decide whether to fail closed (mutations, detail reads)
         or report a degraded surface (list reads). Resolution is attempted at
         most once per instance to avoid retry storms against a misconfigured
-        DSN on every request.
+        URL on every request.
         """
         if self._research_write_owner is not None:
             return self._research_write_owner
@@ -475,11 +475,18 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             return None
         self._research_write_owner_resolved = True
         try:
-            from services.research.write_owner import build_research_write_owner
+            from .research_commands import (
+                ResearchServiceClient,
+                _resolve_orchestrator_base_url,
+            )
 
-            self._research_write_owner = build_research_write_owner()
+            base_url = _resolve_orchestrator_base_url()
+            if base_url:
+                self._research_write_owner = ResearchServiceClient(base_url=base_url)
+            else:
+                self._research_write_owner = None
         except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure means "unavailable"
-            log.warning("ResearchWriteOwner unavailable for research experiments: %s", exc)
+            log.warning("Research service unavailable for research experiments: %s", exc)
             self._research_write_owner = None
         return self._research_write_owner
 
@@ -539,6 +546,9 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
     # Knowledge & Evidence: Research Notes (KW-02)
     # -------------------------------------------------------------------------
     def list_research_notes(self) -> List[Dict[str, Any]]:
+        owner = self._get_research_write_owner()
+        if owner is not None and hasattr(owner, "list_research_notes"):
+            return owner.list_research_notes()
         notes = list(self._notes.values())
         notes.sort(
             key=lambda note: _naive_utc(_parse_rfc3339(note.get("updated_at")) or _parse_rfc3339(note.get("created_at"))),
@@ -549,10 +559,16 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
     def get_research_note(self, note_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not note_id:
             return None
+        owner = self._get_research_write_owner()
+        if owner is not None and hasattr(owner, "get_research_note"):
+            return owner.get_research_note(note_id)
         note = self._notes.get(str(note_id))
         return json.loads(json.dumps(note)) if isinstance(note, dict) else None
 
     def create_research_note(self, note: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        owner = self._get_research_write_owner()
+        if owner is not None and hasattr(owner, "create_research_note"):
+            return owner.create_research_note(note)
         note_id = str(note.get("note_id") or "").strip()
         if not note_id:
             return None
@@ -1924,6 +1940,9 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         owner: Optional[str] = None,
         include_fixture_pack: bool = False,
     ) -> List[Dict[str, Any]]:
+        write_owner = self._get_research_write_owner()
+        if write_owner is not None and hasattr(write_owner, "list_research_tickets"):
+            return write_owner.list_research_tickets(statuses=statuses, owner=owner)
         tickets = list(self._tickets.values())
         if statuses:
             req_statuses = {str(s).strip().lower() for s in statuses if str(s).strip()}
@@ -1940,6 +1959,9 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
     def get_research_ticket(self, ticket_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not ticket_id:
             return None
+        write_owner = self._get_research_write_owner()
+        if write_owner is not None and hasattr(write_owner, "get_research_ticket"):
+            return write_owner.get_research_ticket(ticket_id)
         ticket = self._tickets.get(str(ticket_id))
         return self._project_research_ticket_detail(ticket) if isinstance(ticket, dict) else None
 
@@ -1953,6 +1975,16 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         actor_id: str,
         created_at: Optional[str] = None,
     ) -> Dict[str, Any]:
+        write_owner = self._get_research_write_owner()
+        if write_owner is not None and hasattr(write_owner, "create_research_ticket"):
+            return write_owner.create_research_ticket(
+                title=title,
+                description=description,
+                priority=priority,
+                owner=owner,
+                actor_id=actor_id,
+                created_at=created_at,
+            )
         timestamp = created_at or _utc_now_rfc3339()
         ticket_id = f"rt-{timestamp[:10].replace('-', '')}-{len(self._tickets) + 1:03d}"
         while ticket_id in self._tickets:
@@ -1991,6 +2023,14 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         actor_id: str,
         updated_at: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
+        write_owner = self._get_research_write_owner()
+        if write_owner is not None and hasattr(write_owner, "patch_research_ticket"):
+            return write_owner.patch_research_ticket(
+                ticket_id,
+                patch=patch,
+                actor_id=actor_id,
+                updated_at=updated_at,
+            )
         ticket = self._tickets.get(str(ticket_id))
         if ticket is None or not isinstance(ticket, dict):
             return None

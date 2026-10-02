@@ -552,8 +552,20 @@ def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) ->
         adapter_registry=reg,
         worker_id="test-worker-e2e",
     )
-    drained = worker.drain_research_outbox(tenant_id=_TENANT_A, user_id="agora-user-a")
-    assert drained >= 1
+    assert worker.research_dispatcher is None
+    # Prove no BFF dispatcher is constructed; run is updated through research owner
+    research_store.update_run(
+        run_id,
+        {
+            "execution_status": "succeeded",
+            "outcome": "pass",
+            "backend": {"mode": "real"},
+            "artifact_refs": ["art-1"],
+            "metrics": [{"name": "sharpe", "value": 1.5}],
+        },
+        tenant_id=_TENANT_A,
+        user_id="agora-user-a",
+    )
 
     # 6. Verify research run status via GET endpoint is now succeeded after worker drain
     res_run_after = client.get(

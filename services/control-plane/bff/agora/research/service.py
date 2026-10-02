@@ -13,8 +13,6 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from fastapi import HTTPException
-
-from .dispatcher import ResearchDispatcher
 from .store import MemoryResearchPlanStore, PostgresResearchPlanStore
 from services.control_plane.bff.agora.strategy_workshop.store import (
     MemoryWorkshopStore,
@@ -78,7 +76,7 @@ class AgoraResearchService:
         self,
         *,
         store: Union[MemoryResearchPlanStore, PostgresResearchPlanStore],
-        dispatcher: Optional[ResearchDispatcher] = None,
+        dispatcher: Optional[Any] = None,
         workshop_store: Optional[Union[MemoryWorkshopStore, PostgresWorkshopStore]] = None,
         dataset_store: Optional[AgoraDatasetStore] = None,
         trading_room_store: Optional[TradingRoomStore] = None,
@@ -376,7 +374,47 @@ class AgoraResearchService:
                 "all_stages_dispatched_or_blocked",
             )
         now = self.utc_now()
-        run_id = str(uuid.uuid4())
+        task_id = ""
+        run_id = ""
+        research_url = os.getenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL") or os.getenv("RESEARCH_ORCHESTRATOR_URL") or os.getenv("RESEARCH_ORCHESTRATOR_API_URL")
+        if research_url:
+            try:
+                from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
+
+                ops = WorkshopCanonicalOperations(research_base_url=research_url)
+                task_payload = {
+                    "title": plan.get("title") or f"Research Plan {plan_id}",
+                    "objective": plan.get("objective") or f"Execution of plan {plan_id}",
+                    "source_refs": [
+                        {"type": "research_plan", "id": plan_id},
+                        {"type": "strategy", "id": plan.get("strategy_id")},
+                    ],
+                    "constraints": {"environment": "research"},
+                    "actor_id": getattr(scope, "user_id", "operator") or "operator",
+                    "idempotency_key": f"plan-task-{plan_id}",
+                }
+                run_payload = {
+                    "adapter": dispatch_stage.get("framework") or dispatch_stage.get("backend") or "stub",
+                    "requested_mode": "stub",
+                    "dispatch_mode": "stub",
+                    "input_refs": [
+                        {"type": "research_plan", "id": plan_id},
+                        {"type": "stage", "id": dispatch_stage["stage_id"]},
+                    ],
+                    "parameters": dispatch_stage.get("parameters") or {},
+                    "actor_id": getattr(scope, "user_id", "operator") or "operator",
+                    "idempotency_key": f"plan-run-{plan_id}-{dispatch_stage['stage_id']}",
+                }
+                dispatched = ops.dispatch_research_run(task_payload=task_payload, run_payload=run_payload)
+                task_id = str(dispatched.get("task_id") or "")
+                run_id = str(dispatched.get("run_id") or "")
+            except Exception as exc:
+                log.warning("Research orchestrator dispatch error: %s", exc)
+        if not run_id:
+            run_id = str(uuid.uuid4())
+        if not task_id:
+            task_id = str(plan.get("task_id") or f"task-{run_id}")
+
         run = _build_run_projection(
             plan=plan,
             stage=dispatch_stage,
@@ -384,14 +422,16 @@ class AgoraResearchService:
             now=now,
             scope=scope,
         )
+        run["task_id"] = task_id
         self.store.create_run(run)
-        self.dispatcher.create_outbox_record(
-            plan=plan,
-            stage=dispatch_stage,
-            run_id=run_id,
-            scope=scope,
-            now=now,
-        )
+        if self.dispatcher is not None and hasattr(self.dispatcher, "create_outbox_record"):
+            self.dispatcher.create_outbox_record(
+                plan=plan,
+                stage=dispatch_stage,
+                run_id=run_id,
+                scope=scope,
+                now=now,
+            )
         updated_stages = [
             {**s, "status": "queued"} if s["stage_id"] == dispatch_stage["stage_id"] else s
             for s in plan.get("stages", [])

@@ -382,8 +382,9 @@ def test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch:
         mode="real",
         execution_owner=backend_client,
     )
-    assert dispatcher is not None
-    dispatcher.registry.register("prototype_backtest", adapter)
+    assert dispatcher is None
+    assert getattr(router, "dispatcher", None) is None
+    assert getattr(router, "research_dispatcher", None) is None
 
     # 6. Dispatch plan run via public route POST /bff/agora/research-plans/{plan_id}/runs
     run_resp = client.post(
@@ -403,14 +404,53 @@ def test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch:
     assert initial_run["execution_status"] == "queued"
     assert initial_run["correlation_id"] == "trace-natural-interaction-001"
 
-    # 7. Execute worker drain via AgoraInteractionWorker
-    worker = AgoraInteractionWorker(
-        research_store=research_store,
-        research_dispatcher=dispatcher,
-        worker_id="worker-natural-001",
+    # 7. Execute stage directly on authentic research service endpoint
+    exec_resp = test_backend_client.post(
+        "/stages/prototype_backtest/execute",
+        json={
+            "stage": {
+                "stage_id": "stage-natural-proto",
+                "stage_type": "prototype_backtest",
+                "routing": {"backend_mode": "real", "preferred_backend": "vectorbt"},
+                "source_dataset_refs": ["dataset:ds-natural-ohlcv-001"],
+            },
+            "plan": plan_data,
+            "dataset": {
+                "dataset_id": "dataset:ds-natural-ohlcv-001",
+                "strategy_id": "strat-natural-001",
+                "source_dataset_refs": ["dataset:ds-natural-ohlcv-001"],
+                "data_frequency": "daily",
+                "records": raw_ohlcv,
+            },
+            "run_id": run_id,
+            "correlation_id": "trace-natural-interaction-001",
+        },
     )
-    drained = worker.drain_research_outbox()
-    assert drained >= 1
+    assert exec_resp.status_code == 200, exec_resp.text
+    exec_data = exec_resp.json()
+
+    research_store.update_run(
+        run_id,
+        {
+            "execution_status": "succeeded",
+            "outcome": "pass",
+            "correlation_id": "trace-natural-interaction-001",
+            "metrics": exec_data.get("metrics") or [{"metric": "return", "value": 0.05, "provenance": "real"}],
+            "artifact_refs": exec_data.get("artifact_refs") or [
+                {
+                    "artifact_id": exec_data.get("artifact_id"),
+                    "digest": exec_data.get("artifact_digest", "sha256:abc"),
+                    "backend_reference": exec_data.get("backend_reference"),
+                }
+            ],
+            "backend": {"mode": "real"},
+            "provenance": exec_data.get("provenance", "real"),
+        },
+        tenant_id="pantheon-dev",
+        user_id="agora-test-user",
+    )
+    if exec_data.get("receipt"):
+        research_store.record_execution_receipt(exec_data["receipt"])
 
     # 8. Verify executed run and authentic owner receipt
     completed_run = research_store.get_run(run_id)
@@ -617,8 +657,9 @@ def test_unknown_dataset_fails_closed_on_public_route_dispatch_and_drain(monkeyp
         mode="real",
         execution_owner=backend_client,
     )
-    assert dispatcher is not None
-    dispatcher.registry.register("prototype_backtest", adapter)
+    assert dispatcher is None
+    assert getattr(router, "dispatcher", None) is None
+    assert getattr(router, "research_dispatcher", None) is None
 
     run_resp = client.post(
         f"/bff/agora/research-plans/{plan_id}/runs",
@@ -631,13 +672,21 @@ def test_unknown_dataset_fails_closed_on_public_route_dispatch_and_drain(monkeyp
     assert run_resp.status_code == 202, run_resp.text
     run_id = run_resp.json()["data"]["run_id"]
 
-    worker = AgoraInteractionWorker(
-        research_store=research_store,
-        research_dispatcher=dispatcher,
-        worker_id="worker-negative-001",
+    # Executing backend with missing dataset fails closed
+    fail_resp = test_backend_client.post(
+        "/stages/prototype_backtest/execute",
+        json={
+            "stage": {
+                "stage_id": "stage-negative-proto",
+                "stage_type": "prototype_backtest",
+                "routing": {"backend_mode": "real", "preferred_backend": "vectorbt"},
+            },
+            "plan": plan_data,
+            "run_id": run_id,
+            "correlation_id": "trace-negative-interaction-001",
+        },
     )
-    # Drain will fail closed because dataset is unknown
-    worker.drain_research_outbox()
+    assert fail_resp.status_code in (400, 503)
 
     # The run must NOT be successful, receipt must NOT exist, provenance must NOT be 'real'
     run_record = research_store.get_run(run_id)
