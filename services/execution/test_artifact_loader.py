@@ -144,6 +144,29 @@ class TestArtifactLoader(unittest.TestCase):
         self.assertEqual(loaded.payload, self.payload)
         self.assertEqual(loaded.projection.metadata_key, self.projection.metadata_key)
 
+    def test_load_exact_treats_null_lineage_fields_as_absent(self):
+        metadata = build_metadata()
+        metadata["lineage"]["source_dataset_refs"] = None
+        metadata["lineage"]["source_strategy_spec_id"] = None
+        loader = self._build_loader(metadata)
+
+        loaded = loader.load_exact(
+            registry_id="reg-strat-001-1.2.3",
+            strategy_id="strat-001",
+            version="1.2.3",
+            execution_mode=ExecutionMode.PAPER,
+        )
+
+        self.assertNotIn("source_dataset_refs", loaded.metadata["lineage"])
+
+    def test_rejects_non_array_non_null_lineage_field(self):
+        metadata = build_metadata()
+        metadata["lineage"]["source_dataset_refs"] = "ds-1"
+        loader = self._build_loader(metadata)
+
+        with self.assertRaisesRegex(ArtifactLoadError, "source_dataset_refs"):
+            loader.load("strat-001", "1.2.3", ExecutionMode.PAPER)
+
     def test_rejects_wrong_deployment_stage_for_mode(self):
         loader = self._build_loader(build_metadata(state="live"))
 

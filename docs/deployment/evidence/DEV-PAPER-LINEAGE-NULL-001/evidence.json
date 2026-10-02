@@ -1,0 +1,1 @@
+{"task":"DEV-PAPER-LINEAGE-NULL-001","tests":"pytest services/execution/test_artifact_loader.py services/registry/promotion/test_gate.py services/control-plane/governance/test_deployment_plan.py","result":"62 passed","production_net_lines":7}
