@@ -191,7 +191,7 @@ def http_request_json_with_headers(
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
     try:
-        with urllib.request.urlopen(req, timeout=req_timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout or _DEFAULT_REQUEST_TIMEOUT) as resp:
             status_code = int(resp.status)
             raw = resp.read()
             body = json.loads(raw.decode("utf-8")) if raw else None

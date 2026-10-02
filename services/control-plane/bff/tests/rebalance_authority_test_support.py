@@ -971,7 +971,7 @@ class CapitalBffAuthorityHarness:
         self.owner_calls.append((request.get_method(), request.full_url, auth))
         headers = {"Content-Type": "application/json", "X-Pantheon-Service": "control-plane-bff"}
         for h in ("Authorization", "X-Pantheon-Service", "X-Tenant-Id"):
-            val = request.get_header(h)
+            val = request.get_header(h) or request.get_header(h.capitalize())
             if val:
                 headers[h] = val
         response = self.capital_client.request(

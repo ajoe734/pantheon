@@ -310,3 +310,110 @@ def test_real_operator_jwt_forwarding_with_strict_capital_auth(tmp_path: Path, m
         assert any(c[2] == f"Bearer {token_str}" for c in pool_calls)
         assert all("service:provisioning" not in str(c[2]) for c in harness.owner_calls)
 
+        # Stored PersonaCapitalBinding activation under strict auth
+        created_b = command_executor.create_capital_binding(
+            {
+                "binding_id": "b-strict-paper",
+                "persona_id": "p-strict-paper",
+                "capital_pool_id": "pool-jwt",
+                "role": "paper_owner",
+                "allowed_deployment_scope": "paper",
+                "actor_id": "op-verified-operator",
+                "actor_role": "operator",
+            },
+            auth_token=token_str,
+            tenant_id="tenant-real-dev",
+        )
+        assert created_b["status"] == "pending"
+        b_params = {
+            "action_id": "activate",
+            "entity_type": "binding",
+            "entity_id": "b-strict-paper",
+            "actor_id": "op-verified-operator",
+            "actor_role": "operator",
+            "tenant_id": "tenant-real-dev",
+            "idempotency_key": "activate-strict-b",
+        }
+        act = harness.run_command(
+            "PersonaAction",
+            {"type": BINDING, "id": "b-strict-paper"},
+            b_params,
+            key="activate-strict-b",
+            headers={"Authorization": f"Bearer {token_str}"},
+        )
+        assert act["status"] == "executed", act.get("error")
+        assert act["result"]["authoritative_readback"]["status"] == "active"
+
+        # Stored CapitalPoolAction pause under strict auth forwards caller JWT and verified tenant
+        params = {
+            "entity_type": "CapitalPool",
+            "entity_id": "pool-jwt",
+            "action_id": "pause",
+            "actor_id": "op-verified-operator",
+            "actor_role": "operator",
+            "tenant_id": "tenant-real-dev",
+            "idempotency_key": "pause-pool-jwt",
+        }
+        paused = harness.run_command(
+            "CapitalPoolAction",
+            {"type": "CapitalPool", "id": "pool-jwt"},
+            params,
+            key="pause-pool-jwt",
+            headers={"Authorization": f"Bearer {token_str}"},
+        )
+        assert paused["status"] == "executed", paused.get("error")
+        assert paused["result"]["pool_state"] == "suspended"
+
+        # Foreign tenant denial under strict auth (403 TENANT_SCOPE_FORBIDDEN)
+        foreign_tenant_params = {**params, "tenant_id": "foreign-tenant", "idempotency_key": "foreign-pause"}
+        denied_tenant = harness.run_command(
+            "CapitalPoolAction",
+            {"type": "CapitalPool", "id": "pool-jwt"},
+            foreign_tenant_params,
+            key="foreign-pause",
+            headers={"Authorization": f"Bearer {token_str}"},
+        )
+        assert denied_tenant["status"] == "failed"
+        assert denied_tenant["error"]["downstream_status"] == 403
+
+        # Forged actor denial under strict auth (403 ACTOR_ID_MISMATCH)
+        import urllib.error
+        from services.control_plane.bff.command_adapters.capital_adapter import CapitalOwnerWriter
+
+        with pytest.raises(urllib.error.HTTPError) as exc_actor:
+            CapitalOwnerWriter().pool_action(
+                {"action_id": "pause"},
+                target_id="pool-jwt",
+                actor_id="attacker",
+                actor_role="operator",
+                auth_token=token_str,
+                tenant_id="tenant-real-dev",
+            )
+        assert exc_actor.value.code == 403
+
+        # Forged role denial under strict auth (403 ACTOR_ROLE_MISMATCH)
+        with pytest.raises(urllib.error.HTTPError) as exc_role:
+            CapitalOwnerWriter().pool_action(
+                {"action_id": "pause"},
+                target_id="pool-jwt",
+                actor_id="op-verified-operator",
+                actor_role="capital.admin",
+                auth_token=token_str,
+                tenant_id="tenant-real-dev",
+            )
+        assert exc_role.value.code == 403
+
+
+def test_headers_transport_preserves_timeout() -> None:
+    from unittest.mock import MagicMock, patch
+    from services.control_plane.bff.command_adapters import base
+
+    response = MagicMock()
+    response.status = 200
+    response.read.return_value = b"{}"
+    response.headers = {}
+    response.__enter__.return_value = response
+    with patch.object(base.urllib.request, "urlopen", return_value=response) as transport:
+        assert base.http_request_json_with_headers("http://isolated.invalid/metadata", timeout=7) == (200, {}, {})
+        assert transport.call_args.kwargs["timeout"] == 7
+
