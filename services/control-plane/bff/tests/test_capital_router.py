@@ -1,6 +1,7 @@
 """Contract tests for the standalone Capital Allocation router."""
 from __future__ import annotations
 
+import json
 import os
 import sys
 from copy import deepcopy
@@ -280,6 +281,8 @@ def test_owner_http_failures_keep_rejection_conflict_and_unavailability_distinct
     assert post(http(409)) == 409
     assert post(http(503)) == 503
     assert post(urllib.error.URLError("down")) == 503
+    assert post(json.JSONDecodeError("truncated", "{", 1)) == 503
+    assert post(RuntimeError("Capital authority returned a pool with mismatched create semantics")) == 502
     assert post(ValueError("pool_id is required")) == 422
 
 

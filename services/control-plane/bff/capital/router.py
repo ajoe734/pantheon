@@ -7,6 +7,7 @@ Manager client, auth guards, and response helpers when it mounts the router.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.error
 from datetime import datetime, timezone
@@ -118,7 +119,7 @@ def _error_for_capital_exception(exc: Exception, bff_error: Callable[..., Except
         except Exception:
             detail = None
         return bff_error(exc.code, code, "Capital owner rejected the request", str(detail or exc.reason))
-    if isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError)):
+    if isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException, json.JSONDecodeError)):
         return bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Capital authority unavailable", str(exc))
     if isinstance(exc, ValueError):
         return bff_error(422, ErrorCode.VALIDATION_FAILED, "Capital request validation failed", str(exc))
@@ -129,6 +130,8 @@ def _error_for_capital_exception(exc: Exception, bff_error: Callable[..., Except
         return bff_error(409 if code == ErrorCode.IDEMPOTENCY_CONFLICT else 422, code, "Capital request validation failed", str(exc))
     if isinstance(exc, CapitalAuthorityUnavailable):
         return bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Capital authority unavailable", str(exc))
+    if isinstance(exc, RuntimeError):  # owner answered, but not with the record that was requested
+        return bff_error(502, ErrorCode.UPSTREAM_ERROR, "Capital owner returned an unexpected result", str(exc))
     return exc
 
 

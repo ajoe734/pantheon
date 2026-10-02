@@ -1,9 +1,10 @@
 """Capital Domain Command Adapter.
 
 ``CapitalOwnerWriter`` is the single BFF -> Capital owner forwarder.  The REST
-router (injected through ``core/app_factory.py``), the canonical command
-executor and this adapter all delegate to it, so every write carries the
-caller's verified JWT and the owner remains the only decision point for
+router (injected through ``core/app_factory.py``) and this adapter call it; it
+reuses the command executor's owner transport for create/apply/containment and
+the shared ``base`` primitives for status changes.  Every write carries the
+caller's own verified JWT, and the owner stays the only decision point for
 approval, risk policy and paper/live classification.
 """
 from __future__ import annotations

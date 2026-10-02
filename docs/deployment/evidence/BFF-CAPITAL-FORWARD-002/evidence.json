@@ -1,0 +1,40 @@
+{
+  "task_id": "BFF-CAPITAL-FORWARD-002",
+  "scope": "source/local/isolated validation only; no hosted, dev-VM or live-money acceptance claimed (hosted proof is external_wait for the single consolidated batch release)",
+  "forwarding": "services/control-plane/bff/command_adapters/capital_adapter.py::CapitalOwnerWriter is the single BFF->Capital forwarder, injected into CapitalService via core/app_factory.py (get_capital_authority). It reuses command_executor's owner transport (create pool/binding/proposal, ApprovedApply, containment, ambiguous-outcome receipt reconcile) and base.http_request_json for status changes; every call carries the caller's own verified JWT and a role the identity actually holds. The stored-command CapitalCommandAdapter delegates to the same writer/executor functions.",
+  "removed": [
+    "CapitalService._authority read-store write fallback, _call_write method/signature probing and method-name guessing",
+    "POST /bff/rebalances/{id}/approve and /two-man-sign (fabricated approval/signature receipts) and the BFF rebalance approval/two-man evidence evaluators for ApprovedApply in preconditions.py",
+    "executor _execute_approve_pool and /api/internal/v1/capital-pools/{id}/approve; ApprovePool catalog entries (action ids stay out of the catalog; CommandType kept so stored records deserialize)",
+    "adapter default-pool/default-actor/'operator-bff' probing, adjust_budget/patch fake pool statuses, duplicate local containment and apply effects",
+    "preconditions paper_simulation_authority bypass keyed on caller params (authority_mode/target_environment/environment)",
+    "containment receipt requirement for a two_man_signature_id echo the Capital owner never returns"
+  ],
+  "retired_explicitly": [
+    "PATCH /bff/capital-pools/{id}, PATCH /bff/rebalances/{id}, POST /bff/rebalances/{id}/actions/{action} return 410 OPERATION_NOT_ALLOWED (no Capital owner endpoint); adapter pool/rebalance actions without an owner operation fail ACTION_UNAVAILABLE and never report executed"
+  ],
+  "paper_onboarding": "persona_capital_binding.validate_binding exempts only role=paper_owner + allowed_deployment_scope=paper from the activation decision; schema approval_decision_id is nullable; PG activate delegate signature aligned. persona_provisioning_coordinator no longer sends or reads the Registry approval_decision_id for paper binding activation (identity reuses _validate_binding_identity). Canary/live still need the exact Governance decision at the CapitalGuard.",
+  "owner_changes": [
+    "write_authority: operator added only to CapitalPool.update_status and PersonaCapitalBinding.activate/update_status (no Governance voting role)",
+    "U07: _tenant_match and PG load/save use the formal tenant_id; blank legacy rows fail closed instead of adopting caller-writable metadata; binding conflict redaction denies a missing caller tenant"
+  ],
+  "validation": {
+    "services/capital + governance test_persona_capital_binding + coordinator/readback/loop_prod_per_001 + tests/persona_capital_write_owner": "344 passed, 1 skipped (new: verified operator paper status lifecycle with viewer/reviewer/approver/forged role/forged actor/foreign tenant denial; live binding needs approval; formal-tenant and redaction regressions; paper binding exemption and null-decision schema tests)",
+    "tests/test_capital_owner_forwarding.py": "8 passed against the real isolated Capital owner via /bff/v1/commands stored-record processing and mounted REST: paper pool+binding create/activate/suspend/reactivate/reload with no Capital approval and no risk_policy_ref, canary/live missing/revoked approval 403 and exact approval passes, pool pause/activate (non-paper needs owner approval), unsupported actions fail ACTION_UNAVAILABLE, viewer denied before the owner, forged body identity not forwarded, owner 400/403/503 distinct, containment forwarded with caller JWT",
+    "tests/test_persona_paper_onboarding_capital_integration.py": "1 passed: real PersonaProvisioningCoordinator drives the real isolated Capital service (pool and binding create AND activate, no approval id, risk_policy_ref None), then suspend/reactivate/restart reload",
+    "tests/test_bff_rebalance_proposals.py": "27 passed (rewritten onto mounted stored-record flow: owner apply replay one effect, ambiguous-response reconcile x3, retryable same-key retry, restart readback, live increase without approval rejected by owner with state unchanged, caller JWT on apply/receipt reads)",
+    "tests/test_bff_emergency_containment.py, tests/test_capital_router.py, tests/test_remaining_main_seam_composition.py, tests/test_bff_b2_list_detail_facade.py": "pass (fakes migrated to the CapitalOwnerWriter interface; containment harness no longer mutates the shared harness class or global catalog)"
+  },
+  "baseline_reproductions": {
+    "method": "git archive of 3d21f1f9d run side by side",
+    "preexisting_failures_unchanged": "56 failures in test_bff_pm12_portfolio_book_contract, test_bff_management_delta_routes, test_action_catalog (critical_actions_require_two_man, get_bff_actions_all_command_types), test_action_catalog_safety_invariants, test_ppl_alloc_012_ranking_projection (24), test_bff_strategy_persona_contract (4), test_bff_capital_ranking_rebalance_contract rebalance lineage etc. fail identically on dev",
+    "stale_before_this_task": "test_bff_rebalance_proposals (33 failed: harness created an active non-paper pool without Governance approval and expected retired approve/two-man routes) and 10 test_bff_emergency_containment tests; replaced/repaired here"
+  },
+  "production_delta": "git diff of non-test files vs 3d21f1f9d: +310/-623 = -313 (limit -300)",
+  "not_verified": [
+    "hosted dev write-readback; a NEW labelled paper fixture and existing-pool non-modification are deferred to centralized acceptance after the batch release",
+    "real BFF->Capital JWT shape in hosted dev: Capital derives the single allowed tenant and caller service from the forwarded token claims (no X-Tenant-Id/X-Pantheon-Service header is sent); a multi-tenant token would be refused by the owner",
+    "main.py still carries dead duplicate rebalance-evidence helpers (_trusted_rebalance_evidence_record, _rebalance_approval_decision_record); main.py is outside this task's artifact contract",
+    "PANTHEON_RUNTIME_MANAGER safe-mode source and risk policy files for canary/live are owner deployment facts, not wired here"
+  ]
+}

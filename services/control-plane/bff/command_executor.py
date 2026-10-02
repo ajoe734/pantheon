@@ -424,44 +424,15 @@ def create_capital_rebalance_proposal(payload: Dict[str, Any], auth_token: Optio
     return body
 
 
-def _reconcile_rebalance_apply_receipt(
-    *,
-    rebalance_id: str,
-    command_id: str,
-    approval_ref: str,
-    auth_token: Optional[str] = None,
+def _reconcile_owner_receipt(
+    kind: str, command_id: str, validate: Any, auth_token: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
+    """Read the owner's committed receipt (``rebalances``/``containments``) after an ambiguous POST."""
     receipt = _get_json(
-        _capital_url(f"/api/rebalances/receipts/{quote(command_id, safe='')}"),
-        auth_token=auth_token,
+        _capital_url(f"/api/{kind}/receipts/{quote(command_id, safe='')}"), auth_token=auth_token
     )
     try:
-        return _validate_rebalance_apply_receipt(
-            receipt,
-            rebalance_id=rebalance_id,
-            command_id=command_id,
-            approval_ref=approval_ref,
-        )
-    except RuntimeError:
-        return None
-
-
-def _reconcile_containment_receipt(
-    *,
-    command_id: str,
-    persona_id: str,
-    auth_token: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
-    receipt = _get_json(
-        _capital_url(f"/api/containments/receipts/{quote(command_id, safe='')}"),
-        auth_token=auth_token,
-    )
-    try:
-        return _validate_containment_receipt(
-            receipt,
-            command_id=command_id,
-            persona_id=persona_id,
-        )
+        return validate(receipt)
     except RuntimeError:
         return None
 
@@ -1212,11 +1183,13 @@ def _execute_approved_rebalance_apply(
         if not _owner_post_may_have_committed(exc):
             raise
         try:
-            reconciled = _reconcile_rebalance_apply_receipt(
-                rebalance_id=rebalance_id,
-                command_id=command_id,
-                approval_ref=approval_ref,
-                auth_token=auth_token,
+            reconciled = _reconcile_owner_receipt(
+                "rebalances",
+                command_id,
+                lambda receipt: _validate_rebalance_apply_receipt(
+                    receipt, rebalance_id=rebalance_id, command_id=command_id, approval_ref=approval_ref
+                ),
+                auth_token,
             )
         except Exception:
             raise exc
@@ -1296,10 +1269,11 @@ def _execute_emergency_containment_authority(
         if not _owner_post_may_have_committed(exc):
             raise
         try:
-            reconciled = _reconcile_containment_receipt(
-                command_id=command_id,
-                persona_id=persona_id,
-                auth_token=auth_token,
+            reconciled = _reconcile_owner_receipt(
+                "containments",
+                command_id,
+                lambda receipt: _validate_containment_receipt(receipt, command_id=command_id, persona_id=persona_id),
+                auth_token,
             )
         except Exception:
             raise exc
