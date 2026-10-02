@@ -212,20 +212,17 @@ def test_all_dev_mutations_and_public_proofs_use_pinned_wrapper() -> None:
     )
 
 
-def test_bff_smoke_runs_before_unrelated_smoke_steps() -> None:
-    """An unrelated smoke test failing must not silently skip the one step
-    that actually verifies the live BFF matches this deploy's exact target
-    sha. GitHub Actions skips a later step by default once an earlier step
-    in the same job fails, so the BFF/FE verification has to run first."""
+def test_bff_smoke_runs_before_mandatory_restart_probe() -> None:
+    """Prove the target identity before restarting and verifying persistence."""
 
     dev = _job(_workflow(), "deploy-dev", "deploy-staging-live")
     bff_smoke_at = dev.index(
         "      - name: Public dev BFF smoke and exact version proof under lease"
     )
-    for unrelated_step in (
+    for restart_step in (
         "Dev Agora restart persistence smoke under lease",
     ):
-        assert bff_smoke_at < dev.index(f"      - name: {unrelated_step}")
+        assert bff_smoke_at < dev.index(f"      - name: {restart_step}")
 
 
 def test_provider_live_acceptance_is_not_a_dev_deployment_gate() -> None:
@@ -258,26 +255,18 @@ def test_deployment_completion_retains_real_checks_without_provider_gate(
         outcomes[failed_step] = "failure"
     result = subprocess.run(
         ["bash", "-c", dev[start:end] + '\nprintf "%s" "$complete_success"'],
-        env={**os.environ, **outcomes, "TARGET_COMPONENT": component},
+        env={**os.environ, **outcomes, "TARGET_COMPONENT": component, "ARTIFACTS_VERIFIED": "true"},
         capture_output=True, text=True, check=True,
     )
     assert result.stdout == ("false" if failed_step else "true")
 
 
-def test_dev_release_admission_depends_only_on_verified_bff_fe_pair() -> None:
-    """Admitting a release candidate must track whether the BFF/FE pair
-    itself was verified healthy, not whether unrelated smoke tests (e.g. the
-    OpenClaw assistant integration) also happened to pass in the same job."""
+def test_dev_release_admission_requires_complete_backend_and_lease_success() -> None:
+    """Restart/persistence are mandatory; provider live acceptance is separate."""
 
     workflow = _workflow()
     dev = _job(workflow, "deploy-dev", "coordinate-dev-release")
-    assert (
-        "bff_fe_pair_verified: ${{ steps.deploy.outcome == 'success' "
-        "&& steps.public_smoke.outcome == 'success' "
-        "&& steps.artifact_baseline_upload.outcome == 'success' "
-        "&& steps.artifact_candidate_seal.outcome == 'success' "
-        "&& steps.artifact_candidate_upload.outcome == 'success' }}"
-    ) in dev
+    assert "bff_fe_pair_verified: ${{ steps.lease_cleanup.outputs.complete_success == 'true' }}" in dev
 
     coordinate = _job(workflow, "coordinate-dev-release", "deploy-staging-live")
     assert "needs.deploy-dev.result" not in coordinate
@@ -1237,10 +1226,7 @@ def test_dev_root_phase_failure_prevents_release_admission_and_switch() -> None:
     dev_job = _job(workflow, "deploy-dev", "coordinate-dev-release")
     coordinate_job = _job(workflow, "coordinate-dev-release", "deploy-staging-live")
 
-    assert (
-        "bff_fe_pair_verified: ${{ steps.deploy.outcome == 'success' "
-        "&& steps.public_smoke.outcome == 'success' }}"
-    ) in dev_job
+    assert "bff_fe_pair_verified: ${{ steps.lease_cleanup.outputs.complete_success == 'true' }}" in dev_job
     assert (
         "if: ${{ !cancelled() && needs.deploy-dev.outputs.bff_fe_pair_verified "
         "== 'true' }}"
@@ -1249,7 +1235,7 @@ def test_dev_root_phase_failure_prevents_release_admission_and_switch() -> None:
     deploy_script = DEPLOY.read_text(encoding="utf-8")
     root_section = deploy_script.split("case \"${PANTHEON_DEPLOY_COMPONENT}\" in", 1)[1].split("root)", 1)[1].split(";;", 1)[0]
     assert "docker compose -p pantheon -f docker-compose.yml build \\\n      || { dump_dev_root_failure_diagnostics; exit 1; }" in root_section
-    assert "docker compose -p pantheon -f docker-compose.yml up -d \\\n      || rollback_dev_bff_on_failure \"docker_compose_up\"" in root_section
+    assert "run_dev_candidate_compose up -d \\\n      || rollback_dev_bff_on_failure \"docker_compose_up\"" in root_section
 
 
 def test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative(tmp_path: Path) -> None:
@@ -1376,7 +1362,7 @@ def _evaluate_github_actions_condition(condition_expr: str, context: dict) -> bo
         path = match.group(0)
         return f'_resolve(ctx, "{path}")'
 
-    expr = re.sub(r"\b(?:steps|env|needs|inputs|vars|github)\.[a-zA-Z0-9_\.]+\b", _replace_lookup, expr)
+    expr = re.sub(r"\b(?:steps|env|needs|inputs|vars|github)\.[a-zA-Z0-9_.-]+\b", _replace_lookup, expr)
 
     return bool(eval(expr, {"_resolve": _resolve, "ctx": context, "True": True, "False": False}))
 
@@ -1578,6 +1564,11 @@ def test_dev_deploy_compensation_condition_truth_table(
             "TARGET_COMPONENT": target_component,
         },
         "steps": {
+            **{name: {"outcome": "success"} for name in (
+                "heartbeat", "artifact_baseline_upload", "artifact_candidate_seal",
+                "artifact_candidate_upload", "deploy-posture-evidence", "agora",
+            )},
+            "artifact_baseline": {"outcome": "success" if rollback_sha else "failure"},
             "lease": {
                 "outcome": lease_outcome,
             },
