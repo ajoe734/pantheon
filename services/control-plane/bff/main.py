@@ -112,6 +112,7 @@ from .models import (
     utc_now,
 )
 from .command_queue import CommandStore
+from .trade_journey_projection_store import ProjectionReadUnavailable
 
 try:
     from . import assistant_conversation_store as _acs_mod
