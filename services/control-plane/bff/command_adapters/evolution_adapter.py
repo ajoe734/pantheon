@@ -24,48 +24,7 @@ from .base import (
 )
 
 
-def http_request_json(
-    url: str,
-    method: str = "POST",
-    payload: Optional[Dict[str, Any]] = None,
-    auth_token: Optional[str] = None,
-    mfa_token: Optional[str] = None,
-    timeout: Optional[int] = None,
-    headers: Optional[Dict[str, str]] = None,
-) -> Any:
-    """Execute HTTP request to domain service endpoint with custom header support."""
-    if not headers:
-        return _base_http_request_json(
-            url,
-            method=method,
-            payload=payload,
-            auth_token=auth_token,
-            mfa_token=mfa_token,
-            timeout=timeout,
-        )
-
-    req_timeout = timeout or 10
-    req_headers: Dict[str, str] = {"Accept": "application/json"}
-    data: Optional[bytes] = None
-
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-        req_headers["Content-Type"] = "application/json"
-
-    if auth_token:
-        req_headers["Authorization"] = f"Bearer {auth_token}" if not auth_token.startswith("Bearer ") else auth_token
-    if mfa_token:
-        req_headers["X-MFA-Token"] = mfa_token
-    if headers:
-        req_headers.update(headers)
-
-    req = urllib.request.Request(url, data=data, headers=req_headers, method=method.upper())
-    with urllib.request.urlopen(req, timeout=req_timeout) as resp:
-        raw = resp.read().decode("utf-8")
-        if raw:
-            return json.loads(raw)
-        return {}
-
+http_request_json = _base_http_request_json
 
 log = logging.getLogger(__name__)
 

@@ -3566,7 +3566,6 @@ def _command_response_dry_run_meta(idempotency_key: str) -> Dict[str, Any]:
         },
     }
 _GOV_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-_FINAL_CONTRACT_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 
 from .command_adapters.service import CommandAdapterService as _CommandAdapterService
 
@@ -3581,7 +3580,6 @@ _command_adapter_service = _CommandAdapterService(
     validators=_VALIDATORS,
     process_command_task=lambda cmd_id: _process_command_stub(cmd_id),
     check_read_surface_state=_check_read_surface_state,
-    final_contract_idempotency=_FINAL_CONTRACT_IDEMPOTENCY,
     gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
     publish_event=lambda event_type, data: _publish_event(
         _sse_buffers["audit"],
@@ -3643,180 +3641,19 @@ from .assistant.management_service import (
 _MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {}
 _TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {}
 _SKILL_REGISTRY: Dict[str, Dict[str, Any]] = {}
-_CAPITAL_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-def _capital_bff_idempotency_identity(operator_id: str, resolved_key: str) -> str:
-    return f"{operator_id}\x00{resolved_key}"
-def _capital_bff_idempotency_check(
-    operator_id: str,
-    resolved_key: str,
-    request_hash: str,
-) -> Optional[Dict[str, Any]]:
-    """Return cached result on replay or raise 409 on conflict."""
-    existing = _CAPITAL_BFF_IDEMPOTENCY.get(
-        _capital_bff_idempotency_identity(operator_id, resolved_key)
-    )
-    if existing is None:
-        return None
-    if existing.get("request_hash") != request_hash:
-        raise _bff_error(
-            409,
-            ErrorCode.IDEMPOTENCY_CONFLICT,
-            "Idempotency key was already used with a different payload",
-            f"Key {resolved_key!r} is bound to a different request hash",
-            precondition_failed="idempotency_conflict",
-            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-        )
-    return existing.get("result")
-def _capital_bff_idempotency_store(
-    operator_id: str,
-    resolved_key: str,
-    request_hash: str,
-    result: Any,
-) -> None:
-    _CAPITAL_BFF_IDEMPOTENCY[
-        _capital_bff_idempotency_identity(operator_id, resolved_key)
-    ] = {"request_hash": request_hash, "result": result}
+
+
+
 def _capital_bff_action_command(
-    entity_type: ObjectType,
-    entity_id: str,
-    action_id: str,
-    resolved_key: str,
-    identity: Any,
-    payload: Dict[str, Any],
-    command_type: CommandType,
+    entity_type: ObjectType, entity_id: str, action_id: str, resolved_key: str,
+    identity: Any, payload: Dict[str, Any], command_type: CommandType,
     background_tasks: Optional[BackgroundTasks] = None,
-) -> Dict[str, Any]:
-    """Submit a resource action through the command store and return the receipt."""
-    request_hash = sha256_checksum({
-        "entity_type": entity_type.value,
-        "entity_id": entity_id,
-        "action_id": action_id,
-        "payload": payload,
-    })
-    durable = command_store.get_command_by_idempotency_key(
-        resolved_key,
-        operator_id=identity.operator_id,
+    authorization: Optional[str] = None,
+) -> JSONResponse:
+    return _command_adapter_service.submit_resource_action(
+        entity_type, entity_id, action_id, resolved_key, identity, payload, command_type,
+        authorization=authorization,
     )
-    if durable is not None:
-        durable_idempotency = (durable.get("foundation") or {}).get("idempotency_record") or {}
-        if durable_idempotency.get("request_hash") != request_hash:
-            raise _bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key was already used with a different payload",
-                f"Key {resolved_key!r} is bound to command {durable.get('command_id')}",
-                precondition_failed="idempotency_conflict",
-                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-            )
-        replay = _project_final_command_response(
-            command_id=str(durable["command_id"]),
-            command=CommandType(str(durable["type"])),
-            accepted_at=str(durable.get("submitted_at") or utc_now()),
-            status=CommandStatus(str(durable.get("status") or CommandStatus.SUBMITTED.value)),
-            staleness_warning=None,
-            meta=_command_response_durable_meta(resolved_key, replayed=True),
-        )
-        _capital_bff_idempotency_store(
-            identity.operator_id, resolved_key, request_hash, replay
-        )
-        return replay
-    cached = _capital_bff_idempotency_check(
-        identity.operator_id, resolved_key, request_hash
-    )
-    if cached is not None:
-        return cached
-    catalog_entry = get_catalog_entry(command_type.value)
-    staleness_warning = _check_read_surface_state()
-    command_id = str(uuid.uuid4())
-    submitted_at = utc_now()
-    target = TargetObject(type=entity_type, id=entity_id)
-    audit_action = _foundation_audit_for_command_record(
-        identity=identity,
-        command_type=command_type,
-        target_type=entity_type,
-        target_id=entity_id,
-        payload={**payload, "action_id": action_id},
-        reason=str(payload.get("reason") or action_id or command_type.value),
-        command_id=command_id,
-        idempotency_key=resolved_key,
-        route=f"POST /bff/{entity_type.value}/{entity_id}/actions/{action_id}",
-        metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
-    )
-    audit_record = {
-        "operator_id": identity.operator_id,
-        "roles_at_submission": identity.roles,
-        "action_id": action_id,
-        "preconditions_checked": ["authentication", "authorization", "idempotency"],
-        "timestamp": submitted_at,
-    }
-    idempotency_record = IdempotencyRecord.reserve(
-        idempotency_key=resolved_key,
-        operation_type=f"bff.{command_type.value}",
-        target_ref=f"{entity_type.value}:{entity_id}",
-        request_payload={
-            "entity_type": entity_type.value,
-            "entity_id": entity_id,
-            "action_id": action_id,
-            "payload": payload,
-        },
-        trace_id=command_id,
-    )
-    foundation_ctx = {
-        "idempotency_record": idempotency_record.to_dict(),
-        "audit_action": audit_action.to_dict(),
-    }
-    audit_record["foundation"] = foundation_ctx
-    command_store.submit_command(
-        command_id=command_id,
-        command_type=command_type,
-        target=target,
-        submitted_at=submitted_at,
-        params={
-            **{
-                key: value
-                for key, value in payload.items()
-                if key
-                not in {
-                    "entity_type",
-                    "entity_id",
-                    "action_id",
-                    "actor_id",
-                    "actor_role",
-                    "idempotency_key",
-                    "request_hash",
-                }
-            },
-            "entity_type": entity_type.value,
-            "entity_id": entity_id,
-            "action_id": action_id,
-            "actor_id": identity.operator_id,
-            "actor_role": next(
-                (
-                    role
-                    for role in ("admin", "approver", "reviewer", "operator")
-                    if role in identity.roles
-                ),
-                "operator",
-            ),
-            "idempotency_key": resolved_key,
-            "request_hash": request_hash,
-        },
-        audit_context=audit_record,
-        foundation_context=foundation_ctx,
-    )
-    if background_tasks is not None:
-        background_tasks.add_task(_process_command_stub, command_id)
-    result = _project_final_command_response(
-        command_id=command_id,
-        command=command_type,
-        accepted_at=submitted_at,
-        status=CommandStatus.SUBMITTED,
-        staleness_warning=staleness_warning,
-    )
-    _capital_bff_idempotency_store(
-        identity.operator_id, resolved_key, request_hash, result
-    )
-    return result
 _PPL_ALLOC_009_PAPER_AUTHORITY_MODE = "governed_paper_simulation"
 _PM12_RANKING_SNAPSHOT_DEFAULT_TTL_SECONDS = 24 * 60 * 60
 _PM12_RANKING_SNAPSHOT_MAX_TTL_SECONDS = 7 * 24 * 60 * 60
@@ -5323,101 +5160,17 @@ async def stream_ask_events(
 ):
     """Per-channel alias for the generic ask-channel SSE stream."""
     return await stream_generic_events("ask", last_event_id, authorization)
-_EVOL_EXP_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-def _evol_exp_bff_idempotency_check(
-    resolved_key: str,
-    request_hash: str,
-) -> Optional[Dict[str, Any]]:
-    existing = _EVOL_EXP_BFF_IDEMPOTENCY.get(resolved_key)
-    if existing is None:
-        return None
-    if existing.get("request_hash") != request_hash:
-        raise _bff_error(
-            409,
-            ErrorCode.IDEMPOTENCY_CONFLICT,
-            "Idempotency key was already used with a different payload",
-            f"Key {resolved_key!r} is bound to a different request hash",
-            precondition_failed="idempotency_conflict",
-            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-        )
-    return existing.get("result")
+
 def _evol_exp_bff_action_command(
-    entity_type: ObjectType,
-    entity_id: str,
-    action_id: str,
-    resolved_key: str,
-    identity: Any,
-    payload: Dict[str, Any],
-    command_type: CommandType,
-) -> Dict[str, Any]:
-    request_hash = _stable_json_hash({
-        "entity_type": entity_type.value,
-        "entity_id": entity_id,
-        "action_id": action_id,
-        "payload": payload,
-    })
-    cached = _evol_exp_bff_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
-    catalog_entry = get_catalog_entry(command_type.value)
-    staleness_warning = _check_read_surface_state()
-    command_id = str(uuid.uuid4())
-    submitted_at = utc_now()
-    target = TargetObject(type=entity_type, id=entity_id)
-    audit_action = _foundation_audit_for_command_record(
-        identity=identity,
-        command_type=command_type,
-        target_type=entity_type,
-        target_id=entity_id,
-        payload={"action_id": action_id, **payload},
-        reason=str(payload.get("reason") or action_id or command_type.value),
-        command_id=command_id,
-        idempotency_key=resolved_key,
-        route=f"POST /bff/{entity_type.value}/{entity_id}/actions/{action_id}",
-        metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
+    entity_type: ObjectType, entity_id: str, action_id: str, resolved_key: str,
+    identity: Any, payload: Dict[str, Any], command_type: CommandType,
+    background_tasks: Optional[BackgroundTasks] = None,
+    authorization: Optional[str] = None,
+) -> JSONResponse:
+    return _command_adapter_service.submit_resource_action(
+        entity_type, entity_id, action_id, resolved_key, identity, payload, command_type,
+        authorization=authorization,
     )
-    audit_record = {
-        "operator_id": identity.operator_id,
-        "roles_at_submission": identity.roles,
-        "action_id": action_id,
-        "preconditions_checked": ["authentication", "authorization", "idempotency"],
-        "timestamp": submitted_at,
-    }
-    idempotency_record = IdempotencyRecord.reserve(
-        idempotency_key=resolved_key,
-        operation_type=f"bff.{command_type.value}",
-        target_ref=f"{entity_type.value}:{entity_id}",
-        request_payload={
-            "entity_type": entity_type.value,
-            "entity_id": entity_id,
-            "action_id": action_id,
-            "payload": payload,
-        },
-        trace_id=command_id,
-    )
-    foundation_ctx = {
-        "idempotency_record": idempotency_record.to_dict(),
-        "audit_action": audit_action.to_dict(),
-    }
-    audit_record["foundation"] = foundation_ctx
-    command_store.submit_command(
-        command_id=command_id,
-        command_type=command_type,
-        target=target,
-        submitted_at=submitted_at,
-        params={"action_id": action_id, **payload},
-        audit_context=audit_record,
-        foundation_context=foundation_ctx,
-    )
-    result = _project_final_command_response(
-        command_id=command_id,
-        command=command_type,
-        accepted_at=submitted_at,
-        status=CommandStatus.SUBMITTED,
-        staleness_warning=staleness_warning,
-    )
-    _EVOL_EXP_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
 _MCP_SERVER_REGISTRY: Dict[str, Dict[str, Any]] = {}
 def _read_store_fixture_records(dataset: str) -> List[Dict[str, Any]]:
     data = getattr(read_store, "_data", {})
@@ -5452,102 +5205,15 @@ def _merged_mcp_tool_records() -> List[Dict[str, Any]]:
 _GOV_BFF_EXPERIMENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
 from .action_catalog import get_catalog_entry
 def _gov_bff_action_command(
-    entity_type: ObjectType,
-    entity_id: str,
-    action_id: str,
-    resolved_key: str,
-    identity: Any,
-    payload: Dict[str, Any],
-    command_type: CommandType,
-) -> Dict[str, Any]:
-    """Submit a governance/risk/incident resource action through the command store."""
-    _reject_body_idempotency_key(payload)
-    request_hash = _stable_json_hash(
-        {"entity_type": entity_type.value, "entity_id": entity_id, "action_id": action_id, "payload": payload}
+    entity_type: ObjectType, entity_id: str, action_id: str, resolved_key: str,
+    identity: Any, payload: Dict[str, Any], command_type: CommandType,
+    background_tasks: Optional[BackgroundTasks] = None,
+    authorization: Optional[str] = None,
+) -> JSONResponse:
+    return _command_adapter_service.submit_resource_action(
+        entity_type, entity_id, action_id, resolved_key, identity, payload, command_type,
+        authorization=authorization,
     )
-    if _request_dry_run_requested():
-        submitted_at = utc_now()
-        command_id = f"dryrun-cmd-{uuid.uuid4().hex[:12]}"
-        result = _project_final_command_response(
-            command_id=command_id,
-            command=command_type,
-            accepted_at=submitted_at,
-            status=CommandStatus.SUBMITTED,
-            staleness_warning=_check_read_surface_state(),
-            meta=_command_response_dry_run_meta(resolved_key),
-        )
-        return result.model_dump(mode="json")
-    existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
-    if existing is not None:
-        if existing.get("request_hash") != request_hash:
-            raise _bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key was already used with a different payload",
-                f"Key {resolved_key!r} is bound to a different request hash",
-                precondition_failed="idempotency_conflict",
-                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-            )
-        return existing["result"]
-
-    staleness_warning = _check_read_surface_state()
-    catalog_entry = get_catalog_entry(command_type.value)
-    command_id = str(uuid.uuid4())
-    submitted_at = utc_now()
-    target = TargetObject(type=entity_type, id=entity_id)
-    audit_action = _foundation_audit_for_command_record(
-        identity=identity,
-        command_type=command_type,
-        target_type=entity_type,
-        target_id=entity_id,
-        payload={"action_id": action_id, **payload},
-        reason=str(payload.get("reason") or action_id or command_type.value),
-        command_id=command_id,
-        idempotency_key=resolved_key,
-        route=f"POST /bff/{entity_type.value}/{entity_id}/actions/{action_id}",
-        metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
-    )
-    audit_record = {
-        "operator_id": identity.operator_id,
-        "roles_at_submission": identity.roles,
-        "action_id": action_id,
-        "preconditions_checked": ["authentication", "authorization", "idempotency"],
-        "timestamp": submitted_at,
-        "idempotency_key": resolved_key,
-        "request_hash": request_hash,
-        "catalog_entry": catalog_entry.action_id if catalog_entry else None,
-    }
-    idempotency_record = IdempotencyRecord.reserve(
-        idempotency_key=resolved_key,
-        operation_type=f"bff.{command_type.value}",
-        target_ref=f"{entity_type.value}:{entity_id}",
-        request_payload={
-            "entity_type": entity_type.value,
-            "entity_id": entity_id,
-            "action_id": action_id,
-            "payload": payload,
-        },
-        trace_id=command_id,
-    )
-    foundation_ctx = {
-        "idempotency_record": idempotency_record.to_dict(),
-        "audit_action": audit_action.to_dict(),
-    }
-    audit_record["foundation"] = foundation_ctx
-    if command_type in {CommandType.INCIDENT_ACTION, CommandType.RISK_ALERT_ACTION}:
-        from .incidents.router import submit_incident_action_command
-        return submit_incident_action_command(
-            command_store, entity_type, entity_id, action_id, resolved_key,
-            identity, payload, command_type, bff_error=_bff_error, idempotency_ledger=_GOV_BFF_IDEMPOTENCY,
-            request_hash=request_hash,
-        )
-    exec_status = CommandStatus.SUBMITTED
-
-    command_store.submit_command(command_id=command_id, command_type=command_type, target=target, submitted_at=submitted_at, params={"action_id": action_id, **payload}, audit_context=audit_record, foundation_context=foundation_ctx)
-    result = _project_final_command_response(command_id=command_id, command=command_type, accepted_at=submitted_at, status=exec_status, staleness_warning=staleness_warning)
-    res_dict = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
-    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": res_dict}
-    return res_dict
 
 def _research_experiments_surface_source(records: Sequence[Dict[str, Any]]) -> Optional[str]:
     if read_store.dataset_source("research_experiments") != "missing":
@@ -5576,7 +5242,6 @@ def _list_bff_jobs(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
         requested = {s.strip().lower() for s in status.split(",") if s.strip()}
         jobs = [j for j in jobs if str(j.get("status") or "").lower() in requested]
     return sorted(jobs, key=lambda j: str(j.get("created_at") or j.get("submitted_at") or ""), reverse=True)
-# _FINAL_CONTRACT_IDEMPOTENCY defined earlier
 def _sem_command_response(
     *,
     command_type: CommandType,
@@ -5590,6 +5255,7 @@ def _sem_command_response(
     server_generated_target: bool = False,
     trusted_evidence_producer: Optional[str] = None,
     terminal_on_persist: bool = False,
+    authorization: Optional[str] = None,
 ) -> JSONResponse:
     return _command_adapter_service.sem_command_response(
         command_type=command_type,
@@ -5603,6 +5269,7 @@ def _sem_command_response(
         server_generated_target=server_generated_target,
         trusted_evidence_producer=trusted_evidence_producer,
         terminal_on_persist=terminal_on_persist,
+        authorization=authorization,
     )
 def _guarded_command_confirm_token_id(record: Dict[str, Any]) -> Optional[str]:
     entry = get_catalog_entry(str(record.get("type") or ""))

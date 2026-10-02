@@ -16,6 +16,7 @@ RETIRED_COMMANDS = {
     "HumanGateReject": "/bff/approvals/{decision_id}/decide",
     "HumanGateRequestMoreEvidence": "GET /bff/approvals/{decision_id}",
     "HumanGateExtendTtl": "GET /bff/approvals/{decision_id}",
+    "RequestReview": "GET /bff/approvals",
 }
 
 
@@ -26,4 +27,19 @@ def reject_retired_command(command: str) -> None:
             "code": "ACTION_RETIRED",
             "message": f"{command} has no executing owner; use {replacement}",
             "details": {"replacement": replacement},
+        }})
+
+
+def reject_unowned_action(cmd) -> None:
+    action = str(cmd.action or cmd.params.get("action_id") or cmd.params.get("actionId") or "").lower()
+    command = cmd.command.value
+    unsupported = (
+        command == "ExperimentAction" and action not in {"cancel", "retry", "archive", "archived", "invalidate", "invalidated"}
+        or command == "JobAction" and (not cmd.target.id.startswith("job-orchestrator-") or action not in {"cancel", "retry"})
+    )
+    if unsupported:
+        raise HTTPException(410, detail={"error": {
+            "code": "ACTION_RETIRED",
+            "message": f"{command}/{action} has no executing owner; use /bff/v1/commands with a supported owner action",
+            "details": {"replacement": "/bff/v1/commands"},
         }})

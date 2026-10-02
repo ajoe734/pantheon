@@ -485,11 +485,10 @@ def create_rankings_long_tail_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
-        """BFF: ranking formula action — routes through command/precondition machinery."""
-        return deprecated_bff_path_response(
-            route="/bff/ranking/formulas/{formula_id}/actions/{action_id}",
-            replacement="/bff/v1/commands",
-        )
+        identity = _extract_identity(authorization)
+        _require_op(identity)
+        from ..command_adapters.retired import reject_retired_command
+        reject_retired_command("RankingFormulaAction")
 
 
     @router.get("/bff/rankings")
@@ -550,28 +549,10 @@ def create_rankings_long_tail_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
-        """BFF: ranking action (full-spec long tail) — routes through command/precondition machinery."""
         identity = _extract_identity(authorization)
         _require_op(identity)
-        reject_body_idempotency_key(payload)
-        resolved_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        read_store = _get_read_store()
-        ranking = read_store.get_ranking(ranking_id)
-        if not ranking:
-            raise _err(
-                404, ErrorCode.RESOURCE_NOT_FOUND,
-                "Ranking not found",
-                f"Ranking {ranking_id} does not exist",
-            )
-        return capital_bff_action_command(
-            entity_type=object_type.RANKING,
-            entity_id=ranking_id,
-            action_id=action_id,
-            resolved_key=resolved_key,
-            identity=identity,
-            payload=payload,
-            command_type=command_type.RANKING_ACTION,
-        )
+        from ..command_adapters.retired import reject_retired_command
+        reject_retired_command("RankingAction")
 
     return router
 

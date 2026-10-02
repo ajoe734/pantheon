@@ -24,7 +24,7 @@ async def _execute_command_background_task(task_fn: Callable[[str], Any], comman
     if asyncio.iscoroutine(res):
         await res
 
-from fastapi import HTTPException, Response
+from fastapi import BackgroundTasks, HTTPException, Response
 from fastapi.responses import JSONResponse
 
 try:
@@ -301,7 +301,6 @@ class CommandAdapterService:
         dispatch_command_fn: Optional[Callable[..., Any]] = None,
         publish_event: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
         gov_bff_idempotency: Optional[Dict[str, Dict[str, Any]]] = None,
-        final_contract_idempotency: Optional[Dict[str, Dict[str, Any]]] = None,
         check_read_surface_state: Optional[Callable[[], Optional[StalenessWarning]]] = None,
         validators: Optional[Dict[Any, Callable[..., None]]] = None,
         process_command_task: Optional[Callable[[str], Any]] = None,
@@ -338,9 +337,6 @@ class CommandAdapterService:
         self._process_command_task = process_command_task or (lambda cmd_id: _process_command_stub(cmd_id, command_store=self.command_store, read_store=self.read_store))
         self._submit_command_admission = submit_command_admission or self.submit_command_admission
 
-        self._final_contract_idempotency: Dict[str, Dict[str, Any]] = (
-            final_contract_idempotency if final_contract_idempotency is not None else {}
-        )
         self._gov_bff_idempotency: Dict[str, Dict[str, Any]] = (
             gov_bff_idempotency if gov_bff_idempotency is not None else {}
         )
@@ -666,7 +662,7 @@ class CommandAdapterService:
             foundation_context=foundation_ctx,
         )
 
-    def sem_command_response(
+    def _persist_confirm_token(
         self,
         *,
         command_type: CommandType,
@@ -692,22 +688,6 @@ class CommandAdapterService:
         if not server_generated_target:
             hash_body["target_id"] = target_id
         request_hash = _stable_json_hash(hash_body)
-        cache_key = f"{identity.operator_id}\x00{clean_key}"
-
-        existing = self._final_contract_idempotency.get(cache_key)
-        if existing:
-            if existing.get("request_hash") != request_hash:
-                raise self._raise_error(
-                    409,
-                    ErrorCode.IDEMPOTENCY_CONFLICT,
-                    "Idempotency key was reused with a different command payload",
-                    "The idempotency key already belongs to another command payload",
-                    precondition_failed="idempotency_key",
-                )
-            replay = dict(existing["result"])
-            replay.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
-            return JSONResponse(status_code=status_code, content=replay)
-
         store = self.command_store
         if store is not None:
             existing_record = store.get_command_by_idempotency_key(
@@ -860,106 +840,68 @@ class CommandAdapterService:
                 "snapshot_at": now,
             },
         }
-        self._final_contract_idempotency[cache_key] = {"request_hash": request_hash, "result": result_content}
         return JSONResponse(status_code=status_code, content=result_content)
 
     def submit_governance_action(
-        self,
-        *,
-        action_kind: str,
-        target_id: str,
-        action_id: str,
-        payload: Dict[str, Any],
-        identity: OperatorIdentity,
-        idempotency_key: str,
-    ) -> Dict[str, Any]:
-        """Single owner of governance command-admission normalization,
-        idempotency, concurrency-safety, and receipt projection.
+        self, *, action_kind: str, target_id: str, action_id: str,
+        payload: Dict[str, Any], identity: OperatorIdentity,
+        idempotency_key: str, authorization: Optional[str] = None,
+    ) -> JSONResponse:
+        return self.submit_resource_action(
+            ObjectType.REVIEW, target_id, action_id, idempotency_key,
+            identity, payload, CommandType.REVIEW_ACTION, authorization=authorization,
+        )
 
-        Called by ``GovernanceService.submit_governance_action`` (the only
-        caller) with exactly these keyword arguments.
-        """
+    def submit_resource_action(
+        self, entity_type: ObjectType, entity_id: str, action_id: str,
+        resolved_key: str, identity: OperatorIdentity, payload: Dict[str, Any],
+        command_type: CommandType, *, authorization: Optional[str] = None,
+        background_tasks: Any = None,
+    ) -> JSONResponse:
+        return self.sem_command_response(
+            command_type=command_type, target_type=entity_type, target_id=entity_id,
+            payload=payload, identity=identity, idempotency_key=resolved_key,
+            action_id=action_id, authorization=authorization,
+        )
+
+    def sem_command_response(
+        self, *, command_type: CommandType, target_type: ObjectType,
+        target_id: str, payload: Dict[str, Any], identity: OperatorIdentity,
+        idempotency_key: Optional[str], x_idempotency_key: Optional[str] = None,
+        status_code: int = 202, server_generated_target: bool = False,
+        terminal_on_persist: bool = False, trusted_evidence_producer: Optional[str] = None,
+        authorization: Optional[str] = None, action_id: Optional[str] = None,
+    ) -> JSONResponse:
+        """Translate resource routes into the canonical durable admission."""
+        if command_type in {
+            CommandType.CONFIRM_TOKEN_CREATE, CommandType.CONFIRM_TOKEN_REDEEM,
+            CommandType.CONFIRM_TOKEN_DELETE,
+        }:
+            return self._persist_confirm_token(
+                command_type=command_type, target_type=target_type, target_id=target_id,
+                payload=payload, identity=identity, idempotency_key=idempotency_key,
+                x_idempotency_key=x_idempotency_key, status_code=status_code,
+                server_generated_target=server_generated_target, terminal_on_persist=True,
+            )
         _reject_body_idempotency_key(payload)
-        p_p = payload.get("params") if isinstance(payload.get("params"), dict) else {}
-        verbs = {re.sub(r"[^a-z0-9]", "", str(v).lower()) for v in (action_id, payload.get("decision"), payload.get("action"), payload.get("verb"), payload.get("action_id"), payload.get("actionId"), payload.get("outcome"), p_p.get("decision"), p_p.get("action"), p_p.get("verb"), p_p.get("action_id"), p_p.get("actionId"), p_p.get("outcome")) if v}
-        if {"requestrevision", "requestapprovalrevision", "requestchanges", "requestchange"}.intersection(verbs) or payload.get("revision_notes") or payload.get("revisionNotes") or p_p.get("revision_notes") or p_p.get("revisionNotes"):
-            raise self._raise_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
-        entity_type, command_type = ObjectType.REVIEW, CommandType.REVIEW_ACTION
-        resolved_key = str(idempotency_key or "").strip()
-        request_hash = _stable_json_hash(
-            {"action_kind": action_kind, "target_id": target_id, "action_id": action_id, "payload": payload}
+        background = BackgroundTasks()
+        if server_generated_target:
+            # Stable across replay; the owner still allocates its own resource identity.
+            key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+            target_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{identity.operator_id}:{key}"))
+        result = self._submit_command_admission(
+            background_tasks=background, authorization=authorization,
+            idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key,
+            payload={
+                "command": command_type.value, "action": action_id,
+                "target": {"type": target_type.value, "id": target_id},
+                "params": dict(payload),
+                "audit_context": {"reason": str(payload.get("reason") or command_type.value)},
+            },
+            include_durable_meta=True,
         )
-
-        if _truthy_header(payload.get("dryRun") or payload.get("dry_run")) or _truthy_header(os.getenv("BFF_REQUEST_DRY_RUN")):
-            submitted_at = self._utc_now()
-            result = project_final_command_response(
-                command_id=f"dryrun-cmd-{uuid.uuid4().hex[:12]}",
-                command=command_type,
-                accepted_at=submitted_at,
-                status=CommandStatus.SUBMITTED,
-                staleness_warning=self.check_read_surface_state(),
-                meta=command_response_dry_run_meta(resolved_key),
-            )
-            return result.model_dump(mode="json") if hasattr(result, "model_dump") else result
-
-        existing = self._gov_bff_idempotency.get(resolved_key)
-        if existing is not None:
-            if existing.get("request_hash") != request_hash:
-                raise self._raise_error(
-                    409,
-                    ErrorCode.IDEMPOTENCY_CONFLICT,
-                    "Idempotency key was already used with a different payload",
-                    f"Key {resolved_key!r} is bound to a different request hash",
-                    precondition_failed="idempotency_conflict",
-                    suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-                )
-            return existing["result"]
-
-        store = self.command_store
-        if store is None:
-            raise self._raise_error(
-                503,
-                ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Command persistence is unavailable",
-                "CommandStore is not configured; refusing to accept unpersisted command",
-                precondition_failed="command_store_unconfigured",
-            )
-
-        staleness_warning = self.check_read_surface_state()
-        command_id = str(uuid.uuid4())
-        submitted_at = self._utc_now()
-        target = TargetObject(type=entity_type, id=target_id)
-        preconditions_checked = ["authentication", "authorization", "idempotency"]
-        audit_record = {
-            "operator_id": identity.operator_id,
-            "roles_at_submission": list(getattr(identity, "roles", []) or []),
-            "action_kind": action_kind,
-            "action_id": action_id,
-            "timestamp": submitted_at,
-            "idempotency_key": resolved_key,
-            "request_hash": request_hash,
-        }
-        audit_record["preconditions_checked"] = preconditions_checked
-        record = store.submit_command(
-            command_id=command_id,
-            command_type=command_type,
-            target=target,
-            submitted_at=submitted_at,
-            params={"action_id": action_id, **payload},
-            audit_context=audit_record,
-        )
-        assert record is not None
-
-        result = project_final_command_response(
-            command_id=command_id,
-            command=command_type,
-            accepted_at=submitted_at,
-            status=CommandStatus.SUBMITTED,
-            staleness_warning=staleness_warning,
-        )
-        res_dict = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
-        self._gov_bff_idempotency[resolved_key] = {"request_hash": request_hash, "result": res_dict}
-        return res_dict
+        content = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+        return JSONResponse(status_code=202, content=content, background=background)
 
     def create_confirm_token(
         self,
@@ -1346,6 +1288,8 @@ class CommandAdapterService:
         identity = self.extract_identity(authorization, mfa_token=x_mfa_token)
         payload = canonicalize_wrapped_payload(payload)
         cmd = normalize_operator_command_payload(payload)
+        from .retired import reject_unowned_action
+        reject_unowned_action(cmd)
 
         candidate_key = str(idempotency_key or x_idempotency_key or "").strip() or None
         foundation_context = build_foundation_command_context(
@@ -1452,6 +1396,12 @@ class CommandAdapterService:
             raise foundation_bff_error(exc, foundation_context=foundation_context) from exc
 
         stored_params = stored_command_params(cmd, identity, payload)
+        tenant_id = identity.claims.get("tenant_id")
+        asserted_tenant = stored_params.get("tenant_id")
+        if asserted_tenant and asserted_tenant != tenant_id:
+            raise self._raise_error(403, ErrorCode.FORBIDDEN, "Tenant mismatch", "Use the authenticated tenant")
+        if tenant_id:
+            stored_params["tenant_id"] = tenant_id
         stored_params["idempotency_key"] = resolved_key
         stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
         canonicalize_validated_precondition_evidence(

@@ -1315,6 +1315,7 @@ class GovernanceService:
         payload: Mapping[str, Any],
         identity: Any,
         idempotency_key: str,
+        authorization: Optional[str] = None,
     ) -> Any:
         if self.submit_action is None:
             from fastapi import HTTPException
@@ -1340,12 +1341,14 @@ class GovernanceService:
                 payload=dict(payload),
                 identity=identity,
                 idempotency_key=idempotency_key,
+                authorization=authorization,
             )
         )
 
     def governance_ledger(
         self,
         *,
+        approval_records: Optional[List[Dict[str, Any]]] = None,
         source_type: Optional[str],
         status: Optional[str],
         q: str,
@@ -1354,8 +1357,8 @@ class GovernanceService:
     ) -> Dict[str, Any]:
         entries_by_id: Dict[str, Dict[str, Any]] = {}
         for dataset, records in (
-            ("approval_queue_items", self.list_approval_queue()),
-            ("approval_decisions", self._all_approval_decisions()),
+            ("approval_queue_items", approval_records if approval_records is not None else self.list_approval_queue()),
+            ("approval_decisions", approval_records if approval_records is not None else self._all_approval_decisions()),
         ):
             for item in records:
                 decision_id = record_id(item, "decision_id", "item_id", "id")

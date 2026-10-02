@@ -151,16 +151,17 @@ def http_request_json(
     mfa_token: Optional[str] = None,
     timeout: Optional[int] = None,
     tenant_id: Optional[str] = None,
+    headers: Optional[Dict[str, str]] = None,
 ) -> Any:
     """Execute HTTP request to a domain authority endpoint and parse JSON response."""
     from services.control_plane.bff import command_executor
     normalized_method = method.upper()
-    if normalized_method == "GET" and hasattr(command_executor, "_get_json"):
+    if headers is None and normalized_method == "GET" and hasattr(command_executor, "_get_json"):
         return command_executor._get_json(url, auth_token=auth_token, mfa_token=mfa_token, tenant_id=tenant_id)
-    if normalized_method == "POST" and hasattr(command_executor, "_post_json"):
+    if headers is None and normalized_method == "POST" and hasattr(command_executor, "_post_json"):
         return command_executor._post_json(url, payload or {}, auth_token=auth_token, mfa_token=mfa_token, tenant_id=tenant_id)
 
-    headers = _headers(payload, auth_token, mfa_token, tenant_id)
+    headers = {**(headers or {}), **_headers(payload, auth_token, mfa_token, tenant_id)}
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=data, headers=headers, method=normalized_method)
     try:

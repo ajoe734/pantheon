@@ -616,11 +616,11 @@ def create_governance_router(
     ) -> Dict[str, Any]:
         identity = _identity(authorization)
         resolved_state = decision_state if decision_state is not None else state
-        items = _service().list_approval_queue(
-            decision_types=split_csv(decision_type),
-            risk_levels=split_csv(risk_level),
-            decision_states=split_csv(resolved_state),
-        )
+        items = await _forward(approval_owner.list_decisions, authorization, state=resolved_state)
+        if decision_type:
+            items = [i for i in items if i.get("decision_type") in split_csv(decision_type)]
+        if risk_level:
+            items = [i for i in items if i.get("risk_level") in split_csv(risk_level)]
         response = _paged(
             items,
             page_token=page_token,
@@ -932,7 +932,9 @@ def create_governance_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = _identity(authorization)
+        decisions = await _forward(approval_owner.list_decisions, authorization)
         response = _service().governance_ledger(
+            approval_records=decisions,
             source_type=source_type,
             status=status,
             q=q,
@@ -979,19 +981,9 @@ def create_governance_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Any:
-        identity = _identity(authorization, operator=True)
-        review_id = str(payload.get("review_id") or payload.get("id") or uuid.uuid4())
-        try:
-            return await _service().submit_governance_action(
-                action_kind="review",
-                target_id=review_id,
-                action_id="submit",
-                payload=payload,
-                identity=identity,
-                idempotency_key=_idempotency_key(idempotency_key, x_idempotency_key),
-            )
-        except RuntimeError:
-            _fail(409, "IDEMPOTENCY_CONFLICT", "Idempotency key conflict", "The key is bound to another payload")
+        _identity(authorization, operator=True)
+        _fail(410, "ACTION_RETIRED", "Review creation has no executing owner",
+              "Use /bff/approvals for Governance decisions")
 
     @router.get("/bff/reviews/{review_id}")
     async def bff_get_review(
@@ -1042,9 +1034,11 @@ def create_governance_router(
         params = dict(payload)
         params["decision"] = vote_verb
         key = _idempotency_key(idempotency_key, x_idempotency_key, required=False)
-        result = await _forward(approval_owner.decide, authorization, clean_id, params, key)
-        _publish_decision(clean_id, result, identity)
-        return JSONResponse(status_code=202, content=result)
+        return await _service().submit_governance_action(
+            action_kind="review", target_id=clean_id, action_id=vote_verb,
+            payload=params, identity=identity, idempotency_key=key,
+            authorization=authorization,
+        )
 
     @router.get("/bff/reviews/{review_id}/validators")
     async def bff_review_validators(
