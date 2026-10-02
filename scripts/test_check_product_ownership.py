@@ -110,6 +110,57 @@ def test_validate_mutation_routes_rejects_duplicate_route() -> None:
     assert any("Duplicate route" in err for err in errors)
 
 
+@pytest.mark.parametrize("drift", ["omitted", "retired", "duplicate"])
+def test_mutation_route_gate_rejects_inventory_drift(drift: str) -> None:
+    """Neither a stale row nor a newly mounted route may be silently filtered."""
+    from fastapi import APIRouter, FastAPI
+
+    app = FastAPI()
+    router = APIRouter()
+
+    @router.post("/plans/{plan_id}")
+    def create_plan(plan_id: str) -> dict[str, str]:
+        return {"id": plan_id}
+
+    app.include_router(router)
+    row = {
+        "route": "POST /plans/{param}",
+        "command": "create_plan",
+        "router": "plans",
+        "application_owner": "plan_application",
+        "store_owner": "plan_store",
+        "table_or_stream": "plans",
+        "outbox_subject": None,
+        "idempotency_scope": "tenant:key",
+        "readback_projection": "plan_detail",
+        "legacy_path": None,
+        "legacy_removal_wave": None,
+    }
+    assert validate_mutation_routes({"mutation_routes": [row]}, live_app=app) == []
+    if drift == "omitted":
+        rows = [{**row, "route": "POST /different-plan"}]
+        expected = "Mounted mutation routes missing from inventory"
+    elif drift == "retired":
+        rows = [row, {**row, "route": "POST /retired-plan"}]
+        expected = "Inventory declares mutation routes not mounted"
+    else:
+        rows = [row, dict(row)]
+        expected = "Duplicate route"
+    errors = validate_mutation_routes({"mutation_routes": rows}, live_app=app)
+    assert any(expected in error for error in errors), errors
+
+
+def test_servant_proposal_inventory_describes_draft_persistence_not_dispatch() -> None:
+    routes = load_ownership_manifest(DEFAULT_MANIFEST)["mutation_routes"]
+    proposal = next(row for row in routes if row["route"] == (
+        "POST /bff/agora/workshops/{param}/research-plans/servant-proposal"
+    ))
+    assert proposal["application_owner"] == "AgoraResearchService.create_workshop_plan"
+    assert proposal["store_owner"] == "agora.research.store.make_research_plan_store"
+    assert proposal["outbox_subject"] is None
+    assert proposal["idempotency_scope"] == "user_id:tenant_id:endpoint:Idempotency-Key"
+
+
 def test_validate_worker_ownership_rejects_duplicate_lease() -> None:
     sample = {
         "workers": [
