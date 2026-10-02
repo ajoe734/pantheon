@@ -690,6 +690,10 @@ class CapitalBffAuthorityHarness:
         "PANTHEON_GOVERNANCE_DATA_DIR",
         "PANTHEON_PERSONA_DATA_DIR",
         "PANTHEON_PERSISTENCE_POSTURE",
+        "PANTHEON_BFF_JWT_SECRET",
+        "CAPITAL_JWT_SECRET",
+        "CAPITAL_AUTH_MODE",
+        "CAPITAL_ALLOWED_CALLER_SERVICES",
     )
 
     def __init__(self, root: Path, *, seed_allocation: bool = True) -> None:

@@ -489,8 +489,9 @@ def create_runtime_router(
         request_hash = _stable_json_hash(
             {"route": "POST /api/v1/bindings", "tenant_id": tenant_id, "payload": payload}
         )
+        cache_actor = f"{identity.operator_id}\x00{tenant_id or ''}"
         try:
-            cached = _capital_bff_idempotency_check(identity.operator_id, resolved_key, request_hash, tenant_id=tenant_id)
+            cached = _capital_bff_idempotency_check(cache_actor, resolved_key, request_hash)
         except TypeError:
             cached = _capital_bff_idempotency_check(identity.operator_id, resolved_key, request_hash)
         if cached is not None:
@@ -503,7 +504,7 @@ def create_runtime_router(
             raise _bff_error(422, ErrorCode.VALIDATION_FAILED, f"{missing} is required", f"Persona capital binding requires a non-empty {missing}", precondition_failed=missing)
         req_id = payload.get("binding_id") or payload.get("id")
         try:
-            binding_id = _stable_capital_resource_id("binding", operator_id=identity.operator_id, idempotency_key=resolved_key, requested_id=req_id, tenant_id=tenant_id)
+            binding_id = _stable_capital_resource_id("binding", operator_id=f"{identity.operator_id}:{tenant_id or ''}", idempotency_key=resolved_key, requested_id=req_id)
         except TypeError:
             binding_id = _stable_capital_resource_id("binding", operator_id=identity.operator_id, idempotency_key=resolved_key, requested_id=req_id)
         role = str(payload.get("role") or "live_owner").strip()
@@ -555,7 +556,7 @@ def create_runtime_router(
         sleeve = result.get("capital_sleeve_id") or (result.get("metadata") or {}).get("capital_sleeve_id") or capital_sleeve_id
         result = {**result, "capital_sleeve_id": sleeve, "status": result.get("status") or "pending"}
         try:
-            _capital_bff_idempotency_store(identity.operator_id, resolved_key, request_hash, result, tenant_id=tenant_id)
+            _capital_bff_idempotency_store(cache_actor, resolved_key, request_hash, result)
         except TypeError:
             _capital_bff_idempotency_store(identity.operator_id, resolved_key, request_hash, result)
         return result
