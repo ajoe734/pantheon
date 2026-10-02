@@ -1,0 +1,47 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "CAPITAL-POLICY-CONVERGENCE-20261002",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "target_repo": "ajoe734/pantheon",
+  "delivery_branch": "task/CAPITAL-POLICY-CONVERGENCE-20261002",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "66bd4e431db07403c10e0660b91cf4b5cfaed00a",
+  "validated_source_commit": "e5a2cb12a6505490f2c1800bbbb2c0d9ae2ccc68",
+  "change_class": "simplify",
+  "production_lines": {"added": 105, "deleted": 132, "net": -27, "budget": 0},
+  "scope": "Source-only U07: existing Capital owner and RiskPolicy implementation; consumes merged #6088 and #6091 without reimplementing forwarding or reader authentication.",
+  "reproduction": [
+    "At base: _tenant_of(SimpleNamespace(tenant_id='', metadata={'tenant_id': 'B'})) returned 'B'. It now returns ''. Explicit None likewise cannot adopt metadata.",
+    "At base: RiskPolicy.from_mapping({'gross_limit': 'NaN'}).gross_limit returned None. It now raises RiskPolicyError.",
+    "At base: Capital separately validated raw policy, parsed once, then reparsed in every evaluation. Guard now parses once per operation; existing RiskPolicy evaluator owns required Capital facts before context normalization."
+  ],
+  "preserved_boundaries": [
+    "Canonical and legacy limit aliases, explicit canonical precedence, zero limits, and rejection of malformed shadowed aliases.",
+    "Owner-derived weights, gross/net exposure, leverage, turnover and stage remain deterministic. No provider judgment or caller-metadata observation source was added.",
+    "Liquidity, drawdown, canary scale and other unavailable configured facts fail closed. Metadata with plausible timestamps cannot provide an observation; no stale observation fallback exists.",
+    "Empty-pool allocation-limit deferral and canary-only scale applicability remain. Explicit paper policies remain enforced; live/canary approvals and safe-mode gates remain.",
+    "Formal ownership dominates owner reads, DTOs and guard checks. PG column null/blank remains unowned; PG adapters never promote metadata. Only absent-field isolated JSON records retain server-stamped metadata compatibility.",
+    "No VM, SSH, hosted endpoint, hosted migration, deployment, existing-data cleanup or real-capital operation was performed. This evidence is not hosted acceptance."
+  ],
+  "validation": {
+    "interpreter": ".venv-pantheon/bin/python3, provisioned via scripts/dev/provision_python_distribution.py; psycopg[binary] 3.2.9 installed only in this checkout venv",
+    "postgres": "Task-owned postgres:16-alpine container capital-policy-convergence-20261002-pg, loopback port 35432, disposable pantheon database; CAPITAL_TEST_DSN explicitly overrides the shared/default test endpoint.",
+    "baseline_capital": {"command": ".venv-pantheon/bin/python3 -m pytest -q services/capital", "result": "204 passed, 9 skipped (PG driver unavailable), exit 0; skips are not passes"},
+    "capital_final": {"command": "CAPITAL_TEST_DSN=<task-owned-loopback-DSN> timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/capital --tb=short", "result": "345 passed, 0 skipped, 1 deprecation warning, 220.47s, exit 0"},
+    "convergence": {"command": "CAPITAL_TEST_DSN=<task-owned-loopback-DSN> timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/capital/test_policy_convergence.py --tb=short", "result": "132 passed, exit 0"},
+    "consumers": {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/promotion/test_service.py services/runtime-manager/test_runtime_manager.py services/optimizer-svc/test_portfolio_synthesis.py services/control-plane/governance/test_deployment_plan.py",
+      "result": "141 passed, 6 subtests passed, 1 failed, exit 1",
+      "failure": "services/promotion/test_service.py::test_decide_failure_does_not_persist_partial_under_review_state expects 'requires at least one condition', but the existing owner returns 'requires nonempty conditions'. HTTP 422 is correct; this is an unrelated pre-existing wording assertion.",
+      "baseline_confirmation": "Ran the same single test after loading services.capital.risk_policy byte-for-byte from git show 66bd4e431db07403c10e0660b91cf4b5cfaed00a:services/capital/risk_policy.py via importlib; identical failure, exit 1. No promotion source or assertions were changed."
+    },
+    "additional_consumers": {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/deployment/test_service.py services/optimizer-svc/test_allocation_synthesis_method.py services/runtime-manager/test_p0_tw_paper_activate_authority_contract.py",
+      "result": "32 passed, exit 0"
+    },
+    "budget": {"command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD --change-class simplify --budget 0", "result": "passed, production net -27"},
+    "whitespace": {"command": "git diff --check origin/dev...HEAD", "result": "exit 0"}
+  },
+  "review": "Pending independent exact-head review by Claude. PR, immutable head and manifest blob are bound by the governed handoff; this manifest does not claim review approval or merge."
+}
