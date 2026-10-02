@@ -507,8 +507,8 @@ def test_dataset_surface_status_full_app_parity(state: str, monkeypatch: pytest.
 # exercised through the mounted composition root (this reviewed composition suite).
 
 MUTATION_ROUTES = [
-    ("POST", "/bff/jobs/j1/actions/retry", 202, None, {"reason": "operator retry"}),
-    ("POST", "/bff/rankings/r1/actions/publish", 202, None, {}),
+    ("POST", "/bff/jobs/j1/actions/retry", 410, "VALIDATION_FAILED", {"reason": "operator retry"}),
+    ("POST", "/bff/rankings/r1/actions/publish", 410, "VALIDATION_FAILED", {}),
     ("POST", "/api/v1/personas/p1/strategy-discovery", 202, None, {"query": "momentum", "lookback_days": 30}),
     ("POST", "/bff/personas/p1/strategy-discovery", 202, None, {"query": "momentum", "lookback_days": 30}),
     ("POST", "/api/v1/personas/p1/strategy-matches/m1/actions", 202, None, {"action": "promote_seed_candidate", "notes": "operator approved"}),
@@ -562,10 +562,11 @@ def test_operator_token_keeps_handler_behavior(mutation_roles_client, method, pa
         assert "data" in body
         assert isinstance(body["data"], (dict, list))
 
-def test_reviewer_token_accepted_on_ranking_action(mutation_roles_client):
+def test_reviewer_token_cannot_execute_retired_ranking_action(mutation_roles_client):
     r = mutation_roles_client.post("/bff/rankings/r1/actions/publish", json={}, headers={
         "Authorization": "Bearer rev-1:reviewer", "Idempotency-Key": "k-reviewer-ranking"})
-    assert r.status_code == 202, r.text
+    assert r.status_code == 410, r.text
+    assert r.json()["error"]["details"]["replacement"] == "GET /bff/rankings"
 
 @pytest.mark.parametrize("missing_reader", [True, False])
 def test_lifecycle_readiness_reports_unavailable_projection(monkeypatch, missing_reader):
