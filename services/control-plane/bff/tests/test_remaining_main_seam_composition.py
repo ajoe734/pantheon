@@ -146,25 +146,19 @@ class _FakeCapitalStore:
     def get_rebalance(self, requested_id: str) -> Optional[Dict[str, Any]]:
         return self.rebalances.get(requested_id)
 
-    def create_capital_pool(self, payload: Dict[str, Any], **_: Any) -> Dict[str, Any]:
+    def create_pool(self, payload: Dict[str, Any], **_: Any) -> Dict[str, Any]:
         if self.fail_writes:
             raise RuntimeError("Underlying pool store write failure")
         item = {"id": str(payload.get("id") or "pool-new"), "status": "active", **deepcopy(payload)}
         self.pools[item["id"]] = item
         return item
 
-    def patch_capital_pool(self, payload: Dict[str, Any], pool_id: str, **_: Any) -> Dict[str, Any]:
-        if self.fail_writes:
-            raise RuntimeError("Underlying pool patch failure")
-        self.pools[pool_id].update(deepcopy(payload))
-        return self.pools[pool_id]
-
-    def apply_rebalance(self, payload: Dict[str, Any], rebalance_id: str, **_: Any) -> Dict[str, Any]:
+    def apply_rebalance(self, payload: Dict[str, Any], *, target_id: str, **_: Any) -> Dict[str, Any]:
         if self.fail_writes:
             raise RuntimeError("Underlying rebalance apply failure")
         self.apply_rebalance_calls += 1
-        self.rebalances[rebalance_id]["status"] = "applied"
-        return {"rebalance_id": rebalance_id, "state": "applied", **deepcopy(payload)}
+        self.rebalances[target_id]["status"] = "applied"
+        return {"rebalance_id": target_id, "state": "applied", **deepcopy(payload)}
 
 
 class _FakePerformanceStore:
@@ -425,7 +419,7 @@ class TestCapitalMountedComposition:
         body = response.json()
         error = body.get("detail", {}).get("error") or body.get("error", {})
         assert error.get("code") in ("SERVICE_UNAVAILABLE", "DEPENDENCY_UNAVAILABLE")
-        assert "mutation method" in str(error).lower()
+        assert "does not expose" in str(error).lower()
 
     def test_capital_router_tenant_isolation(self) -> None:
         # Tenant Prime operator should only see Tenant Prime pools

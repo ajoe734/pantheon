@@ -266,6 +266,148 @@ def test_capital_mutations_bind_verified_actor_role_and_tenant():
                 os.environ[key] = value
 
 
+@pytest.fixture()
+def strict_client():
+    """Capital with real JWT verification; yields ``(client, headers_for(roles, actor))``."""
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    tempdir = tempfile.mkdtemp(prefix="capital_strict_")
+    env = {
+        "CAPITAL_DATA_DIR": tempdir, "PANTHEON_GOVERNANCE_DATA_DIR": tempdir, "CAPITAL_STORE_BACKEND": "json",
+        "CAPITAL_AUDIT_BACKEND": "jsonl", "CAPITAL_AUTH_DISABLED": "false", "CAPITAL_AUTH_MODE": "strict",
+        "CAPITAL_JWT_SECRET": "capital-test-secret", "CAPITAL_ALLOWED_CALLER_SERVICES": "control-plane-bff",
+    }
+    backup = {key: os.environ.get(key) for key in env}
+    os.environ.update(env)
+    try:
+        sys.modules.pop("services.capital.main", None)
+        module = importlib.reload(importlib.import_module("services.capital.main"))
+
+        def headers_for(roles, actor, tenant="tenant-capital-a"):
+            token = encode_jwt_hs256(
+                {"sub": "control-plane-bff", "service": "control-plane-bff", "roles": list(roles),
+                 "allowed_tenants": [tenant], "delegated_actor_id": actor, "exp": int(time.time()) + 300},
+                secret="capital-test-secret",
+            )
+            return {"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant, "X-Pantheon-Service": "control-plane-bff"}
+
+        yield TestClient(module.app), headers_for
+    finally:
+        for key, value in backup.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def test_verified_operator_runs_paper_status_lifecycle_and_other_roles_are_denied(strict_client):
+    test_client, headers_for = strict_client
+    operator = headers_for(["operator"], "operator-1")
+    pool = _pool_payload(
+        actor_id="operator-1", actor_role="operator", pool_id="pool-paper", risk_policy_ref=None,
+        approval_decision_id=None, metadata={"execution_context": "paper"},
+    )
+    assert test_client.post("/api/capital-pools", json=pool, headers=operator).status_code == 201
+    binding = _binding_payload(
+        actor_id="operator-1", actor_role="operator", binding_id="binding-paper", capital_pool_id="pool-paper",
+        role="paper_owner", allowed_deployment_scope="paper", capital_sleeve_id=None,
+    )
+    assert test_client.post("/api/bindings", json=binding, headers=operator).status_code == 201
+
+    as_operator = {"actor_id": "operator-1", "actor_role": "operator"}
+    activated = test_client.post("/api/bindings/binding-paper/activate", json=as_operator, headers=operator)
+    assert activated.status_code == 200, activated.text
+    assert activated.json()["status"] == "active" and activated.json()["approval_decision_id"] is None
+    suspend = {**as_operator, "status": "suspended"}
+    assert test_client.patch("/api/bindings/binding-paper/status", json=suspend, headers=operator).status_code == 200
+    assert test_client.post("/api/bindings/binding-paper/activate", json=as_operator, headers=operator).status_code == 200
+    assert test_client.patch("/api/capital-pools/pool-paper/status", json=suspend, headers=operator).status_code == 200
+    reactivate = {**as_operator, "status": "active"}
+    assert test_client.patch("/api/capital-pools/pool-paper/status", json=reactivate, headers=operator).status_code == 200
+
+    # Viewer/reviewer/approver tokens, forged body roles and forged body actors never gain these writes.
+    for roles, role in ((["viewer"], "viewer"), (["reviewer"], "reviewer"), (["approver"], "approver")):
+        denied = test_client.patch(
+            "/api/capital-pools/pool-paper/status",
+            json={"actor_id": "other-1", "actor_role": role, "status": "suspended"},
+            headers=headers_for(roles, "other-1"),
+        )
+        assert denied.status_code == 403, (role, denied.text)
+    forged_role = test_client.post(
+        "/api/bindings/binding-paper/activate", json={"actor_id": "operator-1", "actor_role": "persona.admin"}, headers=operator
+    )
+    assert forged_role.status_code == 403 and "verified token" in forged_role.json()["detail"]
+    forged_actor = test_client.post(
+        "/api/bindings/binding-paper/activate", json={"actor_id": "attacker", "actor_role": "operator"}, headers=operator
+    )
+    assert forged_actor.status_code == 403 and "authenticated actor" in forged_actor.json()["detail"]
+    foreign = test_client.post(
+        "/api/bindings/binding-paper/activate", json=as_operator, headers=headers_for(["operator"], "operator-1", "tenant-capital-b")
+    )
+    assert foreign.status_code == 404  # another tenant cannot see or activate this binding
+
+
+def test_operator_cannot_activate_a_live_binding_without_governance_approval(strict_client):
+    test_client, headers_for = strict_client
+    operator = headers_for(["operator"], "operator-1")
+    pool = _pool_payload(actor_id="operator-1", actor_role="operator", metadata={"execution_context": "paper"})
+    assert test_client.post("/api/capital-pools", json=pool, headers=operator).status_code == 201
+    live = _binding_payload(actor_id="operator-1", actor_role="operator")
+    assert test_client.post("/api/bindings", json=live, headers=operator).status_code == 201
+    denied = test_client.post(
+        "/api/bindings/binding-001/activate", json={"actor_id": "operator-1", "actor_role": "operator"}, headers=operator
+    )
+    assert denied.status_code == 403
+    assert "approval" in denied.json()["detail"].lower()
+
+
+def test_owner_identity_uses_the_formal_tenant_and_blank_legacy_rows_fail_closed(client):
+    from types import SimpleNamespace
+
+    from services.capital import pg_store
+    from services.control_plane.governance.capital_pool import CapitalPool
+
+    module = sys.modules["services.capital.main"]
+    claimed = {"tenant_id": "tenant-a"}  # caller-writable metadata claim
+    assert module._tenant_match(SimpleNamespace(tenant_id="tenant-a", metadata={}), "tenant-a")
+    assert not module._tenant_match(SimpleNamespace(tenant_id="tenant-b", metadata=claimed), "tenant-a")
+    assert not module._tenant_match(SimpleNamespace(tenant_id="", metadata=claimed), "tenant-a")
+    assert module._tenant_match(SimpleNamespace(metadata=claimed), "tenant-a")  # JSON-store record: server-stamped metadata
+
+    legacy = {"pool_id": "pool-legacy", "name": "Legacy", "owner_id": "fund", "owner_type": "fund",
+              "status": "active", "created_at": "2026-01-01T00:00:00Z", "metadata": claimed}
+    loaded = pg_store._load_entity(CapitalPool, ("pool-legacy", legacy, None))
+    assert loaded.tenant_id == "" and loaded.metadata == claimed
+    assert not module._tenant_match(loaded, "tenant-a")
+    stamped = pg_store._load_entity(CapitalPool, ("pool-legacy", legacy, "tenant-a"))
+    assert module._tenant_match(stamped, "tenant-a") and not module._tenant_match(stamped, "tenant-b")
+
+
+def test_binding_conflict_redaction_denies_a_missing_caller_tenant(client):
+    from services.control_plane.governance.persona_capital_binding import (
+        PersonaCapitalBinding,
+        PersonaCapitalBindingError,
+    )
+
+    test_client, _ = client
+    module = sys.modules["services.capital.main"]
+    assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+    holder = PersonaCapitalBinding(
+        binding_id="binding-holder", persona_id="persona-x", capital_pool_id="pool-001", role="live_owner",
+        allowed_deployment_scope="live", status="active", created_at="2026-01-01T00:00:00Z",
+        approval_decision_id="approval-x", metadata={"tenant_id": "tenant-other"},
+    )
+    module.binding_store.create(holder)
+    service = module.get_capital_service()
+    conflict = PersonaCapitalBindingError(
+        "Single-live-owner rule violated: pool 'pool-001' already has an active live_owner binding (binding-holder)."
+    )
+    for caller in (None, "tenant-a"):  # neither a missing nor a different tenant may learn the holder
+        with pytest.raises(PersonaCapitalBindingError) as raised:
+            service._redact_binding_conflict_error(conflict, caller, None)
+        assert "binding-holder" not in str(raised.value)
+
+
 def test_write_authority_matrix(client):
     test_client, _ = client
     response = test_client.get("/api/capital/write-authority")

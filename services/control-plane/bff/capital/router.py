@@ -20,7 +20,6 @@ from services.control_plane.bff.models import ErrorCode
 from .service import (
     CapitalAuthorityUnavailable,
     CapitalNotFound,
-    CapitalOperationRetired,
     CapitalService,
     CapitalValidationError,
     capital_pool_id,
@@ -121,8 +120,6 @@ def _error_for_capital_exception(exc: Exception, bff_error: Callable[..., Except
         return bff_error(exc.code, code, "Capital owner rejected the request", str(detail or exc.reason))
     if isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError)):
         return bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Capital authority unavailable", str(exc))
-    if isinstance(exc, CapitalOperationRetired):
-        return bff_error(410, ErrorCode.OPERATION_NOT_ALLOWED, "Capital operation retired", str(exc))
     if isinstance(exc, ValueError):
         return bff_error(422, ErrorCode.VALIDATION_FAILED, "Capital request validation failed", str(exc))
     if isinstance(exc, CapitalNotFound):
@@ -286,22 +283,6 @@ def create_capital_router(
     ) -> Dict[str, Any]:
         return await get_capital_pool(pool_id, authorization)
 
-    # 6. Patch pool properties / limits through the owner.
-    @router.patch("/bff/capital-pools/{pool_id}")
-    async def bff_patch_capital_pool(
-        pool_id: str,
-        payload: Dict[str, Any] = Body(...),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_operator_role(identity)
-        _pool_or_error(pool_id)
-        key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("patch_pool", payload, identity=identity, authorization=authorization, key=key, target_id=pool_id)
-        return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
-
     # 7. Capital pool action command.
     @router.post("/bff/capital-pools/{pool_id}/actions/{action_id}", status_code=202)
     async def bff_capital_pool_action(
@@ -398,25 +379,6 @@ def create_capital_router(
         row = _rebalance_or_error(rebalance_id)
         meta = _surface_meta(snapshot_at=utc_now(), dataset="rebalances", surface_key="rebalance", dataset_surface_status=dataset_surface_status, snapshot_meta=snapshot_meta)
         return _readback_response(row, meta=meta)
-
-    # 15. Typed action against a rebalance record.
-    @router.post("/bff/rebalances/{rebalance_id}/actions/{action_id}", status_code=202)
-    async def bff_rebalance_action(
-        rebalance_id: str,
-        action_id: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_operator_role(identity)
-        _rebalance_or_error(rebalance_id)
-        if not str(action_id).strip():
-            raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Rebalance action is required")
-        key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("rebalance_action", {**payload, "action_id": action_id}, identity=identity, authorization=authorization, key=key, target_id=rebalance_id)
-        return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
 
     def _portfolio_or_error() -> List[Dict[str, Any]]:
         try:
@@ -558,21 +520,17 @@ def create_capital_router(
         }
         return _readback_response(data, meta={"snapshot_at": utc_now(), "policy": "read_only_capital_board_pack"})
 
-    # 25. Canonical rebalance patch command.
-    @router.patch("/bff/rebalances/{rebalance_id}")
-    async def sem_patch_rebalance_command(
-        rebalance_id: str,
-        payload: Dict[str, Any] = Body(...),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ) -> Dict[str, Any]:
-        identity = extract_identity(authorization)
-        require_operator_role(identity)
-        _rebalance_or_error(rebalance_id)
-        key = _resolve_idempotency_key(idempotency_key, x_idempotency_key)
-        result, replayed = _idempotent_write("patch_rebalance", payload, identity=identity, authorization=authorization, key=key, target_id=rebalance_id)
-        return _readback_response(result, meta={"snapshot_at": utc_now(), "idempotency_key": key, "replayed": replayed})
+    async def retired_write(authorization: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+        require_operator_role(extract_identity(authorization))
+        raise bff_error(410, ErrorCode.OPERATION_NOT_ALLOWED, "Capital operation retired", "Capital has no owner endpoint for this write")
+
+    # No Capital owner endpoint exists for these writes: they are retired, never simulated.
+    for method, path in (
+        ("PATCH", "/bff/capital-pools/{pool_id}"),
+        ("PATCH", "/bff/rebalances/{rebalance_id}"),
+        ("POST", "/bff/rebalances/{rebalance_id}/actions/{action_id}"),
+    ):
+        router.add_api_route(path, retired_write, methods=[method])
 
     return router
 

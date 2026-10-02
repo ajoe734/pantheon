@@ -102,10 +102,6 @@ class CapitalAuthorityUnavailable(CapitalServiceError):
     """A write was requested but no Capital write authority is available."""
 
 
-class CapitalOperationRetired(CapitalServiceError):
-    """The operation has no Capital owner endpoint and is retired, not simulated."""
-
-
 def stable_digest(value: Any) -> str:
     """Return a stable digest for allocation and rebalance lineage records."""
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
@@ -199,9 +195,6 @@ def _read_collection(store: Any, method_name: str, **kwargs: Any) -> List[Dict[s
     return [deepcopy(dict(item)) for item in (value or []) if isinstance(item, Mapping)]
 
 
-_OWNER_OPERATIONS = frozenset({"create_pool", "pool_action", "create_rebalance", "apply_rebalance"})
-
-
 @dataclass
 class CapitalService:
     """Store/authority facade shared by all 25 Capital routes."""
@@ -293,8 +286,6 @@ class CapitalService:
 
     def write(self, operation: str, payload: Dict[str, Any], **context: Any) -> Dict[str, Any]:
         """Forward a mutation to the injected Capital owner writer and return its readback."""
-        if operation not in _OWNER_OPERATIONS:
-            raise CapitalOperationRetired(f"{operation} has no Capital owner operation and is retired")
         authority = self.get_capital_authority() if self.get_capital_authority else None
         method = getattr(authority, operation, None)
         if not callable(method):

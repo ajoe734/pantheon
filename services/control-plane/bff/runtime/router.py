@@ -550,7 +550,7 @@ def create_runtime_router(
             "metadata": metadata,
         }
         try:
-            result = create_capital_binding(owner_payload)
+            result = create_capital_binding(owner_payload, auth_token=authorization)
         except Exception as exc:
             _raise_capital_owner_error(exc, operation="create persona capital binding")
             raise

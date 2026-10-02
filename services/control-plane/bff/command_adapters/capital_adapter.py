@@ -192,16 +192,9 @@ class CapitalCommandAdapter(DomainCommandAdapter):
         readback = self.writer.pool_action(
             {**params, "action_id": action_id}, target_id=pool_id, **self._ctx(params, auth_token)
         )
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="CapitalPool",
-            entity_id=pool_id,
-            action_id=action_id,
-            status="executed",
-            dispatch_path=capital_url(f"/api/capital-pools/{quote(pool_id, safe='')}/status"),
-            domain_receipt=readback,
-            authoritative_readback=readback,
-            extra={"pool_id": pool_id, "pool_state": readback.get("status")},
+        return self._receipt(
+            command_id, "CapitalPool", pool_id, action_id, "executed", f"/api/capital-pools/{quote(pool_id, safe='')}/status",
+            readback, pool_id=pool_id, pool_state=readback.get("status"),
         )
 
     def _rebalance(self, command_id, action_id, params, auth_token) -> Dict[str, Any]:
@@ -214,16 +207,8 @@ class CapitalCommandAdapter(DomainCommandAdapter):
             )
         body = self.writer.create_rebalance(params, **self._ctx(params, auth_token))
         rebalance_id = str(body.get("rebalance_id") or body.get("id") or "").strip()
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="Rebalance",
-            entity_id=rebalance_id,
-            action_id="RebalanceProposal",
-            status="created",
-            dispatch_path=capital_url("/api/rebalances"),
-            domain_receipt=body,
-            authoritative_readback=body,
-            extra={"rebalance_id": rebalance_id},
+        return self._receipt(
+            command_id, "Rebalance", rebalance_id, "RebalanceProposal", "created", "/api/rebalances", body, rebalance_id=rebalance_id
         )
 
     def _binding(self, command_id, binding_id, action_id, params, auth_token) -> Dict[str, Any]:
@@ -236,14 +221,15 @@ class CapitalCommandAdapter(DomainCommandAdapter):
             readback = self.writer.binding_status(
                 {"status": params.get("status") or action_id}, target_id=binding_id, **ctx
             )
+        return self._receipt(
+            command_id, "PersonaCapitalBinding", binding_id, action_id, "executed", f"/api/bindings/{quote(binding_id, safe='')}",
+            readback, binding_id=binding_id,
+        )
+
+    @staticmethod
+    def _receipt(command_id, entity_type, entity_id, action_id, status, path, readback, **extra) -> Dict[str, Any]:
+        """Receipt whose readback is the owner's own persisted record."""
         return build_domain_receipt(
-            command_id=command_id,
-            entity_type="PersonaCapitalBinding",
-            entity_id=binding_id,
-            action_id=action_id,
-            status="executed",
-            dispatch_path=capital_url(f"/api/bindings/{quote(binding_id, safe='')}"),
-            domain_receipt=readback,
-            authoritative_readback=readback,
-            extra={"binding_id": binding_id},
+            command_id=command_id, entity_type=entity_type, entity_id=entity_id, action_id=action_id, status=status,
+            dispatch_path=capital_url(path), domain_receipt=readback, authoritative_readback=readback, extra=extra,
         )

@@ -1331,8 +1331,8 @@ def write_authority() -> WriteAuthorityResponse:
     return WriteAuthorityResponse(
         matrix=matrix_as_list(),
         description=(
-            "CapitalPool writes require capital.admin. PersonaCapitalBinding "
-            "writes require persona.admin. Governed BFF operator, approver, and admin "
+            "CapitalPool status writes require operator or capital.admin. PersonaCapitalBinding "
+            "activate/status writes require operator or persona.admin. Governed BFF operator, approver, and admin "
             "calls may create/apply rebalances and execute risk-decreasing containment."
         ),
     )

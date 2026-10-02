@@ -16,6 +16,7 @@ from persona_capital_binding import (
     PersonaCapitalBindingStore,
     DeploymentScope,
     validate_binding,
+    validate_binding_json,
 )
 
 
@@ -138,6 +139,23 @@ class TestValidateBinding:
     def test_active_with_approval_decision(self):
         b = make_active_binding()
         assert validate_binding(b) == []
+
+    def test_genuine_paper_binding_is_active_without_approval_decision(self):
+        paper = make_binding(status="active", role="paper_owner", allowed_deployment_scope="paper")
+        assert validate_binding(paper) == []
+
+    @pytest.mark.parametrize(
+        ("role", "scope"),
+        [("live_owner", "canary"), ("live_owner", "live"), ("live_owner", "paper"), ("advisor", "none"), ("paper_owner", "none")],
+    )
+    def test_only_the_paper_owner_paper_binding_is_exempt_from_the_approval_decision(self, role, scope):
+        errors = validate_binding(make_binding(status="active", role=role, allowed_deployment_scope=scope))
+        assert any("approval_decision_id" in e for e in errors)
+
+    def test_schema_accepts_a_null_decision_id(self):
+        paper = make_binding(status="active", role="paper_owner", allowed_deployment_scope="paper")
+        for record in (paper.to_dict(), {**paper.to_dict(), "approval_decision_id": None}):
+            assert validate_binding_json(record) == []
 
     def test_advisor_role_cannot_claim_deployment_scope(self):
         b = make_binding(allowed_deployment_scope="paper")
@@ -280,6 +298,18 @@ class TestActivation:
         # Confirm activated binding is valid
         b = store.activate("binding-001", "appr-001")
         assert validate_binding(b) == []
+
+    def test_paper_binding_activates_without_a_decision_but_live_binding_does_not(self):
+        store = PersonaCapitalBindingStore()
+        store.create(make_binding(binding_id="paper-1", role="paper_owner", allowed_deployment_scope="paper"))
+        store.create(make_binding(binding_id="live-1", persona_id="persona-live", role="live_owner", allowed_deployment_scope="live"))
+        paper = store.activate("paper-1")
+        assert paper.status == "active" and paper.approval_decision_id is None
+        with pytest.raises(PersonaCapitalBindingError, match="approval_decision_id"):
+            store.activate("live-1")
+        assert store.get("live-1").status == "pending"
+        store.update_status("paper-1", "suspended")
+        assert store.activate("paper-1").status == "active"
 
     def test_activate_invalid_transition(self):
         store = PersonaCapitalBindingStore()

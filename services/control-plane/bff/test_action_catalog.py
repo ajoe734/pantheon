@@ -43,6 +43,7 @@ def test_every_command_type_has_catalog_entry() -> None:
     excluded = {
         "RebalanceApproval",
         "RebalanceTwoManSign",
+        "ApprovePool",  # retired: Capital has no pool-approve operation; kept so stored records still deserialize
     }
     missing = [ct.value for ct in CommandType if ct.value not in catalogued and ct.value not in excluded]
     assert not missing, f"CommandType values missing from action catalog: {missing}"
@@ -176,6 +177,7 @@ def test_get_bff_actions_all_command_types_present_in_response() -> None:
     excluded = {
         "RebalanceApproval",
         "RebalanceTwoManSign",
+        "ApprovePool",  # retired: Capital has no pool-approve operation; kept so stored records still deserialize
     }
     for command_type in CommandType:
         if command_type.value in excluded:
