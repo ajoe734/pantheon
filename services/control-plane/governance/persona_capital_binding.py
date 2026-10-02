@@ -396,6 +396,8 @@ class PersonaCapitalBindingStore:
                     "updated_at": utc_now(),
                 }
             )
+            if hasattr(binding, "tenant_id"):  # keep authoritative formal owner through reconstruction
+                object.__setattr__(updated, "tenant_id", binding.tenant_id)
             errors = validate_binding(updated)
             if errors:
                 raise PersonaCapitalBindingError(f"Invalid binding: {errors}")
@@ -415,6 +417,8 @@ class PersonaCapitalBindingStore:
             updated = PersonaCapitalBinding(
                 **{**binding.to_dict(), "status": new_status, "updated_at": utc_now()}
             )
+            if hasattr(binding, "tenant_id"):  # keep authoritative formal owner through reconstruction
+                object.__setattr__(updated, "tenant_id", binding.tenant_id)
             snapshot = dict(self._bindings)
             self._bindings[binding_id] = updated
             try:

@@ -62,6 +62,8 @@ class PersistentCapitalPoolStore(CapitalPoolStore):
                 _validate_status_transition(pool.status, target_status)
             payload = {**pool.to_dict(), **patch, "updated_at": updated_at}
             updated = CapitalPool.from_dict(payload)
+            if hasattr(pool, "tenant_id"):  # keep authoritative formal owner through reconstruction
+                object.__setattr__(updated, "tenant_id", pool.tenant_id)
             errors = validate_pool(updated)
             if errors:
                 raise CapitalPoolError(f"Invalid pool patch: {errors}")

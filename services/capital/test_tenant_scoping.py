@@ -1525,3 +1525,62 @@ def test_real_postgres_migration_regression_preexisting_rows():
     finally:
         with psycopg.connect(dsn, autocommit=True) as conn:
             conn.execute("ALTER DATABASE pantheon RESET lock_timeout;")
+
+
+@pytest.fixture()
+def pg_identity_dsn():
+    dsn = os.environ.get("CAPITAL_TEST_DSN", "postgresql://postgres:postgres@127.0.0.1:15432/pantheon")
+    try:
+        import psycopg
+        with psycopg.connect(dsn, connect_timeout=2):
+            pass
+    except Exception:
+        pytest.skip("Disposable PostgreSQL instance not available at " + dsn)
+    return dsn
+
+
+def _pg_tenant_column(store, record_id):
+    with store._records._connect() as conn:
+        return conn.execute(f"SELECT tenant_id FROM {store._records.table} WHERE record_id=%s", (record_id,)).fetchone()[0]
+
+
+def _pg_make(store, record, tenant):
+    store.create(record)
+    with store._records._connect() as conn:  # legacy rows predate the formal column
+        conn.execute(f"UPDATE {store._records.table} SET tenant_id=%s WHERE record_id=%s", (tenant, record.pool_id if hasattr(record, "pool_id") else record.binding_id))
+
+
+@pytest.mark.parametrize("tenant", ["tenant-a", None])
+@pytest.mark.parametrize("mutation", ["update_status", "patch"])
+def test_pg_pool_mutation_keeps_formal_tenant(pg_identity_dsn, mutation, tenant):
+    import uuid
+    from services.capital.pg_store import CapitalPool, PostgresCapitalPoolStore
+
+    table = "capital.pi_pools_" + uuid.uuid4().hex[:8]
+    store = PostgresCapitalPoolStore(pg_identity_dsn, table=table)
+    pid = "pi-pool-" + uuid.uuid4().hex
+    _pg_make(store, CapitalPool(pool_id=pid, name="p", owner_id="org-a", owner_type="org", status="active", created_at="2026-10-02T00:00:00Z", metadata={"tenant_id": "caller-claim"}), tenant)
+    if mutation == "update_status":
+        store.update_status(pid, "suspended")
+    else:
+        store.patch(pid, patch={"name": "renamed"}, updated_at="2026-10-02T00:01:00Z")
+    assert _pg_tenant_column(store, pid) == tenant  # never erased, never backfilled from metadata
+    assert (PostgresCapitalPoolStore(pg_identity_dsn, table=table).require(pid).tenant_id or None) == tenant
+
+
+@pytest.mark.parametrize("tenant", ["tenant-a", None])
+@pytest.mark.parametrize("mutation", ["activate", "update_status"])
+def test_pg_binding_mutation_keeps_formal_tenant(pg_identity_dsn, mutation, tenant):
+    import uuid
+    from services.capital.pg_store import PersonaCapitalBinding, PostgresPersonaCapitalBindingStore
+
+    table = "capital.pi_bindings_" + uuid.uuid4().hex[:8]
+    store = PostgresPersonaCapitalBindingStore(pg_identity_dsn, table=table)
+    bid = "pi-binding-" + uuid.uuid4().hex
+    _pg_make(store, PersonaCapitalBinding(binding_id=bid, persona_id="p", capital_pool_id="pool", role="paper_owner", allowed_deployment_scope="paper", status="pending", created_at="2026-10-02T00:00:00Z", metadata={"tenant_id": "caller-claim"}), tenant)
+    if mutation == "activate":
+        store.activate(bid)  # genuine paper binding needs no decision
+    else:
+        store.update_status(bid, "revoked")
+    assert _pg_tenant_column(store, bid) == tenant
+    assert (PostgresPersonaCapitalBindingStore(pg_identity_dsn, table=table).require(bid).tenant_id or None) == tenant
