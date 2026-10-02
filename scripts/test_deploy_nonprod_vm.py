@@ -744,6 +744,323 @@ verify_exact_component_deployment agora-interaction-worker
     assert "required component(s) unhealthy" in proc.stderr or "mismatched image revision" in proc.stderr
 
 
+def test_verify_exact_component_deployment_paper_signal_producer_unhealthy_prevents_activation(
+    tmp_path: Path,
+) -> None:
+    """DEV-READINESS-RECOVERY-20261002 regression: unhealthy paper-signal-producer fails closed before activation."""
+    import os
+
+    func_def = _extract_verify_exact_component_deployment_func()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    mock_docker = bin_dir / "docker"
+    mock_docker.write_text(
+        """#!/usr/bin/env bash
+if [[ "$1" == "compose" ]]; then
+  if [[ " $* " == *" images -q "* ]]; then
+    echo "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  else
+    echo "cid_paper_1"
+  fi
+elif [[ "$1" == "inspect" ]]; then
+  fmt="$3"
+  if [[ "$fmt" == "{{.State.Status}}" ]]; then
+    echo "running"
+  elif [[ "$fmt" == "{{.RestartCount}}" ]]; then
+    echo "0"
+  elif [[ "$fmt" == *"{{.State.Health.Status}}"* ]]; then
+    echo "unhealthy"
+  elif [[ "$fmt" == "{{.Config.Image}}" ]]; then
+    echo "pantheon-paper-signal-producer:latest"
+  elif [[ "$fmt" == "{{.Image}}" ]]; then
+    echo "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  elif [[ "$fmt" == *"org.opencontainers.image.revision"* ]]; then
+    echo "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+  elif [[ "$fmt" == *"{{json .Config.Cmd}}"* ]]; then
+    echo '["python", "-m", "services.execution.lean_runtime.paper_signal_producer"]'
+  fi
+fi
+""",
+        encoding="utf-8",
+    )
+    mock_docker.chmod(0o755)
+    _write_mock_git(bin_dir, "7a9674ea259bbac883e42f3ee217b3e8f68170fe")
+
+    receipt_path = tmp_path / "backend-components-receipt.json"
+    rollback_marker = tmp_path / "rollback-called"
+    runner_script = tmp_path / "run_verifier_paper_unhealthy.sh"
+    runner_script.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{func_def}
+
+export PATH="{bin_dir}:$PATH"
+export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
+export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
+export GIT_SHA="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+
+verify_exact_component_deployment paper-signal-producer || printf 'rollback\\n' >"{rollback_marker}"
+""",
+        encoding="utf-8",
+    )
+    runner_script.chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+
+    proc = subprocess.run(
+        ["bash", str(runner_script)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert proc.returncode == 0
+    assert (tmp_path / "rollback-called").exists(), "unhealthy paper-signal-producer must trigger rollback handler"
+    assert "required component(s) unhealthy or unknown: paper-signal-producer: health=unhealthy" in proc.stderr
+    assert receipt_path.exists()
+    receipt_data = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt_data["status"] == "failed"
+    assert receipt_data["all_passed"] is False
+    assert "paper-signal-producer: health=unhealthy" in receipt_data["verification_failures"]["unhealthy"]
+
+
+def test_verify_exact_component_deployment_paper_signal_producer_healthy_admits_pair(
+    tmp_path: Path,
+) -> None:
+    """DEV-READINESS-RECOVERY-20261002 recovery regression: healthy paper-signal-producer passes gate and generates verified receipt."""
+    import os
+
+    func_def = _extract_verify_exact_component_deployment_func()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    mock_docker = bin_dir / "docker"
+    mock_docker.write_text(
+        """#!/usr/bin/env bash
+if [[ "$1" == "compose" ]]; then
+  if [[ " $* " == *" images -q "* ]]; then
+    echo "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  else
+    echo "cid_paper_1"
+  fi
+elif [[ "$1" == "inspect" ]]; then
+  fmt="$3"
+  if [[ "$fmt" == "{{.State.Status}}" ]]; then
+    echo "running"
+  elif [[ "$fmt" == "{{.RestartCount}}" ]]; then
+    echo "0"
+  elif [[ "$fmt" == *"{{.State.Health.Status}}"* ]]; then
+    echo "healthy"
+  elif [[ "$fmt" == "{{.Config.Image}}" ]]; then
+    echo "pantheon-paper-signal-producer:latest"
+  elif [[ "$fmt" == "{{.Image}}" ]]; then
+    echo "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  elif [[ "$fmt" == *"org.opencontainers.image.revision"* ]]; then
+    echo "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+  elif [[ "$fmt" == *"{{json .Config.Cmd}}"* ]]; then
+    echo '["python", "-m", "services.execution.lean_runtime.paper_signal_producer"]'
+  fi
+fi
+""",
+        encoding="utf-8",
+    )
+    mock_docker.chmod(0o755)
+    _write_mock_git(bin_dir, "7a9674ea259bbac883e42f3ee217b3e8f68170fe")
+
+    receipt_path = tmp_path / "backend-components-receipt.json"
+    rollback_marker = tmp_path / "rollback-called"
+    runner_script = tmp_path / "run_verifier_paper_healthy.sh"
+    runner_script.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{func_def}
+
+export PATH="{bin_dir}:$PATH"
+export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
+export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
+export GIT_SHA="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+
+verify_exact_component_deployment paper-signal-producer || printf 'rollback\\n' >"{rollback_marker}"
+""",
+        encoding="utf-8",
+    )
+    runner_script.chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+
+    proc = subprocess.run(
+        ["bash", str(runner_script)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert proc.returncode == 0
+    assert not (tmp_path / "rollback-called").exists(), "healthy paper-signal-producer must not trigger rollback"
+    assert "backend component receipt written atomically" in proc.stdout
+    assert receipt_path.exists()
+    receipt_data = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt_data["status"] == "passed"
+    assert receipt_data["all_passed"] is True
+    assert "paper-signal-producer" in receipt_data["services"]
+    comp = receipt_data["services"]["paper-signal-producer"]
+    assert comp["health"] == "healthy"
+    assert comp["status"] == "running"
+
+
+def test_paper_signal_producer_binding_recovery_and_health_lifecycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DEV-READINESS-RECOVERY-20261002 recovery regression: prove degraded caching and supported binding recovery procedures."""
+    import json
+    from typing import Any
+    from services.execution.lean_runtime.paper_signal_producer import (
+        BindingRef,
+        SignalDecisionUnavailable,
+        SmokeStrategy,
+        healthcheck,
+        main,
+    )
+    from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+
+    stores: dict[str, InMemoryPendingSignalStore] = {}
+
+    def mock_redis_store_factory(signal_store_url: str):
+        def store_for(binding_or_id: Any):
+            if isinstance(binding_or_id, str):
+                bid = binding_or_id
+            else:
+                bid = getattr(binding_or_id, "binding_id", "")
+                if not bid and isinstance(binding_or_id, dict):
+                    bid = binding_or_id.get("binding_id", "")
+            return stores.setdefault(bid, InMemoryPendingSignalStore())
+
+        return store_for
+
+    monkeypatch.setattr(
+        "services.execution.lean_runtime.paper_signal_producer._redis_store_factory",
+        mock_redis_store_factory,
+    )
+
+    class FaultyStrategy(SmokeStrategy):
+        def __call__(self, binding: Any, now_iso: str) -> list[dict[str, Any]]:
+            bid = getattr(binding, "binding_id", "") or (
+                binding.get("binding_id", "") if isinstance(binding, dict) else ""
+            )
+            if bid == "rb-stale-001":
+                raise SignalDecisionUnavailable(
+                    "artifact_unavailable",
+                    "Metadata schema validation failed at lineage.source_dataset_refs: None is not of type array",
+                )
+            return super().__call__(binding, now_iso)
+
+    monkeypatch.setattr(
+        "services.execution.lean_runtime.paper_signal_producer._runner_strategy",
+        lambda: FaultyStrategy(),
+    )
+
+    monkeypatch.setenv("SIGNAL_STORE_URL", "redis://signal-store:6379")
+    monkeypatch.setenv("PAPER_PRODUCER_INTERVAL_SECONDS", "0.01")
+    monkeypatch.setenv("PANTHEON_LIVE_BROKER_ENABLED", "false")
+    monkeypatch.setenv("PANTHEON_CANARY_EXECUTION_ENABLED", "false")
+    monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", "http://mock-manager")
+
+    stale_binding = BindingRef(binding_id="rb-stale-001", strategy_id="strat-001")
+
+    # 1. Drive production loop with stale binding on tick 1, followed by empty bindings (retired in DB) on tick 2.
+    #    Proves metadata schema failure causes degraded status, and retiring bindings alone leaves degraded state
+    #    cached in the running process (skipping producer.tick per line 1123).
+    health_file_degraded = tmp_path / "paper-producer-degraded-health.json"
+    monkeypatch.setenv("PAPER_PRODUCER_HEALTH_FILE", str(health_file_degraded))
+    monkeypatch.setenv("PAPER_PRODUCER_MAX_TICKS", "2")
+
+    phase1_calls = 0
+
+    def mock_fetch_phase1(url: str, token: str | None = None, *, raise_on_error: bool = False):
+        nonlocal phase1_calls
+        phase1_calls += 1
+        if phase1_calls == 1:
+            return [stale_binding]
+        return []
+
+    monkeypatch.setattr(
+        "services.execution.lean_runtime.paper_signal_producer.fetch_eligible_paper_bindings",
+        mock_fetch_phase1,
+    )
+
+    exit_code_degraded = main()
+    assert exit_code_degraded == 0
+    payload_degraded = json.loads(health_file_degraded.read_text(encoding="utf-8"))
+    assert payload_degraded["status"] == "degraded"
+    assert payload_degraded["ticks"] == 2
+    assert "rb-stale-001" in payload_degraded["degraded_bindings"]
+    assert healthcheck() == 1
+
+    # 2. Supported Recovery Procedure A: Fresh container restart with 0 active bindings.
+    #    Exercises production startup health transition: writes starting, tick 1 with 0 bindings,
+    #    transitions to status=ok, and healthcheck passes.
+    health_file_restarted = tmp_path / "paper-producer-restarted-health.json"
+    monkeypatch.setenv("PAPER_PRODUCER_HEALTH_FILE", str(health_file_restarted))
+    monkeypatch.setenv("PAPER_PRODUCER_MAX_TICKS", "1")
+    monkeypatch.setattr(
+        "services.execution.lean_runtime.paper_signal_producer.fetch_eligible_paper_bindings",
+        lambda url, token=None, *, raise_on_error=False: [],
+    )
+
+    exit_code_restarted = main()
+    assert exit_code_restarted == 0
+    payload_restarted = json.loads(health_file_restarted.read_text(encoding="utf-8"))
+    assert payload_restarted["status"] == "ok"
+    assert payload_restarted["ticks"] == 1
+    assert payload_restarted["active_binding_count"] == 0
+    assert payload_restarted["degraded_binding_count"] == 0
+    assert payload_restarted["degraded_bindings"] == {}
+    assert healthcheck() == 0
+
+    # 3. Supported Recovery Procedure B: Replacement with valid active binding.
+    #    Drives bounded production loop where tick 1 degrades stale binding, then tick 2 receives
+    #    valid active binding. Producer purges stale degraded bindings from memory on tick (lines 876-884),
+    #    transitions status=ok via production write_health, and healthcheck passes without restart.
+    health_file_valid = tmp_path / "paper-producer-valid-health.json"
+    monkeypatch.setenv("PAPER_PRODUCER_HEALTH_FILE", str(health_file_valid))
+    monkeypatch.setenv("PAPER_PRODUCER_MAX_TICKS", "2")
+
+    valid_binding = BindingRef(binding_id="rb-valid-002", strategy_id="strat-002")
+    phase3_calls = 0
+
+    def mock_fetch_phase3(url: str, token: str | None = None, *, raise_on_error: bool = False):
+        nonlocal phase3_calls
+        phase3_calls += 1
+        if phase3_calls == 1:
+            return [stale_binding]
+        return [valid_binding]
+
+    monkeypatch.setattr(
+        "services.execution.lean_runtime.paper_signal_producer.fetch_eligible_paper_bindings",
+        mock_fetch_phase3,
+    )
+
+    exit_code_valid = main()
+    assert exit_code_valid == 0
+    payload_valid = json.loads(health_file_valid.read_text(encoding="utf-8"))
+    assert payload_valid["status"] == "ok"
+    assert payload_valid["ticks"] == 2
+    assert payload_valid["active_binding_count"] == 1
+    assert payload_valid["degraded_binding_count"] == 0
+    assert payload_valid["degraded_bindings"] == {}
+    assert "rb-stale-001" not in payload_valid["degraded_bindings"]
+    assert healthcheck() == 0
+
+
 def test_verify_exact_component_receipt_write_failure_reaches_rollback_caller(
     tmp_path: Path,
 ) -> None:
