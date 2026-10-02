@@ -62,6 +62,8 @@ class PersistentCapitalPoolStore(CapitalPoolStore):
                 _validate_status_transition(pool.status, target_status)
             payload = {**pool.to_dict(), **patch, "updated_at": updated_at}
             updated = CapitalPool.from_dict(payload)
+            if hasattr(pool, "tenant_id"):  # keep authoritative formal owner through reconstruction
+                object.__setattr__(updated, "tenant_id", pool.tenant_id)
             errors = validate_pool(updated)
             if errors:
                 raise CapitalPoolError(f"Invalid pool patch: {errors}")
@@ -106,10 +108,9 @@ def _put_record(records: Any, record_id: str, payload_dict: dict[str, Any], tena
 def _load_entity(cls: Any, row: tuple) -> Any:
     rec, tid = (row[1] if isinstance(row[1], dict) else json.loads(row[1])), row[2]
     ent = cls.from_dict(rec)
-    tid = tid or (getattr(ent, "metadata", None) or {}).get("tenant_id") or rec.get("tenant_id")
-    if tid:
-        object.__setattr__(ent, "tenant_id", tid)
-        if getattr(ent, "metadata", None) is not None: ent.metadata["tenant_id"] = tid
+    # The formal tenant column is the only ownership truth; blank legacy rows stay
+    # blank (fail closed) instead of adopting a caller-writable metadata claim.
+    object.__setattr__(ent, "tenant_id", tid or "")
     return ent
 
 
@@ -165,7 +166,7 @@ class PostgresCapitalPoolStore(PersistentCapitalPoolStore):
 
     def _save(self) -> None:
         for pool in self._pools.values():
-            tenant_id = getattr(pool, "tenant_id", None) or (pool.metadata or {}).get("tenant_id")
+            tenant_id = getattr(pool, "tenant_id", None) or None
             _put_record(self._records, pool.pool_id, pool.to_dict(), tenant_id)
 
     def _refresh_from_postgres(self) -> None:
@@ -218,7 +219,7 @@ class PostgresPersonaCapitalBindingStore(PersonaCapitalBindingStore):
                 role=role,
             )
 
-    def activate(self, binding_id: str, approval_decision_id: str) -> PersonaCapitalBinding:
+    def activate(self, binding_id: str, approval_decision_id: Optional[str] = None) -> PersonaCapitalBinding:
         with self._lock:
             self._refresh_from_postgres()
             return super().activate(binding_id, approval_decision_id)
@@ -230,7 +231,7 @@ class PostgresPersonaCapitalBindingStore(PersonaCapitalBindingStore):
 
     def _save(self) -> None:
         for binding in self._bindings.values():
-            tenant_id = getattr(binding, "tenant_id", None) or (binding.metadata or {}).get("tenant_id")
+            tenant_id = getattr(binding, "tenant_id", None) or None
             _put_record(self._records, binding.binding_id, binding.to_dict(), tenant_id)
 
     def _refresh_from_postgres(self) -> None:

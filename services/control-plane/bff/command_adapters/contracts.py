@@ -396,7 +396,6 @@ _WRAPPER_CANONICALS = {
         "RejectRollback": (),
     },
     "RebalanceAction": {"ApprovedApply": ("apply",), "RebalanceProposal": ("propose", "create"), "EmergencyContainment": ()},
-    "CapitalPoolAction": {"ApprovePool": ("approve",)},
     "DeploymentAction": {
         "ApproveDeployment": ("approve",),
         "EscalateDiff": (),

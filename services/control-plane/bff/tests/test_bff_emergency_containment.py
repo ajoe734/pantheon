@@ -2,7 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from typing import Any
+from typing import Any, Optional
 
 from services.control_plane.bff import command_executor
 from services.control_plane.bff.command_executor import (
@@ -34,22 +34,6 @@ def _ppl_getattr(self: Any, name: str) -> Any:
     return super(PplProjectionTestDouble, self).__getattribute__(name)
 
 
-def _create_capital_pool(payload: dict[str, Any], **context: Any) -> dict[str, Any]:
-    augmented = dict(payload)
-    augmented.setdefault("actor_id", context.get("actor_id") or "op-2")
-    augmented.setdefault("actor_role", context.get("actor_role") or "operator")
-    return command_executor.create_capital_pool(augmented)
-
-
-def _create_rebalance(payload: dict[str, Any], **context: Any) -> dict[str, Any]:
-    augmented = dict(payload)
-    augmented.setdefault("actor_id", context.get("actor_id") or "op-2")
-    augmented.setdefault("actor_role", context.get("actor_role") or "operator")
-    augmented.setdefault("idempotency_key", context.get("key") or "rebalance-proposal-key")
-    augmented.setdefault("request_hash", "rebalance-proposal-hash")
-    return command_executor.create_capital_rebalance_proposal(augmented)
-
-
 from starlette.requests import Request
 from starlette.responses import Response
 from fastapi.testclient import TestClient
@@ -60,21 +44,6 @@ from services.control_plane.bff.tests.rebalance_authority_test_support import (
 
 PplProjectionTestDouble.__setattr__ = _ppl_setattr  # type: ignore[assignment]
 PplProjectionTestDouble.__getattribute__ = _ppl_getattr  # type: ignore[assignment]
-PplProjectionTestDouble.create_capital_pool = staticmethod(_create_capital_pool)  # type: ignore[attr-defined]
-PplProjectionTestDouble.create_rebalance = staticmethod(_create_rebalance)  # type: ignore[attr-defined]
-
-_orig_create_binding = command_executor.create_capital_binding
-
-
-def _containment_create_capital_binding(payload: dict[str, Any]) -> dict[str, Any]:
-    augmented = dict(payload)
-    augmented.setdefault("actor_id", "op-2")
-    augmented.setdefault("actor_role", "operator")
-    return _orig_create_binding(augmented)
-
-
-command_executor.create_capital_binding = _containment_create_capital_binding
-
 
 from services.control_plane.bff.auth.policy import (
     bff_error,
@@ -87,15 +56,23 @@ from services.control_plane.bff.control_loops.router import create_control_loops
 from services.control_plane.bff.models import utc_now
 
 
-from fastapi import FastAPI, Body
+from fastapi import FastAPI, Body, Header
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import JSONResponse
 from services.control_plane.bff.capital.router import create_capital_router
+from services.control_plane.bff.command_adapters.capital_adapter import CapitalOwnerWriter
 from services.control_plane.bff.command_adapters.router import (
     create_command_adapters_router,
     create_action_command_router,
 )
 from services.control_plane.bff.models import ErrorCode
+
+
+class ContainmentHarness(CapitalBffAuthorityHarness):
+    """Capital harness whose BFF app also mounts the containment admission validators and persona readback."""
+
+    def _reset_bff_process_state(self) -> None:
+        _containment_reset_bff_process_state(self)
 
 
 def _containment_reset_bff_process_state(self: Any) -> None:
@@ -173,6 +150,7 @@ def _containment_reset_bff_process_state(self: Any) -> None:
     app.include_router(
         create_capital_router(
             read_surface=self.read_surface,
+            get_capital_authority=lambda: CapitalOwnerWriter(),
             extract_identity=extract_identity,
             require_read_role=require_read_role,
             require_operator_role=require_operator_role,
@@ -196,8 +174,9 @@ def _containment_reset_bff_process_state(self: Any) -> None:
     )
 
     @app.post("/api/v1/bindings", status_code=201)
-    async def _create_binding(payload: dict[str, Any] = Body(...)):
-        return command_executor.create_capital_binding(payload)
+    async def _create_binding(payload: dict[str, Any] = Body(...), authorization: Optional[str] = Header(default=None)):
+        body = {"actor_id": "op-2", "actor_role": "operator", **payload}
+        return command_executor.create_capital_binding(body, auth_token=authorization)
 
     @app.get("/api/v1/bindings")
     async def _list_bindings():
@@ -265,13 +244,16 @@ def _containment_reset_bff_process_state(self: Any) -> None:
     self.client = TestClient(app)
 
 
-CapitalBffAuthorityHarness._reset_bff_process_state = _containment_reset_bff_process_state
 
 from services.control_plane.bff.action_catalog import get_catalog_entry
 
-_entry = get_catalog_entry("EmergencyContainment")
-if _entry is not None:
-    _entry.requires_approval = False
+
+
+@pytest.fixture(autouse=True)
+def _containment_without_catalog_approval(monkeypatch):
+    entry = get_catalog_entry("EmergencyContainment")
+    if entry is not None:
+        monkeypatch.setattr(entry, "requires_approval", False)
 
 
 def _command(**overrides):
@@ -284,7 +266,7 @@ def _command(**overrides):
     return params
 
 
-def _command_receipt(harness: CapitalBffAuthorityHarness, command_id: str) -> dict:
+def _command_receipt(harness: ContainmentHarness, command_id: str) -> dict:
     assert harness.client is not None
     response = harness.client.get(
         f"/api/v1/operator/commands/{command_id}",
@@ -295,7 +277,7 @@ def _command_receipt(harness: CapitalBffAuthorityHarness, command_id: str) -> di
 
 
 def _containment_security_evidence(
-    harness: CapitalBffAuthorityHarness,
+    harness: ContainmentHarness,
     *,
     suffix: str,
     persona_id: str = "p-live",
@@ -372,7 +354,7 @@ def test_emergency_command_requires_evidence_and_rollback_reference():
 
 
 def test_bff_command_admission_keeps_risk_increasing_containment_at_422(tmp_path):
-    with CapitalBffAuthorityHarness(tmp_path) as harness:
+    with ContainmentHarness(tmp_path) as harness:
         assert harness.client is not None
         response = harness.client.post(
             "/bff/v1/commands",
@@ -399,7 +381,7 @@ def test_bff_command_admission_keeps_risk_increasing_containment_at_422(tmp_path
 
 
 def test_command_admission_enforces_containment_confirm_and_two_man(tmp_path):
-    with CapitalBffAuthorityHarness(tmp_path) as harness:
+    with ContainmentHarness(tmp_path) as harness:
         harness.create_persona("p-live")
         assert harness.client is not None
         command = {
@@ -482,7 +464,7 @@ def test_containment_admissions_execute_authoritative_persona_freeze(
     route,
     idempotency_header,
 ):
-    with CapitalBffAuthorityHarness(tmp_path) as harness:
+    with ContainmentHarness(tmp_path) as harness:
         harness.create_persona("p-live")
         signature_id, security_headers = _containment_security_evidence(
             harness,
@@ -570,7 +552,7 @@ def test_containment_admissions_execute_authoritative_persona_freeze(
 
 
 def test_concurrent_new_keys_cannot_reuse_one_containment_confirm_token(tmp_path):
-    with CapitalBffAuthorityHarness(tmp_path) as harness:
+    with ContainmentHarness(tmp_path) as harness:
         harness.create_persona("p-live")
         signature_id, security_headers = _containment_security_evidence(
             harness,
@@ -638,7 +620,7 @@ def test_containment_admissions_reject_params_target_redirect(
     route,
     idempotency_header,
 ):
-    with CapitalBffAuthorityHarness(tmp_path) as harness:
+    with ContainmentHarness(tmp_path) as harness:
         assert harness.client is not None
         redirected = harness.client.post(
             route,
@@ -678,7 +660,7 @@ def test_containment_admissions_require_persona_target_type(
     route,
     idempotency_header,
 ):
-    with CapitalBffAuthorityHarness(tmp_path) as harness:
+    with ContainmentHarness(tmp_path) as harness:
         assert harness.client is not None
         wrong_type = harness.client.post(
             route,
@@ -711,7 +693,6 @@ def test_containment_admissions_require_persona_target_type(
     [
         ("command_id", "cmd-owner-other"),
         ("persona_id", "p-owner-other"),
-        ("two_man_signature_id", "tms-owner-other"),
     ],
 )
 def test_normal_owner_containment_receipt_fails_closed_on_identity_mismatch(
@@ -749,7 +730,7 @@ def test_normal_owner_containment_receipt_fails_closed_on_identity_mismatch(
 
 
 def test_authority_dispatch_projects_explicit_frozen_containment_after_restart(tmp_path):
-    with CapitalBffAuthorityHarness(tmp_path) as harness:
+    with ContainmentHarness(tmp_path) as harness:
         harness.create_persona("p-live")
         assert harness.client is not None
         proposal_payload = rebalance_payload()

@@ -224,19 +224,6 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
     # Capital pool operations
     # ------------------------------------------------------------------ #
     BffActionCatalogEntry(
-        action_id="ApprovePool",
-        entity_type="CapitalPool",
-        endpoint="/bff/capital-pools/{pool_id}/actions/ApprovePool",
-        risk_level=RiskLevel.HIGH,
-        requires_approval=True,
-        requires_confirm_token=False,
-        requires_two_man=False,
-        cooldown_seconds=0,
-        idempotency_required=True,
-        required_roles=["treasury_approver"],
-        description="Approve a capital pool draft; transitions state from draft to approved (one-way).",
-    ),
-    BffActionCatalogEntry(
         action_id="LiquidateAll",
         entity_type="CapitalPool",
         endpoint=_FINAL_COMMAND_ENDPOINT,
@@ -930,19 +917,6 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         description="Forward an explicit lifecycle target to Persona, which verifies caller authority and governance approval before writing.",
     ),
     BffActionCatalogEntry(
-        action_id="ApprovePool",
-        entity_type="CapitalPool",
-        endpoint="/bff/capital-pools/{pool_id}/actions/ApprovePool",
-        risk_level=RiskLevel.HIGH,
-        requires_approval=True,
-        requires_confirm_token=False,
-        requires_two_man=False,
-        cooldown_seconds=0,
-        idempotency_required=True,
-        required_roles=["treasury_approver"],
-        description="Approve a capital pool draft → approved (one-way). Memo ≥8 chars required.",
-    ),
-    BffActionCatalogEntry(
         action_id="RequestReview",
         entity_type="Review",
         endpoint="/bff/v1/commands",
@@ -1001,11 +975,11 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         risk_level=RiskLevel.HIGH,
         requires_approval=True,
         requires_confirm_token=True,
-        requires_two_man=True,
+        requires_two_man=False,
         cooldown_seconds=60,
         idempotency_required=True,
         required_roles=["operator", "approver"],
-        description="Apply an approved rebalance or deployment change to live systems.",
+        description="Apply a persisted rebalance proposal at the Capital owner, which verifies the Governance approval_ref.",
     ),
     BffActionCatalogEntry(
         action_id="EmergencyContainment",

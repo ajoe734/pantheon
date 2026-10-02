@@ -683,9 +683,8 @@ class _FacadeContext:
         self._STRATEGY_BFF_OVERLAY: dict[str, Any] = {}
         self._PERSONA_BFF_OVERLAY: dict[str, Any] = {}
         self._CAPITAL_BFF_IDEMPOTENCY: dict[str, Any] = {}
-        self.create_capital_pool = _mock_create_capital_pool
-        self.create_rebalance = _mock_create_rebalance
-        self.create_capital_rebalance_proposal = _mock_create_rebalance
+        self.create_pool = lambda payload, **ctx: _mock_create_capital_pool(payload, ctx)
+        self.create_rebalance = lambda payload, **ctx: _mock_create_rebalance(payload, ctx)
         self._coordinate_persona_create = _mock_coordinate_persona_create
         self.build_persona_runtime_profile = lambda *a, **kw: type('Profile', (), {'to_dict': lambda s: {}})()
         self.app = _create_app()
@@ -696,9 +695,8 @@ facade_state = _FacadeContext()
 
 def _fresh_client(td: str) -> TestClient:
     facade_state.read_store = _ListDetailFacadeTestStore()
-    facade_state.create_capital_pool = _mock_create_capital_pool
-    facade_state.create_rebalance = _mock_create_rebalance
-    facade_state.create_capital_rebalance_proposal = _mock_create_rebalance
+    facade_state.create_pool = lambda payload, **ctx: _mock_create_capital_pool(payload, ctx)
+    facade_state.create_rebalance = lambda payload, **ctx: _mock_create_rebalance(payload, ctx)
     facade_state._coordinate_persona_create = _mock_coordinate_persona_create
     facade_state.build_persona_runtime_profile = lambda *a, **kw: type("Profile", (), {"to_dict": lambda s: {}})()
     facade_state._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()

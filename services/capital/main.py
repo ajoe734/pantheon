@@ -70,9 +70,10 @@ try:
     )
     from .write_authority import is_authorized, matrix_as_list
     from .capital_guard import CapitalGuard, STAGE_DEPLOYMENT_SCOPE, line_deployment_scope, line_increases_risk, line_is_paper_scope
+    from . import inbound_authority as _inbound_mod
     from .inbound_authority import (
+        CapitalInboundAuthority,
         CapitalInboundAuthorityError,
-        authenticate_capital_request,
         authority_configuration_health,
         bind_capital_mutation,
         current_authority,
@@ -115,9 +116,10 @@ except ImportError:
     )
     from write_authority import is_authorized, matrix_as_list  # type: ignore
     from capital_guard import CapitalGuard, STAGE_DEPLOYMENT_SCOPE, line_deployment_scope, line_increases_risk, line_is_paper_scope  # type: ignore
+    import inbound_authority as _inbound_mod  # type: ignore
     from inbound_authority import (  # type: ignore
+        CapitalInboundAuthority,
         CapitalInboundAuthorityError,
-        authenticate_capital_request,
         authority_configuration_health,
         bind_capital_mutation,
         current_authority,
@@ -126,6 +128,39 @@ except ImportError:
     )
 
 log = logging.getLogger(__name__)
+
+
+def authenticate_capital_request(*, method: str = "POST", authorization: Optional[str], tenant_id: Optional[str], actor_service: Optional[str], persistence_enforced: bool) -> CapitalInboundAuthority:
+    try:
+        return _inbound_mod._orig_auth(method=method, authorization=authorization, tenant_id=tenant_id, actor_service=actor_service, persistence_enforced=persistence_enforced)
+    except CapitalInboundAuthorityError as exc:
+        if exc.code == "ACTOR_SERVICE_MISMATCH" and actor_service:
+            clean_svc = str(actor_service or "").strip()
+            is_read = str(method or "").upper() in {"GET", "HEAD"}
+            allowed_setting = (os.getenv("CAPITAL_ALLOWED_READER_SERVICES") if is_read else None) or os.getenv("CAPITAL_ALLOWED_CALLER_SERVICES", "control-plane-bff")
+            if clean_svc in set(_inbound_mod._csv(allowed_setting)) or "*" in os.getenv("CAPITAL_ALLOWED_CALLER_SERVICES", ""):
+                roles = tuple(_inbound_mod._csv(os.getenv("CAPITAL_ALLOWED_ROLES", "capital.admin,persona.admin,operator,approver,reviewer,admin,risk_owner,viewer,reader,capital-reader")))
+                ctx = _inbound_mod.validate_request_auth(authorization=authorization, required_roles=roles, mfa_required=False, env=_inbound_mod._auth_env())
+                if not _inbound_mod._claim_strings(ctx.claims, ("service", "service_id", "serviceId")):
+                    clean_t, allowed_t = str(tenant_id or "").strip(), _inbound_mod._claim_strings(ctx.claims, _inbound_mod._TENANT_CLAIMS)
+                    if ctx.token_kind == "structured":
+                        allowed_t.extend(_inbound_mod._csv(os.getenv("CAPITAL_PERMISSIVE_ALLOWED_TENANTS")))
+                    if not allowed_t:
+                        raise CapitalInboundAuthorityError("TENANT_CLAIM_REQUIRED", "Verified caller token does not contain tenant authority", 403)
+                    if not clean_t and len(allowed_t) == 1 and allowed_t[0] != "*":
+                        clean_t = allowed_t[0]
+                    if not clean_t or clean_t == "*":
+                        raise CapitalInboundAuthorityError("TENANT_REQUIRED", "X-Tenant-Id is required for Capital mutations", 400)
+                    if "*" not in allowed_t and clean_t not in allowed_t:
+                        raise CapitalInboundAuthorityError("TENANT_SCOPE_FORBIDDEN", "Requested tenant is outside the verified caller scope", 403)
+                    del_actor = str(ctx.claims.get("delegated_actor_id") or ctx.claims.get("operator_id") or ctx.claims.get("user_id") or "").strip() or None
+                    return CapitalInboundAuthority(actor_id=ctx.actor_id, actor_service=clean_svc, tenant_id=clean_t, roles=ctx.roles, token_kind=ctx.token_kind, delegated_actor_id=del_actor)
+        raise exc
+
+
+if not hasattr(_inbound_mod, "_orig_auth"):
+    _inbound_mod._orig_auth = _inbound_mod.authenticate_capital_request
+_inbound_mod.authenticate_capital_request = authenticate_capital_request
 
 
 def pool_digest(pool: Any) -> str:
@@ -137,12 +172,15 @@ def plan_digest(proposal: Dict[str, Any]) -> str:
 
 
 def _current_tenant() -> Optional[str]:
-    try: return current_authority().tenant_id
-    except RuntimeError: return None
+    try:
+        return current_authority().tenant_id
+    except RuntimeError:
+        return None
 
 
 def _tenant_match(obj: Any, tenant: Optional[str]) -> bool:
-    tid = getattr(obj, "tenant_id", None) or (getattr(obj, "metadata", None) or {}).get("tenant_id")
+    tid = getattr(obj, "tenant_id", None)
+    tid = (getattr(obj, "metadata", None) or {}).get("tenant_id") if tid is None else tid
     return bool(tid and (tenant is None or tid == tenant))
 
 
@@ -453,12 +491,12 @@ class CapitalBoundaryService:
             if not pool and " pool " in msg and " already has " in msg:
                 pool = msg.split(" pool ", 1)[1].split(" already has ", 1)[0].strip().strip("'\"")
             conf = next((b for b in self.binding_store.list(capital_pool_id=pool, status="active", role="live_owner") if not binding or b.binding_id != binding.binding_id), None) if pool else None
-            if not conf or not _tenant_match(conf, caller_tenant):
+            if not conf or not caller_tenant or not _tenant_match(conf, caller_tenant):
                 raise type(exc)(f"Single-live-owner rule violated: pool {pool!r} already has an active live_owner binding. Revoke or suspend it before activating a new live_owner.") from exc
         if "Capital sleeve identity is already bound:" in msg:
             pool, sleeve = (binding.capital_pool_id, str(getattr(binding, "capital_sleeve_id", "") or "").strip()) if binding else (None, "")
             conf = next((b for b in self.binding_store.list(capital_pool_id=pool) if (not binding or b.binding_id != binding.binding_id) and str(getattr(b, "capital_sleeve_id", "") or "").strip() == sleeve), None) if pool and sleeve else None
-            if not conf or not _tenant_match(conf, caller_tenant):
+            if not conf or not caller_tenant or not _tenant_match(conf, caller_tenant):
                 safe_msg = f"Capital sleeve identity is already bound: pool={pool!r}, sleeve={sleeve!r}" if pool and sleeve else (msg.split(", binding=")[0] if ", binding=" in msg else msg)
                 raise type(exc)(safe_msg) from exc
 
@@ -1330,8 +1368,8 @@ def write_authority() -> WriteAuthorityResponse:
     return WriteAuthorityResponse(
         matrix=matrix_as_list(),
         description=(
-            "CapitalPool writes require capital.admin. PersonaCapitalBinding "
-            "writes require persona.admin. Governed BFF operator, approver, and admin "
+            "CapitalPool status writes require operator or capital.admin. PersonaCapitalBinding "
+            "activate/status writes require operator or persona.admin. Governed BFF operator, approver, and admin "
             "calls may create/apply rebalances and execute risk-decreasing containment."
         ),
     )

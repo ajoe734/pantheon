@@ -33,10 +33,27 @@ It does **not** own deployment execution or `RuntimeBinding` writes.
 
 | Object | Operation | Authorized role |
 |---|---|---|
-| `CapitalPool` | create / update status | `capital.admin` |
-| `PersonaCapitalBinding` | create / activate / update status | `persona.admin` |
+| `CapitalPool` | create | `operator`, `approver`, `admin`, `capital.admin` |
+| `CapitalPool` | update status | `operator`, `capital.admin` |
+| `PersonaCapitalBinding` | create | `operator`, `approver`, `admin`, `persona.admin` |
+| `PersonaCapitalBinding` | activate / update status | `operator`, `persona.admin` |
 | `Rebalance` | create / apply | `operator`, `approver`, `admin`, `capital.operator`, `capital.admin` |
 | `Containment` | create | `operator`, `approver`, `reviewer`, `admin`, `capital.operator`, `capital.admin`, `risk.admin` |
+
+Roles are the caller's verified JWT roles; `actor_id`/`actor_role` in a body
+must equal the verified actor and one of its roles. Role authority is never a
+Governance vote: a Capital approval is decided only by the CapitalGuard.
+
+A genuine paper binding (`role=paper_owner`, `allowed_deployment_scope=paper`)
+may be active with a null `approval_decision_id`; every other binding needs the
+exact Governance decision. The CapitalGuard exempts an operation from the Capital approval only when the
+owner's own facts say it is paper: the `paper_owner` binding with paper
+deployment scope, `paper_ledger` allocations and no active canary/live binding.
+A pool metadata label is necessary but never sufficient, and no body flag or
+environment field can exempt canary/live work. Ownership is the formal `tenant_id`; a
+legacy row whose formal tenant is blank is never adopted from metadata and fails
+closed (JSON-store records created by this service carry the server-stamped
+metadata tenant).
 
 BFF and other callers remain façades or consumers. They must not mutate the
 underlying JSON stores directly.

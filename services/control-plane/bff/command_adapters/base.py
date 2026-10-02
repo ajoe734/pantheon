@@ -129,6 +129,20 @@ def record_downstream_outcome(url: str, ok: bool, status_code: int, detail: Opti
         log.debug("failed to record downstream outcome for %s: %s", url, exc)
 
 
+def _headers(payload: Any, auth_token: Optional[str], mfa_token: Optional[str], tenant_id: Optional[str]) -> Dict[str, str]:
+    h = {"Accept": "application/json", "X-Pantheon-Service": "control-plane-bff"}
+    t = tenant_id or (payload.get("tenant_id") if isinstance(payload, dict) else None)
+    if t:
+        h["X-Tenant-Id"] = str(t).strip()
+    if payload is not None:
+        h["Content-Type"] = "application/json"
+    if auth_token:
+        h["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
+    if mfa_token:
+        h["X-MFA-Token"] = mfa_token
+    return h
+
+
 def http_request_json(
     url: str,
     method: str = "GET",
@@ -136,34 +150,21 @@ def http_request_json(
     auth_token: Optional[str] = None,
     mfa_token: Optional[str] = None,
     timeout: Optional[int] = None,
+    tenant_id: Optional[str] = None,
 ) -> Any:
     """Execute HTTP request to a domain authority endpoint and parse JSON response."""
     from services.control_plane.bff import command_executor
     normalized_method = method.upper()
     if normalized_method == "GET" and hasattr(command_executor, "_get_json"):
-        return command_executor._get_json(url, auth_token=auth_token, mfa_token=mfa_token)
+        return command_executor._get_json(url, auth_token=auth_token, mfa_token=mfa_token, tenant_id=tenant_id)
     if normalized_method == "POST" and hasattr(command_executor, "_post_json"):
-        # _post_json hardcodes method="POST"; PATCH/PUT/DELETE must not reuse
-        # it or they would silently be sent as POST against a route that
-        # doesn't accept it.
-        return command_executor._post_json(url, payload or {}, auth_token=auth_token, mfa_token=mfa_token)
+        return command_executor._post_json(url, payload or {}, auth_token=auth_token, mfa_token=mfa_token, tenant_id=tenant_id)
 
-    req_timeout = timeout or _DEFAULT_REQUEST_TIMEOUT
-    headers: Dict[str, str] = {"Accept": "application/json"}
-    data: Optional[bytes] = None
-
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-
-    if auth_token:
-        headers["Authorization"] = f"Bearer {auth_token}" if not auth_token.startswith("Bearer ") else auth_token
-    if mfa_token:
-        headers["X-MFA-Token"] = mfa_token
-
-    req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
+    headers = _headers(payload, auth_token, mfa_token, tenant_id)
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(url, data=data, headers=headers, method=normalized_method)
     try:
-        with urllib.request.urlopen(req, timeout=req_timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout or _DEFAULT_REQUEST_TIMEOUT) as resp:
             status_code = int(resp.status)
             body = json.loads(resp.read().decode("utf-8"))
             record_downstream_outcome(url, ok=True, status_code=status_code)
@@ -183,33 +184,14 @@ def http_request_json_with_headers(
     auth_token: Optional[str] = None,
     mfa_token: Optional[str] = None,
     timeout: Optional[int] = None,
+    tenant_id: Optional[str] = None,
 ) -> Tuple[int, Dict[str, str], Any]:
-    """Like :func:`http_request_json`, but returns ``(status_code, headers, body)``.
-
-    Some callers must inspect the response beyond the parsed JSON body — for
-    example the Registry metadata-CAS PATCH route's ``X-Idempotent-Replay``
-    header — so a caller can build a receipt from what the owner actually
-    returned instead of re-deriving it from a separate, potentially stale or
-    unrelated confirmatory GET. Always uses the raw ``urllib`` path (not the
-    ``command_executor._get_json``/``_post_json`` shortcuts, which discard
-    headers) so this works uniformly for every HTTP method.
-    """
-    req_timeout = timeout or _DEFAULT_REQUEST_TIMEOUT
-    headers: Dict[str, str] = {"Accept": "application/json"}
-    data: Optional[bytes] = None
-
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-
-    if auth_token:
-        headers["Authorization"] = f"Bearer {auth_token}" if not auth_token.startswith("Bearer ") else auth_token
-    if mfa_token:
-        headers["X-MFA-Token"] = mfa_token
-
+    """Like :func:`http_request_json`, but returns ``(status_code, headers, body)``."""
+    headers = _headers(payload, auth_token, mfa_token, tenant_id)
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
     try:
-        with urllib.request.urlopen(req, timeout=req_timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout or _DEFAULT_REQUEST_TIMEOUT) as resp:
             status_code = int(resp.status)
             raw = resp.read()
             body = json.loads(raw.decode("utf-8")) if raw else None

@@ -273,7 +273,7 @@ def test_explicit_paper_policy_enforces_limits_and_rejects(client, monkeypatch):
     assert "Risk policy rejected" in res_rejected.json()["detail"]
 
 
-def test_paper_binding_activation_passes_guard_and_honors_lowerstore_contract(client):
+def test_paper_binding_activates_suspends_and_reactivates_without_approval(client):
     test_client, _ = client
     test_client.post("/api/capital-pools", json={
         "actor_id": "control-plane-bff", "actor_role": "admin", "pool_id": "pool-paper-binding",
@@ -287,13 +287,16 @@ def test_paper_binding_activation_passes_guard_and_honors_lowerstore_contract(cl
     }).json()
     assert binding["status"] == "pending"
 
-    # Lowerstore currently insists any active binding has a decision; until BFF-CAPITAL-FORWARD-001 lands,
-    # activating without approval_decision_id passes CapitalGuard but raises 400 from the lower store.
-    res_no_approval = test_client.post("/api/bindings/binding-paper-01/activate", json={
-        "actor_id": "persona-admin-1", "actor_role": "persona.admin",
-    })
-    assert res_no_approval.status_code == 400
-    assert "approval_decision_id is required" in res_no_approval.json()["detail"]
+    activate = {"actor_id": "persona-admin-1", "actor_role": "persona.admin"}
+    activated = test_client.post("/api/bindings/binding-paper-01/activate", json=activate)
+    assert activated.status_code == 200
+    assert activated.json()["status"] == "active"
+    assert activated.json()["approval_decision_id"] is None
+    status = "/api/bindings/binding-paper-01/status"
+    assert test_client.patch(status, json={**activate, "status": "suspended"}).status_code == 200
+    reactivated = test_client.post("/api/bindings/binding-paper-01/activate", json=activate)
+    assert reactivated.status_code == 200
+    assert reactivated.json()["status"] == "active"
 
 
 def test_canary_live_mixed_and_sameweight_upgrade_deny_unapproved_money_effect(client, monkeypatch):
