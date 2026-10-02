@@ -325,3 +325,31 @@ def test_restart_reloads_pending_identity_and_retries(tmp_path):
     assert out2["created"] == 1
     assert len(_proposals(log)) == 1
     assert "pending" not in store2.load()["requests"]["p1|frozen"]
+
+
+def test_changed_content_after_unknown_outcome_does_not_attach_old_proposal(tmp_path):
+    down, log1 = _fetch([_item("p1")], [_rec("p1")], gov_down=True)
+    _run(tmp_path, down)
+    original = _proposals(log1)[0]
+    changed = {**_rec("p1"), "rationale": "different provider judgment after new evidence"}
+    up, log2 = _fetch([_item("p1")], [changed], snapshot="snap-2")
+    _run(tmp_path, up, now=NOW + 30)
+    assert _proposals(log2)[0] == original  # unknown identity must be retried unchanged
+    saved = pea.Store(tmp_path / "state.json").load()
+    rec = saved["results"][f"{QUARTER}|snap-2"]["items"][0]
+    assert pea.proposal_digest(rec) != original["proposal_content_digest"]
+    assert rec["governance_request"] is None, "changed recommendation attached to old content decision"
+
+
+def test_incomplete_200_is_not_verified_same_content_replay(tmp_path):
+    fallback, _ = _fetch([_item("p1")], [_rec("p1")], readback_404=True)
+
+    def fetch(url, data=None, **kwargs):
+        if "/api/governance/approvals" in url and data is not None:
+            return {"_http_status": 200}
+        return fallback(url, data=data, **kwargs)
+
+    result = _run(tmp_path, fetch)
+    assert result["deduped"] == 0, "missing owner identity/content was fabricated from local defaults"
+    saved = pea.Store(tmp_path / "state.json").load()
+    assert saved["requests"]["p1|frozen"].get("pending")

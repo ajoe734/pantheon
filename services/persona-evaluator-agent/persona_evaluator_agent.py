@@ -326,46 +326,36 @@ def run_once(
             except Exception:
                 skipped += 1  # outcome unknown: slot and pending identity stay reserved
                 continue
-            status = resp.get("_http_status", 201) if isinstance(resp, dict) else 201
             req_digest = entry["pending"]["body"]["proposal_content_digest"]
-            is_owner_match = (
-                isinstance(resp, dict)
-                and resp.get("decision_id", entry["decision_id"]) == entry["decision_id"]
-                and resp.get("tenant_id", tenant) == tenant
-                and resp.get("target_id", rec["persona_id"]) == rec["persona_id"]
-                and resp.get("proposal_content_digest", req_digest) == req_digest
-            )
-            if status == 201 and is_owner_match:
-                created += 1
-                entry.pop("pending", None)
-                entry["at"] = now()
-                rec["governance_request"] = {"decision_id": entry["decision_id"], "to_state": to_state}
-            elif status == 200 and is_owner_match:
-                deduped += 1
-                state["created"].pop()
-                entry.pop("pending", None)
-                entry["at"] = now()
-                rec["governance_request"] = {"decision_id": entry["decision_id"], "to_state": to_state}
+            dec_id, pid = entry["decision_id"], rec["persona_id"]
+            status = resp.get("_http_status", 201) if isinstance(resp, dict) else 201
+            match = lambda d: isinstance(d, dict) and d.get("decision_id") == dec_id and d.get("tenant_id") == tenant and d.get("target_id") == pid and d.get("proposal_content_digest") == req_digest
+            if match(resp) and status in (200, 201):
+                is_created, verified = (status == 201), True
             else:
-                rb = readback_lifecycle(entry["decision_id"], governance_url=governance_url, token=governance_token, fetch=fetch)
-                if (
-                    isinstance(rb, dict)
-                    and rb.get("_http_status", 200) in (200, 201)
-                    and rb.get("decision_id") == entry["decision_id"]
-                    and rb.get("tenant_id") == tenant
-                    and rb.get("target_id") == rec["persona_id"]
-                    and rb.get("proposal_content_digest") == req_digest
-                ):
+                rb = readback_lifecycle(dec_id, governance_url=governance_url, token=governance_token, fetch=fetch)
+                is_created, verified = False, match(rb) and rb.get("_http_status", 200) in (200, 201)
+            if verified:
+                if is_created:
+                    created += 1
+                else:
                     deduped += 1
                     state["created"].pop()
-                    entry.pop("pending", None)
-                    entry["at"] = now()
-                    rec["governance_request"] = {"decision_id": entry["decision_id"], "to_state": to_state}
-                else:
-                    conflicts += 1
-                    skipped += 1
-                    state["created"].pop()
-                    entry["conflict"] = {"status": status, "detail": (resp.get("detail") if isinstance(resp, dict) else str(resp)), "at": now()}
+                entry.pop("pending", None)
+                entry["at"] = now()
+                entry["content_digest"] = req_digest
+                gov_req = {"decision_id": dec_id, "to_state": to_state}
+                if digest == req_digest:
+                    rec["governance_request"] = gov_req
+                for res in state["results"].values():
+                    for item in res.get("items", []):
+                        if item.get("persona_id") == pid and lifecycle_target(item) == to_state and proposal_digest(item) == req_digest:
+                            item["governance_request"] = gov_req
+            else:
+                conflicts += 1
+                skipped += 1
+                state["created"].pop()
+                entry["conflict"] = {"status": status, "detail": (resp.get("detail") if isinstance(resp, dict) else str(resp)), "at": now()}
 
     store.update(apply)
     status_label = "degraded" if conflicts > 0 else "ok"
