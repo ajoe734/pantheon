@@ -177,11 +177,16 @@ def authority_configuration_health(*, persistence_enforced: bool) -> dict[str, A
         "allowed_services": _csv(
             os.getenv("CAPITAL_ALLOWED_CALLER_SERVICES", "control-plane-bff")
         ),
+        "allowed_reader_services": _csv(
+            os.getenv("CAPITAL_ALLOWED_READER_SERVICES")
+            or os.getenv("CAPITAL_ALLOWED_CALLER_SERVICES", "control-plane-bff")
+        ),
     }
 
 
 def authenticate_capital_request(
     *,
+    method: str = "POST",
     authorization: Optional[str],
     tenant_id: Optional[str],
     actor_service: Optional[str],
@@ -217,7 +222,12 @@ def authenticate_capital_request(
 
     clean_tenant = _clean(tenant_id)
     clean_service = _clean(actor_service)
-    allowed_services = set(_csv(os.getenv("CAPITAL_ALLOWED_CALLER_SERVICES", "control-plane-bff")))
+    is_read = str(method or "").upper() in {"GET", "HEAD"}
+    allowed_setting = (
+        (os.getenv("CAPITAL_ALLOWED_READER_SERVICES") if is_read else None)
+        or os.getenv("CAPITAL_ALLOWED_CALLER_SERVICES", "control-plane-bff")
+    )
+    allowed_services = set(_csv(allowed_setting))
     if not authorization:
         if not clean_tenant:
             raise CapitalInboundAuthorityError("TENANT_REQUIRED", "X-Tenant-Id is required for Capital mutations", 400)

@@ -149,6 +149,25 @@ def _deployment_request_headers() -> dict[str, str]:
     }
 
 
+def _capital_request_headers(tenant_id: str | None = None) -> dict[str, str]:
+    from services.service_token_file import configured_service_token
+    try:
+        token = configured_service_token("RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN") or configured_service_token("DEPLOYMENT_CAPITAL_SERVICE_TOKEN")
+    except RuntimeError as exc:
+        raise DeployAuthorityUnavailableError("Capital read principal unavailable") from exc
+    token = token or (os.getenv("RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN") or os.getenv("DEPLOYMENT_CAPITAL_SERVICE_TOKEN") or os.getenv("PANTHEON_CAPITAL_SERVICE_TOKEN") or os.getenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN") or "").strip()
+    if not token:
+        raise DeployAuthorityUnavailableError("Capital scoped read principal required")
+    tenant = str(tenant_id or os.getenv("PANTHEON_DEPLOYMENT_TENANT_ID") or os.getenv("PANTHEON_TENANT_ID") or "").strip()
+    headers = {
+        "Authorization": token if token.lower().startswith("bearer ") else f"Bearer {token}",
+        "X-Pantheon-Service": "runtime-manager",
+    }
+    if tenant:
+        headers["X-Tenant-Id"] = tenant
+    return headers
+
+
 def _parse_time(value: str, label: str) -> datetime:
     normalized = value.strip()
     if normalized.endswith("Z"):
@@ -173,6 +192,7 @@ def verify_deploy_authorities(
     fetch_json: FetchJson | None = None,
     approval_reader=None,
     registry_fetch_json: FetchJson | None = None,
+    capital_fetch_json: FetchJson | None = None,
     now: datetime | None = None,
     allowed_plan_statuses: Collection[str] = ("approved", "executing"),
     allowed_target_stages: Collection[str] = ("paper",),
@@ -297,9 +317,20 @@ def verify_deploy_authorities(
         raise DeployAuthorityUnavailableError(str(exc)) from exc
     except ApprovalInvalid as exc:
         raise DeployAuthorityError(str(exc)) from exc
-    capital_pool = fetch(capital_pool_proof_url, timeout_seconds)
-    capital_admissibility = fetch(capital_admissibility_proof_url, timeout_seconds)
-    persona_binding = fetch(persona_binding_proof_url, timeout_seconds)
+    capital_fetch = capital_fetch_json
+    if capital_fetch is None:
+        def capital_fetch(url: str, timeout: float) -> Mapping[str, Any]:
+            tenant = str((plan.get("metadata") or {}).get("tenant_id") or "").strip() or None
+            try:
+                return _fetch_json(url, timeout, headers=_capital_request_headers(tenant))
+            except DeployAuthorityUnavailableError:
+                if fetch_json and getattr(fetch_json, "__name__", "") != "_fetch_authority_json":
+                    return fetch_json(url, timeout)
+                raise
+
+    capital_pool = capital_fetch(capital_pool_proof_url, timeout_seconds)
+    capital_admissibility = capital_fetch(capital_admissibility_proof_url, timeout_seconds)
+    persona_binding = capital_fetch(persona_binding_proof_url, timeout_seconds)
 
     expected_plan = {
         "plan_id": plan_id,

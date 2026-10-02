@@ -41,6 +41,16 @@ It does **not** own deployment execution or `RuntimeBinding` writes.
 BFF and other callers remain façades or consumers. They must not mutate the
 underlying JSON stores directly.
 
+## Inbound Authority and Whitelists
+
+Every `/api/` request requires a verified bearer token and `X-Tenant-Id` header
+matching the token's tenant claim. Service authorization distinguishes read queries
+from mutations:
+
+- **Mutations (`POST`, `PUT`, `PATCH`, `DELETE`):** Restricted to caller services authorized in `CAPITAL_ALLOWED_CALLER_SERVICES` (default: `control-plane-bff`).
+- **Reads (`GET`, `HEAD`):** Authorized for reader services in `CAPITAL_ALLOWED_READER_SERVICES` (default: `control-plane-bff,runtime-manager`). Services authorized for read access (such as `runtime-manager`) obtain read-only access to pools, bindings, and admissibility proofs without gaining mutation authority.
+
+
 ## API Surface
 
 ### Capital pools
@@ -156,7 +166,7 @@ underlying JSON stores directly.
 
 ## Downstream Read Paths
 
-- Runtime-manager checks `/api/bindings/admissibility` before creating a `RuntimeBinding`.
+- Runtime-manager checks `/api/bindings/admissibility` and reads capital pools before creating a `RuntimeBinding` using its scoped `runtime-manager` service identity (`capital-reader` role).
 - BFF creates and applies rebalance proposals through this service, then reads
   `/api/allocations` (or the pool-scoped route) for authoritative readback.
 - BFF and other read surfaces load the canonical snapshots emitted by this service.

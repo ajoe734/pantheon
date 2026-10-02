@@ -166,6 +166,14 @@ def _verify(
         capital_base_url="http://capital:8092",
         approval_reader=SnapshotApprovalReader(approval),
         registry_fetch_json=lambda url, timeout: registry,
+        capital_fetch_json=_fetcher(
+            registry,
+            approval,
+            plan,
+            capital_pool,
+            persona_binding,
+            capital_admissibility=capital_admissibility,
+        ),
         fetch_json=_fetcher(
             registry,
             approval,
@@ -513,3 +521,29 @@ def test_missing_authority_urls_fail_closed():
             governance_base_url="",
             capital_base_url="",
         )
+
+
+def test_capital_authority_read_sends_service_token_and_tenant(monkeypatch):
+    monkeypatch.setenv("RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN", "cap-token-123")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "tenant-dev")
+
+    headers = authority._capital_request_headers()
+    assert headers["Authorization"] == "Bearer cap-token-123"
+    assert headers["X-Pantheon-Service"] == "runtime-manager"
+    assert headers["X-Tenant-Id"] == "tenant-dev"
+
+    headers_explicit = authority._capital_request_headers("tenant-explicit")
+    assert headers_explicit["X-Tenant-Id"] == "tenant-explicit"
+
+
+def test_capital_authority_auth_fails_closed_when_missing(monkeypatch):
+    monkeypatch.delenv("RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN_FILE", raising=False)
+    monkeypatch.delenv("PANTHEON_CAPITAL_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", raising=False)
+
+    with pytest.raises(
+        authority.DeployAuthorityUnavailableError,
+        match="Capital scoped read principal required",
+    ):
+        authority._capital_request_headers()
