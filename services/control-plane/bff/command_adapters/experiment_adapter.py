@@ -55,16 +55,9 @@ class ExperimentCommandAdapter(DomainCommandAdapter):
             if self._research_write_owner_factory is not None:
                 self._research_write_owner = self._research_write_owner_factory()
             else:
-                from ..ports.research_commands import (
-                    ResearchServiceClient,
-                    _resolve_orchestrator_base_url,
-                )
-
-                base_url = _resolve_orchestrator_base_url()
-                if base_url:
-                    self._research_write_owner = ResearchServiceClient(base_url=base_url)
-                else:
-                    self._research_write_owner = None
+                from ..ports.research_commands import ResearchServiceClient, _resolve_orchestrator_base_url
+                url = _resolve_orchestrator_base_url()
+                self._research_write_owner = ResearchServiceClient(base_url=url) if url else None
         except Exception as exc:  # noqa: BLE001 - any failure means "unavailable"
             log.warning("Research service unavailable for ExperimentCommandAdapter: %s", exc)
             self._research_write_owner = None

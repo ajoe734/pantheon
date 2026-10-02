@@ -376,44 +376,19 @@ class AgoraResearchService:
         now = self.utc_now()
         task_id = ""
         run_id = ""
-        research_url = os.getenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL") or os.getenv("RESEARCH_ORCHESTRATOR_URL") or os.getenv("RESEARCH_ORCHESTRATOR_API_URL")
-        if research_url:
+        r_url = os.getenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL") or os.getenv("RESEARCH_ORCHESTRATOR_URL") or os.getenv("RESEARCH_ORCHESTRATOR_API_URL")
+        if r_url:
             try:
                 from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
-
-                ops = WorkshopCanonicalOperations(research_base_url=research_url)
-                task_payload = {
-                    "title": plan.get("title") or f"Research Plan {plan_id}",
-                    "objective": plan.get("objective") or f"Execution of plan {plan_id}",
-                    "source_refs": [
-                        {"type": "research_plan", "id": plan_id},
-                        {"type": "strategy", "id": plan.get("strategy_id")},
-                    ],
-                    "constraints": {"environment": "research"},
-                    "actor_id": getattr(scope, "user_id", "operator") or "operator",
-                    "idempotency_key": f"plan-task-{plan_id}",
-                }
-                run_payload = {
-                    "adapter": dispatch_stage.get("framework") or dispatch_stage.get("backend") or "stub",
-                    "requested_mode": "stub",
-                    "dispatch_mode": "stub",
-                    "input_refs": [
-                        {"type": "research_plan", "id": plan_id},
-                        {"type": "stage", "id": dispatch_stage["stage_id"]},
-                    ],
-                    "parameters": dispatch_stage.get("parameters") or {},
-                    "actor_id": getattr(scope, "user_id", "operator") or "operator",
-                    "idempotency_key": f"plan-run-{plan_id}-{dispatch_stage['stage_id']}",
-                }
-                dispatched = ops.dispatch_research_run(task_payload=task_payload, run_payload=run_payload)
-                task_id = str(dispatched.get("task_id") or "")
-                run_id = str(dispatched.get("run_id") or "")
+                actor = getattr(scope, "user_id", "operator") or "operator"
+                task_p = {"title": plan.get("title") or f"Plan {plan_id}", "objective": plan.get("objective") or f"Execution {plan_id}", "source_refs": [{"type": "research_plan", "id": plan_id}, {"type": "strategy", "id": plan.get("strategy_id")}], "constraints": {"environment": "research"}, "actor_id": actor, "idempotency_key": f"plan-task-{plan_id}"}
+                run_p = {"adapter": dispatch_stage.get("framework") or dispatch_stage.get("backend") or "stub", "requested_mode": "stub", "dispatch_mode": "stub", "input_refs": [{"type": "research_plan", "id": plan_id}, {"type": "stage", "id": dispatch_stage["stage_id"]}], "parameters": dispatch_stage.get("parameters") or {}, "actor_id": actor, "idempotency_key": f"plan-run-{plan_id}-{dispatch_stage['stage_id']}"}
+                dispatched = WorkshopCanonicalOperations(research_base_url=r_url).dispatch_research_run(task_payload=task_p, run_payload=run_p)
+                task_id, run_id = str(dispatched.get("task_id") or ""), str(dispatched.get("run_id") or "")
             except Exception as exc:
                 log.warning("Research orchestrator dispatch error: %s", exc)
-        if not run_id:
-            run_id = str(uuid.uuid4())
-        if not task_id:
-            task_id = str(plan.get("task_id") or f"task-{run_id}")
+        run_id = run_id or str(uuid.uuid4())
+        task_id = task_id or str(plan.get("task_id") or f"task-{run_id}")
 
         run = _build_run_projection(
             plan=plan,
@@ -425,13 +400,7 @@ class AgoraResearchService:
         run["task_id"] = task_id
         self.store.create_run(run)
         if self.dispatcher is not None and hasattr(self.dispatcher, "create_outbox_record"):
-            self.dispatcher.create_outbox_record(
-                plan=plan,
-                stage=dispatch_stage,
-                run_id=run_id,
-                scope=scope,
-                now=now,
-            )
+            self.dispatcher.create_outbox_record(plan=plan, stage=dispatch_stage, run_id=run_id, scope=scope, now=now)
         updated_stages = [
             {**s, "status": "queued"} if s["stage_id"] == dispatch_stage["stage_id"] else s
             for s in plan.get("stages", [])

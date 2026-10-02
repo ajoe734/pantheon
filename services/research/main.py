@@ -2065,123 +2065,63 @@ def execute_research_stage(
 # -----------------------------------------------------------------------------
 
 
-class CreateResearchTicketBody(BaseModel):
-    title: str
-    description: str = ""
-    priority: str = "medium"
-    owner: str = ""
-    actor_id: str = "operator"
-    created_at: Optional[str] = None
-    ticket_id: Optional[str] = None
+def _handle_experiment_action(experiment_id: str, action_fn: Any, err_desc: str) -> Dict[str, Any]:
+    wo = get_write_owner()
+    res = action_fn(wo)
+    if res is None:
+        if wo.get_research_experiment(experiment_id) is None:
+            raise HTTPException(status_code=404, detail=f"Research experiment '{experiment_id}' not found")
+        raise HTTPException(status_code=409, detail=f"Research experiment '{experiment_id}' {err_desc}")
+    return res
 
 
 @app.post("/api/research/tickets")
-def create_research_ticket(
-    body: CreateResearchTicketBody,
-) -> Dict[str, Any]:
-    write_owner = get_write_owner()
+def create_research_ticket(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     try:
-        return write_owner.create_research_ticket(
-            title=body.title,
-            description=body.description,
-            priority=body.priority,
-            owner=body.owner,
-            actor_id=body.actor_id,
-            created_at=body.created_at,
-            ticket_id=body.ticket_id,
+        return get_write_owner().create_research_ticket(
+            title=str(body.get("title") or ""), description=str(body.get("description") or ""),
+            priority=str(body.get("priority") or "medium"), owner=str(body.get("owner") or ""),
+            actor_id=str(body.get("actor_id") or "operator"), created_at=body.get("created_at"), ticket_id=body.get("ticket_id"),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.patch("/api/research/tickets/{ticket_id}")
-def patch_research_ticket(
-    ticket_id: str,
-    body: Dict[str, Any] = Body(...),
-) -> Dict[str, Any]:
-    write_owner = get_write_owner()
+def patch_research_ticket(ticket_id: str, body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     patch = body.get("patch") if isinstance(body.get("patch"), dict) else body
-    actor_id = str(body.get("actor_id") or patch.get("actor_id") or "operator")
-    updated_at = body.get("updated_at") or patch.get("updated_at")
-    res = write_owner.patch_research_ticket(ticket_id, patch=patch, actor_id=actor_id, updated_at=updated_at)
+    res = get_write_owner().patch_research_ticket(
+        ticket_id, patch=patch,
+        actor_id=str(body.get("actor_id") or patch.get("actor_id") or "operator"),
+        updated_at=body.get("updated_at") or patch.get("updated_at"),
+    )
     if not res:
         raise HTTPException(status_code=404, detail=f"Research ticket '{ticket_id}' not found")
     return res
 
 
 @app.get("/api/research/tickets")
-def list_research_tickets(
-    status: Optional[str] = Query(default=None),
-    owner: Optional[str] = Query(default=None),
-) -> List[Dict[str, Any]]:
-    write_owner = get_write_owner()
+def list_research_tickets(status: Optional[str] = Query(default=None), owner: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
     statuses = [s.strip() for s in status.split(",") if s.strip()] if status else None
-    return write_owner.list_research_tickets(statuses=statuses, owner=owner)
+    return get_write_owner().list_research_tickets(statuses=statuses, owner=owner)
 
 
 @app.get("/api/research/tickets/{ticket_id}")
 def get_research_ticket(ticket_id: str) -> Dict[str, Any]:
-    write_owner = get_write_owner()
-    res = write_owner.get_research_ticket(ticket_id)
+    res = get_write_owner().get_research_ticket(ticket_id)
     if not res:
         raise HTTPException(status_code=404, detail=f"Research ticket '{ticket_id}' not found")
     return res
 
 
-# -----------------------------------------------------------------------------
-# Research Experiments (RW-04) Single Owner Endpoints
-# -----------------------------------------------------------------------------
-
-
-class CreateResearchExperimentBody(BaseModel):
-    ticket_id: str = ""
-    experiment_name: str
-    strategy_selector: Dict[str, Any] = Field(default_factory=dict)
-    parameter_set: Dict[str, Any] = Field(default_factory=dict)
-    run_config: Dict[str, Any] = Field(default_factory=dict)
-    launch_context: Dict[str, Any] = Field(default_factory=dict)
-    queued_at: Optional[str] = None
-    experiment_id: Optional[str] = None
-
-
-class CancelResearchExperimentBody(BaseModel):
-    completed_at: Optional[str] = None
-    reason: Optional[str] = None
-    actor_id: Optional[str] = None
-
-
-class RetryResearchExperimentBody(BaseModel):
-    actor_id: Optional[str] = None
-    requested_at: Optional[str] = None
-    idempotency_key: Optional[str] = None
-
-
-class ArchiveResearchExperimentBody(BaseModel):
-    actor_id: Optional[str] = None
-    archived_at: Optional[str] = None
-
-
-class InvalidateResearchExperimentBody(BaseModel):
-    reason: Optional[str] = None
-    actor_id: Optional[str] = None
-    invalidated_at: Optional[str] = None
-
-
 @app.post("/api/research/experiments")
-def create_research_experiment(
-    body: CreateResearchExperimentBody,
-) -> Dict[str, Any]:
-    write_owner = get_write_owner()
+def create_research_experiment(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     try:
-        return write_owner.create_research_experiment(
-            ticket_id=body.ticket_id,
-            experiment_name=body.experiment_name,
-            strategy_selector=body.strategy_selector,
-            parameter_set=body.parameter_set,
-            run_config=body.run_config,
-            launch_context=body.launch_context,
-            queued_at=body.queued_at,
-            experiment_id=body.experiment_id,
+        return get_write_owner().create_research_experiment(
+            ticket_id=str(body.get("ticket_id") or ""), experiment_name=str(body.get("experiment_name") or ""),
+            strategy_selector=body.get("strategy_selector") or {}, parameter_set=body.get("parameter_set") or {},
+            run_config=body.get("run_config") or {}, launch_context=body.get("launch_context") or {},
+            queued_at=body.get("queued_at"), experiment_id=body.get("experiment_id"),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2189,111 +2129,46 @@ def create_research_experiment(
 
 @app.get("/api/research/experiments")
 def list_research_experiments(
-    ticket_id: Optional[str] = Query(default=None),
-    status: Optional[str] = Query(default=None),
-    include_archived: bool = Query(default=False),
+    ticket_id: Optional[str] = Query(default=None), status: Optional[str] = Query(default=None), include_archived: bool = Query(default=False),
 ) -> List[Dict[str, Any]]:
-    write_owner = get_write_owner()
-    return write_owner.list_research_experiments(
-        ticket_id=ticket_id, status=status, include_archived=include_archived
-    )
+    return get_write_owner().list_research_experiments(ticket_id=ticket_id, status=status, include_archived=include_archived)
 
 
 @app.get("/api/research/experiments/{experiment_id}")
 def get_research_experiment(experiment_id: str) -> Dict[str, Any]:
-    write_owner = get_write_owner()
-    res = write_owner.get_research_experiment(experiment_id)
+    res = get_write_owner().get_research_experiment(experiment_id)
     if not res:
         raise HTTPException(status_code=404, detail=f"Research experiment '{experiment_id}' not found")
     return res
 
 
 @app.post("/api/research/experiments/{experiment_id}/cancel")
-def cancel_research_experiment(
-    experiment_id: str,
-    body: Optional[CancelResearchExperimentBody] = Body(default=None),
-) -> Dict[str, Any]:
-    write_owner = get_write_owner()
-    completed_at = body.completed_at if body else None
-    reason = body.reason if body else None
-    actor_id = body.actor_id if body else None
-    res = write_owner.cancel_research_experiment(
-        experiment_id, completed_at=completed_at, reason=reason, actor_id=actor_id
-    )
-    if res is None:
-        if write_owner.get_research_experiment(experiment_id) is None:
-            raise HTTPException(status_code=404, detail=f"Research experiment '{experiment_id}' not found")
-        raise HTTPException(status_code=409, detail=f"Research experiment '{experiment_id}' is not in a cancelable state")
-    return res
+def cancel_research_experiment(experiment_id: str, body: Optional[Dict[str, Any]] = Body(default=None)) -> Dict[str, Any]:
+    p = body or {}
+    return _handle_experiment_action(experiment_id, lambda wo: wo.cancel_research_experiment(experiment_id, completed_at=p.get("completed_at"), reason=p.get("reason"), actor_id=p.get("actor_id")), "is not in a cancelable state")
 
 
 @app.post("/api/research/experiments/{experiment_id}/retry")
-def retry_research_experiment(
-    experiment_id: str,
-    body: Optional[RetryResearchExperimentBody] = Body(default=None),
-) -> Dict[str, Any]:
-    write_owner = get_write_owner()
-    actor_id = body.actor_id if body else None
-    requested_at = body.requested_at if body else None
-    idempotency_key = body.idempotency_key if body else None
-    res = write_owner.retry_research_experiment(
-        experiment_id, actor_id=actor_id, requested_at=requested_at, idempotency_key=idempotency_key
-    )
-    if res is None:
-        if write_owner.get_research_experiment(experiment_id) is None:
-            raise HTTPException(status_code=404, detail=f"Research experiment '{experiment_id}' not found")
-        raise HTTPException(status_code=409, detail=f"Research experiment '{experiment_id}' is not in a retryable state")
-    return res
+def retry_research_experiment(experiment_id: str, body: Optional[Dict[str, Any]] = Body(default=None)) -> Dict[str, Any]:
+    p = body or {}
+    return _handle_experiment_action(experiment_id, lambda wo: wo.retry_research_experiment(experiment_id, actor_id=p.get("actor_id"), requested_at=p.get("requested_at"), idempotency_key=p.get("idempotency_key")), "is not in a retryable state")
 
 
 @app.post("/api/research/experiments/{experiment_id}/archive")
-def archive_research_experiment(
-    experiment_id: str,
-    body: Optional[ArchiveResearchExperimentBody] = Body(default=None),
-) -> Dict[str, Any]:
-    write_owner = get_write_owner()
-    actor_id = body.actor_id if body else None
-    archived_at = body.archived_at if body else None
-    res = write_owner.archive_research_experiment(
-        experiment_id, actor_id=actor_id, archived_at=archived_at
-    )
-    if res is None:
-        if write_owner.get_research_experiment(experiment_id) is None:
-            raise HTTPException(status_code=404, detail=f"Research experiment '{experiment_id}' not found")
-        raise HTTPException(status_code=409, detail=f"Research experiment '{experiment_id}' is not in an archivable state")
-    return res
+def archive_research_experiment(experiment_id: str, body: Optional[Dict[str, Any]] = Body(default=None)) -> Dict[str, Any]:
+    p = body or {}
+    return _handle_experiment_action(experiment_id, lambda wo: wo.archive_research_experiment(experiment_id, actor_id=p.get("actor_id"), archived_at=p.get("archived_at")), "is not in an archivable state")
 
 
 @app.post("/api/research/experiments/{experiment_id}/invalidate")
-def invalidate_research_experiment(
-    experiment_id: str,
-    body: Optional[InvalidateResearchExperimentBody] = Body(default=None),
-) -> Dict[str, Any]:
-    write_owner = get_write_owner()
-    reason = body.reason if body else None
-    actor_id = body.actor_id if body else None
-    invalidated_at = body.invalidated_at if body else None
-    res = write_owner.invalidate_research_experiment(
-        experiment_id, reason=reason, actor_id=actor_id, invalidated_at=invalidated_at
-    )
-    if res is None:
-        if write_owner.get_research_experiment(experiment_id) is None:
-            raise HTTPException(status_code=404, detail=f"Research experiment '{experiment_id}' not found")
-        raise HTTPException(status_code=409, detail=f"Research experiment '{experiment_id}' cannot be invalidated")
-    return res
-
-
-# -----------------------------------------------------------------------------
-# Research Notes (KW-02) Single Owner Endpoints
-# -----------------------------------------------------------------------------
+def invalidate_research_experiment(experiment_id: str, body: Optional[Dict[str, Any]] = Body(default=None)) -> Dict[str, Any]:
+    p = body or {}
+    return _handle_experiment_action(experiment_id, lambda wo: wo.invalidate_research_experiment(experiment_id, reason=p.get("reason"), actor_id=p.get("actor_id"), invalidated_at=p.get("invalidated_at")), "cannot be invalidated")
 
 
 @app.post("/api/research/notes")
-def create_research_note(
-    body: Dict[str, Any] = Body(...),
-) -> Dict[str, Any]:
-    write_owner = get_write_owner()
-    res = write_owner.create_research_note(body)
+def create_research_note(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    res = get_write_owner().create_research_note(body)
     if res is None:
         raise HTTPException(status_code=400, detail="Invalid note payload")
     return res
@@ -2301,14 +2176,12 @@ def create_research_note(
 
 @app.get("/api/research/notes")
 def list_research_notes() -> List[Dict[str, Any]]:
-    write_owner = get_write_owner()
-    return write_owner.list_research_notes()
+    return get_write_owner().list_research_notes()
 
 
 @app.get("/api/research/notes/{note_id}")
 def get_research_note(note_id: str) -> Dict[str, Any]:
-    write_owner = get_write_owner()
-    res = write_owner.get_research_note(note_id)
+    res = get_write_owner().get_research_note(note_id)
     if not res:
         raise HTTPException(status_code=404, detail=f"Research note '{note_id}' not found")
     return res

@@ -70,40 +70,22 @@ def resolve_governed_dataset(
     tenant_id: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Resolve canonical input_refs into typed execution inputs through canonical dataset owner.
-
-    Deletes synthetic fixtures from the natural path. Fails closed when references
-    are missing, invalid, or unavailable. Never synthesizes fake OHLCV records.
-    """
+    """Resolve canonical input_refs into typed execution inputs through canonical dataset owner."""
     if stage.get("dataset"):
         return stage["dataset"]
     if plan and plan.get("dataset"):
         return plan["dataset"]
 
-    input_refs = stage.get("input_refs")
-    if input_refs is None and plan:
-        input_refs = plan.get("input_refs")
+    input_refs = stage.get("input_refs") or (plan.get("input_refs") if plan else None)
     if not input_refs or not isinstance(input_refs, (list, tuple)):
         return None
-
     valid_refs = [str(r).strip() for r in input_refs if str(r).strip()]
     if not valid_refs:
         return None
 
-    resolved_tenant = str(
-        tenant_id
-        or stage.get("tenant_id")
-        or (plan.get("tenant_id") if plan else "")
-        or ""
-    ).strip()
-    resolved_user = str(
-        user_id
-        or stage.get("user_id")
-        or (plan.get("user_id") if plan else "")
-        or ""
-    ).strip()
+    r_tenant = str(tenant_id or stage.get("tenant_id") or (plan.get("tenant_id") if plan else "") or "").strip()
+    r_user = str(user_id or stage.get("user_id") or (plan.get("user_id") if plan else "") or "").strip()
 
-    # Consult canonical dataset store/owner
     store = dataset_store
     if store is None:
         try:
@@ -114,55 +96,136 @@ def resolve_governed_dataset(
                 from services.control_plane.bff.agora.dataset_extraction.router import _default_store
                 store = _default_store()
             except Exception:
-                store = None
-
+                return None
     if store is None:
         return None
 
     strategy_id = str((plan.get("strategy_id") if plan else None) or stage.get("strategy_id") or "strategy-default")
-
     for ref in valid_refs:
         record = None
         if hasattr(store, "get_by_ref"):
-            record = store.get_by_ref(ref, tenant_id=resolved_tenant, user_id=resolved_user)
+            record = store.get_by_ref(ref, tenant_id=r_tenant, user_id=r_user)
         elif hasattr(store, "get"):
             clean_id = ref.split(":", 1)[-1] if ":" in ref else ref
-            record = store.get(clean_id, tenant_id=resolved_tenant, user_id=resolved_user)
-            if record is None and clean_id != ref:
-                record = store.get(ref, tenant_id=resolved_tenant, user_id=resolved_user)
+            record = store.get(clean_id, tenant_id=r_tenant, user_id=r_user) or store.get(ref, tenant_id=r_tenant, user_id=r_user)
             if record is None and hasattr(store, "_records"):
                 for r in store._records.values():
-                    if resolved_tenant and getattr(r, "tenant_id", None) != resolved_tenant:
-                        continue
-                    if resolved_user and getattr(r, "user_id", None) != resolved_user:
-                        continue
-                    if getattr(r, "evidence_id", None) in (ref, clean_id) or getattr(r, "dataset_version_id", None) in (ref, clean_id):
-                        record = r
-                        break
-
+                    if (not r_tenant or getattr(r, "tenant_id", None) == r_tenant) and (not r_user or getattr(r, "user_id", None) == r_user):
+                        if getattr(r, "evidence_id", None) in (ref, clean_id) or getattr(r, "dataset_version_id", None) in (ref, clean_id):
+                            record = r
+                            break
         if record is not None:
             content = getattr(record, "content", {}) or {}
             clean_id = ref.split(":", 1)[-1] if ":" in ref else ref
             version_id = getattr(record, "dataset_version_id", clean_id)
-
-            if isinstance(content, dict):
-                ds = dict(content)
-            else:
-                ds = {"records": content}
-
+            ds = dict(content) if isinstance(content, dict) else {"records": content}
             ds.setdefault("dataset_id", ref if ref.startswith("dataset:") else f"dataset:{ref}")
             ds.setdefault("strategy_id", strategy_id)
             ds.setdefault("source_dataset_refs", valid_refs)
             ds.setdefault("dataset_version_id", version_id)
-            ds.setdefault("tenant_id", getattr(record, "tenant_id", resolved_tenant))
-            ds.setdefault("user_id", getattr(record, "user_id", resolved_user))
+            ds.setdefault("tenant_id", getattr(record, "tenant_id", r_tenant))
+            ds.setdefault("user_id", getattr(record, "user_id", r_user))
             ds.setdefault("lineage_ref", f"lineage://agora/dataset/{version_id}")
             if getattr(record, "learning_eligible", None) is not None:
                 ds.setdefault("learning_eligible", record.learning_eligible)
             return ds
-
-    # Missing, invalid, or unavailable references fail closed
     return None
+
+
+def _validate_receipt(
+    receipt_val: Any,
+    run_id: Optional[str],
+    observed_prov: str,
+    stage_type: str,
+    receipt_label: str = "Owner-emitted",
+    provenance_label: str = "stage",
+) -> Optional[ResearchExecutionReceipt]:
+    if receipt_val is None:
+        return None
+    receipt = ResearchExecutionReceipt.from_dict(receipt_val) if isinstance(receipt_val, dict) else receipt_val
+    if not getattr(receipt, "receipt_id", None):
+        raise RuntimeError(f"{receipt_label} receipt missing receipt_id")
+    if not getattr(receipt, "completed_at", None):
+        raise RuntimeError(f"{receipt_label} receipt missing completed_at timestamp")
+    try:
+        datetime.fromisoformat(str(receipt.completed_at).replace("Z", "+00:00"))
+    except Exception as exc:
+        raise RuntimeError(f"{receipt_label} receipt has invalid completed_at timestamp: {receipt.completed_at}") from exc
+    if run_id and str(receipt.run_id) != str(run_id):
+        raise RuntimeError(f"{receipt_label} receipt run_id mismatch: expected {run_id}, got {receipt.run_id}")
+    if str(receipt.mode).lower() not in VALID_MODES:
+        raise RuntimeError(f"{receipt_label} receipt has invalid mode: {receipt.mode}")
+    if str(receipt.mode).lower() != observed_prov:
+        raise RuntimeError(
+            f"{receipt_label} receipt mode '{receipt.mode}' contradicts observed {provenance_label} provenance '{observed_prov}' for stage '{stage_type}'."
+        )
+    if str(getattr(receipt, "spec_version", "1.0")) != "1.0":
+        raise RuntimeError(f"{receipt_label} receipt has invalid spec_version: {receipt.spec_version}")
+    return receipt
+
+
+def _validate_real_mode_fields(stage_type: str, backend_ref: Any, checksum: Any, metrics: Any, has_artifact_refs: bool = True) -> None:
+    if not backend_ref:
+        raise RuntimeError(f"Authentic real execution for stage '{stage_type}' missing backend reference.")
+    if not checksum:
+        raise RuntimeError(f"Authentic real execution for stage '{stage_type}' missing genuine backend artifact digest.")
+    if metrics is None or not isinstance(metrics, list) or len(metrics) == 0:
+        raise RuntimeError(f"Authentic real execution for stage '{stage_type}' missing genuine backend metrics.")
+    if not has_artifact_refs:
+        raise RuntimeError(f"Authentic real execution for stage '{stage_type}' missing genuine owner artifact identities.")
+
+
+def _validate_and_tag_provenance(metrics: List[Any], evidence_refs: List[Any], observed_prov: str, stage_type: str) -> None:
+    for m in metrics:
+        if isinstance(m, dict):
+            if "provenance" not in m:
+                m["provenance"] = observed_prov
+            elif observed_prov == "simulation" and str(m.get("provenance", "")).lower() == "real":
+                m["provenance"] = "simulation"
+            elif str(m.get("provenance", "")).lower() != observed_prov:
+                raise RuntimeError(
+                    f"Backend metric provenance '{m.get('provenance')}' contradicts observed stage provenance '{observed_prov}' for stage '{stage_type}'."
+                )
+    for ev in evidence_refs:
+        if isinstance(ev, dict) and "provenance" not in ev:
+            ev["provenance"] = observed_prov
+
+
+def _resolve_genuine_artifacts(
+    owner_art_id: Optional[str],
+    owner_art_refs: Any,
+    owner_checksums: Any,
+    checksum: Optional[str],
+) -> Tuple[List[Any], Dict[str, str]]:
+    genuine_refs: List[Any] = []
+    genuine_checksums: Dict[str, str] = {}
+
+    if owner_art_refs and isinstance(owner_art_refs, (list, tuple)):
+        genuine_refs.extend(owner_art_refs)
+    elif owner_art_id:
+        genuine_refs.append({"artifact_id": owner_art_id, "ref": f"artifact://{owner_art_id}", "digest": checksum})
+
+    if owner_art_id and not any((r.get("artifact_id") == owner_art_id) if isinstance(r, dict) else (r == owner_art_id) for r in genuine_refs):
+        genuine_refs.append({"artifact_id": owner_art_id, "ref": f"artifact://{owner_art_id}", "digest": checksum})
+
+    if owner_checksums and isinstance(owner_checksums, dict):
+        for k, v in owner_checksums.items():
+            if str(k).lower() != "artifact":
+                genuine_checksums[k] = v
+
+    if checksum:
+        if owner_art_id:
+            genuine_checksums[owner_art_id] = checksum
+            genuine_checksums[f"artifact://{owner_art_id}"] = checksum
+        for r in genuine_refs:
+            if isinstance(r, dict):
+                for k in ("artifact_id", "ref_id", "id", "ref"):
+                    if r.get(k):
+                        genuine_checksums[str(r[k])] = r.get("digest") or checksum
+            elif isinstance(r, str):
+                genuine_checksums[r] = checksum
+
+    return genuine_refs, genuine_checksums
 
 
 @dataclass
@@ -224,72 +287,30 @@ class DefaultAllowlistedAdapter:
     ) -> ResearchStageResult:
         routing = stage.get("routing") or {}
         requested_mode = routing.get("backend_mode") or context.get("backend_mode") or "simulation"
-        if requested_mode == "fixture":
-            provenance = "fixture"
-        elif requested_mode == "simulation":
-            provenance = "simulation"
-        elif requested_mode == "real":
-            provenance = "simulation"
-        else:
-            provenance = self.default_provenance
+        provenance = "fixture" if requested_mode == "fixture" else ("simulation" if requested_mode in ("simulation", "real") else self.default_provenance)
         if provenance not in VALID_PROVENANCE_VALUES:
             provenance = "unavailable"
 
         stage_id = stage.get("stage_id", "stage-unknown")
         strategy_id = plan.get("strategy_id", "strategy-unknown")
         backend_job_id = f"job:{self.preferred_backend}:{downstream_key}"
-
-        # Generate stage-specific artifacts and lineage
         artifact_id = f"art:{stage_id}:{self.preferred_backend}"
+        now_ts = _utc_now_iso()
         artifact_payload = {
-            "artifact_id": artifact_id,
-            "stage_id": stage_id,
-            "stage_type": self.stage_type,
-            "strategy_id": strategy_id,
-            "backend": self.preferred_backend,
-            "backend_job_id": backend_job_id,
-            "provenance": provenance,
-            "created_at": _utc_now_iso(),
+            "artifact_id": artifact_id, "stage_id": stage_id, "stage_type": self.stage_type,
+            "strategy_id": strategy_id, "backend": self.preferred_backend,
+            "backend_job_id": backend_job_id, "provenance": provenance, "created_at": now_ts,
         }
         checksum = compute_artifact_checksum(artifact_payload)
         artifact_ref = f"research-artifact://{self.preferred_backend}/{artifact_id}"
-        lineage_ref = f"lineage://research/{strategy_id}/{stage_id}/{checksum[:12]}"
-        evidence_ref = {
-            "ref_type": "research_evidence",
-            "ref_id": f"ev:{stage_id}:{checksum[:8]}",
-            "stage_type": self.stage_type,
-            "provenance": provenance,
-            "checksum": checksum,
-            "as_of": _utc_now_iso(),
-        }
-
-        metrics = [
-            {
-                "metric_name": f"{self.stage_type}_execution_score",
-                "value": 1.0,
-                "provenance": provenance,
-            }
-        ]
-
         run_id = str(context.get("run_id") or stage.get("run_id") or "")
-        correlation_id = str(
-            context.get("correlation_id")
-            or plan.get("correlation_id")
-            or plan.get("trace_id")
-            or ""
-        )
-        receipt = None
-        if run_id:
-            receipt = ResearchExecutionReceipt(
-                receipt_id=f"rcpt-{uuid.uuid4().hex[:10]}",
-                run_id=run_id,
-                executor=f"{self.preferred_backend}_executor",
-                mode="simulation",
-                correlation_id=correlation_id,
-                completed_at=_utc_now_iso(),
-                backend_reference=f"{self.preferred_backend}://jobs/{backend_job_id}",
-                artifact_digest=checksum,
-            )
+        corr_id = str(context.get("correlation_id") or plan.get("correlation_id") or plan.get("trace_id") or "")
+        receipt = ResearchExecutionReceipt(
+            receipt_id=f"rcpt-{uuid.uuid4().hex[:10]}", run_id=run_id,
+            executor=f"{self.preferred_backend}_executor", mode="simulation",
+            correlation_id=corr_id, completed_at=now_ts,
+            backend_reference=f"{self.preferred_backend}://jobs/{backend_job_id}", artifact_digest=checksum,
+        ) if run_id else None
 
         return ResearchStageResult(
             outcome="succeeded",
@@ -297,16 +318,13 @@ class DefaultAllowlistedAdapter:
             progress_percent=100.0,
             backend_job_id=backend_job_id,
             backend_version="1.0.0",
-            metrics=metrics,
+            metrics=[{"metric_name": f"{self.stage_type}_execution_score", "value": 1.0, "provenance": provenance}],
             findings=[{"stage_type": self.stage_type, "status": "completed", "backend": self.preferred_backend}],
-            warnings=(
-                ["default_adapter_did_not_execute_real_backend"]
-                if requested_mode == "real" else []
-            ),
+            warnings=["default_adapter_did_not_execute_real_backend"] if requested_mode == "real" else [],
             blocking_reasons=[],
             artifact_refs=[artifact_ref],
-            evidence_refs=[evidence_ref],
-            lineage_refs=[lineage_ref],
+            evidence_refs=[{"ref_type": "research_evidence", "ref_id": f"ev:{stage_id}:{checksum[:8]}", "stage_type": self.stage_type, "provenance": provenance, "checksum": checksum, "as_of": now_ts}],
+            lineage_refs=[f"lineage://research/{strategy_id}/{stage_id}/{checksum[:12]}"],
             partial_effects={"backend_job_id": backend_job_id, "backend": self.preferred_backend},
             checksums={artifact_ref: checksum},
             receipt=receipt,
@@ -408,7 +426,6 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
                 )
 
             result = backend_output
-            # Preserve observed provenance from backend; do not rewrite to self.mode
             observed_prov = result.provenance if result.provenance in VALID_PROVENANCE_VALUES else self.mode
             result.provenance = observed_prov
             if self.mode == "real" and observed_prov == "fixture":
@@ -417,96 +434,32 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
                 if str(getattr(result.receipt, "mode", "")).lower() in ("real", "simulation"):
                     raise RuntimeError("Generated fixture inputs must never be promoted to real provenance")
 
-            checksum = next(iter(result.checksums.values()), None)
+            checksum = next(iter(result.checksums.values()), None) if result.checksums else None
             backend_ref = self.backend_reference or getattr(result, "backend_job_id", None) or None
             if self.mode == "real" and observed_prov == "real":
-                if not backend_ref:
-                    raise RuntimeError(
-                        f"Authentic real execution for stage '{self.stage_type}' missing backend reference."
-                    )
-                if not checksum:
-                    raise RuntimeError(
-                        f"Authentic real execution for stage '{self.stage_type}' missing genuine backend artifact digest."
-                    )
-                if not result.metrics or not isinstance(result.metrics, list) or len(result.metrics) == 0:
-                    raise RuntimeError(
-                        f"Authentic real execution for stage '{self.stage_type}' missing genuine backend metrics."
-                    )
-                if not result.artifact_refs:
-                    raise RuntimeError(
-                        f"Authentic real execution for stage '{self.stage_type}' missing genuine owner artifact identities."
-                    )
+                _validate_real_mode_fields(self.stage_type, backend_ref, checksum, result.metrics, bool(result.artifact_refs))
 
-            if result.receipt is not None:
-                receipt_obj = result.receipt
-                if isinstance(receipt_obj, dict):
-                    receipt_obj = ResearchExecutionReceipt.from_dict(receipt_obj)
-                if not getattr(receipt_obj, "receipt_id", None):
-                    raise RuntimeError("Owner-emitted receipt missing receipt_id")
-                if not getattr(receipt_obj, "completed_at", None):
-                    raise RuntimeError("Owner-emitted receipt missing completed_at timestamp")
-                try:
-                    datetime.fromisoformat(str(receipt_obj.completed_at).replace("Z", "+00:00"))
-                except Exception as exc:
-                    raise RuntimeError(f"Owner-emitted receipt has invalid completed_at timestamp: {receipt_obj.completed_at}") from exc
-                if run_id and str(receipt_obj.run_id) != str(run_id):
-                    raise RuntimeError(f"Owner-emitted receipt run_id mismatch: expected {run_id}, got {receipt_obj.run_id}")
-                if str(receipt_obj.mode).lower() not in VALID_MODES:
-                    raise RuntimeError(f"Owner-emitted receipt has invalid mode: {receipt_obj.mode}")
-                if str(receipt_obj.mode).lower() != observed_prov:
-                    raise RuntimeError(
-                        f"Owner-emitted receipt mode '{receipt_obj.mode}' contradicts observed stage provenance '{observed_prov}' for stage '{self.stage_type}'."
-                    )
-                if str(getattr(receipt_obj, "spec_version", "1.0")) != "1.0":
-                    raise RuntimeError(f"Owner-emitted receipt has invalid spec_version: {receipt_obj.spec_version}")
-                result.receipt = receipt_obj
-            else:
-                if observed_prov == "real":
-                    observed_prov = "simulation"
-                result.receipt = None
+            result.receipt = _validate_receipt(result.receipt, run_id, observed_prov, self.stage_type, "Owner-emitted", "stage")
+            if result.receipt is None and observed_prov == "real":
+                observed_prov = "simulation"
                 result.provenance = observed_prov
 
-            for m in result.metrics:
-                if isinstance(m, dict):
-                    if "provenance" not in m:
-                        m["provenance"] = observed_prov
-                    elif observed_prov == "simulation" and str(m["provenance"]).lower() == "real":
-                        m["provenance"] = "simulation"
-                    elif str(m["provenance"]).lower() != observed_prov:
-                        raise RuntimeError(
-                            f"Backend metric provenance '{m['provenance']}' contradicts observed stage provenance '{observed_prov}' for stage '{self.stage_type}'."
-                        )
-            for ev in result.evidence_refs:
-                if isinstance(ev, dict) and "provenance" not in ev:
-                    ev["provenance"] = observed_prov
+            _validate_and_tag_provenance(result.metrics, result.evidence_refs, observed_prov, self.stage_type)
             return result
 
         if isinstance(backend_output, dict):
             status_val = str(backend_output.get("status") or backend_output.get("execution_status") or "").lower().strip()
             outcome_val = str(backend_output.get("outcome") or "").lower().strip()
-
             terminal_success_values = {"succeeded", "completed", "success", "passed", "pass"}
             terminal_failure_values = {"failed", "error", "fail", "cancelled", "canceled", "timed_out", "timeout"}
             nonterminal_values = {"running", "queued", "pending", "in_progress", "scheduled", "dispatching"}
 
             if status_val in terminal_failure_values or outcome_val in terminal_failure_values:
-                err_text = (
-                    backend_output.get("error")
-                    or backend_output.get("error_message")
-                    or backend_output.get("message")
-                    or f"status={status_val or outcome_val}"
-                )
-                raise RuntimeError(
-                    f"Authentic execution failed for stage '{self.stage_type}': {err_text}"
-                )
-
+                err_text = backend_output.get("error") or backend_output.get("error_message") or backend_output.get("message") or f"status={status_val or outcome_val}"
+                raise RuntimeError(f"Authentic execution failed for stage '{self.stage_type}': {err_text}")
             if status_val in nonterminal_values or outcome_val in nonterminal_values:
-                raise RuntimeError(
-                    f"Authentic execution for stage '{self.stage_type}' returned nonterminal status '{status_val or outcome_val}'."
-                )
-
-            has_terminal_success = (status_val in terminal_success_values) or (outcome_val in terminal_success_values)
-            if not has_terminal_success:
+                raise RuntimeError(f"Authentic execution for stage '{self.stage_type}' returned nonterminal status '{status_val or outcome_val}'.")
+            if not (status_val in terminal_success_values or outcome_val in terminal_success_values):
                 raise RuntimeError(
                     f"Authentic execution for stage '{self.stage_type}' returned invalid or nonterminal status "
                     f"'{status_val or outcome_val or 'absent'}'. Explicit validated terminal success is required."
@@ -521,122 +474,28 @@ class AuthenticStageAdapter(DefaultAllowlistedAdapter):
             raw_metrics = backend_output.get("metrics")
 
             if self.mode == "real" and observed_prov == "real":
-                if not backend_ref:
-                    raise RuntimeError(
-                        f"Authentic real execution for stage '{self.stage_type}' missing backend reference."
-                    )
-                if not checksum:
-                    raise RuntimeError(
-                        f"Authentic real execution for stage '{self.stage_type}' missing genuine backend artifact digest."
-                    )
-                if raw_metrics is None or not isinstance(raw_metrics, list) or len(raw_metrics) == 0:
-                    raise RuntimeError(
-                        f"Authentic real execution for stage '{self.stage_type}' missing genuine backend metrics."
-                    )
+                _validate_real_mode_fields(self.stage_type, backend_ref, checksum, raw_metrics, has_artifact_refs=True)
 
-            receipt_val = backend_output.get("receipt")
-            receipt = None
-            if receipt_val is not None:
-                if isinstance(receipt_val, dict):
-                    receipt = ResearchExecutionReceipt.from_dict(receipt_val)
-                elif isinstance(receipt_val, ResearchExecutionReceipt):
-                    receipt = receipt_val
-                if not getattr(receipt, "receipt_id", None):
-                    raise RuntimeError("Owner-emitted receipt missing receipt_id")
-                if not getattr(receipt, "completed_at", None):
-                    raise RuntimeError("Owner-emitted receipt missing completed_at timestamp")
-                try:
-                    datetime.fromisoformat(str(receipt.completed_at).replace("Z", "+00:00"))
-                except Exception as exc:
-                    raise RuntimeError(f"Owner-emitted receipt has invalid completed_at timestamp: {receipt.completed_at}") from exc
-                if run_id and str(receipt.run_id) != str(run_id):
-                    raise RuntimeError(f"Owner-emitted receipt run_id mismatch: expected {run_id}, got {receipt.run_id}")
-                if str(receipt.mode).lower() not in VALID_MODES:
-                    raise RuntimeError(f"Owner-emitted receipt has invalid mode: {receipt.mode}")
-                if str(receipt.mode).lower() != observed_prov:
-                    raise RuntimeError(
-                        f"Owner-emitted receipt mode '{receipt.mode}' contradicts observed stage provenance '{observed_prov}' for stage '{self.stage_type}'."
-                    )
-                if str(getattr(receipt, "spec_version", "1.0")) != "1.0":
-                    raise RuntimeError(f"Owner-emitted receipt has invalid spec_version: {receipt.spec_version}")
-            else:
-                if observed_prov == "real":
-                    observed_prov = "simulation"
-                receipt = None
+            receipt = _validate_receipt(backend_output.get("receipt"), run_id, observed_prov, self.stage_type, "Owner-emitted", "stage")
+            if receipt is None and observed_prov == "real":
+                observed_prov = "simulation"
 
             result = super().execute(stage=stage, plan=plan, context=context, downstream_key=downstream_key)
             result.receipt = receipt
             result.provenance = observed_prov
-            if raw_metrics is not None and isinstance(raw_metrics, list):
-                result.metrics = list(raw_metrics)
-            else:
-                result.metrics = []
+            result.metrics = list(raw_metrics) if raw_metrics is not None and isinstance(raw_metrics, list) else []
 
-            # Preserve genuine owner artifact IDs, refs, and digests end-to-end.
-            # Never admit synthetic refs or placeholder checksum keys like "artifact".
-            owner_art_id = backend_output.get("artifact_id")
-            owner_art_refs = backend_output.get("artifact_refs") or backend_output.get("artifacts")
-            owner_checksums = backend_output.get("checksums")
-
-            genuine_refs: List[Any] = []
-            genuine_checksums: Dict[str, str] = {}
-
-            if owner_art_refs and isinstance(owner_art_refs, (list, tuple)):
-                genuine_refs.extend(owner_art_refs)
-            elif owner_art_id:
-                genuine_refs.append({
-                    "artifact_id": owner_art_id,
-                    "ref": f"artifact://{owner_art_id}",
-                    "digest": checksum,
-                })
-
-            if owner_art_id:
-                has_owner = any(
-                    (r.get("artifact_id") == owner_art_id) if isinstance(r, dict) else (r == owner_art_id)
-                    for r in genuine_refs
-                )
-                if not has_owner:
-                    genuine_refs.append({
-                        "artifact_id": owner_art_id,
-                        "ref": f"artifact://{owner_art_id}",
-                        "digest": checksum,
-                    })
-
-            if owner_checksums and isinstance(owner_checksums, dict):
-                for k, v in owner_checksums.items():
-                    if str(k).lower() != "artifact":
-                        genuine_checksums[k] = v
-
-            if checksum:
-                if owner_art_id:
-                    genuine_checksums[owner_art_id] = checksum
-                    genuine_checksums[f"artifact://{owner_art_id}"] = checksum
-                for r in genuine_refs:
-                    if isinstance(r, dict):
-                        for k in ("artifact_id", "ref_id", "id", "ref"):
-                            if r.get(k):
-                                genuine_checksums[str(r[k])] = r.get("digest") or checksum
-                    elif isinstance(r, str):
-                        genuine_checksums[r] = checksum
-
-            # Remove synthesized artifact/evidence/lineage fallback from authentic results
+            genuine_refs, genuine_checksums = _resolve_genuine_artifacts(
+                owner_art_id=backend_output.get("artifact_id"),
+                owner_art_refs=backend_output.get("artifact_refs") or backend_output.get("artifacts"),
+                owner_checksums=backend_output.get("checksums"),
+                checksum=checksum,
+            )
             result.artifact_refs = genuine_refs
             result.checksums = genuine_checksums
             result.evidence_refs = list(backend_output.get("evidence_refs") or [])
             result.lineage_refs = list(backend_output.get("lineage_refs") or [])
-            for m in result.metrics:
-                if isinstance(m, dict):
-                    if "provenance" not in m:
-                        m["provenance"] = observed_prov
-                    elif observed_prov == "simulation" and str(m.get("provenance", "")).lower() == "real":
-                        m["provenance"] = "simulation"
-                    elif str(m["provenance"]).lower() != observed_prov:
-                        raise RuntimeError(
-                            f"Backend metric provenance '{m['provenance']}' contradicts observed stage provenance '{observed_prov}' for stage '{self.stage_type}'."
-                        )
-            for ev in result.evidence_refs:
-                if isinstance(ev, dict) and "provenance" not in ev:
-                    ev["provenance"] = observed_prov
+            _validate_and_tag_provenance(result.metrics, result.evidence_refs, observed_prov, self.stage_type)
             return result
 
         # Fallback for simulation mode only when no backend output provided
@@ -882,71 +741,24 @@ class AuthenticResearchBackendClient:
         elif observed_prov not in VALID_PROVENANCE_VALUES:
             observed_prov = "unavailable"
 
-        receipt_raw = resp_data.get("receipt")
-        receipt: Optional[ResearchExecutionReceipt] = None
-        if receipt_raw is not None:
-            if isinstance(receipt_raw, dict):
-                receipt = ResearchExecutionReceipt.from_dict(receipt_raw)
-            elif isinstance(receipt_raw, ResearchExecutionReceipt):
-                receipt = receipt_raw
-            if not getattr(receipt, "receipt_id", None):
-                raise RuntimeError("Backend receipt missing receipt_id")
-            if not getattr(receipt, "completed_at", None):
-                raise RuntimeError("Backend receipt missing completed_at timestamp")
-            try:
-                datetime.fromisoformat(str(receipt.completed_at).replace("Z", "+00:00"))
-            except Exception as exc:
-                raise RuntimeError(f"Backend receipt has invalid completed_at timestamp: {receipt.completed_at}") from exc
-            if run_id and str(receipt.run_id) != str(run_id):
-                raise RuntimeError(f"Backend receipt run_id mismatch: expected {run_id}, got {receipt.run_id}")
-            if str(receipt.mode).lower() not in VALID_MODES:
-                raise RuntimeError(f"Backend receipt has invalid mode: {receipt.mode}")
-            if str(receipt.mode).lower() != observed_prov:
-                raise RuntimeError(
-                    f"Backend receipt mode '{receipt.mode}' contradicts observed backend provenance '{observed_prov}' for stage '{self.stage_type}'."
-                )
-            if str(getattr(receipt, "spec_version", "1.0")) != "1.0":
-                raise RuntimeError(f"Backend receipt has invalid spec_version: {receipt.spec_version}")
-        else:
-            # Absent owner receipt must NOT manufacture a receipt or mint real provenance
-            if observed_prov == "real":
-                observed_prov = "simulation"
-            receipt = None
+        receipt = _validate_receipt(resp_data.get("receipt"), run_id, observed_prov, self.stage_type, "Backend", "backend")
+        if receipt is None and observed_prov == "real":
+            observed_prov = "simulation"
 
-        for m in metrics:
-            if isinstance(m, dict):
-                if observed_prov == "simulation" and str(m.get("provenance", "")).lower() == "real":
-                    m["provenance"] = "simulation"
-                elif m.get("provenance") and str(m["provenance"]).lower() != observed_prov:
-                    raise RuntimeError(
-                        f"Backend metric provenance '{m['provenance']}' contradicts observed backend provenance '{observed_prov}' for stage '{self.stage_type}'."
-                    )
+        metrics_list = list(metrics)
+        _validate_and_tag_provenance(metrics_list, [], observed_prov, self.stage_type)
 
         artifact_id = str(resp_data.get("artifact_id") or "").strip()
         artifact_refs = resp_data.get("artifact_refs")
         if artifact_refs is None and resp_data.get("artifacts") is not None:
             artifact_refs = resp_data.get("artifacts")
-        if not artifact_refs and artifact_id:
-            artifact_refs = [{
-                "artifact_id": artifact_id,
-                "ref": f"artifact://{artifact_id}",
-                "digest": artifact_digest,
-            }]
 
-        checksums = resp_data.get("checksums")
-        if not checksums and artifact_digest:
-            checksums = {}
-            if artifact_id:
-                checksums[artifact_id] = artifact_digest
-                checksums[f"artifact://{artifact_id}"] = artifact_digest
-            if artifact_refs:
-                for ref_item in artifact_refs:
-                    if isinstance(ref_item, dict):
-                        for k in ("artifact_id", "ref_id", "id", "ref"):
-                            if ref_item.get(k):
-                                checksums[str(ref_item[k])] = ref_item.get("digest") or artifact_digest
-                    elif isinstance(ref_item, str):
-                        checksums[ref_item] = artifact_digest
+        genuine_refs, genuine_checksums = _resolve_genuine_artifacts(
+            owner_art_id=artifact_id,
+            owner_art_refs=artifact_refs,
+            owner_checksums=resp_data.get("checksums"),
+            checksum=artifact_digest,
+        )
 
         return {
             "status": "succeeded",
@@ -954,9 +766,9 @@ class AuthenticResearchBackendClient:
             "backend_reference": backend_ref,
             "artifact_id": artifact_id,
             "artifact_digest": artifact_digest,
-            "artifact_refs": artifact_refs or [],
-            "checksums": checksums or {},
-            "metrics": metrics,
+            "artifact_refs": genuine_refs,
+            "checksums": genuine_checksums,
+            "metrics": metrics_list,
             "receipt": receipt,
             "provenance": observed_prov,
         }
@@ -1074,60 +886,22 @@ class ResearchDispatcher:
         self.utc_now = utc_now or _utc_now_iso
         self.dataset_store = dataset_store
 
-    def create_outbox_record(
-        self,
-        *,
-        plan: Dict[str, Any],
-        stage: Dict[str, Any],
-        run_id: str,
-        scope: Any,
-        now: str,
-    ) -> Dict[str, Any]:
+    def create_outbox_record(self, *, plan: Dict[str, Any], stage: Dict[str, Any], run_id: str, scope: Any, now: str) -> Dict[str, Any]:
         """Create a durable outbox record before dispatch execution."""
-        plan_id = plan["plan_id"]
-        stage_id = stage["stage_id"]
-        stage_type = stage["stage_type"]
-        preferred_backend = ALLOWLISTED_STAGE_BACKENDS.get(stage_type, "unknown_backend")
-        downstream_key = f"idemp:{scope.tenant_id}:{scope.user_id}:{plan_id}:{stage_id}:{run_id}"
-        correlation_id = str(
-            plan.get("correlation_id")
-            or plan.get("trace_id")
-            or (f"workshop:{plan.get('workshop_id')}" if plan.get("workshop_id") else "")
-            or (f"plan:{plan_id}" if plan_id else "")
-            or ""
-        )
-
+        plan_id, stage_id, stage_type = plan["plan_id"], stage["stage_id"], stage["stage_type"]
+        backend = ALLOWLISTED_STAGE_BACKENDS.get(stage_type, "unknown_backend")
+        dk = f"idemp:{scope.tenant_id}:{scope.user_id}:{plan_id}:{stage_id}:{run_id}"
+        corr = str(plan.get("correlation_id") or plan.get("trace_id") or (f"workshop:{plan.get('workshop_id')}" if plan.get("workshop_id") else "") or (f"plan:{plan_id}" if plan_id else ""))
         record: Dict[str, Any] = {
-            "outbox_id": f"rob:{plan_id}:{stage_id}:{run_id}",
-            "tenant_id": scope.tenant_id,
-            "user_id": scope.user_id,
-            "plan_id": plan_id,
-            "workshop_id": plan.get("workshop_id", ""),
-            "correlation_id": correlation_id,
-            "strategy_id": plan.get("strategy_id", ""),
-            "run_id": run_id,
-            "stage_id": stage_id,
-            "stage_type": stage_type,
-            "status": "queued",
-            "backend": preferred_backend,
-            "downstream_idempotency_key": downstream_key,
-            "backend_job_id": f"job:{preferred_backend}:{downstream_key}",
-            "lease_owner": None,
-            "lease_expires_at": None,
-            "partial_effects": {},
-            "progress": {
-                "phase": "queued",
-                "percent": 0.0,
-                "message": "Run queued in durable outbox",
-                "updated_at": now,
-            },
-            "provenance": "unavailable",
-            "created_at": now,
-            "updated_at": now,
+            "outbox_id": f"rob:{plan_id}:{stage_id}:{run_id}", "tenant_id": scope.tenant_id, "user_id": scope.user_id,
+            "plan_id": plan_id, "workshop_id": plan.get("workshop_id", ""), "correlation_id": corr,
+            "strategy_id": plan.get("strategy_id", ""), "run_id": run_id, "stage_id": stage_id, "stage_type": stage_type,
+            "status": "queued", "backend": backend, "downstream_idempotency_key": dk, "backend_job_id": f"job:{backend}:{dk}",
+            "lease_owner": None, "lease_expires_at": None, "partial_effects": {},
+            "progress": {"phase": "queued", "percent": 0.0, "message": "Run queued in durable outbox", "updated_at": now},
+            "provenance": "unavailable", "created_at": now, "updated_at": now,
         }
-        if hasattr(self.store, "create_outbox_record"):
-            return self.store.create_outbox_record(record)
-        return record
+        return self.store.create_outbox_record(record) if hasattr(self.store, "create_outbox_record") else record
 
     def execute_stage(
         self,
@@ -1166,89 +940,52 @@ class ResearchDispatcher:
             logger.warning(error_msg)
             return {"status": "lease_blocked", "error": error_msg}
 
-        # 2. Check allowlist
-        if not self.registry.is_allowlisted(stage_type):
-            error_msg = f"Stage type '{stage_type}' is not an allowlisted research stage backend"
-            failure_updates = {
-                "execution_status": "failed",
-                "outcome": "fail",
-                "blocking_reasons": [error_msg],
-                "progress": {
-                    "phase": "failed",
-                    "percent": 0.0,
-                    "message": error_msg,
-                    "updated_at": now,
+        def _fail(err_msg: str, phase_pct: float = 0.0, progress_msg: Optional[str] = None) -> Dict[str, Any]:
+            fail_now = self.utc_now()
+            msg = progress_msg or err_msg
+            self.store.update_run(
+                run_id,
+                {
+                    "execution_status": "failed",
+                    "outcome": "fail",
+                    "blocking_reasons": [err_msg],
+                    "progress": {"phase": "failed", "percent": phase_pct, "message": msg, "updated_at": fail_now},
+                    "completed_at": fail_now,
+                    "updated_at": fail_now,
                 },
-                "updated_at": now,
-            }
-            self.store.update_run(run_id, failure_updates, tenant_id=scope.tenant_id, user_id=scope.user_id)
+                tenant_id=scope.tenant_id,
+                user_id=scope.user_id,
+            )
             if hasattr(self.store, "update_outbox_record"):
                 self.store.update_outbox_record(
                     outbox_id,
-                    {
-                        "status": "failed",
-                        "blocking_reasons": [error_msg],
-                        "updated_at": now,
-                    },
+                    {"status": "failed", "blocking_reasons": [err_msg], "updated_at": fail_now},
                     tenant_id=scope.tenant_id,
                     user_id=scope.user_id,
                 )
-            return {"status": "failed", "error": error_msg}
+            return {"status": "failed", "error": msg}
+
+        def _step(phase: str, pct: float, msg: str) -> None:
+            t = self.utc_now()
+            if self.publish_progress and workshop_id:
+                self.publish_progress(workshop_id, run_id, pct, msg, phase=phase, utc_now_fn=self.utc_now)
+            self.store.update_run(
+                run_id,
+                {"execution_status": phase, "progress": {"phase": phase, "percent": pct, "message": msg, "updated_at": t}, "updated_at": t},
+                tenant_id=scope.tenant_id,
+                user_id=scope.user_id,
+            )
+
+        # 2. Check allowlist
+        if not self.registry.is_allowlisted(stage_type):
+            return _fail(f"Stage type '{stage_type}' is not an allowlisted research stage backend")
 
         adapter = self.registry.get(stage_type)
         downstream_key = f"{scope.tenant_id}:{scope.user_id}:{plan_id}:{stage_id}:{run_id}"
 
-        # 3. Transition: dispatching
-        if self.publish_progress and workshop_id:
-            self.publish_progress(
-                workshop_id,
-                run_id,
-                10.0,
-                f"Dispatching stage {stage_type} to backend {ALLOWLISTED_STAGE_BACKENDS.get(stage_type)}",
-                phase="dispatching",
-                utc_now_fn=self.utc_now,
-            )
-        self.store.update_run(
-            run_id,
-            {
-                "execution_status": "dispatching",
-                "progress": {
-                    "phase": "dispatching",
-                    "percent": 10.0,
-                    "message": f"Dispatching {stage_type}",
-                    "updated_at": now,
-                },
-                "updated_at": now,
-            },
-            tenant_id=scope.tenant_id,
-            user_id=scope.user_id,
-        )
-
-        # 4. Transition: running
-        if self.publish_progress and workshop_id:
-            self.publish_progress(
-                workshop_id,
-                run_id,
-                50.0,
-                f"Running stage {stage_type}",
-                phase="running",
-                utc_now_fn=self.utc_now,
-            )
-        self.store.update_run(
-            run_id,
-            {
-                "execution_status": "running",
-                "progress": {
-                    "phase": "running",
-                    "percent": 50.0,
-                    "message": f"Running {stage_type}",
-                    "updated_at": now,
-                },
-                "updated_at": now,
-            },
-            tenant_id=scope.tenant_id,
-            user_id=scope.user_id,
-        )
+        # 3. Transition: dispatching & running
+        _step("dispatching", 10.0, f"Dispatching stage {stage_type} to backend {ALLOWLISTED_STAGE_BACKENDS.get(stage_type)}")
+        _step("running", 50.0, f"Running stage {stage_type}")
 
         # 5. Invoke adapter with partial effects capture
         correlation_id = str(
@@ -1293,37 +1030,7 @@ class ResearchDispatcher:
         except Exception as exc:
             logger.exception("Research adapter execution failed for %s", stage_type)
             err = str(exc)
-            fail_now = self.utc_now()
-            self.store.update_run(
-                run_id,
-                {
-                    "execution_status": "failed",
-                    "outcome": "fail",
-                    "blocking_reasons": [err],
-                    "progress": {
-                        "phase": "failed",
-                        "percent": 50.0,
-                        "message": f"Adapter execution error: {err}",
-                        "updated_at": fail_now,
-                    },
-                    "completed_at": fail_now,
-                    "updated_at": fail_now,
-                },
-                tenant_id=scope.tenant_id,
-                user_id=scope.user_id,
-            )
-            if hasattr(self.store, "update_outbox_record"):
-                self.store.update_outbox_record(
-                    outbox_id,
-                    {
-                        "status": "failed",
-                        "blocking_reasons": [err],
-                        "updated_at": fail_now,
-                    },
-                    tenant_id=scope.tenant_id,
-                    user_id=scope.user_id,
-                )
-            return {"status": "failed", "error": err}
+            return _fail(err, 50.0, f"Adapter execution error: {err}")
 
         # Durably record execution receipt emitted by authentic execution owner
         if getattr(result, "receipt", None) is not None:
@@ -1354,70 +1061,60 @@ class ResearchDispatcher:
             expected_correlation_id=correlation_id or None,
             expected_owner=expected_owner,
         )
-        run_updates = {
-            "execution_status": exec_status,
-            "outcome": "pass" if result.outcome == "succeeded" else ("fail" if result.outcome == "failed" else result.outcome),
-            "executor": expected_owner,
-            "correlation_id": correlation_id,
-            "backend": {
-                "requested": stage.get("routing", {}).get("preferred_backend") or ALLOWLISTED_STAGE_BACKENDS.get(stage_type, ""),
-                "effective": ALLOWLISTED_STAGE_BACKENDS.get(stage_type, ""),
-                # `backend.mode` records the requested execution contract.  It
-                # is deliberately distinct from the observed provenance below:
-                # an unreceipted real request must remain visibly requested as
-                # real while its produced result is labelled simulation.
-                "mode": stage.get("routing", {}).get("backend_mode") or "real",
-                "version": result.backend_version,
-            },
-            "provenance": resolved_provenance,
-            "metrics": result.metrics,
-            "findings": result.findings,
-            "warnings": result.warnings,
-            "blocking_reasons": result.blocking_reasons,
-            "artifact_refs": result.artifact_refs,
-            "evidence_refs": result.evidence_refs,
-            "lineage_refs": result.lineage_refs,
-            "partial_effects": result.partial_effects,
-            "checksums": result.checksums,
-            "progress": {
-                "phase": "succeeded" if result.outcome == "succeeded" else result.outcome,
-                "percent": result.progress_percent,
-                "message": f"Stage {stage_type} completed successfully",
+        self.store.update_run(
+            run_id,
+            {
+                "execution_status": exec_status,
+                "outcome": "pass" if result.outcome == "succeeded" else ("fail" if result.outcome == "failed" else result.outcome),
+                "executor": expected_owner,
+                "correlation_id": correlation_id,
+                "backend": {
+                    "requested": stage.get("routing", {}).get("preferred_backend") or ALLOWLISTED_STAGE_BACKENDS.get(stage_type, ""),
+                    "effective": ALLOWLISTED_STAGE_BACKENDS.get(stage_type, ""),
+                    "mode": stage.get("routing", {}).get("backend_mode") or "real",
+                    "version": result.backend_version,
+                },
+                "provenance": resolved_provenance,
+                "metrics": result.metrics,
+                "findings": result.findings,
+                "warnings": result.warnings,
+                "blocking_reasons": result.blocking_reasons,
+                "artifact_refs": result.artifact_refs,
+                "evidence_refs": result.evidence_refs,
+                "lineage_refs": result.lineage_refs,
+                "partial_effects": result.partial_effects,
+                "checksums": result.checksums,
+                "progress": {
+                    "phase": "succeeded" if result.outcome == "succeeded" else result.outcome,
+                    "percent": result.progress_percent,
+                    "message": f"Stage {stage_type} completed successfully",
+                    "updated_at": complete_now,
+                },
+                "completed_at": complete_now,
                 "updated_at": complete_now,
             },
-            "completed_at": complete_now,
-            "updated_at": complete_now,
-        }
-        self.store.update_run(run_id, run_updates, tenant_id=scope.tenant_id, user_id=scope.user_id)
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
+        )
 
         # Update stage status in the plan
         current_plan = self.store.get_plan(plan_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
         if current_plan:
-            raw_stages = current_plan.get("stages", [])
-            updated_stages = []
-            for s in raw_stages:
-                if isinstance(s, dict):
-                    if s.get("stage_id") == stage_id or s.get("stage_type") == stage_type:
-                        updated_stages.append({**s, "status": "completed" if result.outcome == "succeeded" else "failed"})
-                    else:
-                        updated_stages.append(s)
-                elif isinstance(s, str):
-                    if s == stage_id or s == stage_type:
-                        updated_stages.append({"stage_id": s, "stage_type": s, "status": "completed" if result.outcome == "succeeded" else "failed"})
-                    else:
-                        updated_stages.append(s)
-                else:
-                    updated_stages.append(s)
+            updated_stages = [
+                {**s, "status": "completed" if result.outcome == "succeeded" else "failed"}
+                if (isinstance(s, dict) and (s.get("stage_id") == stage_id or s.get("stage_type") == stage_type))
+                else s
+                for s in current_plan.get("stages", [])
+            ]
             all_completed = all(
                 (s.get("status") == "completed") if isinstance(s, dict) else False
                 for s in updated_stages
             )
-            plan_status = "completed" if all_completed else "running"
             self.store.update_plan(
                 plan_id,
                 {
                     "stages": updated_stages,
-                    "status": plan_status,
+                    "status": "completed" if all_completed else "running",
                     "lock_version": int(current_plan.get("lock_version", 1)) + 1,
                     "updated_at": complete_now,
                 },
@@ -1464,58 +1161,22 @@ class ResearchDispatcher:
         """Drain queued outbox records by leasing each and executing execute_stage."""
         if not hasattr(self.store, "list_outbox_records"):
             return []
-
-        queued_records = self.store.list_outbox_records(
-            status="queued",
-            tenant_id=tenant_id,
-            user_id=user_id,
-        )
+        queued_records = self.store.list_outbox_records(status="queued", tenant_id=tenant_id, user_id=user_id)
         if limit is not None and limit > 0:
             queued_records = queued_records[:limit]
-
         drained_results: List[Dict[str, Any]] = []
-
         for record in queued_records:
-            plan_id = record.get("plan_id")
-            stage_id = record.get("stage_id")
-            run_id = record.get("run_id")
-            r_tenant = record.get("tenant_id") or tenant_id or "pantheon-dev"
-            r_user = record.get("user_id") or user_id or "agora-user-a"
-
+            plan_id, stage_id, run_id = record.get("plan_id"), record.get("stage_id"), record.get("run_id")
             if not plan_id or not stage_id or not run_id:
                 continue
-
+            r_tenant, r_user = record.get("tenant_id") or tenant_id or "pantheon-dev", record.get("user_id") or user_id or "agora-user-a"
             plan = self.store.get_plan(plan_id, tenant_id=r_tenant, user_id=r_user)
             if not plan:
                 continue
-
-            stage = None
-            for s in plan.get("stages", []):
-                if isinstance(s, dict) and s.get("stage_id") == stage_id:
-                    stage = s
-                    break
-                elif isinstance(s, str) and s == stage_id:
-                    stage = {"stage_id": s, "stage_type": s, "status": "ready"}
-                    break
+            stage = next((s if isinstance(s, dict) else {"stage_id": s, "stage_type": s, "status": "ready"} for s in plan.get("stages", []) if (s.get("stage_id") if isinstance(s, dict) else s) == stage_id), None)
             if not stage:
                 continue
-
             scope = SimpleNamespace(tenant_id=r_tenant, user_id=r_user)
-
-            result = self.execute_stage(
-                plan=plan,
-                stage=stage,
-                run_id=run_id,
-                scope=scope,
-                worker_id=worker_id,
-                lease_duration_seconds=lease_duration_seconds,
-            )
-            drained_results.append({
-                "outbox_id": record.get("outbox_id"),
-                "run_id": run_id,
-                "status": result.get("status"),
-                "result": result.get("result"),
-                "error": result.get("error"),
-            })
-
+            result = self.execute_stage(plan=plan, stage=stage, run_id=run_id, scope=scope, worker_id=worker_id, lease_duration_seconds=lease_duration_seconds)
+            drained_results.append({"outbox_id": record.get("outbox_id"), "run_id": run_id, "status": result.get("status"), "result": result.get("result"), "error": result.get("error")})
         return drained_results

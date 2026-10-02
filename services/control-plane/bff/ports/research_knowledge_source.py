@@ -475,16 +475,9 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             return None
         self._research_write_owner_resolved = True
         try:
-            from .research_commands import (
-                ResearchServiceClient,
-                _resolve_orchestrator_base_url,
-            )
-
-            base_url = _resolve_orchestrator_base_url()
-            if base_url:
-                self._research_write_owner = ResearchServiceClient(base_url=base_url)
-            else:
-                self._research_write_owner = None
+            from .research_commands import ResearchServiceClient, _resolve_orchestrator_base_url
+            url = _resolve_orchestrator_base_url()
+            self._research_write_owner = ResearchServiceClient(base_url=url) if url else None
         except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure means "unavailable"
             log.warning("Research service unavailable for research experiments: %s", exc)
             self._research_write_owner = None
@@ -1977,14 +1970,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
     ) -> Dict[str, Any]:
         write_owner = self._get_research_write_owner()
         if write_owner is not None and hasattr(write_owner, "create_research_ticket"):
-            return write_owner.create_research_ticket(
-                title=title,
-                description=description,
-                priority=priority,
-                owner=owner,
-                actor_id=actor_id,
-                created_at=created_at,
-            )
+            return write_owner.create_research_ticket(title=title, description=description, priority=priority, owner=owner, actor_id=actor_id, created_at=created_at)
         timestamp = created_at or _utc_now_rfc3339()
         ticket_id = f"rt-{timestamp[:10].replace('-', '')}-{len(self._tickets) + 1:03d}"
         while ticket_id in self._tickets:
@@ -2025,12 +2011,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
     ) -> Optional[Dict[str, Any]]:
         write_owner = self._get_research_write_owner()
         if write_owner is not None and hasattr(write_owner, "patch_research_ticket"):
-            return write_owner.patch_research_ticket(
-                ticket_id,
-                patch=patch,
-                actor_id=actor_id,
-                updated_at=updated_at,
-            )
+            return write_owner.patch_research_ticket(ticket_id, patch=patch, actor_id=actor_id, updated_at=updated_at)
         ticket = self._tickets.get(str(ticket_id))
         if ticket is None or not isinstance(ticket, dict):
             return None

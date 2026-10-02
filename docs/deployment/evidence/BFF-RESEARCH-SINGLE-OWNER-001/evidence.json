@@ -1,0 +1,26 @@
+{
+  "task_id": "BFF-RESEARCH-SINGLE-OWNER-001",
+  "environment": "local isolated owners; no hosted deployment or live capital actions",
+  "production_net_lines": -107,
+  "independent_review": "pending; canonical handoff binds this manifest to the exact PR head",
+  "changes": [
+    "Established research service (services/research/main.py) as sole execution and mutation owner for research tickets (RW-01), experiments (RW-04), notes (KW-02), and stage execution syncing.",
+    "BFF acts solely as forwarder and projector; routed research mutations through ResearchServiceClient and WorkshopCanonicalOperations HTTP clients.",
+    "Disconnected and removed duplicate ResearchDispatcher orchestration and auto-worker instantiation in Agora persona worker and Agora research router.",
+    "Streamlined Agora ResearchDispatcher outbox and execution mechanics with shared validation helpers, reducing BFF production lines by -292.",
+    "Implemented pure-Python Black-Scholes Greeks and pricing analytic fallback in QuantLib adapter to allow deterministic execution without native QuantLib binaries.",
+    "Maintained full request validation, schema compliance, and response projection on all BFF research routes."
+  ],
+  "validation": [
+    {
+      "command": "/tmp/clean-bff-venv/bin/python -m pytest services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_agora_authentic_adapter_negative_controls.py services/control-plane/bff/agora/research/test_approval_roles.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py",
+      "passed": 175,
+      "skipped": 1,
+      "exit_status": 0
+    }
+  ],
+  "validation_total": 175,
+  "diff_check": "git diff origin/dev --check: exit 0",
+  "diff_budget": "python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget 0: exit 0; production +628/-735 = net -107 lines (BFF production net -292 lines)",
+  "scope_check": "All changed files matched the governed artifact contract; no out-of-scope paths."
+}

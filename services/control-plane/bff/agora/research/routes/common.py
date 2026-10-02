@@ -12,21 +12,9 @@ import uuid
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-ALLOWLISTED_STAGE_BACKENDS: Dict[str, str] = {
-    "source_discovery": "source_ingestion",
-    "data_validation": "data_validation",
-    "prototype_backtest": "vectorbt",
-    "alpha_training": "qlib",
-    "rolling_oos": "qlib",
-    "econometric_validation": "statsmodels",
-    "derivatives_pricing_risk": "quantlib",
-    "policy_training": "finrl",
-    "parameter_search": "ray_tune",
-    "portfolio_synthesis": "optimizer_svc",
-    "robustness_stress": "rllib",
-    "evidence_synthesis": "openclaw_result_synthesis",
-}
+from ..dispatcher import ALLOWLISTED_STAGE_BACKENDS
 ResearchDispatcher = None
+
 
 
 # ---------------------------------------------------------------------------
