@@ -96,7 +96,15 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
         authorization: Optional[str] = Header(default=None),
     ):
         """Retired: the evaluator's Governance proposal is the only approval record."""
-        _extract_identity(authorization)
+        identity = _extract_identity(authorization)
+        if not {"operator", "approver", "admin"}.intersection(identity.roles):
+            raise _bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Quarterly ranking recommendation submission requires operator-level role",
+                "Operator does not hold the required role",
+                precondition_failed="role_check",
+            )
         reject_retired_command("QuarterlyRankingRecommendationSubmit")
 
     @router.get("/bff/management/promotion-reviews")
