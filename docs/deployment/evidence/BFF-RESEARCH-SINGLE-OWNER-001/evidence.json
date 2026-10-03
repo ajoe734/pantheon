@@ -1,7 +1,7 @@
 {
   "task_id": "BFF-RESEARCH-SINGLE-OWNER-001",
   "environment": "isolated read-only venv ~/pantheon-ci-deploy/runtime/research-test-python/20261003-f9fd19209; no hosted deployment or live capital actions",
-  "independent_review": "pending; bind the refreshed manifest to the exact PR head during handoff",
+  "independent_review": "Codex2 rejected prior head 75ea801; cancellation fencing, completed-stage restart recovery, and stale inventory entries corrected; fresh exact-head review pending.",
   "hosted_track": "external_wait per Human/Ops 2026-10-01 decision; no hosted probes performed",
   "design_items": {
     "D1": "services/research/main.py:367, 1042-1157 validates execution modes before backend selection; durable runs execute off-request and latest attempt/dependency progression schedules roots and joins. File-backed records survive restart.",
@@ -13,7 +13,7 @@
   "validation": [
     {
       "command": "~/pantheon-ci-deploy/runtime/research-test-python/20261003-f9fd19209/bin/python3 -m pytest -q services/research/tests/test_research_single_owner_routes.py",
-      "result": "14 passed; includes failed-stage retry then downstream completion, restart recovery without replaying completed predecessors, multi-root/fan-in and dispatch returning before slow execution ends"
+      "result": "15 passed; includes failed-stage retry, crash after completed predecessor before successor enqueue, in-flight cancellation fencing, multi-root/fan-in and async dispatch"
     },
     {
       "command": "~/pantheon-ci-deploy/runtime/research-test-python/20261003-f9fd19209/bin/python3 -m pytest -q services/research/tests/test_research_orchestrator_http_service.py",
@@ -24,14 +24,18 @@
       "result": "99 passed, 1 skipped; candidate provenance/trust negatives, artifact binding/digest, missing identities, dataset owner restart, unknown public dispatch, mounted multi-root projection/restart and persona launcher regressions"
     },
     {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "result": "39 passed; includes test_every_entry_has_valid_layer_and_disposition"
+    },
+    {
       "command": "Broader nine-file BFF/research exploratory batch with the same isolated interpreter",
       "result": "186 passed, 6 failed; the failures were 4 pre-existing unrelated BFF composition/router assertions, one alternate-import-path test, and one shared-store interaction in the combined research batch. The corrected scoped suites passed in the separate bounded batches above; this exploratory batch is not counted as passed."
     },
     {
       "command": "git diff --check; python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget 0",
-      "result": "both passed at head f2325c59dbe5b91138b440d06751a1b08df162bf; production +1389/-1823 net -434 (below zero), BFF production decreases; tests +1345/-2857 net -1512; docs/evidence +114 lines"
+      "result": "previous exact-base budget passed at head 75ea80191d78f40ecfe14964afad91003bb3e856: production +1389/-1823 net -434; tests +1345/-2857 net -1512; docs/evidence +114. Re-run against refreshed committed head before handoff."
     }
   ],
-  "suite_note": "The retained test functions from the deleted chain file were migrated into services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py; research receipt and owner provenance controls are in test_research_receipt_provenance.py and test_research_single_owner_routes.py. Deleted-stack-only cases are enumerated in the exact-head handoff message. Hosted acceptance remains external_wait; no hosted probes performed.",
+  "suite_note": "Codex2's reproduced AC6 defects are covered by the new owner regressions. The BFF architecture inventory no longer lists the two deleted suites; the full architecture gate passes. Hosted acceptance remains external_wait; no hosted probes performed.",
   "scope": "Source and local isolated functional evidence only; no hosted deployment, hosted probe, or real capital action is claimed."
 }

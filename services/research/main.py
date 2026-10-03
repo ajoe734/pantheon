@@ -373,7 +373,11 @@ def resume_queued_plan_stages() -> None:
         plan = params.get("plan")
         stage = params.get("stage")
         status = str(record.get("status") or "").lower()
-        if status not in {"queued", "running"} or not isinstance(plan, dict) or not isinstance(stage, dict):
+        if status not in {"queued", "running", "completed", "succeeded"} or not isinstance(plan, dict) or not isinstance(stage, dict):
+            continue
+        if status in {"queued", "running"} and record.get("cancellation_fence"):
+            record["status"] = "canceled"
+            store.put_run(record)
             continue
         if status == "running":
             record["status"] = "queued"
@@ -1137,6 +1141,10 @@ def _execute_plan_stage(
     ds = params.get("dataset") or plan.get("dataset")
     backend = str(stage.get("stage_type") or run.get("adapter") or "prototype_backtest")
     current = store.get_run(run_id) or run
+    if str(current.get("status") or "").lower() in {"canceled", "cancelled", "rejected"} or current.get("cancellation_fence"):
+        with _stage_workers_lock:
+            _active_stage_workers.discard(run_id)
+        return
     current["status"] = "running"
     store.put_run(current)
     try:
@@ -1148,12 +1156,14 @@ def _execute_plan_stage(
     except Exception as exc:
         logger.warning("Research stage execution error for %s: %s", run_id, exc)
         current = store.get_run(run_id) or current
-        current["status"], current["error"] = "failed", str(exc)
-        store.put_run(current)
+        if str(current.get("status") or "").lower() not in {"canceled", "cancelled", "rejected"} and not current.get("cancellation_fence"):
+            current["status"], current["error"] = "failed", str(exc)
+            store.put_run(current)
     completed = store.get_run(run_id) or current
     with _stage_workers_lock:
         _active_stage_workers.discard(run_id)
-    _progress_plan_stages(plan, completed, actor_id, store, str(completed.get("updated_at") or utc_now()))
+    if str(completed.get("status") or "").lower() not in {"canceled", "cancelled", "rejected"} and not completed.get("cancellation_fence"):
+        _progress_plan_stages(plan, completed, actor_id, store, str(completed.get("updated_at") or utc_now()))
 
 
 def _trigger_retrain_execution(run_id: str, params: dict) -> None:

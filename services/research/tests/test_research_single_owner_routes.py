@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from services.research import main as research_main
@@ -401,7 +402,8 @@ def test_owner_restart_resumes_queued_stage_without_replaying_completed_predeces
         ],
         "dataset": {"dataset_id": "restart-dataset"},
     }
-    for stage_id, status, attempt in (("s1", "completed", 1), ("s2", "running", 1)):
+    # Simulate a crash after s1 was persisted but before s2 was ever queued.
+    for stage_id, status, attempt in (("s1", "completed", 1),):
         stage = next(item for item in plan["stages"] if item["stage_id"] == stage_id)
         run_id = f"restart-{stage_id}"
         research_main.store.put_run({
@@ -425,6 +427,45 @@ def test_owner_restart_resumes_queued_stage_without_replaying_completed_predeces
     runs = _wait_for_task_status(task_id, {"completed", "failed"}, expected_count=2)
     assert {run["stage_id"]: run["status"] for run in runs} == {"s1": "completed", "s2": "completed"}
     assert executed == ["s2"]
+
+
+def test_in_flight_stage_cancel_is_not_overwritten_by_late_backend_error(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    task_id = "cancel-in-flight-task"
+    stage = {"stage_id": "s1", "stage_type": "prototype_backtest", "dependencies": []}
+    plan = {"plan_id": "cancel-in-flight-plan", "task_id": task_id, "stages": [stage]}
+    research_main.store.put_task({"task_id": task_id, "status": "running"})
+    run = {
+        "run_id": "cancel-in-flight-run", "task_id": task_id, "stage_id": "s1",
+        "attempt_number": 1, "status": "queued", "adapter": stage["stage_type"],
+        "parameters": {"stage": stage, "plan": plan}, "events": [],
+    }
+    research_main.store.put_run(run)
+
+    def late_backend_error(*args: Any, **kwargs: Any) -> None:
+        started.set()
+        assert release.wait(3)
+        raise HTTPException(status_code=409, detail="late completion fenced")
+
+    monkeypatch.setattr(research_main, "execute_research_stage", late_backend_error)
+    worker = threading.Thread(
+        target=research_main._execute_plan_stage,
+        args=(run, stage, plan, research_main.store, "tester"),
+    )
+    worker.start()
+    assert started.wait(1)
+    canceled = research_main.cancel_run("cancel-in-flight-run")
+    assert canceled["status"] == "canceled"
+    assert canceled["cancellation_fence"]
+    release.set()
+    worker.join(timeout=3)
+    assert not worker.is_alive()
+    persisted = research_main.store.get_run("cancel-in-flight-run")
+    assert persisted["status"] == "canceled"
+    assert persisted["cancellation_fence"]
 
 
 def test_stage_idempotency_restart_exactly_once(client: TestClient) -> None:
