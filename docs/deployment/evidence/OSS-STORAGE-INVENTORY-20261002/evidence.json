@@ -1,0 +1,132 @@
+{
+  "task_id": "OSS-STORAGE-INVENTORY-20261002",
+  "kind": "coordinator_read_only_inventory",
+  "authorization": {
+    "granted_by": "operator (chat)",
+    "scope": "one coordinator-only read-only inventory of dev MinIO and GCS; no content, no secrets, no deletion",
+    "worker_access": "none; no SSH key or credential handed to any worker",
+    "granted_at": "2026-10-02 between 23:28Z and 23:32Z (chat), before the first inventory command; all times in this file are UTC"
+  },
+  "environment": {
+    "vm": "pantheon-dev-deploy",
+    "project": "pantheon-dev-20260902",
+    "deployed_backend_sha": "f3e267c1fd700e9452470e43d73da3c3dd57146e",
+    "observed_at": "2026-10-02T23:35Z"
+  },
+  "minio": {
+    "containers": [
+      {
+        "name": "pantheon-minio-1",
+        "image_digest_prefix": "14cea493d9a3",
+        "state": "Up 4 weeks (healthy)"
+      },
+      {
+        "name": "pantheon-minio-init-1",
+        "image": "minio/mc:RELEASE.2024-01-16T16-06-34Z",
+        "state": "Exited (0)"
+      }
+    ],
+    "volumes": [
+      {
+        "name": "pantheon_minio-data",
+        "mount": "/data"
+      }
+    ],
+    "volume_total_bytes": 188390,
+    "volume_file_count": 30,
+    "files_outside_minio_sys": 0,
+    "buckets": [
+      {
+        "name": "pantheon-artifacts",
+        "created": "2026-09-02T11:47Z",
+        "object_count": 0,
+        "bytes_on_disk": 4096,
+        "versions": 0,
+        "note": "empty directory; only bucket metadata under .minio.sys/buckets/pantheon-artifacts"
+      }
+    ],
+    "system_area": {
+      "path": ".minio.sys",
+      "bytes": 180198,
+      "content": "format.json, config, pool.bin, bucket usage caches"
+    },
+    "configured_consumers_in_deployed_compose": [
+      "capital",
+      "consultation-svc",
+      "evaluation",
+      "governance",
+      "incidents",
+      "memory",
+      "optimizer-svc",
+      "persona",
+      "policy-learning-svc",
+      "postmortems",
+      "promotion",
+      "reconciliation-drift-svc",
+      "registry",
+      "research-orchestrator-svc",
+      "research-worker-gateway-svc",
+      "search-svc",
+      "source-ingest",
+      "training-session-svc"
+    ],
+    "consumer_note": "At the deployed SHA, 18 compose services set PANTHEON_S3_ENDPOINT=http://minio:9000 and 17 of them also set PANTHEON_ARTIFACT_BUCKET=pantheon-artifacts (persona sets the endpoint only). The running stack resolves the same 18 settings (see hosted_effective_configuration), and no client held a connection to MinIO when sampled; together with 0 stored objects this is the observable consumer evidence, and it cannot exclude a consumer that writes and deletes between samples. The bucket holds no object at observation time; whether objects were written and later deleted is not observable from this inventory. Paper binding artifact projections are stored inline in runtime binding metadata (runtime-manager /data/runtime/runtime_bindings.json), not in MinIO.",
+    "method": "docker exec pantheon-minio-1 (ls, du) and docker run --rm -v pantheon_minio-data:/d:ro alpine find; filesystem view only, no MinIO credential used, no object content read",
+    "hosted_effective_configuration": {
+      "observed_at": "2026-10-03T00:06Z",
+      "method": "for every running container (54): docker exec printenv PANTHEON_S3_ENDPOINT and PANTHEON_ARTIFACT_BUCKET only (non-secret); no credential variable read",
+      "containers_with_s3_setting": 18,
+      "containers": [
+        "reconciliation-drift-svc",
+        "postmortems",
+        "incidents",
+        "training-session-svc",
+        "search-svc",
+        "consultation-svc",
+        "persona (endpoint only)",
+        "research-worker-gateway-svc",
+        "capital",
+        "governance",
+        "memory",
+        "registry",
+        "source-ingest",
+        "policy-learning-svc",
+        "promotion",
+        "research-orchestrator-svc",
+        "optimizer-svc",
+        "evaluation"
+      ],
+      "matches_compose": true
+    },
+    "live_connections": {
+      "observed_at": "2026-10-03T00:06Z",
+      "method": "/proc/net/tcp and /proc/net/tcp6 inside pantheon-minio-1, ESTABLISHED sockets on local port 9000",
+      "established_on_9000": 0,
+      "limit": "a point-in-time sample; it shows no client was connected at that moment, not that no client ever connects"
+    }
+  },
+  "gcs": {
+    "attachment_bucket_config": {
+      "workflow_input": "DEV_MANAGEMENT_AI_ATTACH_BUCKET is empty in nonprod-deploy run 37035071230 (location asia-east1)",
+      "compose_key": "operator-bff PANTHEON_MGMT_AI_ATTACH_BUCKET defaults to empty",
+      "effective_running_bff": "operator-bff (backend f3e267c) printenv PANTHEON_MGMT_AI_ATTACH_BUCKET is unset/empty at 2026-10-03T00:00Z; scripts/deploy_nonprod_vm.sh can carry an existing override, and none is in effect"
+    },
+    "buckets_in_project": [],
+    "method": "gcloud storage buckets list --project pantheon-dev-20260902 from the VM service account (429489276340-compute), rc=0 with no rows",
+    "generation_metageneration_checksum_contract": "not verified: no attachment bucket is configured and none exists, so there is no object to check. This remains an open obligation for any future GCS attachment bucket before object-store cutover relies on it.",
+    "buckets_in_project_scope": "project pantheon-dev-20260902 only, as listed by the VM service account"
+  },
+  "acceptance": {
+    "1_authorization": "explicit operator authorization recorded above; coordinator-only; no worker access",
+    "2_inventory": "every MinIO volume and bucket recorded with counts and bytes; configured consumers (compose at the deployed SHA) and hosted effective consumers (printenv across all 54 running containers) recorded, plus a live connection sample; GCS attachment configuration in the running BFF and the project bucket list recorded; no content or secrets",
+    "3_preserve_and_restore": "PARTIAL: MinIO holds 0 objects and 0 versions, so no application-object backup, restore or migration is needed for the observed store; GCS tenant/session and identity contracts could not be verified (no bucket exists) and are carried as open_obligations, not claimed satisfied",
+    "4_no_destructive_change": "no volume, object, credential, bucket policy or hosting change; one read-only alpine image was pulled on the VM to run find against the volume"
+  },
+  "conclusion": "At observation time the dev MinIO store holds no application object and no GCS attachment bucket is configured or exists in the project. OSS-OBJECT-STORE-CUTOVER-002 may retire the MinIO setup without an object migration, but must remove the configured S3 settings from the 18 services, keep the unverified GCS tenant/session and identity contracts as open obligations for any future bucket, and obtain its own per-operation authorization for any hosted change.",
+  "open_obligations": [
+    "GCS attachment store: generation/metageneration/custom checksum contracts and tenant/session access are NOT verified because no bucket is configured or exists; any future GCS attachment bucket must be verified with authorized non-destructive evidence before object-store cutover relies on it",
+    "MinIO consumer coverage is limited to the configured settings, the running stack's resolved settings and one connection sample; OSS-OBJECT-STORE-CUTOVER-002 must remove the S3 settings from the 18 services and confirm no service fails without them",
+    "Any hosted change made by OSS-OBJECT-STORE-CUTOVER-002 (stopping MinIO, removing the volume) needs its own per-operation authorization; this inventory authorizes nothing"
+  ],
+  "status": "inventory complete; acceptance 3 GCS contract verification pending (open_obligations)"
+}
