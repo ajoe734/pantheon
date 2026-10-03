@@ -738,7 +738,6 @@ def _list_governance_audit_events(
     to_ts: Optional[datetime] = None,
     include_command_store: bool = True,
     include_fixture_pack: bool = True,
-    tenant_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     events = read_store.list_governance_audit_events(
         actor=actor,
@@ -782,7 +781,6 @@ def _list_governance_audit_events(
             target_type=target_type,
             from_ts=from_ts,
             to_ts=to_ts,
-            tenant_id=tenant_id,
         ):
             events_by_id.setdefault(str(event.get("entry_id")), event)
     merged = list(events_by_id.values())

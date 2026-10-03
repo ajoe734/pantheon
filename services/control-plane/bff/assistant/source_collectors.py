@@ -240,8 +240,6 @@ def _assistant_filter_tenant_records(
     tenant = _assistant_tenant_scope(identity, deps=deps)
     if tenant.get("scope") == "global":
         return [record for record in records if isinstance(record, dict)]
-    if tenant.get("scope") == "denied" or not tenant.get("tenant_id"):
-        return []
     return deps.filter_tenant_records_fn(
         [record for record in records if isinstance(record, dict)],
         str(tenant.get("tenant_id") or ""),

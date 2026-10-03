@@ -212,10 +212,10 @@
       "note": "Caller-empty truthy guard removed: missing or empty caller tenant fails closed (returns False), and untagged/empty record tenants fail closed. Matches only explicit tenant or wildcard '*'."
     },
     {
-      "site": "services/control-plane/bff/assistant/routes.py and source_collectors.py:188, :240",
+      "site": "services/control-plane/bff/assistant/routes.py:101-156 (build_session_context_pack)",
       "disposition": "fixed",
-      "trusted_source": "caller identity via bff_me_tenant_payload",
-      "note": "_assistant_filter_tenant_records fails closed (returns empty list) when caller tenant authority is denied or missing (scope=denied or empty tenant_id). Mounted signed-JWT regression confirms zero private foreign command audit events disclosed."
+      "trusted_source": "caller identity via extract_identity / management_service",
+      "note": "Assistant endpoints enforce verified operator identity with read/write roles and delegate record filtering to management_service._mgmt_nl_filter_tenant_records which fails closed on empty or foreign caller tenant. Mounted signed-JWT regression confirms zero private foreign command audit events disclosed."
     }
   ],
   "mounted_signed_jwt_tests": [
