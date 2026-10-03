@@ -408,20 +408,89 @@ def test_drain_outbox_never_invents_or_widens_tenant():
     assert store.plan_reads == ["tenant-b", "tenant-a"]  # tenantless record skipped, never defaulted
 
 
-def test_journal_create_denies_jwt_without_tenant_authority_even_if_body_names_one(monkeypatch, tmp_path):
+def test_journal_create_denies_jwt_without_tenant_authority_under_all_defaults(monkeypatch, tmp_path):
     owner = build_decision_journal_write_owner(data_dir=str(tmp_path))
-    headers = _jwt_headers(monkeypatch, "tenant-a")
-    token = encode_jwt_hs256(
-        {"sub": "low-priv-operator", "roles": ["operator"], "iss": _ISSUER, "aud": _AUDIENCE,
-         "iat": int(time.time()), "exp": int(time.time()) + 3600},
-        secret=_SECRET,
+    client = _journal_client(owner)
+    _jwt_headers(monkeypatch, "tenant-a")
+    no_tenant_headers = _jwt_without_tenant()
+
+    # 1. Built-in default ("pantheon-dev") and absent body tenant: both fail closed
+    res_absent = client.post(
+        "/bff/agora/journal",
+        headers={**no_tenant_headers, "Idempotency-Key": "idem-absent-1"},
+        json={"title": "x", "body": "y"},
     )
-    response = _journal_client(owner).post(
-        "/bff/agora/journal", headers={**headers, "Authorization": f"Bearer {token}"},
+    assert res_absent.status_code == 403, res_absent.text
+    assert _stored_journal_tenants(owner) == []
+
+    res_builtin = client.post(
+        "/bff/agora/journal",
+        headers={**no_tenant_headers, "Idempotency-Key": "idem-builtin-1"},
+        json={"title": "x", "body": "y", "tenant_id": "pantheon-dev"},
+    )
+    assert res_builtin.status_code == 403, res_builtin.text
+    assert _stored_journal_tenants(owner) == []
+
+    res_foreign = client.post(
+        "/bff/agora/journal",
+        headers={**no_tenant_headers, "Idempotency-Key": "idem-foreign-1"},
         json={"title": "x", "body": "y", "tenant_id": "tenant-b"},
     )
-    assert response.status_code >= 400, response.text
+    assert res_foreign.status_code == 403, res_foreign.text
     assert _stored_journal_tenants(owner) == []
+
+    # 2. Active matching environment default ("tenant-b") kept active after token config
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-b")
+    res_env_absent = client.post(
+        "/bff/agora/journal",
+        headers={**no_tenant_headers, "Idempotency-Key": "idem-env-absent-1"},
+        json={"title": "x", "body": "y"},
+    )
+    assert res_env_absent.status_code == 403, res_env_absent.text
+    assert _stored_journal_tenants(owner) == []
+
+    res_env_match = client.post(
+        "/bff/agora/journal",
+        headers={**no_tenant_headers, "Idempotency-Key": "idem-env-match-1"},
+        json={"title": "x", "body": "y", "tenant_id": "tenant-b"},
+    )
+    assert res_env_match.status_code == 403, res_env_match.text
+    assert _stored_journal_tenants(owner) == []
+
+    res_env_foreign = client.post(
+        "/bff/agora/journal",
+        headers={**no_tenant_headers, "Idempotency-Key": "idem-env-foreign-1"},
+        json={"title": "x", "body": "y", "tenant_id": "tenant-c"},
+    )
+    assert res_env_foreign.status_code == 403, res_env_foreign.text
+    assert _stored_journal_tenants(owner) == []
+
+    # 3. Positive controls with valid tenant authority
+    valid_headers = _jwt_headers(monkeypatch, "tenant-a")
+    res_same = client.post(
+        "/bff/agora/journal",
+        headers={**valid_headers, "Idempotency-Key": "idem-pos-same"},
+        json={"title": "x", "body": "y", "tenant_id": "tenant-a"},
+    )
+    assert res_same.status_code == 201, res_same.text
+    assert _stored_journal_tenants(owner) == ["tenant-a"]
+
+    res_pos_absent = client.post(
+        "/bff/agora/journal",
+        headers={**valid_headers, "Idempotency-Key": "idem-pos-absent"},
+        json={"title": "x", "body": "y"},
+    )
+    assert res_pos_absent.status_code == 201, res_pos_absent.text
+    assert _stored_journal_tenants(owner) == ["tenant-a", "tenant-a"]
+
+    res_pos_foreign = client.post(
+        "/bff/agora/journal",
+        headers={**valid_headers, "Idempotency-Key": "idem-pos-foreign"},
+        json={"title": "x", "body": "y", "tenant_id": "tenant-b"},
+    )
+    assert res_pos_foreign.status_code == 403, res_pos_foreign.text
+    assert _stored_journal_tenants(owner) == ["tenant-a", "tenant-a"]
+
 
 
 def _jwt_without_tenant() -> dict[str, str]:

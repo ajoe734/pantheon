@@ -35,7 +35,12 @@ from ..models import (
     TargetObject,
     utc_now as default_utc_now,
 )
-from .identity.scope import resolve_canonical_agora_scope
+from .identity.scope import (
+    _ALLOWED_TENANT_CLAIM_PATHS,
+    _claim_strings,
+    _claims,
+    resolve_canonical_agora_scope,
+)
 
 from services.control_plane.bff.ports import (
     OpenClawOpsClient,
@@ -755,6 +760,19 @@ class AgoraService:
 
         return patch
 
+    def _verify_tenant_authority(self, identity: OperatorIdentity, requested: Optional[str] = None) -> set[str]:
+        claims = _claims(identity)
+        tenants = set(_claim_strings(claims, _ALLOWED_TENANT_CLAIM_PATHS))
+        if getattr(identity, "tenant_id", None):
+            tenants.add(str(identity.tenant_id).strip())
+        is_strict = getattr(identity, "token_kind", "") == "jwt" or os.getenv("PANTHEON_BFF_AUTH_MODE") == "strict"
+        if is_strict and not tenants:
+            raise self.bff_error(403, ErrorCode.FORBIDDEN, "Tenant access denied", "Caller has no verified tenant authority", precondition_failed="tenant_scope")
+        req = str(requested or "").strip()
+        if req and tenants and "*" not in tenants and req not in tenants:
+            raise self.bff_error(403, ErrorCode.FORBIDDEN, "Tenant access denied", "Requested tenant outside verified scope", precondition_failed="tenant_scope")
+        return tenants
+
     def patch_journal_entry(
         self,
         *,
@@ -772,6 +790,7 @@ class AgoraService:
             "entryId": entry_id,
             "patch": patch,
         })
+        self._verify_tenant_authority(identity, tenant_id)
         resolved_tenant, resolved_user = resolve_canonical_agora_scope(
             identity,
             tenant_id=tenant_id,
@@ -941,12 +960,18 @@ class AgoraService:
         resolved_key = self.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         if identity is None:
             raise self.bff_error(401, ErrorCode.AUTH_REQUIRED, "Journal entry creation requires a verified identity")
+        body_tenant = str(payload.get("tenant_id") or payload.get("tenantId") or "").strip()
+        trusted = self._verify_tenant_authority(identity, body_tenant or tenant_id)
         resolved_tenant, resolved_user = resolve_canonical_agora_scope(
             identity,
-            tenant_id=tenant_id or payload.get("tenant_id") or payload.get("tenantId"),
+            tenant_id=tenant_id,
             user_id=user_id or payload.get("user_id") or payload.get("userId"),
             utc_now=self.utc_now,
         )
+        if trusted and "*" not in trusted and resolved_tenant not in trusted:
+            raise self.bff_error(403, ErrorCode.FORBIDDEN, "Tenant access denied", "Resolved tenant outside scope", precondition_failed="tenant_scope")
+        if body_tenant and resolved_tenant and body_tenant != resolved_tenant:
+            raise self.bff_error(403, ErrorCode.FORBIDDEN, "Tenant access denied", "Payload tenant mismatch", precondition_failed="tenant_scope")
         title = self.agora_required_text(payload, "title")
         body_text = str(payload.get("body") or payload.get("decision") or payload.get("rationale") or "").strip()
         visibility = str(payload.get("visibility") or "private").strip().lower()

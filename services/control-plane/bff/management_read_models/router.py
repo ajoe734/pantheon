@@ -277,63 +277,19 @@ def _extract_tenant_id(
     requested_tenant: Optional[str] = None,
 ) -> str:
     claims = getattr(identity, "claims", {}) or {}
-    claim_tenant = str(
-        claims.get("tenant_id")
-        or claims.get("tenantId")
-        or claims.get("tid")
-        or claims.get("org_id")
-        or getattr(identity, "tenant_id", None)
-        or ""
-    ).strip()
-    raw_allowed = (
-        getattr(identity, "allowed_tenants", None)
-        or claims.get("allowed_tenants")
-        or claims.get("allowedTenants")
-        or claims.get("tenant_ids")
-        or claims.get("tenantIds")
-        or claims.get("tenants")
-    )
-    if isinstance(raw_allowed, (list, tuple, set)):
-        allowed_tenants = {str(t).strip() for t in raw_allowed if str(t).strip()}
-    elif isinstance(raw_allowed, str):
-        allowed_tenants = {t.strip() for t in raw_allowed.split(",") if t.strip()}
-    elif claim_tenant:
-        allowed_tenants = {claim_tenant}
-    else:
-        allowed_tenants = set()
-
+    claim_tenant = str(claims.get("tenant_id") or claims.get("tenantId") or claims.get("tid") or claims.get("org_id") or getattr(identity, "tenant_id", None) or "").strip()
+    raw_allowed = getattr(identity, "allowed_tenants", None) or claims.get("allowed_tenants") or claims.get("allowedTenants") or claims.get("tenant_ids") or claims.get("tenantIds") or claims.get("tenants")
+    allowed_tenants = {str(t).strip() for t in raw_allowed if str(t).strip()} if isinstance(raw_allowed, (list, tuple, set)) else ({t.strip() for t in raw_allowed.split(",") if t.strip()} if isinstance(raw_allowed, str) else ({claim_tenant} if claim_tenant else set()))
     req = str(requested_tenant or "").strip()
     if req:
-        if claim_tenant and req != claim_tenant and "*" not in allowed_tenants and req not in allowed_tenants:
-            raise _default_bff_error(
-                403,
-                ErrorCode.FORBIDDEN,
-                "Tenant access denied",
-                "Requested tenant is outside the caller tenant scope",
-                precondition_failed="tenant_scope",
-                details_extra={"tenantId": req, "allowedTenantIds": sorted(list(allowed_tenants))},
-            )
-        if not claim_tenant and (not allowed_tenants or ("*" not in allowed_tenants and req not in allowed_tenants)):
-            raise _default_bff_error(
-                403,
-                ErrorCode.FORBIDDEN,
-                "Tenant access denied",
-                "Caller has no verified tenant authority to request tenant scope",
-                precondition_failed="tenant_scope",
-            )
+        if (claim_tenant and req != claim_tenant and "*" not in allowed_tenants and req not in allowed_tenants) or (not claim_tenant and (not allowed_tenants or ("*" not in allowed_tenants and req not in allowed_tenants))):
+            raise _default_bff_error(403, ErrorCode.FORBIDDEN, "Tenant access denied", "Requested tenant is outside the caller tenant scope", precondition_failed="tenant_scope", details_extra={"tenantId": req, "allowedTenantIds": sorted(list(allowed_tenants))})
         return req
-
     if claim_tenant:
         return claim_tenant
     if len(allowed_tenants) == 1 and "*" not in allowed_tenants:
         return next(iter(allowed_tenants))
-    raise _default_bff_error(
-        403,
-        ErrorCode.FORBIDDEN,
-        "Tenant access denied",
-        "Caller has no verified tenant authority",
-        precondition_failed="tenant_scope",
-    )
+    raise _default_bff_error(403, ErrorCode.FORBIDDEN, "Tenant access denied", "Caller has no verified tenant authority", precondition_failed="tenant_scope")
 
 
 def _default_extract_identity(
