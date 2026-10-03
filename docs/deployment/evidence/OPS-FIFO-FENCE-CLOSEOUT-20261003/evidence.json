@@ -1,0 +1,160 @@
+{
+  "task_id": "OPS-FIFO-FENCE-CLOSEOUT-20261003",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "scope": "isolated source delivery; hosted promotion remains with existing coordinator",
+  "base_sha": "361fd3b34fb94687a259d677edd1bea2138a50f1",
+  "validated_source_commit": "d7efbeb00c0401a547843c59afe21324c72d3e52",
+  "adopted_from": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/5688",
+    "commit": "6f683ca985f3ff82bf7fd9e53beab3b28c9ff63b",
+    "author": "ajoe734 <bjoe734@gmail.com>",
+    "coauthor": "Claude Fable 5.1 <noreply@anthropic.com>",
+    "replacement_reason": "Dispatched worker must stay on task/OPS-FIFO-FENCE-CLOSEOUT-20261003; adopt residual only against current dev. Preserve old PR until replacement merged.",
+    "history_readback": "Original PR open; no comments or reviews at readback. Original check history remains at PR5688; not reused as approval of this replacement."
+  },
+  "source_sha256": {
+    ".orchestrator/common.py": "26e0d3372e14909aeb4cf451d0821ac491b2c3f04570449c9b290c2f5ad4752a",
+    ".orchestrator/runtime_state.py": "38492024dd3add9ff9ceb7dd90c60a2bfcbb5b3a826fad3a30f229e3456973fd",
+    ".orchestrator/test_common.py": "05d8712a31f64af365cec07f61dc9453e7d75c76b7cc08f3bae0013ac351e539",
+    ".orchestrator/test_runtime_state.py": "ec8b6326a411eebb802e57fbfe5d48091c0231cec32e2c305ce7ff37711c0d9b",
+    ".orchestrator/test_worker_runner_receipt.py": "13e4435f603570699517a8ae3ff219054918ee3fc196cc5fac9c51d7789a59c7",
+    ".orchestrator/worker_runner.py": "d87064de7a109413217be6c0846ab180541506dba0effc54918e1c3208f0f317",
+    "scripts/ai_status.py": "57b8debc4d7dab7ce3a324b16fe683e76ab428951a257bbdd56a230c3569f194",
+    "scripts/dashboard_server.py": "6872d50456eacec8fb4bdb12ed91130ee15771c3149abe0e4065579016f3c048",
+    "scripts/promote_supervisor_runtime.py": "c7aca6a27881aeb82a649dd035f67528b54b588d4a7f11e4ffeff6138e1e0ba9",
+    "scripts/test_ai_status.py": "7fbbd105ef1482dc30bfe254cf054a4cd27b82a902827035cb800734a2ec6724",
+    "scripts/test_promote_supervisor_runtime.py": "613997eaabd69882178f8689db46e0d87a78d50b97344896a95a2ecfb9984a08"
+  },
+  "validation_runner": "AI_NAME=Codex timeout <seconds> uv run --no-project --with pytest --with cryptography --with pydantic python -m pytest -q <selection>",
+  "validation": [
+    {
+      "selection": "scripts/test_promote_supervisor_runtime.py -k \"create_retired_path_fence or upgrades_fifo_fences\"",
+      "stage": "before repair",
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "result": "4 failed as expected on original FIFO creation/upgrade/collision behavior"
+    },
+    {
+      "selection": "scripts/test_promote_supervisor_runtime.py .orchestrator/test_runtime_state.py .orchestrator/test_worker_runner_receipt.py .orchestrator/test_worker_runner_heartbeat.py",
+      "timeout_seconds": 180,
+      "exit_code": 0,
+      "result": "224 passed, 29 subtests passed; promotion rerun below includes later added tests"
+    },
+    {
+      "selection": "scripts/test_promote_supervisor_runtime.py",
+      "timeout_seconds": 120,
+      "exit_code": 0,
+      "result": "102 passed"
+    },
+    {
+      "selection": ".orchestrator/test_common.py",
+      "timeout_seconds": 180,
+      "exit_code": 0,
+      "result": "146 passed, 66 subtests passed"
+    },
+    {
+      "selection": "scripts/test_ai_status.py scripts/test_sync_dev_root.py: collected node IDs [0:180]",
+      "timeout_seconds": 300,
+      "exit_code": 0,
+      "result": "180 passed, 162 subtests passed"
+    },
+    {
+      "selection": "scripts/test_ai_status.py scripts/test_sync_dev_root.py: collected node IDs [180:360]",
+      "timeout_seconds": 300,
+      "exit_code": 0,
+      "result": "180 passed, 91 subtests passed"
+    },
+    {
+      "selection": "status/sync collected node IDs [360:405]",
+      "timeout_seconds": 300,
+      "exit_code": 0,
+      "result": "45 passed"
+    },
+    {
+      "selection": "status/sync collected node IDs [405:450]",
+      "timeout_seconds": 300,
+      "exit_code": 0,
+      "result": "45 passed, 44 subtests passed"
+    },
+    {
+      "selection": "status/sync collected node IDs [450:495]",
+      "timeout_seconds": 300,
+      "exit_code": 0,
+      "result": "45 passed, 17 subtests passed"
+    },
+    {
+      "selection": "status/sync collected node IDs [517:538]",
+      "timeout_seconds": 600,
+      "exit_code": 0,
+      "result": "21 passed, 12 subtests passed"
+    },
+    {
+      "selection": "status/sync collected node IDs [495:517]",
+      "timeout_seconds": 600,
+      "exit_code": 0,
+      "result": "22 passed, 22 subtests passed"
+    },
+    {
+      "selection": ".orchestrator/test_worker_runner_receipt.py",
+      "timeout_seconds": 60,
+      "exit_code": 0,
+      "result": "1 passed after removing trailing blank line; no semantic change"
+    }
+  ],
+  "nonpassing_batches": [
+    {
+      "selection": ".orchestrator/test_common.py scripts/test_ai_status.py scripts/test_sync_dev_root.py",
+      "timeout_seconds": 300,
+      "exit_code": 124,
+      "result": "Incomplete; not counted as passed. Split reruns replace this batch. Transient-JSON fixture repaired to use an actual temporary regular file without relaxing retry assertion."
+    },
+    {
+      "selection": "scripts/test_ai_status.py scripts/test_sync_dev_root.py",
+      "timeout_seconds": 360,
+      "exit_code": 124,
+      "result": "Incomplete; not counted as passed. Complete 538-node inventory split into three disjoint batches of 180/180/178 with 300-second subprocess limits."
+    },
+    {
+      "selection": "status/sync collected node IDs [360:538]",
+      "timeout_seconds": 300,
+      "exit_code": 1,
+      "result": "subprocess.TimeoutExpired; not counted as passed. Replaced by four disjoint smaller batches."
+    },
+    {
+      "selection": "status/sync collected node IDs [495:538]",
+      "timeout_seconds": 300,
+      "exit_code": 124,
+      "result": "Incomplete; not counted as passed. Replaced by disjoint [495:517] and [517:538] batches with 600-second limits."
+    },
+    {
+      "selection": "scripts/test_dashboard_server.py",
+      "exit_code": 1,
+      "result": "2 failed, 6 passed on both candidate and untouched base 361fd3b; same authoritative-config detection and refresh tests fail. Baseline exported using git archive; no hosted endpoint involved."
+    }
+  ],
+  "acceptance_coverage": [
+    "Actual temporary FIFO reader blocks before upgrade, is released on exchange; future subprocess open fails immediately with IsADirectoryError.",
+    "mkdir/exchange failure preserves original FIFO inode; fsync failure preserves new restrictive directory; no unguarded retired path.",
+    "Symlink, parent symlink, regular file and nonempty directory fence creation refused.",
+    "Ordinary promotion upgrades state/approval/journal lock/head fences without moving or modifying journal; launch failure restores incumbent config while retaining directory fences.",
+    "Existing explicit storage migration and rollback, immutable legacy writer denial and current TaskStore writer denial remain tested.",
+    "Current runtime/receipt layout bypasses retired FIFO; configured retired writers remain denied; HTTP current read succeeds and retired FIFO returns 404."
+  ],
+  "budget": {
+    "change_class": "corrective",
+    "production_net_lines": 57,
+    "production_limit": 100,
+    "evidence_added_line_limit": 400
+  },
+  "handoff": "HANDOFF.md",
+  "review_and_delivery": "Exact final PR/head/manifest frozen by governed handoff; independent Codex2 decision and supervisor merge pending. No review, merge, live conversion or hosted acceptance claimed.",
+  "status_batch_reproduction": "Collect with python -m pytest --collect-only -q scripts/test_ai_status.py scripts/test_sync_dev_root.py; retain all 538 node-ID lines in collection order. Run disjoint slices [0:180], [180:360], [360:405], [405:450], [450:495], [495:517], [517:538] through the same pytest runner. No deselection or assertions relaxed.",
+  "status_node_inventory_sha256": "ce9c956a17f23f621f4637939e9791015f304a143484baa103da5690d92f5cd3",
+  "status_full_suite_result": {
+    "collected": 538,
+    "passed": 538,
+    "subtests_passed": 348,
+    "all_batch_exit_codes": 0
+  }
+}
