@@ -37,7 +37,7 @@
     },
     {
       "command": "git diff --check; python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget 0",
-      "result": "exact-base simplify budget passed at the current implementation diff: production +1442/-1823 net -381; tests +1556/-2875 net -1319; docs/evidence +134/-0 net +134."
+      "result": "exact-base simplify budget passed at the current implementation diff: production +1463/-1829 net -366; tests +1620/-2875 net -1255; docs/evidence +134/-0 net +134."
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_research_run_projection.py",
