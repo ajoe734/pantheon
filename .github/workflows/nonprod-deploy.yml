@@ -2193,7 +2193,7 @@ jobs:
           PUBLIC_SMOKE_OUTCOME: ${{ steps.public_smoke.outcome }}
           DEPLOY_POSTURE_EVIDENCE_OUTCOME: ${{ steps.deploy-posture-evidence.outcome }}
           AGORA_OUTCOME: ${{ steps.agora.outcome }}
-          ARTIFACTS_VERIFIED: ${{ !cancelled() && steps.artifact_baseline.outcome == 'success' && steps.artifact_baseline_upload.outcome == 'success' && steps.artifact_candidate_seal.outcome == 'success' && steps.artifact_candidate_upload.outcome == 'success' }}
+          ARTIFACTS_VERIFIED: ${{ job.status != 'cancelled' && steps.artifact_baseline.outcome == 'success' && steps.artifact_baseline_upload.outcome == 'success' && steps.artifact_candidate_seal.outcome == 'success' && steps.artifact_candidate_upload.outcome == 'success' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"

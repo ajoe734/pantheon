@@ -125,6 +125,7 @@ def evaluate(expression, values, cancelled=False):
     expression = re.sub(r"(?:steps|env|needs)\.[\w.-]+",
                         lambda match: repr(values.get(match[0], "")), expression)
     expression = expression.replace("always()", "True").replace("cancelled()", repr(cancelled))
+    expression = expression.replace("job.status", repr("cancelled" if cancelled else "success"))
     expression = expression.replace("&&", " and ").replace("||", " or ")
     expression = re.sub(r"!(?!=)", " not ", expression)
     return eval(expression.strip(), {"__builtins__": {}}, {})
@@ -222,3 +223,26 @@ def test_compensation_needs_acquired_lease_and_captured_predecessor(prerequisite
                    f"steps.{prerequisite}.outcome": outcome})
     assert not evaluate(step(DEPLOY, "deploy_compensation")["if"], values)
     assert not evaluate(DEPLOY["outputs"]["bff_fe_pair_verified"], values)
+
+
+STATUS_FUNCTIONS = re.compile(r"\b(?:cancelled|success|failure|always)\(\)")
+
+
+def test_status_functions_appear_only_in_if_conditions():
+    """GitHub rejects the whole workflow file when a status-check function is
+    used outside an ``if``; every push then records a "workflow file issue"
+    failure and dispatches cannot start."""
+    misplaced = []
+
+    def walk(node, path):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                walk(value, path + (str(key),))
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                walk(value, path + (str(index),))
+        elif isinstance(node, str) and path[-1] != "if" and "${{" in node and STATUS_FUNCTIONS.search(node):
+            misplaced.append(".".join(path))
+
+    walk(WORKFLOW, ())
+    assert misplaced == []
