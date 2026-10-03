@@ -31,6 +31,15 @@ AUTH_SHA = "c200f3691d83b41bf9bbd8638997a462592937ed"
 GCLOUD_SHA = "e427ad8a34f8676edf47cf7d7925499adf3eb74f"
 
 
+# Explicit offline staging identity; no developer-machine deployment defaults.
+STAGING_ENV = {
+    "PROJECT_ID": "contract-test-project", "REMOTE_USER": "contract-test",
+    "STAGING_EXEC_VM": "contract-exec", "STAGING_EXEC_ZONE": "test-zone",
+    "STAGING_EXEC_REMOTE_DIR": "/tmp/contract-exec",
+    "STAGING_EXEC_HEALTH_URL": "http://127.0.0.1:9/health",
+}
+
+
 def _workflow() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
@@ -451,6 +460,7 @@ def test_staging_dry_run_does_not_require_dev_lease() -> None:
         for key, value in os.environ.items()
         if not key.startswith("PANTHEON_DEV_ENVIRONMENT_LEASE")
     }
+    env.update(STAGING_ENV)
     result = subprocess.run(
         [
             "bash",
@@ -602,6 +612,7 @@ def test_dev_deploy_validates_deadline_configuration_positive(
 ) -> None:
     env = {
         **os.environ,
+        **STAGING_ENV,
         **extra_env,
     }
     result = subprocess.run(
@@ -646,6 +657,7 @@ def test_dev_deploy_validates_deadline_configuration_negative(
 ) -> None:
     env = {
         **os.environ,
+        **STAGING_ENV,
         **extra_env,
     }
     result = subprocess.run(
@@ -675,6 +687,16 @@ def test_dev_deploy_validates_deadline_configuration_negative(
 def test_dev_deploy_ssh_command_terminates_process_group_on_deadline(
     tmp_path: Path,
 ) -> None:
+    # Worktree checkout permissions may be group-writable; the transport accepts
+    # only a private controller copy. This still executes unchanged source bytes.
+    import shutil
+    controller = tmp_path / "controller"
+    controller.mkdir(mode=0o700)
+    for name in ("deploy_nonprod_vm.sh", "dev_vm_ssh.sh", "dev_remote_guarded_exec.py",
+                 "dev_remote_watchdog.py", "dev_candidate_receipt.py",
+                 "capture_dev_artifact_baseline.py", "dev_release_artifacts.py"):
+        shutil.copyfile(SCRIPTS / name, controller / name)
+        (controller / name).chmod(0o700)
     mock_bin = tmp_path / "bin"
     mock_bin.mkdir()
     pid_file = tmp_path / "mock_ssh.pid"
@@ -693,7 +715,7 @@ def test_dev_deploy_ssh_command_terminates_process_group_on_deadline(
     key_file.write_text("dummy-key\n", encoding="utf-8")
     key_file.chmod(0o600)
     known_hosts.write_text(
-        "35.201.204.12 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGdummy\n",
+        "34.81.52.222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGdummy\n",
         encoding="utf-8",
     )
     known_hosts.chmod(0o600)
@@ -711,6 +733,21 @@ def test_dev_deploy_ssh_command_terminates_process_group_on_deadline(
         "PATH": f"{mock_bin}:{cur_path}",
         "PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE": str(lease_state),
         "PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID": "11111111-1111-4111-8111-111111111111",
+        "PROJECT_ID": "pantheon-dev-20260902",
+        "REMOTE_USER": "chloe_ong_dev_cctech_support_com",
+        "DEV_VM": "pantheon-dev-deploy", "DEV_ZONE": "asia-east1-b",
+        "DEV_DEPLOY_SSH_HOST": "34.81.52.222",
+        "DEV_BFF_PUBLIC_HOST": "api.dev.mvl-cap.tw",
+        "DEV_FE_PUBLIC_HOST": "app.dev.mvl-cap.tw",
+        "PANTHEON_DEV_ARTIFACT_RUNNER_EVIDENCE_DIR": str(tmp_path / "candidate"),
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_ID": "c" * 64,
+        "PANTHEON_DEV_ARTIFACT_RUN_ID": "12345", "PANTHEON_DEV_ARTIFACT_ATTEMPT": "1",
+        "PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA": "d" * 40,
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA": "a" * 40,
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA": "b" * 40,
+        "PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA": "e" * 40,
+        "PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA": "f" * 40,
+        "PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256": "1" * 64,
         "DEV_DEPLOY_SSH_KEY_FILE": str(key_file),
         "DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE": str(known_hosts),
         "DEV_BFF_AUTH_STUB": "true",
@@ -721,7 +758,7 @@ def test_dev_deploy_ssh_command_terminates_process_group_on_deadline(
     result = subprocess.run(
         [
             "bash",
-            str(DEPLOY),
+            str(controller / DEPLOY.name),
             "--environment",
             "dev",
             "--component",
@@ -739,10 +776,9 @@ def test_dev_deploy_ssh_command_terminates_process_group_on_deadline(
     )
 
     assert result.returncode == 75
-    assert (
-        "deploy command exceeded deadline of 1s; direct SSH process group terminated"
-        in result.stderr
-    )
+    error = json.loads(result.stderr.strip())
+    assert error["status"] == "error" and error["failure_stage"] == "transport"
+    assert error["exit_code"] == 75
     assert pid_file.exists()
     spawned_pid = int(pid_file.read_text(encoding="utf-8").strip())
     # Verify the child process was terminated by process group kill
@@ -1190,8 +1226,8 @@ def test_dev_root_deploy_builds_candidate_before_mutating_active_runtime() -> No
     export_sha_idx = root_section.index('export GIT_SHA="${PANTHEON_DEPLOY_SHA}"')
     config_idx = root_section.index("docker compose -p pantheon -f docker-compose.yml config --quiet")
     build_idx = root_section.index("docker compose -p pantheon -f docker-compose.yml build")
-    up_idx = root_section.index("docker compose -p pantheon -f docker-compose.yml up -d")
-    projector_recreate_idx = root_section.index("docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps loop-run-projector-scheduler")
+    up_idx = root_section.index("run_dev_candidate_compose up -d")
+    projector_recreate_idx = root_section.index("run_dev_candidate_compose up -d --force-recreate --no-deps loop-run-projector-scheduler")
 
     assert export_sha_idx < config_idx < build_idx < up_idx < projector_recreate_idx
     assert 'GIT_SHA="${PANTHEON_DEPLOY_SHA}"' in root_section[:up_idx]
@@ -1199,7 +1235,7 @@ def test_dev_root_deploy_builds_candidate_before_mutating_active_runtime() -> No
     bff_section = deploy_script.split("case \"${PANTHEON_DEPLOY_COMPONENT}\" in", 1)[1].split("\n  bff)", 1)[1].split(";;", 1)[0]
     bff_export_sha_idx = bff_section.index('export GIT_SHA="${PANTHEON_DEPLOY_SHA}"')
     bff_build_idx = bff_section.index("docker compose -p pantheon -f docker-compose.yml build operator-bff agora-interaction-worker loop-run-projector-scheduler")
-    bff_up_idx = bff_section.index("docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler")
+    bff_up_idx = bff_section.index("run_dev_candidate_compose up -d --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler")
     assert bff_export_sha_idx < bff_build_idx < bff_up_idx
     assert 'GIT_SHA="${PANTHEON_DEPLOY_SHA}"' in bff_section[:bff_up_idx]
 
@@ -1619,12 +1655,6 @@ REQUIRED_COMPENSATION_ENV_VARS = (
     "DEV_BFF_MFA_CLAIMS",
     "DEV_BFF_MFA_VALUES",
     "DEV_BFF_REQUIRE_EMAIL_VERIFIED",
-    "DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED",
-    "DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED",
-    "DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED",
-    "DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED",
-    "DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED",
-    "DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED",
     "DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH",
     "DEV_BFF_ROLE_CLAIMS",
     "DEV_BFF_ROLE_MAP",
@@ -1667,10 +1697,11 @@ def _validate_deploy_compensation_step(step: str) -> None:
     assert "export DEV_BFF_AUTH_MODE=permissive" in step
     assert "--component bff" in step
     assert '--rollback-sha "${PANTHEON_ROLLBACK_BACKEND_SHA}"' in step
+    assert '"--artifact-${PANTHEON_DEV_ARTIFACT_OPERATION}"' in step
+    assert 'prepare --provenance runner-local --output-env "${artifact_env}"' in step
+    assert 'source "${artifact_env}"' in step
+    assert 'current_bff=' not in step
     assert 'PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_ROLLBACK_BACKEND_SHA}"' in step
-    assert 'current_bff="$(curl --connect-timeout 10 --max-time 30 -fsS "${DEV_BFF_URL}/bff/version"' in step
-    assert 'if [[ -n "${current_bff}" && "${current_bff}" == "${PANTHEON_ROLLBACK_BACKEND_SHA}" ]]; then' in step
-    assert "skipping rollback deploy and verifying baseline pair" in step
     assert 'python3 "${controller}/scripts/dev_environment_lease.py" acquire' in step
     assert 'python3 "${controller}/scripts/dev_environment_lease.py" heartbeat-loop' in step
     assert 'python3 "${controller}/scripts/dev_environment_lease.py" verify-heartbeat-identity' in step
@@ -1870,6 +1901,48 @@ def _start_ticks(pid: int) -> int:
         return 0
 
 
+def _retained_compensation_inputs(tmp_path: Path, backend: str, frontend: str,
+                                  candidate_sealed: bool) -> dict[str, str]:
+    # Reuse the strict artifact schema fixture, then run the REAL prepare CLI.
+    # Only Docker/HTTP/lease remote I/O are simulated, never admission validation.
+    from scripts.test_dev_artifact_compensation_evidence import case, write, no_candidate, e
+    with pytest.MonkeyPatch.context() as patch:
+        fixture = case.__wrapped__(tmp_path, patch)
+    controller_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    replacements = {"a" * 40: backend, "b" * 40: frontend, "d" * 40: controller_sha,
+                    "123456": "12345", "2": "1"}
+    def replace(value):
+        if isinstance(value, dict): return {key: replace(item) for key, item in value.items()}
+        if isinstance(value, list): return [replace(item) for item in value]
+        return replacements.get(value, value) if isinstance(value, str) else value
+    baseline = replace(fixture["baseline"])
+    bundle = baseline["image_bundle"]
+    baseline["image_bundle_sha256"] = e.capture.digest(e.capture.encoded(bundle))
+    baseline_hash = e.capture.digest(e.capture.encoded(baseline))
+    receipt = replace(fixture["receipt"])
+    record = receipt["candidate_image_manifest"]
+    record["baseline_manifest_sha256"] = baseline_hash
+    receipt_hash = e.capture.digest(e.capture.encoded(record))
+    receipt["candidate_image_manifest_sha256"] = receipt_hash
+    folder = e.capture.ARTIFACT_ROOT / ("baseline-12345-1-" + "c" * 64)
+    receipt["candidate_image_manifest_path"] = str(folder / "candidate-images.json")
+    receipt["candidate_image_override_path"] = str(folder / "candidate-images.override.json")
+    retained = tmp_path / "pantheon-dev-artifacts-12345-1"
+    baseline_path = write(retained / "baseline/artifact-baseline.json", e.capture.encoded(baseline))
+    receipt_path = write(retained / "candidate/candidate-receipt.json", e.capture.encoded(receipt))
+    retained.chmod(0o700)
+    env = replace(fixture["env"])
+    env.update({"PANTHEON_RELEASE_REPO_ROOT": str(ROOT),
+                e.ENV_PREFIX + "BASELINE_FILE": str(baseline_path),
+                e.ENV_PREFIX + "MANIFEST_SHA256": baseline_hash,
+                e.ENV_PREFIX + "CANDIDATE_RECEIPT_FILE": str(receipt_path),
+                e.ENV_PREFIX + "CANDIDATE_IMAGE_MANIFEST_SHA256": receipt_hash})
+    if not candidate_sealed: no_candidate(env)
+    # No unrelated guard UUID from the primitive fixture grants this workflow authority.
+    env.pop("PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID", None)
+    return env
+
+
 def _setup_mock_compensation_environment(
     tmp_path: Path,
     initial_bff_sha: str,
@@ -1878,6 +1951,7 @@ def _setup_mock_compensation_environment(
     rollback_fe_sha: str,
     deploy_behavior: str = "success",
     predecessor_heartbeat_state: str = "quarantined",
+    candidate_sealed: bool = True,
 ) -> tuple[dict[str, str], Path, Path]:
     import shutil
 
@@ -1890,6 +1964,9 @@ def _setup_mock_compensation_environment(
 
     agora_scripts = tmp_path / ".agora-gate-controller" / "scripts"
     agora_scripts.mkdir(parents=True, exist_ok=True)
+    for name in ("dev_artifact_compensation_evidence.py", "capture_dev_artifact_baseline.py",
+                 "dev_candidate_receipt.py", "dev_release_artifacts.py"):
+        shutil.copy2(SCRIPTS / name, agora_scripts / name)
     mock_deploy = agora_scripts / "deploy_nonprod_vm.sh"
     invocations_log = tmp_path / "deploy_invocations.log"
     bff_sha_file = tmp_path / "mock_bff_sha.txt"
@@ -1950,7 +2027,16 @@ def _setup_mock_compensation_environment(
     else:
         deploy_body = f"echo \"$@\" >> '{invocations_log}'\nexit 0\n"
 
-    mock_deploy.write_text(f"#!/usr/bin/env bash\nset -euo pipefail\n{deploy_body}", encoding="utf-8")
+    # Transport stub rejects legacy source-only redeploy. Verify never mutates.
+    admission = (
+        '[[ "$*" == *"--artifact-${PANTHEON_DEV_ARTIFACT_OPERATION}"* ]] || exit 76\n'
+        '[[ -n "${PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID:-}" ]] || exit 76\n'
+        'if [[ "${PANTHEON_DEV_ARTIFACT_OPERATION}" == verify ]]; then\n'
+        f'  echo "$@" >> "{invocations_log}"\n'
+        f'  [[ "$(cat "{bff_sha_file}")" == "{rollback_bff_sha}" ]]\n'
+        '  exit $?\nfi\n'
+    )
+    mock_deploy.write_text(f"#!/usr/bin/env bash\nset -euo pipefail\n{admission}{deploy_body}", encoding="utf-8")
     mock_deploy.chmod(0o755)
 
     bin_dir = tmp_path / "bin"
@@ -2083,12 +2169,12 @@ def _setup_mock_compensation_environment(
         "GITHUB_REPOSITORY": "ajoe734/pantheon",
         "GITHUB_SERVER_URL": "https://github.com",
         "DEV_AUTH_PROFILE": "strict",
-        "DEV_BFF_URL": "https://pantheon-lupin-dev-bff.mock",
-        "DEV_FE_URL": "https://pantheon-lupin-dev-fe.mock",
+        "DEV_BFF_URL": "https://bff.contract.invalid",
+        "DEV_FE_URL": "https://fe.contract.invalid",
         "PANTHEON_ROLLBACK_BACKEND_SHA": rollback_bff_sha,
         "PANTHEON_ROLLBACK_FRONTEND_SHA": rollback_fe_sha,
         "PANTHEON_DEV_ROLLBACK_BACKEND_SHA": rollback_bff_sha,
-        "GCP_DEPLOY_PROJECT_ID": "pantheon-lupin-dev-20260719",
+        "GCP_DEPLOY_PROJECT_ID": "pantheon-dev-20260902",
         "DEV_DEPLOY_DEADLINE_SECONDS": "1200",
         "PANTHEON_ENVIRONMENT_LEASE_TOKEN": "mock-token",
         "PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE": str(initial_state_file),
@@ -2104,8 +2190,8 @@ def _setup_mock_compensation_environment(
         "DEV_BFF_JWT_AUDIENCE": "bff-operators",
         "DEV_BFF_JWKS_URI": "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com",
         "DEV_BFF_OIDC_DISCOVERY_URL": "https://discovery.mock",
-        "DEV_BFF_OIDC_ISSUER": "https://securetoken.google.com/pantheon-lupin-dev-20260719",
-        "DEV_BFF_OIDC_AUDIENCE": "pantheon-lupin-dev-20260719",
+        "DEV_BFF_OIDC_ISSUER": "https://issuer.contract.invalid",
+        "DEV_BFF_OIDC_AUDIENCE": "contract-test",
         "DEV_BFF_OIDC_CLIENT_ID": "mock-oidc-client-id",
         "DEV_BFF_OIDC_CLIENT_SECRET": "mock-oidc-client-secret",
         "DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID": "pantheon-dev-viewer-v1",
@@ -2122,12 +2208,6 @@ def _setup_mock_compensation_environment(
         "DEV_BFF_MFA_CLAIMS": "amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor",
         "DEV_BFF_MFA_VALUES": "true,1,yes,mfa,otp,totp,webauthn",
         "DEV_BFF_REQUIRE_EMAIL_VERIFIED": "true",
-        "DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED": "false",
-        "DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED": "true",
-        "DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED": "true",
-        "DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED": "true",
-        "DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED": "true",
-        "DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED": "true",
         "DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH": "hash",
         "DEV_BFF_ROLE_CLAIMS": "roles,role",
         "DEV_BFF_ROLE_MAP": "pantheon-operator=operator;pantheon-viewer=viewer;pantheon-reviewer=reviewer;pantheon-approver=approver;pantheon-risk-owner=risk_owner;pantheon-admin=admin",
@@ -2143,16 +2223,17 @@ def _setup_mock_compensation_environment(
         "DEV_MANAGEMENT_AI_DATABASE_URL": "postgresql://user:pass@localhost:5432/db",
         "DEV_MANAGEMENT_AI_ATTACH_BUCKET": "bucket",
         "DEV_MANAGEMENT_AI_ATTACH_LOCATION": "asia-east1",
-        "DEV_BFF_CANONICAL_CORS_ORIGIN": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
-        "DEV_BFF_CORS_ORIGINS": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
+        "DEV_BFF_CANONICAL_CORS_ORIGIN": "https://fe.contract.invalid",
+        "DEV_BFF_CORS_ORIGINS": "https://fe.contract.invalid",
     }
+    env.update(_retained_compensation_inputs(runner_temp, rollback_bff_sha, rollback_fe_sha,
+                                             candidate_sealed))
+    env["EVIDENCE_DIR"] = str(runner_temp)
     return env, invocations_log, step_summary
 
 
-def test_dev_deploy_compensation_mutation_aware_skips_deploy_when_already_at_baseline_negative(tmp_path: Path) -> None:
-    """Executable negative regression proving that when preflight/build fails while the active BFF
-    is already at the rollback baseline SHA, deploy_compensation under TARGET_ENV=dev with preceding failure
-    state makes NO deploy_nonprod_vm.sh invocation and preserves the running services untouched."""
+def test_dev_deploy_compensation_mutation_aware_verifies_without_candidate_receipt_negative(tmp_path: Path) -> None:
+    """Without a candidate receipt, verify exact baseline under a fresh guard."""
     rollback_bff = "1" * 40
     rollback_fe = "2" * 40
     env, invocations_log, step_summary = _setup_mock_compensation_environment(
@@ -2161,6 +2242,7 @@ def test_dev_deploy_compensation_mutation_aware_skips_deploy_when_already_at_bas
         initial_fe_sha=rollback_fe,
         rollback_bff_sha=rollback_bff,
         rollback_fe_sha=rollback_fe,
+        candidate_sealed=False,
     )
     script = _extract_deploy_compensation_run_script()
     result = subprocess.run(
@@ -2173,13 +2255,12 @@ def test_dev_deploy_compensation_mutation_aware_skips_deploy_when_already_at_bas
     )
 
     assert result.returncode == 0, f"Compensation script failed: {result.stderr}"
-    assert "skipping rollback deploy and verifying baseline pair" in result.stdout
-    assert not invocations_log.exists() or invocations_log.read_text(encoding="utf-8").strip() == "", (
-        "deploy_nonprod_vm.sh must NOT be invoked when hosted BFF is already at baseline"
-    )
+    assert "--artifact-verify" in invocations_log.read_text()
+    assert "--artifact-restore" not in invocations_log.read_text()
+    assert (tmp_path / "mock_bff_sha.txt").read_text() == rollback_bff
     assert step_summary.exists()
     summary_content = step_summary.read_text(encoding="utf-8")
-    assert f"Preserved exact hosted dev baseline pair without deploy mutation: BFF={rollback_bff} FE={rollback_fe}" in summary_content
+    assert f"Artifact verify proved exact prior images and FE bytes: BFF={rollback_bff} FE={rollback_fe}" in summary_content
 
 
 def test_dev_deploy_compensation_mutation_aware_executes_deploy_when_not_at_baseline_positive(tmp_path: Path) -> None:
@@ -2208,7 +2289,7 @@ def test_dev_deploy_compensation_mutation_aware_executes_deploy_when_not_at_base
     )
 
     assert result.returncode == 0, f"Compensation script failed: {result.stderr}"
-    assert f"rolling back BFF to baseline {rollback_bff}" in result.stdout
+    assert "--artifact-restore" in invocations_log.read_text()
     assert invocations_log.exists(), "deploy_nonprod_vm.sh MUST be invoked when hosted BFF is not at baseline"
     invocations = invocations_log.read_text(encoding="utf-8").strip().splitlines()
     assert len(invocations) == 1
@@ -2216,7 +2297,7 @@ def test_dev_deploy_compensation_mutation_aware_executes_deploy_when_not_at_base
     assert "--component bff" in invocations[0]
     assert step_summary.exists()
     summary_content = step_summary.read_text(encoding="utf-8")
-    assert f"Restored exact hosted dev baseline pair: BFF={rollback_bff} FE={rollback_fe}" in summary_content
+    assert f"Artifact restore proved exact prior images and FE bytes: BFF={rollback_bff} FE={rollback_fe}" in summary_content
 
 
 def test_dev_deploy_compensation_quarantined_predecessor_heartbeat_restores_baseline_e2e(tmp_path: Path) -> None:
@@ -2246,14 +2327,14 @@ def test_dev_deploy_compensation_quarantined_predecessor_heartbeat_restores_base
     )
 
     assert result.returncode == 0, f"Compensation script failed: {result.stderr}"
-    assert f"rolling back BFF to baseline {rollback_bff}" in result.stdout
+    assert "--artifact-restore" in invocations_log.read_text()
     assert invocations_log.exists()
     actual_bff = (tmp_path / "mock_bff_sha.txt").read_text(encoding="utf-8").strip()
     actual_fe = (tmp_path / "mock_fe_sha.txt").read_text(encoding="utf-8").strip()
     assert actual_bff == rollback_bff
     assert actual_fe == rollback_fe
     summary_content = step_summary.read_text(encoding="utf-8")
-    assert f"Restored exact hosted dev baseline pair: BFF={rollback_bff} FE={rollback_fe}" in summary_content
+    assert f"Artifact restore proved exact prior images and FE bytes: BFF={rollback_bff} FE={rollback_fe}" in summary_content
     lease_events = (tmp_path / "lease_events.log").read_text(encoding="utf-8")
     assert "CONTENTION: active lease owned by pantheon:ajoe734/pantheon:12345:1" in lease_events
     assert "ACQUIRED: owner=pantheon:ajoe734/pantheon:12345:1:rollback" in lease_events
@@ -2293,7 +2374,7 @@ def test_dev_deploy_compensation_active_predecessor_heartbeat_stopped_and_recove
 
     assert result.returncode == 0, f"Compensation script failed: {result.stderr}"
     assert f"Stopping active predecessor heartbeat (pid={initial_pid})" in result.stdout
-    assert f"rolling back BFF to baseline {rollback_bff}" in result.stdout
+    assert "--artifact-restore" in invocations_log.read_text()
 
     # Verify the predecessor heartbeat process was stopped cleanly
     time.sleep(0.1)
@@ -2307,7 +2388,7 @@ def test_dev_deploy_compensation_active_predecessor_heartbeat_stopped_and_recove
     assert actual_bff == rollback_bff
     assert actual_fe == rollback_fe
     summary_content = step_summary.read_text(encoding="utf-8")
-    assert f"Restored exact hosted dev baseline pair: BFF={rollback_bff} FE={rollback_fe}" in summary_content
+    assert f"Artifact restore proved exact prior images and FE bytes: BFF={rollback_bff} FE={rollback_fe}" in summary_content
     lease_events = (tmp_path / "lease_events.log").read_text(encoding="utf-8")
     assert "CONTENTION: active lease owned by pantheon:ajoe734/pantheon:12345:1" in lease_events
     assert "ACQUIRED: owner=pantheon:ajoe734/pantheon:12345:1:rollback" in lease_events
@@ -2611,12 +2692,6 @@ REQUIRED_INNER_ROLLBACK_MAPPINGS = (
     'PANTHEON_BFF_MFA_CLAIMS="${PANTHEON_DEV_BFF_MFA_CLAIMS}"',
     'PANTHEON_BFF_MFA_VALUES="${PANTHEON_DEV_BFF_MFA_VALUES}"',
     'PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED="${PANTHEON_DEV_BFF_REQUIRE_EMAIL_VERIFIED}"',
-    'PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED}"',
-    'PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED}"',
-    'PANTHEON_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED}"',
-    'PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED}"',
-    'PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED}"',
-    'PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED}"',
     'PANTHEON_BFF_ROLE_CLAIMS="${PANTHEON_DEV_BFF_ROLE_CLAIMS}"',
     'PANTHEON_BFF_ROLE_MAP="${PANTHEON_DEV_BFF_ROLE_MAP}"',
     'PANTHEON_BFF_ROLE_MAP_MODE="${PANTHEON_DEV_BFF_ROLE_MAP_MODE}"',
@@ -2636,44 +2711,48 @@ REQUIRED_INNER_ROLLBACK_MAPPINGS = (
 )
 
 
-def _extract_rollback_dev_bff_function() -> str:
-    deploy_script = DEPLOY.read_text(encoding="utf-8")
-    start = deploy_script.index("rollback_dev_bff_on_failure() {")
-    end = deploy_script.index("\ncd \"${PANTHEON_REMOTE_DIR}\"", start)
-    return deploy_script[start:end]
+def _shell_function(name: str) -> str:
+    script = DEPLOY.read_text(encoding="utf-8")
+    start = script.index(name + "() {\n")
+    return script[start:script.index("\n}\n", start) + 3]
 
 
-def _validate_rollback_dev_bff_function(func_text: str) -> None:
+def _validate_runtime_environment(func_text: str) -> None:
     for mapping in REQUIRED_INNER_ROLLBACK_MAPPINGS:
-        assert mapping in func_text, f"Missing required env mapping '{mapping}' in rollback_dev_bff_on_failure"
+        assert mapping in func_text, f"Missing required env mapping '{mapping}'"
 
 
-def test_dev_inner_rollback_preserves_full_governed_bff_environment() -> None:
-    """rollback_dev_bff_on_failure in deploy_nonprod_vm.sh must pass all governed BFF credentials,
-    role maps, Agora configuration, and adapter variables to Compose so the restored baseline remains usable."""
-    func_text = _extract_rollback_dev_bff_function()
-    _validate_rollback_dev_bff_function(func_text)
+def test_dev_candidate_preserves_full_governed_bff_environment() -> None:
+    _validate_runtime_environment(_shell_function("with_dev_bff_runtime_env"))
 
 
 @pytest.mark.parametrize("missing_mapping", REQUIRED_INNER_ROLLBACK_MAPPINGS)
-def test_dev_inner_rollback_fails_closed_when_mapping_absent_negative(missing_mapping: str) -> None:
-    """Negative test verifying that omitting any environment mapping from rollback_dev_bff_on_failure
-    is rejected by the contract check."""
-    func_text = _extract_rollback_dev_bff_function()
-    tampered_func = func_text.replace(missing_mapping, "# OMITTED")
-    assert missing_mapping not in tampered_func
+def test_dev_candidate_missing_environment_mapping_negative(missing_mapping: str) -> None:
+    func_text = _shell_function("with_dev_bff_runtime_env")
+    _validate_runtime_environment(func_text)  # A negative must start from a passing control.
     with pytest.raises(AssertionError, match="Missing required env mapping"):
-        _validate_rollback_dev_bff_function(tampered_func)
+        _validate_runtime_environment(func_text.replace(missing_mapping, "# OMITTED"))
 
 
-def test_dev_deploy_inner_rollback_skips_rollback_when_nested_compensation_matches_deploy_sha() -> None:
-    """Inner rollback in deploy_nonprod_vm.sh must skip rollback and exit 1 when
-    PANTHEON_DEV_ROLLBACK_BACKEND_SHA == PANTHEON_DEPLOY_SHA, preventing nested compensation
-    from mistakenly checking out and restoring a failed candidate."""
-    func_text = _extract_rollback_dev_bff_function()
-    assert 'local rollback_sha="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"' in func_text
-    assert '"${rollback_sha}" == "${PANTHEON_DEPLOY_SHA}"' in func_text
-    assert 'automatic BFF rollback skipped: no distinct valid baseline rollback SHA available' in func_text
+@pytest.mark.parametrize("acked,operation", [("true", "restore"), ("false", "verify")])
+@pytest.mark.parametrize("driver_status", [0, 75])
+def test_dev_inner_rollback_uses_sealed_artifacts_even_for_same_source(
+    tmp_path: Path, acked: str, operation: str, driver_status: int,
+) -> None:
+    log = tmp_path / "driver.log"
+    script = "\n".join([
+        'info() { :; }', 'dump_dev_root_failure_diagnostics() { :; }',
+        f'run_dev_artifact_driver() {{ echo "$*" >> "{log}"; return {driver_status}; }}',
+        _shell_function("rollback_dev_bff_on_failure"),
+        'rollback_dev_bff_on_failure failed_gate',
+    ])
+    result = subprocess.run(["bash", "-euo", "pipefail", "-c", script],
+                            env={**os.environ, "DEV_CANDIDATE_RECEIPT_ACKED": acked,
+                                 "PANTHEON_DEPLOY_SHA": "a" * 40,
+                                 "PANTHEON_DEV_ROLLBACK_BACKEND_SHA": "a" * 40},
+                            capture_output=True, text=True, timeout=5)
+    assert result.returncode == 1, result.stderr
+    assert log.read_text().splitlines() == [operation]
 
 
 def test_dev_deploy_built_image_identity_matches_requested_sha_including_baseline_compensation(tmp_path: Path) -> None:
@@ -2819,12 +2898,12 @@ def test_dev_root_deploy_stale_compose_replacement_cleanup_defined_and_invoked()
 
     root_section = deploy_script.split('case "${PANTHEON_DEPLOY_COMPONENT}" in', 1)[1].split("root)", 1)[1].split(";;", 1)[0]
     cleanup_idx = root_section.index("cleanup_stale_compose_replacement_containers")
-    up_idx = root_section.index("docker compose -p pantheon -f docker-compose.yml up -d")
+    up_idx = root_section.index("run_dev_candidate_compose up -d")
     assert cleanup_idx < up_idx, "cleanup_stale_compose_replacement_containers must run before root compose up rollout"
 
     bff_section = deploy_script.split('case "${PANTHEON_DEPLOY_COMPONENT}" in', 1)[1].split("\n  bff)", 1)[1].split(";;", 1)[0]
     bff_cleanup_idx = bff_section.index("cleanup_stale_compose_replacement_containers")
-    bff_up_idx = bff_section.index("docker compose -p pantheon -f docker-compose.yml up -d")
+    bff_up_idx = bff_section.index("run_dev_candidate_compose up -d")
     assert bff_cleanup_idx < bff_up_idx, "cleanup_stale_compose_replacement_containers must run before bff compose up recreate"
 
 
