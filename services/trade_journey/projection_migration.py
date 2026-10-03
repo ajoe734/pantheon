@@ -46,7 +46,9 @@ from services.trade_journey.lifecycle_projector import (
 from services.trade_journey.materializer import (
     IDENTIFIER_FIELDS,
     JourneyMaterializer,
+    SHARED_IDENTIFIER_TYPES,
     STAGES,
+    identity_summary,
     TERMINAL_STATUSES,
 )
 from services.trade_journey.projection_store import (
@@ -500,7 +502,7 @@ def _journey_row_for_aggregate(
         last_occurred_at=_parse_dt(snapshot["updated_at"]),
         first_ingested_seq=min(ingested_seqs),
         last_ingested_seq=max(ingested_seqs),
-        current_identity_summary=snapshot.get("identifiers", {}),
+        current_identity_summary=identity_summary(agg.identity, snapshot.get("identifiers")),
         evidence_summary={"diagnostics": projection.diagnostics},
         diagnostic_summary={"completeness": snapshot.get("completeness", {})},
         loop_run_id=agg.identity.get("loop_run_id", ""),
@@ -570,6 +572,8 @@ def _receipts_and_identity_links(
     occurrences: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
     for journey_event in agg.journey_events:
         for identifier_type in IDENTIFIER_FIELDS:
+            if identifier_type in SHARED_IDENTIFIER_TYPES:
+                continue
             value = journey_event.get(identifier_type)
             if isinstance(value, str) and value:
                 occurrences.setdefault((identifier_type, value), []).append(journey_event)
@@ -1284,6 +1288,8 @@ def legacy_identity_rows(events: Iterable[Mapping[str, Any]]) -> list[dict[str, 
     seen: set[tuple[Any, ...]] = set()
     for event in events:
         for identifier_type in IDENTIFIER_FIELDS:
+            if identifier_type in SHARED_IDENTIFIER_TYPES:
+                continue  # shared dimensions live in the journey summary, not identity_links
             value = event.get(identifier_type)
             if not (isinstance(value, str) and value):
                 continue

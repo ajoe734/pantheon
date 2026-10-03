@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Optional, Sequence
 
-from services.trade_journey.materializer import JourneyProjection, STAGES, TERMINAL_STATUSES
+from services.trade_journey.materializer import JourneyProjection, SHARED_IDENTIFIER_TYPES, STAGES, TERMINAL_STATUSES
 
 READER_BACKEND_ENV = "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND"
 READER_DSN_ENV = "PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN"
@@ -249,17 +249,22 @@ class TradeJourneyProjectionStore:
             else:
                 clauses.append(f"(status IN ({terminal_placeholders}) OR last_occurred_at >= clock_timestamp() - interval '900 seconds')")
             params.extend(terminal_params)
-        for key, identifier_type in (("persona_id", "persona_id"), ("strategy_id", "strategy_id"), ("decision_id", "decision_id"), ("order_id", "order_id"), ("broker_order_id", "broker_order_id")):
+        for key, identifier_type in tuple((name, name) for name in sorted(SHARED_IDENTIFIER_TYPES)) + (("decision_id", "decision_id"), ("order_id", "order_id"), ("broker_order_id", "broker_order_id")):
             if filters.get(key):
-                clauses.append(f"EXISTS (SELECT 1 FROM {self.schema}.identity_links link WHERE link.tenant_id={self.schema}.journeys.tenant_id AND link.environment={self.schema}.journeys.environment AND link.journey_id={self.schema}.journeys.journey_id AND link.identifier_type=%s AND link.identifier_value=%s)")
-                params.extend((identifier_type, str(filters[key])))
+                link_match = f"EXISTS (SELECT 1 FROM {self.schema}.identity_links link WHERE link.tenant_id={self.schema}.journeys.tenant_id AND link.environment={self.schema}.journeys.environment AND link.journey_id={self.schema}.journeys.journey_id AND link.identifier_type=%s AND link.identifier_value=%s)"
+                if identifier_type in SHARED_IDENTIFIER_TYPES:
+                    clauses.append(f"({link_match} OR COALESCE(current_identity_summary -> 'identifiers', current_identity_summary) -> %s ? %s)")
+                    params.extend((identifier_type, str(filters[key]), identifier_type, str(filters[key])))
+                else:
+                    clauses.append(link_match)
+                    params.extend((identifier_type, str(filters[key])))
         if filters.get("q"):
             if filters.get("q_journey_only"):
                 clauses.append("journey_id ILIKE %s")
                 params.append(f"%{filters['q']}%")
             else:
-                clauses.append(f"(journey_id ILIKE %s OR EXISTS (SELECT 1 FROM {self.schema}.identity_links link WHERE link.tenant_id={self.schema}.journeys.tenant_id AND link.environment={self.schema}.journeys.environment AND link.journey_id={self.schema}.journeys.journey_id AND link.identifier_value ILIKE %s))")
-                params.extend((f"%{filters['q']}%", f"%{filters['q']}%"))
+                clauses.append(f"(journey_id ILIKE %s OR EXISTS (SELECT 1 FROM {self.schema}.identity_links link WHERE link.tenant_id={self.schema}.journeys.tenant_id AND link.environment={self.schema}.journeys.environment AND link.journey_id={self.schema}.journeys.journey_id AND link.identifier_value ILIKE %s) OR EXISTS (SELECT 1 FROM jsonb_each(COALESCE({self.schema}.journeys.current_identity_summary -> 'identifiers', {self.schema}.journeys.current_identity_summary)) dim(k, v), jsonb_array_elements_text(CASE WHEN jsonb_typeof(v)='array' THEN v ELSE jsonb_build_array(v) END) val WHERE k = ANY(%s) AND val ILIKE %s))")
+                params.extend((f"%{filters['q']}%", f"%{filters['q']}%", sorted(SHARED_IDENTIFIER_TYPES), f"%{filters['q']}%"))
         return clauses, params
 
     def page_journeys(self, *, tenant_id: str, environment: str, filters: Optional[Mapping[str, Any]] = None, sort: str = "updated_at_desc", page_size: int = DEFAULT_PAGE_SIZE, page_token: Optional[str] = None) -> ProjectionPage:
@@ -332,6 +337,8 @@ class TradeJourneyProjectionStore:
         self._require_scope(tenant_id, environment)
         if identifier_type == "journey_id":
             rows = self._rows(f"SELECT journey_id FROM {self.schema}.journeys WHERE tenant_id=%s AND environment=%s AND journey_id=%s", (tenant_id, environment, identifier_value))
+        elif identifier_type in SHARED_IDENTIFIER_TYPES:
+            rows = self._rows(f"SELECT journey_id FROM {self.schema}.journeys WHERE tenant_id=%s AND environment=%s AND COALESCE(current_identity_summary -> 'identifiers', current_identity_summary) -> %s ? %s UNION SELECT journey_id FROM {self.schema}.identity_links WHERE tenant_id=%s AND environment=%s AND identifier_type=%s AND identifier_value=%s ORDER BY journey_id ASC LIMIT {MAX_PAGE_SIZE}", (tenant_id, environment, identifier_type, identifier_value, tenant_id, environment, identifier_type, identifier_value))
         else:
             rows = self._rows(f"SELECT journey_id FROM {self.schema}.identity_links WHERE tenant_id=%s AND environment=%s AND identifier_type=%s AND identifier_value=%s ORDER BY journey_id ASC LIMIT {MAX_PAGE_SIZE}", (tenant_id, environment, identifier_type, identifier_value))
         return sorted({str(row.get("journey_id") or "") for row in rows if row.get("journey_id")})
