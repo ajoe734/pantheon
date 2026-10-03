@@ -66,7 +66,14 @@ def resolve_governed_dataset(
     input_refs = stage.get("input_refs") or (plan.get("input_refs") if plan else None)
     if not input_refs or not isinstance(input_refs, (list, tuple)):
         return None
-    valid_refs = [str(r).strip() for r in input_refs if str(r).strip()]
+    valid_refs = []
+    for r in input_refs:
+        if isinstance(r, dict):
+            ref_val = r.get("id") or r.get("ref") or r.get("uri")
+            if ref_val and str(ref_val).strip():
+                valid_refs.append(str(ref_val).strip())
+        elif isinstance(r, str) and r.strip():
+            valid_refs.append(r.strip())
     if not valid_refs:
         return None
 

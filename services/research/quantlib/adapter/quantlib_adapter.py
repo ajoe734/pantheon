@@ -125,51 +125,27 @@ def _get_core_adapter():
     return mod
 
 
-def _analytic_bs_metrics(option: GovernedOptionSpec) -> dict[str, float]:
-    spot, strike, rate, vol = option.spot, option.strike, option.risk_free_rate, option.volatility
-    tenor, div_yield, qty = option.maturity_days / 365.0, option.dividend_yield, option.quantity
-    cp = 1.0 if option.option_type.lower() == "call" else -1.0
-
-    if tenor <= 0.0:
-        price = max(0.0, cp * (spot - strike))
-        delta = cp if (spot > strike if cp > 0 else spot < strike) else (cp * 0.5 if spot == strike else 0.0)
-        return {"npv": round(price * abs(qty), 6), "delta": round(delta * qty, 6), "gamma": 0.0, "vega": 0.0, "theta": 0.0, "rho": 0.0}
-
-    d1 = (math.log(spot / strike) + (rate - div_yield + 0.5 * vol * vol) * tenor) / (vol * math.sqrt(tenor))
-    d2 = d1 - vol * math.sqrt(tenor)
-    n_cdf = lambda x: 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
-    n_pdf = lambda x: math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
-
-    df_q, df_r = math.exp(-div_yield * tenor), math.exp(-rate * tenor)
-    price = cp * (spot * df_q * n_cdf(cp * d1) - strike * df_r * n_cdf(cp * d2))
-    delta = cp * df_q * n_cdf(cp * d1)
-    theta_per_day = (-spot * df_q * n_pdf(d1) * vol / (2.0 * math.sqrt(tenor)) - cp * rate * strike * df_r * n_cdf(cp * d2) + cp * div_yield * spot * df_q * n_cdf(cp * d1)) / 365.0
-    rho = cp * strike * tenor * df_r * n_cdf(cp * d2)
-    gamma = df_q * n_pdf(d1) / (spot * vol * math.sqrt(tenor))
-    vega = spot * df_q * math.sqrt(tenor) * n_pdf(d1)
-
-    return {
-        "npv": round(price * abs(qty), 6), "delta": round(delta * qty, 6), "gamma": round(gamma * abs(qty), 6),
-        "vega": round(vega * abs(qty) / 100.0, 6), "theta": round(theta_per_day * qty, 6), "rho": round(rho * qty / 100.0, 6),
-    }
-
-
 def _bs_metrics(option: GovernedOptionSpec) -> dict[str, float]:
-    """Compute option metrics via the unified QuantLib numerical backend or analytic formulas."""
-    try:
-        t = option.maturity_days / 365.0
-        res = _get_core_adapter().price_european(
-            spot=option.spot, strike=option.strike, rate=option.risk_free_rate, vol=option.volatility,
-            tenor=t, option_type=option.option_type, dividend_yield=option.dividend_yield,
-        )
-        q = option.quantity
-        return {
-            "npv": round(res["price"] * abs(q), 6), "delta": round(res["delta"] * q, 6),
-            "gamma": round(res["gamma"] * abs(q), 6), "vega": round(res["vega"] * abs(q) / 100.0, 6),
-            "theta": round(res["theta"] * q, 6), "rho": round(res["rho"] * q / 100.0, 6),
-        }
-    except (RuntimeError, ImportError):
-        return _analytic_bs_metrics(option)
+    """Compute option metrics via the unified QuantLib numerical backend."""
+    adapter_mod = _get_core_adapter()
+    t = option.maturity_days / 365.0
+    res = adapter_mod.price_european(
+        spot=option.spot,
+        strike=option.strike,
+        rate=option.risk_free_rate,
+        vol=option.volatility,
+        tenor=t,
+        option_type=option.option_type,
+        dividend_yield=option.dividend_yield,
+    )
+    return {
+        "npv": round(res["price"] * abs(option.quantity), 6),
+        "delta": round(res["delta"] * option.quantity, 6),
+        "gamma": round(res["gamma"] * abs(option.quantity), 6),
+        "vega": round(res["vega"] * abs(option.quantity) / 100.0, 6),
+        "theta": round(res["theta"] * option.quantity, 6),
+        "rho": round(res["rho"] * option.quantity / 100.0, 6),
+    }
 
 
 def _bond_metrics(bond: GovernedBondSpec) -> dict[str, float]:

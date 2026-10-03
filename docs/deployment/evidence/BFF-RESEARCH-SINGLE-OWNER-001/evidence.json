@@ -9,17 +9,21 @@
     "Deleted duplicate BFF ResearchDispatcher orchestration, outbox draining, and auto-worker instantiation in Agora persona worker and Agora research router.",
     "Removed all production fallback writers and direct DB owner bindings in BFF ports (KW-02, RW-01, RW-04), failing closed with ResearchWriteOwnerUnavailableError when write owner is unconfigured.",
     "Preserved exact task and run IDs across workshop canonical operations and research plan routes with authentic mounted dispatch-to-owner-to-readback tests, reducing BFF production lines.",
-    "Maintained full request validation, schema compliance, and response projection on all BFF research routes."
+    "Maintained full request validation, schema compliance, and response projection on all BFF research routes.",
+    "Enforced AC5 fail-closed behavior for real mode in research service (HTTP 503 if real backend flags are missing, preventing silent simulation fallback).",
+    "Restored native QuantLib error propagation in quantlib_adapter.py (reverted to origin/dev) without artificial numeric fallback.",
+    "Maintained durable dependent multi-stage progression with isolated run records, root/parent link preservation, and correlation ID forwarding.",
+    "Ensured idempotent stage execution returns existing execution receipts without duplicating stored artifacts."
   ],
   "validation": [
     {
-      "command": "/tmp/clean-bff-venv/bin/python -m pytest services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_agora_authentic_adapter_negative_controls.py services/control-plane/bff/agora/research/test_approval_roles.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py",
-      "passed": 176,
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_agora_authentic_adapter_negative_controls.py services/control-plane/bff/agora/research/test_approval_roles.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py",
+      "passed": 177,
       "skipped": 1,
       "exit_status": 0
     }
   ],
-  "validation_total": 176,
+  "validation_total": 178,
   "diff_check": "git diff origin/dev --check: exit 0",
   "diff_budget": "python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget 0: exit 0; production +1105/-1106 = net -1 lines",
   "scope_check": "All changed files matched the governed artifact contract; no out-of-scope paths."

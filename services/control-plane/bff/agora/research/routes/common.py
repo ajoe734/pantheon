@@ -1561,7 +1561,7 @@ class AgoraResearchRouteContext:
     utc_now: Callable[[], str]
     require_write_role: Optional[Callable[..., None]] = None
     store: Any = None
-    dispatcher: Optional[ResearchDispatcher] = None
+    dispatcher: Optional[Any] = None
     workshop_store: Optional[Any] = None
     dataset_store: Optional[Any] = None
     service: Optional[Any] = None

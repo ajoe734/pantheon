@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import json as _json
+import logging
 import os
 import re
 import urllib.request
@@ -12,6 +13,8 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import Body, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger("research-orchestrator")
 
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
@@ -851,6 +854,13 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
                 status_code=503,
                 detail=f"Backend execution owner for adapter '{adapter}' ({backend_name}) is absent or not configured",
             )
+        if requested_mode == "real" or dispatch_mode == "real":
+            env_var = f"PANTHEON_{backend_name.upper()}_BACKEND"
+            if os.getenv(env_var, "stub").lower() != "real":
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Backend execution owner for adapter '{adapter}' ({backend_name}) is unavailable in real mode ({env_var}!=real)",
+                )
 
     if any(token in request_text for token in ("registry_write", "direct_registry_write", "promote_to_registry")):
         rejected = True
@@ -960,11 +970,20 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         status = "queued"
         summary = "Stub research orchestration run queued for bounded dispatch."
         events.append(_event(timestamp, "run_queued", summary, body.actor_id, run_id, events))
+    stage_id_val = None
+    if body.parameters.get("stage") and isinstance(body.parameters["stage"], dict):
+        stage_id_val = body.parameters["stage"].get("stage_id")
+    if not stage_id_val:
+        for ref in body.input_refs:
+            if isinstance(ref, dict) and ref.get("type") == "stage" and ref.get("id"):
+                stage_id_val = str(ref["id"])
+                break
 
     run: Dict[str, Any] = {
         "id": run_id,
         "run_id": run_id,
         "task_id": task_id,
+        "stage_id": stage_id_val,
         "attempt_number": 1,
         "parent_run_id": None,
         "root_run_id": run_id,
@@ -1003,7 +1022,7 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         ds_payload = body.parameters.get("dataset") or plan_payload.get("dataset")
         corr_id = body.parameters.get("correlation_id") or f"corr-{run_id}"
         st_type = st_payload.get("stage_type") or adapter
-        downstream_key = body.idempotency_key or f"stage:{st_type}:{run_id}"
+        downstream_key = f"stage:{st_type}:{run_id}"
         try:
             execute_research_stage(
                 st_type,
@@ -1026,7 +1045,47 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
                 if (st_payload.get("stage_id") in deps or not deps) and dep_stage.get("status") in ("pending", "ready"):
                     dep_type = dep_stage.get("stage_type") or adapter
                     dep_ds = dep_stage.get("dataset") or ds_payload
-                    dep_key = f"stage:{dep_type}:{run_id}:{dep_stage.get('stage_id')}"
+                    dep_run_id = _next_id("rrun", timestamp, {str(r.get("run_id") or "") for r in store.list_runs()})
+                    dep_events: List[Dict[str, Any]] = [
+                        _event(timestamp, "run_queued", f"Dependent stage '{dep_stage.get('stage_id')}' queued.", body.actor_id, dep_run_id, [])
+                    ]
+                    dep_run: Dict[str, Any] = {
+                        "id": dep_run_id,
+                        "run_id": dep_run_id,
+                        "task_id": task_id,
+                        "attempt_number": 1,
+                        "parent_run_id": run_id,
+                        "root_run_id": run.get("root_run_id") or run_id,
+                        "stage_id": dep_stage.get("stage_id"),
+                        "adapter": dep_type,
+                        "requested_mode": requested_mode,
+                        "dispatch_mode": dispatch_mode,
+                        "status": "queued",
+                        "production_activation": "disabled",
+                        "input_refs": [
+                            {"type": "stage", "id": dep_stage.get("stage_id")},
+                            *([{"type": "dataset", "id": dep_ds["dataset_id"]}] if isinstance(dep_ds, dict) and dep_ds.get("dataset_id") else []),
+                        ],
+                        "parameters": {
+                            **body.parameters,
+                            "stage": dep_stage,
+                            "plan": plan_payload,
+                            "dataset": dep_ds,
+                        },
+                        "created_by": body.actor_id,
+                        "tenant_id": run.get("tenant_id"),
+                        "user_id": run.get("user_id"),
+                        "created_at": timestamp,
+                        "updated_at": timestamp,
+                        "idempotency_key": f"stage:{dep_type}:{task_id}:{dep_stage.get('stage_id')}",
+                        "rejection": None,
+                        "events": dep_events,
+                        "artifact_refs": [],
+                        "proposal_refs": [],
+                        "registry_writebacks": [],
+                    }
+                    store.put_run(dep_run)
+                    dep_key = f"stage:{dep_type}:{dep_run_id}"
                     try:
                         execute_research_stage(
                             dep_type,
@@ -1034,18 +1093,22 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
                                 "stage": dep_stage,
                                 "plan": plan_payload,
                                 "dataset": dep_ds,
-                                "run_id": run_id,
+                                "run_id": dep_run_id,
                                 "correlation_id": corr_id,
                                 "downstream_key": dep_key,
                             },
                         )
-                        up_run = store.get_run(run_id)
-                        if up_run and isinstance(up_run, dict):
-                            run = up_run
+                        dep_stage["status"] = "succeeded"
                     except Exception as dep_exc:
-                        log.warning("Dependent stage execution error on %s: %s", dep_stage.get("stage_id"), dep_exc)
+                        logger.warning("Dependent stage execution error on %s: %s", dep_stage.get("stage_id"), dep_exc)
+                        dep_up = store.get_run(dep_run_id)
+                        if dep_up and isinstance(dep_up, dict):
+                            dep_up["status"] = "failed"
+                            dep_up["error"] = str(dep_exc)
+                            store.put_run(dep_up)
+                        dep_stage["status"] = "failed"
         except Exception as exc:
-            log.warning("Research orchestrator stage execution error: %s", exc)
+            logger.warning("Research orchestrator stage execution error: %s", exc)
             run["status"] = "failed"
             run["error"] = str(exc)
             store.put_run(run)
@@ -1873,6 +1936,25 @@ def execute_research_stage(
                 status_code=400,
                 detail=f"Stage identity mismatch: run '{run_id}' stage '{rec_stage_id}' != '{stage.get('stage_id')}'",
             )
+        if status_str == "completed" and run_record.get("receipt"):
+            cached_receipt = run_record["receipt"]
+            cached_art_refs = run_record.get("artifact_refs") or []
+            first_art = cached_art_refs[0] if cached_art_refs else {}
+            first_art_id = first_art.get("artifact_id") or ""
+            first_digest = cached_receipt.get("artifact_digest") or first_art.get("digest") or ""
+            return {
+                "status": "succeeded",
+                "outcome": "succeeded",
+                "provenance": run_record.get("provenance") or cached_receipt.get("mode") or "real",
+                "backend_reference": cached_receipt.get("backend_reference") or f"research-orchestrator://stages/{stage_type}/{run_id}",
+                "artifact_id": first_art_id,
+                "artifact_digest": first_digest,
+                "artifact_refs": cached_art_refs,
+                "artifacts": cached_art_refs,
+                "checksums": {first_art_id: first_digest, f"artifact://{first_art_id}": first_digest} if first_art_id else {},
+                "metrics": run_record.get("metrics") or [],
+                "receipt": cached_receipt,
+            }
 
     if stage_type not in ALLOWLISTED_STAGE_TYPES:
         raise HTTPException(
@@ -1932,6 +2014,15 @@ def execute_research_stage(
     now_iso = utc_now()
     backend_ref = f"research-orchestrator://stages/{stage_type}/{run_id}"
 
+    req_mode = str(
+        body.get("requested_mode")
+        or body.get("dispatch_mode")
+        or (stage.get("routing") or {}).get("backend_mode")
+        or (run_record.get("requested_mode") if run_record else "")
+        or (run_record.get("dispatch_mode") if run_record else "")
+        or ""
+    ).lower().strip()
+
     if backend_name == "vectorbt" or stage_type == "prototype_backtest":
         try:
             from services.research.vectorbt.adapter.vectorbt_adapter import (
@@ -1942,6 +2033,11 @@ def execute_research_stage(
                 VectorbtWorkflowError,
             )
             use_real = os.environ.get("PANTHEON_VECTORBT_BACKEND", "stub").lower() == "real"
+            if req_mode == "real" and not use_real:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode",
+                )
             # The real owner checks its dependencies; never fall back to a stub
             # while retaining a real receipt label.
             backend_runner = VectorbtBackend() if use_real else StubVectorbtBackend()
@@ -2015,6 +2111,11 @@ def execute_research_stage(
             validated_ds = adapter.validate(dataset_obj)
 
             use_real = os.environ.get("PANTHEON_STATSMODELS_BACKEND", "stub").lower() == "real"
+            if req_mode == "real" and not use_real:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode",
+                )
             backend_runner = StatsmodelsBackend() if use_real else StubStatsmodelsBackend()
             provenance = "real" if use_real else "simulation"
 
@@ -2082,6 +2183,11 @@ def execute_research_stage(
                 snapshot = dataset_input
 
             use_real = os.environ.get("PANTHEON_QUANTLIB_BACKEND", "stub").lower() == "real"
+            if req_mode == "real" and not use_real:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode",
+                )
             backend_runner = QuantLibBackend() if use_real else StubQuantLibBackend()
             provenance = "real" if use_real else "simulation"
 

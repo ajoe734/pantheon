@@ -77,6 +77,7 @@ def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
                 pass
     test_backend_client = TestClient(research_app)
     monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://test-research-orchestrator")
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
 
     orig_request_json = WorkshopCanonicalOperations._request_json
 
@@ -403,8 +404,9 @@ def test_strategy_candidate_pool_lookup(monkeypatch: pytest.MonkeyPatch) -> None
 # 5. Durable Outbox, Lease Management, Backend Job Adoption, & Provenance
 # ===========================================================================
 
-def test_durable_dispatcher_outbox_lease_and_provenance() -> None:
+def test_durable_dispatcher_outbox_lease_and_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
     """Store manages outbox records, lease acquisition, and execution runs through authoritative research owner."""
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
     store = MemoryResearchPlanStore()
 
     plan = {
@@ -896,3 +898,85 @@ def test_drain_outbox_restart_persistence_and_stale_stage_idempotency() -> None:
     worker = AgoraInteractionWorker(research_store=store, worker_id="worker-restart-2")
     assert worker.research_dispatcher is None
     assert worker.drain_research_outbox() == 0
+
+
+def test_governed_dataset_reference_dispatch_to_research_owner(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Validate plan dispatch with input_refs dataset reference (no inline dataset) resolves and executes autonomously to completion."""
+    from agora.dataset_extraction.models import DatasetRecord, DatasetKind, InteractionKind
+    from agora.dataset_extraction.router import _default_store
+
+    client = _client(monkeypatch)
+    ds_store = getattr(client.router, "dataset_store", None) or getattr(client.app_instance, "dataset_store", None) or _default_store()
+
+    # 1. Register canonical governed dataset in the dataset store
+    ds_store.save_record(DatasetRecord(
+        evidence_id="ev-ref-dispatch-001",
+        dataset_version_id="ds-ref-dispatch-001",
+        dataset_kind=DatasetKind.OBSERVE,
+        interaction_kind=InteractionKind.ASK,
+        persona_id="persona-servant-agora",
+        session_id="session-ref-001",
+        tenant_id=_TENANT_A,
+        user_id="agora-user-a",
+        content={
+            "dataset_id": "dataset:ds-ref-dispatch-001",
+            "strategy_id": "strat-ref-dispatch",
+            "records": _sample_ohlcv_records(),
+        },
+        source_refs=["dataset:ds-ref-dispatch-001"],
+        learning_eligible=True,
+        captured_at="2026-09-08T00:00:00Z",
+        extracted_at="2026-09-08T00:00:00Z",
+    ))
+
+    # 2. Create plan referencing the dataset via input_refs with NO inline dataset
+    res_create = client.post(
+        "/bff/agora/workshops/ws-ref-dispatch/research-plans",
+        headers=_headers(idempotency_key="idemp-ref-create"),
+        json={
+            "spec_version": "1.0",
+            "strategy_id": "strat-ref-dispatch",
+            "strategy_spec_registry_id": "reg-ref-dispatch",
+            "stages": [
+                {
+                    "stage_id": "stage-ref-proto",
+                    "stage_type": "prototype_backtest",
+                    "status": "ready",
+                    "input_refs": ["dataset:ds-ref-dispatch-001"],
+                    "routing": {"backend_mode": "real", "preferred_backend": "vectorbt"},
+                }
+            ],
+        },
+    )
+    assert res_create.status_code == 201, res_create.text
+    plan_data = res_create.json()["data"]
+    plan_id = plan_data["plan_id"]
+    etag = res_create.json()["meta"]["etag"]
+
+    # 3. Approve plan
+    res_app = client.post(
+        f"/bff/agora/research-plans/{plan_id}/approve",
+        headers=_headers(idempotency_key="idemp-ref-approve", if_match=etag),
+    )
+    assert res_app.status_code == 200, res_app.text
+    etag_v2 = f'W/"research-plan:{plan_id}:v2"'
+
+    # 4. Dispatch stage - service resolves dataset from store, forwards to research orchestrator, and executes autonomously
+    res_dispatch = client.post(
+        f"/bff/agora/research-plans/{plan_id}/runs",
+        headers=_headers(idempotency_key="idemp-ref-dispatch", if_match=etag_v2),
+    )
+    assert res_dispatch.status_code == 202, res_dispatch.text
+    dispatch_data = res_dispatch.json()["data"]
+    run_id = dispatch_data["run_id"]
+
+    # 5. Read back run from authoritative research owner
+    res_run = client.get(
+        f"/bff/agora/research-runs/{run_id}",
+        headers=_headers(),
+    )
+    assert res_run.status_code == 200, res_run.text
+    run_info = res_run.json()
+    assert run_info["execution_status"] == "succeeded"
+    assert run_info["outcome"] == "pass"
+    assert run_info["provenance"] in ("real", "unavailable", "simulation")

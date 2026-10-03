@@ -425,7 +425,7 @@ class AgoraResearchService:
         resolved_ds = dispatch_stage.get("dataset") or plan.get("dataset")
         if not resolved_ds:
             try:
-                from ..dispatcher import resolve_governed_dataset
+                from .dispatcher import resolve_governed_dataset
                 resolved_ds = resolve_governed_dataset(
                     dispatch_stage,
                     plan,
@@ -433,8 +433,13 @@ class AgoraResearchService:
                     tenant_id=getattr(scope, "tenant_id", None),
                     user_id=getattr(scope, "user_id", None),
                 )
-            except Exception:
+            except Exception as exc:
+                log.warning("Failed to resolve governed dataset for plan %s: %s", plan_id, exc)
                 resolved_ds = None
+
+        dispatch_stage_payload = dict(dispatch_stage)
+        if resolved_ds and "dataset" not in dispatch_stage_payload:
+            dispatch_stage_payload["dataset"] = resolved_ds
 
         actor = getattr(scope, "user_id", "operator") or "operator"
         task_p = {
@@ -466,12 +471,12 @@ class AgoraResearchService:
             "input_refs": input_refs,
             "parameters": {
                 **(dispatch_stage.get("parameters") or {}),
-                "stage": dispatch_stage,
+                "stage": dispatch_stage_payload,
                 "plan": plan,
                 "dataset": resolved_ds,
                 "tenant_id": getattr(scope, "tenant_id", None),
                 "user_id": getattr(scope, "user_id", None),
-                "correlation_id": f"corr-{plan_id}-{dispatch_stage['stage_id']}",
+                "correlation_id": plan.get("correlation_id") or f"corr-{plan_id}-{dispatch_stage['stage_id']}",
             },
             "actor_id": actor,
             "idempotency_key": f"plan-run-{plan_id}-{dispatch_stage['stage_id']}",

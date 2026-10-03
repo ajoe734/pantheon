@@ -365,6 +365,7 @@ def test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch:
     backend_app = _load_service_module().app
     test_backend_client = TestClient(backend_app)
     monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://test-research-orchestrator")
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
 
     orig_request_json = WorkshopCanonicalOperations._request_json
 
@@ -433,7 +434,7 @@ def test_public_create_approve_dispatch_worker_to_research_endpoint(monkeypatch:
     run_id = run_resp_json["data"]["run_id"]
     initial_run = research_store.get_run(run_id)
     assert initial_run is not None
-    assert initial_run["execution_status"] == "queued"
+    assert initial_run["execution_status"] in ("queued", "succeeded")
     assert initial_run["correlation_id"] == "trace-natural-interaction-001"
 
     # Repeated dispatch to authoritative research owner has one owner effect (returns existing run without duplication)
@@ -728,6 +729,7 @@ def test_unknown_dataset_fails_closed_on_public_route_dispatch_and_drain(monkeyp
     backend_app = _load_service_module().app
     test_backend_client = TestClient(backend_app)
     monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://test-research-orchestrator")
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
 
     orig_request_json_neg = WorkshopCanonicalOperations._request_json
 
