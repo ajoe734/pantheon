@@ -122,6 +122,15 @@ class WorkshopCanonicalOperations:
     ) -> Any:
         if self.transport is not None:
             return self.transport(authority, method, base_url, path, payload)
+        if authority == "research_orchestrator":
+            from services.control_plane.bff.research.client import ResearchCommandError, ResearchServiceClient
+            try:
+                return ResearchServiceClient(base_url=base_url)._call(method, path, payload)
+            except ResearchCommandError as exc:
+                raise CanonicalOperationError(
+                    authority, exc.message, status_code=exc.status_code,
+                    retryable=exc.status_code >= 500 or exc.status_code == 429,
+                ) from exc
         url = self._url(base_url, path, authority)
         body = None
         headers = {"Accept": "application/json"}
@@ -344,6 +353,14 @@ class WorkshopCanonicalOperations:
                 {"research_task_id": task_id, "research_run_id": run_id},
             )
         return {"task": task_readback, "run": run_readback}
+
+    def list_research_runs(self, *, task_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        query = f"?task_id={urllib.parse.quote(task_id, safe='')}" if task_id else ""
+        value = self._request_json(
+            "research_orchestrator", "GET", self.research_base_url,
+            f"/api/research-orchestrator/runs{query}",
+        )
+        return value if isinstance(value, list) else []
 
     def get_research_run(self, run_id: str) -> Dict[str, Any]:
         value = self._request_json(

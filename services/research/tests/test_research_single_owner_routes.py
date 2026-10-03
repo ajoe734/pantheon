@@ -315,17 +315,7 @@ def test_research_dag_fan_in_progression(client: TestClient) -> None:
     assert len(runs_after_s1) == 2
     assert all(r["status"] == "completed" for r in runs_after_s1)
 
-    # Dispatch s2 -> s3 is now unblocked and automatically progresses
-    d2 = client.post(f"/api/research-orchestrator/tasks/{task_id}/runs", json={
-        "adapter": "statsmodels",
-        "requested_mode": "stub",
-        "dispatch_mode": "stub",
-        "input_refs": [{"type": "stage", "id": "s2"}],
-        "parameters": {"stage": plan["stages"][1], "plan": plan, "dataset": ds},
-        "idempotency_key": f"idemp-dag-fanin-2-{task_id}",
-    })
-    assert d2.status_code == 201
-    runs_after_s2 = [r for r in research_main.store.list_runs() if r.get("task_id") == task_id]
+    # One owner dispatch schedules both roots, then their fan-in successor.
     runs_after_s2 = _wait_for_task_status(task_id, {"completed", "failed"}, expected_count=3)
     assert len(runs_after_s2) == 3
     run_by_stage = {r["stage_id"]: r for r in runs_after_s2}
@@ -397,6 +387,46 @@ def test_stage_dispatch_returns_before_slow_execution_finishes(client: TestClien
     _wait_for_task_status(task_id, {"completed", "failed"})
 
 
+def test_owner_restart_resumes_queued_stage_without_replaying_completed_predecessor(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(research_main, "store", research_main.build_research_orchestrator_store(str(tmp_path)))
+    task_id = "restart-mid-graph-task"
+    research_main.store.put_task({"task_id": task_id, "title": "restart", "status": "running"})
+    plan = {
+        "plan_id": "restart-mid-graph-plan", "task_id": task_id,
+        "stages": [
+            {"stage_id": "s1", "stage_type": "prototype_backtest", "dependencies": []},
+            {"stage_id": "s2", "stage_type": "econometric_validation", "dependencies": ["s1"]},
+        ],
+        "dataset": {"dataset_id": "restart-dataset"},
+    }
+    for stage_id, status, attempt in (("s1", "completed", 1), ("s2", "running", 1)):
+        stage = next(item for item in plan["stages"] if item["stage_id"] == stage_id)
+        run_id = f"restart-{stage_id}"
+        research_main.store.put_run({
+            "run_id": run_id, "task_id": task_id, "stage_id": stage_id,
+            "attempt_number": attempt, "status": status, "adapter": stage["stage_type"],
+            "requested_mode": "stub", "dispatch_mode": "stub",
+            "parameters": {"stage": stage, "plan": plan, "dataset": plan["dataset"]},
+            "created_at": "2026-10-03T00:00:00Z", "events": [], "artifact_refs": [],
+        })
+
+    executed = []
+    def complete_stage(stage_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        executed.append(payload["stage"]["stage_id"])
+        run = research_main.store.get_run(payload["run_id"])
+        run["status"] = "completed"
+        research_main.store.put_run(run)
+        return {"status": "succeeded"}
+
+    monkeypatch.setattr(research_main, "execute_research_stage", complete_stage)
+    research_main.resume_queued_plan_stages()
+    runs = _wait_for_task_status(task_id, {"completed", "failed"}, expected_count=2)
+    assert {run["stage_id"]: run["status"] for run in runs} == {"s1": "completed", "s2": "completed"}
+    assert executed == ["s2"]
+
+
 def test_stage_idempotency_restart_exactly_once(client: TestClient) -> None:
     ds = _valid_multimodal_dataset()
     t_res = client.post("/api/research-orchestrator/tasks", json={"title": "Idemp Task", "objective": "idemp", "source_refs": [], "constraints": {}})
@@ -434,7 +464,10 @@ def test_retry_run_executes_backend_and_produces_artifacts(client: TestClient) -
         "plan_id": f"plan-{task_id}",
         "task_id": task_id,
         "strategy_id": "strat-dag-test",
-        "stages": [{"stage_id": "s1", "stage_type": "prototype_backtest", "status": "ready", "dependencies": []}],
+        "stages": [
+            {"stage_id": "s1", "stage_type": "prototype_backtest", "status": "ready", "dependencies": []},
+            {"stage_id": "s2", "stage_type": "econometric_validation", "status": "pending", "dependencies": ["s1"]},
+        ],
         "dataset": {"invalid": "bad"},
     }
     # Initial dispatch with bad stage dataset -> fails
@@ -468,6 +501,7 @@ def test_retry_run_executes_backend_and_produces_artifacts(client: TestClient) -
     assert retried_data["attempt_number"] == 2
     assert retried_data["stage_id"] == "s1"
     assert retried_data["status"] == "queued"
+    assert retried_data["parameters"]["dataset"]["dataset_id"] == "ds-combined"
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         retried_data = research_main.store.get_run(retried_data["run_id"])
@@ -477,6 +511,14 @@ def test_retry_run_executes_backend_and_produces_artifacts(client: TestClient) -
     assert retried_data["status"] == "completed"
     assert retried_data.get("receipt") is not None
     assert len(retried_data.get("artifact_refs") or []) >= 1
+    latest_attempts = _wait_for_task_status(task_id, {"completed", "failed"}, expected_count=3)
+    latest_by_stage = {}
+    for record in latest_attempts:
+        if record.get("stage_id") not in latest_by_stage or record.get("attempt_number", 1) > latest_by_stage[record["stage_id"]].get("attempt_number", 1):
+            latest_by_stage[record["stage_id"]] = record
+    assert latest_by_stage["s1"]["status"] == "completed"
+    assert latest_by_stage["s2"]["status"] == "completed"
+    assert latest_by_stage["s2"]["parent_run_id"] == retried_data["run_id"]
 
 
 def test_bff_import_does_not_initialize_research_store() -> None:

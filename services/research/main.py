@@ -372,8 +372,13 @@ def resume_queued_plan_stages() -> None:
         params = record.get("parameters") or {}
         plan = params.get("plan")
         stage = params.get("stage")
-        if str(record.get("status") or "").lower() != "queued" or not isinstance(plan, dict) or not isinstance(stage, dict):
+        status = str(record.get("status") or "").lower()
+        if status not in {"queued", "running"} or not isinstance(plan, dict) or not isinstance(stage, dict):
             continue
+        if status == "running":
+            record["status"] = "queued"
+            record["updated_at"] = utc_now()
+            store.put_run(record)
         grouped[str(record.get("task_id") or "")] = (plan, record)
     for plan, record in grouped.values():
         _progress_plan_stages(plan, record, record.get("created_by"), store, str(record.get("updated_at") or utc_now()))
@@ -1087,7 +1092,8 @@ def _progress_plan_stages(
                 "root_run_id": parent_run.get("root_run_id") or parent_run.get("run_id") or parent_run.get("id"),
                 "adapter": backend, "requested_mode": parent_run.get("requested_mode", "stub"),
                 "dispatch_mode": parent_run.get("dispatch_mode", "stub"), "status": "queued",
-                "production_activation": "disabled", "input_refs": [{"type": "stage", "id": stage_id}],
+                "production_activation": "disabled",
+                "input_refs": ([{"type": "research_plan", "id": plan_payload.get("plan_id")}] if plan_payload.get("plan_id") else []) + [{"type": "stage", "id": stage_id}],
                 "parameters": {**(parent_run.get("parameters") or {}), "stage": stage, "plan": plan_payload, "dataset": ds},
                 "created_by": actor_id or parent_run.get("created_by"), "tenant_id": parent_run.get("tenant_id"),
                 "user_id": parent_run.get("user_id"), "created_at": timestamp, "updated_at": timestamp,
@@ -1512,6 +1518,14 @@ def retry_run(run_id: str, body: Optional[RetryRunBody] = None) -> Dict[str, Any
     store.append_event(events[-1])
 
     params = new_run.get("parameters") or {}
+    plan_payload = params.get("plan") or {}
+    stage_payload = params.get("stage") or {}
+    if isinstance(plan_payload.get("stages"), list):
+        for stage in plan_payload["stages"]:
+            if isinstance(stage, dict) and stage.get("stage_id") == stage_payload.get("stage_id"):
+                if params.get("dataset"):
+                    stage["dataset"] = params["dataset"]
+                break
     adapter = new_run.get("adapter", "stub")
     supported_stage_backends = {"vectorbt", "statsmodels", "quantlib", "prototype_backtest", "econometric_validation", "derivatives_pricing_risk"}
     is_stage_backend = adapter in supported_stage_backends or params.get("stage") is not None

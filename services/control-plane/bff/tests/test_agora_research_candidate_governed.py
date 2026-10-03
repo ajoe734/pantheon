@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -105,6 +106,34 @@ def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     client = _workshop_client(monkeypatch)
     setattr(client, "test_backend_client", test_backend_client)
     return client
+
+
+def _wait_owner_plan_runs(test_backend_client: TestClient, plan_id: str, expected: int) -> list[Dict[str, Any]]:
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        response = test_backend_client.get("/api/research-orchestrator/runs")
+        assert response.status_code == 200, response.text
+        runs = [
+            run for run in response.json()
+            if any(ref.get("type") == "research_plan" and ref.get("id") == plan_id
+                   for ref in run.get("input_refs") or [] if isinstance(ref, dict))
+        ]
+        if len(runs) >= expected and all(run.get("status") in {"completed", "failed", "rejected", "canceled"} for run in runs):
+            return runs
+        time.sleep(0.01)
+    pytest.fail(f"Research plan {plan_id} did not complete {expected} owner runs")
+
+
+def _wait_owner_terminal(test_backend_client: TestClient, run_id: str) -> Dict[str, Any]:
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        response = test_backend_client.get(f"/api/research-orchestrator/runs/{run_id}")
+        assert response.status_code == 200, response.text
+        run = response.json()
+        if run.get("status") in {"completed", "failed", "rejected", "canceled"}:
+            return run
+        time.sleep(0.01)
+    pytest.fail(f"Research owner run {run_id} did not reach terminal status")
 
 
 def _headers(
@@ -625,6 +654,8 @@ def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) ->
     assert res_dispatch.status_code == 202, res_dispatch.text
     dispatch_data = res_dispatch.json()["data"]
     run_id = dispatch_data["run_id"]
+    owner_run = _wait_owner_terminal(test_backend_client, run_id)
+    assert owner_run["status"] == "completed"
 
     # 4. Read back run from authoritative research owner without any test-side store mutations
     res_run = client.get(
@@ -893,12 +924,61 @@ def test_drain_outbox_restart_persistence_and_stale_stage_idempotency() -> None:
     assert worker.drain_research_outbox() == 0
 
 
+def test_bff_plan_projects_all_owner_roots_and_terminal_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch)
+    owner_client = getattr(client, "test_backend_client")
+    created = client.post(
+        "/bff/agora/workshops/ws-owner-multi-root/research-plans",
+        headers=_headers(idempotency_key="multi-root-create"),
+        json={
+            "spec_version": "1.0", "strategy_id": "strategy-multi-root",
+            "strategy_spec_registry_id": "registry-multi-root",
+            "dataset": {"dataset_id": "ds-multi-root", "strategy_id": "strategy-multi-root", "source_dataset_refs": ["ds-multi-root"], "records": _sample_ohlcv_records()},
+            "stages": [
+                {"stage_id": "root-a", "stage_type": "prototype_backtest", "status": "ready", "dependencies": [], "routing": {"backend_mode": "fixture", "preferred_backend": "vectorbt"}},
+                {"stage_id": "root-b", "stage_type": "prototype_backtest", "status": "ready", "dependencies": [], "routing": {"backend_mode": "fixture", "preferred_backend": "vectorbt"}},
+            ],
+        },
+    )
+    assert created.status_code == 201, created.text
+    plan_id = created.json()["data"]["plan_id"]
+    approval = client.post(
+        f"/bff/agora/research-plans/{plan_id}/approve",
+        headers=_headers(idempotency_key="multi-root-approve", if_match=created.json()["meta"]["etag"]),
+    )
+    assert approval.status_code == 200, approval.text
+    dispatched = client.post(
+        f"/bff/agora/research-plans/{plan_id}/runs",
+        headers=_headers(idempotency_key="multi-root-dispatch", if_match=approval.json()["meta"]["etag"]),
+    )
+    assert dispatched.status_code == 202, dispatched.text
+    owner_runs = _wait_owner_plan_runs(owner_client, plan_id, 2)
+    assert {run["stage_id"] for run in owner_runs} == {"root-a", "root-b"}
+    assert all(run["status"] == "completed" for run in owner_runs)
+
+    listed = client.get(f"/bff/agora/research-plans/{plan_id}/runs", headers=_headers())
+    assert listed.status_code == 200, listed.text
+    assert {run["stage_id"] for run in listed.json()["items"]} == {"root-a", "root-b"}
+    readback = client.get(f"/bff/agora/research-plans/{plan_id}", headers=_headers())
+    assert readback.status_code == 200, readback.text
+    assert readback.json()["data"]["status"] == "completed"
+    assert {stage["status"] for stage in readback.json()["data"]["stages"]} == {"succeeded"}
+    repeated = client.post(
+        f"/bff/agora/research-plans/{plan_id}/runs",
+        headers=_headers(idempotency_key="multi-root-dispatch-again", if_match=readback.json()["meta"]["etag"]),
+    )
+    assert repeated.status_code == 202, repeated.text
+    assert repeated.json()["data"]["run_id"] == dispatched.json()["data"]["run_id"]
+    assert len(_wait_owner_plan_runs(owner_client, plan_id, 2)) == 2
+
+
 def test_governed_dataset_reference_dispatch_to_research_owner(monkeypatch: pytest.MonkeyPatch) -> None:
     """Validate plan dispatch with input_refs dataset reference (no inline dataset) resolves and executes autonomously to completion."""
     from agora.dataset_extraction.models import DatasetRecord, DatasetKind, InteractionKind
     from agora.dataset_extraction.router import _default_store
 
     client = _client(monkeypatch)
+    test_backend_client = getattr(client, "test_backend_client")
     ds_store = getattr(client.router, "dataset_store", None) or getattr(client.app_instance, "dataset_store", None) or _default_store()
 
     # 1. Register canonical governed dataset in the dataset store
@@ -962,6 +1042,8 @@ def test_governed_dataset_reference_dispatch_to_research_owner(monkeypatch: pyte
     assert res_dispatch.status_code == 202, res_dispatch.text
     dispatch_data = res_dispatch.json()["data"]
     run_id = dispatch_data["run_id"]
+    owner_run = _wait_owner_terminal(test_backend_client, run_id)
+    assert owner_run["status"] == "completed"
 
     # 5. Read back run from authoritative research owner
     res_run = client.get(

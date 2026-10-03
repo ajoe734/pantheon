@@ -212,7 +212,63 @@ class AgoraResearchService:
             return None
         if plan.get("user_id") and plan.get("user_id") != scope.user_id:
             return None
-        return plan
+        return self._project_plan_from_owner(plan, scope)
+
+    def _owner_run_records(self, plan: Dict[str, Any], scope: Any) -> Optional[List[Dict[str, Any]]]:
+        base_url = resolve_orchestrator_base_url()
+        if not base_url:
+            return None
+        try:
+            from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
+            records = WorkshopCanonicalOperations(research_base_url=base_url).list_research_runs()
+        except Exception as exc:
+            log.warning("Research owner plan projection unavailable: %s", exc)
+            return None
+        plan_id = str(plan.get("plan_id") or "")
+        return [
+            record for record in records
+            if isinstance(record, dict)
+            and any(ref.get("type") == "research_plan" and str(ref.get("id")) == plan_id
+                    for ref in record.get("input_refs") or [] if isinstance(ref, dict))
+            and (not record.get("tenant_id") or record.get("tenant_id") == scope.tenant_id)
+            and (not record.get("user_id") or record.get("user_id") == scope.user_id)
+        ]
+
+    def _project_plan_from_owner(self, plan: Dict[str, Any], scope: Any) -> Dict[str, Any]:
+        result = dict(plan)
+        records = self._owner_run_records(plan, scope)
+        if records is None:
+            return result
+        latest: Dict[str, Dict[str, Any]] = {}
+        for record in records:
+            stage_id = str(record.get("stage_id") or "")
+            previous = latest.get(stage_id)
+            rank = int(record.get("attempt_number") or 1)
+            if stage_id and (previous is None or rank >= int(previous.get("attempt_number") or 1)):
+                latest[stage_id] = record
+        if not records:
+            result["stages"] = [{**stage, "status": "pending"} for stage in plan.get("stages") or []]
+            result["run_ids"] = []
+            result["status"] = "approved" if plan.get("approved_at") else "draft"
+            return result
+        status_map = {"completed": "succeeded", "succeeded": "succeeded", "failed": "failed", "rejected": "failed", "canceled": "cancelled", "cancelled": "cancelled"}
+        stages = []
+        for stage in plan.get("stages") or []:
+            owner = latest.get(str(stage.get("stage_id") or ""))
+            if owner:
+                status = str(owner.get("status") or "queued").lower()
+                stage = {**stage, "status": status_map.get(status, status)}
+            stages.append(stage)
+        result["stages"] = stages
+        result["run_ids"] = [str(record.get("run_id") or record.get("id")) for record in records]
+        statuses = [str(record.get("status") or "").lower() for record in latest.values()]
+        if all(status in {"completed", "succeeded"} for status in statuses) and len(latest) == len(stages):
+            result["status"] = "completed"
+        elif any(status in {"failed", "rejected", "canceled", "cancelled"} for status in statuses):
+            result["status"] = "failed"
+        else:
+            result["status"] = "running"
+        return result
 
     def get_plan_or_404(self, plan_id: str, *, scope: Any) -> Dict[str, Any]:
         plan = self.get_plan(plan_id, scope=scope)
@@ -338,11 +394,18 @@ class AgoraResearchService:
         plan = self.get_plan(plan_id, scope=scope)
         if plan is None:
             raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), f"Research plan '{plan_id}' not found", plan_id)
-        runs = self.store.list_runs_for_plan(
-            plan_id,
-            tenant_id=scope.tenant_id,
-            user_id=scope.user_id,
-        )
+        owner_runs = self._owner_run_records(plan, scope)
+        if owner_runs is not None:
+            stages = {str(stage.get("stage_id")): stage for stage in plan.get("stages") or []}
+            projected = []
+            for owner in owner_runs:
+                stage = stages.get(str(owner.get("stage_id") or ""), {})
+                run = _build_run_projection(plan=plan, stage=stage or {"stage_id": owner.get("stage_id", "unknown"), "stage_type": owner.get("adapter", "unknown")}, run_id=str(owner.get("run_id") or owner.get("id")), now=str(owner.get("created_at") or self.utc_now()), scope=scope)
+                status = str(owner.get("status") or "queued").lower()
+                run.update({"task_id": owner.get("task_id"), "attempt_number": owner.get("attempt_number", 1), "parent_run_id": owner.get("parent_run_id"), "execution_status": {"completed": "succeeded", "failed": "failed", "rejected": "failed", "canceled": "cancelled"}.get(status, status), "outcome": "pass" if status == "completed" else ("fail" if status in {"failed", "rejected"} else "pending"), "artifact_refs": owner.get("artifact_refs") or [], "updated_at": owner.get("updated_at") or owner.get("created_at")})
+                projected.append(run)
+            return projected
+        runs = self.store.list_runs_for_plan(plan_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
         return [_run_projection_with_defaults(r, store=self.store) for r in runs]
 
     def dispatch_plan(
@@ -357,6 +420,11 @@ class AgoraResearchService:
             raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), f"Research plan '{plan_id}' not found", plan_id)
         self._check_plan_if_match(plan, if_match)
         if plan["status"] != "approved":
+            if plan["status"] in {"running", "completed", "failed"}:
+                existing = self.list_runs_for_plan(plan_id, scope=scope)
+                if existing:
+                    first = existing[0]
+                    return {"run_id": first["run_id"], "plan_id": plan_id, "stage_id": first["stage_id"], "stage_type": first["stage_type"]}
             raise self.bff_error(
                 409, self._error_code("RESOURCE_CONFLICT"),
                 f"Only approved plans may be dispatched; current status: '{plan['status']}'",
@@ -654,10 +722,7 @@ class AgoraResearchService:
                 "Research execution owner is unconfigured or unavailable; run cancellation cannot be processed locally",
                 run_id,
             )
-        from services.control_plane.bff.agora.strategy_workshop.operations import (
-            CanonicalOperationError,
-            WorkshopCanonicalOperations,
-        )
+        from services.control_plane.bff.agora.strategy_workshop.operations import CanonicalOperationError, WorkshopCanonicalOperations
         try:
             WorkshopCanonicalOperations(research_base_url=r_url).cancel_research_run(run_id)
         except CanonicalOperationError as exc:
