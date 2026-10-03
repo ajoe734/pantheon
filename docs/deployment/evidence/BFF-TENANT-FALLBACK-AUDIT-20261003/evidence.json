@@ -162,6 +162,30 @@
       "site": "services/control-plane/bff/migrations/overlay_retirement.py:457, 597, 796, 994, 1087, 1432",
       "disposition": "proven safe for request paths",
       "caller_proof": "Migration/shadow-comparison adapters used only by migration test/CLI harnesses, never reached by HTTP request handlers."
+    },
+    {
+      "site": "services/control-plane/bff/agora/trading_room/routes/common.py:586 (_workspace_scope)",
+      "disposition": "fixed",
+      "trusted_source": "central resolve_canonical_agora_scope(identity)",
+      "note": "Workspace scope resolution delegates to central resolve_canonical_agora_scope. Callers lacking verified tenant authority in claims fail closed with 403 Forbidden instead of falling back to 'pantheon-dev'. Mounted GET /bff/agora/trading-room/workspaces/{id} test confirms 403 on missing tenant, 403 on foreign tenant, and 200 on same tenant."
+    },
+    {
+      "site": "services/control-plane/bff/command_queue.py:352-363 (get_command_by_idempotency_key)",
+      "disposition": "proven safe",
+      "trusted_source": "caller tenant_id argument",
+      "caller_proof": "Internal idempotency deduplication query; tenant_id if provided is used only for equality comparison against command record tenant, never fills a missing trusted tenant or scopes a read/write without caller identity."
+    },
+    {
+      "site": "services/control-plane/bff/governance/command_audit.py:178 (project_command_record_audit_event)",
+      "disposition": "proven safe",
+      "trusted_source": "caller tenant_id argument",
+      "caller_proof": "Audit event projection filter; clean_tenant_id if provided filters records by equality, never assigns or fills tenant authority."
+    },
+    {
+      "site": "services/control-plane/bff/governance/decision_journal_write_owner.py:382, 433, 465, 482, 519, 531 (idempotency conflict checks)",
+      "disposition": "proven safe",
+      "trusted_source": "caller tenant_id argument",
+      "note": "Stores and idempotency checks compare stored record/result tenant against requested tenant for equality, returning cross_tenant_scope_mismatch conflict on divergence; never fills a missing trusted tenant."
     }
   ],
   "mounted_signed_jwt_tests": [
@@ -174,9 +198,11 @@
     "test_mounted_research_run_dispatch_scopes_to_the_jwt_tenant: POST /bff/agora/research-plans/{id}/runs (tenantless JWT fails closed with 403, 0 runs under built-in 'pantheon-dev' and active env default 'tenant-a'; foreign -> 404, 0 runs; same-tenant -> 202, 1 run).",
     "test_readiness_route_denies_tenantless_jwt_authority_under_all_defaults: GET /bff/agora/operational-readiness (tenantless JWT fails closed to scope=None under built-in 'pantheon-dev' and active env default 'tenant-a'; returns only public/shared rows with 0 disclosures of private tenant rows).",
     "test_reproduction_personas_service_report_only_finding: reproduction test for personas/service.py:2338 and :3330 confirming that empty caller tenant bypasses foreign tenant filtering while explicit tenant authority isolates records; marked report-only per AC4.",
-    "test_mounted_operations_read_model_route_scopes_to_the_jwt_tenant: GET /bff/management/operations-read-model/{id} (tenantless JWT under custom, built-in 'pantheon-dev', and active env 'custom-default' -> 403; foreign -> 404/200; same -> 200).",
+    "test_mounted_operations_read_model_route_scopes_to_the_jwt_tenant: GET /bff/management/operations-read-model/{id} (tenantless JWT under custom, built-in 'pantheon-dev', and active env 'custom-default' -> 403; foreign -> 404/200; same -> 200; nested tenant/organization claims -> 200).",
     "test_mounted_risk_radar_scopes_to_the_jwt_tenant: GET /bff/management/risk-radar (tenantless JWT -> 403 before store; foreign -> 200 without Persona B; same -> 200 with Persona B).",
-    "test_mounted_strategy_command_route_with_tenant_enforcing_owner: mounted POST /bff/v1/commands StrategyAction with tenant-enforcing owner (absent -> 0 writes; foreign -> 0 writes; same -> 202, 1 write)."
+    "test_mounted_strategy_command_route_with_tenant_enforcing_owner: mounted POST /bff/v1/commands StrategyAction with tenant-enforcing owner (absent -> 0 writes; foreign -> 0 writes; same -> 202, 1 write).",
+    "test_mounted_workspace_route_scopes_to_the_jwt_tenant: mounted GET /bff/agora/trading-room/workspaces/{id} (absent tenant in JWT claims -> 403, zero data disclosed; foreign tenant -> 403; same tenant -> 200).",
+    "test_authorized_configured_default_is_not_replaced_by_allowlist_order: mounted GET /bff/agora/performance/action-receipts/{id} with multi-tenant allowed_tenants selects active configured default (PANTHEON_BFF_TENANT_ID) over allowlist position -> 200."
   ],
   "validation": {
     "local_postgresql_acceptance": {
@@ -187,8 +213,9 @@
         "CAPITAL_TEST_ADMIN_DSN=postgresql://postgres:postgres@127.0.0.1:32804/pantheon",
         "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:32804/pantheon"
       ],
-      "results": "207 passed, 9 subtests passed, 0 failed, ZERO skipped across all 9 focused BFF and Capital test suites against local PostgreSQL 127.0.0.1:32804/pantheon."
+      "results": "207 passed, 9 subtests passed, 0 failed, ZERO skipped across all 9 focused BFF and Capital test suites against local PostgreSQL 127.0.0.1:32804/pantheon; 41 passed in test_tenant_fallback_audit.py."
     },
-    "diff_budget": "diff_budget.py --change-class corrective --budget 60 passes with zero violations (production net +49 <= 60)."
+    "diff_budget": "diff_budget.py --change-class corrective --budget 60 passes with zero violations (production net +43 <= 60)."
   }
 }
+

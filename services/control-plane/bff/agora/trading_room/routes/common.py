@@ -584,29 +584,13 @@ def _widget(
 
 
 def _workspace_scope(identity: Any) -> Dict[str, str]:
-    claims = getattr(identity, "claims", None)
-    if not isinstance(claims, dict):
-        claims = identity.get("claims", {}) if isinstance(identity, dict) else {}
-    if not isinstance(claims, dict):
-        claims = {}
-    tenant_id = str(
-        claims.get("tenant_id")
-        or claims.get("tenantId")
-        or (identity.get("tenant_id") if isinstance(identity, dict) else None)
-        or (identity.get("tenantId") if isinstance(identity, dict) else None)
-        or "pantheon-dev"
-    ).strip()
-    user_id = str(
-        claims.get("user_id")
-        or claims.get("userId")
-        or claims.get("sub")
-        or (identity.get("user_id") if isinstance(identity, dict) else None)
-        or (identity.get("userId") if isinstance(identity, dict) else None)
-        or (identity.get("operator_id") if isinstance(identity, dict) else None)
-        or getattr(identity, "operator_id", "")
-        or ""
-    ).strip()
-    return {"tenant_id": tenant_id, "user_id": user_id}
+    from ...identity.scope import resolve_canonical_agora_scope, AgoraScopeResolutionError
+    try:
+        tenant_id, user_id = resolve_canonical_agora_scope(identity)
+        return {"tenant_id": tenant_id, "user_id": user_id}
+    except AgoraScopeResolutionError as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
 
 
 def _record_visible_to_scope(record: Dict[str, Any], scope: Dict[str, str]) -> bool:

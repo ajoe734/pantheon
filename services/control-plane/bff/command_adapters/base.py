@@ -133,25 +133,21 @@ def record_downstream_outcome(url: str, ok: bool, status_code: int, detail: Opti
 def _token_tenant(token: Optional[str]) -> Optional[str]:
     try:
         raw = str(token or "").removeprefix("Bearer ").strip().split(".")[1]
-        claims = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
-        tid = str(claims.get("tenant_id") or "").strip()
+        c = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+        tid = str(c.get("tenant_id") or "").strip()
         if tid and tid != "*":
             return tid
-        allowed = [str(t).strip() for t in claims.get("allowed_tenants") or [] if str(t).strip() and str(t).strip() != "*"]
-        return allowed[0] if len(allowed) == 1 and claims.get("allowed_tenants") == [allowed[0]] else None
+        al = [str(t).strip() for t in c.get("allowed_tenants") or [] if str(t).strip() and str(t).strip() != "*"]
+        return al[0] if len(al) == 1 and c.get("allowed_tenants") == [al[0]] else None
     except Exception:
         return None
 
 
 def bound_tenant(payload: Any, tenant_id: Optional[str]) -> str:
     """Return the trusted tenant; a payload tenant may only equal it, never fill it."""
-    trusted = str(tenant_id or "").strip()
-    claimed = str(payload.get("tenant_id") or "").strip() if isinstance(payload, dict) else ""
+    trusted, claimed = str(tenant_id or "").strip(), str(payload.get("tenant_id") or "").strip() if isinstance(payload, dict) else ""
     if not trusted or (claimed and claimed != trusted):
-        raise ActionUnavailableError(
-            "Payload tenant_id is not the verified caller tenant.",
-            error_code="TENANT_MISMATCH",
-        )
+        raise ActionUnavailableError("Payload tenant_id is not the verified caller tenant.", error_code="TENANT_MISMATCH")
     return trusted
 
 

@@ -985,6 +985,28 @@ def test_mounted_operations_read_model_route_scopes_to_the_jwt_tenant(monkeypatc
     assert client.get(url_unscoped, headers=_jwt_without_tenant()).status_code == 403
     assert client.get(url_unscoped, headers=_jwt_headers(monkeypatch, "tenant-a")).status_code == 200
 
+    # 5. Nested claim support: tenant: {"id": "tenant-b"} extracts "tenant-b" and succeeds with 200
+    now = int(time.time())
+    nested_tok = encode_jwt_hs256(
+        {
+            "sub": "low-priv-operator", "roles": ["operator"],
+            "tenant": {"id": "tenant-b"}, "allowed_tenants": ["tenant-b"],
+            "iss": _ISSUER, "aud": _AUDIENCE, "iat": now, "exp": now + 3600,
+        },
+        secret=_SECRET,
+    )
+    assert client.get(url_b, headers={"Authorization": f"Bearer {nested_tok}"}).status_code == 200
+
+    nested_org_tok = encode_jwt_hs256(
+        {
+            "sub": "low-priv-operator", "roles": ["operator"],
+            "organization": {"id": "tenant-b"}, "allowed_tenants": ["tenant-b"],
+            "iss": _ISSUER, "aud": _AUDIENCE, "iat": now, "exp": now + 3600,
+        },
+        secret=_SECRET,
+    )
+    assert client.get(url_b, headers={"Authorization": f"Bearer {nested_org_tok}"}).status_code == 200
+
 
 def test_mounted_risk_radar_scopes_to_the_jwt_tenant(monkeypatch):
     from services.control_plane.bff.auth.policy import bff_me_tenant_payload
@@ -1200,4 +1222,102 @@ def test_strategy_registry_receipt_mismatch_post_write_semantics(monkeypatch):
     res = adapter.execute("cmd-1", "StrategyAction", params, auth_token=_tok_for("tenant-b"))
     assert res["status"] == "metadata_updated"
     assert res["entity_id"] == "s-1"
+
+
+def test_mounted_workspace_route_scopes_to_the_jwt_tenant(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from services.control_plane.bff.auth.policy import bff_error, extract_identity, require_read_role
+    from services.control_plane.bff.core.errors import register_error_handlers
+    from services.control_plane.bff.agora.trading_room.router import create_trading_room_router
+    from services.control_plane.bff.agora.trading_room.store import TradingRoomStore
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", _SECRET)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", _ISSUER)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", _AUDIENCE)
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+    for key in ("PANTHEON_BFF_TENANT_ID", "PANTHEON_BFF_DEFAULT_TENANT_ID", "PANTHEON_TENANT_ID", "PANTHEON_BFF_ALLOWED_TENANTS"):
+        monkeypatch.delenv(key, raising=False)
+
+    store = TradingRoomStore()
+    store.upsert_workspace(
+        {"id": "private-ws", "strategyId": "s1", "dashboardVersion": 1, "views": [], "privateMarker": "private-default-tenant-data"},
+        tenant_id="pantheon-dev",
+        user_id="test-operator",
+    )
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(create_trading_room_router(
+        extract_identity=extract_identity,
+        require_read_role=require_read_role,
+        bff_error=bff_error,
+        utc_now=lambda: "2026-10-03T00:00:00Z",
+        trading_room_store=store,
+    ))
+    client = TestClient(app, raise_server_exceptions=False)
+
+    def _tok_claims(claims_extra):
+        now = int(time.time())
+        token = encode_jwt_hs256({
+            "sub": "test-operator", "roles": ["operator"], "iss": _ISSUER, "aud": _AUDIENCE,
+            "iat": now, "exp": now + 600, **claims_extra
+        }, secret=_SECRET)
+        return {"Authorization": f"Bearer {token}"}
+
+    # Missing tenant in JWT claims fails closed with 403
+    r_missing = client.get("/bff/agora/trading-room/workspaces/private-ws", headers=_tok_claims({}))
+    assert r_missing.status_code == 403
+    assert "privateMarker" not in r_missing.text
+
+    # Foreign tenant fails closed with 403
+    r_foreign = client.get("/bff/agora/trading-room/workspaces/private-ws", headers=_tok_claims({"tenant_id": "tenant-b", "allowed_tenants": ["tenant-b"]}))
+    assert r_foreign.status_code == 403
+    assert "privateMarker" not in r_foreign.text
+
+    # Same tenant succeeds with 200
+    r_same = client.get("/bff/agora/trading-room/workspaces/private-ws", headers=_tok_claims({"tenant_id": "pantheon-dev", "allowed_tenants": ["pantheon-dev"]}))
+    assert r_same.status_code == 200
+    assert "privateMarker" in r_same.text
+
+
+def test_authorized_configured_default_is_not_replaced_by_allowlist_order(monkeypatch, tmp_path):
+    for k, v in {
+        "PANTHEON_BFF_AUTH_STUB": "",
+        "PANTHEON_BFF_AUTH_MODE": "strict",
+        "PANTHEON_BFF_JWT_SECRET": "local-selection-test-secret",
+        "PANTHEON_BFF_JWT_ISSUER": "local-selection-test",
+        "PANTHEON_BFF_JWT_AUDIENCE": "pantheon-bff",
+        "PANTHEON_BFF_MFA_REQUIRED": "false",
+        "PANTHEON_BFF_TENANT_ID": "pantheon-dev",
+    }.items():
+        monkeypatch.setenv(k, v)
+    now = int(time.time())
+    token = encode_jwt_hs256({
+        "sub": "local-operator", "roles": ["operator"],
+        "allowed_tenants": ["tenant-dev", "pantheon-dev", "pantheon-local"],
+        "iss": "local-selection-test", "aud": "pantheon-bff", "iat": now, "exp": now + 600,
+    }, secret="local-selection-test-secret")
+    receipt = {
+        "receipt_id": "receipt-owned", "audit_event_id": "audit-owned", "suggestion_id": "suggestion-owned",
+        "strategy_id": "s1", "action": "apply", "previous_status": "proposed", "status": "applied",
+        "previous_version": 1, "version": 2, "actor_id": "local-operator", "recorded_at": "t",
+        "authoritative_readback": {"suggestion_id": "suggestion-owned", "strategy_id": "s1", "period": "30d",
+            "status": "applied", "version": 2, "provenance": {"source_id": "src", "source_type": "test", "produced_at": "t"}, "as_of": "t"},
+    }
+    store = PerformanceSuggestionStore(str(tmp_path / "local.sqlite"), incidents_api_url="")
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("INSERT INTO performance_action_receipts VALUES (?,?,?,?,?,?,?,?,?)",
+                     ("receipt-owned", "pantheon-dev", "local-operator", "suggestion-owned", "s1", "k", "h", json.dumps(receipt), "t"))
+    app = FastAPI()
+    from services.control_plane.bff.agora.performance.router import create_performance_router
+    app.include_router(create_performance_router(
+        extract_identity=_extract_identity, require_read_role=_require_read_role,
+        require_write_role=_require_operator_role, bff_error=_bff_error,
+        utc_now=lambda: "2026-10-03T00:00:00Z", get_trade_journey_store=lambda: None, suggestion_store=store,
+    ))
+    response = TestClient(app).get("/bff/agora/performance/action-receipts/receipt-owned", headers={"Authorization": "Bearer " + token})
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["receipt_id"] == "receipt-owned"
 
