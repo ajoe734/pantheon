@@ -1,0 +1,11 @@
+{
+  "task_id": "AGORA-WORKER-DEV-TENANT-20261003",
+  "changes": {
+    "agora-interaction-worker": "PANTHEON_TENANT_ID now ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}; resolves tenant-dev when only the BFF tenant is configured.",
+    "training-session-preview-worker": "TRAINING_SESSION_TENANT_ID now falls back through PANTHEON_TENANT_ID then PANTHEON_BFF_TENANT_ID; the worker code (preview_eval_worker.py) already treats PANTHEON_TENANT_ID as its fallback.",
+    "reconciliation-drift-incident-listener": "PANTHEON_TENANT_ID now ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}. Source data: incident_listener.py:272-285,717 fetches from incidents:8090/api/incidents, and the incidents service (docker-compose.yml:1153) already uses that same fallback chain; services/incidents/main.py:548 stamps findings with that tenant. reconciliation-drift-svc only echoes the supplied X-Tenant-Id (main.py:802), so its default is not source-data ownership."
+  },
+  "isolation": "Each worker still processes exactly one configured tenant; no tenant rule changed.",
+  "test": "scripts/test_worker_tenant_compose_contract.py (docker compose config; 4 passed)",
+  "hosted_verification": "Pending coordinator after next root deploy (AGORA-SYNTHESIS-AGENT-001)."
+}
