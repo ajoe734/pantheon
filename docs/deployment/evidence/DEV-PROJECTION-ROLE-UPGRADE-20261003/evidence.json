@@ -1,0 +1,56 @@
+{
+  "task_id": "DEV-PROJECTION-ROLE-UPGRADE-20261003",
+  "scope": "Source and isolated local PostgreSQL only; no VM, SSH, live DB, IAM, hosted operation or release dispatch.",
+  "base_sha": "9304d19c005218205d637c8016b78abd02418b57",
+  "validated_source_commit": "fab0b421f52996c00a08a415cece33d928f28919",
+  "head_binding": "Canonical handoff binds the final PR head and this committed manifest blob; the final commit adds evidence only.",
+  "reviewer": "Codex",
+  "review_status": "Pending genuine independent exact-head review; no approval claimed.",
+  "production_net_lines": 92,
+  "production_net_line_limit": 180,
+  "observed_failure": {
+    "actions_run": "37100075282",
+    "source": "/tmp/pantheon-closeout-continuation-20261003-0704/deploy-failed.log",
+    "confirmed": "bootstrap_schema rejected runtime schema/table DDL before activation. Actions compensation evidence belongs to the existing release coordinator.",
+    "not_observed": "The exact VM schema owners and grants were not inspected; local layouts reproduce possible causes, not an asserted VM privilege inventory."
+  },
+  "regression": {
+    "baseline_command": "TEST_PROJECTION_CONTAINER=dev-projection-role-upgrade-20261003-pg TEST_DATABASE_ADMIN_URL=postgresql://postgres:isolated-test@127.0.0.1:32810/pantheon timeout 100 /tmp/dev-projection-bootstrap-venv/bin/python -m pytest services/trade_journey/test_projection_migration.py -k sealed_bootstrap -q --tb=short",
+    "baseline_result": "On unchanged production base: 1 passed (empty), 2 failed (owned/direct_create), exit 1. Both failures are the exact Projection runtime must not hold schema/table DDL authority guard.",
+    "baseline_log_sha256": "24b06aae4d20701a8b0a507298c0ef4a90155c55185093e7e0d0d875f2ebd830",
+    "repair": "Explicit sealed-bootstrap opt-in transfers only directly runtime-owned known projection objects to the separate migration identity and revokes direct schema CREATE/table TRIGGER. Final DDL guard remains, including default/inherited TRIGGER grants.",
+    "positive_layouts": "Empty, runtime-owned schema/tables, database+schema+tables ownership, tables-only ownership, direct CREATE, direct TRIGGER; actual init-db.sh and resolved Compose pantheon_app identity; production bootstrap shell and CLI, local transport substitution only.",
+    "durability": "Seeded actual lifecycle receipts, journeys, identities and live controller/checkpoint; compared all seven table readbacks before/after upgrade and two repeats; fresh projector resumed to checkpoint 8. Runtime CREATE/ALTER/DROP TABLE and DROP SCHEMA denied; public data/DDL authority preserved.",
+    "negatives": "PUBLIC/inherited CREATE, inherited admin/TRIGGER, unknown relation, wrong schema/table owner, custom routine, wrong schema/database/runtime authority, insufficient migration authority, default TRIGGER privileges. Catalog ownership/ACLs and all rows unchanged on refusal; actual post-transfer SQL and GRANT failures both roll back."
+  },
+  "postgres": {
+    "image": "postgres:16-alpine",
+    "image_id": "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+    "container": "dev-projection-role-upgrade-20261003-pg",
+    "isolation": "Task-owned disposable container, random loopback port 32810; per-test disposable databases; fixed isolated-test credential is test-only.",
+    "versions": "psycopg 3.3.6; pytest 9.1.1",
+    "recreate": "docker run --name <task-local-name> -e POSTGRES_PASSWORD=isolated-test -e POSTGRES_DB=pantheon -p 127.0.0.1::5432 -d postgres:16-alpine; use docker port to set the test DSNs and TEST_PROJECTION_CONTAINER. Remove only that test container after validation."
+  },
+  "validation": [
+    {
+      "environment": "TEST_PROJECTION_CONTAINER=dev-projection-role-upgrade-20261003-pg TEST_DATABASE_ADMIN_URL=postgresql://postgres:isolated-test@127.0.0.1:32810/pantheon TEST_DATABASE_URL=postgresql://postgres:isolated-test@127.0.0.1:32810/pantheon",
+      "command": "timeout 200 /tmp/dev-projection-bootstrap-venv/bin/python -m pytest services/trade_journey/test_projection_migration.py services/trade_journey/test_projection_store.py services/trade_journey/test_lifecycle_projector.py scripts/test_deploy_nonprod_bootstrap_contract.py -q --tb=short",
+      "result": "259 passed, zero skipped; exit 0; 108.34s",
+      "log": "/tmp/dev-projection-role-upgrade-core-final.log",
+      "log_sha256": "8a0d1ffdbf581157ea473617c05572ae247b22a60e30dbcb0c2cb1d3fe4022f5"
+    },
+    {
+      "environment": "TEST_DATABASE_ADMIN_URL=postgresql://postgres:isolated-test@127.0.0.1:32810/pantheon TEST_DATABASE_URL=postgresql://postgres:isolated-test@127.0.0.1:32810/pantheon RANKING_STORE_DSN=postgresql://postgres:isolated-test@127.0.0.1:32810/pantheon RANKING_STORE_BOOTSTRAP=0",
+      "command": "timeout 180 /tmp/dev-projection-bootstrap-venv/bin/python -m pytest scripts/test_dev_environment_lease_deploy_contract.py services/trade_journey/test_lifecycle_projector_compose.py -q --tb=short --disable-warnings",
+      "result": "248 passed, zero skipped; exit 0; 78.60s",
+      "log": "/tmp/dev-projection-role-upgrade-deploy-final.log",
+      "log_sha256": "23b9e173e13fa77117ee16ef173bb64bfd6b153e5c93537945b99a24625538b1"
+    },
+    {
+      "command": "git diff --check origin/dev; bash -n scripts/deploy_nonprod_vm.sh; python3 scripts/git/diff_budget.py --base origin/dev --change-class corrective --budget 180",
+      "result": "All exit 0; production +100/-8 = net +92."
+    }
+  ],
+  "earlier_attempts": "Initial system Python lacked psycopg; used the existing isolated test venv. Intermediate core run:186 passed. First deploy batch omitted PG/Ranking DSNs:316 passed,2 skipped,1 failed at required Ranking DSN configuration, exit1. Corrected final batches above include every skipped/failed case and have zero skips. No timeout or uncollected batch counted as passed.",
+  "coordinator_handoff": "After exact-head independent approval, required CI and supervisor merge, only the existing release coordinator may consume this source through its existing sealed release path. Runtime remains bootstrap=False; seal ordering, readiness and compensation are unchanged. Unsafe/unrepairable layouts fail closed. No new deployment lane or root retry was started; source merge is not hosted acceptance."
+}
