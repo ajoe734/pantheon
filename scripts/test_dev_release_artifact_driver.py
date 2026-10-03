@@ -34,6 +34,12 @@ class Barrier:
             raise d.a.ArtifactError("fixture cancellation")
 
 
+def split_services(fields):
+    return {"services": {service: {"environment": {key: value for key, value in fields.items()
+                                                   if key.startswith("PERSONA_EVALUATOR_") == (service != "operator-bff")}}
+                         for service in d.CONFIG_SERVICES}}
+
+
 class Docker(FakeDocker):
     def __init__(self, source):
         super().__init__()
@@ -59,6 +65,9 @@ class Docker(FakeDocker):
             self.calls.append(args)
             owner = self.owners[args[-1].rsplit("=", 1)[1]]
             return "" if owner is None else owner["container_id"]
+        if args[0] == "ps" and args[-1].endswith("=persona-evaluator-agent"):
+            self.calls.append(args)
+            return "e" * 64
         if args[0] == "inspect" and args[2] == d.OWNER_FORMAT:
             self.calls.append(args)
             if int(args[-1], 16) <= 3:
@@ -68,7 +77,8 @@ class Docker(FakeDocker):
             return json.dumps(next(row for row in self.owners.values() if row and row["container_id"] == args[-1]))
         if args[0] == "inspect" and args[2] == d.CONFIG_FORMAT:
             self.calls.append(args)
-            return "\n".join(json.dumps(key + "=" + value) for key, value in self.config.items() if value is not None) + self.extra_config + "\n"
+            return "\n".join(json.dumps(key + "=" + value) for key, value in self.config.items()
+                             if value is not None and key.startswith("PERSONA_EVALUATOR_") == (args[-1] == "e" * 64)) + self.extra_config + "\n"
         if args[:2] == ("image", "inspect") and args[3] == d.BUILT_IMAGE_FORMAT:
             self.calls.append(args)
             service = args[-1].removeprefix("pantheon-")
@@ -82,7 +92,8 @@ class Docker(FakeDocker):
                 return "postgres:16-alpine\npantheon-" + args[-1] + "\n"
             compose_file = Path(args[args.index("-f") + 1])
             if "--env-file" in args:
-                fields = json.loads(compose_file.read_bytes())["services"]["operator-bff"]["environment"]
+                fields = {key: value for service in json.loads(compose_file.read_bytes())["services"].values()
+                          for key, value in service["environment"].items()}
                 for key, value in fields.items():
                     match = re.fullmatch(r"\$\{([A-Z_]+)(:-|-)(.*?)\}", value or "")
                     if match:
@@ -91,12 +102,12 @@ class Docker(FakeDocker):
                         if operator == ":-" and not fields[key]: fields[key] = default
                 if self.render_drift:
                     fields["PANTHEON_BFF_MFA_REQUIRED"] = "true"
-                return json.dumps({"services": {"operator-bff": {"environment": fields}}})
+                return json.dumps(split_services(fields))
             if compose_file != self.candidate_compose:
                 fields = self.compose_fields
                 if fields is None:
                     fields = {key: value for key, value in (self.baseline_config or self.config).items() if value is not None}
-                return json.dumps({"services": {"operator-bff": {"environment": fields}}})
+                return json.dumps(split_services(fields))
             model = {"services": {service: {"build": {"context": str(self.candidate_compose.parent), "dockerfile": d.DOCKERFILES[service]}}
                                   for service in d.a.SERVICES}}
             row = model["services"][d.a.SERVICES[0]]
@@ -630,7 +641,8 @@ def test_real_compose_auth_defaults_require_representable_baseline(case, monkeyp
     if legacy_fields:
         fields.update({key: "${" + key + ":-false}" for key in d.a.BASELINE_AUTH_FLAGS[1:]})
     compose = case.args.compose_file.parent / "auth-only-compose.json"
-    compose.write_text(json.dumps({"services": {"operator-bff": {"image": "fixture-never-run", "environment": fields}}}))
+    compose.write_text(json.dumps({"services": {service: {"image": "fixture-never-run", "environment": block["services"][service]["environment"]}
+                                                for block in [split_services(fields)] for service in d.CONFIG_SERVICES}}))
     expected = {**d.a.BASELINE_PRINCIPAL_CONFIG, **dict.fromkeys(d.a.BASELINE_AUTH_FLAGS, value)}
     if not legacy_fields:
         expected.update(dict.fromkeys(d.a.BASELINE_AUTH_FLAGS[1:], None))
@@ -659,7 +671,8 @@ def test_real_compose_literal_empty_or_omitted_auth_fields_can_be_represented(ca
     expected = {**d.a.BASELINE_PRINCIPAL_CONFIG, **dict.fromkeys(d.a.BASELINE_AUTH_FLAGS, value)}
     fields = {key: setting for key, setting in expected.items() if setting is not None}
     compose = case.args.compose_file.parent / "literal-auth-compose.json"
-    compose.write_text(json.dumps({"services": {"operator-bff": {"image": "fixture-never-run", "environment": fields}}}))
+    compose.write_text(json.dumps({"services": {service: {"image": "fixture-never-run", "environment": block["services"][service]["environment"]}
+                                                for block in [split_services(fields)] for service in d.CONFIG_SERVICES}}))
     class RenderOnly:
         def call(self, *args):
             assert args[0] == "compose" and "config" in args
@@ -701,9 +714,10 @@ def test_auth_manifest_validator_rejects_nonboolean_data(key, value):
     assert "fixture-private" not in str(error.value)
 
 
-@pytest.mark.parametrize("failure", ["path", "actor", "auth", "unexpected", "duplicate"])
+@pytest.mark.parametrize("failure", ["path", "evaluator", "actor", "auth", "unexpected", "duplicate"])
 def test_nonsecret_configuration_allowlist_fails_before_sealing(case, failure):
     if failure == "path": case.docker.config["PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE"] = "/unapproved/token"
+    elif failure == "evaluator": case.docker.config["PERSONA_EVALUATOR_GOVERNANCE_TOKEN_FILE"] = "/unapproved/token"
     elif failure == "actor": case.docker.config["PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID"] = "operator-admin"
     elif failure == "auth": case.docker.config["PANTHEON_BFF_MFA_REQUIRED"] = "fixture-private-not-a-boolean"
     elif failure == "unexpected": case.docker.extra_config = '\n"UNEXPECTED_SECRET=never-print"'

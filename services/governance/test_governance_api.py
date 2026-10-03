@@ -881,3 +881,31 @@ def test_authoritative_approval_readback_and_anti_forgery():
     assert get_body["controller_record_ref"] == f"governance-controller://approval-{did}"
     assert get_body["recorded_at"] == dec_body["recorded_at"]
 
+
+
+def test_evaluator_principal_proposes_and_reads_lifecycle_request_but_cannot_decide_or_revoke():
+    from scripts.issue_dev_paper_principals import issue_environment
+    minted = issue_environment({
+        "PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
+        "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true",
+        "PANTHEON_DEV_BFF_JWT_SECRET": _test_env["PANTHEON_GOVERNANCE_JWT_SECRET"],
+        "PANTHEON_DEV_BFF_JWT_ISSUER": _test_env["PANTHEON_GOVERNANCE_JWT_ISSUER"],
+        "PANTHEON_DEV_BFF_JWT_AUDIENCE": _test_env["PANTHEON_GOVERNANCE_JWT_AUDIENCE"],
+    })
+    auth = {"Authorization": "Bearer " + minted["PERSONA_EVALUATOR_GOVERNANCE_TOKEN"]}
+    did = uid()
+    created = client.post("/api/governance/approvals", json={
+        "decision_id": did, "expected_version": 0, "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "tenant-dev", "owner_user_id": "persona-evaluator-agent",
+        "target_type": "persona_lifecycle_transition", "target_id": "p1", "target_version": "snap-1",
+        "risk_level": "high", "persona_id": "p1",
+        "subject": {"persona_id": "p1", "from_state": "paper_owner", "to_state": "frozen"},
+    }, headers={**auth, "Idempotency-Key": uid()})
+    assert created.status_code == 201, created.text
+    assert client.get(f"/api/governance/approvals/{did}", headers=auth).json()["decision_state"] == "proposed"
+    for operation, body in (("decide", {"outcome": "approved", "rationale": "self"}), ("revoke", {})):
+        denied = client.post(f"/api/governance/approvals/{did}/{operation}", headers={**auth, "Idempotency-Key": uid()},
+                             json={"expected_version": 1, "actor_role": "governance_reviewer",
+                                   "actor_id": "persona-evaluator-agent", **body})
+        assert denied.status_code == 403, denied.text
+    assert client.get(f"/api/governance/approvals/{did}", headers=auth).json()["decision_state"] == "proposed"
