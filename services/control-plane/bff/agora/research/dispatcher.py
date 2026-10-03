@@ -1,19 +1,4 @@
-"""Agora research dispatcher, allowlisted adapters, lease management, and artifact projection.
-
-Implements the governed research dispatcher per:
-  - docs/04/pantheon_agora_product_gap_sd_2026-08-13/03_SD_AGORA_COMPLETE_PRODUCT.md §6.2
-  - services/control-plane/specs/agora/v4/research_plan_execution.schema.json
-  - services/control-plane/specs/agora/v4/research_run_projection.schema.json
-
-Responsibilities:
-  - Consumes durable outbox records with lease acquisition & timeout
-  - Resolves allowlisted backend adapters for typed stages
-  - Enforces deterministic downstream idempotency keys
-  - Persists backend identity and partial effects before polling/completion
-  - Projects ordered progress events (queued -> dispatching -> running -> completed/failed)
-  - Computes and verifies artifact checksums (sha256) and explicit lineage
-  - Labels explicit provenance: 'real', 'simulation', 'fixture', 'unavailable' without fallback
-"""
+"""Agora research adapter registry and authentic stage adapters."""
 from __future__ import annotations
 
 import hashlib
@@ -32,8 +17,7 @@ from .receipt import ResearchExecutionReceipt, resolve_run_provenance, VALID_MOD
 
 logger = logging.getLogger(__name__)
 
-# Consolidated at the authoritative Research orchestrator service (services/research/main.py)
-from services.research.main import ALLOWLISTED_STAGE_BACKENDS
+from services.research.constants import ALLOWLISTED_STAGE_BACKENDS
 
 VALID_PROVENANCE_VALUES = frozenset({"real", "simulation", "fixture", "unavailable"})
 DEFAULT_LEASE_DURATION_SECONDS = 60.0
@@ -684,38 +668,17 @@ class AuthenticResearchBackendClient:
         terminal_success_values = {"succeeded", "completed", "success", "passed", "pass"}
         terminal_failure_values = {"failed", "error", "fail", "cancelled", "canceled", "timed_out", "timeout"}
         nonterminal_values = {"running", "queued", "pending", "in_progress", "scheduled", "dispatching"}
-
-        # Reject failure statuses
         if status_val in terminal_failure_values or outcome_val in terminal_failure_values:
-            err = (
-                resp_data.get("error")
-                or resp_data.get("error_message")
-                or resp_data.get("message")
-                or f"status={status_val or outcome_val}"
-            )
-            raise RuntimeError(
-                f"Backend execution owner returned failure outcome for stage '{self.stage_type}': {err}"
-            )
-
-        # Reject nonterminal statuses
+            err = resp_data.get("error") or resp_data.get("error_message") or resp_data.get("message") or f"status={status_val or outcome_val}"
+            raise RuntimeError(f"Backend execution owner returned failure outcome for stage '{self.stage_type}': {err}")
         if status_val in nonterminal_values or outcome_val in nonterminal_values:
-            raise RuntimeError(
-                f"Backend execution owner for stage '{self.stage_type}' returned nonterminal status '{status_val or outcome_val}'."
-            )
-
-        # Reject unknown/invalid statuses
+            raise RuntimeError(f"Backend execution owner for stage '{self.stage_type}' returned nonterminal status '{status_val or outcome_val}'.")
         if status_val and status_val not in terminal_success_values:
-            raise RuntimeError(
-                f"Backend execution owner returned invalid or unrecognized status '{status_val}' for stage '{self.stage_type}'."
-            )
+            raise RuntimeError(f"Backend execution owner returned invalid or unrecognized status '{status_val}' for stage '{self.stage_type}'.")
         if outcome_val and outcome_val not in terminal_success_values:
-            raise RuntimeError(
-                f"Backend execution owner returned invalid or unrecognized outcome '{outcome_val}' for stage '{self.stage_type}'."
-            )
+            raise RuntimeError(f"Backend execution owner returned invalid or unrecognized outcome '{outcome_val}' for stage '{self.stage_type}'.")
         if not status_val and not outcome_val:
-            raise RuntimeError(
-                f"Backend execution owner for stage '{self.stage_type}' returned missing status and outcome."
-            )
+            raise RuntimeError(f"Backend execution owner for stage '{self.stage_type}' returned missing status and outcome.")
 
         backend_ref = str(resp_data.get("backend_reference") or "").strip()
         if not backend_ref:

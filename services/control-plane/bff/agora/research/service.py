@@ -21,7 +21,7 @@ from services.control_plane.bff.agora.strategy_workshop.store import (
 from services.control_plane.bff.agora.dataset_extraction.extractor import AgoraDatasetStore
 from services.control_plane.bff.agora.trading_room.store import TradingRoomStore
 from services.control_plane.bff.research.client import resolve_orchestrator_base_url
-from services.research.main import ALLOWLISTED_STAGE_BACKENDS
+from services.research.constants import ALLOWLISTED_STAGE_BACKENDS
 
 from .routes.common import (
     CandidateDiscussionRequest,
@@ -649,38 +649,35 @@ class AgoraResearchService:
     def cancel_run(self, run_id: str, *, scope: Any) -> Dict[str, Any]:
         raw_run = self.get_run_or_404(run_id, scope=scope)
         r_url = resolve_orchestrator_base_url()
-        if r_url:
-            from services.control_plane.bff.agora.strategy_workshop.operations import (
-                CanonicalOperationError,
-                WorkshopCanonicalOperations,
+        if not r_url:
+            raise self.bff_error(
+                503,
+                self._error_code("UPSTREAM_UNAVAILABLE"),
+                "Research execution owner is unconfigured or unavailable; run cancellation cannot be processed locally",
+                run_id,
             )
-            try:
-                WorkshopCanonicalOperations(research_base_url=r_url).cancel_research_run(run_id)
-            except CanonicalOperationError as exc:
-                if exc.status_code == 404:
-                    raise self.bff_error(
-                        404, self._error_code("RESOURCE_NOT_FOUND"), exc.reason, run_id
-                    ) from exc
-                if exc.status_code == 409:
-                    raise self.bff_error(
-                        409, self._error_code("RESOURCE_CONFLICT"), exc.reason, run_id
-                    ) from exc
+        from services.control_plane.bff.agora.strategy_workshop.operations import (
+            CanonicalOperationError,
+            WorkshopCanonicalOperations,
+        )
+        try:
+            WorkshopCanonicalOperations(research_base_url=r_url).cancel_research_run(run_id)
+        except CanonicalOperationError as exc:
+            if exc.status_code == 404:
                 raise self.bff_error(
-                    503, self._error_code("UPSTREAM_UNAVAILABLE"), exc.reason, run_id
+                    404, self._error_code("RESOURCE_NOT_FOUND"), exc.reason, run_id
                 ) from exc
-            except Exception as exc:
+            if exc.status_code == 409:
                 raise self.bff_error(
-                    503, self._error_code("UPSTREAM_UNAVAILABLE"), str(exc), run_id
+                    409, self._error_code("RESOURCE_CONFLICT"), exc.reason, run_id
                 ) from exc
-        else:
-            cancellable_statuses = {"queued", "dispatching", "running"}
-            current = raw_run.get("execution_status")
-            if current not in cancellable_statuses:
-                raise self.bff_error(
-                    409, self._error_code("RESOURCE_CONFLICT"),
-                    f"Run in status '{current}' cannot be cancelled",
-                    f"cancellable statuses: {sorted(cancellable_statuses)}",
-                )
+            raise self.bff_error(
+                503, self._error_code("UPSTREAM_UNAVAILABLE"), exc.reason, run_id
+            ) from exc
+        except Exception as exc:
+            raise self.bff_error(
+                503, self._error_code("UPSTREAM_UNAVAILABLE"), str(exc), run_id
+            ) from exc
         now = self.utc_now()
         if hasattr(self.store, "update_run"):
             self.store.update_run(
