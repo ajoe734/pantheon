@@ -123,8 +123,11 @@
   },
   "exact_head_verification": {
     "interpreter_identities": {
+      "host_python": "Python 3.12.3 (/usr/bin/python3, Linux x86_64)",
+      "isolated_venv_runner": "uv 0.12.9 with Python 3.12.3 per-framework hash-locked virtualenvs",
       "worker_test_runner": "Python 3.12.3 (.venv-pantheon/bin/python3, pytest-9.1.1, pluggy-1.6.0)",
-      "imitation_docker_image": "python:3.12-slim (3.12.15, GCC 14.2.0)"
+      "imitation_docker_image": "python:3.12-slim (3.12.15, image 0776160728e7)",
+      "research_quantlib_docker_image": "python:3.11-slim (QuantLib 1.43, image 28458e27d4a9)"
     },
     "tested_lock_hashes": {
       "services-learning-dspy.txt": "sha256:e8a9200aed20a78aef6b79e416b2c3307afeb211c1b0b3e5359467890921745f",
@@ -194,22 +197,100 @@
         "exit_code": 0,
         "passed": 27
       },
-      "dspy_unavailable_provider_behavior": {
-        "command": "python3 -c \"import adapter; adapter.DSPyBootstrapFewShotBackend().train(None, None)\"",
+      "trl_genuine_dpo": {
+        "install_command": "uv pip sync --require-hashes --index-strategy unsafe-best-match dependencies/locks/services-learning-trl.txt",
+        "pytest_command": "pytest services/learning/trl/test_adapter.py services/learning/trl/test_preflight.py services/learning/trl/test_activation_smoke.py",
+        "pytest_passed": 42,
+        "smoke_command": "python services/learning/trl/smoke_test.py --backend trl",
+        "exit_code": 0,
+        "backend": "trl_dpo",
+        "model": "sshleifer/tiny-gpt2",
+        "train_pairs": 5,
+        "epochs": 1,
+        "optimizer_steps": 2,
+        "train_loss": 0.6932,
+        "run_id": "trl-dpo-f7786b913591",
+        "registry_id": "trl-preference-model-preference-learning-multi-asset-1.0.0",
+        "checksum": "sha256:1ac093177e9de0acbf9883cd5f4135d6b0e6c75a3abc71800a150fe6e649702c",
+        "coupled_fix": "Pinned trl==1.14.1, AutoModelForCausalLM, sshleifer/tiny-gpt2, use_cpu=True"
+      },
+      "qlib_initialized_numerical_adapter": {
+        "install_command": "uv pip sync --require-hashes dependencies/locks/services-research-qlib.txt",
+        "pytest_command": "pytest services/research/qlib/test_adapter.py services/research/qlib/test_preflight.py",
+        "pytest_passed": 29,
+        "import_command": "python -c 'import qlib; print(qlib.__version__)'",
+        "import_version": "0.9.7",
+        "numerical_test_command": "python -c 'import qlib, ...; qlib.init(...); run_qlib_workflow(..., backend=QlibLightGBMBackend(), config=TrainingConfig(n_estimators=5))'",
+        "exit_code": 0,
+        "backend": "qlib_lgbm",
+        "num_samples": 12,
+        "num_features": 4,
+        "num_instruments": 3,
+        "n_estimators": 5,
+        "val_mse": 0.00002169,
+        "run_id": "qlib-lgbm-146ad35906d0",
+        "registry_id": "qlib-alpha-equity-cross-sectional-alpha-1.0.0",
+        "checksum": "sha256:0fa1e6b5f8667f81fece6762733403cf3bd10c8c6e89417f26aa2c4861678466",
+        "preservation": "Worker entrypoint initialization remains parent residual task obligation"
+      },
+      "vectorbt_numerical_probe": {
+        "install_command": "uv pip sync --require-hashes dependencies/locks/services-research-vectorbt.txt",
+        "pytest_command": "pytest services/research/vectorbt/test_adapter.py",
+        "pytest_passed": 33,
+        "smoke_command": "PANTHEON_VECTORBT_BACKEND=real python services/research/vectorbt/smoke_test.py --backend real",
+        "exit_code": 0,
+        "backend": "vectorbt_portfolio",
+        "version": "vectorbt 1.1.1",
+        "instruments": 2,
+        "total_bars": 70,
+        "registry_id": "vbt-backtest-smoke-strategy-1.0.0",
+        "checksum": "sha256:b6a29b0ad72b5ec91c412d06bcfeb1d0fa411516e88d66cb67ec80ae3ef9e7c5"
+      },
+      "statsmodels_numerical_probe": {
+        "install_command": "uv pip sync --require-hashes dependencies/locks/services-research-statsmodels.txt",
+        "pytest_command": "pytest services/research/statsmodels/test_adapter.py services/research/statsmodels/test_production_cointegration.py",
+        "pytest_passed": 31,
+        "smoke_command": "python services/research/statsmodels/smoke_test.py",
+        "exit_code": 0,
+        "version": "statsmodels 0.15.0",
+        "test": "engle_granger",
+        "seed": 42,
+        "p_value": 0.0,
+        "half_life": 0.4395,
+        "series_length": 120,
+        "checksum": "016252267637129889b5611ddaa371b47c5d7b14d32c26417b89b379b4ae9fb4"
+      },
+      "finrl_training_probe": {
+        "install_command": "uv pip sync --require-hashes --index-strategy unsafe-best-match dependencies/locks/services-research-finrl.txt",
+        "pytest_command": "pytest services/research/finrl/test_adapter.py services/research/finrl/test_production_drl_run.py",
+        "pytest_passed": 22,
+        "smoke_command": "python services/research/finrl/smoke_test.py",
+        "exit_code": 0,
+        "version": "finrl 0.3.7 / stable-baselines3 2.9.0 / torch 2.14.1+cpu",
+        "dqn_metrics": {"steps": 57, "sharpe": 139.78, "max_q_value": 0.218},
+        "ppo_metrics": {"steps": 57, "total_training_steps": 684, "annual_return": 0.1508, "portfolio_final": 1.03229}
+      },
+      "dspy_installed_import_and_denial": {
+        "install_command": "uv pip sync --require-hashes dependencies/locks/services-learning-dspy.txt",
+        "pytest_command": "pytest services/learning/dspy/test_adapter.py",
+        "pytest_passed": 3,
+        "import_command": "python -c 'import dspy; print(dspy.__version__)'",
+        "import_version": "3.4.0",
+        "denial_command": "python -c 'from services.learning.dspy.adapter import DSPyBootstrapFewShotBackend; DSPyBootstrapFewShotBackend().train(None, None)'",
+        "exit_code": 0,
         "observed_behavior": "Raises DSPyWorkflowError: DSPy backend requires PANTHEON_DSPY_MODEL or an explicit model_name (fails closed; no manufactured credentials)",
         "preservation": "Genuine provider verification remains parent residual task obligation"
       },
-      "trl_preference_smoke": {
-        "command": "python services/learning/trl/smoke_test.py --backend stub",
+      "research_owner_quantlib_behavior": {
+        "image_id": "28458e27d4a9",
+        "lock": "dependencies/locks/services-research.txt",
+        "import_command": "docker run --rm pantheon-test-research-quantlib:latest python -c 'import QuantLib; print(QuantLib.__version__)'",
+        "import_version": "1.43",
+        "smoke_command": "docker run --rm -v /workspace pantheon-test-research-quantlib:latest python services/research/quantlib/smoke_test.py",
         "exit_code": 0,
-        "passed": true,
-        "coupled_fix": "Pinned trl==1.14.1, AutoModelForCausalLM, sshleifer/tiny-gpt2, use_cpu=True"
-      },
-      "qlib_smoke": {
-        "command": "python services/research/qlib/smoke_test.py --backend stub",
-        "exit_code": 0,
-        "passed": true,
-        "coupled_fix": "Pinned pyqlib==0.9.7; worker entrypoint initialization remains parent obligation"
+        "pricing_models": ["black_scholes", "crr_binomial"],
+        "checksum": "36756edc406bb29ffcedbb968a9f798dd1f6ed67cbe283c2bb869956349dbb6f",
+        "status": "SMOKE TEST PASSED"
       },
       "training_session_compose": {
         "command": "pytest services/training-session/tests/test_compose_activation.py",
@@ -218,8 +299,8 @@
       }
     },
     "test_battery_summary": {
-      "focused_pytest_passed": 76,
-      "focused_smoke_and_unit_total": 82,
+      "total_pytest_and_unit_passed": 191,
+      "breakdown": "trl: 42, qlib: 29, vectorbt: 33, statsmodels: 31, finrl: 22, dspy: 3, imitation: 27, compose: 2, legacy_smoke: 2",
       "exit_code": 0
     }
   },
