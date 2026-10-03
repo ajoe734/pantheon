@@ -108,6 +108,7 @@ class WorkshopCanonicalOperations:
             raise CanonicalOperationError(
                 authority,
                 "canonical service URL is not configured",
+                status_code=503,
                 retryable=True,
             )
         return f"{base_url}/{path.lstrip('/')}"
@@ -127,8 +128,11 @@ class WorkshopCanonicalOperations:
             try:
                 return ResearchServiceClient(base_url=base_url)._call(method, path, payload)
             except ResearchCommandError as exc:
+                message = getattr(exc, "message", None) or str(exc)
                 raise CanonicalOperationError(
-                    authority, exc.message, status_code=exc.status_code,
+                    authority,
+                    message,
+                    status_code=exc.status_code,
                     retryable=exc.status_code >= 500 or exc.status_code == 429,
                 ) from exc
         url = self._url(base_url, path, authority)

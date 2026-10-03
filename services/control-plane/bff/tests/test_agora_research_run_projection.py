@@ -51,7 +51,20 @@ def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         records[run_id] = run
         return {"task": {"task_id": task_id}, "run": run}
 
+    def cancel_run(_self, run_id, **_kwargs):
+        if run_id not in records:
+            from services.control_plane.bff.agora.strategy_workshop.operations import CanonicalOperationError
+            raise CanonicalOperationError("research_orchestrator", "not found", status_code=404)
+        run = records[run_id]
+        if run.get("status") in ("completed", "rejected"):
+            from services.control_plane.bff.agora.strategy_workshop.operations import CanonicalOperationError
+            raise CanonicalOperationError("research_orchestrator", "conflict", status_code=409)
+        run["status"] = "canceled"
+        run["execution_status"] = "canceled"
+        return run
+
     monkeypatch.setattr(WorkshopCanonicalOperations, "dispatch_research_run", dispatch)
+    monkeypatch.setattr(WorkshopCanonicalOperations, "cancel_research_run", cancel_run)
     monkeypatch.setattr(WorkshopCanonicalOperations, "list_research_runs", lambda _self, **_kwargs: list(records.values()))
     monkeypatch.setattr(WorkshopCanonicalOperations, "get_research_run", lambda _self, run_id: records[run_id])
     monkeypatch.setattr(WorkshopCanonicalOperations, "get_research_artifacts", lambda _self, _run_id: [])
@@ -494,3 +507,209 @@ def test_route_get_research_run_provenance_validation(
     res10 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
     assert res10.status_code == 200
     assert res10.json()["provenance"] == "unavailable"
+
+
+def test_workshop_preserves_research_owner_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.control_plane.bff.research.client import ResearchServiceClient, ResearchCommandError
+    from services.control_plane.bff.agora.strategy_workshop.operations import (
+        WorkshopCanonicalOperations, CanonicalOperationError,
+    )
+
+    ops = WorkshopCanonicalOperations(research_base_url="http://research-owner.test")
+    for status_code, expected_retryable in [
+        (400, False),
+        (404, False),
+        (409, False),
+        (503, True),
+    ]:
+        def mock_call(*args, **kwargs):
+            raise ResearchCommandError(f"error with status {status_code}", status_code=status_code)
+
+        monkeypatch.setattr(ResearchServiceClient, "_call", mock_call)
+        with pytest.raises(CanonicalOperationError) as exc_info:
+            ops.cancel_research_run(f"run-{status_code}")
+        assert exc_info.value.status_code == status_code
+        assert exc_info.value.retryable is expected_retryable
+        assert f"error with status {status_code}" in str(exc_info.value)
+        assert exc_info.value.authority == "research_orchestrator"
+
+
+def test_mounted_cancel_owner_failure_preserves_nonterminal_and_allows_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.control_plane.bff.agora.strategy_workshop.operations import (
+        WorkshopCanonicalOperations, CanonicalOperationError,
+    )
+    client = _client(monkeypatch)
+    workshop_id = "ws-cancel-owner-fail"
+    created = _create_plan(client, workshop_id, "cancel-fail-create")
+    pid = created["data"]["plan_id"]
+    _approve_plan(client, pid, created["meta"]["etag"], "cancel-fail-approve")
+    approved = _get_plan(client, pid)
+    rid = _dispatch_plan(client, pid, approved["meta"]["etag"], "cancel-fail-dispatch")
+
+    should_fail = True
+
+    def flakey_cancel(_self, run_id, **kwargs):
+        if should_fail:
+            raise CanonicalOperationError("research_orchestrator", "owner unavailable", status_code=503)
+        client.owner_research_runs[run_id]["status"] = "canceled"
+        return client.owner_research_runs[run_id]
+
+    monkeypatch.setattr(WorkshopCanonicalOperations, "cancel_research_run", flakey_cancel)
+
+    # 1. Attempt cancel while owner is unavailable
+    fail_res = client.post(
+        f"/bff/agora/research-plans/{pid}/cancel",
+        headers=_headers("cancel-attempt-1", _get_plan(client, pid)["meta"]["etag"]),
+    )
+    assert fail_res.status_code == 503
+    readback = _get_plan(client, pid)
+    assert readback["data"]["status"] == "running"
+    assert client.owner_research_runs[rid]["status"] == "queued"
+
+    # 2. Owner recovers; retry cancel succeeds
+    should_fail = False
+    retry_res = client.post(
+        f"/bff/agora/research-plans/{pid}/cancel",
+        headers=_headers("cancel-attempt-2", readback["meta"]["etag"]),
+    )
+    assert retry_res.status_code == 200
+    final_readback = _get_plan(client, pid)
+    assert final_readback["data"]["status"] == "cancelled"
+    assert client.owner_research_runs[rid]["status"] == "canceled"
+
+    # 3. Redispatch is rejected
+    redispatch = client.post(
+        f"/bff/agora/research-plans/{pid}/runs",
+        headers=_headers("cancel-redispatch", final_readback["meta"]["etag"]),
+    )
+    assert redispatch.status_code == 409
+
+
+def test_mounted_cancel_unconfigured_owner_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch)
+    workshop_id = "ws-cancel-unconfigured"
+    created = _create_plan(client, workshop_id, "cancel-unconf-create")
+    pid = created["data"]["plan_id"]
+    _approve_plan(client, pid, created["meta"]["etag"], "cancel-unconf-approve")
+    approved = _get_plan(client, pid)
+    rid = _dispatch_plan(client, pid, approved["meta"]["etag"], "cancel-unconf-dispatch")
+
+    monkeypatch.delenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", raising=False)
+    monkeypatch.delenv("RESEARCH_ORCHESTRATOR_URL", raising=False)
+    monkeypatch.delenv("RESEARCH_ORCHESTRATOR_API_URL", raising=False)
+
+    res = client.post(
+        f"/bff/agora/research-plans/{pid}/cancel",
+        headers=_headers("cancel-unconf-req", _get_plan(client, pid)["meta"]["etag"]),
+    )
+    assert res.status_code == 503
+    assert res.json()["error"]["code"] in ("DEPENDENCY_UNAVAILABLE", "UPSTREAM_UNAVAILABLE")
+    readback = _get_plan(client, pid)
+    assert readback["data"]["status"] == "running"
+    assert client.owner_research_runs[rid]["status"] == "queued"
+
+
+def test_mounted_cancel_unavailable_owner_projection_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.control_plane.bff.agora.strategy_workshop.operations import (
+        WorkshopCanonicalOperations, CanonicalOperationError,
+    )
+    client = _client(monkeypatch)
+    workshop_id = "ws-cancel-unavail-proj"
+    created = _create_plan(client, workshop_id, "cancel-proj-create")
+    pid = created["data"]["plan_id"]
+    _approve_plan(client, pid, created["meta"]["etag"], "cancel-proj-approve")
+    approved = _get_plan(client, pid)
+    _dispatch_plan(client, pid, approved["meta"]["etag"], "cancel-proj-dispatch")
+
+    def broken_list(_self, **_kwargs):
+        raise CanonicalOperationError("research_orchestrator", "owner unreachable", status_code=503)
+
+    monkeypatch.setattr(WorkshopCanonicalOperations, "list_research_runs", broken_list)
+
+    res = client.post(
+        f"/bff/agora/research-plans/{pid}/cancel",
+        headers=_headers("cancel-proj-req", _get_plan(client, pid)["meta"]["etag"]),
+    )
+    assert res.status_code == 503
+    assert res.json()["error"]["code"] in ("DEPENDENCY_UNAVAILABLE", "UPSTREAM_UNAVAILABLE")
+
+
+def test_mounted_cancel_partial_failure_preserves_nonterminal_retryable_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.control_plane.bff.agora.strategy_workshop.operations import (
+        WorkshopCanonicalOperations, CanonicalOperationError,
+    )
+    client = _client(monkeypatch)
+    store = getattr(client, "router", None) and getattr(client.router, "research_store", None) or getattr(client, "app_instance", None) and getattr(client.app_instance, "research_store", None)
+    workshop_id = "ws-cancel-partial"
+    created = _create_plan(client, workshop_id, "cancel-partial-create")
+    pid = created["data"]["plan_id"]
+    _approve_plan(client, pid, created["meta"]["etag"], "cancel-partial-approve")
+    approved = _get_plan(client, pid)
+    rid1 = _dispatch_plan(client, pid, approved["meta"]["etag"], "cancel-partial-dispatch-1")
+
+    # Inject second run into store and owner
+    rid2 = "owner-run-2"
+    client.owner_research_runs[rid2] = {
+        "run_id": rid2,
+        "task_id": "owner-task-2",
+        "status": "running",
+        "execution_status": "running",
+        "outcome": "pending",
+        "stage_id": "stage-prototype-backtest",
+        "input_refs": [{"type": "research_plan", "id": pid}],
+        "created_at": "2026-10-03T00:00:00Z",
+    }
+    store.create_run({
+        "run_id": rid2,
+        "plan_id": pid,
+        "stage_id": "stage-prototype-backtest",
+        "stage_type": "prototype_backtest",
+        "execution_status": "running",
+        "tenant_id": "pantheon-dev",
+        "user_id": "agora-test-user",
+        "created_at": "2026-10-03T00:00:00Z",
+    })
+
+    # When cancelling, rid1 succeeds but rid2 fails
+    fail_rid2 = True
+
+    def partial_cancel(_self, run_id, **kwargs):
+        if run_id == rid2 and fail_rid2:
+            raise CanonicalOperationError("research_orchestrator", "run 2 timeout", status_code=504)
+        client.owner_research_runs[run_id]["status"] = "canceled"
+        return client.owner_research_runs[run_id]
+
+    monkeypatch.setattr(WorkshopCanonicalOperations, "cancel_research_run", partial_cancel)
+
+    readback_before = _get_plan(client, pid)
+    res = client.post(
+        f"/bff/agora/research-plans/{pid}/cancel",
+        headers=_headers("cancel-partial-req-1", readback_before["meta"]["etag"]),
+    )
+    assert res.status_code == 504
+    # Plan remains nonterminal (running)
+    readback_mid = _get_plan(client, pid)
+    assert readback_mid["data"]["status"] == "running"
+    # Run 1 was cancelled locally and on owner
+    assert client.owner_research_runs[rid1]["status"] == "canceled"
+    run1_local = store.get_run(rid1)
+    assert run1_local["execution_status"] == "cancelled"
+    # Run 2 is still running
+    assert client.owner_research_runs[rid2]["status"] == "running"
+
+    # Now owner recovers on rid2, retry succeeds
+    fail_rid2 = False
+    retry_res = client.post(
+        f"/bff/agora/research-plans/{pid}/cancel",
+        headers=_headers("cancel-partial-req-2", readback_mid["meta"]["etag"]),
+    )
+    assert retry_res.status_code == 200
+    readback_after = _get_plan(client, pid)
+    assert readback_after["data"]["status"] == "cancelled"
+    assert client.owner_research_runs[rid2]["status"] == "canceled"

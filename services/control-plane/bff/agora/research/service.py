@@ -387,6 +387,38 @@ class AgoraResearchService:
         )
         return {"plan_id": plan_id, "status": "approved", "lock_version": new_version}
 
+    def _mark_local_runs_cancelled(
+        self,
+        plan_id: str,
+        scope: Any,
+        run_ids: Set[str],
+        *,
+        user_id: Optional[str] = None,
+    ) -> None:
+        if not run_ids or not hasattr(self.store, "list_runs_for_plan") or not hasattr(self.store, "update_run"):
+            return
+        now = self.utc_now()
+        target_user = user_id or getattr(scope, "user_id", None)
+        for local_run in self.store.list_runs_for_plan(plan_id, tenant_id=scope.tenant_id, user_id=target_user):
+            rid = str(local_run.get("run_id") or local_run.get("id") or "")
+            if rid in run_ids:
+                self.store.update_run(
+                    rid,
+                    {
+                        "execution_status": "cancelled",
+                        "progress": {
+                            **(local_run.get("progress") or {}),
+                            "phase": "cancelled",
+                            "message": "Run cancelled on owner",
+                            "updated_at": now,
+                        },
+                        "completed_at": now,
+                        "updated_at": now,
+                    },
+                    tenant_id=scope.tenant_id,
+                    user_id=target_user,
+                )
+
     def cancel_plan(
         self,
         plan_id: str,
@@ -403,6 +435,77 @@ class AgoraResearchService:
                 f"Plan in status '{plan['status']}' cannot be cancelled",
                 f"cancellable statuses: {sorted(cancellable)}",
             )
+        active_statuses = {"running", "queued", "pending", "dispatched"}
+        local_runs = (
+            self.store.list_runs_for_plan(plan_id, tenant_id=scope.tenant_id, user_id=plan.get("user_id"))
+            if hasattr(self.store, "list_runs_for_plan")
+            else []
+        )
+        active_run_ids = set()
+        for local_run in local_runs:
+            if str(local_run.get("execution_status") or "").lower() in active_statuses:
+                rid = str(local_run.get("run_id") or local_run.get("id") or "")
+                if rid:
+                    active_run_ids.add(rid)
+
+        r_url = resolve_orchestrator_base_url()
+        if not r_url and (active_run_ids or plan.get("status") == "running"):
+            raise self.bff_error(
+                503,
+                self._error_code("UPSTREAM_UNAVAILABLE"),
+                "Research execution owner is unconfigured or unavailable; plan cancellation cannot be processed locally",
+                plan_id,
+            )
+
+        if r_url:
+            owner_records = self._owner_run_records(plan, scope)
+            if owner_records is None and plan.get("status") == "running":
+                raise self.bff_error(
+                    503,
+                    self._error_code("UPSTREAM_UNAVAILABLE"),
+                    "Research execution owner is unavailable; running plan cancellation cannot be verified",
+                    plan_id,
+                )
+            if owner_records:
+                for rec in owner_records:
+                    rec_status = str(rec.get("status") or "").lower()
+                    if rec_status in active_statuses:
+                        rid = str(rec.get("run_id") or rec.get("id") or "")
+                        if rid:
+                            active_run_ids.add(rid)
+
+        cancelled_run_ids = set()
+        if r_url and active_run_ids:
+            from services.control_plane.bff.agora.strategy_workshop.operations import (
+                WorkshopCanonicalOperations,
+                CanonicalOperationError,
+            )
+            owner_ops = WorkshopCanonicalOperations(research_base_url=r_url)
+            for rid in sorted(active_run_ids):
+                try:
+                    owner_ops.cancel_research_run(rid)
+                    cancelled_run_ids.add(rid)
+                except CanonicalOperationError as exc:
+                    self._mark_local_runs_cancelled(plan_id, scope, cancelled_run_ids, user_id=plan.get("user_id"))
+                    status_code = exc.status_code if exc.status_code and exc.status_code >= 400 else 503
+                    err_code = "RESOURCE_NOT_FOUND" if status_code == 404 else (
+                        "RESOURCE_CONFLICT" if status_code == 409 else "UPSTREAM_UNAVAILABLE"
+                    )
+                    raise self.bff_error(
+                        status_code,
+                        self._error_code(err_code),
+                        f"Failed to cancel owner run {rid}: {exc.reason}",
+                        plan_id,
+                    ) from exc
+                except Exception as exc:
+                    self._mark_local_runs_cancelled(plan_id, scope, cancelled_run_ids, user_id=plan.get("user_id"))
+                    raise self.bff_error(
+                        503,
+                        self._error_code("UPSTREAM_UNAVAILABLE"),
+                        f"Failed to cancel owner run {rid}: {exc}",
+                        plan_id,
+                    ) from exc
+
         now = self.utc_now()
         new_version = plan.get("lock_version", 1) + 1
         self.store.update_plan(
@@ -415,37 +518,9 @@ class AgoraResearchService:
             tenant_id=scope.tenant_id,
             user_id=plan.get("user_id"),
         )
-        r_url = resolve_orchestrator_base_url()
-        if r_url:
-            from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
-            owner_ops = WorkshopCanonicalOperations(research_base_url=r_url)
-            owner_records = self._owner_run_records(plan, scope)
-            active_statuses = {"running", "queued", "pending", "dispatched"}
-            cancelled_run_ids = set()
-            if owner_records:
-                for rec in owner_records:
-                    rec_status = str(rec.get("status") or "").lower()
-                    if rec_status in active_statuses:
-                        rid = str(rec.get("run_id") or rec.get("id") or "")
-                        if rid and rid not in cancelled_run_ids:
-                            try:
-                                owner_ops.cancel_research_run(rid)
-                                cancelled_run_ids.add(rid)
-                            except Exception as exc:
-                                log.warning("Failed to cancel owner run %s for plan %s: %s", rid, plan_id, exc)
-            if hasattr(self.store, "list_runs_for_plan"):
-                for local_run in self.store.list_runs_for_plan(plan_id, tenant_id=scope.tenant_id, user_id=plan.get("user_id")):
-                    if str(local_run.get("execution_status") or "").lower() in active_statuses:
-                        rid = str(local_run.get("run_id") or local_run.get("id") or "")
-                        if rid and rid not in cancelled_run_ids:
-                            try:
-                                owner_ops.cancel_research_run(rid)
-                                cancelled_run_ids.add(rid)
-                            except Exception as exc:
-                                pass
         if hasattr(self.store, "list_runs_for_plan") and hasattr(self.store, "update_run"):
             for local_run in self.store.list_runs_for_plan(plan_id, tenant_id=scope.tenant_id, user_id=plan.get("user_id")):
-                if str(local_run.get("execution_status") or "").lower() in {"running", "queued", "pending", "dispatched"}:
+                if str(local_run.get("execution_status") or "").lower() in active_statuses:
                     rid = str(local_run.get("run_id") or local_run.get("id") or "")
                     if rid:
                         self.store.update_run(
