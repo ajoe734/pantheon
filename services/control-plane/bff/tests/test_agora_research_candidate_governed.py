@@ -980,6 +980,37 @@ def test_bff_plan_projects_all_owner_roots_and_terminal_state(monkeypatch: pytes
     assert len(_wait_owner_plan_runs(owner_client, plan_id, 2)) == 2
 
 
+def test_unknown_dataset_fails_closed_on_public_plan_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    client = _client(monkeypatch)
+    created = client.post(
+        "/bff/agora/workshops/ws-unknown-dataset/research-plans",
+        headers=_headers(idempotency_key="unknown-dataset-create"),
+        json={
+            "spec_version": "1.0", "strategy_id": "unknown-dataset-strategy",
+            "strategy_spec_registry_id": "unknown-dataset-registry",
+            "stages": [{
+                "stage_id": "unknown-dataset-stage", "stage_type": "prototype_backtest",
+                "status": "ready", "input_refs": ["dataset:does-not-exist"],
+                "routing": {"backend_mode": "real", "preferred_backend": "vectorbt"},
+            }],
+        },
+    )
+    assert created.status_code == 201, created.text
+    plan_id = created.json()["data"]["plan_id"]
+    approved = client.post(
+        f"/bff/agora/research-plans/{plan_id}/approve",
+        headers=_headers(idempotency_key="unknown-dataset-approve", if_match=created.json()["meta"]["etag"]),
+    )
+    assert approved.status_code == 200, approved.text
+    dispatched = client.post(
+        f"/bff/agora/research-plans/{plan_id}/runs",
+        headers=_headers(idempotency_key="unknown-dataset-dispatch", if_match=approved.json()["meta"]["etag"]),
+    )
+    assert dispatched.status_code == 503, dispatched.text
+    assert dispatched.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+
 def test_governed_dataset_reference_dispatch_to_research_owner(monkeypatch: pytest.MonkeyPatch) -> None:
     """Validate plan dispatch with input_refs dataset reference (no inline dataset) resolves and executes autonomously to completion."""
     from agora.dataset_extraction.models import DatasetRecord, DatasetKind, InteractionKind

@@ -540,6 +540,19 @@ class AgoraResearchService:
                 log.warning("Failed to resolve governed dataset for plan %s: %s", plan_id, exc)
                 resolved_ds = None
 
+        has_dataset_reference = any(
+            (isinstance(ref, str) and ref.startswith("dataset:"))
+            or (isinstance(ref, dict) and ref.get("type") == "dataset" and ref.get("id"))
+            for ref in dispatch_stage.get("input_refs") or []
+        )
+        if has_dataset_reference and not resolved_ds:
+            raise self.bff_error(
+                503,
+                self._error_code("DEPENDENCY_UNAVAILABLE"),
+                "The referenced governed research dataset is unavailable",
+                plan_id,
+            )
+
         dispatch_stage_payload = dict(dispatch_stage)
         if resolved_ds and "dataset" not in dispatch_stage_payload:
             dispatch_stage_payload["dataset"] = resolved_ds

@@ -135,6 +135,14 @@ def resolve_run_provenance(
     run_prov = str(run.get("provenance") or "").lower().strip()
     if run_prov and run_prov in VALID_PROVENANCE_VALUES and run_prov != receipt_mode:
         return "unavailable", None
+    metrics = run.get("metrics") or []
+    if isinstance(metrics, list) and any(
+        isinstance(metric, dict)
+        and str(metric.get("provenance") or "").lower().strip() in VALID_PROVENANCE_VALUES
+        and str(metric.get("provenance") or "").lower().strip() != receipt_mode
+        for metric in metrics
+    ):
+        return "unavailable", None
 
     if expected_correlation_id is not None:
         if correlation_id != str(expected_correlation_id).strip():

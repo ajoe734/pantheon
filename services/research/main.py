@@ -2069,6 +2069,8 @@ def execute_research_stage(
         or (run_record.get("dispatch_mode") if run_record else "")
         or ""
     ).lower().strip()
+    if req_mode and req_mode not in {"real", "simulation", "fixture", "stub", "offline"}:
+        raise HTTPException(status_code=400, detail=f"Unknown research execution mode '{req_mode}'")
 
     if backend_name == "vectorbt" or stage_type == "prototype_backtest":
         try:

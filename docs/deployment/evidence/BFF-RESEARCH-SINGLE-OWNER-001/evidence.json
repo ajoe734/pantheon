@@ -4,30 +4,34 @@
   "independent_review": "pending; bind the refreshed manifest to the exact PR head during handoff",
   "hosted_track": "external_wait per Human/Ops 2026-10-01 decision; no hosted probes performed",
   "design_items": {
-    "D1": "services/research/main.py:367, 1042-1157; durable queued runs execute off-request, one latest-attempt/dependency progression schedules all roots and joins, startup requeues interrupted running attempts. services/research/store.py serializes and atomically replaces file-backed records.",
-    "D2": "Retired by anchor 3deb0fd30: removed duplicate BFF ResearchDispatcher wiring, unused interaction-worker registry/dispatcher dependencies, and tests that only covered the deleted stack.",
-    "D3": "services/control-plane/bff/research/client.py:38-175 is the shared ResearchServiceClient HTTP transport; WorkshopCanonicalOperations delegates its default research-owner requests to it, and ResearchCommandsPort delegates its default POST transport to it.",
-    "D4": "services/control-plane/bff/agora/research/service.py:207-283, 400-424 reads owner runs to project complete plan stages/status and run lists; mounted multi-root test clears BFF run cache, preserves plan/stage identities, verifies terminal readback, and repeats dispatch without duplicating owner effects.",
-    "D5": "Reverted statement joining introduced by 69f5b5a05 in services/research/main.py and BFF research/client, service, and workshop operations code; retained ordinary multi-line formatting."
+    "D1": "services/research/main.py:367, 1042-1157 validates execution modes before backend selection; durable runs execute off-request and latest attempt/dependency progression schedules roots and joins. File-backed records survive restart.",
+    "D2": "Removed duplicate BFF ResearchDispatcher wiring and research-outbox worker ownership. Retained persona interaction worker launcher and restored its six healthcheck/help/persona-client regressions.",
+    "D3": "services/control-plane/bff/research/client.py is the shared ResearchServiceClient transport for workshop and command-port owner requests.",
+    "D4": "services/control-plane/bff/agora/research/service.py rejects unresolved governed dataset references before owner dispatch. Owner run sets project complete plan stages/status and run lists; mounted multi-root test clears BFF run cache, preserves identities, verifies terminal readback and idempotent repeated dispatch.",
+    "D5": "Receipt resolution now fails closed on receipt/run/metric provenance mismatch and missing or malformed completed_at. Owner execution tests prove stub output remains simulation and unknown modes cannot be dispatched as real."
   },
   "validation": [
     {
-      "command": "research single-owner route tests using the isolated venv",
-      "result": "13 passed; covers multi-root/fan-in, failed predecessor retry then successor, restart recovery without replaying completed predecessor, and dispatch returning while slow execution is running"
+      "command": "~/pantheon-ci-deploy/runtime/research-test-python/20261003-f9fd19209/bin/python3 -m pytest -q services/research/tests/test_research_single_owner_routes.py",
+      "result": "14 passed; includes failed-stage retry then downstream completion, restart recovery without replaying completed predecessors, multi-root/fan-in and dispatch returning before slow execution ends"
     },
     {
-      "command": "research HTTP service, single-owner routes, BFF job action receipts, research knowledge source ports, and approval-role tests using the isolated venv",
-      "result": "118 passed"
+      "command": "~/pantheon-ci-deploy/runtime/research-test-python/20261003-f9fd19209/bin/python3 -m pytest -q services/research/tests/test_research_orchestrator_http_service.py",
+      "result": "21 passed"
     },
     {
-      "command": "BFF test_agora_research_candidate_governed.py using the isolated venv",
-      "result": "12 passed; includes mounted create/approve/multi-root dispatch, BFF run-cache clearing, owner-backed plan/run readback, repeat dispatch, and async end-to-end owner completion"
+      "command": "~/pantheon-ci-deploy/runtime/research-test-python/20261003-f9fd19209/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_research_receipt_provenance.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/agora/research/test_approval_roles.py scripts/test_run_agora_interaction_worker.py",
+      "result": "99 passed, 1 skipped; candidate provenance/trust negatives, artifact binding/digest, missing identities, dataset owner restart, unknown public dispatch, mounted multi-root projection/restart and persona launcher regressions"
+    },
+    {
+      "command": "Broader nine-file BFF/research exploratory batch with the same isolated interpreter",
+      "result": "186 passed, 6 failed; the failures were 4 pre-existing unrelated BFF composition/router assertions, one alternate-import-path test, and one shared-store interaction in the combined research batch. The corrected scoped suites passed in the separate bounded batches above; this exploratory batch is not counted as passed."
     },
     {
       "command": "git diff --check; python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget 0",
-      "result": "both passed; production +1366/-1823 = net -457; tests +1171/-3791 = net -2620; docs/evidence +110 lines"
+      "result": "both passed; committed PR diff production +1366/-1823 net -457 (below zero), BFF production decreases; tests +1171/-3791 before restored untracked tests; docs/evidence +110 lines before refreshed manifest"
     }
   ],
-  "suite_note": "The historical eight-file manifest run (184 passed, 1 skipped) was verified on prior head 38141ba6f only. Two files in that command were deliberately removed under D2; on this head all retained manifest files passed in separate bounded batches (130 passed total). A combined six-file rerun reached its 180-second timeout and is not counted as passed. No claim is made that the removed tests ran on this head.",
-  "scope": "Changes remain within the declared task artifacts; the task branch commits include D2 and D1/D3/D4 implementation anchors."
+  "suite_note": "The retained test functions from the deleted chain file were migrated into services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py; research receipt and owner provenance controls are in test_research_receipt_provenance.py and test_research_single_owner_routes.py. Deleted-stack-only cases are enumerated in the exact-head handoff message. Hosted acceptance remains external_wait; no hosted probes performed.",
+  "scope": "Source and local isolated functional evidence only; no hosted deployment, hosted probe, or real capital action is claimed."
 }

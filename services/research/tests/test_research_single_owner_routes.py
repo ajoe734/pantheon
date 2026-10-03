@@ -521,6 +521,30 @@ def test_retry_run_executes_backend_and_produces_artifacts(client: TestClient) -
     assert latest_by_stage["s2"]["parent_run_id"] == retried_data["run_id"]
 
 
+def test_stage_owner_keeps_stub_output_simulation_and_rejects_unknown_mode(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "stub")
+    stage = {"stage_id": "provenance-stage", "stage_type": "prototype_backtest"}
+    plan = {"plan_id": "provenance-plan", "dataset": _valid_multimodal_dataset()}
+    result = research_main.execute_research_stage("prototype_backtest", {
+        "stage": stage, "plan": plan, "dataset": plan["dataset"],
+        "run_id": "provenance-stub-run", "correlation_id": "provenance-stub-correlation",
+        "requested_mode": "stub",
+    })
+    assert result["provenance"] == "simulation"
+    assert result["receipt"]["mode"] == "simulation"
+
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    with pytest.raises(Exception) as exc_info:
+        research_main.execute_research_stage("prototype_backtest", {
+            "stage": stage, "plan": plan, "dataset": plan["dataset"],
+            "run_id": "provenance-unknown-run", "correlation_id": "provenance-unknown-correlation",
+            "requested_mode": "unrecognized-mode",
+        })
+    assert getattr(exc_info.value, "status_code", None) == 400
+
+
 def test_bff_import_does_not_initialize_research_store() -> None:
     import subprocess
     import sys
