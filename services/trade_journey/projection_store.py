@@ -428,13 +428,44 @@ class ProjectionStore:
                 f"ProjectionStore connection to database timed out after {self.connect_timeout_seconds}s"
             )
 
-    def bootstrap_schema(self) -> None:
+    def bootstrap_schema(self, *, runtime_role: str | None = None) -> None:
         """Apply the versioned migration explicitly with migration credentials."""
 
         sql = INITIAL_MIGRATION_PATH.read_text(encoding="utf-8")
         sql = sql.replace(DEFAULT_PROJECTION_SCHEMA, self.schema)
         with self._connect_db() as conn, conn.cursor() as cur:
+            if runtime_role is not None:
+                # Refuse elevated runtime identities before any DDL or grants.
+                cur.execute(
+                    "SELECT rolsuper, rolcreaterole FROM pg_roles WHERE rolname=%s",
+                    (runtime_role,),
+                )
+                role = cur.fetchone()
+                if role is None or any(role):
+                    raise ValueError("Projection runtime must be an existing non-admin role")
             cur.execute(sql)
+            if runtime_role is not None:
+                from psycopg import sql as pgsql
+
+                cur.execute(
+                    "SELECT has_schema_privilege(%s, n.oid, 'CREATE') OR "
+                    "pg_has_role(%s, n.nspowner, 'MEMBER') OR EXISTS ("
+                    "SELECT 1 FROM pg_class c WHERE c.relnamespace=n.oid "
+                    "AND pg_has_role(%s, c.relowner, 'MEMBER')) "
+                    "FROM pg_namespace n WHERE n.nspname=%s",
+                    (runtime_role, runtime_role, runtime_role, self.schema),
+                )
+                if cur.fetchone()[0]:
+                    raise ValueError("Projection runtime must not hold schema/table DDL authority")
+                cur.execute(pgsql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                    pgsql.Identifier(self.schema), pgsql.Identifier(runtime_role)
+                ))
+                for table in ("controller", "event_receipts", "identity_links", "journeys",
+                              "journey_stages", "loop_runs", "quarantine"):
+                    cur.execute(pgsql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON {}.{} TO {}").format(
+                        pgsql.Identifier(self.schema), pgsql.Identifier(table),
+                        pgsql.Identifier(runtime_role),
+                    ))
 
     def get_controller_state(
         self, controller_id: str, tenant_scope: str, environment_scope: str

@@ -50,18 +50,37 @@ def _sync_fetch(source: PostgresLifecycleSource):
     return fetch
 
 
+def bootstrap_projection(dsn: str, schema: str, runtime_dsn: str, runtime_schema: str) -> None:
+    """Initialize only the runtime's exact database/schema using separate DDL authority."""
+    import psycopg
+
+    if schema != runtime_schema or not runtime_dsn:
+        raise ValueError("Bootstrap requires the exact runtime DSN and schema")
+    identity_sql = "SELECT current_database(), inet_server_addr(), inet_server_port(), current_user"
+    with psycopg.connect(runtime_dsn, connect_timeout=10) as runtime:
+        runtime_identity = runtime.execute(identity_sql).fetchone()
+    with psycopg.connect(dsn, connect_timeout=10) as migration:
+        migration_identity = migration.execute(identity_sql).fetchone()
+    if runtime_identity[:3] != migration_identity[:3] or runtime_identity[3] == migration_identity[3]:
+        raise ValueError("Bootstrap requires the same database and separate migration authority")
+    ProjectionStore(dsn, schema=schema).bootstrap_schema(runtime_role=runtime_identity[3])
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dsn", default=os.getenv("LIFECYCLE_PROJECTION_DSN", ""))
     parser.add_argument(
-        "--schema", default=os.getenv("LIFECYCLE_PROJECTION_SCHEMA", "trade_journey_projection")
+        "--schema", default=os.getenv("LIFECYCLE_PROJECTION_SCHEMA", os.getenv(
+            "LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA", "trade_journey_projection"))
     )
-    parser.add_argument("--controller-id", required=True, help="the live controller id this job backfills for")
+    parser.add_argument("--bootstrap-only", action="store_true", help="initialize schema/grants; do not backfill")
+    parser.add_argument("--runtime-dsn", default=os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_DSN", ""))
+    parser.add_argument("--controller-id", help="the live controller id this job backfills for")
     parser.add_argument("--tenant-scope", default="")
     parser.add_argument("--environment-scope", default="")
     parser.add_argument("--batch-size", type=int, default=500)
     parser.add_argument("--max-batches", type=int, default=None)
-    parser.add_argument("--snapshot-path", type=Path, required=True)
+    parser.add_argument("--snapshot-path", type=Path)
     parser.add_argument("--deployment-sha", default=os.getenv("GIT_SHA", "unknown"))
     parser.add_argument("--evidence-out", type=Path, default=None)
     parser.add_argument(
@@ -90,6 +109,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if not args.dsn:
         parser.error("--dsn or LIFECYCLE_PROJECTION_DSN is required")
+
+    if args.bootstrap_only:
+        if args.controller_id or args.snapshot_path or args.legacy_controller_state:
+            parser.error("--bootstrap-only cannot be combined with backfill inputs")
+        bootstrap_projection(args.dsn, args.schema, args.runtime_dsn, os.getenv(
+            "LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA", "trade_journey_projection"))
+        print(json.dumps({"bootstrap": "complete", "schema": args.schema}))
+        return 0
+    if not args.controller_id or args.snapshot_path is None:
+        parser.error("--controller-id and --snapshot-path are required for backfill")
 
     store = ProjectionStore(args.dsn, schema=args.schema)
     if args.legacy_controller_state is not None:
