@@ -684,7 +684,7 @@ def test_dev_deploy_validates_deadline_configuration_negative(
     assert "DEV_DEPLOY_DEADLINE_SECONDS must be a positive integer" in result.stderr
 
 
-def test_dev_deploy_ssh_command_terminates_process_group_on_deadline(
+def test_dev_deploy_guarded_ssh_terminates_transport_on_deadline(
     tmp_path: Path,
 ) -> None:
     # Worktree checkout permissions may be group-writable; the transport accepts
@@ -705,7 +705,7 @@ def test_dev_deploy_ssh_command_terminates_process_group_on_deadline(
     mock_ssh.write_text(
         f"#!/usr/bin/env bash\n"
         f"echo $$ > '{pid_file}'\n"
-        f"sleep 30\n",
+        f"exec sleep 30\n",
         encoding="utf-8",
     )
     mock_ssh.chmod(0o755)
@@ -2755,130 +2755,67 @@ def test_dev_inner_rollback_uses_sealed_artifacts_even_for_same_source(
     assert log.read_text().splitlines() == [operation]
 
 
-def test_dev_deploy_built_image_identity_matches_requested_sha_including_baseline_compensation(tmp_path: Path) -> None:
-    """Executable regression proving that candidate image prebuilds in deploy_nonprod_vm.sh
-    bind the requested PANTHEON_DEPLOY_SHA into GIT_SHA build args for operator-bff and
-    lifecycle projector, that the subsequent rollout executes without --build using the
-    correctly stamped image identity, and that baseline compensation restores the exact baseline SHA."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    docker_log = tmp_path / "docker_invocations.log"
-    image_state_dir = tmp_path / "image_state"
-    image_state_dir.mkdir(parents=True, exist_ok=True)
+def _run_bff_candidate(tmp_path: Path, *, fail_bootstrap: bool = False,
+                       acked: bool = True, source: str | None = None):
+    """Execute the checked-in BFF arm and helpers; stub only external operations.
 
-    mock_docker = bin_dir / "docker"
-    mock_docker.write_text(
-        f"""#!/usr/bin/env bash
-set -euo pipefail
-log_file="{docker_log}"
-state_dir="{image_state_dir}"
-
-if [[ "$1" == "compose" ]]; then
-  shift
-  while [[ $# -gt 0 && "$1" =~ ^- ]]; do
-    if [[ "$1" == "-p" || "$1" == "-f" ]]; then
-      shift 2
-    else
-      shift 1
-    fi
-  done
-  subcmd="${{1:-}}"
-  shift || true
-
-  if [[ "$subcmd" == "build" ]]; then
-    services=()
-    while [[ $# -gt 0 && ! "$1" =~ ^- ]]; do
-      services+=("$1")
-      shift
-    done
-    if [[ ${{#services[@]}} -eq 0 ]]; then
-      services=("operator-bff" "loop-run-projector-scheduler")
-    fi
-    git_sha="${{GIT_SHA:-unknown}}"
-    echo "BUILD git_sha=${{git_sha}} services=${{services[*]}}" >> "$log_file"
-    for s in "${{services[@]}}"; do
-      echo "${{git_sha}}" > "${{state_dir}}/${{s}}.sha"
-    done
-  elif [[ "$subcmd" == "up" ]]; then
-    has_build_flag=false
-    services=()
-    while [[ $# -gt 0 ]]; do
-      if [[ "$1" == "--build" ]]; then
-        has_build_flag=true
-      elif [[ ! "$1" =~ ^- ]]; then
-        services+=("$1")
-      fi
-      shift
-    done
-    if [[ ${{#services[@]}} -eq 0 ]]; then
-      services=("operator-bff" "loop-run-projector-scheduler")
-    fi
-    for s in "${{services[@]}}"; do
-      built_sha="$(cat "${{state_dir}}/${{s}}.sha" 2>/dev/null || echo "none")"
-      echo "UP has_build_flag=${{has_build_flag}} service=${{s}} image_sha=${{built_sha}}" >> "$log_file"
-    done
-  fi
-fi
-exit 0
-""",
-        encoding="utf-8",
-    )
-    mock_docker.chmod(0o755)
-
-    # 1. Candidate BFF deploy path: verify build receives target SHA and up runs without --build
-    candidate_sha = "c" * 40
-    bff_deploy_snippet = f"""
-    export PANTHEON_DEPLOY_COMPONENT=bff
-    export PANTHEON_DEPLOY_SHA="{candidate_sha}"
-    export PATH="{bin_dir}:$PATH"
-
-    export GIT_SHA="${{PANTHEON_DEPLOY_SHA}}"
-    COMPOSE_BAKE=false \\
-    COMPOSE_PROFILES="" \\
-    GIT_SHA="${{PANTHEON_DEPLOY_SHA}}" \\
-    BUILD_TIME="2026-08-24T00:00:00Z" \\
-      docker compose -p pantheon -f docker-compose.yml build operator-bff loop-run-projector-scheduler
-
-    COMPOSE_BAKE=false \\
-    COMPOSE_PROFILES="" \\
-    GIT_SHA="${{PANTHEON_DEPLOY_SHA}}" \\
-    BUILD_TIME="2026-08-24T00:00:00Z" \\
-    PANTHEON_ENV=dev \\
-      docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff loop-run-projector-scheduler
+    Sealed override bytes/identity are independently covered by the driver suite.
+    This harness proves shell ordering, env forwarding and failure propagation.
     """
-    subprocess.run(["bash", "-euo", "pipefail", "-c", bff_deploy_snippet], capture_output=True, text=True, check=True)
-    logs = docker_log.read_text(encoding="utf-8").strip().splitlines()
-    assert f"BUILD git_sha={candidate_sha} services=operator-bff loop-run-projector-scheduler" in logs[0]
-    assert f"UP has_build_flag=false service=operator-bff image_sha={candidate_sha}" in logs[1]
-    assert f"UP has_build_flag=false service=loop-run-projector-scheduler image_sha={candidate_sha}" in logs[2]
+    source = source or DEPLOY.read_text()
+    def function(name):
+        start = source.index(name + "() {\n")
+        return source[start:source.index("\n}\n", start) + 3]
+    block = source.split("\n  bff)", 1)[1].split("\n  exec)", 1)[0].rsplit(";;", 1)[0]
+    helpers = "\n".join(function(name) for name in (
+        "with_dev_bff_runtime_env", "run_dev_candidate_compose", "bootstrap_dev_lifecycle_projection"))
+    env = {**os.environ, **dict.fromkeys(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", helpers + block), "")}
+    env.update({"PANTHEON_DEPLOY_SHA": "c" * 40,
+                "PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS": "317",
+                "PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_OVERRIDE_PATH": "/isolated/sealed-images.json",
+                "DEV_CANDIDATE_RECEIPT_ACKED": str(acked).lower()})
+    log = tmp_path / "compose.log"
+    stubs = "\n".join(name + '() { :; }' for name in (
+        "snapshot_remote_state", "prepare_deploy_worktree", "prepare_dev_paper_principals",
+        "seal_dev_candidate_images", "start_dev_paper_principal_issuer",
+        "cleanup_stale_compose_replacement_containers", "wait_for_exact_bff_lifecycle_readiness",
+        "assert_bff_source_sha", "assert_bff_auth_gate", "assert_ppl_alloc_009_dev_proof_gate",
+        "ensure_dev_caddy_ingress", "verify_exact_component_deployment",
+        "validate_dev_candidate_override", "dump_dev_root_failure_diagnostics", "info"))
+    docker = f'''docker() {{
+      printf '%s|%s|%s\\n' "$*" "${{GIT_SHA:-}}" "${{LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-}}" >> "{log}"
+      if [[ "$*" == *"config --format json"* ]]; then echo '{{}}'; fi
+      if [[ "$*" == *"--bootstrap-only"* ]]; then cat >/dev/null; return {int(fail_bootstrap)}; fi
+    }}
+    curl() {{ echo '{{"source_commit_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'; }}
+    rollback_dev_bff_on_failure() {{ echo "rollback:$1" >> "{log}"; exit 1; }}
+    DEV_PAPER_ISSUER_BUILD_TARGETS=()
+'''
+    result = subprocess.run(["bash", "-euo", "pipefail", "-c", stubs + "\n" + helpers + "\n" + docker + block],
+                            env=env, capture_output=True, text=True, timeout=10)
+    return result, log.read_text().splitlines()
 
-    # 2. Baseline compensation deploy path: verify baseline compensation prebuilds and rolls out baseline SHA
-    docker_log.unlink()
-    baseline_sha = "1" * 40
-    compensation_deploy_snippet = f"""
-    export PANTHEON_DEPLOY_COMPONENT=bff
-    export PANTHEON_DEPLOY_SHA="{baseline_sha}"
-    export PATH="{bin_dir}:$PATH"
 
-    export GIT_SHA="${{PANTHEON_DEPLOY_SHA}}"
-    COMPOSE_BAKE=false \\
-    COMPOSE_PROFILES="" \\
-    GIT_SHA="${{PANTHEON_DEPLOY_SHA}}" \\
-    BUILD_TIME="2026-08-24T00:00:00Z" \\
-      docker compose -p pantheon -f docker-compose.yml build operator-bff loop-run-projector-scheduler
+def test_dev_deploy_built_image_identity_matches_requested_sha(tmp_path: Path) -> None:
+    result, calls = _run_bff_candidate(tmp_path)
+    assert result.returncode == 0, result.stderr
+    build = next(row for row in calls if " build " in row)
+    bootstrap = next(row for row in calls if "--bootstrap-only" in row)
+    up = next(row for row in calls if "--force-recreate" in row)
+    assert calls.index(build) < calls.index(bootstrap) < calls.index(up)
+    assert build.endswith("|" + "c" * 40 + "|")
+    assert up.endswith("|" + "c" * 40 + "|317")
+    assert "-f /isolated/sealed-images.json" in bootstrap and "-f /isolated/sealed-images.json" in up
+    assert "--build" not in up
 
-    COMPOSE_BAKE=false \\
-    COMPOSE_PROFILES="" \\
-    GIT_SHA="${{PANTHEON_DEPLOY_SHA}}" \\
-    BUILD_TIME="2026-08-24T00:00:00Z" \\
-    PANTHEON_ENV=dev \\
-      docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff loop-run-projector-scheduler
-    """
-    subprocess.run(["bash", "-euo", "pipefail", "-c", compensation_deploy_snippet], capture_output=True, text=True, check=True)
-    logs = docker_log.read_text(encoding="utf-8").strip().splitlines()
-    assert f"BUILD git_sha={baseline_sha} services=operator-bff loop-run-projector-scheduler" in logs[0]
-    assert f"UP has_build_flag=false service=operator-bff image_sha={baseline_sha}" in logs[1]
-    assert f"UP has_build_flag=false service=loop-run-projector-scheduler image_sha={baseline_sha}" in logs[2]
+
+@pytest.mark.parametrize("failure", ["bootstrap", "receipt_ack"])
+def test_bff_candidate_failure_prevents_runtime_start(tmp_path: Path, failure: str) -> None:
+    result, calls = _run_bff_candidate(tmp_path, fail_bootstrap=failure == "bootstrap",
+                                       acked=failure != "receipt_ack")
+    assert result.returncode == 1
+    assert calls[-1] == "rollback:projection_bootstrap"
+    assert not any("--force-recreate" in row for row in calls)
 
 
 def test_dev_root_deploy_stale_compose_replacement_cleanup_defined_and_invoked() -> None:
@@ -3035,3 +2972,68 @@ def test_cleanup_stale_compose_replacement_containers_handles_empty_and_missing_
     """
     res2 = subprocess.run(["bash", "-euo", "pipefail", "-c", test_no_docker], capture_output=True, text=True, check=True)
     assert "docker command unavailable" in res2.stdout
+
+
+@pytest.mark.parametrize("field", [
+    "PANTHEON_DEV_ARTIFACT_BASELINE_FILE", "PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256",
+    "PANTHEON_DEV_ARTIFACT_CANDIDATE_RECEIPT_FILE",
+    "PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256",
+    "PANTHEON_RELEASE_CANDIDATE_ID", "PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA",
+])
+def test_compensation_missing_sealed_authority_cannot_acquire_lease(tmp_path, field):
+    env, invocations, _ = _setup_mock_compensation_environment(
+        tmp_path, "9" * 40, "2" * 40, "1" * 40, "2" * 40)
+    env.pop(field)
+    result = subprocess.run(["bash", "-euo", "pipefail", "-c",
+                             _extract_deploy_compensation_run_script()],
+                            env=env, capture_output=True, text=True, timeout=10)
+    assert result.returncode != 0
+    assert not invocations.exists()
+    assert not (tmp_path / "lease_events.log").exists()
+
+
+@pytest.mark.parametrize("field", ["GCP_DEPLOY_PROJECT_ID", "DEV_VM", "DEV_ZONE",
+                                   "PANTHEON_ROLLBACK_BACKEND_SHA", "GITHUB_RUN_ID"])
+def test_compensation_wrong_identity_cannot_acquire_lease(tmp_path, field):
+    env, invocations, _ = _setup_mock_compensation_environment(
+        tmp_path, "9" * 40, "2" * 40, "1" * 40, "2" * 40)
+    env[field] = "wrong-identity"
+    result = subprocess.run(["bash", "-euo", "pipefail", "-c",
+                             _extract_deploy_compensation_run_script()],
+                            env=env, capture_output=True, text=True, timeout=10)
+    assert result.returncode != 0
+    assert not invocations.exists()
+    assert not (tmp_path / "lease_events.log").exists()
+
+
+@pytest.mark.parametrize("mutation", ["bootstrap", "receipt_ack", "freshness", "sealed_override"])
+def test_candidate_protection_removal_is_detected(tmp_path, monkeypatch, mutation):
+    source = DEPLOY.read_text()
+    mutations = {
+        "bootstrap": ('bootstrap_dev_lifecycle_projection || rollback_dev_bff_on_failure "projection_bootstrap"', ':'),
+        "receipt_ack": ('[[ "${DEV_CANDIDATE_RECEIPT_ACKED:-false}" == true ]]', 'true'),
+        "freshness": ('LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}"',
+                      'LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS=120'),
+        "sealed_override": ('-f "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_OVERRIDE_PATH}" "$@"', '"$@"'),
+    }
+    old, new = mutations[mutation]
+    assert old in source
+    control = tmp_path / "control"
+    control.mkdir()
+    oracle = (lambda folder: test_bff_candidate_failure_prevents_runtime_start(folder, mutation)) if mutation in (
+        "bootstrap", "receipt_ack") else test_dev_deploy_built_image_identity_matches_requested_sha
+    oracle(control)
+    mutant = tmp_path / "deploy.sh"
+    mutant.write_text(source.replace(old, new))
+    monkeypatch.setitem(globals(), "DEPLOY", mutant)
+    with pytest.raises(AssertionError):
+        oracle(tmp_path)
+
+
+def test_restart_admission_removal_is_detected(monkeypatch):
+    test_deployment_completion_retains_real_checks_without_provider_gate("root", "AGORA_OUTCOME")
+    source = _workflow()
+    assert "${AGORA_OUTCOME}" in source
+    monkeypatch.setitem(globals(), "_workflow", lambda: source.replace("${AGORA_OUTCOME}", "success"))
+    with pytest.raises(AssertionError):
+        test_deployment_completion_retains_real_checks_without_provider_gate("root", "AGORA_OUTCOME")

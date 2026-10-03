@@ -183,7 +183,7 @@ def test_hosted_lifecycle_probe_uses_mfa_bound_governed_operator():
     assert "--expected-login-identity operator_a" in probe["run"]
 
 
-def test_managed_dev_deploy_forwards_lifecycle_freshness_budget():
+def test_managed_dev_deploy_forwards_lifecycle_freshness_budget(tmp_path):
     workflow = yaml.safe_load(
         (ROOT / ".github/workflows/nonprod-deploy.yml").read_text(encoding="utf-8")
     )
@@ -216,20 +216,33 @@ def test_managed_dev_deploy_forwards_lifecycle_freshness_budget():
         '${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}"'
     )
     assert root_block.count(compose_override) == 2
-    assert bff_block.count(compose_override) == 1
+    assert 'with_dev_bff_runtime_env "${PANTHEON_DEPLOY_SHA}"' in bff_block
+    from scripts.test_dev_environment_lease_deploy_contract import _run_bff_candidate
+    result, calls = _run_bff_candidate(tmp_path)
+    assert result.returncode == 0, result.stderr
+    up = next(row for row in calls if "--force-recreate" in row)
+    assert up.endswith("|317")
 
 
-def test_bff_only_deploy_rebuilds_its_lifecycle_projector_only():
+def test_bff_only_deploy_rebuilds_its_lifecycle_projector_only(tmp_path):
     script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
     bff_block = script.split("\n  bff)", 1)[1].split("\n  exec)", 1)[0]
 
     compose_up = (
-        "docker compose -p pantheon -f docker-compose.yml "
-        "up -d --force-recreate --no-deps operator-bff loop-run-projector-scheduler"
+        "run_dev_candidate_compose "
+        "up -d --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler"
     )
     assert bff_block.count(compose_up) == 1
     assert "runtime-manager" not in compose_up
     assert "paper-fleet" not in compose_up
+    from scripts.test_dev_environment_lease_deploy_contract import _run_bff_candidate
+    result, calls = _run_bff_candidate(tmp_path)
+    assert result.returncode == 0, result.stderr
+    up = next(row for row in calls if "--force-recreate" in row)
+    assert up.split("--no-deps ", 1)[1].split("|", 1)[0] == (
+        "operator-bff agora-interaction-worker loop-run-projector-scheduler"
+    )
+    assert "-f /isolated/sealed-images.json" in up
 
 
 def test_rendered_compose_operator_bff_readiness_with_postgres_reader(
