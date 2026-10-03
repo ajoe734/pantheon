@@ -340,6 +340,43 @@ def test_research_dag_fan_in_progression(client: TestClient) -> None:
         assert run_by_stage[sid]["status"] == "completed"
 
 
+def test_research_dag_fan_in_progression_is_atomic_across_repeated_runs(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def complete_stage(_stage_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        run = research_main.store.get_run(payload["run_id"])
+        run["status"] = "completed"
+        research_main.store.put_run(run)
+        return {"status": "succeeded"}
+
+    monkeypatch.setattr(research_main, "execute_research_stage", complete_stage)
+    for iteration in range(20):
+        task = client.post("/api/research-orchestrator/tasks", json={
+            "title": f"Fan-in race {iteration}", "objective": "atomic join",
+            "source_refs": [], "constraints": {},
+        }).json()
+        task_id = task["task_id"]
+        plan = {
+            "plan_id": f"fan-in-{task_id}", "task_id": task_id,
+            "stages": [
+                {"stage_id": "left", "stage_type": "prototype_backtest", "dependencies": []},
+                {"stage_id": "right", "stage_type": "econometric_validation", "dependencies": []},
+                {"stage_id": "join", "stage_type": "derivatives_pricing_risk", "dependencies": ["left", "right"]},
+            ],
+            "dataset": {"dataset_id": f"dataset-{task_id}"},
+        }
+        response = client.post(f"/api/research-orchestrator/tasks/{task_id}/runs", json={
+            "adapter": "vectorbt", "requested_mode": "stub", "dispatch_mode": "stub",
+            "input_refs": [{"type": "stage", "id": "left"}],
+            "parameters": {"stage": plan["stages"][0], "plan": plan, "dataset": plan["dataset"]},
+            "idempotency_key": f"fan-in-{task_id}",
+        })
+        assert response.status_code == 201, response.text
+        records = _wait_for_task_status(task_id, {"completed", "failed"}, expected_count=3)
+        assert len(records) == 3
+        assert {record["stage_id"] for record in records} == {"left", "right", "join"}
+
+
 def test_research_dag_failed_stage_halts_downstream(client: TestClient) -> None:
     t_res = client.post("/api/research-orchestrator/tasks", json={"title": "Halt DAG", "objective": "fail halts", "source_refs": [], "constraints": {}})
     assert t_res.status_code == 201

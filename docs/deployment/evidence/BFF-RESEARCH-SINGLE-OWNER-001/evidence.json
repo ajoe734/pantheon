@@ -37,7 +37,19 @@
     },
     {
       "command": "git diff --check; python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget 0",
-      "result": "exact-base simplify budget passed at head 80e68e23a9e7363114035ffeeab038930c187846: production +1399/-1823 net -424; tests +1386/-2871 net -1485; docs/evidence +118. Re-run after the current stage-progression serialization refresh."
+      "result": "exact-base simplify budget passed at the current implementation diff: production +1446/-1909 net -463; tests +1452/-3077 net -1625; docs/evidence +122/-93 net +29."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_research_run_projection.py",
+      "result": "4 passed; retained projections use the owner-backed test transport and cover cancellation before and during active plans, completed legacy history readback and non-replay, provenance validation, artifact listing, and SSE."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_research_single_owner_routes.py -k 'not three_stage_linear_progression and not fan_in_progression'",
+      "result": "16 passed, 2 deselected. The two adapter-backed DAG tests were not counted: this worker runtime lacks QuantLib, required by the derivatives-pricing stage."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_research_single_owner_routes.py::test_research_dag_fan_in_progression_is_atomic_across_repeated_runs",
+      "result": "1 passed; 20 isolated concurrent fan-in iterations produced exactly one completed join each."
     }
   ],
   "suite_note": "Codex2's reproduced AC6 defects are covered by owner regressions. Full BFF architecture gate: 39 passed; deleted inventory references removed. Do not run these research suites concurrently: shared /tmp store writes race. Hosted acceptance remains external_wait; no hosted probes performed.",

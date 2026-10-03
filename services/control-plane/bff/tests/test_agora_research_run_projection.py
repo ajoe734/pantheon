@@ -121,6 +121,73 @@ def _dispatch_plan(client: TestClient, plan_id: str, etag: str, idempotency_key:
     return response.json()["data"]["run_id"]
 
 
+def test_cancelled_and_historical_plans_remain_terminal_without_owner_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client(monkeypatch)
+    created = _create_plan(client, "ws-terminal-plan", "terminal-create")
+    plan_id = created["data"]["plan_id"]
+    _approve_plan(client, plan_id, created["meta"]["etag"], "terminal-approve")
+    approved = _get_plan(client, plan_id)
+    cancelled = client.post(
+        f"/bff/agora/research-plans/{plan_id}/cancel",
+        headers=_headers("terminal-cancel", approved["meta"]["etag"]),
+    )
+    assert cancelled.status_code == 200, cancelled.text
+    assert _get_plan(client, plan_id)["data"]["status"] == "cancelled"
+    redispatch = client.post(
+        f"/bff/agora/research-plans/{plan_id}/runs",
+        headers=_headers("terminal-redispatch", _get_plan(client, plan_id)["meta"]["etag"]),
+    )
+    assert redispatch.status_code == 409
+
+    active_plan = _create_plan(client, "ws-active-cancel", "active-cancel-create")
+    active_id = active_plan["data"]["plan_id"]
+    _approve_plan(client, active_id, active_plan["meta"]["etag"], "active-cancel-approve")
+    active_approved = _get_plan(client, active_id)
+    _dispatch_plan(client, active_id, active_approved["meta"]["etag"], "active-cancel-dispatch")
+    active_readback = _get_plan(client, active_id)
+    active_cancel = client.post(
+        f"/bff/agora/research-plans/{active_id}/cancel",
+        headers=_headers("active-cancel", active_readback["meta"]["etag"]),
+    )
+    assert active_cancel.status_code == 200, active_cancel.text
+    assert _get_plan(client, active_id)["data"]["status"] == "cancelled"
+    active_redispatch = client.post(
+        f"/bff/agora/research-plans/{active_id}/runs",
+        headers=_headers("active-redispatch", _get_plan(client, active_id)["meta"]["etag"]),
+    )
+    assert active_redispatch.status_code == 409
+
+    history_plan = _create_plan(client, "ws-history-plan", "history-create")
+    history_id = history_plan["data"]["plan_id"]
+    _approve_plan(client, history_id, history_plan["meta"]["etag"], "history-approve")
+    store = client.router.research_store
+    stored_plan = store.get_plan(history_id)
+    store.create_run({
+        "run_id": "legacy-completed-run", "plan_id": history_id,
+        "stage_id": "stage-prototype-backtest", "stage_type": "prototype_backtest",
+        "execution_status": "succeeded", "outcome": "pass",
+        "tenant_id": stored_plan["tenant_id"], "user_id": stored_plan["user_id"],
+        "created_at": "2026-09-01T00:00:00Z",
+        "artifact_refs": [], "evidence_refs": [],
+    })
+    projected = _get_plan(client, history_id)
+    assert projected["data"]["status"] == "completed"
+    assert projected["data"]["run_ids"] == ["legacy-completed-run"]
+    listed = client.get(
+        f"/bff/agora/research-plans/{history_id}/runs", headers=_headers()
+    )
+    assert listed.status_code == 200
+    assert [run["run_id"] for run in listed.json()["items"]] == ["legacy-completed-run"]
+    redispatch_history = client.post(
+        f"/bff/agora/research-plans/{history_id}/runs",
+        headers=_headers("history-redispatch", projected["meta"]["etag"]),
+    )
+    assert redispatch_history.status_code == 202
+    assert redispatch_history.json()["data"]["run_id"] == "legacy-completed-run"
+
+
 def test_research_run_detail_returns_schema_projection(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _client(monkeypatch)
     workshop_id = "ws-ag-be-rs-002-projection"
