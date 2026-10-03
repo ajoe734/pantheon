@@ -1,0 +1,139 @@
+{
+  "task_id": "OPS-DEPLOY-CONTRACT-CLOSURE-20261003",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "review_status": "Pending independent exact-head review; canonical handoff binds final head and manifest blob.",
+  "scope": "Offline source contract closure only. No deployment, VM/SSH connection, workflow_dispatch, IAM or hosted writes. Transport, images, credentials and receipts inside test harnesses are explicitly synthetic fixtures, not hosted evidence.",
+  "plans_read": [
+    "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/PLAN.md",
+    "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/consolidated-audit-closeout-20261002/PLAN.md"
+  ],
+  "dependency": {
+    "task": "DEV-PROJECTION-BOOTSTRAP-20261003",
+    "pr": 6111,
+    "merge": "3728879abc87f070603d67567fe8eea80787cb50",
+    "canonical_status": "done"
+  },
+  "base_sha": "9333e40933c6f9c64e9a96fdc255dd83ab8dc665",
+  "baseline": {
+    "sha": "3728879abc87f070603d67567fe8eea80787cb50",
+    "clean_worktree": true,
+    "command": "timeout 180 /tmp/dev-projection-bootstrap-venv/bin/python -m pytest scripts/test_dev_environment_lease_deploy_contract.py -q --tb=short",
+    "result": "186 passed, 45 failed in 30.72s",
+    "exit_status": 1,
+    "log_sha256": "0fa45aa79b8811bb8ed50959ab1284f66b59660b8be7c2a604158364cacbba7f",
+    "failures_by_cause": {
+      "missing_explicit_staging_identity": [
+        "test_staging_dry_run_does_not_require_dev_lease",
+        "test_dev_deploy_validates_deadline_configuration_positive[args0-extra_env0-900]",
+        "test_dev_deploy_validates_deadline_configuration_positive[args1-extra_env1-750]",
+        "test_dev_deploy_validates_deadline_configuration_positive[args2-extra_env2-600]",
+        "test_dev_deploy_validates_deadline_configuration_positive[args3-extra_env3-450]",
+        "test_dev_deploy_validates_deadline_configuration_positive[args4-extra_env4-7200]"
+      ],
+      "missing_candidate_context_before_guarded_transport": [
+        "test_dev_deploy_ssh_command_terminates_process_group_on_deadline"
+      ],
+      "obsolete_raw_compose_command_expectations": [
+        "test_dev_root_deploy_builds_candidate_before_mutating_active_runtime",
+        "test_dev_root_deploy_stale_compose_replacement_cleanup_defined_and_invoked"
+      ],
+      "obsolete_static_MFA_environment_expectations": [
+        "test_dev_deploy_compensation_exports_full_governed_bff_environment",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_ROLE_CLAIMS]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_ROLE_MAP]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_ROLE_MAP_MODE]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_DEFAULT_ROLE]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_MANAGEMENT_AI_STORE_BACKEND]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_MANAGEMENT_AI_STORE_SCHEMA]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_MANAGEMENT_AI_DB_USER]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_MANAGEMENT_AI_DB_PASSWORD]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_MANAGEMENT_AI_DATABASE_URL]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_MANAGEMENT_AI_ATTACH_BUCKET]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_MANAGEMENT_AI_ATTACH_LOCATION]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_CANONICAL_CORS_ORIGIN]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_CORS_ORIGINS]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[PANTHEON_ROLLBACK_BACKEND_SHA]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[PANTHEON_ROLLBACK_FRONTEND_SHA]",
+        "test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[PANTHEON_DEV_ROLLBACK_BACKEND_SHA]"
+      ],
+      "missing_real_artifact_prepare_fixture": [
+        "test_dev_deploy_compensation_mutation_aware_skips_deploy_when_already_at_baseline_negative",
+        "test_dev_deploy_compensation_mutation_aware_executes_deploy_when_not_at_baseline_positive",
+        "test_dev_deploy_compensation_quarantined_predecessor_heartbeat_restores_baseline_e2e",
+        "test_dev_deploy_compensation_active_predecessor_heartbeat_stopped_and_recovered_e2e",
+        "test_dev_deploy_compensation_predecessor_heartbeat_mismatched_identity_fails_closed_negative",
+        "test_dev_deploy_compensation_unstoppable_predecessor_fails_closed_negative",
+        "test_dev_deploy_compensation_mutation_aware_fails_closed_on_rollback_failure_negative",
+        "test_dev_deploy_compensation_forces_post_up_failure_inside_compensation_and_proves_pair_remains_baseline"
+      ],
+      "obsolete_inner_rebuild_and_inline_environment_expectations": [
+        "test_dev_inner_rollback_preserves_full_governed_bff_environment",
+        "test_dev_deploy_inner_rollback_skips_rollback_when_nested_compensation_matches_deploy_sha"
+      ]
+    }
+  },
+  "changes": [
+    "Supply explicit isolated staging identity. Guarded SSH deadline test executes unchanged controller bytes from a private copy with sealed context and a local exec-sleep SSH stub; observes sanitized transport failure and reaped PID.",
+    "Execute the real compensation prepare CLI against private typed baseline/candidate receipts. Verify-only requires no candidate receipt; restore requires its external seal and a new lease. Keep heartbeat identity, contention, TTL, failure and exact pair assertions.",
+    "Move candidate credential/config mapping checks to with_dev_bff_runtime_env, validating the positive control before each deletion mutation. Remove 12 obsolete per-login MFA parameter cases across the two old tables; legacy baseline auth flags remain exercised by the complete artifact driver suite, including tampering and representability negatives.",
+    "Replace source-SHA rollback skip expectations with executable verify/restore selection for equal source SHAs, ACK present/absent and driver success/failure; original deployment remains failed in every case.",
+    "Replace the handwritten build/rebuild simulation with the actual BFF case arm and actual environment/candidate/bootstrap shell helpers. Assert build/bootstrap/recreate order, exact GIT_SHA, freshness forwarding, sealed override and exactly the three admitted BFF services.",
+    "Run negative mutations removing bootstrap, ACK guard, freshness forwarding, sealed override and restart admission; every mutated protection causes its passing behavioral oracle to fail.",
+    "Add six missing artifact authority and five wrong-identity executions that fail before acquiring a lease or invoking transport. Original 231 cases become 240 after 12 obsolete parameter cases retire and 21 behavioral cases are added."
+  ],
+  "production_net_lines": 0,
+  "production_line_budget": 80,
+  "production_changes": [],
+  "validation": [
+    {
+      "command": "RANKING_STORE_DSN=<isolated-unused-loopback-DSN> RANKING_STORE_BOOTSTRAP=0 timeout 180 /tmp/dev-projection-bootstrap-venv/bin/python -m pytest scripts/test_dev_environment_lease_deploy_contract.py services/trade_journey/test_lifecycle_projector_compose.py -q --tb=short -rs --disable-warnings",
+      "result": "248 passed, 95 warnings in 87.66s (0:01:27)",
+      "exit_status": 0,
+      "local_log": "/tmp/ops-contract-final-current.log",
+      "log_sha256": "655cc9b54d44ded3afcc5f77c024f6ad668279f56defbb0f573652d5ff9f7de4"
+    },
+    {
+      "command": "PANTHEON_FE_RELEASE_CANDIDATE_HELPER=/tmp/ops-contract-fe-current-20261003/scripts/release-candidate.mjs timeout 180 /tmp/dev-projection-bootstrap-venv/bin/python -m pytest scripts/test_dev_release_artifacts.py scripts/test_dev_release_artifact_driver.py scripts/test_dev_artifact_compensation_evidence.py -q --tb=short -rs",
+      "result": "382 passed in 84.40s (0:01:24)",
+      "exit_status": 0,
+      "local_log": "/tmp/ops-contract-artifacts-current.log",
+      "log_sha256": "c0ddba45c48bd8389252cd7b7fbd5c20f921231856c3230e8e90097a33e04349"
+    },
+    {
+      "command": "TEST_DATABASE_ADMIN_URL=<task-owned-loopback-PostgreSQL> timeout 180 /tmp/dev-projection-bootstrap-venv/bin/python -m pytest scripts/test_nonprod_dev_artifact_workflow.py scripts/test_cross_repo_release_controller.py scripts/test_deploy_nonprod_bootstrap_contract.py -q --tb=short -rs",
+      "result": "292 passed in 55.36s",
+      "exit_status": 0,
+      "local_log": "/tmp/ops-contract-workflow-current.log",
+      "log_sha256": "6425b72d3366005ba567c2bd0fab619d943ede76a27b3d0c142da9702dcdb32d"
+    }
+  ],
+  "total_scoped_validation": "922 passed, zero failed, zero skipped across the three complete final batches.",
+  "validation_dependencies": {
+    "python": "/tmp/dev-projection-bootstrap-venv/bin/python; reused without package mutation",
+    "postgres": "Task-owned postgres:16-alpine, host unix socket Docker, random loopback port 32808; fresh per-test databases and roles; two actual bootstrap/CLI executions including forced migration failure.",
+    "frontend_sha": "86a4314b947e241f985a16b9c98f19d816230fc5",
+    "frontend_source": "Separate sparse clone of ajoe734/execute-plans dev under /tmp/ops-contract-fe-current-20261003; no FE source copied into Pantheon."
+  },
+  "additional_validation": {
+    "command": "timeout 120 /tmp/dev-projection-bootstrap-venv/bin/python -m pytest scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py scripts/test_dev_environment_lease_guard.py scripts/test_wait_for_bff_lifecycle_readiness.py -q --tb=short -rs",
+    "result": "84 passed, 2 failed; exit 1. Not reported as a passing batch.",
+    "remaining_outside_declared_artifacts": [
+      "scripts/test_wait_for_bff_lifecycle_readiness.py::test_root_initial_readiness_uses_exact_waiter_before_residual_smoke",
+      "scripts/test_wait_for_bff_lifecycle_readiness.py::test_bff_only_readiness_also_uses_exact_waiter"
+    ],
+    "baseline_verification": "Both fail identically at lines 748/801 against git-show extracted files from 3728879abc87f070603d67567fe8eea80787cb50. They assert obsolete raw Compose strings, not an observed runtime failure. The two scoped lifecycle literal failures were also reproduced against that frozen base, and are repaired here. No additional artifact grant was assumed.",
+    "baseline_log_sha256": "3c98ea6dc8abdfad6901eaa4c45a23bae69e99a6e7ab4bc7f0677264d716c10e"
+  },
+  "earlier_attempts": "System python lacked pytest; used existing venv. Intermediate fixture runs failed and were corrected. One 30-second batch timed out because the old SSH stub spawned a sleep descendant; replaced it with exec sleep to model the real exec-SSH transport. Initial optional dependency skips were subsequently rerun in complete final batches without skips. Initial FE parity failed against an August checkout 4fd6088d; current isolated dev passes. None of these earlier failures/timeouts/skips is counted as passed.",
+  "delivery": "Independent Claude review, required CI and supervisor merge remain separate gates; no approval or hosted acceptance is claimed."
+}

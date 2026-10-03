@@ -781,7 +781,7 @@ def test_dev_deploy_guarded_ssh_terminates_transport_on_deadline(
     assert error["exit_code"] == 75
     assert pid_file.exists()
     spawned_pid = int(pid_file.read_text(encoding="utf-8").strip())
-    # Verify the child process was terminated by process group kill
+    # The real guarded sender terminates/reaps its SSH child on deadline.
     import time
     time.sleep(0.5)
     try:
@@ -2668,7 +2668,7 @@ def test_dev_deploy_compensation_fails_closed_when_credential_absent_negative(mi
         _validate_deploy_compensation_step(tampered_step)
 
 
-REQUIRED_INNER_ROLLBACK_MAPPINGS = (
+REQUIRED_BFF_RUNTIME_MAPPINGS = (
     'PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}"',
     'PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}"',
     'PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}"',
@@ -2718,7 +2718,7 @@ def _shell_function(name: str) -> str:
 
 
 def _validate_runtime_environment(func_text: str) -> None:
-    for mapping in REQUIRED_INNER_ROLLBACK_MAPPINGS:
+    for mapping in REQUIRED_BFF_RUNTIME_MAPPINGS:
         assert mapping in func_text, f"Missing required env mapping '{mapping}'"
 
 
@@ -2726,7 +2726,7 @@ def test_dev_candidate_preserves_full_governed_bff_environment() -> None:
     _validate_runtime_environment(_shell_function("with_dev_bff_runtime_env"))
 
 
-@pytest.mark.parametrize("missing_mapping", REQUIRED_INNER_ROLLBACK_MAPPINGS)
+@pytest.mark.parametrize("missing_mapping", REQUIRED_BFF_RUNTIME_MAPPINGS)
 def test_dev_candidate_missing_environment_mapping_negative(missing_mapping: str) -> None:
     func_text = _shell_function("with_dev_bff_runtime_env")
     _validate_runtime_environment(func_text)  # A negative must start from a passing control.
