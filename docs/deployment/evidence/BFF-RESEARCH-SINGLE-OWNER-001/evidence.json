@@ -24,7 +24,7 @@
       "result": "16 passed; includes test_bff_dispatch_fails_closed_when_successor_dataset_unavailable, test_bff_plan_projects_all_owner_roots_and_terminal_state, multi-tenant isolation 404, and mounted cancel tests"
     },
     {
-      "command": "python3 scripts/git/diff_budget.py --base 78234716d81b5c90529944caa614f326483ff213 --change-class simplify --budget 0",
+      "command": "python3 scripts/git/diff_budget.py --base 5743158b02ad5e463d4cba19d79521071daf4778 --change-class simplify --budget 0",
       "result": "exact-base simplify budget passed (net production -13 lines, tests +284 lines, evidence +110 lines, 0 AST same-line suites, 0 statement semicolons)"
     }
   ],
