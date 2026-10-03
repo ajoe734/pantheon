@@ -227,6 +227,24 @@ def _request_text(body: DispatchRunBody) -> str:
     return " ".join(parts).lower()
 
 
+def _extract_dataset_refs(refs: Any) -> List[str]:
+    items = refs if isinstance(refs, (list, tuple, set)) else [refs] if refs else []
+    return [
+        str(r.get("id") or r.get("dataset_id") if isinstance(r, dict) else r).strip()
+        for r in items
+        if (isinstance(r, str) and (r.startswith("dataset:") or r.startswith("ds-") or r.startswith("dataset-")))
+        or (isinstance(r, dict) and r.get("type") == "dataset" and (r.get("id") or r.get("dataset_id")))
+    ]
+
+
+def _matches_dataset_ref(cand: Any, allowed_refs: List[str]) -> bool:
+    if not cand or not isinstance(cand, dict) or not allowed_refs:
+        return False
+    cid = str(cand.get("dataset_id") or cand.get("id") or "").strip()
+    clean_cid = cid.split(":", 1)[-1] if ":" in cid else cid
+    return any(cid == ref or clean_cid == (ref.split(":", 1)[-1] if ":" in ref else ref) for ref in allowed_refs)
+
+
 class CreateTaskBody(BaseModel):
     title: str
     objective: str
@@ -641,10 +659,13 @@ def _artifact_quality(run: Dict[str, Any], body: ArtifactBody) -> Dict[str, Any]
     if not source_evidence_refs:
         reasons.append("missing_source_evidence_refs")
     return {
-        "producer_mode": producer_mode, "artifact_origin": _artifact_origin(producer_mode),
-        "storage_status": storage_status, "checksum_status": checksum_status,
+        "producer_mode": producer_mode,
+        "artifact_origin": _artifact_origin(producer_mode),
+        "storage_status": storage_status,
+        "checksum_status": checksum_status,
         "source_evidence_refs": source_evidence_refs,
-        "evidence_eligible": not reasons, "evidence_ineligibility_reasons": reasons,
+        "evidence_eligible": not reasons,
+        "evidence_ineligibility_reasons": reasons,
     }
 
 
@@ -657,26 +678,36 @@ def _writeback_target_quality(
     artifact_metadata = _as_mapping(artifact.get("metadata"))
     quality = _as_mapping(artifact.get("quality"))
     source_evidence_refs = _evidence_source_refs(
-        quality.get("source_evidence_refs"), artifact.get("source_evidence_refs"),
-        artifact_metadata.get("source_evidence_refs"), artifact_metadata.get("evidence_refs"),
-        hints.get("source_evidence_refs"), hints.get("evidence_refs"),
-        body.metadata.get("source_evidence_refs"), body.metadata.get("evidence_refs"),
+        quality.get("source_evidence_refs"),
+        artifact.get("source_evidence_refs"),
+        artifact_metadata.get("source_evidence_refs"),
+        artifact_metadata.get("evidence_refs"),
+        hints.get("source_evidence_refs"),
+        hints.get("evidence_refs"),
+        body.metadata.get("source_evidence_refs"),
+        body.metadata.get("evidence_refs"),
     )
     source_strategy_spec_id = _first_text(
-        body.source_strategy_spec_id, hints.get("source_strategy_spec_id"),
-        hints.get("strategy_spec_id"), artifact.get("source_strategy_spec_id"),
+        body.source_strategy_spec_id,
+        hints.get("source_strategy_spec_id"),
+        hints.get("strategy_spec_id"),
+        artifact.get("source_strategy_spec_id"),
         artifact_metadata.get("source_strategy_spec_id"),
     )
     source_dataset_refs = _evidence_source_refs(
-        body.source_dataset_refs, hints.get("source_dataset_refs"),
-        artifact.get("source_dataset_refs"), _input_ref_id(run, "dataset", "dataset_version"),
+        body.source_dataset_refs,
+        hints.get("source_dataset_refs"),
+        artifact.get("source_dataset_refs"),
+        _input_ref_id(run, "dataset", "dataset_version"),
     )
     return {
         "producer_mode": quality.get("producer_mode") or _producer_mode(run),
         "storage_status": _storage_status(_first_value(body.storage_ref, hints.get("storage_ref"), artifact.get("storage_ref"))),
         "checksum_status": _checksum_status(_first_text(body.checksum, hints.get("checksum"), artifact.get("checksum"))),
-        "source_strategy_spec_id": source_strategy_spec_id, "source_dataset_refs": source_dataset_refs,
-        "source_evidence_refs": source_evidence_refs, "artifact_evidence_eligible": bool(artifact.get("evidence_eligible")),
+        "source_strategy_spec_id": source_strategy_spec_id,
+        "source_dataset_refs": source_dataset_refs,
+        "source_evidence_refs": source_evidence_refs,
+        "artifact_evidence_eligible": bool(artifact.get("evidence_eligible")),
     }
 
 
@@ -756,17 +787,22 @@ def _experiment_run_for_writeback(
         "strategy_spec_version",
     )
     return ExperimentRun(
-        run_id=str(run["run_id"]), task_id=str(run["task_id"]), strategy_id=strategy_id,
+        run_id=str(run["run_id"]),
+        task_id=str(run["task_id"]),
+        strategy_id=strategy_id,
         strategy_spec_version=strategy_spec_version,
         backend_id=str(_first_text(run.get("adapter"), params.get("backend_id"), "research-orchestrator")),
-        runtime_env=body.runtime_env, status=str(run.get("status") or ""),
+        runtime_env=body.runtime_env,
+        status=str(run.get("status") or ""),
         started_at=str(_first_text(run.get("started_at"), run.get("created_at"), timestamp)),
         finished_at=str(_first_text(run.get("finished_at"), run.get("updated_at"), timestamp)),
-        dataset_version_id=dataset_version_id, code_version=code_version,
+        dataset_version_id=dataset_version_id,
+        code_version=code_version,
         input_manifest_ref=str(_first_text(body.input_manifest_ref, run.get("input_manifest_ref"), f"research-run://{run['run_id']}/input")),
         output_manifest_ref=output_manifest_ref,
         metric_bundle_id=_first_text(body.metric_bundle_id, artifact_metadata.get("metric_bundle_id")),
-        artifact_refs=[str(artifact["artifact_id"])], logs_ref=_first_text(run.get("logs_ref")),
+        artifact_refs=[str(artifact["artifact_id"])],
+        logs_ref=_first_text(run.get("logs_ref")),
         trace_id=str(_first_text(run.get("trace_id"), run.get("run_id"))),
         created_at=str(_first_text(run.get("created_at"), timestamp)),
         updated_at=str(_first_text(run.get("updated_at"), timestamp)),
@@ -860,9 +896,7 @@ def get_alpha_replication_admission(tenant_id: str, strategy_spec_id: str) -> Di
 @app.get("/api/research-orchestrator/tasks")
 def list_tasks(status: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
     tasks = store.list_tasks()
-    if status:
-        tasks = [task for task in tasks if str(task.get("status") or "").lower() == status.lower()]
-    return tasks
+    return [task for task in tasks if str(task.get("status") or "").lower() == status.lower()] if status else tasks
 
 
 @app.post("/api/research-orchestrator/tasks", status_code=201)
@@ -873,9 +907,16 @@ def create_task(body: CreateTaskBody) -> Dict[str, Any]:
     timestamp = body.created_at or utc_now()
     task_id = _next_id("rtask", timestamp, {str(task.get("task_id") or "") for task in store.list_tasks()})
     task = {
-        "id": task_id, "task_id": task_id, "title": body.title, "objective": body.objective,
-        "status": "ready", "source_refs": body.source_refs, "constraints": body.constraints,
-        "created_by": body.actor_id, "created_at": timestamp, "updated_at": timestamp,
+        "id": task_id,
+        "task_id": task_id,
+        "title": body.title,
+        "objective": body.objective,
+        "status": "ready",
+        "source_refs": body.source_refs,
+        "constraints": body.constraints,
+        "created_by": body.actor_id,
+        "created_at": timestamp,
+        "updated_at": timestamp,
         "idempotency_key": body.idempotency_key,
     }
     return store.put_task(task)
@@ -1007,18 +1048,13 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         )
 
     stage_param = body.parameters.get("stage") if isinstance(body.parameters.get("stage"), dict) else {}
-    stage_ds_refs = [
-        str(r.get("id") or r.get("dataset_id") if isinstance(r, dict) else r).strip()
-        for r in (body.input_refs or []) + (stage_param.get("input_refs") or []) + (stage_param.get("approved_input_refs") or [])
-        if (isinstance(r, str) and (r.startswith("dataset:") or r.startswith("ds-") or r.startswith("dataset-")))
-        or (isinstance(r, dict) and r.get("type") == "dataset" and (r.get("id") or r.get("dataset_id")))
-    ]
+    stage_ds_refs = _extract_dataset_refs(
+        (body.input_refs or []) + (stage_param.get("input_refs") or []) + (stage_param.get("approved_input_refs") or [])
+    )
     expected_tid = str(body.parameters.get("tenant_id") or getattr(body, "tenant_id", None) or task.get("tenant_id") or "").strip()
     ds_val = body.parameters.get("dataset") or stage_param.get("dataset")
     if is_stage_backend and stage_ds_refs and not rejected:
-        ds_id_val = str((ds_val or {}).get("dataset_id") or (ds_val or {}).get("id") or "").strip()
-        clean_ds_id = ds_id_val.split(":", 1)[-1] if ":" in ds_id_val else ds_id_val
-        if not ds_val or not any(ds_id_val == ref or clean_ds_id == (ref.split(":", 1)[-1] if ":" in ref else ref) for ref in stage_ds_refs):
+        if not _matches_dataset_ref(ds_val, stage_ds_refs):
             _reject(
                 "dataset_unavailable",
                 f"Referenced governed research dataset '{stage_ds_refs}' is unavailable or mismatched",
@@ -1165,26 +1201,17 @@ def _progress_plan_stages_locked(
         if stage_id in latest:
             continue
         stage_status = str(stage.get("status") or "").lower()
-        if stage_status in {"completed", "succeeded"}:
+        if stage_status in {"completed", "succeeded", "failed", "rejected", "canceled", "cancelled"}:
+            canonical_status = "completed" if stage_status in {"completed", "succeeded"} else stage_status
             legacy_run_id = stage.get("run_id") or stage.get("latest_run_id") or stage.get("id")
             latest[stage_id] = {
                 "stage_id": stage_id,
-                "status": "completed",
+                "status": canonical_status,
                 "run_id": legacy_run_id,
                 "id": legacy_run_id,
                 "attempt_number": 1,
             }
-            states[stage_id] = "completed"
-        elif stage_status in {"failed", "rejected", "canceled", "cancelled"}:
-            legacy_run_id = stage.get("run_id") or stage.get("latest_run_id") or stage.get("id")
-            latest[stage_id] = {
-                "stage_id": stage_id,
-                "status": stage_status,
-                "run_id": legacy_run_id,
-                "id": legacy_run_id,
-                "attempt_number": 1,
-            }
-            states[stage_id] = stage_status
+            states[stage_id] = canonical_status
 
     for stage in stages:
         if not isinstance(stage, dict) or not stage.get("stage_id"):
@@ -1202,56 +1229,28 @@ def _progress_plan_stages_locked(
         if stage_id != str(parent_run.get("stage_id") or ""):
             backend = str(stage.get("stage_type") or parent_run.get("adapter") or "prototype_backtest")
             st_refs = (stage.get("input_refs") or []) + (stage.get("approved_input_refs") or [])
-            st_ds_refs = [
-                str(r.get("id") or r.get("dataset_id") if isinstance(r, dict) else r).strip()
-                for r in st_refs
-                if (isinstance(r, str) and (r.startswith("dataset:") or r.startswith("ds-") or r.startswith("dataset-")))
-                or (isinstance(r, dict) and r.get("type") == "dataset" and (r.get("id") or r.get("dataset_id")))
-            ]
+            st_ds_refs = _extract_dataset_refs(st_refs)
             exp_tid = str(parent_run.get("tenant_id") or plan_payload.get("tenant_id") or "").strip()
-
-            def _match_candidate(cand: Any) -> bool:
-                if not isinstance(cand, dict):
-                    return False
-                cid = str(cand.get("dataset_id") or cand.get("id") or "").strip()
-                clean_cid = cid.split(":", 1)[-1] if ":" in cid else cid
-                return any(cid == ref or clean_cid == (ref.split(":", 1)[-1] if ":" in ref else ref) for ref in st_ds_refs)
-
             ds = None
-            if stage.get("dataset") and (not st_ds_refs or _match_candidate(stage["dataset"])):
+            if stage.get("dataset") and (not st_ds_refs or _matches_dataset_ref(stage["dataset"], st_ds_refs)):
                 ds = stage["dataset"]
             elif plan_payload.get("datasets"):
                 p_dss = plan_payload["datasets"]
-                if isinstance(p_dss, dict):
-                    for d_key, d_obj in p_dss.items():
-                        if _match_candidate(d_obj) or (isinstance(d_obj, dict) and d_key in st_ds_refs):
-                            ds = d_obj
-                            break
-                elif isinstance(p_dss, list):
-                    for d_obj in p_dss:
-                        if _match_candidate(d_obj):
-                            ds = d_obj
-                            break
+                candidates = p_dss.items() if isinstance(p_dss, dict) else enumerate(p_dss if isinstance(p_dss, list) else [])
+                for d_key, d_obj in candidates:
+                    if _matches_dataset_ref(d_obj, st_ds_refs) or (isinstance(d_obj, dict) and str(d_key) in st_ds_refs):
+                        ds = d_obj
+                        break
             elif not st_ds_refs:
                 ds = plan_payload.get("dataset") or (parent_run.get("parameters") or {}).get("dataset")
 
-            tenant_ok = True
-            if ds and isinstance(ds, dict) and exp_tid:
-                ds_tid = str(ds.get("tenant_id") or "").strip()
-                if ds_tid and ds_tid != exp_tid:
-                    tenant_ok = False
-
-            is_failed = False
-            fail_reason = ""
-            if st_ds_refs and not ds:
-                is_failed = True
-                fail_reason = f"Referenced governed research dataset '{st_ds_refs}' is unavailable"
-            elif not tenant_ok:
-                is_failed = True
-                fail_reason = f"Unauthorized access to dataset across tenant boundary for stage '{stage_id}'"
-            elif backend != "evidence_synthesis" and not ds:
-                is_failed = True
-                fail_reason = f"Missing required governed dataset for stage '{stage_id}'"
+            ds_tid = str(ds.get("tenant_id") or "").strip() if (ds and isinstance(ds, dict) and exp_tid) else ""
+            fail_reason = (
+                f"Referenced governed research dataset '{st_ds_refs}' is unavailable" if (st_ds_refs and not ds)
+                else (f"Unauthorized access to dataset across tenant boundary for stage '{stage_id}'" if (ds_tid and ds_tid != exp_tid)
+                else (f"Missing required governed dataset for stage '{stage_id}'" if (backend != "evidence_synthesis" and not ds) else ""))
+            )
+            is_failed = bool(fail_reason)
 
             rid = _next_id("rrun", timestamp, {str(r.get("run_id") or "") for r in store.list_runs()})
             pred = next((r_id for d in reversed(deps) if d in latest for r_id in [latest[d].get("run_id") or latest[d].get("id")] if r_id), parent_run.get("run_id") or parent_run.get("id"))
@@ -1494,12 +1493,11 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
 
 @app.get("/api/research-orchestrator/runs")
 def list_runs(task_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict[str, Any]]:
-    runs = store.list_runs()
-    if task_id:
-        runs = [run for run in runs if run.get("task_id") == task_id]
-    if status:
-        runs = [run for run in runs if str(run.get("status") or "").lower() == status.lower()]
-    return runs
+    return [
+        r for r in store.list_runs()
+        if (not task_id or r.get("task_id") == task_id)
+        and (not status or str(r.get("status") or "").lower() == status.lower())
+    ]
 
 
 @app.get("/api/research-orchestrator/runs/{run_id}")
@@ -1514,14 +1512,23 @@ def get_run(run_id: str) -> Dict[str, Any]:
 def get_run_status(run_id: str) -> Dict[str, Any]:
     run = get_run(run_id)
     return {
-        "run_id": run["run_id"], "task_id": run["task_id"], "status": run["status"],
-        "attempt_number": run.get("attempt_number", 1), "parent_run_id": run.get("parent_run_id"),
-        "root_run_id": run.get("root_run_id"), "cancellation_fence": run.get("cancellation_fence"),
-        "adapter": run["adapter"], "requested_mode": run["requested_mode"],
-        "dispatch_mode": run["dispatch_mode"], "production_activation": run["production_activation"],
-        "rejection": run.get("rejection"), "gateway_ref": run.get("gateway_ref"),
-        "artifact_refs": run.get("artifact_refs", []), "proposal_refs": run.get("proposal_refs", []),
-        "registry_writebacks": run.get("registry_writebacks", []), "events": run.get("events", []),
+        "run_id": run["run_id"],
+        "task_id": run["task_id"],
+        "status": run["status"],
+        "attempt_number": run.get("attempt_number", 1),
+        "parent_run_id": run.get("parent_run_id"),
+        "root_run_id": run.get("root_run_id"),
+        "cancellation_fence": run.get("cancellation_fence"),
+        "adapter": run["adapter"],
+        "requested_mode": run["requested_mode"],
+        "dispatch_mode": run["dispatch_mode"],
+        "production_activation": run["production_activation"],
+        "rejection": run.get("rejection"),
+        "gateway_ref": run.get("gateway_ref"),
+        "artifact_refs": run.get("artifact_refs", []),
+        "proposal_refs": run.get("proposal_refs", []),
+        "registry_writebacks": run.get("registry_writebacks", []),
+        "events": run.get("events", []),
         "updated_at": run.get("updated_at"),
     }
 
@@ -1734,19 +1741,35 @@ def handoff_artifact(run_id: str, body: ArtifactBody) -> Dict[str, Any]:
         "quality": quality,
     }
     artifact = {
-        "id": artifact_id, "artifact_id": artifact_id, "run_id": run_id, "task_id": run["task_id"],
-        "artifact_type": body.artifact_type, "artifact_family": body.artifact_family, "title": body.title,
-        "storage_ref": body.storage_ref, "checksum": body.checksum, "artifact_state": "draft",
-        "deployment_stage": "none", "producer_mode": quality["producer_mode"], "artifact_origin": quality["artifact_origin"],
-        "storage_status": quality["storage_status"], "checksum_status": quality["checksum_status"],
-        "source_evidence_refs": quality["source_evidence_refs"], "evidence_eligible": quality["evidence_eligible"],
-        "evidence_ineligibility_reasons": quality["evidence_ineligibility_reasons"], "quality": quality,
+        "id": artifact_id,
+        "artifact_id": artifact_id,
+        "run_id": run_id,
+        "task_id": run["task_id"],
+        "artifact_type": body.artifact_type,
+        "artifact_family": body.artifact_family,
+        "title": body.title,
+        "storage_ref": body.storage_ref,
+        "checksum": body.checksum,
+        "artifact_state": "draft",
+        "deployment_stage": "none",
+        "producer_mode": quality["producer_mode"],
+        "artifact_origin": quality["artifact_origin"],
+        "storage_status": quality["storage_status"],
+        "checksum_status": quality["checksum_status"],
+        "source_evidence_refs": quality["source_evidence_refs"],
+        "evidence_eligible": quality["evidence_eligible"],
+        "evidence_ineligibility_reasons": quality["evidence_ineligibility_reasons"],
+        "quality": quality,
         "governance": {
-            "direct_live_influence": False, "lean_consumption": "research_only_not_direct_action",
+            "direct_live_influence": False,
+            "lean_consumption": "research_only_not_direct_action",
             "write_boundary": "research_plane_only",
         },
-        "registry_hints": body.registry_hints, "registry_projection": registry_projection,
-        "metadata": body.metadata, "created_by": body.actor_id, "created_at": timestamp,
+        "registry_hints": body.registry_hints,
+        "registry_projection": registry_projection,
+        "metadata": body.metadata,
+        "created_by": body.actor_id,
+        "created_at": timestamp,
         "idempotency_key": body.idempotency_key,
     }
     refs = list(run.get("artifact_refs") or [])
@@ -2083,6 +2106,25 @@ def list_run_proposals(run_id: str) -> List[Dict[str, Any]]:
 from services.research.constants import ALLOWLISTED_STAGE_BACKENDS, ALLOWLISTED_STAGE_TYPES
 
 
+def _extract_artifact_ids(raw_refs: Any) -> List[str]:
+    if not raw_refs:
+        return []
+    items = raw_refs if isinstance(raw_refs, (list, tuple, set)) else [raw_refs]
+    out: List[str] = []
+    for r in items:
+        if isinstance(r, dict):
+            rtype = str(r.get("type") or "").strip().lower()
+            if rtype and rtype not in ("artifact", "evidence", "artifact_ref", "evidence_synthesis_artifact"):
+                continue
+            aid = str(r.get("artifact_id") or r.get("id") or "").strip()
+            if aid:
+                out.append(aid)
+        elif isinstance(r, str) and r.strip():
+            s = r.strip()
+            out.append(s.split(":", 1)[-1] if s.startswith("artifact:") else s)
+    return out
+
+
 @app.post("/stages/{stage_type}/execute")
 @app.post("/api/research-orchestrator/stages/{stage_type}/execute")
 def execute_research_stage(
@@ -2107,18 +2149,19 @@ def execute_research_stage(
         or ""
     ).strip()
 
-    if not stage or not isinstance(stage, dict):
-        raise HTTPException(status_code=400, detail="Missing or invalid required execution field: 'stage'")
-    if not plan or not isinstance(plan, dict):
-        raise HTTPException(status_code=400, detail="Missing or invalid required execution field: 'plan'")
-    if not run_id:
-        raise HTTPException(status_code=400, detail="Missing required execution field: 'run_id'")
-    if not correlation_id:
-        raise HTTPException(status_code=400, detail="Missing required execution field: 'correlation_id'")
+    for field_name, val, is_dict in (("stage", stage, True), ("plan", plan, True), ("run_id", run_id, False), ("correlation_id", correlation_id, False)):
+        if not val or (is_dict and not isinstance(val, dict)):
+            detail = f"Missing or invalid required execution field: '{field_name}'" if is_dict else f"Missing required execution field: '{field_name}'"
+            raise HTTPException(status_code=400, detail=detail)
 
     exec_storage_path = store.data_dir / "stage_executions.json"
     run_record = store.get_run(run_id)
-    rec_stage_id = str((run_record or {}).get("stage_id") or "").strip()
+    persisted_params = (run_record.get("parameters") or {}) if (run_record and isinstance(run_record.get("parameters"), dict)) else {}
+    persisted_stage = persisted_params.get("stage") if isinstance(persisted_params.get("stage"), dict) else None
+    persisted_plan = (persisted_params.get("plan") or {}) if isinstance(persisted_params.get("plan"), dict) else {}
+    persisted_task_id = str((run_record or {}).get("task_id") or "").strip()
+
+    rec_stage_id = str((run_record or {}).get("stage_id") or ((persisted_stage.get("stage_id") if persisted_stage else "") or "")).strip()
     if run_record and not rec_stage_id:
         for ref in (run_record.get("input_refs") or []):
             if isinstance(ref, dict) and ref.get("type") == "stage" and ref.get("id"):
@@ -2131,6 +2174,55 @@ def execute_research_stage(
     if not stage_id:
         raise HTTPException(status_code=400, detail=f"Missing required stage identity: 'stage_id' must be specified in request or derived from stored run '{run_id}'")
     stage["stage_id"] = stage_id
+    if persisted_stage is None and isinstance(persisted_plan.get("stages"), list):
+        for s in persisted_plan["stages"]:
+            if isinstance(s, dict) and str(s.get("stage_id") or "").strip() == stage_id:
+                persisted_stage = s
+                break
+    if persisted_stage is None and "parameters" in persisted_params and isinstance(persisted_params.get("parameters"), dict):
+        persisted_stage = {"parameters": persisted_params["parameters"]}
+
+    if run_record:
+        persisted_stage_type = str(
+            (persisted_stage or {}).get("stage_type")
+            or (persisted_stage or {}).get("type")
+            or run_record.get("stage_type")
+            or ""
+        ).strip()
+        if persisted_stage_type and stage_type != persisted_stage_type:
+            raise HTTPException(
+                status_code=400, detail=f"Stage type mismatch: run '{run_id}' stage type '{persisted_stage_type}' != '{stage_type}'"
+            )
+        caller_st_type = str(stage.get("stage_type") or stage.get("type") or "").strip()
+        if caller_st_type and persisted_stage_type and caller_st_type != persisted_stage_type:
+            raise HTTPException(
+                status_code=400, detail=f"Stage type mismatch: run '{run_id}' caller stage type '{caller_st_type}' != '{persisted_stage_type}'"
+            )
+
+        caller_task_id = str(plan.get("task_id") or body.get("task_id") or "").strip()
+        if caller_task_id and persisted_task_id and caller_task_id != persisted_task_id:
+            raise HTTPException(
+                status_code=400, detail=f"Task lineage mismatch: run '{run_id}' task '{persisted_task_id}' != caller '{caller_task_id}'"
+            )
+
+        persisted_plan_id = str(persisted_plan.get("plan_id") or persisted_plan.get("id") or "").strip()
+        if not persisted_plan_id:
+            for ref in (run_record.get("input_refs") or []):
+                if isinstance(ref, dict) and ref.get("type") == "research_plan" and ref.get("id"):
+                    persisted_plan_id = str(ref["id"]).strip()
+                    break
+        caller_plan_id = str(plan.get("plan_id") or plan.get("id") or body.get("plan_id") or "").strip()
+        if caller_plan_id and persisted_plan_id and caller_plan_id != persisted_plan_id:
+            raise HTTPException(
+                status_code=400, detail=f"Plan lineage mismatch: run '{run_id}' plan '{persisted_plan_id}' != caller '{caller_plan_id}'"
+            )
+
+    effective_task_id = persisted_task_id or str(plan.get("task_id") or body.get("task_id") or f"task-{run_id}")
+    effective_plan_id = (
+        str(persisted_plan.get("plan_id") or persisted_plan.get("id") or "").strip()
+        if run_record else ""
+    ) or str(plan.get("plan_id") or plan.get("id") or body.get("plan_id") or "")
+
     stage_claim_key = f"agora-stage-claim:{run_id}:{stage_id}"
     claim_token = uuid.uuid4().hex
 
@@ -2150,46 +2242,123 @@ def execute_research_stage(
         except Exception:
             pass
 
+    def _fail_stage(detail: Any, status_code: int = 503, cause: Optional[Exception] = None) -> None:
+        _persist_failure(detail)
+        msg = getattr(detail, "detail", None) or getattr(detail, "message", None) or str(detail)
+        raise HTTPException(status_code=status_code, detail=msg) from cause
+
     if stage_type not in ALLOWLISTED_STAGE_TYPES:
         raise HTTPException(
-            status_code=400,
-            detail=f"Unknown or non-allowlisted research stage '{stage_type}'. Allowed: {sorted(ALLOWLISTED_STAGE_TYPES)}",
+            status_code=400, detail=f"Unknown or non-allowlisted research stage '{stage_type}'. Allowed: {sorted(ALLOWLISTED_STAGE_TYPES)}"
         )
 
     backend_name = ALLOWLISTED_STAGE_BACKENDS.get(stage_type, stage_type)
     if os.getenv(f"AGORA_RESEARCH_{stage_type.upper()}_UNAVAILABLE") == "1" or os.getenv(f"AGORA_RESEARCH_{backend_name.upper()}_UNAVAILABLE") == "1":
         raise HTTPException(
-            status_code=503,
-            detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable",
+            status_code=503, detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable"
         )
 
     SUPPORTED_EXECUTION_STAGES = {"prototype_backtest", "econometric_validation", "derivatives_pricing_risk", "evidence_synthesis"}
     if stage_type not in SUPPORTED_EXECUTION_STAGES and backend_name not in {"vectorbt", "statsmodels", "quantlib", "openclaw_result_synthesis"}:
         raise HTTPException(
-            status_code=503,
-            detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is absent or not configured",
+            status_code=503, detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is absent or not configured"
         )
 
-    dataset_input = stage.get("dataset") or body.get("dataset") or plan.get("dataset")
-    artifact_refs_input = stage.get("artifact_refs") or body.get("artifact_refs") or plan.get("artifact_refs") or []
-    st_refs = (stage.get("input_refs") or []) + (stage.get("approved_input_refs") or [])
-    st_ds_refs = [
-        str(r.get("id") or r.get("dataset_id") if isinstance(r, dict) else r).strip()
-        for r in st_refs
-        if (isinstance(r, str) and (r.startswith("dataset:") or r.startswith("ds-") or r.startswith("dataset-")))
-        or (isinstance(r, dict) and r.get("type") == "dataset" and (r.get("id") or r.get("dataset_id")))
-    ]
-    if st_ds_refs:
+    persisted_refs = (
+        ((persisted_stage or {}).get("input_refs") or [])
+        + ((persisted_stage or {}).get("approved_input_refs") or [])
+        + (run_record.get("input_refs") or [] if run_record else [])
+    )
+    persisted_ds_refs = _extract_dataset_refs(persisted_refs)
+    caller_refs = (stage.get("input_refs") or []) + (stage.get("approved_input_refs") or [])
+    caller_ds_refs = _extract_dataset_refs(caller_refs)
+    if persisted_ds_refs and caller_ds_refs:
+        clean_persisted = {(r.split(":", 1)[-1] if ":" in r else r) for r in persisted_ds_refs}
+        for cr in caller_ds_refs:
+            clean_cr = cr.split(":", 1)[-1] if ":" in cr else cr
+            if clean_cr not in clean_persisted and cr not in persisted_ds_refs:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Conflicting input refs for stage '{stage_id}': caller supplied '{cr}' not in approved refs '{persisted_ds_refs}'",
+                )
+    st_ds_refs = persisted_ds_refs or caller_ds_refs
+
+    persisted_dataset = (
+        (persisted_params.get("dataset") if isinstance(persisted_params, dict) else None)
+        or (persisted_stage.get("dataset") if isinstance(persisted_stage, dict) else None)
+    )
+    caller_dataset = stage.get("dataset") or body.get("dataset") or plan.get("dataset")
+    if persisted_dataset and caller_dataset:
+        p_ds_id = str((persisted_dataset or {}).get("dataset_id") or (persisted_dataset or {}).get("id") or "").strip()
+        c_ds_id = str((caller_dataset or {}).get("dataset_id") or (caller_dataset or {}).get("id") or "").strip()
+        clean_p = p_ds_id.split(":", 1)[-1] if ":" in p_ds_id else p_ds_id
+        clean_c = c_ds_id.split(":", 1)[-1] if ":" in c_ds_id else c_ds_id
+        if clean_p and clean_c and clean_p != clean_c:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Conflicting dataset hint for stage '{stage_id}': caller supplied '{c_ds_id}' but run is bound to persisted approved dataset '{p_ds_id}'",
+            )
+    dataset_input = persisted_dataset or caller_dataset
+
+    has_persisted_stage = persisted_stage is not None
+    persisted_stage_params = (persisted_stage.get("parameters") or {}) if (persisted_stage and isinstance(persisted_stage.get("parameters"), dict)) else {}
+    caller_stage_params = (stage.get("parameters") or {}) if isinstance(stage, dict) else {}
+    if has_persisted_stage and caller_stage_params:
+        for k, v in caller_stage_params.items():
+            if k not in persisted_stage_params:
+                raise HTTPException(
+                    status_code=400, detail=f"Unapproved stage parameter '{k}' for stage '{stage_id}': not in approved persisted parameters"
+                )
+            if persisted_stage_params[k] != v:
+                raise HTTPException(
+                    status_code=400, detail=f"Conflicting stage parameter '{k}' for stage '{stage_id}': caller supplied '{v}' != persisted '{persisted_stage_params[k]}'"
+                )
+    effective_stage_params = dict(persisted_stage_params) if has_persisted_stage else dict(caller_stage_params)
+    stage["parameters"] = effective_stage_params
+
+    persisted_art_candidates = (
+        ((persisted_stage or {}).get("artifact_refs") if isinstance(persisted_stage, dict) else None)
+        or ((persisted_stage or {}).get("approved_artifact_refs") if isinstance(persisted_stage, dict) else None)
+        or (persisted_params.get("artifact_refs") if isinstance(persisted_params, dict) else None)
+        or (persisted_plan.get("artifact_refs") if isinstance(persisted_plan, dict) else None)
+    )
+    persisted_art_ids = _extract_artifact_ids(persisted_art_candidates)
+
+    caller_art_candidates = (
+        (stage.get("artifact_refs") if isinstance(stage, dict) else None)
+        or (stage.get("approved_artifact_refs") if isinstance(stage, dict) else None)
+        or body.get("artifact_refs")
+        or (plan.get("artifact_refs") if isinstance(plan, dict) else None)
+    )
+    caller_art_ids = _extract_artifact_ids(caller_art_candidates)
+
+    if has_persisted_stage:
+        if persisted_art_candidates is not None or persisted_art_ids:
+            if caller_art_ids:
+                clean_p_arts = {(a.split(":", 1)[-1] if ":" in a else a) for a in persisted_art_ids}
+                clean_c_arts = {(a.split(":", 1)[-1] if ":" in a else a) for a in caller_art_ids}
+                if clean_c_arts != clean_p_arts:
+                    raise HTTPException(
+                        status_code=400, detail=f"Conflicting artifact refs for stage '{stage_id}': caller supplied '{caller_art_ids}' does not match persisted approved artifact refs '{persisted_art_ids}'"
+                    )
+            artifact_refs_input = list(persisted_art_ids)
+        elif caller_art_ids:
+            raise HTTPException(
+                status_code=400, detail=f"Unapproved artifact refs for stage '{stage_id}': caller supplied '{caller_art_ids}' but stage has no approved artifact refs"
+            )
+        else:
+            artifact_refs_input = []
+    else:
+        artifact_refs_input = list(caller_art_ids)
+
+    stage["artifact_refs"] = list(artifact_refs_input)
+    if st_ds_refs and not _matches_dataset_ref(dataset_input, st_ds_refs):
         ds_id_val = str((dataset_input or {}).get("dataset_id") or (dataset_input or {}).get("id") or "").strip()
-        clean_ds_id = ds_id_val.split(":", 1)[-1] if ":" in ds_id_val else ds_id_val
-        if not dataset_input or not any(ds_id_val == ref or clean_ds_id == (ref.split(":", 1)[-1] if ":" in ref else ref) for ref in st_ds_refs):
-            _persist_failure(f"Governed dataset mismatch for stage '{stage_id}': expected one of '{st_ds_refs}', got '{ds_id_val}'")
-            raise HTTPException(status_code=400, detail=f"Governed dataset mismatch for stage '{stage_id}': expected one of '{st_ds_refs}', got '{ds_id_val}'")
+        _fail_stage(f"Governed dataset mismatch for stage '{stage_id}': expected one of '{st_ds_refs}', got '{ds_id_val}'", 400)
     exp_tenant = str((run_record or {}).get("tenant_id") or plan.get("tenant_id") or body.get("tenant_id") or "").strip()
     ds_tenant = str((dataset_input or {}).get("tenant_id") or "").strip() if isinstance(dataset_input, dict) else ""
     if exp_tenant and ds_tenant and exp_tenant != ds_tenant:
-        _persist_failure(f"Unauthorized access to dataset across tenant boundary: '{ds_tenant}' != '{exp_tenant}'")
-        raise HTTPException(status_code=403, detail=f"Unauthorized access to dataset across tenant boundary: '{ds_tenant}' != '{exp_tenant}'")
+        _fail_stage(f"Unauthorized access to dataset across tenant boundary: '{ds_tenant}' != '{exp_tenant}'", 403)
     if not dataset_input and stage_type != "evidence_synthesis":
         raise HTTPException(
             status_code=400,
@@ -2277,18 +2446,13 @@ def execute_research_stage(
     if persisted_mode:
         for h in caller_hints:
             if h != persisted_mode and not (persisted_mode in {"stub", "simulation"} and h in {"stub", "simulation"}):
-                _persist_failure(f"Conflicting execution mode hint '{h}' does not match persisted run mode '{persisted_mode}'")
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Conflicting execution mode hint '{h}' does not match persisted run mode '{persisted_mode}'",
-                )
+                _fail_stage(f"Conflicting execution mode hint '{h}' does not match persisted run mode '{persisted_mode}'", 409)
         req_mode = persisted_mode
     else:
         req_mode = caller_hints[0] if caller_hints else ""
 
     if req_mode and req_mode not in {"real", "simulation", "fixture", "stub", "offline"}:
-        _persist_failure(f"Unknown research execution mode '{req_mode}'")
-        raise HTTPException(status_code=400, detail=f"Unknown research execution mode '{req_mode}'")
+        _fail_stage(f"Unknown research execution mode '{req_mode}'", 400)
 
     if backend_name == "vectorbt" or stage_type == "prototype_backtest":
         try:
@@ -2301,9 +2465,7 @@ def execute_research_stage(
             )
             use_real = os.environ.get("PANTHEON_VECTORBT_BACKEND", "stub").lower() == "real"
             if req_mode == "real" and not use_real:
-                err = f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode"
-                _persist_failure(err)
-                raise HTTPException(status_code=503, detail=err)
+                _fail_stage(f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode", 503)
             # The real owner checks its dependencies; never fall back to a stub
             # while retaining a real receipt label.
             backend_runner = VectorbtBackend() if use_real else StubVectorbtBackend()
@@ -2343,17 +2505,9 @@ def execute_research_stage(
                 {"metric": "total_trades", "value": float(agg_m.get("total_trades", 0)), "provenance": provenance},
             ]
         except (VectorbtWorkflowError, ValueError, KeyError) as exc:
-            _persist_failure(exc)
-            raise HTTPException(
-                status_code=400,
-                detail=f"Governed input validation error for {stage_type}: {exc}",
-            ) from exc
+            _fail_stage(f"Governed input validation error for {stage_type}: {exc}", 400, cause=exc)
         except Exception as exc:
-            _persist_failure(exc)
-            raise HTTPException(
-                status_code=503,
-                detail=f"Vectorbt execution owner failure: {exc}",
-            ) from exc
+            _fail_stage(f"Vectorbt execution owner failure: {exc}", 503, cause=exc)
 
     elif backend_name == "statsmodels" or stage_type == "econometric_validation":
         try:
@@ -2378,9 +2532,7 @@ def execute_research_stage(
 
             use_real = os.environ.get("PANTHEON_STATSMODELS_BACKEND", "stub").lower() == "real"
             if req_mode == "real" and not use_real:
-                err = f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode"
-                _persist_failure(err)
-                raise HTTPException(status_code=503, detail=err)
+                _fail_stage(f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode", 503)
             backend_runner = StatsmodelsBackend() if use_real else StubStatsmodelsBackend()
             provenance = "real" if use_real else "simulation"
 
@@ -2397,17 +2549,9 @@ def execute_research_stage(
                 {"metric": "var_aic", "value": float(var_res.get("aic", -100.0)), "provenance": provenance},
             ]
         except (StatsmodelsWorkflowError, ValueError, KeyError) as exc:
-            _persist_failure(exc)
-            raise HTTPException(
-                status_code=400,
-                detail=f"Governed input validation error for {stage_type}: {exc}",
-            ) from exc
+            _fail_stage(f"Governed input validation error for {stage_type}: {exc}", 400, cause=exc)
         except Exception as exc:
-            _persist_failure(exc)
-            raise HTTPException(
-                status_code=503,
-                detail=f"Statsmodels execution owner failure: {exc}",
-            ) from exc
+            _fail_stage(f"Statsmodels execution owner failure: {exc}", 503, cause=exc)
 
     elif backend_name == "quantlib" or stage_type == "derivatives_pricing_risk":
         try:
@@ -2442,9 +2586,7 @@ def execute_research_stage(
 
             use_real = os.environ.get("PANTHEON_QUANTLIB_BACKEND", "stub").lower() == "real"
             if req_mode == "real" and not use_real:
-                err = f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode"
-                _persist_failure(err)
-                raise HTTPException(status_code=503, detail=err)
+                _fail_stage(f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode", 503)
             backend_runner = QuantLibBackend() if use_real else StubQuantLibBackend()
             provenance = "real" if use_real else "simulation"
 
@@ -2454,30 +2596,20 @@ def execute_research_stage(
             opt_res = results_summary.get("options_pricing", {})
             fi_res = results_summary.get("fixed_income", {})
 
-            metrics = []
-            for opt_id, m in opt_res.items():
-                metrics.append({"metric": f"option_{opt_id}_npv", "value": float(m.get("npv", 0.0)), "provenance": provenance})
-                metrics.append({"metric": f"option_{opt_id}_delta", "value": float(m.get("delta", 0.0)), "provenance": provenance})
-            for bond_id, b in fi_res.items():
-                metrics.append({"metric": f"bond_{bond_id}_clean_price", "value": float(b.get("clean_price", 0.0)), "provenance": provenance})
-                metrics.append({"metric": f"bond_{bond_id}_duration", "value": float(b.get("duration", 0.0)), "provenance": provenance})
-            if not metrics:
-                metrics = [
-                    {"metric": "derivatives_pricing_npv", "value": 0.0, "provenance": provenance},
-                    {"metric": "derivatives_pricing_delta", "value": 0.0, "provenance": provenance},
-                ]
+            metrics = [
+                {"metric": f"option_{opt_id}_{k}", "value": float(m.get(k, 0.0)), "provenance": provenance}
+                for opt_id, m in opt_res.items() for k in ("npv", "delta")
+            ] + [
+                {"metric": f"bond_{bond_id}_{k}", "value": float(b.get(k, 0.0)), "provenance": provenance}
+                for bond_id, b in fi_res.items() for k in ("clean_price", "duration")
+            ] or [
+                {"metric": "derivatives_pricing_npv", "value": 0.0, "provenance": provenance},
+                {"metric": "derivatives_pricing_delta", "value": 0.0, "provenance": provenance},
+            ]
         except (QuantLibWorkflowError, ValueError, KeyError) as exc:
-            _persist_failure(exc)
-            raise HTTPException(
-                status_code=400,
-                detail=f"Governed input validation error for {stage_type}: {exc}",
-            ) from exc
+            _fail_stage(f"Governed input validation error for {stage_type}: {exc}", 400, cause=exc)
         except Exception as exc:
-            _persist_failure(exc)
-            raise HTTPException(
-                status_code=503,
-                detail=f"QuantLib execution owner failure: {exc}",
-            ) from exc
+            _fail_stage(f"QuantLib execution owner failure: {exc}", 503, cause=exc)
     elif backend_name == "openclaw_result_synthesis" or stage_type == "evidence_synthesis":
         try:
             from services.control_plane.bff.openclaw_ops_client import (
@@ -2485,15 +2617,11 @@ def execute_research_stage(
                 OpenClawOpsClientError,
             )
             if os.getenv("PANTHEON_OPENCLAW_UNAVAILABLE") == "1":
-                err = f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable"
-                _persist_failure(err)
-                raise HTTPException(status_code=503, detail=err)
+                _fail_stage(f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable", 503)
             use_real = os.environ.get("PANTHEON_OPENCLAW_BACKEND", "stub").lower() == "real"
             client = OpenClawOpsClient()
             if req_mode == "real" and not (use_real and client.configured):
-                err = f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode"
-                _persist_failure(err)
-                raise HTTPException(status_code=503, detail=err)
+                _fail_stage(f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode", 503)
             expected_tenant = str((run_record.get("tenant_id") if run_record else None) or plan.get("tenant_id") or body.get("tenant_id") or "").strip()
 
             def _resolve_artifact_tenant(art_doc: Dict[str, Any]) -> Optional[str]:
@@ -2530,9 +2658,31 @@ def execute_research_stage(
                     _validate_artifact_tenant(stored, aid)
                     resolved_artifacts.append(stored)
             else:
-                task_id = str(plan.get("task_id") or (run_record.get("task_id") if run_record else "") or "")
-                raw_deps = stage.get("dependencies") or stage.get("depends_on") or []
-                deps = {str(d) for d in (raw_deps if isinstance(raw_deps, (list, tuple, set)) else [raw_deps]) if d}
+                task_id = effective_task_id
+                persisted_deps_raw = (
+                    ((persisted_stage or {}).get("dependencies") if isinstance(persisted_stage, dict) else None)
+                    or ((persisted_stage or {}).get("depends_on") if isinstance(persisted_stage, dict) else None)
+                )
+                caller_deps_raw = (
+                    (stage.get("dependencies") if isinstance(stage, dict) else None)
+                    or (stage.get("depends_on") if isinstance(stage, dict) else None)
+                )
+                p_deps = [str(d).strip() for d in (persisted_deps_raw if isinstance(persisted_deps_raw, (list, tuple, set)) else [persisted_deps_raw]) if d] if persisted_deps_raw is not None else []
+                c_deps = [str(d).strip() for d in (caller_deps_raw if isinstance(caller_deps_raw, (list, tuple, set)) else [caller_deps_raw]) if d] if caller_deps_raw is not None else []
+
+                if has_persisted_stage and persisted_deps_raw is not None:
+                    if c_deps and set(c_deps) != set(p_deps):
+                        raise HTTPException(
+                            status_code=400, detail=f"Conflicting dependency selection for stage '{stage_id}': caller supplied '{c_deps}' != persisted '{p_deps}'"
+                        )
+                    deps = set(p_deps)
+                elif has_persisted_stage and persisted_deps_raw is None and c_deps:
+                    raise HTTPException(
+                        status_code=400, detail=f"Unapproved dependency selection for stage '{stage_id}': caller supplied '{c_deps}' but stage has no approved dependencies"
+                    )
+                else:
+                    deps = set(c_deps)
+
                 c_runs = [r for r in store.list_runs() if str(r.get("task_id") or "") == task_id and str(r.get("run_id") or "") != str(run_id)]
                 if deps:
                     c_runs = [r for r in c_runs if str(r.get("stage_id") or "") in deps]
@@ -2547,7 +2697,11 @@ def execute_research_stage(
                 if not resolved_artifacts and task_id:
                     for art in store.list_artifacts():
                         aid = art.get("artifact_id") or art.get("id")
-                        if aid and aid not in seen_ids and str(art.get("task_id") or "") == task_id and str(art.get("run_id") or "") != str(run_id):
+                        if (
+                            aid and aid not in seen_ids and str(art.get("task_id") or "") == task_id
+                            and (not deps or str(art.get("stage_id") or "") in deps)
+                            and str(art.get("run_id") or "") != str(run_id)
+                        ):
                             _validate_artifact_tenant(art, str(aid))
                             seen_ids.add(aid)
                             resolved_artifacts.append(art)
@@ -2571,21 +2725,19 @@ def execute_research_stage(
                     and ("confidence_score" not in report_data or isinstance(report_data["confidence_score"], (int, float)))
                 )
                 if not is_valid:
-                    err = ValueError(f"Structured agent provider returned invalid extraction output schema: {res}")
-                    _persist_failure(err)
-                    raise HTTPException(status_code=502, detail=str(err))
+                    _fail_stage(f"Structured agent provider returned invalid extraction output schema: {res}", 502)
                 provenance = "real"
             else:
                 provenance = "simulation"
                 art_count = len(resolved_artifacts)
                 report_data = {
-                    "summary": f"Evidence synthesis report for run {run_id} (stage {stage.get('stage_id') or 'report'})",
+                    "summary": f"Evidence synthesis report for run {run_id} (stage {stage_id or 'report'})",
                     "interpretation": f"Analyzed {art_count} input artifact(s); deterministic synthesis indicates criteria met.",
                     "recommendation": "accept", "confidence_score": 0.95, "input_artifact_count": art_count,
                 }
 
             artifact_bundle = {
-                "artifact_family": "evidence_synthesis_artifact", "stage_id": stage.get("stage_id"),
+                "artifact_family": "evidence_synthesis_artifact", "stage_id": stage_id,
                 "report": report_data, "input_artifacts": resolved_artifacts, "synthesized_by": "openclaw_result_synthesis",
             }
             metrics = [
@@ -2594,21 +2746,14 @@ def execute_research_stage(
                 {"metric": "synthesis_confidence", "value": float(report_data.get("confidence_score", 0.9) if isinstance(report_data.get("confidence_score"), (int, float)) else 0.9), "provenance": provenance},
             ]
         except OpenClawOpsClientError as exc:
-            _persist_failure(exc)
-            raise HTTPException(status_code=503, detail=f"OpenClaw structured agent provider unavailable: {exc.message}") from exc
+            _fail_stage(f"OpenClaw structured agent provider unavailable: {exc.message}", 503, cause=exc)
         except HTTPException as exc:
             _persist_failure(exc.detail)
             raise
         except Exception as exc:
-            _persist_failure(exc)
-            raise HTTPException(status_code=503, detail=f"Evidence synthesis provider failure: {exc}") from exc
+            _fail_stage(f"Evidence synthesis provider failure: {exc}", 503, cause=exc)
     else:
-        err = f"Backend execution owner for stage '{stage_type}' ({backend_name}) is absent or not configured"
-        _persist_failure(err)
-        raise HTTPException(
-            status_code=503,
-            detail=err,
-        )
+        _fail_stage(f"Backend execution owner for stage '{stage_type}' ({backend_name}) is absent or not configured", 503)
 
     # A real engine does not turn explicitly simulated input into real evidence.
     # This only downgrades provenance: an input label can never promote a stub.
@@ -2651,12 +2796,14 @@ def execute_research_stage(
     artifact_id = f"rart-{uuid.uuid4().hex[:12]}"
     artifact_record = {
         "id": artifact_id, "artifact_id": artifact_id, "run_id": run_id,
-        "task_id": str(plan.get("task_id") or plan.get("plan_id") or f"task-{run_id}"),
-        "stage_id": stage.get("stage_id"), "stage_type": stage_type, "artifact_type": f"{stage_type}_result",
+        "task_id": effective_task_id,
+        "stage_id": stage_id, "stage_type": stage_type, "artifact_type": f"{stage_type}_result",
         "artifact_family": artifact_bundle.get("artifact_family") or f"{stage_type}_artifact",
         "title": f"Execution artifact for {stage_type} ({run_id})", "payload": artifact_bundle,
         "created_at": now_iso, "provenance": provenance,
     }
+    if effective_plan_id:
+        artifact_record["plan_id"] = effective_plan_id
     if target_tenant_id:
         artifact_record["tenant_id"] = str(target_tenant_id)
     try:
@@ -2712,9 +2859,9 @@ def execute_research_stage(
 # -----------------------------------------------------------------------------
 
 
-def _handle_experiment_action(experiment_id: str, action_fn: Any, err_desc: str) -> Dict[str, Any]:
+def _handle_experiment_action(experiment_id: str, action_fn: Any, body: Optional[Dict[str, Any]], err_desc: str) -> Dict[str, Any]:
     wo = get_write_owner()
-    res = action_fn(wo)
+    res = action_fn(wo, body or {})
     if res is None:
         if wo.get_research_experiment(experiment_id) is None:
             raise HTTPException(status_code=404, detail=f"Research experiment '{experiment_id}' not found")
@@ -2788,26 +2935,22 @@ def get_research_experiment(experiment_id: str) -> Dict[str, Any]:
 
 @app.post("/api/research/experiments/{experiment_id}/cancel")
 def cancel_research_experiment(experiment_id: str, body: Optional[Dict[str, Any]] = Body(default=None)) -> Dict[str, Any]:
-    p = body or {}
-    return _handle_experiment_action(experiment_id, lambda o: o.cancel_research_experiment(experiment_id, completed_at=p.get("completed_at"), reason=p.get("reason"), actor_id=p.get("actor_id")), "is not in a cancelable state")
+    return _handle_experiment_action(experiment_id, lambda o, p: o.cancel_research_experiment(experiment_id, completed_at=p.get("completed_at"), reason=p.get("reason"), actor_id=p.get("actor_id")), body, "is not in a cancelable state")
 
 
 @app.post("/api/research/experiments/{experiment_id}/retry")
 def retry_research_experiment(experiment_id: str, body: Optional[Dict[str, Any]] = Body(default=None)) -> Dict[str, Any]:
-    p = body or {}
-    return _handle_experiment_action(experiment_id, lambda o: o.retry_research_experiment(experiment_id, actor_id=p.get("actor_id"), requested_at=p.get("requested_at"), idempotency_key=p.get("idempotency_key")), "is not in a retryable state")
+    return _handle_experiment_action(experiment_id, lambda o, p: o.retry_research_experiment(experiment_id, actor_id=p.get("actor_id"), requested_at=p.get("requested_at"), idempotency_key=p.get("idempotency_key")), body, "is not in a retryable state")
 
 
 @app.post("/api/research/experiments/{experiment_id}/archive")
 def archive_research_experiment(experiment_id: str, body: Optional[Dict[str, Any]] = Body(default=None)) -> Dict[str, Any]:
-    p = body or {}
-    return _handle_experiment_action(experiment_id, lambda o: o.archive_research_experiment(experiment_id, actor_id=p.get("actor_id"), archived_at=p.get("archived_at")), "is not in an archivable state")
+    return _handle_experiment_action(experiment_id, lambda o, p: o.archive_research_experiment(experiment_id, actor_id=p.get("actor_id"), archived_at=p.get("archived_at")), body, "is not in an archivable state")
 
 
 @app.post("/api/research/experiments/{experiment_id}/invalidate")
 def invalidate_research_experiment(experiment_id: str, body: Optional[Dict[str, Any]] = Body(default=None)) -> Dict[str, Any]:
-    p = body or {}
-    return _handle_experiment_action(experiment_id, lambda o: o.invalidate_research_experiment(experiment_id, reason=p.get("reason"), actor_id=p.get("actor_id"), invalidated_at=p.get("invalidated_at")), "cannot be invalidated")
+    return _handle_experiment_action(experiment_id, lambda o, p: o.invalidate_research_experiment(experiment_id, reason=p.get("reason"), actor_id=p.get("actor_id"), invalidated_at=p.get("invalidated_at")), body, "cannot be invalidated")
 
 
 @app.post("/api/research/notes")

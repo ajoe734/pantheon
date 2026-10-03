@@ -630,6 +630,9 @@ def test_retry_run_executes_backend_and_produces_artifacts(client: TestClient) -
     assert d_fail.json()["status"] == "queued"
     _wait_for_task_status(task_id, {"completed", "failed"})
     assert research_main.store.get_run(fail_run_id)["status"] == "failed"
+    drain_deadline = time.monotonic() + 5
+    while time.monotonic() < drain_deadline and fail_run_id in research_main._active_stage_workers:
+        time.sleep(0.01)
 
     # Retry the failed run with repaired valid dataset
     repaired_run = research_main.store.get_run(fail_run_id)
@@ -1588,4 +1591,492 @@ def test_http_cannot_downgrade_a_persisted_real_run_to_stub(client: TestClient, 
     assert [a for a in store.list_artifacts() if a.get("run_id") == f"r-persisted-{override}"] == []
 
 
+def test_execute_research_stage_omitted_stage_refs_validates_persisted_dataset(client: TestClient) -> None:
+    store = research_main.store
+    task = client.post(
+        "/api/research-orchestrator/tasks",
+        json={"title": "omitted-refs-test", "objective": "test persisted dataset binding with omitted caller refs", "tenant_id": "tenant-001"},
+    ).json()
+    tid = task["task_id"]
+    ds_approved = _make_test_dataset("ds-approved", "tenant-001")
+    ds_unapproved = _make_test_dataset("ds-unapproved", "tenant-001")
+    stage_def = {"stage_id": "s1", "stage_type": "prototype_backtest"}
+    plan_def = {"plan_id": "plan-omitted", "task_id": tid, "tenant_id": "tenant-001", "stages": [stage_def]}
 
+    store.put_run({
+        "run_id": "r-omitted-refs-1", "task_id": tid, "stage_id": "s1", "tenant_id": "tenant-001",
+        "status": "queued", "adapter": "prototype_backtest", "requested_mode": "stub", "dispatch_mode": "stub",
+        "input_refs": [{"type": "stage", "id": "s1"}, {"type": "dataset", "id": "ds-approved"}],
+        "parameters": {"stage": stage_def, "plan": plan_def, "dataset": ds_approved},
+    })
+
+    # Case A: Caller omits input_refs on stage, but supplies unapproved dataset -> rejected with 400
+    res_bad = client.post(
+        "/api/research-orchestrator/stages/prototype_backtest/execute",
+        json={
+            "run_id": "r-omitted-refs-1", "correlation_id": "c-bad",
+            "stage": {"stage_id": "s1"},
+            "plan": plan_def,
+            "dataset": ds_unapproved,
+        },
+    )
+    assert res_bad.status_code == 400
+    assert any(m in res_bad.text.lower() for m in ("mismatch", "conflicting dataset hint"))
+
+    # Case B: Caller omits input_refs on stage, but supplies approved dataset -> succeeds (200)
+    res_ok = client.post(
+        "/api/research-orchestrator/stages/prototype_backtest/execute",
+        json={
+            "run_id": "r-omitted-refs-1", "correlation_id": "c-ok",
+            "stage": {"stage_id": "s1"},
+            "plan": plan_def,
+            "dataset": ds_approved,
+        },
+    )
+    assert res_ok.status_code == 200
+    assert res_ok.json()["status"] == "succeeded"
+
+
+def test_execute_research_stage_conflicting_input_refs_rejected(client: TestClient) -> None:
+    store = research_main.store
+    task = client.post(
+        "/api/research-orchestrator/tasks",
+        json={"title": "conflict-refs-test", "objective": "test conflicting input refs rejection", "tenant_id": "tenant-001"},
+    ).json()
+    tid = task["task_id"]
+    ds_approved = _make_test_dataset("ds-approved", "tenant-001")
+    stage_def = {"stage_id": "s1", "stage_type": "prototype_backtest"}
+    plan_def = {"plan_id": "plan-conflict-refs", "task_id": tid, "tenant_id": "tenant-001", "stages": [stage_def]}
+
+    store.put_run({
+        "run_id": "r-conflict-refs-1", "task_id": tid, "stage_id": "s1", "tenant_id": "tenant-001",
+        "status": "queued", "adapter": "prototype_backtest", "requested_mode": "stub", "dispatch_mode": "stub",
+        "input_refs": [{"type": "stage", "id": "s1"}, {"type": "dataset", "id": "ds-approved"}],
+        "parameters": {"stage": stage_def, "plan": plan_def, "dataset": ds_approved},
+    })
+
+    try:
+        res = client.post(
+            "/api/research-orchestrator/stages/prototype_backtest/execute",
+            json={
+                "run_id": "r-conflict-refs-1", "correlation_id": "c-conflict",
+                "stage": {"stage_id": "s1", "input_refs": [{"type": "dataset", "id": "ds-rogue"}]},
+                "plan": plan_def,
+                "dataset": ds_approved,
+            },
+        )
+        assert res.status_code == 400
+        assert "conflicting input refs" in res.text.lower()
+    finally:
+        run_record = store.get_run("r-conflict-refs-1")
+        if run_record:
+            store.put_run({**run_record, "status": "failed"})
+
+
+def test_execute_research_stage_conflicting_lineage_rejected(client: TestClient) -> None:
+    store = research_main.store
+    task = client.post(
+        "/api/research-orchestrator/tasks",
+        json={"title": "conflict-lineage-test", "objective": "test task and plan lineage validation", "tenant_id": "tenant-001"},
+    ).json()
+    tid = task["task_id"]
+    ds = _make_test_dataset("ds-lineage", "tenant-001")
+    stage_def = {"stage_id": "s1", "stage_type": "prototype_backtest"}
+    plan_def = {"plan_id": "plan-real", "task_id": tid, "tenant_id": "tenant-001", "stages": [stage_def]}
+
+    store.put_run({
+        "run_id": "r-lineage-1", "task_id": tid, "stage_id": "s1", "tenant_id": "tenant-001",
+        "status": "queued", "adapter": "prototype_backtest", "requested_mode": "stub", "dispatch_mode": "stub",
+        "input_refs": [{"type": "stage", "id": "s1"}, {"type": "dataset", "id": "ds-lineage"}],
+        "parameters": {"stage": stage_def, "plan": plan_def, "dataset": ds},
+    })
+
+    try:
+        # Test conflicting task_id in plan
+        res_task = client.post(
+            "/api/research-orchestrator/stages/prototype_backtest/execute",
+            json={
+                "run_id": "r-lineage-1", "correlation_id": "c-task",
+                "stage": {"stage_id": "s1"},
+                "plan": {"plan_id": "plan-real", "task_id": "task-forged-999"},
+                "dataset": ds,
+            },
+        )
+        assert res_task.status_code == 400
+        assert "task lineage mismatch" in res_task.text.lower()
+
+        # Test conflicting plan_id
+        res_plan = client.post(
+            "/api/research-orchestrator/stages/prototype_backtest/execute",
+            json={
+                "run_id": "r-lineage-1", "correlation_id": "c-plan",
+                "stage": {"stage_id": "s1"},
+                "plan": {"plan_id": "plan-forged-999", "task_id": tid},
+                "dataset": ds,
+            },
+        )
+        assert res_plan.status_code == 400
+        assert "plan lineage mismatch" in res_plan.text.lower()
+    finally:
+        run_record = store.get_run("r-lineage-1")
+        if run_record:
+            store.put_run({**run_record, "status": "failed"})
+
+
+def test_execute_research_stage_conflicting_parameters_and_dataset_rejected(client: TestClient) -> None:
+    store = research_main.store
+    task = client.post(
+        "/api/research-orchestrator/tasks",
+        json={"title": "conflict-params-test", "objective": "test stage parameter and dataset conflict rejection", "tenant_id": "tenant-001"},
+    ).json()
+    tid = task["task_id"]
+    ds_approved = _make_test_dataset("ds-param-approved", "tenant-001")
+    ds_other = _make_test_dataset("ds-param-other", "tenant-001")
+    stage_def = {"stage_id": "s1", "stage_type": "prototype_backtest", "parameters": {"lookback": 20, "threshold": 0.5}}
+    plan_def = {"plan_id": "plan-param-test", "task_id": tid, "tenant_id": "tenant-001", "stages": [stage_def]}
+
+    store.put_run({
+        "run_id": "r-params-1", "task_id": tid, "stage_id": "s1", "tenant_id": "tenant-001",
+        "status": "queued", "adapter": "prototype_backtest", "requested_mode": "stub", "dispatch_mode": "stub",
+        "input_refs": [{"type": "stage", "id": "s1"}, {"type": "dataset", "id": "ds-param-approved"}],
+        "parameters": {"stage": stage_def, "plan": plan_def, "dataset": ds_approved},
+    })
+
+    try:
+        # Conflicting stage parameter: caller supplies lookback=50 != persisted lookback=20
+        res_param = client.post(
+            "/api/research-orchestrator/stages/prototype_backtest/execute",
+            json={
+                "run_id": "r-params-1", "correlation_id": "c-p1",
+                "stage": {"stage_id": "s1", "parameters": {"lookback": 50}},
+                "plan": plan_def,
+                "dataset": ds_approved,
+            },
+        )
+        assert res_param.status_code == 400
+        assert "conflicting stage parameter 'lookback'" in res_param.text.lower()
+
+        # Conflicting dataset hint
+        res_ds = client.post(
+            "/api/research-orchestrator/stages/prototype_backtest/execute",
+            json={
+                "run_id": "r-params-1", "correlation_id": "c-p2",
+                "stage": {"stage_id": "s1", "parameters": {"lookback": 20}},
+                "plan": plan_def,
+                "dataset": ds_other,
+            },
+        )
+        assert res_ds.status_code == 400
+        assert "conflicting dataset hint" in res_ds.text.lower()
+    finally:
+        run_record = store.get_run("r-params-1")
+        if run_record:
+            store.put_run({**run_record, "status": "failed"})
+
+
+def test_execute_research_stage_binds_lineage_and_preserves_dataset_on_completion(client: TestClient) -> None:
+    store = research_main.store
+    task = client.post(
+        "/api/research-orchestrator/tasks",
+        json={"title": "lineage-binding-test", "objective": "verify artifact lineage and dataset preservation", "tenant_id": "tenant-001"},
+    ).json()
+    tid = task["task_id"]
+    ds_approved = _make_test_dataset("ds-bind-approved", "tenant-001")
+    stage_def = {"stage_id": "s1", "stage_type": "prototype_backtest", "parameters": {"window": 10}}
+    plan_def = {"plan_id": "plan-bind-approved", "task_id": tid, "tenant_id": "tenant-001", "stages": [stage_def]}
+
+    store.put_run({
+        "run_id": "r-bind-complete-1", "task_id": tid, "stage_id": "s1", "tenant_id": "tenant-001",
+        "status": "queued", "adapter": "prototype_backtest", "requested_mode": "stub", "dispatch_mode": "stub",
+        "input_refs": [{"type": "stage", "id": "s1"}, {"type": "dataset", "id": "ds-bind-approved"}],
+        "parameters": {"stage": stage_def, "plan": plan_def, "dataset": ds_approved},
+    })
+
+    res = client.post(
+        "/api/research-orchestrator/stages/prototype_backtest/execute",
+        json={
+            "run_id": "r-bind-complete-1", "correlation_id": "c-bind",
+            "stage": {"stage_id": "s1"},
+            "plan": plan_def,
+            "dataset": ds_approved,
+        },
+    )
+    assert res.status_code == 200
+    assert res.json()["status"] == "succeeded"
+
+    # Verify run record in store: preserved dataset and completed status
+    updated_run = store.get_run("r-bind-complete-1")
+    assert updated_run["status"] == "completed"
+    assert updated_run["parameters"]["dataset"]["dataset_id"] == "ds-bind-approved"
+
+    # Verify artifact record in store: strictly bound to persisted task_id and plan_id
+    arts = [a for a in store.list_artifacts() if a.get("run_id") == "r-bind-complete-1"]
+    assert len(arts) == 1
+    art = arts[0]
+    assert art["task_id"] == tid
+    assert art["plan_id"] == "plan-bind-approved"
+    assert art["stage_id"] == "s1"
+
+
+def test_execute_research_stage_rejects_unapproved_extra_params_when_persisted_empty(client: TestClient) -> None:
+    store = research_main.store
+    task = client.post(
+        "/api/research-orchestrator/tasks",
+        json={"title": "Empty Persisted Params", "objective": "test binding", "source_refs": [], "constraints": {}},
+    ).json()
+    tid = task["task_id"]
+    ds_approved = _make_test_dataset("ds-empty-params", "tenant-001")
+    stage_def = {"stage_id": "s1", "stage_type": "prototype_backtest", "parameters": {}}
+    plan_def = {"plan_id": "plan-empty-params", "task_id": tid, "tenant_id": "tenant-001", "stages": [stage_def]}
+
+    store.put_run({
+        "run_id": "r-empty-params-1", "task_id": tid, "stage_id": "s1", "tenant_id": "tenant-001",
+        "status": "queued", "adapter": "prototype_backtest", "requested_mode": "stub", "dispatch_mode": "stub",
+        "input_refs": [{"type": "stage", "id": "s1"}, {"type": "dataset", "id": "ds-empty-params"}],
+        "parameters": {"stage": stage_def, "plan": plan_def, "dataset": ds_approved},
+    })
+
+    # Unapproved extra parameter must be rejected with 400
+    res_rejected = client.post(
+        "/api/research-orchestrator/stages/prototype_backtest/execute",
+        json={
+            "run_id": "r-empty-params-1", "correlation_id": "c-empty",
+            "stage": {"stage_id": "s1", "parameters": {"short_window": 1}},
+            "plan": plan_def,
+            "dataset": ds_approved,
+        },
+    )
+    assert res_rejected.status_code == 400
+    assert "unapproved stage parameter" in res_rejected.text.lower()
+
+    # Omitted or empty caller parameters must succeed and execute with empty persisted parameters
+    res_ok = client.post(
+        "/api/research-orchestrator/stages/prototype_backtest/execute",
+        json={
+            "run_id": "r-empty-params-1", "correlation_id": "c-empty-ok",
+            "stage": {"stage_id": "s1"},
+            "plan": plan_def,
+            "dataset": ds_approved,
+        },
+    )
+    assert res_ok.status_code == 200
+    assert res_ok.json()["status"] == "succeeded"
+
+
+def test_execute_research_stage_rejects_unapproved_extra_params_when_persisted_nonempty(client: TestClient) -> None:
+    store = research_main.store
+    task = client.post(
+        "/api/research-orchestrator/tasks",
+        json={"title": "Non-empty Persisted Params", "objective": "test binding", "source_refs": [], "constraints": {}},
+    ).json()
+    tid = task["task_id"]
+    ds_approved = _make_test_dataset("ds-nonempty-params", "tenant-001")
+    stage_def = {"stage_id": "s1", "stage_type": "prototype_backtest", "parameters": {"long_window": 20}}
+    plan_def = {"plan_id": "plan-nonempty-params", "task_id": tid, "tenant_id": "tenant-001", "stages": [stage_def]}
+
+    store.put_run({
+        "run_id": "r-nonempty-params-1", "task_id": tid, "stage_id": "s1", "tenant_id": "tenant-001",
+        "status": "queued", "adapter": "prototype_backtest", "requested_mode": "stub", "dispatch_mode": "stub",
+        "input_refs": [{"type": "stage", "id": "s1"}, {"type": "dataset", "id": "ds-nonempty-params"}],
+        "parameters": {"stage": stage_def, "plan": plan_def, "dataset": ds_approved},
+    })
+
+    # Unapproved extra parameter must be rejected with 400
+    res_extra = client.post(
+        "/api/research-orchestrator/stages/prototype_backtest/execute",
+        json={
+            "run_id": "r-nonempty-params-1", "correlation_id": "c-extra",
+            "stage": {"stage_id": "s1", "parameters": {"short_window": 1}},
+            "plan": plan_def,
+            "dataset": ds_approved,
+        },
+    )
+    assert res_extra.status_code == 400
+    assert "unapproved stage parameter" in res_extra.text.lower()
+
+    # Conflicting parameter must be rejected with 400
+    res_conflict = client.post(
+        "/api/research-orchestrator/stages/prototype_backtest/execute",
+        json={
+            "run_id": "r-nonempty-params-1", "correlation_id": "c-conflict",
+            "stage": {"stage_id": "s1", "parameters": {"long_window": 10}},
+            "plan": plan_def,
+            "dataset": ds_approved,
+        },
+    )
+    assert res_conflict.status_code == 400
+    assert "conflicting stage parameter" in res_conflict.text.lower()
+
+    # Omitted caller parameters must execute solely with persisted {"long_window": 20}
+    res_ok = client.post(
+        "/api/research-orchestrator/stages/prototype_backtest/execute",
+        json={
+            "run_id": "r-nonempty-params-1", "correlation_id": "c-nonempty-ok",
+            "stage": {"stage_id": "s1"},
+            "plan": plan_def,
+            "dataset": ds_approved,
+        },
+    )
+    assert res_ok.status_code == 200
+    assert res_ok.json()["status"] == "succeeded"
+
+
+def test_execute_research_stage_evidence_synthesis_binds_persisted_artifact_refs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store = research_main.build_research_orchestrator_store(str(tmp_path / "owner"))
+    monkeypatch.setattr(research_main, "store", store)
+    task_id = "task-synth-art-bind"
+    store.put_task({"task_id": task_id, "title": "Synth Art Bind", "tenant_id": "tenant-001"})
+    store.put_artifact({
+        "artifact_id": "art-approved", "id": "art-approved", "run_id": "r-app", "task_id": task_id,
+        "tenant_id": "tenant-001", "artifact_family": "backtest_artifact", "payload": {"summary": "approved"},
+    })
+    store.put_artifact({
+        "artifact_id": "art-unapproved", "id": "art-unapproved", "run_id": "r-unapp", "task_id": task_id,
+        "tenant_id": "tenant-001", "artifact_family": "backtest_artifact", "payload": {"summary": "unapproved"},
+    })
+
+    stage_def = {
+        "stage_id": "stage-synth", "stage_type": "evidence_synthesis",
+        "artifact_refs": [{"artifact_id": "art-approved"}],
+    }
+    plan_def = {"plan_id": "plan-synth-art", "task_id": task_id, "stages": [stage_def]}
+
+    store.put_run({
+        "run_id": "r-synth-bind", "id": "r-synth-bind", "task_id": task_id, "stage_id": "stage-synth",
+        "tenant_id": "tenant-001", "status": "queued", "requested_mode": "stub",
+        "parameters": {"stage": stage_def, "plan": plan_def},
+    })
+
+    client = TestClient(research_main.app)
+
+    # Substituted unapproved artifact refs must be rejected with 400
+    res_rejected = client.post(
+        "/api/research-orchestrator/stages/evidence_synthesis/execute",
+        json={
+            "stage": {"stage_id": "stage-synth", "artifact_refs": [{"artifact_id": "art-unapproved"}]},
+            "plan": plan_def,
+            "run_id": "r-synth-bind",
+            "correlation_id": "corr-synth-unapp",
+            "requested_mode": "stub",
+        },
+    )
+    assert res_rejected.status_code == 400
+    assert "conflicting artifact refs" in res_rejected.text.lower()
+
+    # Omitted caller artifact refs must bind to persisted approved records
+    res_ok = client.post(
+        "/api/research-orchestrator/stages/evidence_synthesis/execute",
+        json={
+            "stage": {"stage_id": "stage-synth"},
+            "plan": plan_def,
+            "run_id": "r-synth-bind",
+            "correlation_id": "corr-synth-ok",
+            "requested_mode": "stub",
+        },
+    )
+    assert res_ok.status_code == 200
+    res_data = res_ok.json()
+    assert res_data["status"] == "succeeded"
+    art = store.get_artifact(res_data["artifact_id"])
+    assert art is not None
+    assert len(art["payload"]["input_artifacts"]) == 1
+    assert art["payload"]["input_artifacts"][0]["artifact_id"] == "art-approved"
+
+
+def test_execute_research_stage_evidence_synthesis_rejects_caller_artifacts_when_approved_empty(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store = research_main.build_research_orchestrator_store(str(tmp_path / "owner"))
+    monkeypatch.setattr(research_main, "store", store)
+    task_id = "task-synth-empty-art"
+    store.put_task({"task_id": task_id, "title": "Synth Empty Art", "tenant_id": "tenant-001"})
+    store.put_artifact({
+        "artifact_id": "art-any", "id": "art-any", "run_id": "r-any", "task_id": task_id,
+        "tenant_id": "tenant-001", "artifact_family": "backtest_artifact", "payload": {"summary": "any"},
+    })
+
+    stage_def = {
+        "stage_id": "stage-synth", "stage_type": "evidence_synthesis",
+        "artifact_refs": [],
+    }
+    plan_def = {"plan_id": "plan-synth-empty-art", "task_id": task_id, "stages": [stage_def]}
+
+    store.put_run({
+        "run_id": "r-synth-empty-art", "id": "r-synth-empty-art", "task_id": task_id, "stage_id": "stage-synth",
+        "tenant_id": "tenant-001", "status": "queued", "requested_mode": "stub",
+        "parameters": {"stage": stage_def, "plan": plan_def},
+    })
+
+    client = TestClient(research_main.app)
+
+    # Caller supplying unapproved artifact refs when approved is empty must be rejected with 400
+    res = client.post(
+        "/api/research-orchestrator/stages/evidence_synthesis/execute",
+        json={
+            "stage": {"stage_id": "stage-synth", "artifact_refs": [{"artifact_id": "art-any"}]},
+            "plan": plan_def,
+            "run_id": "r-synth-empty-art",
+            "correlation_id": "corr-synth-any",
+            "requested_mode": "stub",
+        },
+    )
+    assert res.status_code == 400
+    assert "conflicting artifact refs" in res.text.lower() or "unapproved artifact refs" in res.text.lower()
+
+
+def test_execute_research_stage_evidence_synthesis_binds_persisted_dependencies(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store = research_main.build_research_orchestrator_store(str(tmp_path / "owner"))
+    monkeypatch.setattr(research_main, "store", store)
+    task_id = "task-synth-deps-bind"
+    store.put_task({"task_id": task_id, "title": "Synth Deps Bind", "tenant_id": "tenant-001"})
+    store.put_artifact({
+        "artifact_id": "art-dep-approved", "id": "art-dep-approved", "run_id": "r-dep-app", "task_id": task_id,
+        "stage_id": "stage-prior", "tenant_id": "tenant-001", "artifact_family": "backtest_artifact", "payload": {"summary": "prior"},
+    })
+    store.put_run({
+        "run_id": "r-dep-app", "id": "r-dep-app", "task_id": task_id, "stage_id": "stage-prior",
+        "tenant_id": "tenant-001", "status": "completed", "artifact_refs": [{"artifact_id": "art-dep-approved"}],
+    })
+
+    stage_def = {
+        "stage_id": "stage-synth", "stage_type": "evidence_synthesis",
+        "dependencies": ["stage-prior"],
+    }
+    plan_def = {"plan_id": "plan-synth-deps", "task_id": task_id, "stages": [stage_def]}
+
+    store.put_run({
+        "run_id": "r-synth-deps", "id": "r-synth-deps", "task_id": task_id, "stage_id": "stage-synth",
+        "tenant_id": "tenant-001", "status": "queued", "requested_mode": "stub",
+        "parameters": {"stage": stage_def, "plan": plan_def},
+    })
+
+    client = TestClient(research_main.app)
+
+    # Substituted unapproved dependency selection must be rejected with 400
+    res_rejected = client.post(
+        "/api/research-orchestrator/stages/evidence_synthesis/execute",
+        json={
+            "stage": {"stage_id": "stage-synth", "dependencies": ["stage-unapproved"]},
+            "plan": plan_def,
+            "run_id": "r-synth-deps",
+            "correlation_id": "corr-deps-unapp",
+            "requested_mode": "stub",
+        },
+    )
+    assert res_rejected.status_code == 400
+    assert "conflicting dependency selection" in res_rejected.text.lower()
+
+    # Omitted caller dependencies must bind to persisted approved dependency ["stage-prior"]
+    res_ok = client.post(
+        "/api/research-orchestrator/stages/evidence_synthesis/execute",
+        json={
+            "stage": {"stage_id": "stage-synth"},
+            "plan": plan_def,
+            "run_id": "r-synth-deps",
+            "correlation_id": "corr-deps-ok",
+            "requested_mode": "stub",
+        },
+    )
+    assert res_ok.status_code == 200
+    art = store.get_artifact(res_ok.json()["artifact_id"])
+    assert art is not None
+    assert len(art["payload"]["input_artifacts"]) == 1
+    assert art["payload"]["input_artifacts"][0]["artifact_id"] == "art-dep-approved"

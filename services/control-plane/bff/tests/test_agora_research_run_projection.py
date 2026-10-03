@@ -967,4 +967,3 @@ def test_bff_accepts_supported_synthesis_owner(monkeypatch: pytest.MonkeyPatch) 
     service.approve_plan("p", scope=SimpleNamespace(tenant_id="a", user_id="u", roles=["operator"]))
     service.dispatch_plan("p", scope=SimpleNamespace(tenant_id="a", user_id="u", roles=["operator"]))
     assert sent.call_count == 1
-

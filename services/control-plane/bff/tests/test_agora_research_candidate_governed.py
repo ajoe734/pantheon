@@ -1250,4 +1250,3 @@ def test_bff_dispatch_fails_closed_when_successor_dataset_unavailable(monkeypatc
     res_disp = client.post(f"/bff/agora/research-plans/{plan_id}/runs", headers=_headers(idempotency_key="multi-ds-disp", if_match=res_app.json()["meta"]["etag"]))
     assert res_disp.status_code == 503
     assert "DEPENDENCY_UNAVAILABLE" in res_disp.text or "unavailable" in res_disp.text.lower()
-

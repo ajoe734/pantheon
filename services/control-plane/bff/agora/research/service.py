@@ -215,11 +215,9 @@ class AgoraResearchService:
 
     def get_plan(self, plan_id: str, *, scope: Any) -> Optional[Dict[str, Any]]:
         plan = self.store.get_plan(plan_id)
-        if plan is None:
-            return None
-        if plan.get("tenant_id") and plan.get("tenant_id") != scope.tenant_id:
-            return None
-        if plan.get("user_id") and plan.get("user_id") != scope.user_id:
+        if not plan or (plan.get("tenant_id") and plan.get("tenant_id") != scope.tenant_id) or (
+            plan.get("user_id") and plan.get("user_id") != scope.user_id
+        ):
             return None
         return self._project_plan_from_owner(plan, scope)
 
@@ -268,29 +266,6 @@ class AgoraResearchService:
         )
         legacy_statuses = {str(run.get("stage_id") or ""): run.get("execution_status") for run in legacy_runs}
         legacy_run_ids = [str(run.get("run_id") or run.get("id")) for run in legacy_runs]
-        if not records:
-            if legacy_runs:
-                result["run_ids"] = legacy_run_ids
-                result["stages"] = [
-                    {**stage, **({"status": legacy_statuses[str(stage.get("stage_id") or "")]} if str(stage.get("stage_id") or "") in legacy_statuses else {})}
-                    for stage in plan.get("stages") or []
-                ]
-                if plan.get("status") == "cancelled":
-                    return result
-                statuses = [str(run.get("execution_status") or "").lower() for run in legacy_runs]
-                if all(status in {"succeeded", "completed"} for status in statuses) and len(legacy_statuses) == len(result["stages"]):
-                    result["status"] = "completed"
-                elif any(status in {"failed", "cancelled", "canceled"} for status in statuses):
-                    result["status"] = "failed"
-                else:
-                    result["status"] = "running"
-                return result
-            result["stages"] = [{**stage, "status": "pending"} for stage in plan.get("stages") or []]
-            result["run_ids"] = []
-            if plan.get("status") == "cancelled":
-                return result
-            result["status"] = "approved" if plan.get("approved_at") else "draft"
-            return result
         stages = []
         for stage in plan.get("stages") or []:
             st_id = str(stage.get("stage_id") or "")
@@ -300,17 +275,16 @@ class AgoraResearchService:
                 stage = {**stage, "status": _OWNER_STATUS_TO_EXEC_STATUS.get(status, status)}
             elif st_id in legacy_statuses:
                 stage = {**stage, "status": legacy_statuses[st_id]}
+            elif not records and not legacy_runs:
+                stage = {**stage, "status": "pending"}
             stages.append(stage)
         result["stages"] = stages
-        seen_ids = set()
-        all_ids = []
-        for rid in legacy_run_ids + [str(record.get("run_id") or record.get("id")) for record in records]:
-            if rid not in seen_ids:
-                seen_ids.add(rid)
-                all_ids.append(rid)
-        result["run_ids"] = all_ids
+        result["run_ids"] = list(dict.fromkeys(legacy_run_ids + [str(record.get("run_id") or record.get("id")) for record in records]))
         if plan.get("status") == "cancelled":
             result["status"] = "cancelled"
+            return result
+        if not records and not legacy_runs:
+            result["status"] = "approved" if plan.get("approved_at") else "draft"
             return result
         statuses = [str(s.get("status") or "").lower() for s in stages]
         if all(status in {"completed", "succeeded"} for status in statuses) and len(stages) > 0 and all(s.get("status") for s in stages):
@@ -334,10 +308,8 @@ class AgoraResearchService:
 
     def _plan_for_decision(self, plan_id: str, scope: Any) -> Dict[str, Any]:
         plan = self.store.get_plan(plan_id)
-        if plan is None or plan.get("tenant_id") != scope.tenant_id:
-            raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), "Research plan not found", plan_id)
-        workshop = self.workshop_store.get_session(plan["workshop_id"]) if self.workshop_store else None
-        if workshop is not None and workshop.get("tenant_id") != scope.tenant_id:
+        workshop = self.workshop_store.get_session(plan["workshop_id"]) if (plan and self.workshop_store) else None
+        if not plan or plan.get("tenant_id") != scope.tenant_id or (workshop and workshop.get("tenant_id") != scope.tenant_id):
             raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), "Research plan not found", plan_id)
         if not _operator_grade_scope(scope) or (
             "operator" not in scope.roles
@@ -474,35 +446,17 @@ class AgoraResearchService:
                     plan_id,
                 )
             if owner_records is not None:
-                owner_by_id = {
-                    str(rec.get("run_id") or rec.get("id") or ""): rec
-                    for rec in owner_records
-                    if isinstance(rec, dict)
-                }
-                for rid, rec in owner_by_id.items():
-                    if not rid:
-                        continue
-                    rec_status = str(rec.get("status") or "").lower()
-                    if rec_status in active_statuses:
-                        active_run_ids.add(rid)
-
-                # Reconcile stale local records against authoritative owner terminal statuses
+                owner_by_id = {str(rec.get("run_id") or rec.get("id") or ""): rec for rec in owner_records if isinstance(rec, dict)}
+                active_run_ids = {rid for rid, rec in owner_by_id.items() if rid and str(rec.get("status") or "").lower() in active_statuses}
                 for lr in local_runs:
                     l_rid = str(lr.get("run_id") or lr.get("id") or "")
-                    if not l_rid:
-                        continue
-                    if l_rid in owner_by_id:
+                    if l_rid and l_rid in owner_by_id:
                         owner_status = str(owner_by_id[l_rid].get("status") or "").lower()
                         if owner_status in terminal_statuses:
                             active_run_ids.discard(l_rid)
                             mapped = _OWNER_STATUS_TO_EXEC_STATUS.get(owner_status, "failed")
                             if str(lr.get("execution_status") or "").lower() != mapped and hasattr(self.store, "update_run"):
-                                self.store.update_run(
-                                    l_rid,
-                                    {"execution_status": mapped},
-                                    tenant_id=scope.tenant_id,
-                                    user_id=target_user,
-                                )
+                                self.store.update_run(l_rid, {"execution_status": mapped}, tenant_id=scope.tenant_id, user_id=target_user)
         else:
             active_run_ids = set(local_active_ids)
 
@@ -520,29 +474,19 @@ class AgoraResearchService:
             owner_ops = WorkshopCanonicalOperations(research_base_url=r_url)
             for tid in {str(r.get("task_id")) for r in (owner_records or []) if isinstance(r, dict) and r.get("task_id")}:
                 try:
-                    if hasattr(owner_ops, "cancel_research_task"):
-                        owner_ops.cancel_research_task(tid)
-                except CanonicalOperationError as exc:
-                    if exc.status_code not in (404, 409):
-                        sc = exc.status_code if exc.status_code and exc.status_code >= 400 else 503
-                        _fail(exc, f"Failed to cancel owner task {tid}", sc, "UPSTREAM_UNAVAILABLE" if sc == 503 else "INTERNAL_ERROR")
+                    owner_ops.cancel_research_task(tid)
                 except Exception as exc:
-                    _fail(exc, f"Failed to cancel owner task {tid}")
+                    sc = getattr(exc, "status_code", None)
+                    if sc not in (404, 409):
+                        _fail(exc, f"Failed to cancel owner task {tid}", sc if sc and sc >= 400 else 503, "INTERNAL_ERROR" if sc and sc != 503 else "UPSTREAM_UNAVAILABLE")
 
             max_rounds = max(len(plan.get("stages") or []) * 2 + 5, 10)
             for _ in range(max_rounds):
                 owner_records = self._owner_run_records(plan, scope)
                 if owner_records is None:
                     _fail(None, "Research execution owner became unavailable during plan cancellation")
-                owner_by_id = {
-                    str(rec.get("run_id") or rec.get("id") or ""): rec
-                    for rec in owner_records
-                    if isinstance(rec, dict)
-                }
-                active_runs = [
-                    rid for rid, rec in owner_by_id.items()
-                    if rid and str(rec.get("status") or "").lower() in active_statuses
-                ]
+                owner_by_id = {str(rec.get("run_id") or rec.get("id") or ""): rec for rec in owner_records if isinstance(rec, dict)}
+                active_runs = [rid for rid, rec in owner_by_id.items() if rid and str(rec.get("status") or "").lower() in active_statuses]
                 if not active_runs:
                     break
 
@@ -552,25 +496,11 @@ class AgoraResearchService:
                         cancelled_run_ids.add(rid)
                     except CanonicalOperationError as exc:
                         if exc.status_code == 409:
-                            recheck = self._owner_run_records(plan, scope)
-                            recheck_by_id = {
-                                str(r.get("run_id") or r.get("id") or ""): r
-                                for r in (recheck or [])
-                                if isinstance(r, dict)
-                            }
-                            current_rec = recheck_by_id.get(rid)
-                            current_status = str(current_rec.get("status") or "").lower() if current_rec else ""
-                            if current_status in terminal_statuses or (
-                                recheck is None and "terminal research run in status" in str(exc.reason or "")
-                            ):
-                                mapped = _OWNER_STATUS_TO_EXEC_STATUS.get(current_status, "failed")
+                            recheck = {str(r.get("run_id") or r.get("id") or ""): r for r in (self._owner_run_records(plan, scope) or []) if isinstance(r, dict)}
+                            cur_status = str((recheck.get(rid) or {}).get("status") or "").lower()
+                            if cur_status in terminal_statuses or "terminal research run in status" in str(getattr(exc, "reason", "") or ""):
                                 if hasattr(self.store, "update_run"):
-                                    self.store.update_run(
-                                        rid,
-                                        {"execution_status": mapped},
-                                        tenant_id=scope.tenant_id,
-                                        user_id=target_user,
-                                    )
+                                    self.store.update_run(rid, {"execution_status": _OWNER_STATUS_TO_EXEC_STATUS.get(cur_status, "failed")}, tenant_id=scope.tenant_id, user_id=target_user)
                                 continue
                         sc = exc.status_code if exc.status_code and exc.status_code >= 400 else 503
                         err_name = "RESOURCE_NOT_FOUND" if sc == 404 else ("RESOURCE_CONFLICT" if sc == 409 else "UPSTREAM_UNAVAILABLE")
@@ -646,12 +576,6 @@ class AgoraResearchService:
                     scope=scope,
                 )
                 status = str(owner.get("status") or "queued").lower()
-                status_projection = {
-                    "completed": "succeeded",
-                    "failed": "failed",
-                    "rejected": "failed",
-                    "canceled": "cancelled",
-                }
                 outcome = "pass" if status == "completed" else (
                     "fail" if status in {"failed", "rejected"} else "pending"
                 )
@@ -659,7 +583,7 @@ class AgoraResearchService:
                     "task_id": owner.get("task_id"),
                     "attempt_number": owner.get("attempt_number", 1),
                     "parent_run_id": owner.get("parent_run_id"),
-                    "execution_status": status_projection.get(status, status),
+                    "execution_status": _OWNER_STATUS_TO_EXEC_STATUS.get(status, status),
                     "outcome": outcome,
                     "artifact_refs": owner.get("artifact_refs") or [],
                     "evidence_refs": owner.get("evidence_refs") or [],
@@ -703,11 +627,7 @@ class AgoraResearchService:
                     f"Only approved plans may be dispatched; current status: '{plan['status']}'",
                     f"expected 'approved', got '{plan['status']}'",
                 )
-        dispatch_stage = None
-        for stage in plan.get("stages", []):
-            if stage.get("status") in ("pending", "ready"):
-                dispatch_stage = stage
-                break
+        dispatch_stage = next((stage for stage in plan.get("stages", []) if stage.get("status") in ("pending", "ready")), None)
         if dispatch_stage is None:
             raise self.bff_error(
                 409, self._error_code("RESOURCE_CONFLICT"),
@@ -734,17 +654,6 @@ class AgoraResearchService:
             or "stub"
         ).strip().lower()
         backend_mode = str(routing.get("backend_mode") or "real").strip().lower()
-
-        if (
-            os.getenv(f"AGORA_RESEARCH_{stage_type.upper()}_UNAVAILABLE") == "1"
-            or os.getenv(f"AGORA_RESEARCH_{preferred_backend.upper()}_UNAVAILABLE") == "1"
-        ):
-            raise self.bff_error(
-                503,
-                self._error_code("DEPENDENCY_UNAVAILABLE"),
-                f"Backend execution owner for stage '{stage_type}' ({preferred_backend}) is currently unavailable",
-                plan_id,
-            )
         from services.control_plane.bff.agora.strategy_workshop.operations import (
             WorkshopCanonicalOperations,
             CanonicalOperationError,
@@ -815,21 +724,10 @@ class AgoraResearchService:
                 task_payload=task_p,
                 run_payload=run_p,
             )
-        except CanonicalOperationError as exc:
-            status_code = exc.status_code if exc.status_code and exc.status_code >= 400 else 503
-            raise self.bff_error(
-                status_code,
-                self._error_code("DEPENDENCY_UNAVAILABLE"),
-                f"Research orchestrator dispatch failed: {exc}",
-                plan_id,
-            ) from exc
         except Exception as exc:
-            raise self.bff_error(
-                503,
-                self._error_code("DEPENDENCY_UNAVAILABLE"),
-                f"Research orchestrator dispatch error: {exc}",
-                plan_id,
-            ) from exc
+            sc = getattr(exc, "status_code", None)
+            sc = sc if isinstance(sc, int) and sc >= 400 else 503
+            raise self.bff_error(sc, self._error_code("DEPENDENCY_UNAVAILABLE"), f"Research orchestrator dispatch failed: {exc}", plan_id) from exc
 
         task_obj = dispatched.get("task") if isinstance(dispatched.get("task"), dict) else {}
         run_obj = dispatched.get("run") if isinstance(dispatched.get("run"), dict) else {}
@@ -852,20 +750,14 @@ class AgoraResearchService:
         )
         run["task_id"] = task_id
         owner_status = str(run_obj.get("status") or "").lower()
+        run["execution_status"] = _OWNER_STATUS_TO_EXEC_STATUS.get(owner_status, "queued")
+        run["outcome"] = "pass" if owner_status == "completed" else ("fail" if owner_status in ("failed", "rejected") else "pending")
         if owner_status == "completed":
-            run["execution_status"] = "succeeded"
-            run["outcome"] = "pass"
-            if run_obj.get("artifact_refs"):
-                run["artifact_refs"] = run_obj["artifact_refs"]
-            if run_obj.get("metrics"):
-                run["metrics"] = run_obj["metrics"]
-            if run_obj.get("receipt"):
-                run["receipt"] = run_obj["receipt"]
-                if hasattr(self.store, "record_execution_receipt"):
-                    self.store.record_execution_receipt(run_obj["receipt"])
-        elif owner_status in ("failed", "rejected"):
-            run["execution_status"] = "failed"
-            run["outcome"] = "fail"
+            for k in ("artifact_refs", "metrics", "receipt"):
+                if run_obj.get(k):
+                    run[k] = run_obj[k]
+            if run_obj.get("receipt") and hasattr(self.store, "record_execution_receipt"):
+                self.store.record_execution_receipt(run_obj["receipt"])
 
         self.store.create_run(run)
         stage_status = "succeeded" if owner_status == "completed" else ("failed" if owner_status in ("failed", "rejected") else "queued")
@@ -936,31 +828,17 @@ class AgoraResearchService:
                         return None
 
                     if raw_run is None:
-                        plan_id = "plan-unknown"
-                        stage_id = "stage-unknown"
+                        plan_id, stage_id = "plan-unknown", "stage-unknown"
                         for ref in owner_run.get("input_refs") or []:
-                            if isinstance(ref, dict):
-                                if ref.get("type") == "research_plan" and ref.get("id"):
-                                    plan_id = str(ref.get("id"))
-                                elif ref.get("type") == "stage" and ref.get("id"):
-                                    stage_id = str(ref.get("id"))
+                            if isinstance(ref, dict) and ref.get("id"):
+                                if ref.get("type") == "research_plan":
+                                    plan_id = str(ref["id"])
+                                elif ref.get("type") == "stage":
+                                    stage_id = str(ref["id"])
                         st_type = owner_run.get("stage_type") or owner_run.get("adapter") or "prototype_backtest"
-                        ws_id = ""
-                        strat_id = ""
-                        reg_id = ""
-                        if self.store and hasattr(self.store, "get_plan") and plan_id != "plan-unknown":
-                            try:
-                                stored_plan = self.store.get_plan(plan_id)
-                                if stored_plan:
-                                    ws_id = stored_plan.get("workshop_id", "")
-                                    strat_id = stored_plan.get("strategy_id", "")
-                                    reg_id = stored_plan.get("strategy_spec_registry_id", "")
-                                    for stg in stored_plan.get("stages", []):
-                                        if stg.get("stage_id") == stage_id:
-                                            st_type = stg.get("stage_type") or st_type
-                                            break
-                            except Exception:
-                                pass
+                        sp = (self.store.get_plan(plan_id) or {}) if (self.store and hasattr(self.store, "get_plan") and plan_id != "plan-unknown") else {}
+                        ws_id, strat_id, reg_id = sp.get("workshop_id", ""), sp.get("strategy_id", ""), sp.get("strategy_spec_registry_id", "")
+                        st_type = next((s.get("stage_type") for s in sp.get("stages", []) if s.get("stage_id") == stage_id and s.get("stage_type")), st_type)
                         raw_run = {
                             "run_id": run_id, "task_id": owner_run.get("task_id") or f"task-{run_id}",
                             "plan_id": plan_id, "stage_id": stage_id, "stage_type": st_type,
@@ -973,33 +851,25 @@ class AgoraResearchService:
                             "created_at": owner_run.get("created_at") or self.utc_now(),
                             "updated_at": owner_run.get("updated_at") or self.utc_now(),
                         }
-                        if owner_run.get("receipt") and hasattr(self.store, "record_execution_receipt"):
-                            self.store.record_execution_receipt(owner_run["receipt"])
                         if hasattr(self.store, "create_run"):
                             self.store.create_run(raw_run)
                     else:
-                        raw_run["execution_status"] = mapped_status
-                        raw_run["outcome"] = mapped_outcome
-                        if owner_run.get("artifact_refs"):
-                            raw_run["artifact_refs"] = owner_run["artifact_refs"]
-                        if owner_run.get("metrics"):
-                            raw_run["metrics"] = owner_run["metrics"]
-                        if owner_run.get("provenance"):
-                            raw_run["provenance"] = owner_run["provenance"]
-                            if isinstance(raw_run.get("backend"), dict):
-                                raw_run["backend"]["mode"] = owner_run["provenance"]
-                        if owner_run.get("receipt") and hasattr(self.store, "record_execution_receipt"):
-                            self.store.record_execution_receipt(owner_run["receipt"])
+                        raw_run.update({"execution_status": mapped_status, "outcome": mapped_outcome})
+                        for k in ("artifact_refs", "metrics", "provenance"):
+                            if owner_run.get(k):
+                                raw_run[k] = owner_run[k]
+                        if owner_run.get("provenance") and isinstance(raw_run.get("backend"), dict):
+                            raw_run["backend"]["mode"] = owner_run["provenance"]
                         if hasattr(self.store, "update_run"):
                             self.store.update_run(run_id, raw_run, tenant_id=scope.tenant_id, user_id=scope.user_id)
+                    if owner_run.get("receipt") and hasattr(self.store, "record_execution_receipt"):
+                        self.store.record_execution_receipt(owner_run["receipt"])
             except Exception as exc:
                 log.warning("Research orchestrator get_run readback error: %s", exc)
 
-        if raw_run is None:
-            return None
-        if raw_run.get("user_id") and getattr(scope, "user_id", None) and raw_run.get("user_id") != scope.user_id:
-            return None
-        if raw_run.get("tenant_id") and getattr(scope, "tenant_id", None) and raw_run.get("tenant_id") != scope.tenant_id:
+        if not raw_run or (
+            raw_run.get("user_id") and getattr(scope, "user_id", None) and raw_run.get("user_id") != scope.user_id
+        ) or (raw_run.get("tenant_id") and getattr(scope, "tenant_id", None) and raw_run.get("tenant_id") != scope.tenant_id):
             return None
         return _run_projection_with_defaults(raw_run, store=self.store)
 
@@ -1023,11 +893,8 @@ class AgoraResearchService:
         try:
             WorkshopCanonicalOperations(research_base_url=r_url).cancel_research_run(run_id)
         except CanonicalOperationError as exc:
-            if exc.status_code == 404:
-                raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), exc.reason, run_id) from exc
-            if exc.status_code == 409:
-                raise self.bff_error(409, self._error_code("RESOURCE_CONFLICT"), exc.reason, run_id) from exc
-            raise self.bff_error(503, self._error_code("UPSTREAM_UNAVAILABLE"), exc.reason, run_id) from exc
+            err_code = "RESOURCE_NOT_FOUND" if exc.status_code == 404 else ("RESOURCE_CONFLICT" if exc.status_code == 409 else "UPSTREAM_UNAVAILABLE")
+            raise self.bff_error(exc.status_code or 503, self._error_code(err_code), exc.reason, run_id) from exc
         except Exception as exc:
             raise self.bff_error(503, self._error_code("UPSTREAM_UNAVAILABLE"), str(exc), run_id) from exc
         now = self.utc_now()

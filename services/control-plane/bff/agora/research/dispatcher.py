@@ -49,19 +49,15 @@ def resolve_governed_dataset(
     strategy = str((plan or {}).get("strategy_id") or stage.get("strategy_id") or "strategy-default")
     for ref in refs:
         clean = ref.split(":", 1)[-1] if ":" in ref else ref
-        record = None
-        if hasattr(store, "get_by_ref"):
-            record = store.get_by_ref(ref, tenant_id=tenant, user_id=user)
-        elif hasattr(store, "get"):
+        record = getattr(store, "get_by_ref", lambda *a, **k: None)(ref, tenant_id=tenant, user_id=user)
+        if record is None and hasattr(store, "get"):
             record = store.get(clean, tenant_id=tenant, user_id=user) or store.get(ref, tenant_id=tenant, user_id=user)
         if record is None and hasattr(store, "_records"):
             record = next(
-                (
-                    item for item in store._records.values()
-                    if (not tenant or getattr(item, "tenant_id", None) == tenant)
-                    and (not user or getattr(item, "user_id", None) == user)
-                    and (getattr(item, "evidence_id", None) in (ref, clean) or getattr(item, "dataset_version_id", None) in (ref, clean))
-                ),
+                (item for item in store._records.values()
+                 if (not tenant or getattr(item, "tenant_id", None) == tenant)
+                 and (not user or getattr(item, "user_id", None) == user)
+                 and getattr(item, "evidence_id", getattr(item, "dataset_version_id", None)) in (ref, clean)),
                 None,
             )
         if record is None:
