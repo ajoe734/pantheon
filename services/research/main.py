@@ -6,6 +6,7 @@ import json as _json
 import logging
 import os
 import re
+import threading
 import urllib.request
 import uuid
 from datetime import datetime, timezone
@@ -359,6 +360,23 @@ def get_store() -> ResearchOrchestratorStore:
 
 
 _write_owner: Optional[Any] = None
+_stage_workers_lock = threading.Lock()
+_active_stage_workers: set[str] = set()
+
+
+@app.on_event("startup")
+def resume_queued_plan_stages() -> None:
+    """Resume durable queued stage work after an owner process restart."""
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for record in store.list_runs():
+        params = record.get("parameters") or {}
+        plan = params.get("plan")
+        stage = params.get("stage")
+        if str(record.get("status") or "").lower() != "queued" or not isinstance(plan, dict) or not isinstance(stage, dict):
+            continue
+        grouped[str(record.get("task_id") or "")] = (plan, record)
+    for plan, record in grouped.values():
+        _progress_plan_stages(plan, record, record.get("created_by"), store, str(record.get("updated_at") or utc_now()))
 
 
 def get_write_owner() -> Any:
@@ -1017,35 +1035,7 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
     if not rejected and "decision_id" in body.parameters and "target_artifact_id" in body.parameters:
         _trigger_retrain_execution(run["run_id"], body.parameters)
     if not rejected and is_stage_backend and body.parameters.get("stage") and (body.parameters.get("dataset") or (body.parameters.get("plan") and body.parameters["plan"].get("dataset"))):
-        st_payload = body.parameters["stage"]
-        plan_payload = body.parameters.get("plan") or {}
-        ds_payload = body.parameters.get("dataset") or plan_payload.get("dataset")
-        corr_id = body.parameters.get("correlation_id") or f"corr-{run_id}"
-        st_type = st_payload.get("stage_type") or adapter
-        downstream_key = f"stage:{st_type}:{run_id}"
-        try:
-            execute_research_stage(
-                st_type,
-                {
-                    "stage": st_payload,
-                    "plan": plan_payload,
-                    "dataset": ds_payload,
-                    "run_id": run_id,
-                    "correlation_id": corr_id,
-                    "downstream_key": downstream_key,
-                },
-            )
-            up_run = store.get_run(run_id)
-            if up_run and isinstance(up_run, dict):
-                run = up_run
-            st_payload["status"] = "succeeded"
-            _progress_plan_stages(plan_payload, run, body.actor_id, store, timestamp)
-        except Exception as exc:
-            logger.warning("Research orchestrator stage execution error: %s", exc)
-            run["status"] = "failed"
-            run["error"] = str(exc)
-            store.put_run(run)
-            st_payload["status"] = "failed"
+        _progress_plan_stages(body.parameters.get("plan") or {}, run, body.actor_id, store, timestamp)
     return run
 
 
@@ -1056,83 +1046,108 @@ def _progress_plan_stages(
     store: ResearchOrchestratorStore,
     timestamp: str,
 ) -> None:
+    """Durably queue every newly ready stage and execute queued attempts off-request."""
     task_id = str(parent_run.get("task_id") or "")
-    corr_id = parent_run.get("correlation_id") or (parent_run.get("parameters") or {}).get("correlation_id") or f"corr-{task_id}"
-    root_run_id = parent_run.get("root_run_id") or parent_run.get("run_id") or parent_run.get("id")
     stages = plan_payload.get("stages") or []
     if not isinstance(stages, list):
         return
 
-    def _latest_runs_by_stage() -> Dict[str, Dict[str, Any]]:
-        latest: Dict[str, Dict[str, Any]] = {}
-        for record in store.list_runs():
-            if str(record.get("task_id")) != task_id or not record.get("stage_id"):
-                continue
-            stage_key = str(record["stage_id"])
-            previous = latest.get(stage_key)
-            if previous is None or int(record.get("attempt_number") or 1) > int(previous.get("attempt_number") or 1):
-                latest[stage_key] = record
-        return latest
+    records = [r for r in store.list_runs() if str(r.get("task_id")) == task_id and r.get("stage_id")]
+    latest: Dict[str, Dict[str, Any]] = {}
+    for record in records:
+        stage_id = str(record["stage_id"])
+        old = latest.get(stage_id)
+        rank = (int(record.get("attempt_number") or 1), str(record.get("created_at") or ""), str(record.get("run_id") or ""))
+        old_rank = (int(old.get("attempt_number") or 1), str(old.get("created_at") or ""), str(old.get("run_id") or "")) if old else None
+        if old is None or rank > old_rank:
+            latest[stage_id] = record
 
-    def _state(sid: str) -> str:
-        latest = _latest_runs_by_stage().get(sid)
-        if latest:
-            return str(latest.get("status") or "").lower()
-        for st in stages:
-            if isinstance(st, dict) and st.get("stage_id") == sid and st.get("status"):
-                return str(st["status"]).lower()
-        return ""
-
-    progressed = True
-    while progressed:
-        progressed = False
-        for stage in stages:
-            if not isinstance(stage, dict):
-                continue
-            stage_id = stage.get("stage_id")
-            if not stage_id or _state(stage_id) in ("succeeded", "completed", "failed", "canceled", "rejected"):
-                continue
-            deps = stage.get("dependencies") or stage.get("depends_on") or []
-            deps = [str(d) for d in (deps if isinstance(deps, (list, tuple, set)) else [deps]) if d]
-            if any(_state(d) in ("failed", "canceled", "rejected") for d in deps):
-                stage["status"] = "failed"
-                continue
-            if not all(_state(d) in ("succeeded", "completed") for d in deps):
-                continue
-            latest_runs = _latest_runs_by_stage()
-            existing = latest_runs.get(str(stage_id))
-            if existing and str(existing.get("status") or "").lower() in ("completed", "succeeded"):
-                stage["status"] = "succeeded"
-                progressed = True
-                continue
-            dep_type = stage.get("stage_type") or parent_run.get("adapter") or "prototype_backtest"
-            dep_ds = stage.get("dataset") or plan_payload.get("dataset") or (parent_run.get("parameters") or {}).get("dataset")
-            pred_run_id = next((latest_runs[str(dep)].get("run_id") or latest_runs[str(dep)].get("id") for dep in reversed(deps) if str(dep) in latest_runs), parent_run.get("run_id") or parent_run.get("id"))
-            dep_run_id = _next_id("rrun", timestamp, {str(r.get("run_id") or "") for r in store.list_runs()})
-            dep_events = [_event(timestamp, "run_queued", f"Dependent stage '{stage_id}' queued.", actor_id, dep_run_id, [])]
-            dep_run = {
-                "id": dep_run_id, "run_id": dep_run_id, "task_id": task_id, "stage_id": stage_id, "attempt_number": 1,
-                "parent_run_id": pred_run_id, "root_run_id": root_run_id, "adapter": dep_type,
-                "requested_mode": parent_run.get("requested_mode", "stub"), "dispatch_mode": parent_run.get("dispatch_mode", "stub"),
-                "status": "queued", "production_activation": "disabled",
-                "input_refs": [{"type": "stage", "id": stage_id}, *([{"type": "dataset", "id": dep_ds["dataset_id"]}] if isinstance(dep_ds, dict) and dep_ds.get("dataset_id") else [])],
-                "parameters": {**(parent_run.get("parameters") or {}), "stage": stage, "plan": plan_payload, "dataset": dep_ds, "correlation_id": corr_id},
-                "created_by": actor_id or parent_run.get("created_by"), "tenant_id": parent_run.get("tenant_id"), "user_id": parent_run.get("user_id"),
-                "created_at": timestamp, "updated_at": timestamp, "idempotency_key": f"stage:{dep_type}:{task_id}:{stage_id}",
-                "events": dep_events, "artifact_refs": [], "proposal_refs": [], "registry_writebacks": [],
+    states = {key: str(value.get("status") or "").lower() for key, value in latest.items()}
+    for stage in stages:
+        if not isinstance(stage, dict) or not stage.get("stage_id"):
+            continue
+        stage_id = str(stage["stage_id"])
+        if stage_id in latest:
+            continue
+        deps = stage.get("dependencies") or stage.get("depends_on") or []
+        deps = [str(d) for d in (deps if isinstance(deps, (list, tuple, set)) else [deps]) if d]
+        if deps and not all(states.get(dep) in {"completed", "succeeded"} for dep in deps):
+            continue
+        if any(states.get(dep) in {"failed", "canceled", "rejected"} for dep in deps):
+            stage["status"] = "failed"
+            continue
+        if stage_id != str(parent_run.get("stage_id") or ""):
+            backend = str(stage.get("stage_type") or parent_run.get("adapter") or "prototype_backtest")
+            ds = stage.get("dataset") or plan_payload.get("dataset") or (parent_run.get("parameters") or {}).get("dataset")
+            rid = _next_id("rrun", timestamp, {str(r.get("run_id") or "") for r in store.list_runs()})
+            pred = next((latest[d].get("run_id") or latest[d].get("id") for d in reversed(deps) if d in latest), parent_run.get("run_id") or parent_run.get("id"))
+            record = {
+                "id": rid, "run_id": rid, "task_id": task_id, "stage_id": stage_id, "attempt_number": 1,
+                "parent_run_id": pred if deps else None,
+                "root_run_id": parent_run.get("root_run_id") or parent_run.get("run_id") or parent_run.get("id"),
+                "adapter": backend, "requested_mode": parent_run.get("requested_mode", "stub"),
+                "dispatch_mode": parent_run.get("dispatch_mode", "stub"), "status": "queued",
+                "production_activation": "disabled", "input_refs": [{"type": "stage", "id": stage_id}],
+                "parameters": {**(parent_run.get("parameters") or {}), "stage": stage, "plan": plan_payload, "dataset": ds},
+                "created_by": actor_id or parent_run.get("created_by"), "tenant_id": parent_run.get("tenant_id"),
+                "user_id": parent_run.get("user_id"), "created_at": timestamp, "updated_at": timestamp,
+                "idempotency_key": f"stage:{task_id}:{stage_id}", "events": [], "artifact_refs": [],
+                "proposal_refs": [], "registry_writebacks": [],
             }
-            store.put_run(dep_run)
-            try:
-                execute_research_stage(dep_type, {"stage": stage, "plan": plan_payload, "dataset": dep_ds, "run_id": dep_run_id, "correlation_id": corr_id, "downstream_key": f"stage:{dep_type}:{dep_run_id}"})
-                stage["status"] = "succeeded"
-                progressed = True
-            except Exception as dep_exc:
-                logger.warning("Dependent stage execution error on %s: %s", stage_id, dep_exc)
-                dep_up = store.get_run(dep_run_id)
-                if dep_up and isinstance(dep_up, dict):
-                    dep_up["status"], dep_up["error"] = "failed", str(dep_exc)
-                    store.put_run(dep_up)
-                stage["status"] = "failed"
+            store.put_run(record)
+            latest[stage_id] = record
+            states[stage_id] = "queued"
+
+    for stage in stages:
+        if not isinstance(stage, dict):
+            continue
+        stage_id = str(stage.get("stage_id") or "")
+        record = latest.get(stage_id)
+        if not record or str(record.get("status") or "").lower() != "queued":
+            continue
+        deps = stage.get("dependencies") or stage.get("depends_on") or []
+        deps = [str(d) for d in (deps if isinstance(deps, (list, tuple, set)) else [deps]) if d]
+        if any(states.get(dep) not in {"completed", "succeeded"} for dep in deps):
+            continue
+        run_id = str(record.get("run_id") or record.get("id"))
+        with _stage_workers_lock:
+            if run_id in _active_stage_workers:
+                continue
+            _active_stage_workers.add(run_id)
+        threading.Thread(
+            target=_execute_plan_stage,
+            args=(dict(record), dict(stage), dict(plan_payload), store, actor_id),
+            name=f"research-stage-{run_id}",
+            daemon=True,
+        ).start()
+
+
+def _execute_plan_stage(
+    run: Dict[str, Any], stage: Dict[str, Any], plan: Dict[str, Any],
+    store: ResearchOrchestratorStore, actor_id: Optional[str],
+) -> None:
+    run_id = str(run.get("run_id") or run.get("id"))
+    params = run.get("parameters") or {}
+    ds = params.get("dataset") or plan.get("dataset")
+    backend = str(stage.get("stage_type") or run.get("adapter") or "prototype_backtest")
+    current = store.get_run(run_id) or run
+    current["status"] = "running"
+    store.put_run(current)
+    try:
+        execute_research_stage(backend, {
+            "stage": stage, "plan": plan, "dataset": ds, "run_id": run_id,
+            "correlation_id": params.get("correlation_id") or f"corr-{run_id}",
+            "downstream_key": f"stage:{backend}:{run_id}",
+        })
+    except Exception as exc:
+        logger.warning("Research stage execution error for %s: %s", run_id, exc)
+        current = store.get_run(run_id) or current
+        current["status"], current["error"] = "failed", str(exc)
+        store.put_run(current)
+    completed = store.get_run(run_id) or current
+    with _stage_workers_lock:
+        _active_stage_workers.discard(run_id)
+    _progress_plan_stages(plan, completed, actor_id, store, str(completed.get("updated_at") or utc_now()))
 
 
 def _trigger_retrain_execution(run_id: str, params: dict) -> None:
@@ -1503,22 +1518,7 @@ def retry_run(run_id: str, body: Optional[RetryRunBody] = None) -> Dict[str, Any
     if "decision_id" in params and "target_artifact_id" in params:
         _trigger_retrain_execution(new_run["run_id"], params)
     elif is_stage_backend and params.get("stage"):
-        st_payload = params["stage"]
-        plan_payload = params.get("plan") or {}
-        ds_payload = params.get("dataset") or plan_payload.get("dataset")
-        corr_id = params.get("correlation_id") or f"corr-{new_run_id}"
-        st_type = st_payload.get("stage_type") or adapter
-        try:
-            execute_research_stage(st_type, {"stage": st_payload, "plan": plan_payload, "dataset": ds_payload, "run_id": new_run_id, "correlation_id": corr_id, "downstream_key": f"stage:{st_type}:{new_run_id}"})
-            up_new = store.get_run(new_run_id)
-            if up_new and isinstance(up_new, dict):
-                new_run = up_new
-            st_payload["status"] = "succeeded"
-            _progress_plan_stages(plan_payload, new_run, b.actor_id, store, timestamp)
-        except Exception as exc:
-            logger.warning("Retry stage execution error: %s", exc)
-            new_run["status"], new_run["error"], st_payload["status"] = "failed", str(exc), "failed"
-            store.put_run(new_run)
+        _progress_plan_stages(params.get("plan") or {}, new_run, b.actor_id, store, timestamp)
     return new_run
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -106,6 +107,7 @@ class ResearchOrchestratorStore:
         self.proposals_path = self.data_dir / "research_proposals.json"
         self.events_path = self.data_dir / "research_events.jsonl"
         self.event_store = event_store
+        self._lock = threading.RLock()
 
     def _read_map(self, path: Path) -> Dict[str, Dict[str, Any]]:
         if not path.exists():
@@ -120,21 +122,26 @@ class ResearchOrchestratorStore:
 
     def _write_map(self, path: Path, payload: Dict[str, Dict[str, Any]]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+        temporary = path.with_suffix(f"{path.suffix}.tmp")
+        temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+        temporary.replace(path)
 
     def _put_record(self, path: Path, record_id: str, record: Dict[str, Any]) -> Dict[str, Any]:
         if not record_id:
             raise ValueError("record_id is required")
-        records = self._read_map(path)
-        records[record_id] = json.loads(json.dumps(record))
-        self._write_map(path, records)
-        return records[record_id]
+        with self._lock:
+            records = self._read_map(path)
+            records[record_id] = json.loads(json.dumps(record))
+            self._write_map(path, records)
+            return records[record_id]
 
     def _list_records(self, path: Path) -> List[Dict[str, Any]]:
-        return list(self._read_map(path).values())
+        with self._lock:
+            return list(self._read_map(path).values())
 
     def _get_record(self, path: Path, record_id: str) -> Optional[Dict[str, Any]]:
-        return self._read_map(path).get(record_id)
+        with self._lock:
+            return self._read_map(path).get(record_id)
 
     def list_tasks(self) -> List[Dict[str, Any]]:
         return self._list_records(self.tasks_path)

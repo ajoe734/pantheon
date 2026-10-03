@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -184,6 +186,18 @@ def test_research_write_owner_unavailable_returns_503(monkeypatch: pytest.Monkey
     assert "Research write owner unavailable" in res.json()["detail"]
 
 
+def _wait_for_task_status(
+    task_id: str, statuses: set[str], *, expected_count: int = 1, timeout: float = 5.0
+) -> List[Dict[str, Any]]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        runs = [r for r in research_main.store.list_runs() if r.get("task_id") == task_id]
+        if len(runs) >= expected_count and all(str(r.get("status") or "").lower() in statuses for r in runs):
+            return runs
+        time.sleep(0.01)
+    return [r for r in research_main.store.list_runs() if r.get("task_id") == task_id]
+
+
 def _valid_multimodal_dataset() -> Dict[str, Any]:
     from datetime import date, timedelta
     records = []
@@ -241,9 +255,9 @@ def test_research_dag_three_stage_linear_progression(client: TestClient) -> None
         "idempotency_key": f"idemp-dag-linear-{task_id}",
     })
     assert d_res.status_code == 201
-    assert d_res.json()["status"] == "completed"
+    assert d_res.json()["status"] == "queued"
 
-    all_runs = [r for r in research_main.store.list_runs() if r.get("task_id") == task_id]
+    all_runs = _wait_for_task_status(task_id, {"completed", "failed"}, expected_count=3)
     assert len(all_runs) == 3
     run_by_stage = {r["stage_id"]: r for r in all_runs}
     assert set(run_by_stage.keys()) == {"s1", "s2", "s3"}
@@ -296,8 +310,10 @@ def test_research_dag_fan_in_progression(client: TestClient) -> None:
     })
     assert d1.status_code == 201
     runs_after_s1 = [r for r in research_main.store.list_runs() if r.get("task_id") == task_id]
-    assert len(runs_after_s1) == 1
-    assert runs_after_s1[0]["stage_id"] == "s1"
+    assert {r["stage_id"] for r in runs_after_s1} == {"s1", "s2"}
+    runs_after_s1 = _wait_for_task_status(task_id, {"completed", "failed"}, expected_count=2)
+    assert len(runs_after_s1) == 2
+    assert all(r["status"] == "completed" for r in runs_after_s1)
 
     # Dispatch s2 -> s3 is now unblocked and automatically progresses
     d2 = client.post(f"/api/research-orchestrator/tasks/{task_id}/runs", json={
@@ -310,6 +326,7 @@ def test_research_dag_fan_in_progression(client: TestClient) -> None:
     })
     assert d2.status_code == 201
     runs_after_s2 = [r for r in research_main.store.list_runs() if r.get("task_id") == task_id]
+    runs_after_s2 = _wait_for_task_status(task_id, {"completed", "failed"}, expected_count=3)
     assert len(runs_after_s2) == 3
     run_by_stage = {r["stage_id"]: r for r in runs_after_s2}
     assert set(run_by_stage.keys()) == {"s1", "s2", "s3"}
@@ -342,12 +359,42 @@ def test_research_dag_failed_stage_halts_downstream(client: TestClient) -> None:
         "idempotency_key": f"idemp-dag-fail-{task_id}",
     })
     assert d_res.status_code == 201
-    assert d_res.json()["status"] == "failed"
+    assert d_res.json()["status"] == "queued"
 
-    all_runs = [r for r in research_main.store.list_runs() if r.get("task_id") == task_id]
+    all_runs = _wait_for_task_status(task_id, {"completed", "failed"})
     assert len(all_runs) == 1
     assert all_runs[0]["stage_id"] == "s1"
     assert all_runs[0]["status"] == "failed"
+
+
+def test_stage_dispatch_returns_before_slow_execution_finishes(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_execute(*args: Any, **kwargs: Any) -> None:
+        started.set()
+        assert release.wait(3)
+
+    monkeypatch.setattr(research_main, "execute_research_stage", slow_execute)
+    task = client.post("/api/research-orchestrator/tasks", json={"title": "Slow", "objective": "async", "source_refs": [], "constraints": {}}).json()
+    task_id = task["task_id"]
+    plan = {
+        "plan_id": f"plan-{task_id}", "task_id": task_id,
+        "stages": [{"stage_id": "slow", "stage_type": "prototype_backtest", "dependencies": []}],
+        "dataset": {"dataset_id": "ds-slow"},
+    }
+    response = client.post(f"/api/research-orchestrator/tasks/{task_id}/runs", json={
+        "adapter": "vectorbt", "requested_mode": "stub", "dispatch_mode": "stub",
+        "input_refs": [{"type": "stage", "id": "slow"}],
+        "parameters": {"stage": plan["stages"][0], "plan": plan, "dataset": plan["dataset"]},
+        "idempotency_key": f"slow-{task_id}",
+    })
+    assert response.status_code == 201
+    assert response.json()["status"] == "queued"
+    assert started.wait(1)
+    assert research_main.store.get_run(response.json()["run_id"])["status"] == "running"
+    release.set()
+    _wait_for_task_status(task_id, {"completed", "failed"})
 
 
 def test_stage_idempotency_restart_exactly_once(client: TestClient) -> None:
@@ -400,7 +447,9 @@ def test_retry_run_executes_backend_and_produces_artifacts(client: TestClient) -
         "idempotency_key": f"idemp-initial-fail-{task_id}",
     })
     fail_run_id = d_fail.json()["id"]
-    assert d_fail.json()["status"] == "failed"
+    assert d_fail.json()["status"] == "queued"
+    _wait_for_task_status(task_id, {"completed", "failed"})
+    assert research_main.store.get_run(fail_run_id)["status"] == "failed"
 
     # Retry the failed run with repaired valid dataset
     repaired_run = research_main.store.get_run(fail_run_id)
@@ -418,6 +467,13 @@ def test_retry_run_executes_backend_and_produces_artifacts(client: TestClient) -
     retried_data = d_retry.json()
     assert retried_data["attempt_number"] == 2
     assert retried_data["stage_id"] == "s1"
+    assert retried_data["status"] == "queued"
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        retried_data = research_main.store.get_run(retried_data["run_id"])
+        if retried_data["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.01)
     assert retried_data["status"] == "completed"
     assert retried_data.get("receipt") is not None
     assert len(retried_data.get("artifact_refs") or []) >= 1
