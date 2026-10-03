@@ -232,5 +232,5 @@ Agora 清理依賴是為了先完成同區域的刪除，避免並行改寫；�
 
 - 排名建議與 promotion review 的狀態唯一來源是 evaluator 已存的 `governance_request.decision_id` 對應的 Governance `ApprovalDecision`（`personas/service.py::_lifecycle_owner_review_state`）。BFF 不建立、不投票、不翻譯任何第二份核准紀錄。
 - 已刪除舊的 `submit_quarterly_ranking_recommendation` 服務分支；`POST …/recommendations/{id}/submit` 只回 410（`ACTION_RETIRED`），不產生 command。
-- 狀態集合：`advisory_report`（無提案，不可執行）、`pending_human_gate`（owner 提案存在，尚未 decided，含首票）、`decision_accepted`（owner 已 decided）、`owner_unavailable`（owner 讀不到，或 tenant／persona／proposal_id 與已存提案不符）。`recommended_not_submitted` 不再出現。
-- 已知缺口（超出本任務 artifact）：Human Inbox 清單 contributor（`governance/human_inbox.py`、`main.py`）仍只由舊 submit command 紀錄產生，需另案改為讀 owner 提案。
+- 狀態集合：`advisory_report`（無提案，不可執行）、`pending_human_gate`（owner 提案存在，尚未 decided，含首票）、`decision_accepted`（owner 已 decided）、`owner_unavailable`（owner 讀不到，或 tenant／persona／proposal_id／target_type／subject（persona、from_state、to_state）／proposal_content_digest 與已存提案不符；ranking 與 review 的 `links.human_inbox` 此時皆為 null）。`recommended_not_submitted` 不再出現。
+- Human Inbox：owner 可用時 `links.human_inbox`／`human_inbox_id` 指向既有 `approval:{decision_id}` 項目（`source_type=approval`），不另建 promotion_review 身分。

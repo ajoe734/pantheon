@@ -1,6 +1,9 @@
 """PERSONA-OWNER-READBACK-20261002: ranking and promotion reviews read the Governance ApprovalDecision."""
 from __future__ import annotations
 
+import hashlib
+import json
+
 import pytest
 
 from services.control_plane.bff import test_bff_promotion_review_governance as gov_test
@@ -8,6 +11,7 @@ from services.control_plane.bff.pm12 import evaluator_results
 
 HEADERS = gov_test.OPERATOR_HEADERS
 TENANT = gov_test._PM12_ELIGIBLE_TENANT_ID
+FROM = "paper_owner"
 URL = "/bff/management/quarterly-ranking/recommendations"
 REVIEWS = "/bff/management/promotion-reviews"
 
@@ -21,7 +25,12 @@ def _items(client):
 def _decision(rec, **over):
     row = {
         "decision_id": "pev-1", "tenant_id": TENANT, "target_id": rec["persona_id"],
-        "proposal_id": rec["recommendation_id"], "proposal_content_digest": "d1", "decision_state": "proposed",
+        "target_type": "persona_lifecycle_transition", "proposal_id": rec["recommendation_id"],
+        "subject": {"persona_id": rec["persona_id"], "from_state": FROM, "to_state": "frozen"},
+        "proposal_content_digest": hashlib.sha256(json.dumps({
+            "persona_id": rec["persona_id"], "action_id": "promote_to_canary_candidate", "from_state": FROM,
+            "rationale": "Provider.", "evidence_ref_ids": [],
+        }, sort_keys=True).encode()).hexdigest(), "decision_state": "proposed",
         "decision": None, "decided_at": None, "actor_id": None, "version": 0, "metadata": {},
     }
     row.update(over)
@@ -35,7 +44,7 @@ def saved_proposal(monkeypatch):
         persona, snap = first["persona_id"], first["ranking_snapshot_id"]
         rec_id = f"pm12-2026-q1-{persona}-promote_to_canary_candidate"
         saved = {"run_id": "r1", "evaluated_at": "2026-01-01T00:00:00+00:00", "items": [{
-            "persona_id": persona, "action_id": "promote_to_canary_candidate", "rationale": "Provider.",
+            "persona_id": persona, "action_id": "promote_to_canary_candidate", "from_state": FROM, "rationale": "Provider.",
             "evidence_ref_ids": [], "ranking_snapshot_id": snap, "recommendation_id": rec_id,
             "governance_request": request,
         }]}
@@ -90,6 +99,9 @@ def test_ranking_and_review_project_the_same_owner_decision(saved_proposal, over
     {"proposal_id": "someone-else"},   # conflicting content/proposal identity
     {"tenant_id": "foreign-tenant"},   # unauthorized tenant
     {"target_id": "persona-other"},
+    {"target_type": "deployment_plan"},
+    {"subject": {"persona_id": "x", "from_state": FROM, "to_state": "canary_candidate"}},
+    {"proposal_content_digest": "0" * 64},   # source content changed after proposal
 ])
 def test_conflicting_or_foreign_owner_record_is_unavailable_not_projected(saved_proposal, over):
     with gov_test._isolated_client() as (client, store, _commands):
@@ -99,6 +111,7 @@ def test_conflicting_or_foreign_owner_record_is_unavailable_not_projected(saved_
         rec, review = _both(client)
         assert review["status"] == "owner_unavailable" and review["owner_decision"] == {"decision_id": "pev-1", "available": False}
         assert "approved" not in str(review["owner_decision"])
+        assert rec["links"]["human_inbox"] is None and review["links"]["human_inbox"] is None
 
 
 def test_missing_or_failing_owner_is_unavailable(saved_proposal):
@@ -159,3 +172,14 @@ def test_unavailable_owner_has_no_inbox_handoff(saved_proposal):
         store.get_approval_decision = lambda decision_id: None
         _rec, review = _both(client)
         assert review["human_inbox_id"] is None and review["links"]["human_inbox"] is None
+
+
+def test_caller_of_another_tenant_never_reads_the_owner_record(saved_proposal, monkeypatch):
+    with gov_test._isolated_client() as (client, store, _commands):
+        ref = saved_proposal(client, {"decision_id": "pev-1", "to_state": "frozen"})
+        reads = []
+        store.get_approval_decision = lambda decision_id: reads.append(decision_id) or _decision(ref)
+        monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "foreign-tenant")
+        response = client.get(URL, headers=HEADERS, params={"quarter": "2026-Q1", "page_size": 50})
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["items"] == [] and reads == []

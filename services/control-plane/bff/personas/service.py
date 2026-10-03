@@ -5621,6 +5621,16 @@ def _lifecycle_owner_review_state(saved: Dict[str, Any], *, tenant_id: str) -> D
         and str(row.get("tenant_id") or "") == tenant_id
         and str(row.get("target_id") or "") == str(saved.get("persona_id") or "")
         and row.get("proposal_id") == saved.get("recommendation_id")
+        and row.get("target_type") == "persona_lifecycle_transition"
+        and isinstance(subject := row.get("subject"), dict)
+        and subject.get("persona_id") == saved.get("persona_id")
+        and subject.get("from_state") == saved.get("from_state")
+        and subject.get("to_state") == request.get("to_state")
+        and row.get("proposal_content_digest") == hashlib.sha256(json.dumps({
+            "persona_id": str(saved.get("persona_id") or ""), "action_id": str(saved.get("action_id") or ""),
+            "from_state": str(saved.get("from_state") or ""), "rationale": str(saved.get("rationale") or "").strip(),
+            "evidence_ref_ids": sorted(saved.get("evidence_ref_ids") or []),
+        }, sort_keys=True).encode()).hexdigest()
     )
     if not owned:
         return {**state, "submitted": True, "submit_status": "owner_unavailable", "status": "owner_unavailable",
@@ -5635,7 +5645,7 @@ def _lifecycle_owner_review_state(saved: Dict[str, Any], *, tenant_id: str) -> D
         "decided_at": row.get("decided_at") if decided else None,
         "decided_by": row.get("actor_id") if decided else None,
         "owner_decision": {
-            "decision_id": decision_id, "available": True, "to_state": request.get("to_state"),
+            "decision_id": decision_id, "available": True, "to_state": subject["to_state"],
             "decision_state": row.get("decision_state"), "version": row.get("version"),
             "vote_count": len(votes) if isinstance(votes, list) else 0,
             "proposal_content_digest": row.get("proposal_content_digest"),
@@ -12997,8 +13007,9 @@ def _pm12_quarterly_recommendation_item(
             "persona": f"/bff/personas/{persona_id}",
             "human_inbox": (
                 f"/bff/management/human-inbox/approval:{quote(str(request['decision_id']), safe='')}"
-                if isinstance(request := saved.get("governance_request"), dict) and request.get("decision_id")
-                else "/bff/management/human-inbox"
+                if human_review_state["submit_status"] == "owner_proposed"
+                and isinstance(request := saved.get("governance_request"), dict)
+                else None
             ),
             "governance_queue": "/api/v1/operator/governance/approval-queue",
         },
