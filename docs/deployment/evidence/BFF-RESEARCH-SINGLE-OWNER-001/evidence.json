@@ -25,7 +25,7 @@
     },
     {
       "command": "git diff --check; python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget 0",
-      "result": "both passed; production +1319/-1823 = net -504; tests +1163/-3791 = net -2628; docs/evidence +110 lines"
+      "result": "both passed; production +1366/-1823 = net -457; tests +1171/-3791 = net -2620; docs/evidence +110 lines"
     }
   ],
   "suite_note": "The historical eight-file manifest run (184 passed, 1 skipped) was verified on prior head 38141ba6f only. Two files in that command were deliberately removed under D2; on this head all retained manifest files passed in separate bounded batches (130 passed total). A combined six-file rerun reached its 180-second timeout and is not counted as passed. No claim is made that the removed tests ran on this head.",
