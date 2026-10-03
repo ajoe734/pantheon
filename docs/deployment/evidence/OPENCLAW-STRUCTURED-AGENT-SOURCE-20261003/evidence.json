@@ -9,11 +9,11 @@
   ],
   "attribution": "Original implementation was authored by Codex and records LLM-Agent Claude; prior continuation was authored by PiAstra. Both published histories remain unrewritten; this branch reapplies their bounded source change.",
   "checks": [
-    "python3 -m pytest -q scripts/test_openclaw_shared_model_pool_contract.py (10 passed)",
-    "python3 -m pytest -q services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py (48 passed)",
+    "PANTHEON_PY=checkout-provisioned; pytest -q scripts/test_openclaw_shared_model_pool_contract.py services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py services/openclaw-gateway-adapter/test_compose_activation.py (171 passed, 4 skipped)",
+    "Stateful provisioner regressions reject agents.list false, null, malformed JSON, invalid shape, and config-read failure without registry writes or gateway restart.",
     "bash -n scripts/openclaw-configure-shared-model-pool.sh",
     "git diff --check"
   ],
-  "review": "Pending independent functional-only review and required CI on this exact head.",
+  "review": "Pending independent functional-only review and required CI on the corrected exact head.",
   "hosted_verification": "Not performed by workers. Existing release coordinator must verify deployed config, a real structured request, and persistence after redeploy/restart before parent hosted acceptance can close."
 }

@@ -129,7 +129,7 @@ elif cli[:2] == ["config", "get"]:
         if path == "agents.list":
             print(json.dumps(lst))
         else:
-            print(json.dumps({"defaults": {}, **({} if lst is None else {"list": lst})}))
+            print(json.dumps({"defaults": {}, **({} if not raw else {"list": lst})}))
     elif path == "agents.defaults.model.primary":
         print(json.dumps("anthropic/claude-opus-4-8"))
     elif path == "agents.defaults.model.fallbacks":
@@ -156,7 +156,11 @@ elif cli[:2] == ["config", "get"]:
     raw_log = command_log.read_text(encoding="utf-8")
     assert "test-secret-never-in-argv-or-output" not in raw_log + result.stdout + result.stderr
     calls = [json.loads(line) for line in raw_log.splitlines()]
-    result.final_agents = json.loads(state.read_text() or "null")
+    final_state = state.read_text()
+    try:
+        result.final_agents = json.loads(final_state or "null")
+    except json.JSONDecodeError:
+        result.final_agents = final_state
     return result, calls
 
 
@@ -236,10 +240,23 @@ def test_admission_still_rejects_agent_without_deny_all() -> None:
 
 
 def test_agents_read_failure_or_bad_shape_fails_closed(tmp_path) -> None:
-    for kwargs in ({"get_fail": True, "agents": [{"id": "main"}]}, {"raw_state": '{"id": "main"}'}):
-        result, calls = _run_model_pool_script(tmp_path, token_present=False, **kwargs)
+    cases = (
+        {"get_fail": True, "agents": [{"id": "main"}]},
+        {"raw_state": '{"id": "main"}'},
+        {"raw_state": "false"},
+        {"raw_state": "null"},
+        {"raw_state": "{malformed json"},
+    )
+    for index, kwargs in enumerate(cases):
+        case_dir = tmp_path / str(index)
+        case_dir.mkdir()
+        original = kwargs.get("raw_state", json.dumps(kwargs.get("agents", [])))
+        result, calls = _run_model_pool_script(case_dir, token_present=False, **kwargs)
         assert result.returncode != 0
-        assert not any(a[-3:-1] == ["set", "agents.list"] or "agents.list" in a[:5] and "set" in a for a in calls)
+        assert not any(
+            a[-3:-1] == ["set", "agents.list"]
+            or "agents.list" in a[:5] and "set" in a
+            for a in calls
+        )
         assert not any("restart" in a for a in calls)
-        assert json.loads((tmp_path / "agents-state.json").read_text() or "null") in (
-            kwargs.get("agents"), {"id": "main"})
+        assert (case_dir / "agents-state.json").read_text() == original

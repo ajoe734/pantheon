@@ -51,7 +51,7 @@ fi
 # STRUCTURED_AGENT_ID). Upsert so main and other agents stay unchanged.
 # Fail closed: a read/shape error must never replace the whole registry.
 agents_cfg="$(openclaw config get agents --json)"
-agents_list="$(jq -ce '(.list // []) | if type == "array" then . else error("agents.list is not an array") end
+agents_list="$(jq -ce '(if has("list") then .list else [] end) | if type == "array" then . else error("agents.list is not an array") end
   | if any(.[]; .id == "structured-extraction") then
       map(if .id == "structured-extraction" then .tools = ((.tools // {}) + {"deny":["*"]}) else . end)
     else . + [{"id":"structured-extraction","tools":{"deny":["*"]}}] end' <<<"$agents_cfg")"
