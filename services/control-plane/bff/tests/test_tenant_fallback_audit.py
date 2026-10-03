@@ -352,6 +352,39 @@ def test_readiness_route_hides_tenantless_private_rows_from_signed_callers(monke
     assert store.scopes[-1].tenant_id == caller and store.mutation_calls == 0
 
 
+def test_readiness_route_denies_tenantless_jwt_authority_under_all_defaults(monkeypatch):
+    from agora.operational_readiness import create_operational_readiness_router
+    from test_agora_operational_readiness_live_binding import SURFACES, AuthoritativeReadStore
+
+    store = AuthoritativeReadStore(surfaces={name: _readiness_rows() for name in SURFACES})
+    app = FastAPI()
+    app.include_router(create_operational_readiness_router(
+        utc_now=lambda: "2026-09-01T12:00:00Z", extract_identity=_extract_identity,
+        require_read_role=_require_read_role, get_read_store=lambda: store,
+    ))
+    client = TestClient(app)
+    _jwt_headers(monkeypatch, "tenant-a")
+    no_tenant = _jwt_without_tenant()
+
+    # 1. Built-in default active ("pantheon-dev"): scope fails closed to None, never discloses tenant-a/b private rows
+    res_absent = client.get("/bff/agora/operational-readiness", headers=no_tenant)
+    assert res_absent.status_code == 200
+    assert store.scopes[-1] is None
+    assert all(s["count"] == 2 for s in res_absent.json()["data"]["surfaces"].values())
+
+    res_absent_hdr = client.get("/bff/agora/operational-readiness", headers={**no_tenant, "X-Tenant-Id": "tenant-a"})
+    assert res_absent_hdr.status_code == 200
+    assert store.scopes[-1] is None
+    assert all(s["count"] == 2 for s in res_absent_hdr.json()["data"]["surfaces"].values())
+
+    # 2. Active environment default ("tenant-a"): scope fails closed to None, never adopts env tenant
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-a")
+    res_env = client.get("/bff/agora/operational-readiness", headers=no_tenant)
+    assert res_env.status_code == 200
+    assert store.scopes[-1] is None
+    assert all(s["count"] == 2 for s in res_env.json()["data"]["surfaces"].values())
+
+
 # --- Research dispatcher: stored/plan/stage tenants are compared, never used as authority ---
 
 class _DatasetSpy:
@@ -406,6 +439,66 @@ def test_drain_outbox_never_invents_or_widens_tenant():
     store.plan_reads.clear()
     ResearchDispatcher(store=store).drain_outbox()
     assert store.plan_reads == ["tenant-b", "tenant-a"]  # tenantless record skipped, never defaulted
+
+
+def test_mounted_research_run_dispatch_scopes_to_the_jwt_tenant(monkeypatch):
+    from services.control_plane.bff.agora.research.router import create_research_router
+    from services.control_plane.bff.agora.research.store import MemoryResearchPlanStore
+    from services.control_plane.bff.agora.research.routes.common import _plan_etag
+
+    store = MemoryResearchPlanStore()
+    plan_a = {
+        "plan_id": "plan-a",
+        "tenant_id": "tenant-a",
+        "user_id": "low-priv-operator",
+        "status": "approved",
+        "version": 1,
+        "stages": [{"stage_id": "stg-1", "stage_type": "test", "status": "ready"}],
+    }
+    store.create_plan(plan_a)
+    etag = _plan_etag("plan-a", 1)
+
+    app = FastAPI()
+    app.include_router(create_research_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_write_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=lambda: "2026-10-03T00:00:00Z",
+        research_plan_store=store,
+    ))
+    client = TestClient(app, raise_server_exceptions=False)
+    _jwt_headers(monkeypatch, "tenant-a")
+    no_tenant = _jwt_without_tenant()
+    url = "/bff/agora/research-plans/plan-a/runs"
+
+    # 1. Built-in default active ("pantheon-dev"): absent tenant claim fails closed with 403, 0 runs
+    res_absent = client.post(url, headers={**no_tenant, "Idempotency-Key": "k-abs", "If-Match": etag})
+    assert res_absent.status_code == 403
+    assert len(store._runs) == 0
+
+    res_absent_hdr = client.post(url, headers={**no_tenant, "X-Tenant-Id": "tenant-a", "Idempotency-Key": "k-abs-hdr", "If-Match": etag})
+    assert res_absent_hdr.status_code == 403
+    assert len(store._runs) == 0
+
+    # 2. Active matching environment default ("tenant-a"): tenantless JWT fails closed with 403, 0 runs
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-a")
+    res_env = client.post(url, headers={**no_tenant, "Idempotency-Key": "k-env", "If-Match": etag})
+    assert res_env.status_code == 403
+    assert len(store._runs) == 0
+
+    # 3. Foreign tenant (tenant-b): plan-a not found in scope -> 404, 0 runs
+    tok_b = _jwt_headers(monkeypatch, "tenant-b")
+    res_foreign = client.post(url, headers={**tok_b, "Idempotency-Key": "k-foreign", "If-Match": etag})
+    assert res_foreign.status_code == 404
+    assert len(store._runs) == 0
+
+    # 4. Same tenant positive control (tenant-a): 202 queued, 1 run created
+    tok_a = _jwt_headers(monkeypatch, "tenant-a")
+    res_same = client.post(url, headers={**tok_a, "Idempotency-Key": "k-same", "If-Match": etag})
+    assert res_same.status_code == 202, res_same.text
+    assert len(store._runs) == 1
+    assert list(store._runs.values())[0]["tenant_id"] == "tenant-a"
 
 
 def test_journal_create_denies_jwt_without_tenant_authority_under_all_defaults(monkeypatch, tmp_path):
@@ -523,6 +616,14 @@ def test_receipt_route_and_store_never_widen_to_an_empty_tenant(monkeypatch, tmp
             "INSERT INTO performance_action_receipts VALUES (?,?,?,?,?,?,?,?,?)",
             ("receipt-b", "tenant-b", "low-priv-operator", "sg-tenant-b", "s1", "k", "h", json.dumps(_RECEIPT_B), "t"),
         )
+        suggestion_doc = {
+            "suggestion_id": "sg-tenant-b", "strategy_id": "s1", "period": "30d", "status": "proposed", "version": 1,
+            "provenance": {"source_id": "src", "source_type": "test", "produced_at": "2026-10-03T00:00:00Z"}, "as_of": "2026-10-03T00:00:00Z",
+        }
+        conn.execute(
+            "INSERT INTO performance_suggestions VALUES (?,?,?,?,?,?,?,?,?)",
+            ("tenant-b", "low-priv-operator", "sg-tenant-b", "s1", "30d", "proposed", 1, json.dumps(suggestion_doc), "t"),
+        )
     assert store.get_receipt(tenant_id="tenant-b", owner_user_id="", receipt_id="receipt-b") == _RECEIPT_B
     for tenant in ("", "  ", None):
         assert store.get_receipt(tenant_id=tenant, owner_user_id="", receipt_id="receipt-b") is None
@@ -534,13 +635,49 @@ def test_receipt_route_and_store_never_widen_to_an_empty_tenant(monkeypatch, tmp
         utc_now=lambda: "2026-10-03T00:00:00Z", get_trade_journey_store=lambda: None, suggestion_store=store,
     ))
     client = TestClient(app, raise_server_exceptions=False)
-    url = "/bff/agora/performance/action-receipts/receipt-b"
-    foreign = client.get(url, headers=_jwt_headers(monkeypatch, "tenant-a"))
-    absent = client.get(url, headers=_jwt_without_tenant())
-    assert foreign.status_code == 404 and absent.status_code >= 400
-    assert "receipt-b" not in absent.text
-    same = client.get(url, headers=_jwt_headers(monkeypatch, "tenant-b"))
-    assert same.status_code == 200 and "receipt-b" in same.text, same.text
+    read_url = "/bff/agora/performance/action-receipts/receipt-b"
+    act_url = "/bff/agora/trading-room/strategies/s1/performance/suggestions/sg-tenant-b/actions"
+
+    def _receipt_count():
+        with sqlite3.connect(store.path) as conn:
+            return conn.execute("SELECT count(*) FROM performance_action_receipts").fetchone()[0]
+
+    # 1. Built-in default active ("pantheon-dev")
+    foreign = client.get(read_url, headers=_jwt_headers(monkeypatch, "tenant-a"))
+    absent = client.get(read_url, headers=_jwt_without_tenant())
+    assert foreign.status_code == 404
+    assert absent.status_code == 403 and "receipt-b" not in absent.text
+    same = client.get(read_url, headers=_jwt_headers(monkeypatch, "tenant-b"))
+    assert same.status_code == 200 and "receipt-b" in same.text
+
+    action_payload = {"action": "apply", "expected_version": 1, "reason": "test"}
+    act_absent = client.post(act_url, json=action_payload, headers={**_jwt_without_tenant(), "Idempotency-Key": "act-absent-1"})
+    assert act_absent.status_code == 403
+    assert _receipt_count() == 1
+
+    act_foreign = client.post(act_url, json=action_payload, headers={**_jwt_headers(monkeypatch, "tenant-a"), "Idempotency-Key": "act-foreign-1"})
+    assert act_foreign.status_code in (403, 404)
+    assert _receipt_count() == 1
+
+    # 2. Active matching environment default ("tenant-b") kept active
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-b")
+    absent_env = client.get(read_url, headers=_jwt_without_tenant())
+    assert absent_env.status_code == 403 and "receipt-b" not in absent_env.text
+    absent_env_hdr = client.get(read_url, headers={**_jwt_without_tenant(), "X-Tenant-Id": "tenant-b"})
+    assert absent_env_hdr.status_code == 403 and "receipt-b" not in absent_env_hdr.text
+
+    act_env_absent = client.post(act_url, json=action_payload, headers={**_jwt_without_tenant(), "Idempotency-Key": "act-env-absent-1"})
+    assert act_env_absent.status_code == 403
+    assert _receipt_count() == 1
+
+    act_env_match = client.post(act_url, json=action_payload, headers={**_jwt_without_tenant(), "X-Tenant-Id": "tenant-b", "Idempotency-Key": "act-env-match-1"})
+    assert act_env_match.status_code == 403
+    assert _receipt_count() == 1
+
+    # 3. Same tenant positive write control succeeds
+    act_same = client.post(act_url, json=action_payload, headers={**_jwt_headers(monkeypatch, "tenant-b"), "Idempotency-Key": "act-same-pos-1"})
+    assert act_same.status_code == 200, act_same.text
+    assert _receipt_count() == 2
 
 
 def test_mounted_suggestion_read_route_scopes_to_the_jwt_tenant(monkeypatch, tmp_path):
@@ -558,13 +695,57 @@ def test_mounted_suggestion_read_route_scopes_to_the_jwt_tenant(monkeypatch, tmp
     seen: list = []
     real = store.list_suggestions
     monkeypatch.setattr(store, "list_suggestions", lambda *a, **kw: seen.append(kw.get("tenant_id")) or real(*a, **kw))
+
+    # 1. Initialize strict JWT auth
+    _jwt_headers(monkeypatch, "tenant-a")
+
+    # 2. Built-in default active ("pantheon-dev"): absent tenant claim fails closed with 403, 0 store reads
     absent = client.get(url, headers=_jwt_without_tenant())
-    assert absent.status_code >= 400 and seen == [], absent.text
+    assert absent.status_code == 403 and seen == [], absent.text
+    absent_hdr = client.get(url, headers={**_jwt_without_tenant(), "X-Tenant-Id": "tenant-a"})
+    assert absent_hdr.status_code == 403 and seen == [], absent_hdr.text
+
+    # 3. Active matching environment default ("tenant-b"): tenantless JWT fails closed with 403, 0 store reads
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-b")
+    absent_env = client.get(url, headers=_jwt_without_tenant())
+    assert absent_env.status_code == 403 and seen == [], absent_env.text
+    absent_env_hdr = client.get(url, headers={**_jwt_without_tenant(), "X-Tenant-Id": "tenant-b"})
+    assert absent_env_hdr.status_code == 403 and seen == [], absent_env_hdr.text
+
+    # 4. Positive controls with genuine tenant authority
     for tenant in ("tenant-a", "tenant-b"):
         response = client.get(url, headers=_jwt_headers(monkeypatch, tenant))
         assert response.status_code == 200, response.text
         foreign = "tenant-b" if tenant == "tenant-a" else "tenant-a"
         assert seen[-1] == tenant and f'"{foreign}"' not in response.text
+
+
+def test_reproduction_personas_service_report_only_finding():
+    """Reproduce report-only finding in personas/service.py:2338 and :3330.
+
+    Per Acceptance Criteria 4, personas/service.py is report-only because
+    other tasks own concurrent edits. This reproduces the finding that when
+    tenant_id is empty/falsy, foreign tenant personas are not filtered.
+    """
+    from unittest.mock import patch
+    from services.control_plane.bff.personas.service import _get_persona_directory_snapshot
+
+    raw_records = [
+        {"persona_id": "p-a", "tenant_id": "tenant-a"},
+        {"persona_id": "p-b", "tenant_id": "tenant-b"},
+    ]
+    with patch("services.control_plane.bff.personas.service._list_persona_records", return_value=raw_records), \
+         patch("services.control_plane.bff.personas.service._get_active_read_store") as mock_store:
+        mock_store.return_value.list_personas.return_value = []
+        # Missing/empty tenant_id (None or '') retains foreign tenant personas
+        snap_empty = _get_persona_directory_snapshot(None)
+        assert "p-a" in snap_empty.records_by_id and "p-b" in snap_empty.records_by_id
+        snap_blank = _get_persona_directory_snapshot("")
+        assert "p-a" in snap_blank.records_by_id and "p-b" in snap_blank.records_by_id
+
+        # Explicit caller tenant authority correctly excludes foreign tenant
+        snap_a = _get_persona_directory_snapshot("tenant-a")
+        assert "p-a" in snap_a.records_by_id and "p-b" not in snap_a.records_by_id
 
 
 def test_persona_operations_read_model_and_journal_recovery_require_the_caller_tenant(tmp_path):

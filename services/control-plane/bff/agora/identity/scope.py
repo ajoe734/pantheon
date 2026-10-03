@@ -173,20 +173,69 @@ def resolve_agora_user_scope(
         )
 
     user_id = _first_nonblank(*_claim_strings(claims, _USER_CLAIM_PATHS), operator_id)
-    env_default_tenant = _first_nonblank(
-        os.getenv("PANTHEON_BFF_TENANT_ID"),
-        os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
-        os.getenv("PANTHEON_TENANT_ID"),
-    )
-    default_tenant = _first_nonblank(
-        env_default_tenant,
-        *_claim_strings(claims, _TENANT_CLAIM_PATHS),
-        "pantheon-dev",
-    )
-    allowed_tenants = _claim_strings(claims, _ALLOWED_TENANT_CLAIM_PATHS)
-    if not allowed_tenants:
-        allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [default_tenant]
-    tenant_id = _first_nonblank(requested_tenant_id, default_tenant)
+    is_strict = getattr(identity, "token_kind", "") == "jwt" or os.getenv("PANTHEON_BFF_AUTH_MODE") == "strict"
+
+    if is_strict:
+        claim_tenants = _claim_strings(claims, _TENANT_CLAIM_PATHS)
+        ident_tenant = str(getattr(identity, "tenant_id", "") or "").strip()
+        if ident_tenant and ident_tenant not in claim_tenants:
+            claim_tenants.append(ident_tenant)
+        allowed_tenants = _claim_strings(claims, _ALLOWED_TENANT_CLAIM_PATHS)
+        if ident_tenant and ident_tenant not in allowed_tenants:
+            allowed_tenants.append(ident_tenant)
+        if not allowed_tenants and claim_tenants:
+            allowed_tenants = list(claim_tenants)
+
+        if not allowed_tenants:
+            raise AgoraScopeResolutionError(
+                "Tenant access denied for Agora scope",
+                reason="AGORA_SCOPE_TENANT_DENIED",
+                status_code=403,
+                details={"tenantId": requested_tenant_id or "", "allowedTenantIds": []},
+            )
+
+        clean_req = str(requested_tenant_id or "").strip()
+        if clean_req:
+            if "*" not in allowed_tenants and clean_req not in allowed_tenants:
+                raise AgoraScopeResolutionError(
+                    "Tenant access denied for Agora scope",
+                    reason="AGORA_SCOPE_TENANT_DENIED",
+                    status_code=403,
+                    details={"tenantId": clean_req, "allowedTenantIds": allowed_tenants},
+                )
+            tenant_id = clean_req
+        else:
+            tenant_id = _first_nonblank(*claim_tenants, *[t for t in allowed_tenants if t != "*"])
+            if not tenant_id and "*" in allowed_tenants:
+                tenant_id = _first_nonblank(
+                    os.getenv("PANTHEON_BFF_TENANT_ID"),
+                    os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
+                    os.getenv("PANTHEON_TENANT_ID"),
+                    "pantheon-dev",
+                )
+    else:
+        env_default_tenant = _first_nonblank(
+            os.getenv("PANTHEON_BFF_TENANT_ID"),
+            os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
+            os.getenv("PANTHEON_TENANT_ID"),
+        )
+        default_tenant = _first_nonblank(
+            env_default_tenant,
+            *_claim_strings(claims, _TENANT_CLAIM_PATHS),
+            "pantheon-dev",
+        )
+        allowed_tenants = _claim_strings(claims, _ALLOWED_TENANT_CLAIM_PATHS)
+        if not allowed_tenants:
+            allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [default_tenant]
+        tenant_id = _first_nonblank(requested_tenant_id, default_tenant)
+
+        if "*" not in allowed_tenants and tenant_id not in allowed_tenants:
+            raise AgoraScopeResolutionError(
+                "Tenant access denied for Agora scope",
+                reason="AGORA_SCOPE_TENANT_DENIED",
+                status_code=403,
+                details={"tenantId": tenant_id, "allowedTenantIds": allowed_tenants},
+            )
 
     if not tenant_id or not user_id:
         raise AgoraScopeResolutionError(
@@ -194,13 +243,6 @@ def resolve_agora_user_scope(
             reason="AGORA_SCOPE_PREDICATE_MISSING",
             status_code=403,
             details={"tenant_id_present": bool(tenant_id), "user_id_present": bool(user_id)},
-        )
-    if "*" not in allowed_tenants and tenant_id not in allowed_tenants:
-        raise AgoraScopeResolutionError(
-            "Tenant access denied for Agora scope",
-            reason="AGORA_SCOPE_TENANT_DENIED",
-            status_code=403,
-            details={"tenantId": tenant_id, "allowedTenantIds": allowed_tenants},
         )
 
     roles = list(getattr(identity, "roles", []) or [])

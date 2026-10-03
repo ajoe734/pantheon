@@ -19,13 +19,13 @@
       "site": "services/control-plane/bff/agora/performance/store.py:243 (get_suggestion) and :299 (list_suggestions)",
       "disposition": "fixed",
       "trusted_source": "positional tenant_id from the Agora scope",
-      "note": "Empty tenant used to drop the tenant filter; now raises ValueError."
+      "note": "Empty tenant used to drop the tenant filter; now raises ValueError. Mounted route verified by absent (403), foreign, and same-tenant (200) controls under built-in and active environment defaults."
     },
     {
-      "site": "services/control-plane/bff/agora/performance/store.py:358-401 (get_receipt)",
+      "site": "services/control-plane/bff/agora/performance/store.py:358-401 (get_receipt) and router (/bff/agora/performance/action-receipts/{id}, /bff/agora/trading-room/strategies/{id}/performance/suggestions/{id}/actions)",
       "disposition": "fixed",
-      "trusted_source": "scope.tenant_id from performance/router.py get_action_receipt (resolve_agora_user_scope)",
-      "note": "Empty tenant dropped the tenant clause and returned another tenant's row; now returns None. Mounted route covered by foreign (404), absent, and same-tenant (200) controls."
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope",
+      "note": "Performance read and write routes resolve tenant authority via central resolve_agora_user_scope. Empty tenant returns None in store and 403 at route layer. Mounted signed-JWT tests under built-in default ('pantheon-dev') and active environment default ('tenant-b') verify 403 on tenantless JWT, zero receipt disclosures, zero suggestion action writes, foreign tenant isolation (404), and positive same-tenant control (200)."
     },
     {
       "site": "services/control-plane/bff/agora/performance/store.py:367,390 (incidents proxy query params)",
@@ -48,32 +48,32 @@
     {
       "site": "services/control-plane/bff/agora/service.py:944 (create_journal_entry) and :776 (patch_journal_entry)",
       "disposition": "fixed",
-      "trusted_source": "verified JWT caller identity claims and allowed_tenants via _verify_tenant_authority",
-      "note": "Enforced fail-closed tenant authority guard (_verify_tenant_authority) in AgoraService write paths. When strict auth / JWT is active, caller without verified tenant authority in claims is rejected with 403 Forbidden before scope resolution, idempotency check, owner call, or storage write. Payload tenant is never passed as fallback to resolve_canonical_agora_scope; payload tenant if present must equal verified caller tenant, and resolved tenant must be in verified caller scope. Absent body tenant, built-in default ('pantheon-dev'), and active environment default ('tenant-b') all fail closed with 403 and zero stored rows on tenantless JWT."
+      "trusted_source": "verified JWT caller identity claims and allowed_tenants delegated to central resolve_canonical_agora_scope",
+      "note": "create_journal_entry and patch_journal_entry delegate tenant validation directly to central resolve_canonical_agora_scope. When strict auth / JWT is active, caller without verified tenant authority in claims is rejected with 403 Forbidden before scope resolution, idempotency check, owner call, or storage write. Payload tenant is never passed as fallback to resolve_canonical_agora_scope; payload tenant if present must equal verified caller tenant, and resolved tenant must be in verified caller scope. Absent body tenant, built-in default ('pantheon-dev'), and active environment default ('tenant-b') all fail closed with 403 and zero stored rows on tenantless JWT."
     },
     {
       "site": "services/control-plane/bff/agora/identity/scope.py:176-189 (resolve_agora_user_scope / resolve_canonical_agora_scope)",
-      "disposition": "proven safe by owned-layer guard in agora/service.py",
-      "trusted_source": "Caller identity claims; fallback to env/built-in default in resolve_agora_user_scope is blocked from reaching journal writes by _verify_tenant_authority in agora/service.py",
-      "note": "resolve_agora_user_scope's default_tenant invention ('pantheon-dev' or PANTHEON_BFF_TENANT_ID) cannot reach journal writes because AgoraService._verify_tenant_authority guards all write paths (create_journal_entry and patch_journal_entry), failing closed with 403 when caller identity lacks verified tenant authority in token claims. For read paths, callers enforce tenant predicates. Direct editing of identity/scope.py was avoided to remain within owned scoped artifacts without requiring contract extension."
+      "disposition": "fixed",
+      "trusted_source": "caller identity token claims and allowed_tenants",
+      "note": "resolve_agora_user_scope distinguishes strict JWT authentication (token_kind == 'jwt' or PANTHEON_BFF_AUTH_MODE == 'strict') from non-strict stub mode. Under strict JWT auth, verified token claims are the sole authority: callers lacking tenant claims fail closed with 403 AGORA_SCOPE_TENANT_DENIED before any storage read or write. Configured environment defaults (PANTHEON_BFF_TENANT_ID, PANTHEON_BFF_DEFAULT_TENANT_ID, PANTHEON_TENANT_ID) and built-in fallback ('pantheon-dev') are never used as authenticated caller authority for tenantless callers, and requested_tenant_id is checked strictly against allowed_tenants. This centrally protects all Agora routes and stores including journal entries, performance suggestions & receipts, research dispatcher, and operational readiness."
     },
     {
       "site": "services/control-plane/bff/agora/router.py:448 and :518",
       "disposition": "proven safe",
-      "trusted_source": "OperatorIdentity",
-      "note": "Header/body tenant is requested_tenant_id into resolve_agora_user_scope; journal write handler delegates to AgoraService.create_journal_entry which enforces fail-closed tenant authority via _verify_tenant_authority."
+      "trusted_source": "OperatorIdentity claims via central resolve_agora_user_scope",
+      "note": "Header/body tenant is requested_tenant_id into resolve_agora_user_scope which fails closed with 403 when caller identity lacks verified tenant claims in token; journal write handler also validates body tenant matches resolved caller tenant."
     },
     {
       "site": "services/control-plane/bff/agora/operational_readiness.py:271 -> :263 (_visible_to_scope)",
       "disposition": "fixed",
-      "trusted_source": "scope.tenant_id from identity",
-      "note": "Private record with no tenant used to be globally visible; now hidden. Tenantless public/shared records stay visible per contract."
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope",
+      "note": "Operational readiness resolves scope via resolve_agora_user_scope. When caller presents tenantless signed JWT, scope resolution fails closed, setting scope=None. Under scope=None, private records are hidden and only public/shared records are returned. Mounted signed-JWT tests confirm zero disclosures of private tenant rows under built-in and active environment defaults, while same-tenant callers see their scoped private records."
     },
     {
-      "site": "services/control-plane/bff/agora/research/dispatcher.py:764, :1266, :1283, :93-97",
+      "site": "services/control-plane/bff/agora/research/dispatcher.py:764, :1266, :1283, :93-97, :1476-1485",
       "disposition": "fixed",
       "trusted_source": "scope.tenant_id of authenticated Agora scope",
-      "note": "Plan/stage tenants no longer fill missing scope tenant; resolve_governed_dataset raises without trusted tenant."
+      "note": "Plan/stage tenants no longer fill missing scope tenant; resolve_governed_dataset raises ValueError without trusted tenant; AuthenticResearchBackendClient and ResearchDispatcher.dispatch_stage use authenticated scope.tenant_id only. drain_outbox skips records without trusted tenant/user and respects caller tenant filter. Mounted POST /bff/agora/research-plans/{id}/runs test verifies 403 on tenantless JWT under built-in and active env defaults, 404 on foreign tenant, and 202 on same-tenant positive control."
     },
     {
       "site": "services/control-plane/bff/agora/research/dispatcher.py:1129, :1482-1484 (drain_outbox)",
@@ -115,7 +115,7 @@
       "site": "services/control-plane/bff/personas/service.py:2338 and :3330 -- REPORT ONLY",
       "disposition": "finding, not edited",
       "trusted_source": "caller identity where passed",
-      "note": "Empty tenant lists all personas in snapshot; file is owned by concurrent tasks per contract."
+      "note": "Empty tenant lists all personas in snapshot and skips foreign session filtering; file is owned by concurrent tasks per contract AC4. Reproduced by test_reproduction_personas_service_report_only_finding in test_tenant_fallback_audit.py."
     },
     {
       "site": "services/control-plane/bff/command_adapters/runtime_adapter.py:148, :232-234 (_execute_pause)",
@@ -169,8 +169,11 @@
     "test_journal_create_denies_jwt_without_tenant_authority_under_all_defaults: mounted POST /bff/agora/journal with tenantless JWT under built-in default ('pantheon-dev') with absent body tenant (403, 0 stored rows), matching default body tenant (403, 0 stored rows), foreign body tenant (403, 0 stored rows); under active environment default ('tenant-b') with absent body tenant (403, 0 stored rows), matching env default body tenant (403, 0 stored rows), foreign body tenant (403, 0 stored rows); and valid JWT positive controls (same -> 201, absent -> 201, foreign -> 403, 0 added rows).",
     "test_mounted_journal_crash_recovery_scopes_to_the_jwt_tenant: mounted POST /bff/agora/journal with pending dead-PID idempotency record (absent -> >=400, foreign -> 403, same -> 201).",
     "test_mounted_runtime_pause_resume_use_the_jwt_tenant: mounted POST /bff/v1/commands PausePaperRuntime/ResumePaperRuntime (tenantless JWT without and with body tenant -> not executed, 0 downstream calls; foreign tenant -> 0 calls; same-tenant -> executes once).",
-    "test_mounted_suggestion_read_route_scopes_to_the_jwt_tenant: GET /bff/agora/trading-room/strategies/{id}/performance (tenantless JWT denied before store read; tenant-a/b read only own rows).",
-    "test_receipt_route_and_store_never_widen_to_an_empty_tenant: GET /bff/agora/performance/receipts/{id} (foreign -> 404, absent -> 404, same-tenant -> 200).",
+    "test_mounted_suggestion_read_route_scopes_to_the_jwt_tenant: GET /bff/agora/trading-room/strategies/{id}/performance (tenantless JWT fails closed with 403, 0 store reads under built-in 'pantheon-dev' and active env default 'tenant-b'; same tenant reads only own rows with 200).",
+    "test_receipt_route_and_store_never_widen_to_an_empty_tenant: GET /bff/agora/performance/action-receipts/{id} and POST /bff/agora/trading-room/strategies/{id}/performance/suggestions/{id}/actions (foreign -> 404, absent -> 403, 0 action writes/rows under built-in 'pantheon-dev' and active env default 'tenant-b'; same-tenant read -> 200; same-tenant action write -> 200, 1 write).",
+    "test_mounted_research_run_dispatch_scopes_to_the_jwt_tenant: POST /bff/agora/research-plans/{id}/runs (tenantless JWT fails closed with 403, 0 runs under built-in 'pantheon-dev' and active env default 'tenant-a'; foreign -> 404, 0 runs; same-tenant -> 202, 1 run).",
+    "test_readiness_route_denies_tenantless_jwt_authority_under_all_defaults: GET /bff/agora/operational-readiness (tenantless JWT fails closed to scope=None under built-in 'pantheon-dev' and active env default 'tenant-a'; returns only public/shared rows with 0 disclosures of private tenant rows).",
+    "test_reproduction_personas_service_report_only_finding: reproduction test for personas/service.py:2338 and :3330 confirming that empty caller tenant bypasses foreign tenant filtering while explicit tenant authority isolates records; marked report-only per AC4.",
     "test_mounted_operations_read_model_route_scopes_to_the_jwt_tenant: GET /bff/management/operations-read-model/{id} (tenantless JWT under custom, built-in 'pantheon-dev', and active env 'custom-default' -> 403; foreign -> 404/200; same -> 200).",
     "test_mounted_risk_radar_scopes_to_the_jwt_tenant: GET /bff/management/risk-radar (tenantless JWT -> 403 before store; foreign -> 200 without Persona B; same -> 200 with Persona B).",
     "test_mounted_strategy_command_route_with_tenant_enforcing_owner: mounted POST /bff/v1/commands StrategyAction with tenant-enforcing owner (absent -> 0 writes; foreign -> 0 writes; same -> 202, 1 write)."
@@ -184,8 +187,8 @@
         "CAPITAL_TEST_ADMIN_DSN=postgresql://postgres:postgres@127.0.0.1:32804/pantheon",
         "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:32804/pantheon"
       ],
-      "results": "ZERO skipped tests across services/capital/test_tenant_scoping.py (12 passed, 0 skipped) and all focused BFF test suites (104 passed, 0 skipped)."
+      "results": "207 passed, 9 subtests passed, 0 failed, ZERO skipped across all 9 focused BFF and Capital test suites against local PostgreSQL 127.0.0.1:32804/pantheon."
     },
-    "diff_budget": "diff_budget.py --change-class corrective --budget 60 passes with zero violations."
+    "diff_budget": "diff_budget.py --change-class corrective --budget 60 passes with zero violations (production net +49 <= 60)."
   }
 }
