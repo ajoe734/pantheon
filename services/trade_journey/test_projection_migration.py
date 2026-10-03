@@ -81,6 +81,116 @@ def _bootstrap_cli(migration, runtime, *, schema="trade_journey_projection"):
     )
 
 
+@pytest.fixture
+def source_default_bootstrap(fresh_bootstrap_database, tmp_path):
+    """Use the real init shell and resolved Compose identity on task-local PG."""
+    import subprocess
+    import sys
+    import psycopg
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+    container = os.environ["TEST_PROJECTION_CONTAINER"]
+    migration, _ = fresh_bootstrap_database
+    info = conninfo_to_dict(migration)
+    root = Path(__file__).resolve().parents[2]
+    subprocess.run([
+        "docker", "exec", "-i", "-e", "POSTGRES_USER=postgres",
+        "-e", "POSTGRES_DB=" + info["dbname"],
+        "-e", "PANTHEON_APP_DB_NAME=" + info["dbname"], container, "bash",
+    ], input=(root / "scripts/init-db.sh").read_text(), text=True,
+        capture_output=True, check=True, timeout=30)
+    config = subprocess.run([
+        "docker", "compose", "--env-file", "/dev/null", "-f",
+        str(root / "docker-compose.yml"), "config", "--format", "json",
+    ], env={"PATH": os.environ["PATH"], "POSTGRES_DB": info["dbname"],
+            "POSTGRES_PASSWORD": info["password"]},
+        capture_output=True, text=True, check=True, timeout=30)
+    config_path = tmp_path / "compose.json"
+    config_path.write_text(config.stdout)
+    projector_env = json.loads(config.stdout)["services"]["loop-run-projector-scheduler"]["environment"]
+    default_dsn = projector_env["LIFECYCLE_PROJECTOR_PROJECTION_DSN"]
+    assert conninfo_to_dict(default_dsn)["user"] == "pantheon_app"
+    runtime = make_conninfo(default_dsn, host=info["host"], port=info["port"], dbname=info["dbname"])
+    deploy = (root / "scripts/deploy_nonprod_vm.sh").read_text()
+    function = deploy[deploy.index("bootstrap_dev_lifecycle_projection() {"):]
+    function = function[:function.index("\n}\n") + 3]
+    # Execute the production shell/CLI boundary; substitute only local transport.
+    shell = r'''
+set -euo pipefail
+docker() {
+  if [[ "$*" == *"config --format json" ]]; then cat "$TEST_COMPOSE";
+  elif [[ "$*" == *"up -d --wait postgres" ]]; then return 0;
+  else return 99; fi
+}
+run_dev_candidate_compose() {
+  [[ "$*" == "run --rm --no-deps -T --entrypoint python loop-run-projector-scheduler -m scripts.lifecycle_projector_migrate --bootstrap-only --compose-config-stdin --reconcile-runtime-role" ]] || return 98
+  "$TEST_PYTHON" -m scripts.lifecycle_projector_migrate --bootstrap-only --compose-config-stdin --reconcile-runtime-role
+}
+'''
+
+    def run():
+        return subprocess.run(["bash", "-c", shell + function + "\nbootstrap_dev_lifecycle_projection"],
+            env={**os.environ, **projector_env, "TEST_COMPOSE": str(config_path),
+                 "TEST_PYTHON": sys.executable, "PGHOSTADDR": info["host"], "PGPORT": info["port"],
+                 "LIFECYCLE_PROJECTION_DSN": "", "LIFECYCLE_PROJECTOR_PROJECTION_DSN": runtime},
+            capture_output=True, text=True, timeout=30, cwd=root)
+
+    yield migration, runtime, run
+    # The enclosing disposable database fixture removes all database objects.
+    with psycopg.connect(migration) as conn:
+        assert conn.execute("SELECT rolname FROM pg_roles WHERE rolname='pantheon_app'").fetchone()
+
+
+@pytest.mark.parametrize("layout", ["empty", "owned", "direct_create"])
+def test_sealed_bootstrap_upgrades_source_default_runtime(source_default_bootstrap, layout):
+    import psycopg
+    from services.trade_journey.lifecycle_projector import RelationalLifecycleProjector
+    from services.trade_journey.projection_store import ProjectionStore
+
+    migration, runtime, bootstrap = source_default_bootstrap
+    tables = ("controller", "event_receipts", "identity_links", "journeys",
+              "journey_stages", "loop_runs", "quarantine")
+
+    def snapshot():
+        with psycopg.connect(migration) as conn:
+            return {t: conn.execute(f"SELECT * FROM trade_journey_projection.{t} ORDER BY 1,2,3").fetchall()
+                    for t in tables}
+
+    with psycopg.connect(runtime) as conn:
+        conn.execute("CREATE TABLE public.owner_sentinel (value text)")
+        conn.execute("INSERT INTO public.owner_sentinel VALUES ('retained')")
+    if layout != "empty":
+        ProjectionStore(runtime if layout == "owned" else migration, bootstrap=True)
+        if layout == "direct_create":
+            with psycopg.connect(migration) as conn:
+                conn.execute("GRANT USAGE, CREATE ON SCHEMA trade_journey_projection TO pantheon_app")
+                conn.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA trade_journey_projection TO pantheon_app")
+        projector = RelationalLifecycleProjector(ProjectionStore(runtime), deployment_sha="retained-sha")
+        projector.project_records(lifecycle_rows()[:3], mode="live", source_high_watermark=3)
+        before = snapshot()
+        assert before["identity_links"] and before["event_receipts"] and before["journeys"]
+    result = bootstrap()
+    assert result.returncode == 0, result.stderr
+    if layout != "empty":
+        assert snapshot() == before
+    for _ in range(2):
+        before = snapshot()
+        result = bootstrap()
+        assert result.returncode == 0, result.stderr
+        assert snapshot() == before
+    restarted = RelationalLifecycleProjector(ProjectionStore(runtime), deployment_sha="retained-sha")
+    rows = lifecycle_rows() if layout == "empty" else lifecycle_rows()[3:]
+    assert restarted.project_records(rows, mode="live", source_high_watermark=8).checkpoint == 8
+    for ddl in ("CREATE TABLE trade_journey_projection.forbidden (id int)",
+                "ALTER TABLE trade_journey_projection.controller ADD COLUMN forbidden int",
+                "DROP TABLE trade_journey_projection.controller"):
+        with psycopg.connect(runtime) as conn, pytest.raises(psycopg.errors.InsufficientPrivilege):
+            conn.execute(ddl)
+    with psycopg.connect(runtime) as conn:
+        assert conn.execute("SELECT value FROM public.owner_sentinel").fetchone() == ("retained",)
+        conn.execute("ALTER TABLE public.owner_sentinel ADD COLUMN preserved_authority int")
+
+
 def test_fresh_bootstrap_runtime_projection_restart_and_ddl_denial(fresh_bootstrap_database):
     import psycopg
     from services.trade_journey.lifecycle_projector import RelationalLifecycleProjector
