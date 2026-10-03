@@ -35,7 +35,6 @@ def setup(monkeypatch):
             utc_now=lambda: "2026-09-30T00:00:00Z",
             research_plan_store=store,
             workshop_store=workshops,
-            adapter_registry=None,
         )
         monkeypatch.setattr(router.service, "_publish_research_event", lambda *args: events.append(args))
         app = FastAPI()

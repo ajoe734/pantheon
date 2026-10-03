@@ -78,7 +78,6 @@ class AgoraResearchService:
         self,
         *,
         store: Union[MemoryResearchPlanStore, PostgresResearchPlanStore],
-        dispatcher: Optional[Any] = None,
         workshop_store: Optional[Union[MemoryWorkshopStore, PostgresWorkshopStore]] = None,
         dataset_store: Optional[AgoraDatasetStore] = None,
         trading_room_store: Optional[TradingRoomStore] = None,
@@ -87,7 +86,6 @@ class AgoraResearchService:
     ) -> None:
 
         self.store = store
-        self.dispatcher = dispatcher
         self.workshop_store = workshop_store
         self.dataset_store = dataset_store
         self.trading_room_store = trading_room_store

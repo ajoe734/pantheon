@@ -371,7 +371,6 @@ def create_agora_router(
     )
     router.include_router(research_router)
     router.research_store = getattr(research_router, "store", None)
-    router.research_dispatcher = getattr(research_router, "dispatcher", None)
     router.include_router(create_trading_room_router(
         **_kw,
         require_write_role=require_write_role,

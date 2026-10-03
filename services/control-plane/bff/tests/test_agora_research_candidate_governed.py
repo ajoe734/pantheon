@@ -20,11 +20,7 @@ from typing import Any, Dict, Optional
 import pytest
 from fastapi.testclient import TestClient
 
-from agora.research.dispatcher import (
-    AdapterRegistry,
-    ALLOWLISTED_STAGE_BACKENDS,
-    compute_artifact_checksum,
-)
+from services.research.constants import ALLOWLISTED_STAGE_BACKENDS
 from agora.research.store import MemoryResearchPlanStore, PostgresResearchPlanStore
 
 
@@ -647,7 +643,6 @@ def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) ->
         research_store=research_store,
         worker_id="test-worker-e2e",
     )
-    assert worker.research_dispatcher is None
     assert worker.drain_research_outbox() == 0
 
     # 6. Prove repeated dispatch against authoritative research owner has 1 owner effect
@@ -768,7 +763,6 @@ def test_drain_outbox_lease_conflict_and_duplicate_idempotency() -> None:
     # 6. Verify AgoraInteractionWorker has no ResearchDispatcher and does not drain research
     from agora.interaction.worker import AgoraInteractionWorker
     worker = AgoraInteractionWorker(research_store=store, worker_id="worker-a")
-    assert worker.research_dispatcher is None
     assert worker.drain_research_outbox() == 0
 
 
@@ -896,7 +890,6 @@ def test_drain_outbox_restart_persistence_and_stale_stage_idempotency() -> None:
     # AgoraInteractionWorker drain is zero-op
     from agora.interaction.worker import AgoraInteractionWorker
     worker = AgoraInteractionWorker(research_store=store, worker_id="worker-restart-2")
-    assert worker.research_dispatcher is None
     assert worker.drain_research_outbox() == 0
 
 

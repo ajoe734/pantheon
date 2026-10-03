@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
-from ..research.dispatcher import ALLOWLISTED_STAGE_BACKENDS
+from services.research.constants import ALLOWLISTED_STAGE_BACKENDS
 
 _INSTRUCTION = (
     "Draft a research plan (spec_version '1.0') for the request below. "

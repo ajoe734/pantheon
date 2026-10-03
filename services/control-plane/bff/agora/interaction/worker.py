@@ -77,9 +77,7 @@ class AgoraInteractionWorker:
         client_factory: Optional[Callable[[], OpenClawOpsClient]] = None,
         proposal_store: Optional[Any] = None,
         research_store: Optional[Any] = None,
-        research_dispatcher: Optional[Any] = None,
         dataset_store: Optional[Any] = None,
-        adapter_registry: Optional[Any] = None,
         worker_id: Optional[str] = None,
         lease_duration_seconds: int = 300,
         store: Optional[Any] = None,
@@ -90,8 +88,6 @@ class AgoraInteractionWorker:
         self.client_factory = client_factory
         self.proposal_store = proposal_store
         self.dataset_store = dataset_store
-        self.adapter_registry = adapter_registry
-        self.research_dispatcher = None
         self.research_store = research_store
         self.worker_id = worker_id or os.getenv(
             "PANTHEON_AGORA_WORKER_ID", f"agora-worker-{uuid.uuid4().hex[:12]}"

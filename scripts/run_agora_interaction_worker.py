@@ -23,10 +23,6 @@ from agora.governance.store import ProposalStore
 from agora.interaction.persona_client import build_canonical_persona_client
 from agora.interaction.store import InteractionLifecycleStore
 from agora.interaction.worker import AgoraInteractionWorker
-from agora.research.dispatcher import (
-    build_authentic_adapter_registry,
-    build_canonical_research_backend_clients,
-)
 from agora.research.routes.common import publish_research_progress
 from agora.research.store import (
     MemoryResearchPlanStore,
@@ -52,17 +48,10 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.healthcheck:
-        # A healthcheck must not return before required dependency factories
-        # are proven constructible. It skips the long-running loop and any
-        # live database mutation, but a Persona discovery client or required
-        # research backend client that cannot be built is a real startup failure.
         try:
             build_canonical_persona_client()
-            adapter_mode = os.getenv("AGORA_RESEARCH_ADAPTER_MODE", "real").strip().lower()
-            if adapter_mode == "real":
-                build_canonical_research_backend_clients(mode=adapter_mode)
         except Exception:
-            logger.exception("Healthcheck failed: could not construct required clients")
+            logger.exception("Healthcheck failed: could not construct the Persona client")
             return 1
         logger.info("Healthcheck OK")
         return 0
@@ -119,17 +108,6 @@ def main() -> int:
     else:
         raise ValueError(f"Unsupported AGORA_RESEARCH_STORE_BACKEND: {research_backend}")
 
-    # Wire authentic backend adapters for research stages
-    adapter_mode = os.getenv("AGORA_RESEARCH_ADAPTER_MODE", "real").strip().lower()
-    if adapter_mode == "real":
-        backend_clients = build_canonical_research_backend_clients(mode=adapter_mode)
-    else:
-        backend_clients = None
-    adapter_registry = build_authentic_adapter_registry(
-        mode=adapter_mode,
-        execution_owners=backend_clients,
-    )
-
     # Durable dataset store: wire the same durable owner store (postgres in production)
     dataset_backend = (
         os.getenv("AGORA_DATASET_STORE_BACKEND")
@@ -160,7 +138,6 @@ def main() -> int:
         read_store=read_store,
         proposal_store=proposal_store,
         research_store=research_store,
-        research_dispatcher=None,
         dataset_store=dataset_store,
         worker_id=os.getenv("PANTHEON_AGORA_WORKER_ID", "agora-interaction-worker"),
     )

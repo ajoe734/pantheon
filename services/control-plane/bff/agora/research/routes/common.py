@@ -12,7 +12,7 @@ import uuid
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from ..dispatcher import ALLOWLISTED_STAGE_BACKENDS
+from services.research.constants import ALLOWLISTED_STAGE_BACKENDS
 
 
 
@@ -1561,7 +1561,6 @@ class AgoraResearchRouteContext:
     utc_now: Callable[[], str]
     require_write_role: Optional[Callable[..., None]] = None
     store: Any = None
-    dispatcher: Optional[Any] = None
     workshop_store: Optional[Any] = None
     dataset_store: Optional[Any] = None
     service: Optional[Any] = None
@@ -1572,7 +1571,6 @@ class AgoraResearchRouteContext:
             from ..service import AgoraResearchService
             self.service = AgoraResearchService(
                 store=raw_store,
-                dispatcher=self.dispatcher,
                 workshop_store=self.workshop_store,
                 dataset_store=self.dataset_store,
                 utc_now=self.utc_now,

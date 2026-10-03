@@ -5772,7 +5772,6 @@ interaction_lifecycle = app.state.interaction_lifecycle
 workshop_store = app.state.workshop_store
 proposal_store = app.state.proposal_store
 research_store = getattr(app.state, "research_store", None)
-research_dispatcher = getattr(app.state, "research_dispatcher", None)
 dataset_store = getattr(app.state, "dataset_store", None)
 _ASSISTANT_SESSION_STORE = getattr(app.state, "assistant_session_store", None)
 _ASSISTANT_TRANSCRIPT_STORE = getattr(app.state, "assistant_transcript_store", None)

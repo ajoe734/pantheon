@@ -49,18 +49,15 @@ def create_research_router(
     research_plan_store: Any = None,
     workshop_store: Any = None,
     dataset_store: Any = None,
-    adapter_registry: Optional[Any] = None,
     service: Optional[Any] = None,
 ) -> APIRouter:
     """Build and return the Agora research APIRouter with strict write role and tenant isolation."""
     store = research_plan_store if research_plan_store is not None else make_research_plan_store()
     _ACTIVE_RESEARCH_STORE = store
-    dispatcher = None
     if service is None:
         from .service import AgoraResearchService
         service = AgoraResearchService(
             store=store,
-            dispatcher=dispatcher,
             workshop_store=workshop_store,
             dataset_store=dataset_store,
             utc_now=utc_now,
@@ -73,7 +70,6 @@ def create_research_router(
         bff_error=bff_error,
         utc_now=utc_now,
         store=store,
-        dispatcher=dispatcher,
         workshop_store=workshop_store,
         dataset_store=dataset_store,
         service=service,
@@ -83,7 +79,5 @@ def create_research_router(
     router.routes.extend(build_plans_router(ctx).routes)
     router.routes.extend(build_runs_router(ctx).routes)
     router.store = store          # injected-owner composition contract: agora/router.py obtains research_store via getattr(research_router, "store", None)
-    router.dispatcher = None
-    router.adapter_registry = None
     router.service = service
     return router
