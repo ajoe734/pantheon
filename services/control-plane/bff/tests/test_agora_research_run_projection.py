@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -713,3 +714,80 @@ def test_mounted_cancel_partial_failure_preserves_nonterminal_retryable_state(
     readback_after = _get_plan(client, pid)
     assert readback_after["data"]["status"] == "cancelled"
     assert client.owner_research_runs[rid2]["status"] == "canceled"
+
+
+def _setup_two_stages(monkeypatch: pytest.MonkeyPatch, tag: str):
+    client = _client(monkeypatch)
+    created = _create_plan(client, f"ws-review-{tag}", f"{tag}-create")
+    pid = created["data"]["plan_id"]
+    store = getattr(client, "router", None) and getattr(client.router, "research_store", None) or getattr(client, "app_instance", None) and getattr(client.app_instance, "research_store", None)
+    plan = store.get_plan(pid)
+    stages = deepcopy(plan["stages"])
+    stages.append({**deepcopy(stages[0]), "stage_id": "stage-second", "dependencies": [stages[0]["stage_id"]]})
+    store.update_plan(pid, {"stages": stages})
+    _approve_plan(client, pid, created["meta"]["etag"], f"{tag}-approve")
+    rid = _dispatch_plan(client, pid, _get_plan(client, pid)["meta"]["etag"], f"{tag}-dispatch")
+    root = client.owner_research_runs[rid]
+    root["status"] = "completed"
+    child_id = "owner-run-2"
+    client.owner_research_runs[child_id] = {
+        **deepcopy(root),
+        "run_id": child_id,
+        "stage_id": "stage-second",
+        "status": "running",
+        "execution_status": "running",
+        "input_refs": [{"type": "research_plan", "id": pid}, {"type": "stage", "id": "stage-second"}],
+    }
+    return client, store, pid, rid, child_id
+
+
+def test_cancel_after_root_completed_uses_owner_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, store, pid, rid, child_id = _setup_two_stages(monkeypatch, "stale-root")
+    response = client.post(
+        f"/bff/agora/research-plans/{pid}/cancel",
+        headers=_headers("stale-root-cancel", _get_plan(client, pid)["meta"]["etag"]),
+    )
+    assert response.status_code == 200, response.text
+    assert client.owner_research_runs[child_id]["status"] == "canceled"
+
+
+def test_other_operator_cannot_miss_owner_only_successor(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, store, pid, rid, child_id = _setup_two_stages(monkeypatch, "other-operator")
+    store.update_run(rid, {"execution_status": "succeeded"})
+    headers = _headers("other-operator-cancel", _get_plan(client, pid)["meta"]["etag"])
+    headers["Authorization"] = "Bearer second-operator:operator"
+    response = client.post(f"/bff/agora/research-plans/{pid}/cancel", headers=headers)
+    assert response.status_code == 200, response.text
+    assert client.owner_research_runs[child_id]["status"] == "canceled", (
+        "BFF returned cancellation success while owner-only successor stayed running",
+        response.text,
+        client.owner_research_runs[child_id]["status"],
+        store.get_plan(pid)["status"],
+    )
+
+
+def test_cancel_reconciles_terminal_race_when_owner_returns_conflict(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, store, pid, rid, child_id = _setup_two_stages(monkeypatch, "race-conflict")
+    from services.control_plane.bff.agora.strategy_workshop.operations import (
+        WorkshopCanonicalOperations,
+        CanonicalOperationError,
+    )
+
+    def race_cancel(_self, run_id, **kwargs):
+        if run_id == child_id:
+            client.owner_research_runs[child_id]["status"] = "completed"
+            raise CanonicalOperationError(
+                "research_orchestrator",
+                "terminal research run in status 'completed' cannot be canceled",
+                status_code=409,
+            )
+        client.owner_research_runs[run_id]["status"] = "canceled"
+        return client.owner_research_runs[run_id]
+
+    monkeypatch.setattr(WorkshopCanonicalOperations, "cancel_research_run", race_cancel)
+    response = client.post(
+        f"/bff/agora/research-plans/{pid}/cancel",
+        headers=_headers("race-conflict-cancel", _get_plan(client, pid)["meta"]["etag"]),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "cancelled"
