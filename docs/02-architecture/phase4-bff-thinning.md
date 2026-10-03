@@ -227,3 +227,10 @@ Agora 清理依賴是為了先完成同區域的刪除，避免並行改寫；�
 - 研究：`services/control-plane/bff/agora/research/service.py:350`、`dispatcher.py:1062`、`router.py:69`；`agora/strategy_workshop/operations.py:227`；`services/research/main.py:797,1700`；`services/control-plane/bff/ports/research_knowledge_source.py` 的直接 owner 綁定。
 - Persona 建議：`services/control-plane/bff/personas/service.py:5562,12377,13025`。
 - Agora 綜合：`services/control-plane/bff/agora/interaction/runner.py:136,566`；既有 structured 呼叫可參考 `agora/servant/research_proposal.py:45`。
+
+## PERSONA-OWNER-READBACK-20261002：Persona 建議只讀回 Governance owner
+
+- 排名建議與 promotion review 的狀態唯一來源是 evaluator 已存的 `governance_request.decision_id` 對應的 Governance `ApprovalDecision`（`personas/service.py::_lifecycle_owner_review_state`）。BFF 不建立、不投票、不翻譯任何第二份核准紀錄。
+- 已刪除舊的 `submit_quarterly_ranking_recommendation` 服務分支；`POST …/recommendations/{id}/submit` 只回 410（`ACTION_RETIRED`），不產生 command。
+- 狀態集合：`advisory_report`（無提案，不可執行）、`pending_human_gate`（owner 提案存在，尚未 decided，含首票）、`decision_accepted`（owner 已 decided）、`decision_revoked`／`decision_superseded`（owner 終態；`decision_status` 為 `revoked`／`superseded`，保留 owner readback，`links.human_inbox` 為 null）、`owner_unavailable`（owner 讀不到，或 tenant／persona／proposal_id／target_type／subject（persona、from_state、to_state）／proposal_content_digest 與已存提案不符；ranking 與 review 的 `links.human_inbox` 此時皆為 null）。`recommended_not_submitted` 不再出現。
+- Human Inbox：owner 提案尚未 decided 時 `links.human_inbox`／`human_inbox_id` 指向既有 `approval:{decision_id}` 項目（`source_type=approval`）；decided 後該項目已離開 approval queue，故兩者為 null，改以 `links.owner_decision`（`/api/v1/approval-decisions/{decision_id}`）作最終決議讀回。owner subject 讀自 `ApprovalDecision.metadata.subject`。

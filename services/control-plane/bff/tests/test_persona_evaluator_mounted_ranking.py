@@ -30,7 +30,7 @@ def test_mounted_ranking_drives_lifecycle_proposal(owner_state, action, target, 
                 }]}}}}
             if '/api/governance/approvals' in url:
                 proposals.append(data)
-                return {'_http_status': 201}
+                return {**data, '_http_status': 201}
             raise AssertionError(url)
         outcome = pea.run_once(store=pea.Store(tmp_path / 'agent.json'), bff_url='http://bff', bff_headers={},
             adapter_url='http://adapter', adapter_token='test', governance_url='http://gov', governance_token='test',
@@ -64,7 +64,7 @@ def test_mounted_state_change_invalidates_snapshot_and_preserves_reuse_and_idemp
                 }]}}}}
             if '/api/governance/approvals' in url:
                 proposals.append(data)
-                return {'_http_status': 201}
+                return {**data, '_http_status': 201}
             raise AssertionError(url)
 
         agent_store_path = tmp_path / 'agent.json'
