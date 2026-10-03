@@ -1,16 +1,11 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /workspace
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/workspace:/workspace/services/training-session
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/workspace:/workspace/services/training-session
 
-COPY services/training-session/requirements.txt /tmp/training-session-requirements.txt
-COPY services/research/vectorbt/requirements.txt /tmp/vectorbt-requirements.txt
-RUN pip install --no-cache-dir \
-    -r /tmp/training-session-requirements.txt \
-    -r /tmp/vectorbt-requirements.txt
+COPY dependencies/locks/services-training-session.txt ./requirements.lock
+RUN pip install --no-cache-dir --require-hashes -r ./requirements.lock
 
 COPY . /workspace
 
