@@ -905,7 +905,7 @@ def test_evaluator_principal_proposes_and_reads_lifecycle_request_but_cannot_dec
     assert client.get(f"/api/governance/approvals/{did}", headers=auth).json()["decision_state"] == "proposed"
     for operation, body in (("decide", {"outcome": "approved", "rationale": "self"}), ("revoke", {})):
         denied = client.post(f"/api/governance/approvals/{did}/{operation}", headers={**auth, "Idempotency-Key": uid()},
-                             json={"expected_version": 1, "actor_role": "approval_proposer",
+                             json={"expected_version": 1, "actor_role": "governance_reviewer",
                                    "actor_id": "persona-evaluator-agent", **body})
-        assert 400 <= denied.status_code < 500, denied.text
+        assert denied.status_code == 403, denied.text
     assert client.get(f"/api/governance/approvals/{did}", headers=auth).json()["decision_state"] == "proposed"

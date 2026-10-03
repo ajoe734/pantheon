@@ -119,6 +119,7 @@ jobs:
             tests/agora_write_owner/ \
             services/governance/test_paper_approval_postgres.py \
             services/governance/test_approval_authority_postgres.py \
+            services/governance/test_governance_api.py \
             services/registry/test_paper_scope_registry.py \
             services/registry/test_owner_durability.py \
             services/deployment/test_paper_scope_service.py \

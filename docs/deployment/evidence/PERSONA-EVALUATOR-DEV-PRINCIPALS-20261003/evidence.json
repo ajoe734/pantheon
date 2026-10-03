@@ -4,9 +4,15 @@
     "scripts/test_issue_dev_paper_principals.py",
     "scripts/test_dev_paper_principal_renewal.py",
     "services/persona-evaluator-agent/test_persona_evaluator_agent.py",
-    "services/control-plane/bff/tests/test_persona_paper_principal_transport_contract.py"
+    "services/control-plane/bff/tests/test_persona_paper_principal_transport_contract.py",
+    "scripts/test_dev_artifact_compensation_evidence.py => 156 passed",
+    "scripts/test_dev_release_artifact_driver.py scripts/test_capture_dev_artifact_baseline.py scripts/test_dev_release_artifacts.py scripts/test_dev_artifact_compensation_evidence.py => 546 passed + 18 real-compose passed",
+    "scripts/test_dev_paper_diagnostics_failure_path.py (baseline/config subset) => passed",
+    "services/governance/test_governance_api.py against a disposable postgres:16 gov_approval_test => 34 passed"
   ],
-  "not_run_locally": "services/governance/test_governance_api.py::test_evaluator_principal_proposes_and_reads_lifecycle_request_but_cannot_decide_or_revoke needs psycopg and a gov_approval_test Postgres; admission of the minted token was checked directly through governance _approval_principal.",
-  "release_baseline_config": "unchanged: it captures operator-bff only and its manifest keys are sealed; the evaluator is not part of that restore path.",
+  "review_fixes": {
+    "AC3": "forged decide/revoke now use schema-valid actor_role=governance_reviewer with the evaluator JWT, assert 403 and unchanged readback; test_governance_api.py added to the PostgreSQL batch in persona-owner-contract.yml",
+    "AC5": "BASELINE_PRINCIPAL_CONFIG now includes the two nonsecret PERSONA_EVALUATOR_*_TOKEN_FILE paths; the driver captures/verifies them from the persona-evaluator-agent container and Compose render (CONFIG_SERVICES); tokens are never captured; unapproved path is rejected (test)"
+  },
   "hosted_verification": "coordinator after next root deploy (AC12 of PERSONA-EVALUATOR-AGENT-002)"
 }
