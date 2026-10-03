@@ -247,8 +247,32 @@ class AgoraResearchService:
             if stage_id and (previous is None or rank >= int(previous.get("attempt_number") or 1)):
                 latest[stage_id] = record
         if not records:
+            legacy_runs = self.store.list_runs_for_plan(
+                str(plan.get("plan_id") or ""),
+                tenant_id=scope.tenant_id,
+                user_id=scope.user_id,
+            )
+            if legacy_runs:
+                result["run_ids"] = [str(run.get("run_id") or run.get("id")) for run in legacy_runs]
+                legacy_statuses = {str(run.get("stage_id") or ""): run.get("execution_status") for run in legacy_runs}
+                result["stages"] = [
+                    {**stage, **({"status": legacy_statuses[str(stage.get("stage_id") or "")]} if str(stage.get("stage_id") or "") in legacy_statuses else {})}
+                    for stage in plan.get("stages") or []
+                ]
+                if plan.get("status") == "cancelled":
+                    return result
+                statuses = [str(run.get("execution_status") or "").lower() for run in legacy_runs]
+                if all(status in {"succeeded", "completed"} for status in statuses):
+                    result["status"] = "completed"
+                elif any(status in {"failed", "cancelled", "canceled"} for status in statuses):
+                    result["status"] = "failed"
+                else:
+                    result["status"] = "running"
+                return result
             result["stages"] = [{**stage, "status": "pending"} for stage in plan.get("stages") or []]
             result["run_ids"] = []
+            if plan.get("status") == "cancelled":
+                return result
             result["status"] = "approved" if plan.get("approved_at") else "draft"
             return result
         status_map = {
@@ -268,6 +292,9 @@ class AgoraResearchService:
             stages.append(stage)
         result["stages"] = stages
         result["run_ids"] = [str(record.get("run_id") or record.get("id")) for record in records]
+        if plan.get("status") == "cancelled":
+            result["status"] = "cancelled"
+            return result
         statuses = [str(record.get("status") or "").lower() for record in latest.values()]
         if all(status in {"completed", "succeeded"} for status in statuses) and len(latest) == len(stages):
             result["status"] = "completed"
@@ -402,7 +429,7 @@ class AgoraResearchService:
         if plan is None:
             raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), f"Research plan '{plan_id}' not found", plan_id)
         owner_runs = self._owner_run_records(plan, scope)
-        if owner_runs is not None:
+        if owner_runs:
             stages = {str(stage.get("stage_id")): stage for stage in plan.get("stages") or []}
             projected = []
             for owner in owner_runs:
@@ -434,6 +461,7 @@ class AgoraResearchService:
                     "execution_status": status_projection.get(status, status),
                     "outcome": outcome,
                     "artifact_refs": owner.get("artifact_refs") or [],
+                    "evidence_refs": owner.get("evidence_refs") or [],
                     "updated_at": owner.get("updated_at") or owner.get("created_at"),
                 })
                 projected.append(run)
@@ -720,7 +748,9 @@ class AgoraResearchService:
                         "cancelled": "cancelled",
                     }
                     mapped_status = status_map.get(owner_status, owner_status or "queued")
-                    mapped_outcome = "pass" if owner_status == "completed" else ("fail" if owner_status in ("failed", "rejected") else None)
+                    mapped_outcome = "pass" if owner_status == "completed" else (
+                        "fail" if owner_status in ("failed", "rejected") else "pending"
+                    )
                     owner_user_id = str(owner_run.get("created_by") or owner_run.get("user_id") or (owner_run.get("parameters") or {}).get("user_id") or "").strip()
                     owner_tenant_id = str(owner_run.get("tenant_id") or (owner_run.get("parameters") or {}).get("tenant_id") or "").strip()
                     if owner_user_id and getattr(scope, "user_id", None) and owner_user_id != scope.user_id:

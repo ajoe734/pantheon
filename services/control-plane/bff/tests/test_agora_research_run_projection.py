@@ -22,7 +22,42 @@ def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         from services.control_plane.bff.tests.test_agora_strategy_workshop import _workshop_client
     except ImportError:
         from test_agora_strategy_workshop import _workshop_client
-    return _workshop_client(monkeypatch)
+    from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
+
+    monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://research-owner.test")
+    records: dict[str, dict] = {}
+
+    def dispatch(_self, *, task_payload, run_payload, resume=None):
+        task_id = "owner-task-" + str(len(records) + 1)
+        run_id = "owner-run-" + str(len(records) + 1)
+        params = run_payload.get("parameters") or {}
+        stage = params.get("stage") or {}
+        run = {
+            "run_id": run_id,
+            "task_id": task_id,
+            "status": "queued",
+            "execution_status": "queued",
+            "outcome": "pending",
+            "stage_id": stage.get("stage_id"),
+            "adapter": run_payload.get("adapter"),
+            "input_refs": run_payload.get("input_refs") or [],
+            "tenant_id": run_payload.get("tenant_id"),
+            "user_id": run_payload.get("user_id"),
+            "created_at": "2026-10-03T00:00:00Z",
+            "artifact_refs": [],
+            "evidence_refs": [],
+            "parameters": params,
+        }
+        records[run_id] = run
+        return {"task": {"task_id": task_id}, "run": run}
+
+    monkeypatch.setattr(WorkshopCanonicalOperations, "dispatch_research_run", dispatch)
+    monkeypatch.setattr(WorkshopCanonicalOperations, "list_research_runs", lambda _self, **_kwargs: list(records.values()))
+    monkeypatch.setattr(WorkshopCanonicalOperations, "get_research_run", lambda _self, run_id: records[run_id])
+    monkeypatch.setattr(WorkshopCanonicalOperations, "get_research_artifacts", lambda _self, _run_id: [])
+    client = _workshop_client(monkeypatch)
+    client.owner_research_runs = records
+    return client
 
 
 def _headers(idempotency_key: str | None = None, if_match: str | None = None) -> dict[str, str]:
@@ -218,6 +253,10 @@ def test_route_get_research_run_provenance_validation(
             "provenance": "real",
         },
     )
+    client.owner_research_runs[run_id].update({
+        "status": "completed", "correlation_id": correlation_id,
+        "executor": executor, "provenance": "real",
+    })
 
     # 2. Succeeded run claiming real but without receipt -> downgraded to simulation, NEVER real
     res2 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
@@ -295,8 +334,9 @@ def test_route_get_research_run_provenance_validation(
     assert res7.status_code == 200
     assert res7.json()["provenance"] == "unavailable"
 
-    # 8. Non-terminal run with matching receipt -> unavailable
+    # 8. Non-terminal owner run with matching receipt -> unavailable
     store.update_run(run_id, {"execution_status": "running"})
+    client.owner_research_runs[run_id]["status"] = "running"
     store.record_execution_receipt({
         "receipt_id": f"rcpt-{run_id}",
         "run_id": run_id,
@@ -310,14 +350,16 @@ def test_route_get_research_run_provenance_validation(
     assert res8.status_code == 200
     assert res8.json()["provenance"] == "unavailable"
 
-    # 9. Authentic valid receipt on terminal run -> resolves to 'real'
+    # 9. Authentic valid receipt on terminal owner run -> resolves to 'real'
     store.update_run(run_id, {"execution_status": "succeeded", "provenance": "real"})
+    client.owner_research_runs[run_id]["status"] = "completed"
     res9 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
     assert res9.status_code == 200
     assert res9.json()["provenance"] == "real"
 
-    # 10. Mismatched run provenance vs receipt mode (run claims simulation, receipt claims real) -> unavailable
+    # 10. Mismatched owner provenance vs receipt mode (run claims simulation, receipt claims real) -> unavailable
     store.update_run(run_id, {"provenance": "simulation"})
+    client.owner_research_runs[run_id]["provenance"] = "simulation"
     res10 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
     assert res10.status_code == 200
     assert res10.json()["provenance"] == "unavailable"

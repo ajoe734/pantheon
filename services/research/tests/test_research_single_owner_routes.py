@@ -39,12 +39,27 @@ def mock_write_owner() -> ResearchWriteOwner:
 
 
 @pytest.fixture
-def client(mock_write_owner: ResearchWriteOwner) -> TestClient:
+def client(mock_write_owner: ResearchWriteOwner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
+    monkeypatch.setattr(
+        research_main,
+        "store",
+        research_main.build_research_orchestrator_store(str(tmp_path / "research-owner")),
+    )
     research_main.set_write_owner(mock_write_owner)
     try:
         yield TestClient(research_main.app)
     finally:
         research_main.set_write_owner(None)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            active = [
+                record for record in research_main.store.list_runs()
+                if str(record.get("status") or "").lower() in {"queued", "running"}
+            ]
+            if not active:
+                break
+            time.sleep(0.01)
+        assert not active, f"research stage workers did not settle during teardown: {active}"
 
 
 def test_research_tickets_lifecycle(client: TestClient) -> None:
@@ -365,6 +380,11 @@ def test_stage_dispatch_returns_before_slow_execution_finishes(client: TestClien
     def slow_execute(*args: Any, **kwargs: Any) -> None:
         started.set()
         assert release.wait(3)
+        run_id = kwargs.get("run_id") or (args[1].get("run_id") if len(args) > 1 else None)
+        if run_id:
+            run = research_main.store.get_run(run_id)
+            run["status"] = "completed"
+            research_main.store.put_run(run)
 
     monkeypatch.setattr(research_main, "execute_research_stage", slow_execute)
     task = client.post("/api/research-orchestrator/tasks", json={"title": "Slow", "objective": "async", "source_refs": [], "constraints": {}}).json()
