@@ -5622,7 +5622,7 @@ def _lifecycle_owner_review_state(saved: Dict[str, Any], *, tenant_id: str) -> D
         and str(row.get("target_id") or "") == str(saved.get("persona_id") or "")
         and row.get("proposal_id") == saved.get("recommendation_id")
         and row.get("target_type") == "persona_lifecycle_transition"
-        and isinstance(subject := row.get("subject"), dict)
+        and isinstance(subject := (row.get("metadata") or {}).get("subject"), dict)
         and subject.get("persona_id") == saved.get("persona_id")
         and subject.get("from_state") == saved.get("from_state")
         and subject.get("to_state") == request.get("to_state")
@@ -5740,7 +5740,9 @@ def _promotion_review_item_from_recommendation(
     status = str(owner_state.get("status") or "advisory_report")
     decision_status = str(owner_state.get("decision_status") or "not_applicable")
     owner = owner_state.get("owner_decision") or {}
-    inbox_id = f"approval:{owner['decision_id']}" if owner.get("available") else None
+    # Terminal decisions leave the approval queue; their authoritative readback is the Governance owner.
+    inbox_id = f"approval:{owner['decision_id']}" if owner.get("available") and decision_status != "decided" else None
+    owner_href = f"/api/v1/approval-decisions/{quote(str(owner['decision_id']), safe='')}" if owner.get("available") else None
     governance = {
         "requires_human_gate_decision": True,
         "decision_status": decision_status,
@@ -5815,6 +5817,7 @@ def _promotion_review_item_from_recommendation(
             "detail": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}",
             "decisions": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}/decisions",
             "human_inbox": f"/bff/management/human-inbox/{quote(inbox_id, safe=':')}" if inbox_id else None,
+            "owner_decision": owner_href,
         },
     }
     return item
@@ -13007,6 +13010,12 @@ def _pm12_quarterly_recommendation_item(
             "persona": f"/bff/personas/{persona_id}",
             "human_inbox": (
                 f"/bff/management/human-inbox/approval:{quote(str(request['decision_id']), safe='')}"
+                if human_review_state["status"] == "pending_human_gate"
+                and isinstance(request := saved.get("governance_request"), dict)
+                else None
+            ),
+            "owner_decision": (
+                f"/api/v1/approval-decisions/{quote(str(request['decision_id']), safe='')}"
                 if human_review_state["submit_status"] == "owner_proposed"
                 and isinstance(request := saved.get("governance_request"), dict)
                 else None

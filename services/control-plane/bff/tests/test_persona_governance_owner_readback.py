@@ -6,8 +6,10 @@ import json
 
 import pytest
 
+from services.control_plane.governance.approval_decision import ApprovalDecision
 from services.control_plane.bff import test_bff_promotion_review_governance as gov_test
 from services.control_plane.bff.pm12 import evaluator_results
+from services.control_plane.bff.ports.ooda_management import ManagementReviewQueuePort
 
 HEADERS = gov_test.OPERATOR_HEADERS
 TENANT = gov_test._PM12_ELIGIBLE_TENANT_ID
@@ -26,13 +28,14 @@ def _decision(rec, **over):
     row = {
         "decision_id": "pev-1", "tenant_id": TENANT, "target_id": rec["persona_id"],
         "target_type": "persona_lifecycle_transition", "proposal_id": rec["recommendation_id"],
-        "subject": {"persona_id": rec["persona_id"], "from_state": FROM, "to_state": "frozen"},
         "proposal_content_digest": hashlib.sha256(json.dumps({
             "persona_id": rec["persona_id"], "action_id": "promote_to_canary_candidate", "from_state": FROM,
             "rationale": "Provider.", "evidence_ref_ids": [],
         }, sort_keys=True).encode()).hexdigest(), "decision_state": "proposed",
-        "decision": None, "decided_at": None, "actor_id": None, "version": 0, "metadata": {},
+        "decision": None, "decided_at": None, "actor_id": None, "version": 0,
+        "metadata": {"subject": {"persona_id": rec["persona_id"], "from_state": FROM, "to_state": "frozen"}},
     }
+    over = {**over, "metadata": {**row["metadata"], **over.get("metadata", {})}}
     row.update(over)
     return row
 
@@ -100,7 +103,7 @@ def test_ranking_and_review_project_the_same_owner_decision(saved_proposal, over
     {"tenant_id": "foreign-tenant"},   # unauthorized tenant
     {"target_id": "persona-other"},
     {"target_type": "deployment_plan"},
-    {"subject": {"persona_id": "x", "from_state": FROM, "to_state": "canary_candidate"}},
+    {"metadata": {"subject": {"persona_id": "x", "from_state": FROM, "to_state": "canary_candidate"}}},
     {"proposal_content_digest": "0" * 64},   # source content changed after proposal
 ])
 def test_conflicting_or_foreign_owner_record_is_unavailable_not_projected(saved_proposal, over):
@@ -144,26 +147,37 @@ def test_obsolete_submit_route_is_retired():
 @pytest.mark.parametrize(("over", "state"), [
     ({}, "proposed"),
     ({"decision_state": "under_review", "metadata": {"approvals": [{"actor_id": "a"}]}}, "under_review"),
-    ({"decision_state": "decided", "decision": "approved", "decided_at": "t", "actor_id": "b"}, "decided"),
 ])
-def test_ranking_link_resolves_to_the_same_owner_decision_in_human_inbox(saved_proposal, over, state):
+def test_pending_ranking_link_resolves_through_real_inbox_port(saved_proposal, over, state):
     with gov_test._isolated_client() as (client, store, _commands):
         ref = saved_proposal(client, {"decision_id": "pev-1", "to_state": "frozen"})
         row = _decision(ref, **over)
         store.get_approval_decision = lambda decision_id: row if decision_id == "pev-1" else None
-        store.list_approval_queue_items = lambda **_: [{**row, "decision_type": "ApprovalDecision"}]
+        queue = ManagementReviewQueuePort(approval_decisions_reader=lambda: [row])
+        store.list_approval_queue_items = queue.list_approval_queue_items
         rec, review = _both(client)
         link = rec["links"]["human_inbox"]
         assert link == review["links"]["human_inbox"] == "/bff/management/human-inbox/approval:pev-1"
         assert review["human_inbox_id"] == "approval:pev-1"
+        assert rec["links"]["owner_decision"] == review["links"]["owner_decision"] == "/api/v1/approval-decisions/pev-1"
         assert rec["governance"]["decision_type"] == "ApprovalDecision"
-        assert "human_gate_decision" not in rec["governance"]["destinations"]
         detail = client.get(link, headers=HEADERS)
         assert detail.status_code == 200, detail.text
         assert detail.json()["data"]["approval_decision_id"] == "pev-1"
         assert detail.json()["data"]["status"] == state
-        listed = client.get("/bff/management/human-inbox", headers=HEADERS, params={"source_type": "approval"})
-        assert [i["source_id"] for i in listed.json()["data"]["items"]] == ["pev-1"]
+
+
+def test_final_decision_hands_off_to_governance_owner_not_terminal_inbox(saved_proposal):
+    with gov_test._isolated_client() as (client, store, _commands):
+        ref = saved_proposal(client, {"decision_id": "pev-1", "to_state": "frozen"})
+        row = _decision(ref, decision_state="decided", decision="approved", decided_at="t", actor_id="b")
+        store.get_approval_decision = lambda decision_id: row if decision_id == "pev-1" else None
+        queue = ManagementReviewQueuePort(approval_decisions_reader=lambda: [row])
+        store.list_approval_queue_items = queue.list_approval_queue_items
+        rec, review = _both(client)
+        assert rec["links"]["human_inbox"] is None and review["human_inbox_id"] is None
+        assert rec["links"]["owner_decision"] == review["links"]["owner_decision"] == "/api/v1/approval-decisions/pev-1"
+        assert rec["human_review_state"]["status"] == "decision_accepted"
 
 
 def test_unavailable_owner_has_no_inbox_handoff(saved_proposal):
@@ -183,3 +197,17 @@ def test_caller_of_another_tenant_never_reads_the_owner_record(saved_proposal, m
         response = client.get(URL, headers=HEADERS, params={"quarter": "2026-Q1", "page_size": 50})
         assert response.status_code == 200, response.text
         assert response.json()["data"]["items"] == [] and reads == []
+
+
+def test_real_approval_decision_model_serialization_is_readable(saved_proposal):
+    with gov_test._isolated_client() as (client, store, _commands):
+        ref = saved_proposal(client, {"decision_id": "pev-1", "to_state": "frozen"})
+        base = _decision(ref)
+        model = ApprovalDecision.create_proposed(
+            decision_id="pev-1", target_type="persona_lifecycle_transition", target_id=ref["persona_id"],
+            target_version="1", risk_level="medium", tenant_id=TENANT, proposal_id=ref["recommendation_id"],
+            proposal_content_digest=base["proposal_content_digest"],
+            subject={"persona_id": ref["persona_id"], "from_state": FROM, "to_state": "frozen"},
+        )
+        store.get_approval_decision = lambda decision_id: model.to_dict()
+        assert _both(client)[1]["status"] == "pending_human_gate"

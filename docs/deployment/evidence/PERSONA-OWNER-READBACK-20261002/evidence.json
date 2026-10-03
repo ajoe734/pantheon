@@ -3,10 +3,10 @@
   "change_class": "simplify",
   "production_delta": {
     "files": {
-      "services/control-plane/bff/personas/service.py": "+83/-382",
+      "services/control-plane/bff/personas/service.py": "+92/-382",
       "services/control-plane/bff/personas/routes/ranking.py": "+4/-42"
     },
-    "net_lines": -337
+    "net_lines": -328
   },
   "predecessor_state": "Submit command already returned 410 (command_adapters/retired.py); the service submit branch and recommended_not_submitted projection were dead/obsolete.",
   "fe_consumer_contract": {
@@ -14,11 +14,11 @@
     "promotion_review_item": "status in advisory_report|pending_human_gate|decision_accepted|owner_unavailable; owner_decision={decision_id, available, to_state, decision_state, version, vote_count, proposal_content_digest} or {decision_id, available:false}; allowedActions all false; links.submit removed",
     "submit_route": "POST .../recommendations/{id}/submit -> 410 ACTION_RETIRED",
     "decisions": "taken only in Governance (/bff/approvals/{decision_id}/decide); no BFF HumanGateDecision",
-    "human_inbox_handoff": "links.human_inbox and human_inbox_id = approval:{decision_id} (existing Inbox approval item, source_type=approval) only when the owner row is available AND bound to the saved proposal (tenant, target_id, proposal_id, target_type=persona_lifecycle_transition, subject persona/from_state/to_state, recomputed proposal_content_digest); null otherwise in both ranking and promotion-review projections. owner_decision.to_state comes from the owner subject. governance.decision_type=ApprovalDecision; destinations=[human_inbox, governance_queue]; no promotion_review Inbox identity."
+    "human_inbox_handoff": "links.human_inbox and human_inbox_id = approval:{decision_id} (existing Inbox approval item, source_type=approval) only when the owner row is available AND bound to the saved proposal (tenant, target_id, proposal_id, target_type=persona_lifecycle_transition, subject persona/from_state/to_state, recomputed proposal_content_digest); null otherwise in both ranking and promotion-review projections. The owner subject is read from the real ApprovalDecision metadata.subject. Terminal (decided) decisions leave the approval queue (ManagementReviewQueuePort), so for decided: links.human_inbox/human_inbox_id are null and links.owner_decision=/api/v1/approval-decisions/{decision_id} is the authoritative final readback; links.owner_decision is also set while pending. owner_decision.to_state comes from the owner subject. governance.decision_type=ApprovalDecision; destinations=[human_inbox, governance_queue]; no promotion_review Inbox identity."
   },
   "tests": {
     "command": "pytest services/control-plane/bff/tests/test_persona_governance_owner_readback.py services/control-plane/bff/tests/test_persona_evaluator_projection.py services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py",
-    "result": "pass, 27 passed (readback incl. pending/first vote/final, conflicts incl. wrong target_type, conflicting subject.to_state and changed proposal_content_digest, foreign owner tenant, unauthorized caller tenant (no owner read), missing/failing owner, refresh + independent app, 410 route; stale mounted_ranking fake governance fixed to echo the proposal body); plus mounted Inbox detail/list handoff for pending/first vote/final and unavailable owner "
+    "result": "pass, 28 passed (readback incl. pending/first vote/final, conflicts incl. wrong target_type, conflicting subject.to_state and changed proposal_content_digest, foreign owner tenant, unauthorized caller tenant (no owner read), missing/failing owner, refresh + independent app, 410 route; stale mounted_ranking fake governance fixed to echo the proposal body); plus mounted Inbox detail via the real ManagementReviewQueuePort for pending/first vote, final decision handoff to owner link (no Inbox 404 link), real ApprovalDecision.to_dict() serialization, and unavailable owner "
   },
   "not_verified_or_residual": [
     "test_bff_promotion_review_governance.py, test_ppl_alloc_012_ranking_projection.py still fail (38 across 4 related files, 40 before): they exercise the already-retired submit command or a stale CommandAdapterService test-support kwarg (final_contract_idempotency); outside scoped artifacts",
