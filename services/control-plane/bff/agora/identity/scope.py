@@ -190,21 +190,12 @@ def resolve_agora_user_scope(
     if ident_tenant and ident_tenant not in allowed_tenants:
         allowed_tenants.append(ident_tenant)
 
-    env_default = _first_nonblank(
-        os.getenv("PANTHEON_BFF_TENANT_ID"),
-        os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
-        os.getenv("PANTHEON_TENANT_ID"),
-    )
+    env_default = _first_nonblank(os.getenv("PANTHEON_BFF_TENANT_ID"), os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"), os.getenv("PANTHEON_TENANT_ID"))
     if not is_strict and not allowed_tenants:
         allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [env_default or "pantheon-dev"]
 
     if not allowed_tenants:
-        raise AgoraScopeResolutionError(
-            "Tenant access denied for Agora scope",
-            reason="AGORA_SCOPE_TENANT_DENIED",
-            status_code=403,
-            details={"tenantId": requested_tenant_id or "", "allowedTenantIds": []},
-        )
+        raise AgoraScopeResolutionError("Tenant access denied for Agora scope", reason="AGORA_SCOPE_TENANT_DENIED", status_code=403, details={"tenantId": requested_tenant_id or "", "allowedTenantIds": []})
 
     clean_req = str(requested_tenant_id or "").strip()
     default_match = env_default if (env_default and (env_default in allowed_tenants or "*" in allowed_tenants)) else ("" if is_strict else (env_default or "pantheon-dev"))
@@ -213,20 +204,10 @@ def resolve_agora_user_scope(
         tenant_id = env_default or "pantheon-dev"
 
     if "*" not in allowed_tenants and tenant_id not in allowed_tenants:
-        raise AgoraScopeResolutionError(
-            "Tenant access denied for Agora scope",
-            reason="AGORA_SCOPE_TENANT_DENIED",
-            status_code=403,
-            details={"tenantId": tenant_id, "allowedTenantIds": allowed_tenants},
-        )
+        raise AgoraScopeResolutionError("Tenant access denied for Agora scope", reason="AGORA_SCOPE_TENANT_DENIED", status_code=403, details={"tenantId": tenant_id, "allowedTenantIds": allowed_tenants})
 
     if not tenant_id or not user_id:
-        raise AgoraScopeResolutionError(
-            "Agora scope requires tenant_id and user_id",
-            reason="AGORA_SCOPE_PREDICATE_MISSING",
-            status_code=403,
-            details={"tenant_id_present": bool(tenant_id), "user_id_present": bool(user_id)},
-        )
+        raise AgoraScopeResolutionError("Agora scope requires tenant_id and user_id", reason="AGORA_SCOPE_PREDICATE_MISSING", status_code=403, details={"tenant_id_present": bool(tenant_id), "user_id_present": bool(user_id)})
 
 
     roles = list(getattr(identity, "roles", []) or [])

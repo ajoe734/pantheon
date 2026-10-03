@@ -134,18 +134,12 @@ def _token_tenants(token: Optional[str]) -> Tuple[Optional[str], set[str]]:
     try:
         raw = str(token or "").removeprefix("Bearer ").strip().split(".")[1]
         c = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
-        tid = str(c.get("tenant_id") or c.get("tenantId") or c.get("tid") or "").strip()
-        primary = tid if tid and tid != "*" else None
-        al: set[str] = set()
+        p = str(c.get("tenant_id") or c.get("tenantId") or c.get("tid") or "").strip() or None
+        al = {p} if p and p != "*" else set()
         for k in ("allowed_tenants", "allowedTenants", "tenant_ids", "tenantIds", "tenants"):
             v = c.get(k)
-            if isinstance(v, (list, tuple, set)):
-                al.update(str(t).strip() for t in v if str(t).strip())
-            elif isinstance(v, str) and v.strip():
-                al.update(str(t).strip() for t in v.split(",") if str(t).strip())
-        if primary:
-            al.add(primary)
-        return primary, al
+            al.update(str(t).strip() for t in (v if isinstance(v, (list, tuple, set)) else str(v or "").split(",")) if str(t).strip())
+        return (p if p != "*" else None), al
     except Exception:
         return None, set()
 
