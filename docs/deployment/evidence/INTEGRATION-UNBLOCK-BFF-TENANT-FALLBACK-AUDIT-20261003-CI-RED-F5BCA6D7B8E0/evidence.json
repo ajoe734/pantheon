@@ -1,0 +1,151 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-TENANT-FALLBACK-AUDIT-20261003-CI-RED-F5BCA6D7B8E0",
+  "recorded_at": "2026-10-03T17:45:00Z",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "repository": "ajoe734/pantheon",
+  "base_sha": "2643a2d12c0e4c24b397b9965c12c8afc5971b9a",
+  "changed_files": [
+    "docs/deployment/evidence/INTEGRATION-UNBLOCK-BFF-TENANT-FALLBACK-AUDIT-20261003-CI-RED-F5BCA6D7B8E0/evidence.json"
+  ],
+  "source_task": "BFF-TENANT-FALLBACK-AUDIT-20261003",
+  "source_pr": "https://github.com/ajoe734/pantheon/pull/6109",
+  "original_head": "f3b82d888dfc036063187af177ab68dccfefc505",
+  "original_base": "5856d270912d0477aa63724de3ed9f1d2ce3881b",
+  "root_cause": {
+    "dispatch_reason": "ci-red",
+    "workflow": "Persona Owner Contract",
+    "job": "Persona provisioning owner contracts",
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/37138805181",
+    "job_id": 111248768932,
+    "failing_tests": [
+      {
+        "test": "TestAgoraServiceUsesCanonicalDecisionJournalOwner::test_env_tenant_precedence_over_claims",
+        "file": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
+        "assertion": "AssertionError: 'tenant-claim-fallback' != 'tenant-env-override'",
+        "detail": "In resolve_agora_user_scope (services/control-plane/bff/agora/identity/scope.py), candidate tenant resolution evaluated _first_nonblank(*claim_tenants, default_match, ...) placing token claim tenants ahead of the authorized environment default tenant (default_match). This broke the precedence contract where configured active environment tenant overrides take precedence when within the caller's authorized tenant scope."
+      },
+      {
+        "test": "TestAgoraServiceUsesCanonicalDecisionJournalOwner::test_missing_tenant_claims_cannot_be_elevated_by_request_input",
+        "file": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
+        "line": 1566,
+        "assertion": "AssertionError: 403 != 201",
+        "detail": "is_strict evaluated to True whenever bff_auth_mode() == 'strict' (the default when PANTHEON_BFF_AUTH_MODE is unset), causing unauthenticated in-memory test identities without tokens or claims to have allowed_tenants set to [] rather than inheriting configured environment tenant defaults. Consequently, legitimate own-tenant writes failed closed with 403 AGORA_SCOPE_TENANT_DENIED instead of succeeding with 201."
+      }
+    ],
+    "integrator_disposition": "scripts/git/auto_integrator.py operated correctly. Blocking on red CI (failed Persona provisioning owner contracts check) and publishing an unblock task protects dev mainline governance. No change to auto_integrator.py is required."
+  },
+  "pr_resolution": {
+    "action": "Updated PR #6109 with scoped fix commit on task/BFF-TENANT-FALLBACK-AUDIT-20261003",
+    "original_pr_number": 6109,
+    "original_pr_url": "https://github.com/ajoe734/pantheon/pull/6109",
+    "branch": "task/BFF-TENANT-FALLBACK-AUDIT-20261003",
+    "previous_head_sha": "f3b82d888dfc036063187af177ab68dccfefc505",
+    "updated_head_sha": "62bfaad67d3f82a7b6ec4c634787208cbbaaeea0",
+    "fix_commit": {
+      "sha": "62bfaad67d3f82a7b6ec4c634787208cbbaaeea0",
+      "subject": "BFF-TENANT-FALLBACK-AUDIT-20261003: fix tenant precedence and test scope",
+      "changes": [
+        "services/control-plane/bff/agora/identity/scope.py: distinguish token callers (token_kind in ('jwt', 'structured', 'cookie') or token claims) from unauthenticated direct/stub callers, ensuring that verified token callers lacking tenant claims fail closed with 403, while non-token test/stub callers inherit configured environment tenant defaults.",
+        "services/control-plane/bff/agora/identity/scope.py: restore env_default precedence in default_tenant = _first_nonblank(env_default, *claim_tenants, *[t for t in allowed_tenants if t != '*'], 'pantheon-dev'), satisfying test_env_tenant_precedence_over_claims while preserving denial on unauthorized env overrides.",
+        "docs/deployment/evidence/BFF-TENANT-FALLBACK-AUDIT-20261003/evidence.json: update site 9 note with clarified token vs stub distinction."
+      ]
+    },
+    "terminal_ci_receipts": {
+      "workflow": "Persona Owner Contract",
+      "job": "Persona provisioning owner contracts",
+      "run_id": 37140515223,
+      "run_url": "https://github.com/ajoe734/pantheon/actions/runs/37140515223",
+      "job_id": 111253814847,
+      "status": "completed",
+      "conclusion": "success",
+      "elapsed": "12m27s",
+      "result": "PASSED (all owner contract checks and precedence regressions succeeded on updated head 62bfaad67d3f82a7b6ec4c634787208cbbaaeea0)"
+    },
+    "branch_ci_gate_receipts": {
+      "commit_trailers": "SUCCESS (21s)",
+      "runtime_mirror_guard": "SUCCESS (19s)",
+      "smoke_acceptance": "SUCCESS (2m12s)",
+      "python_packaging_provision": "SUCCESS (21s)",
+      "canonical_review_gate_publisher": "SUCCESS (14s)"
+    },
+    "diff_budget_validation": {
+      "command": "python3 scripts/git/diff_budget.py --base 5856d270912d0477aa63724de3ed9f1d2ce3881b --head 62bfaad67d3f82a7b6ec4c634787208cbbaaeea0 --change-class corrective --budget 60",
+      "exit_code": 0,
+      "result": "production +261/-220 net +41 <= 60 budget; test +1890/-17 net +1873; docs/evidence +388/-0 net +388"
+    },
+    "commit_trailers_validation": {
+      "command": "python3 scripts/git/check_commit_trailers.py --range 5856d270912d0477aa63724de3ed9f1d2ce3881b..62bfaad67d3f82a7b6ec4c634787208cbbaaeea0 --skip-merge --delivery-class auto",
+      "exit_code": 0,
+      "result": "All 19 commits across PR range possess validated trailers and subjects <= 70 chars."
+    }
+  },
+  "review_gate_observation": {
+    "canonical_source_status_before": "review_approved",
+    "canonical_source_status_note": "The source task BFF-TENANT-FALLBACK-AUDIT-20261003 reached review_approved at head f3b82d888dfc036063187af177ab68dccfefc505 before auto-integrator hit red CI (failed run 37138805181). Pushing fix commit 62bfaad67d3f82a7b6ec4c634787208cbbaaeea0 to PR #6109 resolved the CI failure and satisfied Persona Owner Contracts (run 37140515223 exit 0). Under Pantheon's review gate policy, the approved head f3b82d888dfc is invalidated once the branch head changes to 62bfaad67d3f. Governed status command execution in this auto-worker session is cryptographically and process-fenced to ORCH_TASK_ID=INTEGRATION-UNBLOCK-BFF-TENANT-FALLBACK-AUDIT-20261003-CI-RED-F5BCA6D7B8E0 per scripts/ai_status.py:validate_active_status_command_lease (enforcing argv task == ORCH_TASK_ID and matching worker lease record). Invoking reopen or handoff against BFF-TENANT-FALLBACK-AUDIT-20261003 from this unblock session fails closed with 'RuntimeError: status command task mismatch: argv task BFF-TENANT-FALLBACK-AUDIT-20261003 != ORCH_TASK_ID INTEGRATION-UNBLOCK-...'. As established in precedent (e.g., INTEGRATION-UNBLOCK-BFF-TEST-MIGRATION-CB07-MANAGEMENT-CONSOLE-READS-OPS-001-EXACT-C0E82204B0A1), clearing the invalidated review binding and re-handing off head 62bfaad67d3f belongs to the source task's own dispatch / governance cycle."
+  },
+  "delivery_status": "PR #6109 is updated and no longer stranded: the original branch task/BFF-TENANT-FALLBACK-AUDIT-20261003 now has exact head 62bfaad67d3f82a7b6ec4c634787208cbbaaeea0, which resolves the CI failure (terminal run 37140515223 SUCCESS in 12m27s), passes all test suites, diff budget, and commit trailers, and reports mergeable=MERGEABLE on GitHub. This evidence closes the INTEGRATION-UNBLOCK task's own scope (root cause documented, PR updated, CI red resolved, PR no longer stranded); it does not and cannot directly mutate the source task's canonical status row due to governed worker lease boundaries. Subsequent source task reopen, handoff of exact head 62bfaad67d3f, and review approval proceed under the source task's own dispatch.",
+  "integrator_code_assessment": {
+    "code_changed": false,
+    "reason_no_code_change": "scripts/git/auto_integrator.py is working as intended. The serialized integrator correctly rejected the red CI PR and filed the unblock request. Full test suite (162 tests) in scripts/git/test_auto_integrator.py passes cleanly."
+  },
+  "validation": [
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/governance/test_decision_journal_write_owner.py",
+      "exit_code": 0,
+      "result": "38 passed, 3 warnings, 9 subtests passed in 36.01s (all 4 previous failures resolved)"
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/tests/test_tenant_fallback_audit.py",
+      "exit_code": 0,
+      "result": "94 passed, 1 skipped, 3 warnings in 49.65s (all tenant fallback audit tests preserved and passing)"
+    },
+    {
+      "command": "python3 -m unittest scripts/git/test_auto_integrator.py",
+      "exit_code": 0,
+      "result": "Ran 162 tests in 6.193s, OK"
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base 2643a2d12c0e4c24b397b9965c12c8afc5971b9a --head HEAD",
+      "exit_code": 0,
+      "result": "production +0/-0 net 0; test +0/-0 net 0; docs/evidence +122/-0 net +122"
+    },
+    {
+      "command": "python3 scripts/git/check_commit_trailers.py --range 2643a2d12c0e4c24b397b9965c12c8afc5971b9a..HEAD --delivery-class auto",
+      "exit_code": 0,
+      "result": "All commits in range pass trailer validation"
+    },
+    {
+      "command": "gh run view 37140515223",
+      "exit_code": 0,
+      "result": "Persona Owner Contract #6109 completed successfully (ID 111253814847 in 12m27s)"
+    },
+    {
+      "command": "gh pr view 6109 --json number,state,mergeable,headRefOid",
+      "exit_code": 0,
+      "result": "PR #6109 is OPEN, MERGEABLE at head 62bfaad67d3f82a7b6ec4c634787208cbbaaeea0"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "Clean diff with no whitespace errors"
+    }
+  ],
+  "source_review_followup": {
+    "source_task_id": "BFF-TENANT-FALLBACK-AUDIT-20261003",
+    "owner": "Antigravity",
+    "reviewer": "Codex",
+    "required_actions": [
+      "In a dispatch scoped to BFF-TENANT-FALLBACK-AUDIT-20261003, owner Antigravity runs ai-status.sh reopen to clear the invalidated head f3b82d888 review binding.",
+      "Owner Antigravity runs ai-status.sh handoff binding PR #6109 updated head 62bfaad67d3f82a7b6ec4c634787208cbbaaeea0 with manifest docs/deployment/evidence/BFF-TENANT-FALLBACK-AUDIT-20261003/evidence.json.",
+      "Reviewer Codex independently reviews and approves the updated head via ai-status.sh approve.",
+      "Supervisor auto-integrator merges PR #6109 into dev, and owner Antigravity finalizes with ai-status.sh done."
+    ]
+  },
+  "resolution": {
+    "state": "original_pr_updated_and_no_longer_stranded",
+    "acceptance_1_satisfied": true,
+    "acceptance_2_satisfied": true,
+    "summary": "Root cause for BFF-TENANT-FALLBACK-AUDIT-20261003 integration blocker is fully documented (failed run 37138805181). Original PR #6109 is updated to head 62bfaad67d3f82a7b6ec4c634787208cbbaaeea0, with terminal Persona Owner Contract CI run 37140515223 passing (12m27s), mergeable=MERGEABLE, and valid trailers, successfully unblocking integration."
+  }
+}
