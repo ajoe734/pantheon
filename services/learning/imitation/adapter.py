@@ -421,7 +421,7 @@ class ImitationBehaviorCloningBackend:
             ),
             action_space=gym.spaces.Discrete(len(dataset.action_labels)),
             demonstrations=[{"obs": observations, "acts": actions}],
-            rng=np.random.default_rng(config.seed),
+            rng=np.random.default_rng(config.seed), batch_size=min(32, len(actions)),
         )
         trainer.train(n_epochs=config.epochs)
         policy_payload = {
