@@ -1321,3 +1321,41 @@ def test_authorized_configured_default_is_not_replaced_by_allowlist_order(monkey
     assert response.status_code == 200, response.text
     assert response.json()["data"]["receipt_id"] == "receipt-owned"
 
+
+@pytest.mark.parametrize("authority", ["missing", "foreign", "same"])
+def test_event_stream_requires_verified_tenant_authority(monkeypatch, tmp_path, authority):
+    from services.control_plane.bff.events.router import create_events_router
+
+    positive = _jwt_headers(monkeypatch, "pantheon-dev" if authority == "same" else "tenant-b")
+    headers = _jwt_without_tenant() if authority == "missing" else positive
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "pantheon-dev")
+    event = {
+        "event_id": "private-event",
+        "type": "audit",
+        "tenant_id": "pantheon-dev",
+        "privateMarker": "PRIVATE_TENANT_EVENT",
+    }
+    router = create_events_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        bff_error=_bff_error,
+        sse_channels={"system"},
+        data_dir=tmp_path,
+    )
+
+    async def finite_stream(channel, buffer, subscribers, cursor, *, event_filter, **kwargs):
+        if event_filter(event):
+            yield {"data": json.dumps(event)}
+
+    monkeypatch.setattr(router.event_stream_service, "stream", finite_stream)
+    app = FastAPI()
+    app.include_router(router)
+    response = TestClient(app).get("/api/v1/stream/system", headers=headers)
+    if authority == "same":
+        assert response.status_code == 200, response.text
+        assert "PRIVATE_TENANT_EVENT" in response.text
+    else:
+        if authority == "missing":
+            assert response.status_code == 403, response.text
+        assert "PRIVATE_TENANT_EVENT" not in response.text, response.text
+

@@ -741,45 +741,46 @@ def bff_me_tenant_payload(
     *,
     requested_tenant: Optional[str] = None,
 ) -> Dict[str, Any]:
-    claim_default = first_nonblank(
-        *identity_claim_strings(
-            identity,
-            [
-                "tenant_id",
-                "tenantId",
-                "tenant.id",
-                "tid",
-                "org_id",
-                "organization.id",
-                "tenant_ids",
-                "tenantIds",
-            ],
-        )
+    claim_paths = [
+        "tenant_id", "tenantId", "tenant.id", "tid", "org_id",
+        "organization.id", "organization_id", "tenant_ids", "tenantIds",
+    ]
+    claim_default = first_nonblank(*identity_claim_strings(identity, claim_paths))
+    claim_allowed = identity_claim_strings(
+        identity,
+        ["allowed_tenants", "allowedTenants", "tenants", *claim_paths],
     )
-    default_tenant = first_nonblank(
+    is_strict = getattr(identity, "token_kind", "") in ("jwt", "structured", "cookie") or bff_auth_mode() == "strict"
+    env_default = first_nonblank(
         os.getenv("PANTHEON_BFF_TENANT_ID"),
         os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
         os.getenv("PANTHEON_TENANT_ID"),
-        claim_default,
-        "pantheon-dev",
     )
-    claim_allowed = identity_claim_strings(
-        identity,
-        [
-            "allowed_tenants",
-            "allowedTenants",
-            "tenant_ids",
-            "tenantIds",
-            "tenants",
-            "tenant_id",
-            "tenantId",
-            "tenant.id",
-            "tid",
-            "org_id",
-        ],
-    )
-    allowed_tenants = claim_allowed or env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [default_tenant]
-    effective_tenant = first_nonblank(requested_tenant, default_tenant) or "pantheon-dev"
+    if not is_strict and not claim_allowed:
+        allowed_tenants = env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [env_default or "pantheon-dev"]
+    else:
+        allowed_tenants = list(claim_allowed)
+
+    if not allowed_tenants:
+        raise bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Tenant access denied",
+            "Caller has no verified tenant authority",
+            precondition_failed="tenant_scope",
+            suggestion="Authenticate with a token containing tenant authority",
+            details_extra={"tenantId": str(requested_tenant or "").strip(), "allowedTenantIds": []},
+        )
+
+    clean_req = str(requested_tenant or "").strip()
+    if claim_default and (claim_default in allowed_tenants or "*" in allowed_tenants):
+        default_tenant = claim_default
+    elif env_default and (env_default in allowed_tenants or "*" in allowed_tenants):
+        default_tenant = env_default
+    else:
+        default_tenant = next((t for t in allowed_tenants if t != "*"), "") or (env_default or "pantheon-dev")
+
+    effective_tenant = clean_req or default_tenant
     if "*" not in allowed_tenants and effective_tenant not in allowed_tenants:
         raise bff_error(
             403,
@@ -795,7 +796,7 @@ def bff_me_tenant_payload(
         )
     return {
         "id": effective_tenant,
-        "requested_id": str(requested_tenant or "").strip() or None,
+        "requested_id": clean_req or None,
         "default_id": default_tenant,
         "allowed_ids": allowed_tenants,
         "scope": "global" if "*" in allowed_tenants else "tenant",

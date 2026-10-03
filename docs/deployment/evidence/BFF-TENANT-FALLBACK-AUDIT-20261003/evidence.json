@@ -186,6 +186,30 @@
       "disposition": "proven safe",
       "trusted_source": "caller tenant_id argument",
       "note": "Stores and idempotency checks compare stored record/result tenant against requested tenant for equality, returning cross_tenant_scope_mismatch conflict on divergence; never fills a missing trusted tenant."
+    },
+    {
+      "site": "services/control-plane/bff/auth/policy.py:739 (bff_me_tenant_payload)",
+      "disposition": "fixed",
+      "trusted_source": "verified JWT/identity tenant claims and allowed_tenants",
+      "note": "Fails closed with 403 Forbidden when caller lacks verified tenant authority under strict auth instead of falling back to default tenant. Supports explicit requested_tenant, primary claim_default, and authorized env defaults when in allowed_tenants."
+    },
+    {
+      "site": "services/control-plane/bff/events/router.py:268, :578-583 (_resolve_caller_tenant_scope, stream_generic_events)",
+      "disposition": "fixed",
+      "trusted_source": "caller identity claims via bff_me_tenant_payload",
+      "note": "Fails closed with 403 on missing tenant authority; truthy check removed so empty allowed_tenants triggers denial rather than fallthrough; anonymous liveness stream on /bff/events/stream preserved."
+    },
+    {
+      "site": "services/control-plane/bff/assistant/management_service.py:4080 (_mgmt_nl_caller_tenant)",
+      "disposition": "proven safe",
+      "trusted_source": "caller identity delegated to bff_me_tenant_payload",
+      "caller_proof": "Delegates to bff_me_tenant_payload which fails closed on unauthorized tenant; all Management AI operations run under verified caller tenant."
+    },
+    {
+      "site": "services/control-plane/bff/assistant/routes.py",
+      "disposition": "proven safe",
+      "trusted_source": "caller identity via extract_identity / management_service",
+      "caller_proof": "Assistant endpoints require authenticated operator identity with read/write roles and enforce tenant scoping via management_service."
     }
   ],
   "mounted_signed_jwt_tests": [
@@ -202,7 +226,8 @@
     "test_mounted_risk_radar_scopes_to_the_jwt_tenant: GET /bff/management/risk-radar (tenantless JWT -> 403 before store; foreign -> 200 without Persona B; same -> 200 with Persona B).",
     "test_mounted_strategy_command_route_with_tenant_enforcing_owner: mounted POST /bff/v1/commands StrategyAction with tenant-enforcing owner (absent -> 0 writes; foreign -> 0 writes; same -> 202, 1 write).",
     "test_mounted_workspace_route_scopes_to_the_jwt_tenant: mounted GET /bff/agora/trading-room/workspaces/{id} (absent tenant in JWT claims -> 403, zero data disclosed; foreign tenant -> 403; same tenant -> 200).",
-    "test_authorized_configured_default_is_not_replaced_by_allowlist_order: mounted GET /bff/agora/performance/action-receipts/{id} with multi-tenant allowed_tenants selects active configured default (PANTHEON_BFF_TENANT_ID) over allowlist position -> 200."
+    "test_authorized_configured_default_is_not_replaced_by_allowlist_order: mounted GET /bff/agora/performance/action-receipts/{id} with multi-tenant allowed_tenants selects active configured default (PANTHEON_BFF_TENANT_ID) over allowlist position -> 200.",
+    "test_event_stream_requires_verified_tenant_authority: mounted GET /api/v1/stream/system with synthetic private event (missing tenant -> 403, zero data disclosed; foreign tenant -> 200, private event withheld; same tenant -> 200, private event delivered)."
   ],
   "validation": {
     "local_postgresql_acceptance": {
@@ -213,9 +238,9 @@
         "CAPITAL_TEST_ADMIN_DSN=postgresql://postgres:postgres@127.0.0.1:32804/pantheon",
         "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:32804/pantheon"
       ],
-      "results": "207 passed, 9 subtests passed, 0 failed, ZERO skipped across all 9 focused BFF and Capital test suites against local PostgreSQL 127.0.0.1:32804/pantheon; 41 passed in test_tenant_fallback_audit.py."
+      "results": "207 passed, 9 subtests passed, 0 failed, ZERO skipped across all 9 focused BFF and Capital test suites against local PostgreSQL 127.0.0.1:32804/pantheon; 44 passed in test_tenant_fallback_audit.py."
     },
-    "diff_budget": "diff_budget.py --change-class corrective --budget 60 passes with zero violations (production net +43 <= 60)."
+    "diff_budget": "diff_budget.py --change-class corrective --budget 60 passes with zero violations (production net +47 <= 60)."
   }
 }
 
