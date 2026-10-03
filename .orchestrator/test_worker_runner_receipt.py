@@ -34,4 +34,3 @@ class RuntimeReceiptFenceTests(unittest.TestCase):
 
             self.assertEqual(wr._runtime_worker_receipt(root, "run-1"), worker)
             self.assertIsNone(wr._runtime_worker_receipt(root, "run-2"))
-

@@ -18,7 +18,7 @@
     ".orchestrator/runtime_state.py": "38492024dd3add9ff9ceb7dd90c60a2bfcbb5b3a826fad3a30f229e3456973fd",
     ".orchestrator/test_common.py": "05d8712a31f64af365cec07f61dc9453e7d75c76b7cc08f3bae0013ac351e539",
     ".orchestrator/test_runtime_state.py": "ec8b6326a411eebb802e57fbfe5d48091c0231cec32e2c305ce7ff37711c0d9b",
-    ".orchestrator/test_worker_runner_receipt.py": "ca64cb4ebbd84240acc1c30227acc5d7978d421a45feb2fe83977041d1e13708",
+    ".orchestrator/test_worker_runner_receipt.py": "13e4435f603570699517a8ae3ff219054918ee3fc196cc5fac9c51d7789a59c7",
     ".orchestrator/worker_runner.py": "d87064de7a109413217be6c0846ab180541506dba0effc54918e1c3208f0f317",
     "scripts/ai_status.py": "57b8debc4d7dab7ce3a324b16fe683e76ab428951a257bbdd56a230c3569f194",
     "scripts/dashboard_server.py": "6872d50456eacec8fb4bdb12ed91130ee15771c3149abe0e4065579016f3c048",
@@ -94,6 +94,12 @@
       "timeout_seconds": 600,
       "exit_code": 0,
       "result": "22 passed, 22 subtests passed"
+    },
+    {
+      "selection": ".orchestrator/test_worker_runner_receipt.py",
+      "timeout_seconds": 60,
+      "exit_code": 0,
+      "result": "1 passed after removing trailing blank line; no semantic change"
     }
   ],
   "nonpassing_batches": [
