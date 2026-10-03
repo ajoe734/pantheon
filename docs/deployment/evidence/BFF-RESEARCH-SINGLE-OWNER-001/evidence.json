@@ -1,31 +1,33 @@
 {
   "task_id": "BFF-RESEARCH-SINGLE-OWNER-001",
-  "environment": "local isolated owners; no hosted deployment or live capital actions",
-  "production_net_lines": -36,
-  "independent_review": "pending; canonical handoff binds this manifest to the exact PR head",
-  "changes": [
-    "Established research service (services/research/main.py) as sole execution and mutation owner for research tickets (RW-01), experiments (RW-04), notes (KW-02), and stage execution syncing.",
-    "BFF acts solely as forwarder and projector; routed research mutations through ResearchServiceClient and WorkshopCanonicalOperations HTTP clients.",
-    "Deleted duplicate BFF ResearchDispatcher orchestration, outbox draining, and auto-worker instantiation in Agora persona worker and Agora research router.",
-    "Removed all production fallback writers and direct DB owner bindings in BFF ports (KW-02, RW-01, RW-04), failing closed with ResearchWriteOwnerUnavailableError when write owner is unconfigured.",
-    "Preserved exact task and run IDs across workshop canonical operations and research plan routes with authentic mounted dispatch-to-owner-to-readback tests, reducing BFF production lines.",
-    "Maintained full request validation, schema compliance, and response projection on all BFF research routes.",
-    "Enforced AC5 fail-closed behavior for real mode in research service (HTTP 503 if real backend flags are missing, preventing silent simulation fallback).",
-    "Restored native QuantLib error propagation in quantlib_adapter.py (reverted to origin/dev) without artificial numeric fallback.",
-    "Maintained durable dependent multi-stage progression with isolated run records, root/parent link preservation, and correlation ID forwarding.",
-    "Ensured idempotent stage execution returns existing execution receipts without duplicating stored artifacts.",
-    "Remediated review issues: initialized child runs cleanly with fresh attempt state and genuine execution, implemented multi-pass DAG scheduling over authoritative store runs, preserved IDs and triggered execution in retry_run, isolated shared constants in services/research/constants.py to avoid BFF importing research service, and enforced fail-closed cancel_run."
-  ],
+  "environment": "isolated read-only venv ~/pantheon-ci-deploy/runtime/research-test-python/20261003-f9fd19209; no hosted deployment or live capital actions",
+  "independent_review": "pending; bind the refreshed manifest to the exact PR head during handoff",
+  "hosted_track": "external_wait per Human/Ops 2026-10-01 decision; no hosted probes performed",
+  "design_items": {
+    "D1": "services/research/main.py:367, 1042-1157; durable queued runs execute off-request, one latest-attempt/dependency progression schedules all roots and joins, startup requeues interrupted running attempts. services/research/store.py serializes and atomically replaces file-backed records.",
+    "D2": "Retired by anchor 3deb0fd30: removed duplicate BFF ResearchDispatcher wiring, unused interaction-worker registry/dispatcher dependencies, and tests that only covered the deleted stack.",
+    "D3": "services/control-plane/bff/research/client.py:37-170 is the shared ResearchServiceClient HTTP transport; WorkshopCanonicalOperations delegates its default research-owner requests to it, and ResearchCommandsPort delegates its default POST transport to it.",
+    "D4": "services/control-plane/bff/agora/research/service.py:207-283, 388-424 reads owner runs to project complete plan stages/status and run lists; mounted multi-root test covers repeat dispatch and terminal readback.",
+    "D5": "Reverted statement joining introduced by 69f5b5a05 in services/research/main.py and BFF research/client, service, and workshop operations code; retained ordinary multi-line formatting."
+  },
   "validation": [
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_agora_authentic_adapter_negative_controls.py services/control-plane/bff/agora/research/test_approval_roles.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py",
-      "passed": 184,
-      "skipped": 1,
-      "exit_status": 0
+      "command": "research single-owner route tests using the isolated venv",
+      "result": "13 passed; covers multi-root/fan-in, failed predecessor retry then successor, restart recovery without replaying completed predecessor, and dispatch returning while slow execution is running"
+    },
+    {
+      "command": "research HTTP service, single-owner routes, BFF job action receipts, research knowledge source ports, and approval-role tests using the isolated venv",
+      "result": "118 passed"
+    },
+    {
+      "command": "BFF test_agora_research_candidate_governed.py using the isolated venv",
+      "result": "12 passed; includes mounted create/approve/multi-root dispatch, owner-backed plan/run readback, repeat dispatch, and async end-to-end owner completion"
+    },
+    {
+      "command": "git diff --check; python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget 0",
+      "result": "both passed; production +1123/-1823 = net -700; tests +1163/-3791 = net -2628; docs/evidence +108 lines"
     }
   ],
-  "validation_total": 185,
-  "diff_check": "git diff origin/dev --check: exit 0",
-  "diff_budget": "python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget 0: exit 0; production +1111/-1147 = net -36 lines",
-  "scope_check": "All changed files matched the governed artifact contract; no out-of-scope paths."
+  "suite_note": "The historical eight-file manifest run (184 passed, 1 skipped) was verified on prior head 38141ba6f only. Two files in that command were deliberately removed under D2; on this head all retained manifest files were run as individual bounded batches (130 passed total). No claim is made that the removed tests ran on this head.",
+  "scope": "Changes remain within the declared task artifacts; the task branch commits include D2 and D1/D3/D4 implementation anchors."
 }

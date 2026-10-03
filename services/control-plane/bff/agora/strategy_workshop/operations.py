@@ -377,11 +377,22 @@ class WorkshopCanonicalOperations:
         return value
 
     def cancel_research_run(self, run_id: str, *, reason: Optional[str] = None) -> Dict[str, Any]:
-        return self._request_json("research_orchestrator", "POST", self.research_base_url, f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}/cancel", {"reason": reason or "Research run canceled by operator."})
+        return self._request_json(
+            "research_orchestrator",
+            "POST",
+            self.research_base_url,
+            f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}/cancel",
+            {"reason": reason or "Research run canceled by operator."},
+        )
 
     def get_research_artifacts(self, run_id: str) -> List[Dict[str, Any]]:
-        val = self._request_json("research_orchestrator", "GET", self.research_base_url, f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}/artifacts")
-        return val if isinstance(val, list) else []
+        value = self._request_json(
+            "research_orchestrator",
+            "GET",
+            self.research_base_url,
+            f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}/artifacts",
+        )
+        return value if isinstance(value, list) else []
 
     # -- Consultation Service --------------------------------------------
 

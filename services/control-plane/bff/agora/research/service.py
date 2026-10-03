@@ -251,7 +251,14 @@ class AgoraResearchService:
             result["run_ids"] = []
             result["status"] = "approved" if plan.get("approved_at") else "draft"
             return result
-        status_map = {"completed": "succeeded", "succeeded": "succeeded", "failed": "failed", "rejected": "failed", "canceled": "cancelled", "cancelled": "cancelled"}
+        status_map = {
+            "completed": "succeeded",
+            "succeeded": "succeeded",
+            "failed": "failed",
+            "rejected": "failed",
+            "canceled": "cancelled",
+            "cancelled": "cancelled",
+        }
         stages = []
         for stage in plan.get("stages") or []:
             owner = latest.get(str(stage.get("stage_id") or ""))
@@ -400,9 +407,35 @@ class AgoraResearchService:
             projected = []
             for owner in owner_runs:
                 stage = stages.get(str(owner.get("stage_id") or ""), {})
-                run = _build_run_projection(plan=plan, stage=stage or {"stage_id": owner.get("stage_id", "unknown"), "stage_type": owner.get("adapter", "unknown")}, run_id=str(owner.get("run_id") or owner.get("id")), now=str(owner.get("created_at") or self.utc_now()), scope=scope)
+                run = _build_run_projection(
+                    plan=plan,
+                    stage=stage or {
+                        "stage_id": owner.get("stage_id", "unknown"),
+                        "stage_type": owner.get("adapter", "unknown"),
+                    },
+                    run_id=str(owner.get("run_id") or owner.get("id")),
+                    now=str(owner.get("created_at") or self.utc_now()),
+                    scope=scope,
+                )
                 status = str(owner.get("status") or "queued").lower()
-                run.update({"task_id": owner.get("task_id"), "attempt_number": owner.get("attempt_number", 1), "parent_run_id": owner.get("parent_run_id"), "execution_status": {"completed": "succeeded", "failed": "failed", "rejected": "failed", "canceled": "cancelled"}.get(status, status), "outcome": "pass" if status == "completed" else ("fail" if status in {"failed", "rejected"} else "pending"), "artifact_refs": owner.get("artifact_refs") or [], "updated_at": owner.get("updated_at") or owner.get("created_at")})
+                status_projection = {
+                    "completed": "succeeded",
+                    "failed": "failed",
+                    "rejected": "failed",
+                    "canceled": "cancelled",
+                }
+                outcome = "pass" if status == "completed" else (
+                    "fail" if status in {"failed", "rejected"} else "pending"
+                )
+                run.update({
+                    "task_id": owner.get("task_id"),
+                    "attempt_number": owner.get("attempt_number", 1),
+                    "parent_run_id": owner.get("parent_run_id"),
+                    "execution_status": status_projection.get(status, status),
+                    "outcome": outcome,
+                    "artifact_refs": owner.get("artifact_refs") or [],
+                    "updated_at": owner.get("updated_at") or owner.get("created_at"),
+                })
                 projected.append(run)
             return projected
         runs = self.store.list_runs_for_plan(plan_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
@@ -424,7 +457,12 @@ class AgoraResearchService:
                 existing = self.list_runs_for_plan(plan_id, scope=scope)
                 if existing:
                     first = existing[0]
-                    return {"run_id": first["run_id"], "plan_id": plan_id, "stage_id": first["stage_id"], "stage_type": first["stage_type"]}
+                    return {
+                        "run_id": first["run_id"],
+                        "plan_id": plan_id,
+                        "stage_id": first["stage_id"],
+                        "stage_type": first["stage_type"],
+                    }
             raise self.bff_error(
                 409, self._error_code("RESOURCE_CONFLICT"),
                 f"Only approved plans may be dispatched; current status: '{plan['status']}'",
