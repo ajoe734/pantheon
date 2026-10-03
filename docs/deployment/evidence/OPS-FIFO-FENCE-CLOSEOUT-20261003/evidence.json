@@ -88,6 +88,12 @@
       "timeout_seconds": 600,
       "exit_code": 0,
       "result": "21 passed, 12 subtests passed"
+    },
+    {
+      "selection": "status/sync collected node IDs [495:517]",
+      "timeout_seconds": 600,
+      "exit_code": 0,
+      "result": "22 passed, 22 subtests passed"
     }
   ],
   "nonpassing_batches": [
@@ -138,5 +144,11 @@
   "handoff": "HANDOFF.md",
   "review_and_delivery": "Exact final PR/head/manifest frozen by governed handoff; independent Codex2 decision and supervisor merge pending. No review, merge, live conversion or hosted acceptance claimed.",
   "status_batch_reproduction": "Collect with python -m pytest --collect-only -q scripts/test_ai_status.py scripts/test_sync_dev_root.py; retain all 538 node-ID lines in collection order. Run disjoint slices [0:180], [180:360], [360:405], [405:450], [450:495], [495:517], [517:538] through the same pytest runner. No deselection or assertions relaxed.",
-  "status_node_inventory_sha256": "ce9c956a17f23f621f4637939e9791015f304a143484baa103da5690d92f5cd3"
+  "status_node_inventory_sha256": "ce9c956a17f23f621f4637939e9791015f304a143484baa103da5690d92f5cd3",
+  "status_full_suite_result": {
+    "collected": 538,
+    "passed": 538,
+    "subtests_passed": 348,
+    "all_batch_exit_codes": 0
+  }
 }
