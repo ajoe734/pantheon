@@ -2323,7 +2323,7 @@ bootstrap_dev_lifecycle_projection() {
   docker compose -p pantheon -f docker-compose.yml config --format json | \
     run_dev_candidate_compose run --rm --no-deps -T \
     --entrypoint python loop-run-projector-scheduler \
-    -m scripts.lifecycle_projector_migrate --bootstrap-only --compose-config-stdin
+    -m scripts.lifecycle_projector_migrate --bootstrap-only --compose-config-stdin --reconcile-runtime-role
 }
 
 ensure_dev_management_ai_postgres_role() {
