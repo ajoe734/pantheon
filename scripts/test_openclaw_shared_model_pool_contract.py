@@ -2,6 +2,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import sys
 from pathlib import Path
 
@@ -85,7 +86,12 @@ def test_claude_token_binding_is_narrow_and_reference_only() -> None:
     assert "auth-profiles.json" not in source
 
 
-def _run_model_pool_script(tmp_path, *, token_present: bool, reject_binding: bool = False):
+def _run_model_pool_script(
+    tmp_path, *, token_present: bool, reject_binding: bool = False,
+    agents=None, get_fail: bool = False, raw_state=None,
+):
+    state = tmp_path / "agents-state.json"
+    state.write_text(raw_state if raw_state is not None else json.dumps(agents) if agents is not None else "")
     command_log = tmp_path / "docker-commands.jsonl"
     fake_docker = tmp_path / "docker"
     fake_docker.write_text(
@@ -99,7 +105,11 @@ if "-e" in args:
 if "dist/index.js" not in args:
     sys.exit(0)
 cli = args[args.index("dist/index.js") + 1:]
-if cli[:2] == ["config", "set"]:
+state = os.environ["TEST_STATE"]
+if cli[:3] == ["config", "set", "agents.list"]:
+    with open(state, "w") as out:
+        out.write(cli[3])
+elif cli[:2] == ["config", "set"]:
     batch = json.loads(cli[cli.index("--batch-json") + 1])
     if any("cliBackends" in op["path"] for op in batch):
         if os.environ["TEST_REJECT_BINDING"] == "1":
@@ -111,6 +121,15 @@ elif cli[:2] == ["config", "get"]:
             "openai/gpt-5.6-sol", "openai/gpt-5.5",
             "anthropic/claude-opus-4-8", "anthropic/claude-sonnet-4-6",
             "google/gemini-3.1-pro-preview"]}))
+    elif path in ("agents", "agents.list"):
+        if os.environ["TEST_AGENTS_GET_FAIL"] == "1":
+            sys.exit(44)
+        raw = open(state).read()
+        lst = json.loads(raw) if raw else None
+        if path == "agents.list":
+            print(json.dumps(lst))
+        else:
+            print(json.dumps({"defaults": {}, **({} if not raw else {"list": lst})}))
     elif path == "agents.defaults.model.primary":
         print(json.dumps("anthropic/claude-opus-4-8"))
     elif path == "agents.defaults.model.fallbacks":
@@ -128,13 +147,21 @@ elif cli[:2] == ["config", "get"]:
             "TEST_DOCKER_LOG": str(command_log),
             "TEST_TOKEN_PRESENT": "1" if token_present else "0",
             "TEST_REJECT_BINDING": "1" if reject_binding else "0",
+            "TEST_STATE": str(state),
+            "TEST_AGENTS_GET_FAIL": "1" if get_fail else "0",
             "CLAUDE_CODE_OAUTH_TOKEN": "test-secret-never-in-argv-or-output",
         },
         capture_output=True, text=True, timeout=10, check=False,
     )
     raw_log = command_log.read_text(encoding="utf-8")
     assert "test-secret-never-in-argv-or-output" not in raw_log + result.stdout + result.stderr
-    return result, [json.loads(line) for line in raw_log.splitlines()]
+    calls = [json.loads(line) for line in raw_log.splitlines()]
+    final_state = state.read_text()
+    try:
+        result.final_agents = json.loads(final_state or "null")
+    except json.JSONDecodeError:
+        result.final_agents = final_state
+    return result, calls
 
 
 def test_optional_claude_token_binds_before_validate_and_restart(tmp_path) -> None:
@@ -157,3 +184,79 @@ def test_invalid_token_binding_stops_before_gateway_restart(tmp_path) -> None:
     result, calls = _run_model_pool_script(tmp_path, token_present=True, reject_binding=True)
     assert result.returncode == 33
     assert not any("restart" in args for args in calls)
+
+
+def _admission(agents):
+    """Run the unchanged adapter admission guard against a rendered config."""
+    sys.path.insert(0, str(REPO_ROOT / "services" / "openclaw-gateway-adapter"))
+    import main as adapter
+    from assistant_openclaw_provider import STRUCTURED_AGENT_ID
+
+    class Provider:
+        def _gateway_call(self, *_a, **_k):
+            return {"valid": True, "config": {"agents": {"list": agents}}}
+
+    saved = adapter._OPENCLAW_AGENT_PROVIDER
+    adapter._OPENCLAW_AGENT_PROVIDER = Provider()
+    try:
+        adapter._assert_structured_gateway_policy(STRUCTURED_AGENT_ID, deadline=time.monotonic() + 5)
+    finally:
+        adapter._OPENCLAW_AGENT_PROVIDER = saved
+
+
+def test_provisioned_config_inserts_and_preserves_agents(tmp_path) -> None:
+    existing = [{"id": "main", "default": True}, {"id": "persona-x", "tools": {"allow": ["exec"]}}]
+    result, _ = _run_model_pool_script(tmp_path, token_present=False, agents=existing)
+    assert result.returncode == 0, result.stderr
+    _admission(result.final_agents)
+    assert result.final_agents[:2] == existing
+    # Rerun on its own output: idempotent, no duplicates.
+    result2, _ = _run_model_pool_script(tmp_path, token_present=False, agents=result.final_agents)
+    assert result2.returncode == 0, result2.stderr
+    assert result2.final_agents == result.final_agents
+
+
+def test_provisioned_config_updates_target_without_dropping_properties(tmp_path) -> None:
+    existing = [
+        {"id": "main", "default": True},
+        {"id": "structured-extraction", "name": "Extractor", "tools": {"allow": ["read"], "alsoAllow": ["lookup"]}},
+    ]
+    result, _ = _run_model_pool_script(tmp_path, token_present=False, agents=existing)
+    assert result.returncode == 0, result.stderr
+    assert result.final_agents[0] == existing[0]
+    assert result.final_agents[1] == {
+        "id": "structured-extraction", "name": "Extractor",
+        "tools": {"allow": ["read"], "alsoAllow": ["lookup"], "deny": ["*"]},
+    }
+    _admission(result.final_agents)
+
+
+def test_admission_still_rejects_agent_without_deny_all() -> None:
+    import pytest
+
+    for agents in ([{"id": "structured-extraction"}], [{"id": "main", "tools": {"deny": ["*"]}}]):
+        with pytest.raises(Exception, match="verified Gateway agent"):
+            _admission(agents)
+
+
+def test_agents_read_failure_or_bad_shape_fails_closed(tmp_path) -> None:
+    cases = (
+        {"get_fail": True, "agents": [{"id": "main"}]},
+        {"raw_state": '{"id": "main"}'},
+        {"raw_state": "false"},
+        {"raw_state": "null"},
+        {"raw_state": "{malformed json"},
+    )
+    for index, kwargs in enumerate(cases):
+        case_dir = tmp_path / str(index)
+        case_dir.mkdir()
+        original = kwargs.get("raw_state", json.dumps(kwargs.get("agents", [])))
+        result, calls = _run_model_pool_script(case_dir, token_present=False, **kwargs)
+        assert result.returncode != 0
+        assert not any(
+            a[-3:-1] == ["set", "agents.list"]
+            or "agents.list" in a[:5] and "set" in a
+            for a in calls
+        )
+        assert not any("restart" in a for a in calls)
+        assert (case_dir / "agents-state.json").read_text() == original

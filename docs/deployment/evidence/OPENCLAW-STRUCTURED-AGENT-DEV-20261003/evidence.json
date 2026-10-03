@@ -1,0 +1,12 @@
+{
+  "task_id": "OPENCLAW-STRUCTURED-AGENT-DEV-20261003",
+  "decision": "Structured route uses dedicated agent 'structured-extraction' (tools.deny=['*']); main is unchanged because ordinary invoke routes use main with native tools.",
+  "provisioning": "scripts/openclaw-configure-shared-model-pool.sh upserts the agent into agents.list on every root deploy (before validate/restart) and asserts deny-all afterwards; config persists on the openclaw-data volume. Fail-closed: reads `agents` (not a defaulting list read); read/shape errors abort before any write or restart; existing agents preserved, upsert idempotent.",
+  "admission_check": "_assert_structured_gateway_policy unchanged; tests still reject missing/partial/duplicate policy.",
+  "tests": [
+    "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
+    "scripts/test_openclaw_shared_model_pool_contract.py",
+    "stateful provisioned-config -> unchanged admission guard; missing-deny rejection; main/persona preservation; read-failure fail-closed"
+  ],
+  "hosted_verification": "NOT YET DONE: workers have no VM access. Required after merge via existing root deploy: deployed dev SHA, live `config get agents.list` showing structured-extraction tools.deny==[\"*\"], successful structured request, and same after redeploy + gateway restart."
+}

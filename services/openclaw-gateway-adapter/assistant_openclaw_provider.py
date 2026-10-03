@@ -46,6 +46,8 @@ OPENCLAW_PROVIDER_ID = "openclaw"
 PROVIDER_RUNTIME = "openclaw_gateway_agent_cli"
 OPENRESPONSES_MODEL = "openclaw"
 DEFAULT_AGENT_ID = "main"
+# Dedicated deny-all agent for the structured route; main keeps native tools.
+STRUCTURED_AGENT_ID = "structured-extraction"
 DEFAULT_TIMEOUT_SECONDS = 90
 DEFAULT_READINESS_ANSWER_TIMEOUT_SECONDS = 20
 # The gateway's own internal request-lane queueing (observed up to ~12s under
