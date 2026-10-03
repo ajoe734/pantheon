@@ -96,6 +96,9 @@ def test_fresh_bootstrap_runtime_projection_restart_and_ddl_denial(fresh_bootstr
         conn.execute("INSERT INTO public.owner_sentinel VALUES ('retained')")
     boot = _bootstrap_cli(migration, runtime)
     assert boot.returncode == 0, boot.stderr
+    with psycopg.connect(migration) as conn:
+        conn.execute("CREATE TABLE trade_journey_projection.owner_sentinel (value text)")
+        conn.execute("INSERT INTO trade_journey_projection.owner_sentinel VALUES ('retained')")
     projector = RelationalLifecycleProjector(store, deployment_sha="bootstrap-test")
     rows = lifecycle_rows()
     result = projector.project_records(rows[:3], mode="live", source_high_watermark=3)
@@ -117,11 +120,17 @@ def test_fresh_bootstrap_runtime_projection_restart_and_ddl_denial(fresh_bootstr
             conn.execute(ddl)
     with psycopg.connect(runtime) as conn, pytest.raises(psycopg.errors.InsufficientPrivilege):
         conn.execute("SELECT * FROM public.owner_sentinel")
+    with psycopg.connect(runtime) as conn, pytest.raises(psycopg.errors.InsufficientPrivilege):
+        conn.execute("SELECT * FROM trade_journey_projection.owner_sentinel")
     with psycopg.connect(migration) as conn:
         assert conn.execute("SELECT value FROM public.owner_sentinel").fetchone() == ("retained",)
+        assert conn.execute("SELECT value FROM trade_journey_projection.owner_sentinel").fetchone() == ("retained",)
 
 
-@pytest.mark.parametrize("failure", ["schema", "authority", "database", "elevated", "runtime_owner", "ddl"])
+@pytest.mark.parametrize("failure", [
+    "schema", "authority", "database", "elevated", "superuser", "createrole",
+    "runtime_owner", "inherited_owner", "public_create", "ddl",
+])
 def test_bootstrap_rejects_wrong_target_or_authority_atomically(fresh_bootstrap_database, failure):
     import psycopg
     from psycopg import sql
@@ -138,6 +147,17 @@ def test_bootstrap_rejects_wrong_target_or_authority_atomically(fresh_bootstrap_
         runtime = make_conninfo(runtime, dbname="postgres")
     elif failure == "elevated":
         runtime = migration
+    elif failure in ("superuser", "createrole"):
+        with psycopg.connect(migration) as conn:
+            conn.execute(sql.SQL("ALTER ROLE {} " + failure.upper()).format(sql.Identifier(role)))
+    elif failure == "inherited_owner":
+        with psycopg.connect(migration) as conn:
+            conn.execute(sql.SQL("GRANT {} TO {}").format(
+                sql.Identifier(conninfo_to_dict(migration)["user"]), sql.Identifier(role)))
+    elif failure == "public_create":
+        with psycopg.connect(migration) as conn:
+            conn.execute("CREATE SCHEMA trade_journey_projection")
+            conn.execute("GRANT CREATE ON SCHEMA trade_journey_projection TO PUBLIC")
     elif failure == "runtime_owner":
         with psycopg.connect(migration) as conn:
             conn.execute(sql.SQL("CREATE SCHEMA trade_journey_projection AUTHORIZATION {}").format(sql.Identifier(role)))

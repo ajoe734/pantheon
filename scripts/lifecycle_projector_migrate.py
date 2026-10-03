@@ -32,6 +32,7 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Sequence
 
@@ -74,6 +75,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA", "trade_journey_projection"))
     )
     parser.add_argument("--bootstrap-only", action="store_true", help="initialize schema/grants; do not backfill")
+    parser.add_argument("--compose-config-stdin", action="store_true", help="read migration authority from resolved Compose config")
     parser.add_argument("--runtime-dsn", default=os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_DSN", ""))
     parser.add_argument("--controller-id", help="the live controller id this job backfills for")
     parser.add_argument("--tenant-scope", default="")
@@ -107,6 +109,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if args.compose_config_stdin:
+        if not args.bootstrap_only or args.dsn:
+            parser.error("--compose-config-stdin requires --bootstrap-only and no --dsn")
+        from psycopg.conninfo import make_conninfo
+
+        database = json.load(sys.stdin)["services"]["postgres"]["environment"]
+        args.dsn = make_conninfo(host="postgres", user=database["POSTGRES_USER"],
+                                 password=database["POSTGRES_PASSWORD"], dbname=database["POSTGRES_DB"])
     if not args.dsn:
         parser.error("--dsn or LIFECYCLE_PROJECTION_DSN is required")
 

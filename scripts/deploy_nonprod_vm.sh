@@ -2320,12 +2320,10 @@ bootstrap_dev_lifecycle_projection() {
   # One-shot migration from the sealed candidate, before starting its runtime.
   # Migration credentials exist only in this container, never in the projector.
   docker compose -p pantheon -f docker-compose.yml up -d --wait postgres || return
-  run_dev_candidate_compose run --rm --no-deps -T \
-    -e PGUSER="${POSTGRES_USER:-postgres}" \
-    -e PGPASSWORD="${POSTGRES_PASSWORD:-postgres}" \
-    -e PGDATABASE="${POSTGRES_DB:-pantheon}" \
+  docker compose -p pantheon -f docker-compose.yml config --format json | \
+    run_dev_candidate_compose run --rm --no-deps -T \
     --entrypoint python loop-run-projector-scheduler \
-    -m scripts.lifecycle_projector_migrate --bootstrap-only --dsn 'host=postgres'
+    -m scripts.lifecycle_projector_migrate --bootstrap-only --compose-config-stdin
 }
 
 ensure_dev_management_ai_postgres_role() {
