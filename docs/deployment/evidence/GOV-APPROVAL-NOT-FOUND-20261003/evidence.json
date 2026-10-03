@@ -1,0 +1,12 @@
+{
+  "task_id": "GOV-APPROVAL-NOT-FOUND-20261003",
+  "kind": "local_real_postgres_validation",
+  "fix": "services/governance/pg_store.py execute_command: non-propose command on a nonexistent approval raises ApprovalCommandNotFound (404) before the stale-version check",
+  "before": "unknown id returned 409 for expected_version 1/999 (404 only at 0)",
+  "tests": {
+    "command": "pytest services/governance/test_governance_api.py services/governance/test_approval_authority_postgres.py services/control-plane/bff/tests/test_receipt_governance_routes.py services/control-plane/bff/test_bff_approvals_decide_contract.py",
+    "result": "227 passed, 0 skipped (includes unknown-id cases in test_governance_api.py and signed foreign-tenant/absent-target review/decide/revoke denials with before/after decision, receipt and audit snapshots in test_approval_authority_postgres.py)",
+    "database": "task-exclusive temporary PostgreSQL, isolated local only"
+  },
+  "limits": "Local source validation only. Hosted verification belongs to the existing coordinator after a later exact release; PR6117 historical run is not retroactively corrected."
+}

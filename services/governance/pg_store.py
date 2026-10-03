@@ -73,7 +73,8 @@ class PostgresApprovalDecisionStore:
             # Use the merged transaction-aware read API, without a second connection.
             base = next((row for row in self._records.list_all(conn=conn)
                          if row['decision_id'] == command['decision_id']), None)
-            if base is not None and base.get('tenant_id') != command['tenant_id']:
+            if (base is None and command['operation'] != 'propose') or (
+                    base is not None and base.get('tenant_id') != command['tenant_id']):
                 raise ApprovalCommandNotFound('Approval decision not found')
             if (base.get('version', 0) if base else 0) != command['expected_version']:
                 raise ApprovalCommandConflict('Approval base version is stale')
