@@ -1108,3 +1108,115 @@ def test_omitted_stage_id_cannot_bypass_owner_claim(monkeypatch: pytest.MonkeyPa
         release.set()
         replies = [first.result(timeout=10), second.result(timeout=10)]
     assert len(calls) == 1, f"backend_calls={len(calls)}, status={[r.status_code for r in replies]}, artifacts={len(store.list_artifacts())}"
+
+
+def _make_invariants_backend(monkeypatch):
+    from services.research.quantlib.adapter import quantlib_adapter
+    entered, second_entered, release = threading.Event(), threading.Event(), threading.Event()
+    calls = []
+    original = quantlib_adapter.run_quantlib_workflow
+    def backend(*args, **kwargs):
+        calls.append(1)
+        (entered if len(calls) == 1 else second_entered).set()
+        assert release.wait(8)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(quantlib_adapter, "run_quantlib_workflow", backend)
+    return entered, second_entered, release, calls
+
+
+def test_cancellation_fences_artifact_publication(client, monkeypatch):
+    from services.research.tests.test_research_orchestrator_http_service import _make_sample_quantlib_dataset
+    from concurrent.futures import ThreadPoolExecutor
+    store = research_main.store
+    monkeypatch.setenv("PANTHEON_QUANTLIB_BACKEND", "stub")
+    store.put_task({"task_id": "t", "tenant_id": "tenant-a", "status": "ready"})
+    store.put_run({"run_id": "r", "task_id": "t", "stage_id": "price", "tenant_id": "tenant-a", "status": "queued", "requested_mode": "stub"})
+    body = {"run_id": "r", "correlation_id": "c", "stage": {"stage_id": "price"},
+            "plan": {"plan_id": "p", "task_id": "t", "tenant_id": "tenant-a"},
+            "dataset": _make_sample_quantlib_dataset()}
+    entered, _, release, calls = _make_invariants_backend(monkeypatch)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(client.post, "/api/research-orchestrator/stages/derivatives_pricing_risk/execute", json=body)
+        try:
+            assert entered.wait(5)
+            cancelled = client.post("/api/research-orchestrator/tasks/t/cancel")
+            assert cancelled.status_code == 200, cancelled.text
+        finally:
+            release.set()
+        result = future.result(timeout=10)
+    assert result.status_code == 409, result.text
+    assert store.get_run("r")["status"] == "canceled"
+    assert store.list_artifacts() == [], "Canceled execution published an output artifact before checking the fence"
+
+
+def test_age_alone_cannot_steal_a_live_execution_claim(client, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from services.research.tests.test_research_orchestrator_http_service import _make_sample_quantlib_dataset
+    from concurrent.futures import ThreadPoolExecutor
+    store = research_main.store
+    monkeypatch.setenv("PANTHEON_QUANTLIB_BACKEND", "stub")
+    store.put_task({"task_id": "t", "tenant_id": "tenant-a", "status": "ready"})
+    store.put_run({"run_id": "r", "task_id": "t", "stage_id": "price", "tenant_id": "tenant-a", "status": "queued", "requested_mode": "stub"})
+    body = {"run_id": "r", "correlation_id": "c", "stage": {"stage_id": "price"},
+            "plan": {"plan_id": "p", "task_id": "t", "tenant_id": "tenant-a"},
+            "dataset": _make_sample_quantlib_dataset()}
+    entered, second_entered, release, calls = _make_invariants_backend(monkeypatch)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(client.post, "/api/research-orchestrator/stages/derivatives_pricing_risk/execute", json=body)
+        try:
+            assert entered.wait(5)
+            path = store.data_dir / "stage_executions.json"
+            key = "agora-stage-claim:r:price"
+            claim = store._get_record(path, key)
+            assert claim and claim["status"] == "in_progress"
+            claim["claimed_at"] = (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat()
+            store._put_record(path, key, claim)
+            second = pool.submit(client.post, "/api/research-orchestrator/stages/derivatives_pricing_risk/execute", json=body)
+            second_entered.wait(1)
+        finally:
+            release.set()
+        results = [first.result(timeout=10), second.result(timeout=10)]
+    assert len(calls) == 1, {"backend_calls": len(calls), "statuses": [r.status_code for r in results]}
+    assert len(store.list_artifacts()) == 1
+
+
+def test_unavailable_synthesis_does_not_leave_phantom_running_claim(client, monkeypatch):
+    store = research_main.store
+    store.put_task({"task_id": "t", "tenant_id": "tenant-a", "status": "ready"})
+    store.put_run({"run_id": "s", "task_id": "t", "stage_id": "synth", "tenant_id": "tenant-a", "status": "queued", "requested_mode": "real"})
+    monkeypatch.setenv("PANTHEON_OPENCLAW_UNAVAILABLE", "1")
+    result = client.post("/api/research-orchestrator/stages/evidence_synthesis/execute", json={
+        "run_id": "s", "correlation_id": "cs", "stage": {"stage_id": "synth"},
+        "plan": {"plan_id": "p", "task_id": "t", "tenant_id": "tenant-a"}, "requested_mode": "real"})
+    assert result.status_code == 503, result.text
+    assert store.get_run("s")["status"] in {"failed", "rejected"}, store.get_run("s")
+
+
+def test_real_provider_cannot_promote_simulated_input_evidence(client, monkeypatch):
+    from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient
+    from services.research.tests.test_research_orchestrator_http_service import _make_sample_quantlib_dataset
+    store = research_main.store
+    monkeypatch.setenv("PANTHEON_QUANTLIB_BACKEND", "stub")
+    monkeypatch.setenv("PANTHEON_OPENCLAW_BACKEND", "real")
+    monkeypatch.delenv("PANTHEON_OPENCLAW_UNAVAILABLE", raising=False)
+    monkeypatch.setattr(OpenClawOpsClient, "configured", property(lambda self: True))
+    monkeypatch.setattr(OpenClawOpsClient, "invoke_structured_extraction", lambda self, **kw: {
+        "data": {"output": {"structured_data": {"summary": "Summary", "interpretation": "Interpretation", "recommendation": "hold"}}}
+    })
+    store.put_task({"task_id": "t", "tenant_id": "tenant-a", "status": "ready"})
+    store.put_run({"run_id": "r", "task_id": "t", "stage_id": "price", "tenant_id": "tenant-a", "status": "queued", "requested_mode": "stub"})
+    body = {"run_id": "r", "correlation_id": "c", "stage": {"stage_id": "price"},
+            "plan": {"plan_id": "p", "task_id": "t", "tenant_id": "tenant-a"},
+            "dataset": _make_sample_quantlib_dataset()}
+    priced = client.post("/api/research-orchestrator/stages/derivatives_pricing_risk/execute", json=body)
+    assert priced.status_code == 200, priced.text
+    assert priced.json()["provenance"] == "simulation"
+    store.put_run({"run_id": "s", "task_id": "t", "stage_id": "synth", "tenant_id": "tenant-a", "status": "queued", "requested_mode": "real"})
+    result = client.post("/api/research-orchestrator/stages/evidence_synthesis/execute", json={
+        "run_id": "s", "correlation_id": "cs", "stage": {"stage_id": "synth"},
+        "plan": {"plan_id": "p", "task_id": "t", "tenant_id": "tenant-a"}, "requested_mode": "real",
+        "artifact_refs": [{"artifact_id": priced.json()["artifact_id"]}]})
+    assert result.status_code in {200, 400, 409, 422}, result.text
+    if result.status_code == 200:
+        assert result.json()["provenance"] == "simulation", result.json()
+        assert result.json()["receipt"]["mode"] == "simulation"

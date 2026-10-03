@@ -398,12 +398,6 @@ def _sync_run_and_return_cached(run_id: str, cached_result: Dict[str, Any]) -> D
     return cached_result
 
 
-def _is_stale_claim(claimed_at: Optional[str], ttl_seconds: float = 60.0) -> bool:
-    if not claimed_at: return True
-    try: return (datetime.now(timezone.utc) - datetime.fromisoformat(str(claimed_at).replace("Z", "+00:00"))).total_seconds() > ttl_seconds
-    except Exception: return True
-
-
 
 @app.on_event("startup")
 def resume_queued_plan_stages() -> None:
@@ -2123,18 +2117,18 @@ def execute_research_stage(
     stage_claim_key = f"agora-stage-claim:{run_id}:{stage_id}"
     claim_token = uuid.uuid4().hex
 
-    def _persist_failure(exc: Exception) -> None:
+    def _persist_failure(exc: Any) -> None:
         try:
-            rec = store.get_run(run_id)
-            if rec and isinstance(rec, dict) and str(rec.get("status") or "").lower() not in {"canceled", "cancelled"}:
-                rec["status"] = "failed"
-                rec["error"] = str(exc)
-                rec["updated_at"] = utc_now()
-                store.put_run(rec)
             with _stage_execution_cond:
                 claim = store._get_record(exec_storage_path, stage_claim_key)
                 if claim and claim.get("claim_token") == claim_token:
                     store._put_record(exec_storage_path, stage_claim_key, {"status": "failed", "error": str(exc), "updated_at": utc_now()})
+                    rec = store.get_run(run_id)
+                    if rec and isinstance(rec, dict) and str(rec.get("status") or "").lower() not in {"canceled", "cancelled"}:
+                        rec["status"] = "failed"
+                        rec["error"] = str(exc)
+                        rec["updated_at"] = utc_now()
+                        store.put_run(rec)
                 _stage_execution_cond.notify_all()
         except Exception:
             pass
@@ -2198,7 +2192,7 @@ def execute_research_stage(
                 if cached_result.get("status") == "succeeded":
                     for tk in transport_keys: store._put_record(exec_storage_path, f"agora-transport-key:{tk}", {"run_id": run_id, "stage_id": stage_id, "stage_type": stage_type})
                     return _sync_run_and_return_cached(run_id, cached_result)
-                if cached_result.get("status") == "in_progress" and not _is_stale_claim(cached_result.get("claimed_at"), 60.0):
+                if cached_result.get("status") == "in_progress":
                     if time.time() - wait_start > 30.0:
                         raise HTTPException(status_code=504, detail=f"Timed out waiting for in-flight execution of stage '{stage_type}'")
                     _stage_execution_cond.wait(timeout=0.1)
@@ -2223,6 +2217,7 @@ def execute_research_stage(
     )
     now_iso = utc_now()
     backend_ref = f"research-orchestrator://stages/{stage_type}/{run_id}"
+    resolved_artifacts = []
 
     req_mode = str(
         body.get("requested_mode")
@@ -2440,18 +2435,15 @@ def execute_research_stage(
                 OpenClawOpsClientError,
             )
             if os.getenv("PANTHEON_OPENCLAW_UNAVAILABLE") == "1":
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable",
-                )
+                err = f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable"
+                _persist_failure(err)
+                raise HTTPException(status_code=503, detail=err)
             use_real = os.environ.get("PANTHEON_OPENCLAW_BACKEND", "stub").lower() == "real"
             client = OpenClawOpsClient()
             if req_mode == "real" and not (use_real and client.configured):
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode",
-                )
-            resolved_artifacts = []
+                err = f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode"
+                _persist_failure(err)
+                raise HTTPException(status_code=503, detail=err)
             expected_tenant = str((run_record.get("tenant_id") if run_record else None) or plan.get("tenant_id") or body.get("tenant_id") or "").strip()
 
             def _resolve_artifact_tenant(art_doc: Dict[str, Any]) -> Optional[str]:
@@ -2565,6 +2557,8 @@ def execute_research_stage(
     records = dataset_input.get("records", []) if isinstance(dataset_input, dict) else dataset_input
     if isinstance(records, list):
         inputs.extend(records)
+    if resolved_artifacts:
+        inputs.extend(resolved_artifacts)
     for value in inputs:
         if not isinstance(value, dict):
             continue
@@ -2574,30 +2568,6 @@ def execute_research_stage(
             for metric in metrics:
                 metric["provenance"] = provenance
             break
-
-    target_tenant_id = (run_record.get("tenant_id") if run_record else None) or plan.get("tenant_id") or body.get("tenant_id")
-    artifact_id = f"rart-{uuid.uuid4().hex[:12]}"
-    artifact_record = {
-        "id": artifact_id, "artifact_id": artifact_id, "run_id": run_id,
-        "task_id": str(plan.get("task_id") or plan.get("plan_id") or f"task-{run_id}"),
-        "stage_id": stage.get("stage_id"), "stage_type": stage_type, "artifact_type": f"{stage_type}_result",
-        "artifact_family": artifact_bundle.get("artifact_family") or f"{stage_type}_artifact",
-        "title": f"Execution artifact for {stage_type} ({run_id})", "payload": artifact_bundle,
-        "created_at": now_iso, "provenance": provenance,
-    }
-    if target_tenant_id: artifact_record["tenant_id"] = str(target_tenant_id)
-    persisted_art = store.put_artifact(artifact_record)
-    artifact_bytes = json.dumps(persisted_art, sort_keys=True, default=str).encode("utf-8")
-    digest = f"sha256:{hashlib.sha256(artifact_bytes).hexdigest()}"
-    persisted_art["checksum"] = digest
-    store.put_artifact(persisted_art)
-
-    receipt = {
-        "receipt_id": f"rcpt-{uuid.uuid4().hex[:10]}", "run_id": run_id, "executor": executor,
-        "mode": provenance, "correlation_id": correlation_id, "completed_at": now_iso,
-        "backend_reference": backend_ref, "artifact_digest": digest, "spec_version": "1.0",
-    }
-    artifact_ref_entry = {"artifact_id": artifact_id, "ref": f"artifact://{artifact_id}", "digest": digest}
 
     with _stage_execution_cond:
         latest_run = store.get_run(run_id)
@@ -2610,6 +2580,29 @@ def execute_research_stage(
             store._put_record(exec_storage_path, stage_claim_key, {"status": "canceled", "updated_at": utc_now()})
             _stage_execution_cond.notify_all()
             raise HTTPException(status_code=409, detail=f"Research run '{run_id}' is in terminal status or canceled and cannot be marked completed")
+
+        target_tenant_id = (run_record.get("tenant_id") if run_record else None) or plan.get("tenant_id") or body.get("tenant_id")
+        artifact_id = f"rart-{uuid.uuid4().hex[:12]}"
+        artifact_record = {
+            "id": artifact_id, "artifact_id": artifact_id, "run_id": run_id,
+            "task_id": str(plan.get("task_id") or plan.get("plan_id") or f"task-{run_id}"),
+            "stage_id": stage.get("stage_id"), "stage_type": stage_type, "artifact_type": f"{stage_type}_result",
+            "artifact_family": artifact_bundle.get("artifact_family") or f"{stage_type}_artifact",
+            "title": f"Execution artifact for {stage_type} ({run_id})", "payload": artifact_bundle,
+            "created_at": now_iso, "provenance": provenance,
+        }
+        if target_tenant_id: artifact_record["tenant_id"] = str(target_tenant_id)
+        persisted_art = store.put_artifact(artifact_record)
+        digest = f"sha256:{hashlib.sha256(json.dumps(persisted_art, sort_keys=True, default=str).encode('utf-8')).hexdigest()}"
+        persisted_art["checksum"] = digest
+        store.put_artifact(persisted_art)
+
+        receipt = {
+            "receipt_id": f"rcpt-{uuid.uuid4().hex[:10]}", "run_id": run_id, "executor": executor,
+            "mode": provenance, "correlation_id": correlation_id, "completed_at": now_iso,
+            "backend_reference": backend_ref, "artifact_digest": digest, "spec_version": "1.0",
+        }
+        artifact_ref_entry = {"artifact_id": artifact_id, "ref": f"artifact://{artifact_id}", "digest": digest}
 
         if latest_run and isinstance(latest_run, dict):
             arts = list(latest_run.get("artifact_refs") or [])
