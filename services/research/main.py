@@ -1063,12 +1063,21 @@ def _progress_plan_stages(
     if not isinstance(stages, list):
         return
 
+    def _latest_runs_by_stage() -> Dict[str, Dict[str, Any]]:
+        latest: Dict[str, Dict[str, Any]] = {}
+        for record in store.list_runs():
+            if str(record.get("task_id")) != task_id or not record.get("stage_id"):
+                continue
+            stage_key = str(record["stage_id"])
+            previous = latest.get(stage_key)
+            if previous is None or int(record.get("attempt_number") or 1) > int(previous.get("attempt_number") or 1):
+                latest[stage_key] = record
+        return latest
+
     def _state(sid: str) -> str:
-        for r in store.list_runs():
-            if str(r.get("task_id")) == task_id and str(r.get("stage_id")) == sid:
-                st = str(r.get("status") or "").lower()
-                if st:
-                    return st
+        latest = _latest_runs_by_stage().get(sid)
+        if latest:
+            return str(latest.get("status") or "").lower()
         for st in stages:
             if isinstance(st, dict) and st.get("stage_id") == sid and st.get("status"):
                 return str(st["status"]).lower()
@@ -1085,21 +1094,20 @@ def _progress_plan_stages(
                 continue
             deps = stage.get("dependencies") or stage.get("depends_on") or []
             deps = [str(d) for d in (deps if isinstance(deps, (list, tuple, set)) else [deps]) if d]
-            if not deps:
-                continue
             if any(_state(d) in ("failed", "canceled", "rejected") for d in deps):
                 stage["status"] = "failed"
                 continue
             if not all(_state(d) in ("succeeded", "completed") for d in deps):
                 continue
-            existing = next((r for r in store.list_runs() if str(r.get("task_id")) == task_id and str(r.get("stage_id")) == stage_id), None)
+            latest_runs = _latest_runs_by_stage()
+            existing = latest_runs.get(str(stage_id))
             if existing and str(existing.get("status") or "").lower() in ("completed", "succeeded"):
                 stage["status"] = "succeeded"
                 progressed = True
                 continue
             dep_type = stage.get("stage_type") or parent_run.get("adapter") or "prototype_backtest"
             dep_ds = stage.get("dataset") or plan_payload.get("dataset") or (parent_run.get("parameters") or {}).get("dataset")
-            pred_run_id = next((r.get("run_id") or r.get("id") for r in store.list_runs() if str(r.get("task_id")) == task_id and str(r.get("stage_id")) == (deps[-1] if deps else "")), parent_run.get("run_id") or parent_run.get("id"))
+            pred_run_id = next((latest_runs[str(dep)].get("run_id") or latest_runs[str(dep)].get("id") for dep in reversed(deps) if str(dep) in latest_runs), parent_run.get("run_id") or parent_run.get("id"))
             dep_run_id = _next_id("rrun", timestamp, {str(r.get("run_id") or "") for r in store.list_runs()})
             dep_events = [_event(timestamp, "run_queued", f"Dependent stage '{stage_id}' queued.", actor_id, dep_run_id, [])]
             dep_run = {
