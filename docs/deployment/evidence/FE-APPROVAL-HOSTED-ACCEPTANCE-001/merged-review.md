@@ -3,9 +3,9 @@
 - Status: review_approved
 - Owner: Human/Ops
 - Reviewer: Codex2
-- Repository: ajoe734/pantheon
-- Delivery commit: 1f61ecc29710f8f9e373ef11b96365ddbef08068
-- Evidence: docs/deployment/evidence/FE-APPROVAL-HOSTED-ACCEPTANCE-001/evidence.json
+- Repository: ajoe734/execute-plans
+- Delivery commit: 5d230426bf3f7e0813d0a5a1435c372d9a7cdf52
+- Evidence: docs/deployment/evidence/FE-APPROVAL-HOSTED-ACCEPTANCE-001/evidence.json (execute-plans, the task's target repository; the same record, without its delivery_repository and mirror_of fields, is in ajoe734/pantheon at 1f61ecc29710f8f9e373ef11b96365ddbef08068)
 
 ## Review
 
