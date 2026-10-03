@@ -361,7 +361,7 @@ def get_store() -> ResearchOrchestratorStore:
 
 _write_owner: Optional[Any] = None
 _stage_workers_lock = threading.Lock()
-_plan_progress_lock = threading.Lock()
+_plan_progress_lock = threading.RLock()
 _active_stage_workers: set[str] = set()
 
 
@@ -380,20 +380,14 @@ def resume_queued_plan_stages() -> None:
             record["status"] = "canceled"
             store.put_run(record)
             continue
-        task_id = str(record.get("task_id") or "")
-        task = store.get_task(task_id) if task_id else None
-        if (
-            (task and (str(task.get("status") or "").lower() in {"canceled", "cancelled"} or task.get("cancellation_fence")))
-            or str(plan.get("status") or "").lower() in {"canceled", "cancelled"}
-        ):
+        task = store.get_task(str(record.get("task_id") or "")) if record.get("task_id") else None
+        if (task and (str(task.get("status") or "").lower() in {"canceled", "cancelled"} or task.get("cancellation_fence"))) or str(plan.get("status") or "").lower() in {"canceled", "cancelled"}:
             if status in {"queued", "running"}:
-                record["status"] = "canceled"
-                record["cancellation_fence"] = record.get("cancellation_fence") or utc_now()
+                record.update({"status": "canceled", "cancellation_fence": record.get("cancellation_fence") or utc_now()})
                 store.put_run(record)
             continue
         if status == "running":
-            record["status"] = "queued"
-            record["updated_at"] = utc_now()
+            record.update({"status": "queued", "updated_at": utc_now()})
             store.put_run(record)
         grouped[str(record.get("task_id") or "")] = (plan, record)
     for plan, record in grouped.values():
@@ -1228,37 +1222,42 @@ def _execute_plan_stage(
     params = run.get("parameters") or {}
     ds = params.get("dataset") or plan.get("dataset")
     backend = str(stage.get("stage_type") or run.get("adapter") or "prototype_backtest")
-    current = store.get_run(run_id) or run
-    if str(current.get("status") or "").lower() in {"canceled", "cancelled", "rejected"} or current.get("cancellation_fence"):
-        with _stage_workers_lock:
-            _active_stage_workers.discard(run_id)
-        return
-    task = store.get_task(str(current.get("task_id") or "")) if current.get("task_id") else None
-    if task and (str(task.get("status") or "").lower() in {"canceled", "cancelled"} or task.get("cancellation_fence")):
-        with _stage_workers_lock:
-            _active_stage_workers.discard(run_id)
-        return
-    current["status"] = "running"
-    store.put_run(current)
+    is_canc = lambda r, t: (
+        str(r.get("status") or "").lower() in {"canceled", "cancelled", "rejected"}
+        or r.get("cancellation_fence")
+        or bool(t and (str(t.get("status") or "").lower() in {"canceled", "cancelled"} or t.get("cancellation_fence")))
+    )
     try:
-        execute_research_stage(backend, {
-            "stage": stage, "plan": plan, "dataset": ds, "run_id": run_id,
-            "correlation_id": params.get("correlation_id") or f"corr-{run_id}",
-            "downstream_key": f"stage:{backend}:{run_id}",
-        })
-    except Exception as exc:
-        logger.warning("Research stage execution error for %s: %s", run_id, exc)
-        current = store.get_run(run_id) or current
-        if str(current.get("status") or "").lower() not in {"canceled", "cancelled", "rejected"} and not current.get("cancellation_fence"):
-            current["status"], current["error"] = "failed", str(exc)
-            store.put_run(current)
-    completed = store.get_run(run_id) or current
-    with _stage_workers_lock:
-        _active_stage_workers.discard(run_id)
-    if str(completed.get("status") or "").lower() not in {"canceled", "cancelled", "rejected"} and not completed.get("cancellation_fence"):
+        with _plan_progress_lock:
+            current = store.get_run(run_id) or run
+            task = store.get_task(str(current.get("task_id") or "")) if current.get("task_id") else None
+            if is_canc(current, task):
+                return
+            current["status"] = "running"
+            current = store.put_run(current)
+            if is_canc(current, task):
+                return
+        try:
+            execute_research_stage(backend, {
+                "stage": stage, "plan": plan, "dataset": ds, "run_id": run_id,
+                "correlation_id": params.get("correlation_id") or f"corr-{run_id}",
+                "downstream_key": f"stage:{backend}:{run_id}",
+            })
+        except Exception as exc:
+            logger.warning("Research stage execution error for %s: %s", run_id, exc)
+            with _plan_progress_lock:
+                current = store.get_run(run_id) or current
+                if not is_canc(current, None):
+                    current["status"], current["error"] = "failed", str(exc)
+                    store.put_run(current)
+    finally:
+        with _stage_workers_lock:
+            _active_stage_workers.discard(run_id)
+    with _plan_progress_lock:
+        completed = store.get_run(run_id) or current
         fresh_task = store.get_task(str(completed.get("task_id") or "")) if completed.get("task_id") else None
-        if not (fresh_task and (str(fresh_task.get("status") or "").lower() in {"canceled", "cancelled"} or fresh_task.get("cancellation_fence"))):
-            _progress_plan_stages(plan, completed, actor_id, store, str(completed.get("updated_at") or utc_now()))
+        if not is_canc(completed, fresh_task):
+            _progress_plan_stages_locked(plan, completed, actor_id, store, str(completed.get("updated_at") or utc_now()))
 
 
 def _trigger_retrain_execution(run_id: str, params: dict) -> None:
@@ -1617,16 +1616,22 @@ def retry_run(run_id: str, body: Optional[RetryRunBody] = None) -> Dict[str, Any
     store.put_run(run)
     store.append_event(old_events[-1])
 
-    task["status"] = "running"
-    task["updated_at"] = timestamp
-    store.put_task(task)
+    with _plan_progress_lock:
+        task["status"] = "running"
+        task["cancellation_fence"] = None
+        task.pop("cancellation_fence", None)
+        task["generation"] = int(task.get("generation") or 1) + 1
+        task["updated_at"] = timestamp
+        store.put_task(task)
 
-    store.put_run(new_run)
-    store.append_event(events[-1])
+        store.put_run(new_run)
+        store.append_event(events[-1])
 
     params = new_run.get("parameters") or {}
     plan_payload = params.get("plan") or {}
     stage_payload = params.get("stage") or {}
+    if str(plan_payload.get("status") or "").lower() in {"canceled", "cancelled"}:
+        plan_payload["status"] = "running"
     if isinstance(plan_payload.get("stages"), list):
         for stage in plan_payload["stages"]:
             if isinstance(stage, dict) and stage.get("stage_id") == stage_payload.get("stage_id"):
@@ -2441,11 +2446,12 @@ def execute_research_stage(
 
     run_record = store.get_run(run_id)
     if run_record and isinstance(run_record, dict):
-        status_str = str(run_record.get("status") or "").lower()
-        if status_str in {"canceled", "cancelled", "rejected"}:
+        task_rec = store.get_task(str(run_record.get("task_id") or "")) if run_record.get("task_id") else None
+        task_canceled = task_rec and (str(task_rec.get("status") or "").lower() in {"canceled", "cancelled"} or task_rec.get("cancellation_fence"))
+        if status_str in {"canceled", "cancelled", "rejected"} or run_record.get("cancellation_fence") or task_canceled:
             raise HTTPException(
                 status_code=409,
-                detail=f"Research run '{run_id}' is in terminal status '{status_str}' and cannot be marked completed",
+                detail=f"Research run '{run_id}' is in terminal status '{status_str}' or canceled and cannot be marked completed",
             )
         run_record["status"] = "completed"
         run_record["completed_at"] = now_iso

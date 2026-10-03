@@ -64,8 +64,12 @@ def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         run["execution_status"] = "canceled"
         return run
 
+    def cancel_task(_self, task_id, **_kwargs):
+        return {"task_id": task_id, "status": "canceled"}
+
     monkeypatch.setattr(WorkshopCanonicalOperations, "dispatch_research_run", dispatch)
     monkeypatch.setattr(WorkshopCanonicalOperations, "cancel_research_run", cancel_run)
+    monkeypatch.setattr(WorkshopCanonicalOperations, "cancel_research_task", cancel_task)
     monkeypatch.setattr(WorkshopCanonicalOperations, "list_research_runs", lambda _self, **_kwargs: list(records.values()))
     monkeypatch.setattr(WorkshopCanonicalOperations, "get_research_run", lambda _self, run_id: records[run_id])
     monkeypatch.setattr(WorkshopCanonicalOperations, "get_research_artifacts", lambda _self, _run_id: [])
@@ -896,3 +900,36 @@ def test_cancel_must_not_acknowledge_success_with_new_running_successor(monkeypa
         "owner_cancel_calls": calls,
         "stored_plan_status": store.get_plan(pid)["status"],
     }
+
+
+def test_cancel_owner_disappears_after_initial_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.control_plane.bff.agora.strategy_workshop.operations import (
+        WorkshopCanonicalOperations,
+        CanonicalOperationError,
+    )
+    client = _client(monkeypatch)
+    created = _create_plan(client, "ws-review-late-outage", "review-create")
+    pid = created["data"]["plan_id"]
+    _approve_plan(client, pid, created["meta"]["etag"], "review-approve")
+    _dispatch_plan(client, pid, _get_plan(client, pid)["meta"]["etag"], "review-dispatch")
+    etag = _get_plan(client, pid)["meta"]["etag"]
+    calls = []
+
+    def list_runs(_self, **kwargs):
+        calls.append("list")
+        if len(calls) > 1:
+            raise CanonicalOperationError("research_orchestrator", "owner unavailable", status_code=503)
+        return list(client.owner_research_runs.values())
+
+    def cancel_task(_self, task_id, **kwargs):
+        raise CanonicalOperationError("research_orchestrator", "owner unavailable", status_code=503)
+
+    monkeypatch.setattr(WorkshopCanonicalOperations, "list_research_runs", list_runs)
+    monkeypatch.setattr(WorkshopCanonicalOperations, "cancel_research_task", cancel_task)
+    response = client.post(
+        f"/bff/agora/research-plans/{pid}/cancel",
+        headers=_headers("review-cancel", etag),
+    )
+    assert response.status_code == 503, "Unavailable cancellation/readback must not commit terminal local success"
+    store = getattr(client, "router", None) and getattr(client.router, "research_store", None) or getattr(client, "app_instance", None) and getattr(client.app_instance, "research_store", None)
+    assert store.get_plan(pid)["status"] != "cancelled", "Plan must not be cancelled locally when owner fails"

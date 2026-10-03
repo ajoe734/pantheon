@@ -730,3 +730,55 @@ def test_bff_cancel_run_fail_closed_when_orchestrator_unset(monkeypatch: pytest.
         svc.cancel_run("rrun-test", scope=scope)
     assert exc_info.value.status_code == 503
     assert "UPSTREAM_UNAVAILABLE" in str(getattr(exc_info.value, "detail", ""))
+
+
+def test_cancelled_run_retry_does_not_remain_permanently_queued(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store = research_main.build_research_orchestrator_store(str(tmp_path / "owner"))
+    monkeypatch.setattr(research_main, "store", store)
+    stage = {"stage_id": "s1", "stage_type": "prototype_backtest", "routing": {"backend_mode": "stub"}}
+    plan = {"plan_id": "p1", "task_id": "t1", "stages": [stage], "dataset": _valid_multimodal_dataset()}
+    store.put_task({"task_id": "t1", "status": "running"})
+    run = {"run_id": "r1", "task_id": "t1", "stage_id": "s1", "status": "queued", "adapter": "vectorbt", "requested_mode": "stub", "dispatch_mode": "stub", "parameters": {"stage": stage, "plan": plan, "dataset": plan["dataset"]}}
+    store.put_run(run)
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "stub")
+    client = TestClient(research_main.app)
+    cancelled = client.post("/api/research-orchestrator/runs/r1/cancel")
+    assert cancelled.status_code == 200
+    response = client.post("/api/research-orchestrator/runs/r1/retry", json={"actor_id": "operator", "idempotency_key": "retry-r1"})
+    assert response.status_code == 201
+    retried_id = response.json()["run_id"]
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        retried = store.get_run(retried_id)
+        if retried["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.02)
+    assert retried["status"] == "completed", "Accepted canceled-run retry must execute; inherited task fence currently prevents all progression"
+
+
+def test_cancel_fence_is_not_overwritten_by_worker_start(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store = research_main.build_research_orchestrator_store(str(tmp_path / "owner"))
+    monkeypatch.setattr(research_main, "store", store)
+    stage = {"stage_id": "s1", "stage_type": "prototype_backtest", "routing": {"backend_mode": "stub"}}
+    plan = {"plan_id": "p1", "task_id": "t1", "stages": [stage], "dataset": _valid_multimodal_dataset()}
+    store.put_task({"task_id": "t1", "status": "running"})
+    run = {"run_id": "r1", "task_id": "t1", "stage_id": "s1", "status": "queued", "adapter": "vectorbt", "requested_mode": "stub", "dispatch_mode": "stub", "parameters": {"stage": stage, "plan": plan, "dataset": plan["dataset"]}}
+    store.put_run(run)
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "stub")
+    put_run = store.put_run
+    fired = []
+
+    def interleaved_put(record: Dict[str, Any]) -> Dict[str, Any]:
+        if record["run_id"] == "r1" and record.get("status") == "running" and not fired:
+            fired.append(True)
+            research_main.cancel_task("t1")
+            assert store.get_run("r1")["status"] == "canceled"
+            assert store.get_run("r1")["cancellation_fence"]
+        return put_run(record)
+
+    monkeypatch.setattr(store, "put_run", interleaved_put)
+    research_main._execute_plan_stage(run, stage, plan, store, "operator")
+    actual = store.get_run("r1")
+    assert actual["status"] == "canceled", "A completed task cancellation must fence a stale worker-start write"
+    assert actual.get("cancellation_fence") is not None
+    assert len(actual.get("artifact_refs") or []) == 0

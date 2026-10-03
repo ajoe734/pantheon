@@ -397,27 +397,24 @@ class AgoraResearchService:
         self,
         plan_id: str,
         scope: Any,
-        run_ids: Set[str],
+        run_ids: Optional[Set[str]] = None,
         *,
         user_id: Optional[str] = None,
+        message: str = "Run cancelled on owner",
     ) -> None:
-        if not run_ids or not hasattr(self.store, "list_runs_for_plan") or not hasattr(self.store, "update_run"):
+        if not hasattr(self.store, "list_runs_for_plan") or not hasattr(self.store, "update_run") or (run_ids is not None and not run_ids):
             return
         now = self.utc_now()
         target_user = user_id or getattr(scope, "user_id", None)
-        for local_run in self.store.list_runs_for_plan(plan_id, tenant_id=scope.tenant_id, user_id=target_user):
-            rid = str(local_run.get("run_id") or local_run.get("id") or "")
-            if rid in run_ids:
+        active = {"pending", "queued", "running"}
+        for r in self.store.list_runs_for_plan(plan_id, tenant_id=scope.tenant_id, user_id=target_user):
+            rid = str(r.get("run_id") or r.get("id") or "")
+            if rid and ((run_ids is None and str(r.get("execution_status") or "").lower() in active) or (run_ids and rid in run_ids)):
                 self.store.update_run(
                     rid,
                     {
                         "execution_status": "cancelled",
-                        "progress": {
-                            **(local_run.get("progress") or {}),
-                            "phase": "cancelled",
-                            "message": "Run cancelled on owner",
-                            "updated_at": now,
-                        },
+                        "progress": {**(r.get("progress") or {}), "phase": "cancelled", "message": message, "updated_at": now},
                         "completed_at": now,
                         "updated_at": now,
                     },
@@ -512,6 +509,11 @@ class AgoraResearchService:
             active_run_ids = set(local_active_ids)
 
         cancelled_run_ids = set()
+        def _fail(exc: Any, msg: str, code: int = 503, err: str = "UPSTREAM_UNAVAILABLE"):
+            self._mark_local_runs_cancelled(plan_id, scope, cancelled_run_ids, user_id=target_user)
+            reason = getattr(exc, "reason", None) or (str(exc) if exc and str(exc) != msg else "")
+            raise self.bff_error(code, self._error_code(err), f"{msg}: {reason}" if reason else msg, plan_id) from (exc if isinstance(exc, Exception) else None)
+
         if r_url:
             from services.control_plane.bff.agora.strategy_workshop.operations import (
                 WorkshopCanonicalOperations,
@@ -522,15 +524,21 @@ class AgoraResearchService:
                 try:
                     if hasattr(owner_ops, "cancel_research_task"):
                         owner_ops.cancel_research_task(tid)
-                except Exception:
-                    pass
+                except CanonicalOperationError as exc:
+                    if exc.status_code not in (404, 409):
+                        sc = exc.status_code if exc.status_code and exc.status_code >= 400 else 503
+                        _fail(exc, f"Failed to cancel owner task {tid}", sc, "UPSTREAM_UNAVAILABLE" if sc == 503 else "INTERNAL_ERROR")
+                except Exception as exc:
+                    _fail(exc, f"Failed to cancel owner task {tid}")
 
             max_rounds = max(len(plan.get("stages") or []) * 2 + 5, 10)
             for _ in range(max_rounds):
                 owner_records = self._owner_run_records(plan, scope)
+                if owner_records is None:
+                    _fail(None, "Research execution owner became unavailable during plan cancellation")
                 owner_by_id = {
                     str(rec.get("run_id") or rec.get("id") or ""): rec
-                    for rec in (owner_records or [])
+                    for rec in owner_records
                     if isinstance(rec, dict)
                 }
                 active_runs = [
@@ -569,74 +577,40 @@ class AgoraResearchService:
                                         user_id=target_user,
                                     )
                                 continue
-                        self._mark_local_runs_cancelled(plan_id, scope, cancelled_run_ids, user_id=target_user)
-                        status_code = exc.status_code if exc.status_code and exc.status_code >= 400 else 503
-                        err_code = "RESOURCE_NOT_FOUND" if status_code == 404 else (
-                            "RESOURCE_CONFLICT" if status_code == 409 else "UPSTREAM_UNAVAILABLE"
-                        )
-                        raise self.bff_error(
-                            status_code,
-                            self._error_code(err_code),
-                            f"Failed to cancel owner run {rid}: {exc.reason}",
-                            plan_id,
-                        ) from exc
+                        sc = exc.status_code if exc.status_code and exc.status_code >= 400 else 503
+                        err_name = "RESOURCE_NOT_FOUND" if sc == 404 else ("RESOURCE_CONFLICT" if sc == 409 else "UPSTREAM_UNAVAILABLE")
+                        _fail(exc, f"Failed to cancel owner run {rid}", sc, err_name)
                     except Exception as exc:
-                        self._mark_local_runs_cancelled(plan_id, scope, cancelled_run_ids, user_id=target_user)
-                        raise self.bff_error(
-                            503,
-                            self._error_code("UPSTREAM_UNAVAILABLE"),
-                            f"Failed to cancel owner run {rid}: {exc}",
-                            plan_id,
-                        ) from exc
+                        _fail(exc, f"Failed to cancel owner run {rid}")
 
             verify_records = self._owner_run_records(plan, scope)
-            if verify_records is not None:
-                still_active = [
-                    str(r.get("run_id") or r.get("id"))
-                    for r in verify_records
-                    if isinstance(r, dict) and str(r.get("status") or "").lower() in active_statuses
-                ]
-                if still_active:
-                    raise self.bff_error(
-                        409,
-                        self._error_code("RESOURCE_CONFLICT"),
-                        f"Active owner runs still in progress after plan cancellation: {still_active}",
-                        plan_id,
-                    )
+            if verify_records is None:
+                _fail(None, "Research execution owner is unavailable; final plan cancellation verification failed")
+            still_active = [
+                str(r.get("run_id") or r.get("id"))
+                for r in verify_records
+                if isinstance(r, dict) and (
+                    str(r.get("status") or "").lower() in active_statuses
+                    or (str(r.get("status") or "").lower() not in terminal_statuses and not r.get("cancellation_fence"))
+                )
+            ]
+            if still_active:
+                raise self.bff_error(
+                    409,
+                    self._error_code("RESOURCE_CONFLICT"),
+                    f"Active owner runs still in progress after plan cancellation: {still_active}",
+                    plan_id,
+                )
 
         now = self.utc_now()
         new_version = plan.get("lock_version", 1) + 1
         self.store.update_plan(
             plan_id,
-            {
-                "status": "cancelled",
-                "lock_version": new_version,
-                "updated_at": now,
-            },
+            {"status": "cancelled", "lock_version": new_version, "updated_at": now},
             tenant_id=scope.tenant_id,
             user_id=target_user,
         )
-        if hasattr(self.store, "list_runs_for_plan") and hasattr(self.store, "update_run"):
-            for local_run in self.store.list_runs_for_plan(plan_id, tenant_id=scope.tenant_id, user_id=target_user):
-                if str(local_run.get("execution_status") or "").lower() in active_statuses:
-                    rid = str(local_run.get("run_id") or local_run.get("id") or "")
-                    if rid:
-                        self.store.update_run(
-                            rid,
-                            {
-                                "execution_status": "cancelled",
-                                "progress": {
-                                    **(local_run.get("progress") or {}),
-                                    "phase": "cancelled",
-                                    "message": "Plan cancelled by operator",
-                                    "updated_at": now,
-                                },
-                                "completed_at": now,
-                                "updated_at": now,
-                            },
-                            tenant_id=scope.tenant_id,
-                            user_id=target_user,
-                        )
+        self._mark_local_runs_cancelled(plan_id, scope, None, user_id=target_user, message="Plan cancelled by operator")
         self.store.record_audit_action({
             "action_type": "research_plan.cancel",
             "tenant_id": scope.tenant_id,

@@ -1,19 +1,19 @@
 {
   "task_id": "BFF-RESEARCH-SINGLE-OWNER-001",
   "environment": "isolated read-only venv ~/pantheon-ci-deploy/runtime/research-test-python/20261003-f9fd19209; no hosted deployment or live capital actions",
-  "independent_review": "Codex2 reviewed head 310c6938edb8e9a85a98535fc873aa08b62aa72a; P1 cancel_plan dynamic multi-round successor cancellation, verification loop against terminal races, and owner task cancellation fencing implemented; P2 projected.append restored in list_runs_for_plan; mounted regressions and owner task-fencing tests added; fresh exact-head review pending.",
+  "independent_review": "Codex2 review rejected PR #6103 head a4f747de37dba2ee3761da0ae9300c5ad4c54ab0; P1 cancel_plan fail-closed on unavailable owner readback while preserving retryable local state, P1 atomic worker-start check/write with task/run cancellation fence, and P2 retry_run unblocking task cancellation fence resolved; mounted regressions test_cancel_owner_disappears_after_initial_read, test_cancel_fence_is_not_overwritten_by_worker_start, and test_cancelled_run_retry_does_not_remain_permanently_queued pass.",
   "hosted_track": "external_wait per Human/Ops 2026-10-01 decision; no hosted probes performed",
   "design_items": {
-    "D1": "services/research/main.py validates execution modes before backend selection; durable off-request stages reconcile completed predecessors at restart, and serialized progression schedules roots/joins without duplicate attempts. Cancellation fences survive late worker errors and legacy completions are adopted without replay.",
+    "D1": "services/research/main.py validates execution modes before backend selection; durable off-request stages reconcile completed predecessors at restart, and serialized progression schedules roots/joins without duplicate attempts. Cancellation fences survive late worker errors, stale worker starts are fenced atomically, retried runs unblock task fences, and legacy completions are adopted without replay.",
     "D2": "Removed duplicate BFF ResearchDispatcher wiring and research-outbox worker ownership. Retained persona interaction worker launcher and restored its six healthcheck/help/persona-client regressions.",
     "D3": "services/control-plane/bff/research/client.py is the shared ResearchServiceClient transport for workshop and command-port owner requests; preserves HTTP status and error details.",
-    "D4": "services/control-plane/bff/agora/research/service.py resolves cancellation records for authorized plan identity and derives active status from authoritative readback, reconciling terminal races and stale local records before terminal persistence; mounted tests verify owner retry, operator scoping, and stage progression.",
+    "D4": "services/control-plane/bff/agora/research/service.py resolves cancellation records for authorized plan identity and derives active status from authoritative readback, failing closed on unavailable owner operations or verification while preserving retryable local state, and reconciling terminal races before terminal persistence.",
     "D5": "Receipt resolution now fails closed on receipt/run/metric provenance mismatch and missing or malformed completed_at. Owner execution tests prove stub output remains simulation and unknown modes cannot be dispatched as real."
   },
   "validation": [
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py",
-      "result": "38 passed; includes task cancellation fence against successor progression and restart, failed-stage retry, crash after completed predecessor before successor enqueue, in-flight cancellation fencing, multi-root/fan-in and async dispatch"
+      "result": "40 passed; includes task cancellation fence against successor progression and restart, failed-stage retry, retry after plan/run cancellation, atomic worker-start fencing, in-flight cancellation fencing, multi-root/fan-in and async dispatch"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
@@ -21,17 +21,17 @@
     },
     {
       "command": "PYTHONPATH=services/control-plane/bff .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_research_run_projection.py",
-      "result": "15 passed; covers cancellation nonterminal failure and retry, unconfigured owner fail-closed, unavailable owner projection fail-closed, partial failure, 400/404/409/503 HTTP status preservation, legacy history readback, different-operator multi-stage cancellation, normal stage progression without run-detail refresh, terminal race reconciliation, owner-only successor listing, and active successor fencing."
+      "result": "16 passed; covers cancellation nonterminal failure and retry, unconfigured owner fail-closed, unavailable owner projection fail-closed, unavailable owner during cancellation/readback fail-closed, partial failure, 400/404/409/503 HTTP status preservation, legacy history readback, different-operator multi-stage cancellation, normal stage progression without run-detail refresh, terminal race reconciliation, owner-only successor listing, and active successor fencing."
     },
     {
       "command": "PYTHONPATH=services/control-plane/bff .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_research_candidate_governed.py",
       "result": "15 passed; includes test_bff_plan_projects_all_owner_roots_and_terminal_state, multi-tenant isolation 404, and mounted cancel tests"
     },
     {
-      "command": "git diff --check; python3 scripts/git/diff_budget.py --base 14eaf55e0528984df21b17a0a64e7a56ceb57708 --change-class simplify --budget 0",
-      "result": "exact-base simplify budget passed (net production -45 lines)"
+      "command": "python3 scripts/git/diff_budget.py --base 14eaf55e0528984df21b17a0a64e7a56ceb57708 --change-class simplify --budget 0",
+      "result": "exact-base simplify budget passed (net production -51 lines)"
     }
   ],
-  "suite_note": "Codex2 reproduced P1 and P2 defects resolved: P1 multi-round cancel verification loop & task cancellation fencing, P2 projected.append restored. All BFF architecture, candidate, run projection, and research owner suites pass. Hosted acceptance remains external_wait; no hosted probes performed.",
+  "suite_note": "Codex2 P1/P2 review findings resolved: fail-closed cancel_plan on unavailable owner with retryable nonterminal local plan state, atomic task/run cancellation fencing on worker start, and retry_run unblocking task cancellation fence. All test suites pass (56 passed in research & BFF projection suites, plus reviewer validation tests). Net production diff is -51 lines (budget <= 0). Hosted acceptance remains external_wait; no hosted probes performed.",
   "scope": "Source and local isolated functional evidence only; no hosted deployment, hosted probe, or real capital action is claimed."
 }

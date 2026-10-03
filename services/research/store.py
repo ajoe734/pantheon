@@ -165,7 +165,21 @@ class ResearchOrchestratorStore:
         run_id = str(run.get("run_id") or run.get("id") or "").strip()
         run["run_id"] = run_id
         run["id"] = run_id
-        return self._put_record(self.runs_path, run_id, run)
+        with self._lock:
+            existing = self._get_record(self.runs_path, run_id)
+            new_status = str(run.get("status") or "").lower()
+            ex_st = str(existing.get("status") or "").lower() if existing else ""
+            ex_fence = existing.get("cancellation_fence") if existing else None
+            task = self._get_record(self.tasks_path, str(run.get("task_id") or "")) if run.get("task_id") else None
+            t_canc = bool(task and (str(task.get("status") or "").lower() in {"canceled", "cancelled"} or task.get("cancellation_fence")))
+            if (ex_fence or ex_st in {"canceled", "cancelled"} or t_canc) and new_status not in {"canceled", "cancelled"}:
+                merged = dict(run)
+                merged["status"] = "canceled"
+                merged["cancellation_fence"] = ex_fence or (task.get("cancellation_fence") if task else None) or run.get("updated_at")
+                if existing and existing.get("completed_at"):
+                    merged["completed_at"] = existing["completed_at"]
+                return self._put_record(self.runs_path, run_id, merged)
+            return self._put_record(self.runs_path, run_id, run)
 
     def list_artifacts(self) -> List[Dict[str, Any]]:
         return self._list_records(self.artifacts_path)
