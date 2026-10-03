@@ -1094,3 +1094,123 @@ def test_governed_dataset_reference_dispatch_to_research_owner(monkeypatch: pyte
     assert run_info["execution_status"] == "succeeded"
     assert run_info["outcome"] == "pass"
     assert run_info["provenance"] in ("real", "unavailable", "simulation")
+
+
+def test_bff_to_owner_continuation_legacy_stages_not_reexecuted(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch)
+    owner_client = getattr(client, "test_backend_client")
+
+    res_create = client.post(
+        "/bff/agora/workshops/ws-mixed-continuation/research-plans",
+        headers=_headers(idempotency_key="mixed-create"),
+        json={
+            "spec_version": "1.0",
+            "strategy_id": "strat-mixed",
+            "strategy_spec_registry_id": "reg-mixed",
+            "dataset": {"dataset_id": "ds-mixed", "strategy_id": "strat-mixed", "source_dataset_refs": ["ds-mixed"], "records": _sample_ohlcv_records()},
+            "stages": [
+                {"stage_id": "s1", "stage_type": "prototype_backtest", "status": "ready", "dependencies": [], "routing": {"backend_mode": "fixture", "preferred_backend": "vectorbt"}},
+                {"stage_id": "s2", "stage_type": "prototype_backtest", "status": "pending", "dependencies": ["s1"], "routing": {"backend_mode": "fixture", "preferred_backend": "vectorbt"}},
+            ],
+        },
+    )
+    assert res_create.status_code == 201, res_create.text
+    plan_id = res_create.json()["data"]["plan_id"]
+    etag = res_create.json()["meta"]["etag"]
+
+    res_app = client.post(
+        f"/bff/agora/research-plans/{plan_id}/approve",
+        headers=_headers(idempotency_key="mixed-approve", if_match=etag),
+    )
+    assert res_app.status_code == 200, res_app.text
+
+    store = client.router.research_store
+    legacy_run_id = "legacy-s1-completed-run"
+    store.create_run({
+        "run_id": legacy_run_id,
+        "plan_id": plan_id,
+        "stage_id": "s1",
+        "stage_type": "prototype_backtest",
+        "tenant_id": _TENANT_A,
+        "user_id": "agora-user-a",
+        "execution_status": "succeeded",
+        "outcome": "pass",
+        "artifact_refs": [{"artifact_id": "legacy-s1-artifact"}],
+    })
+
+    mid_plan = client.get(f"/bff/agora/research-plans/{plan_id}", headers=_headers())
+    assert mid_plan.status_code == 200
+    assert mid_plan.json()["data"]["status"] == "running"
+    stages_by_id = {s["stage_id"]: s["status"] for s in mid_plan.json()["data"]["stages"]}
+    assert stages_by_id["s1"] == "succeeded"
+    assert stages_by_id["s2"] == "pending"
+
+    res_dispatch = client.post(
+        f"/bff/agora/research-plans/{plan_id}/runs",
+        headers=_headers(idempotency_key="mixed-s2-dispatch", if_match=mid_plan.json()["meta"]["etag"]),
+    )
+    assert res_dispatch.status_code == 202, res_dispatch.text
+    s2_run_id = res_dispatch.json()["data"]["run_id"]
+
+    owner_run = _wait_owner_terminal(owner_client, s2_run_id)
+    assert owner_run["status"] == "completed"
+
+    owner_runs_resp = owner_client.get("/api/research-orchestrator/runs")
+    assert owner_runs_resp.status_code == 200
+    plan_owner_runs = [
+        r for r in owner_runs_resp.json()
+        if any(ref.get("type") == "research_plan" and ref.get("id") == plan_id for ref in r.get("input_refs") or [] if isinstance(ref, dict))
+    ]
+    assert len(plan_owner_runs) == 1, f"Expected exactly 1 owner run for s2, got: {plan_owner_runs}"
+    assert plan_owner_runs[0]["stage_id"] == "s2"
+
+    final_plan = client.get(f"/bff/agora/research-plans/{plan_id}", headers=_headers())
+    assert final_plan.status_code == 200
+    assert final_plan.json()["data"]["status"] == "completed"
+    assert legacy_run_id in final_plan.json()["data"]["run_ids"]
+    assert s2_run_id in final_plan.json()["data"]["run_ids"]
+
+    runs_resp = client.get(f"/bff/agora/research-plans/{plan_id}/runs", headers=_headers())
+    assert runs_resp.status_code == 200
+    item_ids = {r["run_id"] for r in runs_resp.json()["items"]}
+    assert legacy_run_id in item_ids
+    assert s2_run_id in item_ids
+
+
+def test_mounted_cancel_running_plan_reaches_owner_and_fences(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch)
+    owner_client = getattr(client, "test_backend_client")
+
+    res_create = client.post(
+        "/bff/agora/workshops/ws-cancel-fencing/research-plans",
+        headers=_headers(idempotency_key="cancel-create"),
+        json={
+            "spec_version": "1.0",
+            "strategy_id": "strat-cancel",
+            "strategy_spec_registry_id": "reg-cancel",
+            "dataset": {"dataset_id": "ds-cancel", "strategy_id": "strat-cancel", "source_dataset_refs": ["ds-cancel"], "records": _sample_ohlcv_records()},
+            "stages": [
+                {"stage_id": "stage-c1", "stage_type": "prototype_backtest", "status": "ready", "dependencies": [], "routing": {"backend_mode": "fixture", "preferred_backend": "vectorbt"}},
+            ],
+        },
+    )
+    assert res_create.status_code == 201
+    plan_id = res_create.json()["data"]["plan_id"]
+    etag = res_create.json()["meta"]["etag"]
+
+    res_app = client.post(f"/bff/agora/research-plans/{plan_id}/approve", headers=_headers(idempotency_key="cancel-app", if_match=etag))
+    assert res_app.status_code == 200
+
+    res_disp = client.post(f"/bff/agora/research-plans/{plan_id}/runs", headers=_headers(idempotency_key="cancel-disp", if_match=res_app.json()["meta"]["etag"]))
+    assert res_disp.status_code == 202
+    run_id = res_disp.json()["data"]["run_id"]
+
+    plan_view = client.get(f"/bff/agora/research-plans/{plan_id}", headers=_headers())
+    res_cancel = client.post(f"/bff/agora/research-plans/{plan_id}/cancel", headers=_headers(idempotency_key="cancel-act", if_match=plan_view.json()["meta"]["etag"]))
+    assert res_cancel.status_code == 200
+    assert res_cancel.json()["data"]["status"] == "cancelled"
+
+    owner_run = owner_client.get(f"/api/research-orchestrator/runs/{run_id}").json()
+    assert owner_run["status"] in {"canceled", "completed"}
+    if owner_run["status"] == "canceled":
+        assert owner_run.get("cancellation_fence") is not None

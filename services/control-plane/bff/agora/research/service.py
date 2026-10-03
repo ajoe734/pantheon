@@ -415,6 +415,55 @@ class AgoraResearchService:
             tenant_id=scope.tenant_id,
             user_id=plan.get("user_id"),
         )
+        r_url = resolve_orchestrator_base_url()
+        if r_url:
+            from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
+            owner_ops = WorkshopCanonicalOperations(research_base_url=r_url)
+            owner_records = self._owner_run_records(plan, scope)
+            active_statuses = {"running", "queued", "pending", "dispatched"}
+            cancelled_run_ids = set()
+            if owner_records:
+                for rec in owner_records:
+                    rec_status = str(rec.get("status") or "").lower()
+                    if rec_status in active_statuses:
+                        rid = str(rec.get("run_id") or rec.get("id") or "")
+                        if rid and rid not in cancelled_run_ids:
+                            try:
+                                owner_ops.cancel_research_run(rid)
+                                cancelled_run_ids.add(rid)
+                            except Exception as exc:
+                                log.warning("Failed to cancel owner run %s for plan %s: %s", rid, plan_id, exc)
+            if hasattr(self.store, "list_runs_for_plan"):
+                for local_run in self.store.list_runs_for_plan(plan_id, tenant_id=scope.tenant_id, user_id=plan.get("user_id")):
+                    if str(local_run.get("execution_status") or "").lower() in active_statuses:
+                        rid = str(local_run.get("run_id") or local_run.get("id") or "")
+                        if rid and rid not in cancelled_run_ids:
+                            try:
+                                owner_ops.cancel_research_run(rid)
+                                cancelled_run_ids.add(rid)
+                            except Exception as exc:
+                                pass
+        if hasattr(self.store, "list_runs_for_plan") and hasattr(self.store, "update_run"):
+            for local_run in self.store.list_runs_for_plan(plan_id, tenant_id=scope.tenant_id, user_id=plan.get("user_id")):
+                if str(local_run.get("execution_status") or "").lower() in {"running", "queued", "pending", "dispatched"}:
+                    rid = str(local_run.get("run_id") or local_run.get("id") or "")
+                    if rid:
+                        self.store.update_run(
+                            rid,
+                            {
+                                "execution_status": "cancelled",
+                                "progress": {
+                                    **(local_run.get("progress") or {}),
+                                    "phase": "cancelled",
+                                    "message": "Plan cancelled by operator",
+                                    "updated_at": now,
+                                },
+                                "completed_at": now,
+                                "updated_at": now,
+                            },
+                            tenant_id=scope.tenant_id,
+                            user_id=plan.get("user_id"),
+                        )
         self.store.record_audit_action({
             "action_type": "research_plan.cancel",
             "tenant_id": scope.tenant_id,

@@ -380,6 +380,17 @@ def resume_queued_plan_stages() -> None:
             record["status"] = "canceled"
             store.put_run(record)
             continue
+        task_id = str(record.get("task_id") or "")
+        task = store.get_task(task_id) if task_id else None
+        if (
+            (task and str(task.get("status") or "").lower() in {"canceled", "cancelled"})
+            or str(plan.get("status") or "").lower() in {"canceled", "cancelled"}
+        ):
+            if status in {"queued", "running"}:
+                record["status"] = "canceled"
+                record["cancellation_fence"] = record.get("cancellation_fence") or utc_now()
+                store.put_run(record)
+            continue
         if status == "running":
             record["status"] = "queued"
             record["updated_at"] = utc_now()
@@ -1070,6 +1081,16 @@ def _progress_plan_stages_locked(
 ) -> None:
     """Durably queue every newly ready stage and execute queued attempts off-request."""
     task_id = str(parent_run.get("task_id") or "")
+    if (
+        str(parent_run.get("status") or "").lower() in {"canceled", "cancelled"}
+        or parent_run.get("cancellation_fence")
+        or str(plan_payload.get("status") or "").lower() in {"canceled", "cancelled"}
+    ):
+        return
+    task = store.get_task(task_id) if task_id else None
+    if task and str(task.get("status") or "").lower() in {"canceled", "cancelled"}:
+        return
+
     stages = plan_payload.get("stages") or []
     if not isinstance(stages, list):
         return
@@ -1091,6 +1112,34 @@ def _progress_plan_stages_locked(
         stage_id = str(stage["stage_id"])
         if stage_id in latest:
             continue
+        stage_status = str(stage.get("status") or "").lower()
+        if stage_status in {"completed", "succeeded"}:
+            legacy_run_id = stage.get("run_id") or stage.get("latest_run_id") or stage.get("id")
+            latest[stage_id] = {
+                "stage_id": stage_id,
+                "status": "completed",
+                "run_id": legacy_run_id,
+                "id": legacy_run_id,
+                "attempt_number": 1,
+            }
+            states[stage_id] = "completed"
+        elif stage_status in {"failed", "rejected", "canceled", "cancelled"}:
+            legacy_run_id = stage.get("run_id") or stage.get("latest_run_id") or stage.get("id")
+            latest[stage_id] = {
+                "stage_id": stage_id,
+                "status": stage_status,
+                "run_id": legacy_run_id,
+                "id": legacy_run_id,
+                "attempt_number": 1,
+            }
+            states[stage_id] = stage_status
+
+    for stage in stages:
+        if not isinstance(stage, dict) or not stage.get("stage_id"):
+            continue
+        stage_id = str(stage["stage_id"])
+        if stage_id in latest:
+            continue
         deps = stage.get("dependencies") or stage.get("depends_on") or []
         deps = [str(d) for d in (deps if isinstance(deps, (list, tuple, set)) else [deps]) if d]
         if deps and not all(states.get(dep) in {"completed", "succeeded"} for dep in deps):
@@ -1102,7 +1151,7 @@ def _progress_plan_stages_locked(
             backend = str(stage.get("stage_type") or parent_run.get("adapter") or "prototype_backtest")
             ds = stage.get("dataset") or plan_payload.get("dataset") or (parent_run.get("parameters") or {}).get("dataset")
             rid = _next_id("rrun", timestamp, {str(r.get("run_id") or "") for r in store.list_runs()})
-            pred = next((latest[d].get("run_id") or latest[d].get("id") for d in reversed(deps) if d in latest), parent_run.get("run_id") or parent_run.get("id"))
+            pred = next((r_id for d in reversed(deps) if d in latest for r_id in [latest[d].get("run_id") or latest[d].get("id")] if r_id), parent_run.get("run_id") or parent_run.get("id"))
             record = {
                 "id": rid, "run_id": rid, "task_id": task_id, "stage_id": stage_id, "attempt_number": 1,
                 "parent_run_id": pred if deps else None,
@@ -1127,6 +1176,8 @@ def _progress_plan_stages_locked(
         stage_id = str(stage.get("stage_id") or "")
         record = latest.get(stage_id)
         if not record or str(record.get("status") or "").lower() != "queued":
+            continue
+        if record.get("cancellation_fence") or str(record.get("status") or "").lower() in {"canceled", "cancelled"}:
             continue
         deps = stage.get("dependencies") or stage.get("depends_on") or []
         deps = [str(d) for d in (deps if isinstance(deps, (list, tuple, set)) else [deps]) if d]
@@ -1155,6 +1206,11 @@ def _execute_plan_stage(
     backend = str(stage.get("stage_type") or run.get("adapter") or "prototype_backtest")
     current = store.get_run(run_id) or run
     if str(current.get("status") or "").lower() in {"canceled", "cancelled", "rejected"} or current.get("cancellation_fence"):
+        with _stage_workers_lock:
+            _active_stage_workers.discard(run_id)
+        return
+    task = store.get_task(str(current.get("task_id") or "")) if current.get("task_id") else None
+    if task and str(task.get("status") or "").lower() in {"canceled", "cancelled"}:
         with _stage_workers_lock:
             _active_stage_workers.discard(run_id)
         return
