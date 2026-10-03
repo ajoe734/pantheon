@@ -37,6 +37,7 @@ services:
       - dev-paper-persona-tokens:/issued/persona
       - dev-paper-capital-tokens:/issued/capital
       - dev-paper-evolution-tokens:/issued/evolution
+      - dev-paper-persona-evaluator-tokens:/issued/persona-evaluator-agent
     healthcheck:
       test: ["CMD", "python", "/issuer/issue_dev_paper_principals.py", "--healthcheck"]
       interval: 30s
@@ -3028,8 +3029,10 @@ services:
     environment:
       PERSONA_EVALUATOR_BFF_URL: http://operator-bff:8001
       PERSONA_EVALUATOR_BFF_TOKEN: ${PERSONA_EVALUATOR_BFF_TOKEN:-}
+      PERSONA_EVALUATOR_BFF_TOKEN_FILE: ${PERSONA_EVALUATOR_BFF_TOKEN_FILE:-}
       PANTHEON_GOVERNANCE_API_URL: http://governance:8082
       PERSONA_EVALUATOR_GOVERNANCE_TOKEN: ${PERSONA_EVALUATOR_GOVERNANCE_TOKEN:-}
+      PERSONA_EVALUATOR_GOVERNANCE_TOKEN_FILE: ${PERSONA_EVALUATOR_GOVERNANCE_TOKEN_FILE:-}
       PERSONA_EVALUATOR_READ_TOKEN: ${PERSONA_EVALUATOR_READ_TOKEN:-persona-evaluator-read-internal}
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
@@ -3038,6 +3041,7 @@ services:
       PERSONA_EVALUATOR_STATE_PATH: /data/persona-evaluator-agent/state.json
     volumes:
       - persona-evaluator-agent-data:/data/persona-evaluator-agent
+      - dev-paper-persona-evaluator-tokens:/run/pantheon-principals:ro
     depends_on:
       governance:
         condition: service_healthy
@@ -3055,6 +3059,7 @@ volumes:
   dev-paper-persona-tokens:
   dev-paper-capital-tokens:
   dev-paper-evolution-tokens:
+  dev-paper-persona-evaluator-tokens:
   broker-data:
   bff-data:
   capital-data:

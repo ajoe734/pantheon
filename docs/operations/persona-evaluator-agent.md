@@ -68,6 +68,14 @@ code path to decide, review, revoke or apply a request, or to change persona,
 capital or runtime state. A human approves; lifecycle application stays with the
 persona lifecycle owner tasks.
 
+On dev both tokens are short-lived principals minted by `dev-paper-principal-issuer`
+(`persona-evaluator-agent` consumer: BFF `viewer` read, governance `approval_proposer`
+with subject `persona-evaluator-agent`), refreshed hourly and revoked with the dev
+paper grant. They are mounted read-only at `/run/pantheon-principals/` and read from
+`PERSONA_EVALUATOR_{BFF,GOVERNANCE}_TOKEN_FILE` at the start of every run; the plain
+env vars are only the fallback when no file path is set. A missing or empty file is a
+degraded run that creates nothing.
+
 ## Read surface
 
 `GET /api/persona-evaluator/recommendations?quarter=YYYY-Qn[&snapshot_id=]`

@@ -1,0 +1,12 @@
+{
+  "task_id": "PERSONA-EVALUATOR-DEV-PRINCIPALS-20261003",
+  "verified_locally": [
+    "scripts/test_issue_dev_paper_principals.py",
+    "scripts/test_dev_paper_principal_renewal.py",
+    "services/persona-evaluator-agent/test_persona_evaluator_agent.py",
+    "services/control-plane/bff/tests/test_persona_paper_principal_transport_contract.py"
+  ],
+  "not_run_locally": "services/governance/test_governance_api.py::test_evaluator_principal_proposes_and_reads_lifecycle_request_but_cannot_decide_or_revoke needs psycopg and a gov_approval_test Postgres; admission of the minted token was checked directly through governance _approval_principal.",
+  "release_baseline_config": "unchanged: it captures operator-bff only and its manifest keys are sealed; the evaluator is not part of that restore path.",
+  "hosted_verification": "coordinator after next root deploy (AC12 of PERSONA-EVALUATOR-AGENT-002)"
+}

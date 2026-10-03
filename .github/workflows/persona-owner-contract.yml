@@ -110,6 +110,7 @@ jobs:
             services/control-plane/bff/tests/test_persona_*contract.py \
             services/control-plane/bff/test_persona_provisioning_coordinator.py \
             tests/persona_capital_write_owner/test_persistent_owners.py \
+            services/persona-evaluator-agent/test_persona_evaluator_agent.py \
             scripts/test_issue_dev_paper_principals.py \
             scripts/test_dev_paper_principal_renewal.py \
             services/governance/test_paper_approval_scope.py \
