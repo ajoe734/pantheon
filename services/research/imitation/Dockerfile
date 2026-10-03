@@ -1,7 +1,7 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 WORKDIR /app
-COPY services/learning/imitation/requirements.txt .
+COPY dependencies/locks/services-learning-imitation.txt ./requirements.lock
 ARG PANTHEON_INSTALL_UPSTREAM_DEPS=true
-RUN if [ "$PANTHEON_INSTALL_UPSTREAM_DEPS" = "true" ]; then pip install --no-cache-dir -r requirements.txt; fi
+RUN if [ "$PANTHEON_INSTALL_UPSTREAM_DEPS" = "true" ]; then pip install --no-cache-dir --require-hashes -r ./requirements.lock; fi
 COPY services/research/imitation/ .
 CMD ["python", "smoke_test.py"]
