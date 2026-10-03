@@ -1,0 +1,19 @@
+{
+  "task_id": "OPENCLAW-STRUCTURED-AGENT-SOURCE-20261003",
+  "owner": "PiAstra",
+  "reviewer": "Codex",
+  "delivery": "Source-only continuation on the canonical task branch; hosted acceptance remains with OPENCLAW-STRUCTURED-AGENT-DEV-20261003.",
+  "supersedes": [
+    "https://github.com/ajoe734/pantheon/pull/6120 (source implementation 8129f83db4d535f5ac7f9640aef188e2e3a648b5)",
+    "https://github.com/ajoe734/pantheon/pull/6121 (continuation 08c91761ef2559f1f40d7a1e17a3442a19ea0c75)"
+  ],
+  "attribution": "Original implementation was authored by Codex and records LLM-Agent Claude; prior continuation was authored by PiAstra. Both published histories remain unrewritten; this branch reapplies their bounded source change.",
+  "checks": [
+    "python3 -m pytest -q scripts/test_openclaw_shared_model_pool_contract.py (10 passed)",
+    "python3 -m pytest -q services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py (48 passed)",
+    "bash -n scripts/openclaw-configure-shared-model-pool.sh",
+    "git diff --check"
+  ],
+  "review": "Pending independent functional-only review and required CI on this exact head.",
+  "hosted_verification": "Not performed by workers. Existing release coordinator must verify deployed config, a real structured request, and persistence after redeploy/restart before parent hosted acceptance can close."
+}
