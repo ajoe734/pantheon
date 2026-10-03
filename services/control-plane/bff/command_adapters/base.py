@@ -7,6 +7,7 @@ production deployment. No fake completion receipts are emitted.
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -129,11 +130,36 @@ def record_downstream_outcome(url: str, ok: bool, status_code: int, detail: Opti
         log.debug("failed to record downstream outcome for %s: %s", url, exc)
 
 
+def _token_tenant(token: Optional[str]) -> Optional[str]:
+    try:
+        raw = str(token or "").removeprefix("Bearer ").strip().split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+        tid = str(claims.get("tenant_id") or "").strip()
+        if tid and tid != "*":
+            return tid
+        allowed = [str(t).strip() for t in claims.get("allowed_tenants") or [] if str(t).strip() and str(t).strip() != "*"]
+        return allowed[0] if len(allowed) == 1 and claims.get("allowed_tenants") == [allowed[0]] else None
+    except Exception:
+        return None
+
+
+def bound_tenant(payload: Any, tenant_id: Optional[str]) -> str:
+    """Return the trusted tenant; a payload tenant may only equal it, never fill it."""
+    trusted = str(tenant_id or "").strip()
+    claimed = str(payload.get("tenant_id") or "").strip() if isinstance(payload, dict) else ""
+    if not trusted or (claimed and claimed != trusted):
+        raise ActionUnavailableError(
+            "Payload tenant_id is not the verified caller tenant.",
+            error_code="TENANT_MISMATCH",
+        )
+    return trusted
+
+
 def _headers(payload: Any, auth_token: Optional[str], mfa_token: Optional[str], tenant_id: Optional[str]) -> Dict[str, str]:
     h = {"Accept": "application/json", "X-Pantheon-Service": "control-plane-bff"}
-    t = tenant_id or (payload.get("tenant_id") if isinstance(payload, dict) else None)
+    t = bound_tenant(payload, tenant_id or _token_tenant(auth_token))
     if t:
-        h["X-Tenant-Id"] = str(t).strip()
+        h["X-Tenant-Id"] = t
     if payload is not None:
         h["Content-Type"] = "application/json"
     if auth_token:

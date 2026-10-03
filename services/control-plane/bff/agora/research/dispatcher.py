@@ -90,12 +90,9 @@ def resolve_governed_dataset(
     if not valid_refs:
         return None
 
-    resolved_tenant = str(
-        tenant_id
-        or stage.get("tenant_id")
-        or (plan.get("tenant_id") if plan else "")
-        or ""
-    ).strip()
+    resolved_tenant = str(tenant_id or "").strip()
+    if not resolved_tenant:
+        raise ValueError("governed dataset resolution requires a trusted tenant_id")
     resolved_user = str(
         user_id
         or stage.get("user_id")
@@ -761,7 +758,7 @@ class AuthenticResearchBackendClient:
                     stage_payload,
                     plan_payload,
                     dataset_store=context.get("dataset_store") if isinstance(context, dict) else None,
-                    tenant_id=(context.get("tenant_id") if isinstance(context, dict) else None) or plan_payload.get("tenant_id"),
+                    tenant_id=context.get("tenant_id") if isinstance(context, dict) else None,
                     user_id=(context.get("user_id") if isinstance(context, dict) else None) or plan_payload.get("user_id"),
                 )
                 if resolved_ds:
@@ -1263,7 +1260,7 @@ class ResearchDispatcher:
                 stage,
                 plan,
                 dataset_store=getattr(self, "dataset_store", None),
-                tenant_id=getattr(scope, "tenant_id", None) or plan.get("tenant_id"),
+                tenant_id=getattr(scope, "tenant_id", None),
                 user_id=getattr(scope, "user_id", None) or plan.get("user_id"),
             )
             if resolved_ds:
@@ -1280,7 +1277,7 @@ class ResearchDispatcher:
             "correlation_id": correlation_id,
             "executor": expected_owner,
             "dataset_store": getattr(self, "dataset_store", None),
-            "tenant_id": getattr(scope, "tenant_id", None) or plan.get("tenant_id"),
+            "tenant_id": getattr(scope, "tenant_id", None),
             "user_id": getattr(scope, "user_id", None) or plan.get("user_id"),
         }
         try:
@@ -1479,10 +1476,12 @@ class ResearchDispatcher:
             plan_id = record.get("plan_id")
             stage_id = record.get("stage_id")
             run_id = record.get("run_id")
-            r_tenant = record.get("tenant_id") or tenant_id or "pantheon-dev"
-            r_user = record.get("user_id") or user_id or "agora-user-a"
+            r_tenant = record.get("tenant_id")
+            r_user = record.get("user_id")
 
-            if not plan_id or not stage_id or not run_id:
+            if not plan_id or not stage_id or not run_id or not r_tenant or not r_user:
+                continue
+            if tenant_id and r_tenant != tenant_id:
                 continue
 
             plan = self.store.get_plan(plan_id, tenant_id=r_tenant, user_id=r_user)

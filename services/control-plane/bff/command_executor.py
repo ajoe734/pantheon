@@ -22,6 +22,7 @@ from fastapi import HTTPException
 
 from .models import CommandStatus, CommandType
 from .command_adapters import ActionUnavailableError, dispatch_domain_command
+from .command_adapters.base import _token_tenant, bound_tenant
 
 log = logging.getLogger(__name__)
 
@@ -241,9 +242,9 @@ def _post_json(
     """POST JSON to url and return parsed response. Raises on HTTP error."""
     data = json.dumps(payload).encode("utf-8")
     headers: Dict[str, str] = {"Content-Type": "application/json", "X-Pantheon-Service": "control-plane-bff"}
-    resolved_tenant = tenant_id or payload.get("tenant_id")
-    if resolved_tenant:
-        headers["X-Tenant-Id"] = str(resolved_tenant).strip()
+    trusted_tenant = bound_tenant(payload, tenant_id or _token_tenant(auth_token))
+    if trusted_tenant:
+        headers["X-Tenant-Id"] = trusted_tenant
     if auth_token:
         headers["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
     if mfa_token:

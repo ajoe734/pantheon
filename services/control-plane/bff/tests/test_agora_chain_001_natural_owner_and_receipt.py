@@ -135,7 +135,7 @@ def test_public_plan_reaches_execution_owner(supply_correlation: bool) -> None:
     owner.execute(
         stage=plan["stages"][0],
         plan=plan,
-        context={"run_id": "review-run", "correlation_id": plan.get("correlation_id", "")},
+        context={"run_id": "review-run", "tenant_id": "review-tenant", "correlation_id": plan.get("correlation_id", "")},
         downstream_key="review-key",
     )
     assert responses and responses[0].status_code == 200, responses[0].text
@@ -195,7 +195,7 @@ def test_backend_without_provenance_or_receipt_does_not_mint_real() -> None:
         result = owner.execute(
             stage={"stage_id": "s", "input_refs": ["dataset:test"]},
             plan={"plan_id": "p"},
-            context={"run_id": "review-run", "correlation_id": "review-correlation"},
+            context={"run_id": "review-run", "tenant_id": "review-tenant", "correlation_id": "review-correlation"},
             downstream_key="review-key",
         )
     except RuntimeError:
@@ -221,7 +221,7 @@ def test_backend_with_real_provenance_but_no_receipt_downgrades_to_simulation() 
     result = owner.execute(
         stage={"stage_id": "s", "input_refs": ["dataset:test"]},
         plan={"plan_id": "p"},
-        context={"run_id": "review-run", "correlation_id": "review-correlation"},
+        context={"run_id": "review-run", "tenant_id": "review-tenant", "correlation_id": "review-correlation"},
         downstream_key="review-key",
     )
     assert result["provenance"] == "simulation"

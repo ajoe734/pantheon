@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import quote
 
 from .base import (
+    _token_tenant,
     ActionUnavailableError,
     DomainCommandAdapter,
     build_domain_receipt,
@@ -284,16 +285,23 @@ class EvolutionCommandAdapter(DomainCommandAdapter):
         if idempotency_key:
             payload["idempotency_key"] = idempotency_key
 
-        tenant_id = (
-            params.get("tenant_id")
-            or sub_payload.get("tenant_id")
-            or os.getenv("EVOLUTION_DEFAULT_TENANT_ID")
-            or os.getenv("PANTHEON_TENANT_ID")
-            or "default"
-        )
-        dispatch_headers: Dict[str, str] = {
-            "X-Tenant-Id": str(tenant_id),
-        }
+        tenant_id = _token_tenant(auth_token)
+        if not tenant_id:
+            raise ActionUnavailableError(
+                f"Program action {clean_action!r} requires a verified caller tenant.",
+                action_id=clean_action,
+                entity_type="EvolutionProgram",
+                error_code="TENANT_REQUIRED",
+            )
+        for claimed in (params.get("tenant_id"), sub_payload.get("tenant_id")):
+            if claimed and str(claimed).strip() != tenant_id:
+                raise ActionUnavailableError(
+                    f"Program action {clean_action!r} tenant is not the verified caller tenant.",
+                    action_id=clean_action,
+                    entity_type="EvolutionProgram",
+                    error_code="TENANT_MISMATCH",
+                )
+        dispatch_headers: Dict[str, str] = {"X-Tenant-Id": tenant_id}
         if idempotency_key:
             dispatch_headers["Idempotency-Key"] = str(idempotency_key)
             dispatch_headers["X-Idempotency-Key"] = str(idempotency_key)

@@ -939,6 +939,8 @@ class AgoraService:
     ) -> Any:
         self.reject_body_idempotency_key(payload)
         resolved_key = self.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        if identity is None:
+            raise self.bff_error(401, ErrorCode.AUTH_REQUIRED, "Journal entry creation requires a verified identity")
         resolved_tenant, resolved_user = resolve_canonical_agora_scope(
             identity,
             tenant_id=tenant_id or payload.get("tenant_id") or payload.get("tenantId"),

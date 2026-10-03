@@ -15,6 +15,7 @@ Verifies:
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -31,6 +32,7 @@ from services.control_plane.bff.command_adapters.evolution_adapter import (
     _CMD_TO_ACTION_ID,
     EvolutionCommandAdapter,
 )
+from services.control_plane.bff.command_adapters.base import _token_tenant
 from services.control_plane.bff.evolution.router import (
     _APPROVER_PROGRAM_ACTIONS,
     create_evolution_programs_router,
@@ -51,6 +53,24 @@ _CANONICAL_ACTIONS = [
     "approve_mutation",
     "reject_mutation",
 ]
+
+def _tenant_token(tenant: str) -> str:
+    claims = base64.urlsafe_b64encode(json.dumps({"tenant_id": tenant}).encode()).decode().rstrip("=")
+    return f"Bearer h.{claims}.s"
+
+
+@pytest.fixture(autouse=True)
+def _authenticated_caller(monkeypatch):
+    """Production always forwards the caller's JWT; direct adapter calls get one for tenant-e2e."""
+    original = EvolutionCommandAdapter.execute
+
+    def execute(self, command_id, command_type, params, auth_token=None, mfa_token=None):
+        if not _token_tenant(auth_token):
+            auth_token = _tenant_token("tenant-e2e")
+        return original(self, command_id, command_type, params, auth_token=auth_token, mfa_token=mfa_token)
+
+    monkeypatch.setattr(EvolutionCommandAdapter, "execute", execute)
+
 
 
 class _FakeIdentity:
@@ -210,6 +230,7 @@ def test_adapter_propagates_idempotency_and_tenant_headers() -> None:
                     "idempotency_key": "unique-idemp-12345",
                     "tenant_id": "tenant-custom-xyz",
                 },
+                auth_token=_tenant_token("tenant-custom-xyz"),
             )
 
             assert mock_http.called
@@ -218,7 +239,7 @@ def test_adapter_propagates_idempotency_and_tenant_headers() -> None:
             assert headers.get("Idempotency-Key") == "unique-idemp-12345"
             assert headers.get("X-Idempotency-Key") == "unique-idemp-12345"
             assert headers.get("X-Tenant-Id") == "tenant-custom-xyz"
-            assert kwargs.get("auth_token") == "backend-auth-token"
+            assert kwargs.get("auth_token") == _tenant_token("tenant-custom-xyz")
 
 
 def test_adapter_propagates_409_conflict() -> None:

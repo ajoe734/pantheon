@@ -1,4 +1,5 @@
 """Mounted adapters execute against an isolated durable owner HTTP boundary."""
+import base64
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -19,16 +20,34 @@ from services.control_plane.bff.models import CommandType, ObjectType, OperatorI
 from services.control_plane.bff.ports import create_read_surface_ports
 
 
+_JWT_ENV = {"PANTHEON_BFF_JWT_SECRET": "receipt-owner-signing-secret-0123456789",
+            "PANTHEON_BFF_JWT_ISSUER": "receipt-owner-tests", "PANTHEON_BFF_JWT_AUDIENCE": "bff-operators",
+            "PANTHEON_BFF_AUTH_MODE": "strict"}
+
+
+def _tok(tenant):
+    """Deterministic HS256 token verified by the production identity path; tenant=None omits the claim."""
+    from services.runtime_auth_inbound import encode_jwt_hs256
+    claims = {"sub": tenant or "no-tenant", "roles": ["operator", "approver"], "exp": 4102444800,
+              "iss": _JWT_ENV["PANTHEON_BFF_JWT_ISSUER"], "aud": _JWT_ENV["PANTHEON_BFF_JWT_AUDIENCE"]}
+    if tenant:
+        claims["tenant_id"] = tenant
+    return "Bearer " + encode_jwt_hs256(claims, secret=_JWT_ENV["PANTHEON_BFF_JWT_SECRET"])
+
+
+def _tenant_of_auth(auth):
+    return next((t for t in ("tenant-a", "tenant-b") if auth == _tok(t)), None)
+
+
 def identity(auth=None, **kwargs):
-    if auth not in {"Bearer tenant-a", "Bearer tenant-b"}:
-        raise HTTPException(401)
-    tenant = auth.split()[1]
-    return OperatorIdentity(operator_id=tenant, roles=["operator", "approver"],
-                            claims={"tenant_id": tenant}, mfa_verified=True)
+    from services.control_plane.bff.auth.policy import extract_identity_jwt
+    return extract_identity_jwt(auth)
 
 
 @pytest.fixture
 def owner(tmp_path, monkeypatch):
+    for key, value in _JWT_ENV.items():
+        monkeypatch.setenv(key, value)
     state = tmp_path / "owner.json"
     state.write_text(json.dumps({"plans": {}, "programs": {
         "program-a": {"program_id": "program-a", "status": "active", "tenant_id": "tenant-a"},
@@ -40,8 +59,8 @@ def owner(tmp_path, monkeypatch):
 
         def handle_request(self):
             data = json.loads(state.read_text())
-            tenant = self.headers.get("Authorization", "").removeprefix("Bearer ")
-            if tenant not in {"tenant-a", "tenant-b"}:
+            tenant = _tenant_of_auth(self.headers.get("Authorization", ""))
+            if not tenant:
                 return self.send_json(401, {})
             path = self.path
             if self.command == "GET":
@@ -147,7 +166,7 @@ def mounted(owner, tmp_path):
 @pytest.mark.parametrize("create_path", ["/bff/deployments", "/api/v1/deployment-plans"])
 def test_deployment_owner_effect_and_default_refresh(mounted, owner, create_path):
     client, store, ports = mounted
-    headers = {"Authorization": "Bearer tenant-a", "Idempotency-Key": "create"}
+    headers = {"Authorization": _tok("tenant-a"), "Idempotency-Key": "create"}
     assert client.post(create_path, json={}).status_code == 401
     first = client.post(create_path, json={"reason": "create paper plan"}, headers=headers)
     assert first.status_code == 202, first.text
@@ -157,7 +176,7 @@ def test_deployment_owner_effect_and_default_refresh(mounted, owner, create_path
     assert json.loads(owner.read_text())["writes"] == 1
     read = client.get("/bff/deployments", headers=headers)
     assert read.json()["data"][0]["plan_id"] == "plan-a", read.text
-    assert client.get("/bff/deployments", headers={"Authorization": "Bearer tenant-b"}).json()["data"] == []
+    assert client.get("/bff/deployments", headers={"Authorization": _tok("tenant-b")}).json()["data"] == []
     patched = client.patch("/bff/deployments/plan-a", json={"status": "approved"},
                            headers={**headers, "Idempotency-Key": "patch"})
     assert patched.status_code == 202, patched.text
@@ -169,7 +188,7 @@ def test_deployment_owner_effect_and_default_refresh(mounted, owner, create_path
 def test_program_owner_effect_and_default_refresh(mounted, owner):
     client, store, ports = mounted
     url = "/bff/evolution-programs/program-a/actions/pause_program"
-    headers = {"Authorization": "Bearer tenant-a", "Idempotency-Key": "pause"}
+    headers = {"Authorization": _tok("tenant-a"), "Idempotency-Key": "pause"}
     response = client.post(url, json={}, headers=headers)
     assert response.status_code == 202, response.text
     record = store.get_command_by_idempotency_key("pause", operator_id="tenant-a")
@@ -177,13 +196,13 @@ def test_program_owner_effect_and_default_refresh(mounted, owner):
     assert client.get("/bff/evolution-programs/program-a", headers=headers).json()["data"]["status"] == "paused"
     assert client.post(url, json={}, headers=headers).status_code == 202
     assert json.loads(owner.read_text())["writes"] == 1
-    assert client.post(url, json={}, headers={**headers, "Authorization": "Bearer tenant-b"}).status_code == 404
+    assert client.post(url, json={}, headers={**headers, "Authorization": _tok("tenant-b")}).status_code == 404
 
 
 def test_proposal_execute_preserves_owner_receipt_and_replays(mounted, owner, monkeypatch):
     client, store, ports = mounted
     monkeypatch.setenv("PANTHEON_GOVERNANCE_API_URL", "http://must-not-route-to-governance.invalid")
-    headers = {"Authorization": "Bearer tenant-a", "Idempotency-Key": "proposal-execute"}
+    headers = {"Authorization": _tok("tenant-a"), "Idempotency-Key": "proposal-execute"}
     payload = {"command": "ExecuteEvolutionAction", "target": {"type": "EvolutionDecision", "id": "proposal-a"},
                "params": {"action_type": "retrain", "evolution_decision_id": "proposal-a", "execution_receipt": {"plane": "research", "record_id": "run-a"}},
                "audit_context": {"reason": "Owner verifies execution evidence"}}
@@ -211,9 +230,9 @@ def test_same_operator_cannot_replay_another_tenant_receipt(owner, tmp_path):
     client = TestClient(app)
     payload = {"command": "CreateDeployment", "target": {"type": "Deployment", "id": "plan-a"},
                "params": {}, "audit_context": {"reason": "tenant scoped admission"}}
-    headers = {"Authorization": "Bearer tenant-a", "Idempotency-Key": "shared-key"}
+    headers = {"Authorization": _tok("tenant-a"), "Idempotency-Key": "shared-key"}
     assert client.post("/bff/v1/commands", json=payload, headers=headers).status_code == 202
-    other = client.post("/bff/v1/commands", json=payload, headers={**headers, "Authorization": "Bearer tenant-b"})
+    other = client.post("/bff/v1/commands", json=payload, headers={**headers, "Authorization": _tok("tenant-b")})
     assert other.status_code == 409, other.text
     assert json.loads(owner.read_text())["writes"] == 1
 
@@ -225,7 +244,7 @@ def test_default_composition_forwards_validated_browser_session(owner, tmp_path)
     app = compose_bff_app(app_deps=deps, _extract_identity=identity, dev_login_enabled=lambda: True,
                           validate_session=lambda token: identity("Bearer " + token), origin_allowed=lambda origin: False)
     client = TestClient(app)
-    client.cookies.set("pantheon_session", "tenant-a")
+    client.cookies.set("pantheon_session", _tok("tenant-a").removeprefix("Bearer "))
     result = client.get("/bff/evolution-programs/program-a")
     assert result.status_code == 200, result.text
     assert result.json()["data"]["program_id"] == "program-a"
@@ -241,7 +260,7 @@ def test_default_composition_forwards_validated_browser_session(owner, tmp_path)
 def test_resource_dry_run_never_enqueues_or_writes_owner(mounted, owner, method, path, payload, extra_headers):
     client, store, ports = mounted
     response = client.request(method, path, json=payload, headers={
-        "Authorization": "Bearer tenant-a", "Idempotency-Key": "dry-run", **extra_headers,
+        "Authorization": _tok("tenant-a"), "Idempotency-Key": "dry-run", **extra_headers,
     })
     assert response.status_code == 202, response.text
     assert response.json()["meta"]["dryRun"] is True

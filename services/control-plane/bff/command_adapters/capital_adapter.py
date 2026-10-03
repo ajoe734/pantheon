@@ -9,8 +9,6 @@ approval, risk policy and paper/live classification.
 """
 from __future__ import annotations
 
-import base64
-import json
 from typing import Any, Dict, Optional
 import urllib.error
 from urllib.parse import quote
@@ -18,6 +16,7 @@ from urllib.parse import quote
 from services.control_plane.bff.capital.service import CapitalValidationError, stable_digest
 
 from .base import (
+    _token_tenant,
     ActionUnavailableError,
     DomainCommandAdapter,
     build_domain_receipt,
@@ -29,19 +28,6 @@ from .base import (
 _BOUND_FIELDS = frozenset({"id", "actor_id", "actor_role", "tenant_id", "idempotency_key", "request_hash"})
 # Owner CapitalPool statuses are active / suspended / archived.
 _POOL_ACTION_STATUS = {"pause": "suspended", "freeze": "suspended", "activate": "active", "resume": "active", "retire": "archived"}
-
-
-def _token_tenant(token: Optional[str]) -> Optional[str]:
-    try:
-        raw = str(token or "").removeprefix("Bearer ").strip().split(".")[1]
-        claims = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
-        tid = str(claims.get("tenant_id") or "").strip()
-        if tid and tid != "*":
-            return tid
-        allowed = [str(t).strip() for t in claims.get("allowed_tenants") or [] if str(t).strip() and str(t).strip() != "*"]
-        return allowed[0] if len(allowed) == 1 and claims.get("allowed_tenants") == [allowed[0]] else None
-    except Exception:
-        return None
 
 
 def _executor() -> Any:
