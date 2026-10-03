@@ -1,0 +1,13 @@
+{
+  "task_id": "AGORA-WORKER-DEV-TENANT-20261003",
+  "changes": {
+    "agora-interaction-worker": "PANTHEON_TENANT_ID now ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}; resolves tenant-dev when only the BFF tenant is configured.",
+    "training-session-preview-worker": "TRAINING_SESSION_TENANT_ID now falls back through PANTHEON_TENANT_ID then PANTHEON_BFF_TENANT_ID; the worker code (preview_eval_worker.py) already treats PANTHEON_TENANT_ID as its fallback."
+  },
+  "unchanged": {
+    "reconciliation-drift-incident-listener": "Keeps default. docker-compose.yml sets no tenant for reconciliation-drift-svc, whose _configured_tenant_id() (services/reconciliation-drift/main.py) reads PANTHEON_TENANT_ID or RECONCILIATION_DRIFT_DEFAULT_TENANT_ID, else 'default'. The listener (incident_listener.py) must send the tenant the svc accepts; a BFF fallback here would diverge from the svc and trigger its 400 'X-Tenant-Id is required' rejection loop."
+  },
+  "isolation": "Each worker still processes exactly one configured tenant; no tenant rule changed.",
+  "test": "scripts/test_worker_tenant_compose_contract.py (docker compose config; 4 passed)",
+  "hosted_verification": "Pending coordinator after next root deploy (AGORA-SYNTHESIS-AGENT-001)."
+}
