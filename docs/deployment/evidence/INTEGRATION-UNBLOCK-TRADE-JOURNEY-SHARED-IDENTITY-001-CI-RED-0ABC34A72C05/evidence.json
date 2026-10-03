@@ -1,0 +1,7 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-TRADE-JOURNEY-SHARED-IDENTITY-001-CI-RED-0ABC34A72C05",
+  "blocked_task": "TRADE-JOURNEY-SHARED-IDENTITY-001",
+  "original_pr": 6104,
+  "root_cause": "Commit trailers check failed on PR #6104 head e288238167a7: subject 94 chars (>72) and missing LLM-Agent/Task-ID/Reviewer trailers. Code diff itself was unaffected.",
+  "resolution": "Delivery content re-committed unchanged as a single commit with a compliant subject and trailers on a new PR; PR #6104 closed as superseded. No force-push of the original branch."
+}
