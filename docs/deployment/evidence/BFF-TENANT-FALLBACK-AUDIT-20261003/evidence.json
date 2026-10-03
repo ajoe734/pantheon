@@ -176,10 +176,10 @@
       "caller_proof": "Internal idempotency deduplication query; tenant_id if provided is used only for equality comparison against command record tenant, never fills a missing trusted tenant or scopes a read/write without caller identity."
     },
     {
-      "site": "services/control-plane/bff/governance/command_audit.py:178 (project_command_record_audit_event)",
-      "disposition": "proven safe",
-      "trusted_source": "caller tenant_id argument",
-      "caller_proof": "Audit event projection filter; clean_tenant_id if provided filters records by equality, never assigns or fills tenant authority."
+      "site": "services/control-plane/bff/governance/command_audit.py:72, :141, :178 (project_command_record_audit_event, _record_tenant_id, list_projected_governance_audit_events)",
+      "disposition": "fixed",
+      "trusted_source": "caller tenant_id argument and verified command record audit/params/foundation tenant",
+      "note": "Projected governance audit events retain command record tenant scope in event, audit_context, and metadata. _record_tenant_id inspects audit and params, and list_projected_governance_audit_events respects tenant_id filter. Downstream filtering preserves private tenant isolation."
     },
     {
       "site": "services/control-plane/bff/governance/decision_journal_write_owner.py:382, 433, 465, 482, 519, 531 (idempotency conflict checks)",
@@ -206,10 +206,16 @@
       "caller_proof": "Delegates to bff_me_tenant_payload which fails closed on unauthorized tenant; all Management AI operations run under verified caller tenant."
     },
     {
-      "site": "services/control-plane/bff/assistant/routes.py",
-      "disposition": "proven safe",
-      "trusted_source": "caller identity via extract_identity / management_service",
-      "caller_proof": "Assistant endpoints require authenticated operator identity with read/write roles and enforce tenant scoping via management_service."
+      "site": "services/control-plane/bff/assistant/management_service.py:4134-4140 (_mgmt_nl_record_matches_tenant)",
+      "disposition": "fixed",
+      "trusted_source": "verified caller tenant_id argument",
+      "note": "Caller-empty truthy guard removed: missing or empty caller tenant fails closed (returns False), and untagged/empty record tenants fail closed. Matches only explicit tenant or wildcard '*'."
+    },
+    {
+      "site": "services/control-plane/bff/assistant/routes.py and source_collectors.py:188, :240",
+      "disposition": "fixed",
+      "trusted_source": "caller identity via bff_me_tenant_payload",
+      "note": "_assistant_filter_tenant_records fails closed (returns empty list) when caller tenant authority is denied or missing (scope=denied or empty tenant_id). Mounted signed-JWT regression confirms zero private foreign command audit events disclosed."
     }
   ],
   "mounted_signed_jwt_tests": [
@@ -228,7 +234,8 @@
     "test_mounted_workspace_route_scopes_to_the_jwt_tenant: mounted GET /bff/agora/trading-room/workspaces/{id} (absent tenant in JWT claims -> 403, zero data disclosed; foreign tenant -> 403; same tenant -> 200).",
     "test_authorized_configured_default_is_not_replaced_by_allowlist_order: mounted GET /bff/agora/performance/action-receipts/{id} with multi-tenant allowed_tenants selects active configured default (PANTHEON_BFF_TENANT_ID) over allowlist position -> 200.",
     "test_event_stream_requires_verified_tenant_authority: mounted GET /api/v1/stream/system with synthetic private event (missing tenant -> 403, zero data disclosed; foreign tenant -> 200, private event withheld; same tenant -> 200, private event delivered).",
-    "test_mounted_capital_command_route_scopes_to_the_jwt_tenant: mounted POST /bff/v1/commands CapitalPoolAction target CapitalPool/pool-b (tenantless JWT and foreign tenant JWT fail closed with zero downstream calls and failed command record status; same-tenant JWT positive control executes with 1 PATCH and 1 GET call with X-Tenant-Id)."
+    "test_mounted_capital_command_route_scopes_to_the_jwt_tenant: mounted POST /bff/v1/commands CapitalPoolAction target CapitalPool/pool-b (tenantless JWT and foreign tenant JWT fail closed with zero downstream calls and failed command record status; same-tenant JWT positive control executes with 1 PATCH and 1 GET call with X-Tenant-Id).",
+    "test_mounted_assistant_audit_projection_scopes_to_the_jwt_tenant: mounted POST /bff/assistant/sessions/review/context with mode=kernel_debug and include=['audit'] (tenantless JWT and foreign tenant JWT fail closed with 0 private tenant-b audit events disclosed; same-tenant JWT positive control returns 201 with PRIVATE_B_AUDIT visible)."
   ],
   "validation": {
     "local_postgresql_acceptance": {

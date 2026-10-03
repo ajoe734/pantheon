@@ -1405,3 +1405,92 @@ def test_mounted_capital_command_route_scopes_to_the_jwt_tenant(mounted, monkeyp
         rec = store.get_command_by_idempotency_key(key)
         assert (rec or {}).get("status") == "executed"
 
+
+@pytest.mark.parametrize("tenant", [None, "tenant-a", "tenant-b"])
+def test_mounted_assistant_audit_projection_scopes_to_the_jwt_tenant(monkeypatch, tmp_path, tenant):
+    import ast
+    from pathlib import Path
+    from types import SimpleNamespace
+    from services.control_plane.bff.auth.policy import extract_identity_jwt, require_read_role, bff_error, bff_me_tenant_payload
+    from services.control_plane.bff.command_queue import CommandStore
+    from services.control_plane.bff.models import CommandType
+    from services.control_plane.bff.governance.command_audit import list_projected_governance_audit_events, audit_event_matches
+    from services.control_plane.bff.assistant.management_service import _mgmt_nl_filter_tenant_records
+    from services.control_plane.bff.assistant.source_collectors import AssistantSourceCollectorDeps, collect_assistant_context_source
+    from services.control_plane.bff.assistant.context_composer import compose_context_pack
+    from services.control_plane.bff.assistant.routes import create_assistant_router
+
+    for k, v in {
+        "PANTHEON_BFF_AUTH_MODE": "strict",
+        "PANTHEON_BFF_JWT_SECRET": "review-only-secret",
+        "PANTHEON_BFF_JWT_ISSUER": "review",
+        "PANTHEON_BFF_JWT_AUDIENCE": "bff",
+        "PANTHEON_ASSISTANT_KERNEL_ENABLED": "true",
+    }.items():
+        monkeypatch.setenv(k, v)
+    cmd_file = str(tmp_path / "commands.jsonl")
+    store = CommandStore(cmd_file)
+    store.submit_command(
+        command_id="private-b",
+        command_type=CommandType.CAPITAL_POOL_ACTION,
+        target={"type": "CapitalPool", "id": "pool-private-b"},
+        submitted_at="2026-10-03T00:00:00Z",
+        params={"tenant_id": "tenant-b"},
+        audit_context={"operator_id": "owner-b", "tenant_id": "tenant-b", "reason": "PRIVATE_B_AUDIT"},
+    )
+    store = CommandStore(cmd_file)  # reopen actual persistence
+
+    source = Path("services/control-plane/bff/main.py")
+    tree = ast.parse(source.read_text())
+    node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_list_governance_audit_events")
+    ns = {
+        "json": json,
+        "read_store": SimpleNamespace(list_governance_audit_events=lambda **kw: []),
+        "agora_audit_store": SimpleNamespace(list_agora_audit_events=lambda **kw: []),
+        "command_store": store,
+        "_list_projected_governance_audit_events": list_projected_governance_audit_events,
+        "_audit_event_matches": audit_event_matches,
+    }
+    code = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), node], type_ignores=[])
+    exec(compile(ast.fix_missing_locations(code), str(source), "exec"), ns)
+    deps = AssistantSourceCollectorDeps(
+        read_store=ns["read_store"],
+        list_governance_audit_events=ns["_list_governance_audit_events"],
+        filter_tenant_records_fn=_mgmt_nl_filter_tenant_records,
+        dataset_surface_status=lambda *args, **kw: {"status": "ok"},
+        generic_path_collector=lambda p: None,
+        persona_service=None,
+        build_operator_alerts_payload=lambda s: {},
+        tenant_payload_fn=bff_me_tenant_payload,
+        read_roles=frozenset({"operator"}),
+    )
+
+    def collect(source_id, request, snapshot_at, identity=None):
+        return collect_assistant_context_source(source_id, request, snapshot_at, identity, deps=deps)
+
+    def build(session_id, request, identity):
+        return compose_context_pack(session_id=session_id, request=request, actor=identity, collect_source=collect)
+
+    app = FastAPI()
+    app.include_router(create_assistant_router(
+        build_context_pack=build,
+        extract_identity=extract_identity_jwt,
+        require_read_role=require_read_role,
+        bff_error=bff_error,
+    ))
+    claims = {"sub": "same-review-actor", "roles": ["operator"], "iss": "review", "aud": "bff", "exp": int(time.time()) + 600}
+    if tenant:
+        claims["tenant_id"] = tenant
+    jwt = encode_jwt_hs256(claims, secret="review-only-secret")
+    response = TestClient(app).post(
+        "/bff/assistant/sessions/review/context",
+        headers={"Authorization": "Bearer " + jwt},
+        json={"mode": "kernel_debug", "include": ["audit"]},
+    )
+    leaked = "PRIVATE_B_AUDIT" in response.text
+    if tenant != "tenant-b":
+        assert not leaked, f"unauthorized audit disclosed: caller={tenant}, status={response.status_code}"
+    else:
+        assert response.status_code == 201 and leaked
+
+

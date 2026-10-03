@@ -186,7 +186,7 @@ def resolve_agora_user_scope(
     ident_tenant = str(_ident_prop(identity, "tenant_id") or "").strip()
     if ident_tenant and ident_tenant not in claim_tenants:
         claim_tenants.append(ident_tenant)
-    allowed_tenants = _claim_strings(claims, _ALLOWED_TENANT_CLAIM_PATHS)
+    allowed_tenants = _claim_strings(claims, _ALLOWED_TENANT_CLAIM_PATHS) or list(claim_tenants)
     if ident_tenant and ident_tenant not in allowed_tenants:
         allowed_tenants.append(ident_tenant)
 
@@ -197,8 +197,6 @@ def resolve_agora_user_scope(
     )
     if not is_strict and not allowed_tenants:
         allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [env_default or "pantheon-dev"]
-    elif not allowed_tenants and claim_tenants:
-        allowed_tenants = list(claim_tenants)
 
     if not allowed_tenants:
         raise AgoraScopeResolutionError(
@@ -209,15 +207,10 @@ def resolve_agora_user_scope(
         )
 
     clean_req = str(requested_tenant_id or "").strip()
-    if clean_req:
-        tenant_id = clean_req
-    else:
-        default_match = env_default if (env_default and (env_default in allowed_tenants or "*" in allowed_tenants)) else ""
-        if not is_strict:
-            default_match = env_default or "pantheon-dev"
-        tenant_id = _first_nonblank(*claim_tenants, default_match, *[t for t in allowed_tenants if t != "*"])
-        if not tenant_id and "*" in allowed_tenants:
-            tenant_id = env_default or "pantheon-dev"
+    default_match = env_default if (env_default and (env_default in allowed_tenants or "*" in allowed_tenants)) else ("" if is_strict else (env_default or "pantheon-dev"))
+    tenant_id = clean_req or _first_nonblank(*claim_tenants, default_match, *[t for t in allowed_tenants if t != "*"])
+    if not tenant_id and "*" in allowed_tenants:
+        tenant_id = env_default or "pantheon-dev"
 
     if "*" not in allowed_tenants and tenant_id not in allowed_tenants:
         raise AgoraScopeResolutionError(
