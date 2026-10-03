@@ -1,19 +1,23 @@
 {
   "task_id": "BFF-RESEARCH-SINGLE-OWNER-001",
   "environment": "isolated read-only venv ~/pantheon-ci-deploy/runtime/research-test-python/20261003-f9fd19209; no hosted deployment or live capital actions",
-  "independent_review": "Codex2 review rejected PR #6103 head 7a4bb49e99dc51c46e930d8f90a2287d89c9fa83; P1 atomic stage execution claim shared across background workers and HTTP stage execute endpoint in services/research/main.py resolves concurrent replay duplicates to a single backend execution call and single artifact with identical receipts; P2 structured agent provider path wired for evidence_synthesis and openclaw_result_synthesis with OpenClawOpsClient reading persisted artifacts and failing closed 503 on unavailable provider. Mounted regressions test_concurrent_stage_executions_deduplicate_to_single_effect, test_evidence_synthesis_resolves_artifacts_and_reaches_provider, and test_evidence_synthesis_unavailable_provider_fails_closed pass.",
+  "independent_review": "Codex2 review rejected PR #6103 head 72e108af6adf64a662031a8611a15b1064fa2e6a. 1) Removed sys._current_frames() stack inspection in services/research/main.py; concurrency synchronization uses standard threading condition notifications and test uses explicit coordination. 2) Stage execution claim key now uses authoritative owner run/stage identity (agora-stage-claim:{run_id}:{stage_id}) across background workers and HTTP entrypoint; transport keys are mapped and checked for conflicting run/stage reuse (returning 409). 3) In evidence_synthesis, missing persisted artifacts fail closed with HTTP 400; predecessor artifacts from candidate runs/artifacts in the same plan are resolved when artifact_refs is omitted; and provider structured output is validated for required summary/interpretation/recommendation fields, returning 502 on malformed response.",
   "hosted_track": "external_wait per Human/Ops 2026-10-01 decision; no hosted probes performed",
   "design_items": {
-    "D1": "services/research/main.py validates execution modes before backend selection; durable off-request stages reconcile completed predecessors at restart, and serialized progression schedules roots/joins without duplicate attempts. Atomic in_progress execution claim with claim_token serializes concurrent stage execution replays across workers and HTTP callers, guaranteeing single backend call and identical receipt/artifacts. Cancellation fences survive late worker errors, stale worker starts are fenced atomically, retried runs unblock task fences, and legacy completions are adopted without replay.",
+    "D1": "services/research/main.py validates execution modes before backend selection; durable off-request stages reconcile completed predecessors at restart, and serialized progression schedules roots/joins without duplicate attempts. Authoritative in_progress execution claim (agora-stage-claim:{run_id}:{stage_id}) serializes concurrent stage execution replays across workers and HTTP callers, guaranteeing single backend call and identical receipt/artifacts, with transport keys tracked and checked for conflict. Cancellation fences survive late worker errors, stale worker starts are fenced atomically, retried runs unblock task fences, and legacy completions are adopted without replay.",
     "D2": "Removed duplicate BFF ResearchDispatcher wiring and research-outbox worker ownership. Retained persona interaction worker launcher and restored its six healthcheck/help/persona-client regressions.",
     "D3": "services/control-plane/bff/research/client.py is the shared ResearchServiceClient transport for workshop and command-port owner requests; preserves HTTP status and error details.",
     "D4": "services/control-plane/bff/agora/research/service.py resolves cancellation records for authorized plan identity and derives active status from authoritative readback, failing closed on unavailable owner operations or verification while preserving retryable local state, and reconciling terminal races before terminal persistence.",
-    "D5": "Receipt resolution now fails closed on receipt/run/metric provenance mismatch and missing or malformed completed_at. Owner execution tests prove stub output remains simulation and unknown modes cannot be dispatched as real. Evidence synthesis resolves persisted artifacts and wires openclaw_result_synthesis structured extraction with fail-closed 503 on unavailable provider."
+    "D5": "Receipt resolution now fails closed on receipt/run/metric provenance mismatch and missing or malformed completed_at. Owner execution tests prove stub output remains simulation and unknown modes cannot be dispatched as real. Evidence synthesis resolves persisted artifacts and predecessor plan artifacts, requiring valid structured extraction schema and failing closed 503 on unavailable provider."
   },
   "validation": [
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py",
-      "result": "43 passed; includes atomic concurrent stage execution claim deduplication, evidence synthesis artifact resolution and provider wireup, 503 provider unavailable fail-closed, task cancellation fence against successor progression and restart, failed-stage retry, retry after plan/run cancellation, atomic worker-start fencing, in-flight cancellation fencing, multi-root/fan-in and async dispatch"
+      "result": "47 passed; includes authoritative stage execution claim deduplication, transport key conflict rejection, evidence synthesis artifact resolution (explicit and plan predecessor) and provider wireup, 503 provider unavailable fail-closed, task cancellation fence against successor progression and restart, failed-stage retry, retry after plan/run cancellation, atomic worker-start fencing, in-flight cancellation fencing, multi-root/fan-in and async dispatch"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q /tmp/test_codex2_research_review.py",
+      "result": "3 passed; covers test_sys_frames_removed, test_stage_claim_identity_authoritative, and test_evidence_synthesis_resolves_and_validates"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
@@ -29,9 +33,9 @@
     },
     {
       "command": "python3 scripts/git/diff_budget.py --base 14eaf55e0528984df21b17a0a64e7a56ceb57708 --change-class simplify --budget 0",
-      "result": "exact-base simplify budget passed (net production -39 lines)"
+      "result": "exact-base simplify budget passed (net production -16 lines)"
     }
   ],
-  "suite_note": "Codex2 P1/P2 review findings resolved: atomic stage execution claim loop in services/research/main.py eliminates concurrent duplicate backend invocations, and evidence_synthesis/openclaw_result_synthesis is wired to provider with persisted artifact resolution and fail-closed 503 on unavailable provider. All test suites pass (74 passed in research & BFF projection suites, plus reviewer validation tests). Net production diff is -39 lines (budget <= 0). Hosted acceptance remains external_wait; no hosted probes performed.",
+  "suite_note": "Codex2 review rejection resolved: 1) stack frame inspection removed from services/research/main.py; 2) stage claim key uses agora-stage-claim:{run_id}:{stage_id} with transport key conflict protection; 3) evidence synthesis fails closed on missing artifacts, resolves predecessor artifacts, and validates structured extraction output. All unit and regression suites pass. Net production diff is -16 lines (budget <= 0). Hosted acceptance remains external_wait; no hosted probes performed.",
   "scope": "Source and local isolated functional evidence only; no hosted deployment, hosted probe, or real capital action is claimed."
 }

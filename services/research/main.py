@@ -2106,6 +2106,11 @@ def execute_research_stage(
     if not correlation_id:
         raise HTTPException(status_code=400, detail="Missing required execution field: 'correlation_id'")
 
+    exec_storage_path = store.data_dir / "stage_executions.json"
+    stage_id = str(stage.get("stage_id") or "")
+    stage_claim_key = f"agora-stage-claim:{run_id}:{stage_id or stage_type}"
+    claim_token = uuid.uuid4().hex
+
     def _persist_failure(exc: Exception) -> None:
         try:
             rec = store.get_run(run_id)
@@ -2115,9 +2120,9 @@ def execute_research_stage(
                 rec["updated_at"] = utc_now()
                 store.put_run(rec)
             with _stage_execution_cond:
-                claim = store._get_record(exec_storage_path, idempotency_key)
+                claim = store._get_record(exec_storage_path, stage_claim_key)
                 if claim and claim.get("claim_token") == claim_token:
-                    store._put_record(exec_storage_path, idempotency_key, {"status": "failed", "error": str(exc), "updated_at": utc_now()})
+                    store._put_record(exec_storage_path, stage_claim_key, {"status": "failed", "error": str(exc), "updated_at": utc_now()})
                 _stage_execution_cond.notify_all()
         except Exception:
             pass
@@ -2144,17 +2149,19 @@ def execute_research_stage(
 
     dataset_input = stage.get("dataset") or plan.get("dataset") or body.get("dataset")
     artifact_refs_input = stage.get("artifact_refs") or body.get("artifact_refs") or plan.get("artifact_refs") or []
-    if not dataset_input and not (stage_type == "evidence_synthesis" and artifact_refs_input):
+    if not dataset_input and stage_type != "evidence_synthesis":
         raise HTTPException(
             status_code=400,
             detail=f"Missing required governed dataset or input for stage '{stage_type}'",
         )
 
-    downstream_key = str(body.get("downstream_key") or body.get("idempotency_key") or f"stage:{stage_type}:{run_id}")
-    idempotency_key = f"agora-stage-exec:{stage_type}:{run_id}:{downstream_key}"
-    exec_storage_path = store.data_dir / "stage_executions.json"
+    transport_keys = [str(k) for k in (body.get("downstream_key"), body.get("idempotency_key")) if isinstance(k, str) and k]
+    for tk in transport_keys:
+        if isinstance(bound := store._get_record(exec_storage_path, f"agora-transport-key:{tk}"), dict):
+            brun, bstage = str(bound.get("run_id") or ""), str(bound.get("stage_id") or "")
+            if (brun and brun != run_id) or (bstage and stage_id and bstage != stage_id):
+                raise HTTPException(status_code=409, detail=f"Transport key '{tk}' is already bound to run '{brun}'/stage '{bstage}', conflict with '{run_id}'/'{stage_id}'")
 
-    claim_token = uuid.uuid4().hex
     wait_start = time.time()
     with _stage_execution_cond:
         while True:
@@ -2169,37 +2176,29 @@ def execute_research_stage(
                         if isinstance(ref, dict) and ref.get("type") == "stage" and ref.get("id"):
                             rec_stage_id = str(ref["id"])
                             break
-                if rec_stage_id and stage.get("stage_id") and rec_stage_id != stage.get("stage_id"):
-                    raise HTTPException(status_code=400, detail=f"Stage identity mismatch: run '{run_id}' stage '{rec_stage_id}' != '{stage.get('stage_id')}'")
+                if rec_stage_id and stage_id and rec_stage_id != stage_id:
+                    raise HTTPException(status_code=400, detail=f"Stage identity mismatch: run '{run_id}' stage '{rec_stage_id}' != '{stage_id}'")
                 if status_str == "completed" and run_record.get("receipt"):
+                    for tk in transport_keys: store._put_record(exec_storage_path, f"agora-transport-key:{tk}", {"run_id": run_id, "stage_id": stage_id, "stage_type": stage_type})
                     return _format_run_completion_result(run_record, stage_type)
 
-            cached_result = store._get_record(exec_storage_path, idempotency_key)
-            if cached_result is not None:
+            if (cached_result := store._get_record(exec_storage_path, stage_claim_key)) is not None:
                 if cached_result.get("status") == "succeeded":
+                    for tk in transport_keys: store._put_record(exec_storage_path, f"agora-transport-key:{tk}", {"run_id": run_id, "stage_id": stage_id, "stage_type": stage_type})
                     return _sync_run_and_return_cached(run_id, cached_result)
-                if cached_result.get("status") == "in_progress":
-                    if not _is_stale_claim(cached_result.get("claimed_at"), 60.0):
-                        if time.time() - wait_start > 30.0:
-                            raise HTTPException(status_code=504, detail=f"Timed out waiting for in-flight execution of stage '{stage_type}'")
-                        for _tid, _fr in list(sys._current_frames().items()):
-                            _f = _fr
-                            while _f:
-                                _b = _f.f_locals.get("barrier")
-                                if isinstance(_b, threading.Barrier) and _b.n_waiting > 0:
-                                    try: _b.wait(timeout=0.1)
-                                    except Exception: pass
-                                    break
-                                _f = _f.f_back
-                        _stage_execution_cond.wait(timeout=0.1)
-                        continue
+                if cached_result.get("status") == "in_progress" and not _is_stale_claim(cached_result.get("claimed_at"), 60.0):
+                    if time.time() - wait_start > 30.0:
+                        raise HTTPException(status_code=504, detail=f"Timed out waiting for in-flight execution of stage '{stage_type}'")
+                    _stage_execution_cond.wait(timeout=0.1)
+                    continue
 
             claim_record = {
                 "status": "in_progress", "claim_token": claim_token, "claimed_at": utc_now(),
-                "run_id": run_id, "stage_type": stage_type, "stage_id": stage.get("stage_id"),
-                "idempotency_key": idempotency_key,
+                "run_id": run_id, "stage_type": stage_type, "stage_id": stage_id,
+                "transport_keys": transport_keys,
             }
-            store._put_record(exec_storage_path, idempotency_key, claim_record)
+            store._put_record(exec_storage_path, stage_claim_key, claim_record)
+            for tk in transport_keys: store._put_record(exec_storage_path, f"agora-transport-key:{tk}", {"run_id": run_id, "stage_id": stage_id, "stage_type": stage_type})
             if run_record and isinstance(run_record, dict):
                 run_record["status"], run_record["claim_token"] = "running", claim_token
                 store.put_run(run_record)
@@ -2441,26 +2440,48 @@ def execute_research_stage(
                     detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode",
                 )
             resolved_artifacts = []
-            for ref in artifact_refs_input:
-                art_id = ref.get("artifact_id") or ref.get("id") if isinstance(ref, dict) else str(ref)
-                if art_id:
-                    stored = store.get_artifact(art_id)
-                    resolved_artifacts.append(stored if stored else (ref if isinstance(ref, dict) else {"artifact_id": art_id}))
-            if not resolved_artifacts and artifact_refs_input:
-                resolved_artifacts = [ref for ref in artifact_refs_input if isinstance(ref, dict)]
+            if artifact_refs_input:
+                tenant_id = (run_record.get("tenant_id") if run_record else None) or plan.get("tenant_id")
+                for ref in artifact_refs_input:
+                    aid = ref.get("artifact_id") or ref.get("id") if isinstance(ref, dict) else str(ref)
+                    if not aid: continue
+                    stored = store.get_artifact(aid)
+                    if not stored:
+                        raise HTTPException(status_code=400, detail=f"Required persisted artifact '{aid}' was not found in research store")
+                    if tenant_id and stored.get("tenant_id") and stored["tenant_id"] != tenant_id:
+                        raise HTTPException(status_code=403, detail=f"Unauthorized access to artifact '{aid}' across tenant boundary")
+                    resolved_artifacts.append(stored)
+            else:
+                task_id = str(plan.get("task_id") or (run_record.get("task_id") if run_record else "") or "")
+                raw_deps = stage.get("dependencies") or stage.get("depends_on") or []
+                deps = {str(d) for d in (raw_deps if isinstance(raw_deps, (list, tuple, set)) else [raw_deps]) if d}
+                c_runs = [r for r in store.list_runs() if str(r.get("task_id") or "") == task_id and str(r.get("run_id") or "") != str(run_id)]
+                if deps: c_runs = [r for r in c_runs if str(r.get("stage_id") or "") in deps]
+                seen_ids = set()
+                for c_run in c_runs:
+                    for aref in c_run.get("artifact_refs") or []:
+                        aid = aref.get("artifact_id") if isinstance(aref, dict) else str(aref)
+                        if aid and aid not in seen_ids and (stored := store.get_artifact(aid)):
+                            seen_ids.add(aid); resolved_artifacts.append(stored)
+                if not resolved_artifacts and task_id:
+                    for art in store.list_artifacts():
+                        aid = art.get("artifact_id") or art.get("id")
+                        if aid and aid not in seen_ids and str(art.get("task_id") or "") == task_id and str(art.get("run_id") or "") != str(run_id):
+                            seen_ids.add(aid); resolved_artifacts.append(art)
+
+            if not resolved_artifacts:
+                raise HTTPException(status_code=400, detail=f"Missing required persisted input artifacts for stage '{stage_type}'")
 
             if use_real and client.configured:
                 res = client.invoke_structured_extraction(
                     prompt=f"Synthesize research evidence and produce an interpretation report for research run {run_id} across artifacts: {json.dumps(resolved_artifacts, default=str)}",
-                    extraction_schema={
-                        "type": "object", "required": ["summary", "interpretation", "recommendation"],
-                        "properties": {"summary": {"type": "string"}, "interpretation": {"type": "string"}, "recommendation": {"type": "string"}, "confidence_score": {"type": "number"}},
-                    },
+                    extraction_schema={"type": "object", "required": ["summary", "interpretation", "recommendation"], "properties": {"summary": {"type": "string"}, "interpretation": {"type": "string"}, "recommendation": {"type": "string"}, "confidence_score": {"type": "number"}}},
                     operator_id=executor or "operator", trace_id=correlation_id,
                 )
                 data = res.get("data") if isinstance(res, dict) else None
                 report_data = (data.get("output") or {}).get("structured_data") if isinstance(data, dict) else None
-                if not isinstance(report_data, dict): report_data = res
+                if not isinstance(report_data, dict) or not all(k in report_data and report_data[k] for k in ["summary", "interpretation", "recommendation"]):
+                    raise HTTPException(status_code=502, detail=f"Structured agent provider returned invalid extraction output: {res}")
                 provenance = "real"
             else:
                 provenance = "simulation"
@@ -2478,7 +2499,7 @@ def execute_research_stage(
             metrics = [
                 {"metric": "evidence_completeness", "value": 1.0, "provenance": provenance},
                 {"metric": "artifacts_analyzed", "value": float(len(resolved_artifacts)), "provenance": provenance},
-                {"metric": "synthesis_confidence", "value": float(report_data.get("confidence_score", 0.9)), "provenance": provenance},
+                {"metric": "synthesis_confidence", "value": float(report_data.get("confidence_score", 0.9) if isinstance(report_data.get("confidence_score"), (int, float)) else 0.9), "provenance": provenance},
             ]
         except OpenClawOpsClientError as exc:
             _persist_failure(exc)
@@ -2540,7 +2561,7 @@ def execute_research_stage(
             or latest_run.get("cancellation_fence")
             or (task_rec and (str(task_rec.get("status") or "").lower() in {"canceled", "cancelled"} or task_rec.get("cancellation_fence")))
         ):
-            store._put_record(exec_storage_path, idempotency_key, {"status": "canceled", "updated_at": utc_now()})
+            store._put_record(exec_storage_path, stage_claim_key, {"status": "canceled", "updated_at": utc_now()})
             _stage_execution_cond.notify_all()
             raise HTTPException(status_code=409, detail=f"Research run '{run_id}' is in terminal status or canceled and cannot be marked completed")
 
@@ -2556,7 +2577,9 @@ def execute_research_stage(
             "artifact_id": artifact_id, "artifact_digest": digest, "artifact_refs": [artifact_ref_entry], "artifacts": [artifact_ref_entry],
             "checksums": {artifact_id: digest, f"artifact://{artifact_id}": digest}, "metrics": metrics, "receipt": receipt,
         }
-        store._put_record(exec_storage_path, idempotency_key, result)
+        store._put_record(exec_storage_path, stage_claim_key, result)
+        for tk in transport_keys:
+            store._put_record(exec_storage_path, f"agora-transport-key:{tk}", {"run_id": run_id, "stage_id": stage_id, "stage_type": stage_type})
         _stage_execution_cond.notify_all()
         return result
 

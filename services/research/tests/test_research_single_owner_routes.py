@@ -789,12 +789,18 @@ def test_concurrent_stage_executions_deduplicate_to_single_effect(monkeypatch: p
     monkeypatch.setattr(research_main, "store", store)
     from services.research.quantlib.adapter import quantlib_adapter
     original = quantlib_adapter.run_quantlib_workflow
-    barrier = threading.Barrier(2, timeout=10)
+    entered = threading.Event()
+    release = threading.Event()
+    second_entered = threading.Event()
     calls = []
 
     def synchronized_workflow(*args: Any, **kwargs: Any) -> Any:
         calls.append(1)
-        barrier.wait()
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(5)
+        else:
+            second_entered.set()
         return original(*args, **kwargs)
 
     monkeypatch.setattr(quantlib_adapter, "run_quantlib_workflow", synchronized_workflow)
@@ -812,12 +818,15 @@ def test_concurrent_stage_executions_deduplicate_to_single_effect(monkeypatch: p
         "plan": {"plan_id": "same-plan"},
         "dataset": _make_sample_quantlib_dataset(),
         "run_id": run["run_id"], "correlation_id": "same-correlation",
-        "idempotency_key": "same-key",
     }
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(client.post, "/api/research-orchestrator/stages/derivatives_pricing_risk/execute", json=body) for _ in range(2)]
-        replies = [f.result(timeout=15) for f in futures]
+        first = pool.submit(client.post, "/api/research-orchestrator/stages/derivatives_pricing_risk/execute", json={**body, "downstream_key": "worker-key"})
+        assert entered.wait(5)
+        second = pool.submit(client.post, "/api/research-orchestrator/stages/derivatives_pricing_risk/execute", json={**body, "idempotency_key": "http-replay-key"})
+        second_entered.wait(1)
+        release.set()
+        replies = [first.result(timeout=15), second.result(timeout=15)]
     assert [r.status_code for r in replies] == [200, 200]
     artifacts = store.list_artifacts()
     assert len(calls) == 1
@@ -826,9 +835,97 @@ def test_concurrent_stage_executions_deduplicate_to_single_effect(monkeypatch: p
     assert replies[0].json()["artifact_id"] == replies[1].json()["artifact_id"]
 
 
-def test_evidence_synthesis_resolves_artifacts_and_reaches_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_transport_key_conflict_rejects_different_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     store = research_main.build_research_orchestrator_store(str(tmp_path / "owner"))
     monkeypatch.setattr(research_main, "store", store)
+    monkeypatch.setenv("PANTHEON_QUANTLIB_BACKEND", "stub")
+    from services.research.tests.test_research_orchestrator_http_service import _make_sample_quantlib_dataset
+    client = TestClient(research_main.app)
+    body1 = {
+        "stage": {"stage_id": "s1", "stage_type": "derivatives_pricing_risk"},
+        "plan": {"plan_id": "p1"}, "dataset": _make_sample_quantlib_dataset(),
+        "run_id": "r1", "correlation_id": "c1", "downstream_key": "shared-worker-key",
+    }
+    r1 = client.post("/api/research-orchestrator/stages/derivatives_pricing_risk/execute", json=body1)
+    assert r1.status_code == 200
+
+    body2 = {
+        "stage": {"stage_id": "s1", "stage_type": "derivatives_pricing_risk"},
+        "plan": {"plan_id": "p1"}, "dataset": _make_sample_quantlib_dataset(),
+        "run_id": "r2", "correlation_id": "c2", "downstream_key": "shared-worker-key",
+    }
+    r2 = client.post("/api/research-orchestrator/stages/derivatives_pricing_risk/execute", json=body2)
+    assert r2.status_code == 409
+    assert "already bound" in r2.json()["detail"].lower()
+
+
+def test_duplicate_request_does_not_release_unrelated_barrier(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store = research_main.build_research_orchestrator_store(str(tmp_path / "owner"))
+    monkeypatch.setattr(research_main, "store", store)
+    monkeypatch.setenv("PANTHEON_QUANTLIB_BACKEND", "stub")
+    from services.research.quantlib.adapter import quantlib_adapter
+    backend_entered, release_backend, unrelated_released = threading.Event(), threading.Event(), threading.Event()
+    unrelated_barrier = threading.Barrier(2, timeout=5)
+    original = quantlib_adapter.run_quantlib_workflow
+
+    def unrelated_work():
+        barrier = unrelated_barrier
+        try:
+            barrier.wait()
+            unrelated_released.set()
+        except threading.BrokenBarrierError:
+            pass
+
+    def backend(*args, **kwargs):
+        backend_entered.set()
+        assert release_backend.wait(5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(quantlib_adapter, "run_quantlib_workflow", backend)
+    from services.research.tests.test_research_orchestrator_http_service import _make_sample_quantlib_dataset
+    body = {"stage": {"stage_id": "s1"}, "plan": {"plan_id": "p1"}, "run_id": "r1",
+            "dataset": _make_sample_quantlib_dataset(), "correlation_id": "c1"}
+    client = TestClient(research_main.app)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        unrelated = pool.submit(unrelated_work)
+        first = pool.submit(client.post, "/api/research-orchestrator/stages/derivatives_pricing_risk/execute", json=body)
+        assert backend_entered.wait(5)
+        second = pool.submit(client.post, "/api/research-orchestrator/stages/derivatives_pricing_risk/execute", json=body)
+        interfered = unrelated_released.wait(1)
+        release_backend.set()
+        unrelated_barrier.abort()
+        assert [first.result(timeout=5).status_code, second.result(timeout=5).status_code] == [200, 200]
+        unrelated.result(timeout=5)
+    assert not interfered, "Production request released an unrelated thread barrier by scanning its stack"
+
+
+def test_evidence_synthesis_resolves_artifacts_and_reaches_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient
+    store = research_main.build_research_orchestrator_store(str(tmp_path / "owner"))
+    monkeypatch.setattr(research_main, "store", store)
+    monkeypatch.setenv("PANTHEON_OPENCLAW_BACKEND", "real")
+    monkeypatch.delenv("PANTHEON_OPENCLAW_UNAVAILABLE", raising=False)
+    monkeypatch.setattr(OpenClawOpsClient, "configured", property(lambda self: True))
+    calls = []
+
+    def fake_extraction(self, **kwargs):
+        calls.append(kwargs)
+        return {
+            "data": {
+                "output": {
+                    "structured_data": {
+                        "summary": "Synthesized evidence indicates positive risk profile",
+                        "interpretation": "Strong Sharpe ratio 1.8 across historical tests",
+                        "recommendation": "accept",
+                        "confidence_score": 0.94,
+                    }
+                }
+            }
+        }
+
+    monkeypatch.setattr(OpenClawOpsClient, "invoke_structured_extraction", fake_extraction)
+
     store.put_artifact({
         "artifact_id": "art-prior-1", "id": "art-prior-1", "run_id": "prior-run",
         "artifact_family": "prototype_backtest_artifact", "payload": {"summary": "sharpe 1.8"},
@@ -836,28 +933,87 @@ def test_evidence_synthesis_resolves_artifacts_and_reaches_provider(monkeypatch:
     client = TestClient(research_main.app)
     task = client.post("/api/research-orchestrator/tasks", json={"title": "synth", "objective": "synthesis"}).json()
     run = client.post(f"/api/research-orchestrator/tasks/{task['task_id']}/runs", json={
-        "adapter": "openclaw_result_synthesis", "requested_mode": "stub", "dispatch_mode": "stub",
+        "adapter": "openclaw_result_synthesis", "requested_mode": "real", "dispatch_mode": "real",
         "input_refs": [{"type": "stage", "id": "stage-synth"}],
         "idempotency_key": "synth-run",
     }).json()
 
     response = client.post("/api/research-orchestrator/stages/evidence_synthesis/execute", json={
         "stage": {"stage_id": "stage-synth", "stage_type": "evidence_synthesis"},
-        "plan": {"plan_id": "plan-synth"},
+        "plan": {"plan_id": "plan-synth", "task_id": task["task_id"]},
         "run_id": run["run_id"],
         "correlation_id": "corr-synth",
+        "requested_mode": "real",
         "artifact_refs": [{"artifact_id": "art-prior-1"}],
     })
     assert response.status_code == 200
     res_data = response.json()
     assert res_data["status"] == "succeeded"
+    assert res_data["provenance"] == "real"
     assert res_data["receipt"]["executor"]
     assert res_data["artifact_id"]
     art = store.get_artifact(res_data["artifact_id"])
     assert art is not None
+    assert art["provenance"] == "real"
     assert art["payload"]["synthesized_by"] == "openclaw_result_synthesis"
     assert len(art["payload"]["input_artifacts"]) == 1
     assert art["payload"]["input_artifacts"][0]["artifact_id"] == "art-prior-1"
+    assert len(calls) == 1
+    assert "sharpe 1.8" in calls[0]["prompt"]
+
+
+def test_real_synthesis_rejects_missing_persisted_artifact(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient
+    store = research_main.build_research_orchestrator_store(str(tmp_path / "owner"))
+    monkeypatch.setattr(research_main, "store", store)
+    monkeypatch.setenv("PANTHEON_OPENCLAW_BACKEND", "real")
+    monkeypatch.delenv("PANTHEON_OPENCLAW_UNAVAILABLE", raising=False)
+    monkeypatch.setattr(OpenClawOpsClient, "configured", property(lambda self: True))
+    calls = []
+
+    def provider(self, **kwargs):
+        calls.append(kwargs)
+        return {"data": {"output": {"structured_data": {"summary": "report", "interpretation": "no evidence", "recommendation": "reject"}}}}
+
+    monkeypatch.setattr(OpenClawOpsClient, "invoke_structured_extraction", provider)
+    response = TestClient(research_main.app).post("/api/research-orchestrator/stages/evidence_synthesis/execute", json={
+        "stage": {"stage_id": "s1"}, "plan": {"plan_id": "p1"}, "run_id": "r1",
+        "correlation_id": "c1", "requested_mode": "real", "artifact_refs": [{"artifact_id": "does-not-exist"}],
+    })
+    assert response.status_code != 200, f"missing artifact accepted: {response.json()}, provider_calls={len(calls)}"
+    assert len(calls) == 0
+
+
+def test_evidence_synthesis_resolves_predecessor_artifacts_from_plan(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store = research_main.build_research_orchestrator_store(str(tmp_path / "owner"))
+    monkeypatch.setattr(research_main, "store", store)
+    task_id = "task-dag-synth"
+    store.put_task({"task_id": task_id, "title": "DAG task"})
+    store.put_artifact({
+        "artifact_id": "art-dep-1", "id": "art-dep-1", "run_id": "r-prior", "task_id": task_id,
+        "stage_id": "stage-prior", "artifact_family": "backtest_artifact", "payload": {"metric": "val"},
+    })
+    store.put_run({
+        "run_id": "r-prior", "id": "r-prior", "task_id": task_id, "stage_id": "stage-prior",
+        "status": "completed", "artifact_refs": [{"artifact_id": "art-dep-1"}],
+    })
+    store.put_run({
+        "run_id": "r-synth", "id": "r-synth", "task_id": task_id, "stage_id": "stage-synth",
+        "status": "queued", "requested_mode": "stub",
+    })
+    client = TestClient(research_main.app)
+    response = client.post("/api/research-orchestrator/stages/evidence_synthesis/execute", json={
+        "stage": {"stage_id": "stage-synth", "stage_type": "evidence_synthesis", "dependencies": ["stage-prior"]},
+        "plan": {"plan_id": "plan-dag", "task_id": task_id},
+        "run_id": "r-synth", "correlation_id": "c-synth", "requested_mode": "stub",
+    })
+    assert response.status_code == 200
+    res_data = response.json()
+    assert res_data["status"] == "succeeded"
+    art = store.get_artifact(res_data["artifact_id"])
+    assert art is not None
+    assert len(art["payload"]["input_artifacts"]) == 1
+    assert art["payload"]["input_artifacts"][0]["artifact_id"] == "art-dep-1"
 
 
 def test_evidence_synthesis_unavailable_provider_fails_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
