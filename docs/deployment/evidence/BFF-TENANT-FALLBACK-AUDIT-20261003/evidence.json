@@ -82,6 +82,18 @@
       "caller_proof": "Only called by background worker InteractionWorker.drain_outbox (agora/interaction/worker.py:170); records without tenant/user are skipped; no request-reachable HTTP route exists."
     },
     {
+      "site": "services/control-plane/bff/agora/research/service.py:1249 (list_candidate_discussions)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope",
+      "caller_proof": "Mounted callers in agora/research/routes/candidates.py:379 and :445 resolve scope via ctx.read_scope / resolve_agora_user_scope which fails closed with 403 on missing tenant claims under strict JWT auth; tenant_id kwarg is omitted by routes so scope.tenant_id is always used; pool access is verified via require_pool_access(pool, scope) before listing discussions."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:131, :149 (get_plan, update_plan caller-None guards)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope / dispatcher / service",
+      "caller_proof": "Callers in research/service.py and research/dispatcher.py pass verified scope.tenant_id. HTTP routes (agora/research/routes/common.py, candidates.py) resolve scope via ctx.read_scope / resolve_agora_user_scope which validates JWT tenant claims and denies tenantless callers with 403 before calling store; store internal methods default tenant_id to None only when called within already-authorized boundaries."
+    },
+    {
       "site": "services/control-plane/bff/command_adapters/evolution_adapter.py:289",
       "disposition": "fixed",
       "trusted_source": "verified JWT tenant claim of auth_token",
@@ -112,10 +124,10 @@
       "caller_proof": "Tenantless multi-tenant token without X-Tenant-Id -> 400 TENANT_REQUIRED; :381 is storage-row label for aggregate JSON blob."
     },
     {
-      "site": "services/control-plane/bff/personas/service.py:2338 and :3330 -- REPORT ONLY",
+      "site": "services/control-plane/bff/personas/service.py:2263, :2294, :2338 and :3330 -- REPORT ONLY",
       "disposition": "finding, not edited",
       "trusted_source": "caller identity where passed",
-      "note": "Empty tenant lists all personas in snapshot and skips foreign session filtering; file is owned by concurrent tasks per contract AC4. Reproduced by test_reproduction_personas_service_report_only_finding in test_tenant_fallback_audit.py."
+      "note": "Empty tenant lists all personas in snapshot and skips foreign session filtering; at :2263 falls back to store.list_all() and at :2294 skips isolation when tenant_id is empty; file is owned by concurrent tasks per contract AC4. Reproduced by test_reproduction_personas_service_report_only_finding in test_tenant_fallback_audit.py."
     },
     {
       "site": "services/control-plane/bff/command_adapters/runtime_adapter.py:148, :232-234 (_execute_pause)",
@@ -130,16 +142,16 @@
       "note": "The `tenant_id and` guard skipped isolation check when caller tenant was empty; tenant-owned persona now returns None for empty or foreign tenant."
     },
     {
-      "site": "services/control-plane/bff/management_read_models/router.py:274-336 (_extract_tenant_id) and :1729 (/bff/management/risk-radar)",
+      "site": "services/control-plane/bff/management_read_models/router.py:274-336 (_extract_tenant_id) and :1708, :1942 (/bff/management/risk-radar, /bff/management/operations-read-model/{persona_id})",
       "disposition": "fixed",
-      "trusted_source": "authenticated caller identity claims/tenant_id and allowed_tenants",
-      "note": "Removed display fallbacks to bff_me_tenant_payload, PANTHEON_BFF_TENANT_ID, and 'pantheon-dev'. Authenticated caller identity is sole authority; missing verified tenant fails closed with 403 before service/store call. Mounted signed-JWT tests cover missing/foreign/same controls for custom tenant, built-in ('pantheon-dev'), and environment defaults."
+      "trusted_source": "authenticated caller identity claims/tenant_id and tenant_payload_fn",
+      "note": "Delegates to tenant_payload_fn (bff_me_tenant_payload) to resolve authorized defaults for authenticated multi-tenant callers, while ensuring tenantless callers fail closed with 403. Fallback extracts claim_tenant and allowed_tenants, selecting configured default only when explicitly authorized in allowed_tenants; tenantless callers fail closed with 403. Mounted signed-JWT tests cover missing/foreign/same controls for custom tenant, built-in ('pantheon-dev'), environment defaults, and multi-tenant authorized defaults."
     },
     {
-      "site": "services/control-plane/bff/agora/interaction/store.py:1170",
-      "disposition": "proven safe",
+      "site": "services/control-plane/bff/agora/interaction/store.py:1170, :1205 (lease_next)",
+      "disposition": "proven safe (background-only exception)",
       "trusted_source": "none needed: no request-scoped caller",
-      "caller_proof": "Only caller is agora/interaction/worker.py from background run_loop; no mounted route passes caller tenant."
+      "caller_proof": "Method lease_next in interaction/store.py is internal queue scheduling for interaction request processing, called exclusively by background worker loop without HTTP request exposure; tenant_id is an optional lease-scoping filter, not an authentication boundary or request-time tenant authority."
     },
     {
       "site": "services/control-plane/bff/ports/read_surface_ports.py:40, 48, 56",
@@ -228,8 +240,8 @@
     "test_mounted_research_run_dispatch_scopes_to_the_jwt_tenant: POST /bff/agora/research-plans/{id}/runs (tenantless JWT fails closed with 403, 0 runs under built-in 'pantheon-dev' and active env default 'tenant-a'; foreign -> 404, 0 runs; same-tenant -> 202, 1 run).",
     "test_readiness_route_denies_tenantless_jwt_authority_under_all_defaults: GET /bff/agora/operational-readiness (tenantless JWT fails closed to scope=None under built-in 'pantheon-dev' and active env default 'tenant-a'; returns only public/shared rows with 0 disclosures of private tenant rows).",
     "test_reproduction_personas_service_report_only_finding: reproduction test for personas/service.py:2338 and :3330 confirming that empty caller tenant bypasses foreign tenant filtering while explicit tenant authority isolates records; marked report-only per AC4.",
-    "test_mounted_operations_read_model_route_scopes_to_the_jwt_tenant: GET /bff/management/operations-read-model/{id} (tenantless JWT under custom, built-in 'pantheon-dev', and active env 'custom-default' -> 403; foreign -> 404/200; same -> 200; nested tenant/organization claims -> 200).",
-    "test_mounted_risk_radar_scopes_to_the_jwt_tenant: GET /bff/management/risk-radar (tenantless JWT -> 403 before store; foreign -> 200 without Persona B; same -> 200 with Persona B).",
+    "test_mounted_operations_read_model_route_scopes_to_the_jwt_tenant: GET /bff/management/operations-read-model/{id} (tenantless JWT under custom, built-in 'pantheon-dev', and active env 'custom-default' -> 403; foreign -> 404/200; same -> 200; nested tenant/organization claims -> 200; multi-tenant authorized active default -> 200, foreign -> 404, absent -> 403).",
+    "test_mounted_risk_radar_scopes_to_the_jwt_tenant: GET /bff/management/risk-radar (tenantless JWT -> 403 before store; foreign -> 200 without Persona B; same -> 200 with Persona B; multi-tenant authorized active default -> 200 with Persona A only).",
     "test_mounted_strategy_command_route_with_tenant_enforcing_owner: mounted POST /bff/v1/commands StrategyAction with tenant-enforcing owner (absent -> 0 writes; foreign -> 0 writes; same -> 202, 1 write).",
     "test_mounted_workspace_route_scopes_to_the_jwt_tenant: mounted GET /bff/agora/trading-room/workspaces/{id} (absent tenant in JWT claims -> 403, zero data disclosed; foreign tenant -> 403; same tenant -> 200).",
     "test_authorized_configured_default_is_not_replaced_by_allowlist_order: mounted GET /bff/agora/performance/action-receipts/{id} with multi-tenant allowed_tenants selects active configured default (PANTHEON_BFF_TENANT_ID) over allowlist position -> 200.",

@@ -1007,6 +1007,24 @@ def test_mounted_operations_read_model_route_scopes_to_the_jwt_tenant(monkeypatc
     )
     assert client.get(url_b, headers={"Authorization": f"Bearer {nested_org_tok}"}).status_code == 200
 
+    # 6. Multi-tenant caller with authorized default selection: missing/foreign/same controls
+    multi_tok = encode_jwt_hs256(
+        {
+            "sub": "multi-operator", "roles": ["operator"],
+            "allowed_tenants": ["tenant-dev", "pantheon-dev", "pantheon-local"],
+            "iss": _ISSUER, "aud": _AUDIENCE, "iat": now, "exp": now + 3600,
+        },
+        secret=_SECRET,
+    )
+    multi_headers = {"Authorization": f"Bearer {multi_tok}"}
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "pantheon-dev")
+    # Same tenant (p-dev is pantheon-dev which is authorized active default): returns 200
+    assert client.get("/bff/management/operations-read-model/p-dev", headers=multi_headers).status_code == 200
+    # Foreign tenant (p1 belongs to tenant-b, not in allowed_tenants): returns 404
+    assert client.get("/bff/management/operations-read-model/p1", headers=multi_headers).status_code == 404
+    # Missing tenant authority fails closed with 403
+    assert client.get("/bff/management/operations-read-model/p-dev", headers=_jwt_without_tenant()).status_code == 403
+
 
 def test_mounted_risk_radar_scopes_to_the_jwt_tenant(monkeypatch):
     from services.control_plane.bff.auth.policy import bff_me_tenant_payload
@@ -1052,6 +1070,23 @@ def test_mounted_risk_radar_scopes_to_the_jwt_tenant(monkeypatch):
     assert res_b.status_code == 200
     rows_b = {r["persona_id"]: r["persona_label"] for r in (res_b.json().get("data") or {}).get("items", [])}
     assert rows_b.get("p-b") == "Persona B"
+
+    # 4. Multi-tenant caller with authorized default selection:
+    multi_radar_tok = encode_jwt_hs256(
+        {
+            "sub": "multi-operator", "roles": ["operator"],
+            "allowed_tenants": ["tenant-a", "pantheon-local"],
+            "iss": _ISSUER, "aud": _AUDIENCE, "iat": int(time.time()), "exp": int(time.time()) + 3600,
+        },
+        secret=_SECRET,
+    )
+    multi_radar_headers = {"Authorization": f"Bearer {multi_radar_tok}"}
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-a")
+    res_multi = client.get("/bff/management/risk-radar", headers=multi_radar_headers)
+    assert res_multi.status_code == 200
+    rows_multi = {r["persona_id"]: r["persona_label"] for r in (res_multi.json().get("data") or {}).get("items", [])}
+    assert rows_multi.get("p-a") == "Persona A"
+    assert rows_multi.get("p-b") != "Persona B"
 
 
 def test_mounted_strategy_command_route_with_tenant_enforcing_owner(mounted, monkeypatch):
