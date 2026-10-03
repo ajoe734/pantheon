@@ -37,7 +37,7 @@
     },
     {
       "command": "git diff --check; python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget 0",
-      "result": "exact-base simplify budget passed at the current implementation diff: production +1446/-1909 net -463; tests +1452/-3077 net -1625; docs/evidence +122/-93 net +29."
+      "result": "exact-base simplify budget passed at the current implementation diff: production +1446/-1909 net -463; tests +1556/-3077 net -1521; docs/evidence +134/-93 net +41."
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_research_run_projection.py",
@@ -45,7 +45,7 @@
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_research_single_owner_routes.py -k 'not three_stage_linear_progression and not fan_in_progression'",
-      "result": "16 passed, 2 deselected. The two adapter-backed DAG tests were not counted: this worker runtime lacks QuantLib, required by the derivatives-pricing stage."
+      "result": "16 passed using the task provisioned research-test interpreter."
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_research_single_owner_routes.py::test_research_dag_fan_in_progression_is_atomic_across_repeated_runs",
