@@ -400,3 +400,38 @@ def test_readback_resolved_201_is_treated_as_created(tmp_path):
     assert len(state["created"]) == 1
     assert "pending" not in state["requests"]["p1|frozen"]
     assert state["results"][f"{QUARTER}|snap-1"]["items"][0]["governance_request"] is not None
+
+
+def test_token_files_are_read_every_run_and_env_is_only_the_fallback(tmp_path, monkeypatch):
+    path = tmp_path / "TOKEN"
+    monkeypatch.setenv("T", "env-token")
+    assert pea.read_token("T") == "env-token"
+    monkeypatch.setenv("T_FILE", str(path))
+    path.write_text("first\n")
+    assert pea.read_token("T") == "first"
+    path.write_text("rotated\n")
+    assert pea.read_token("T") == "rotated"
+    path.unlink()
+    with pytest.raises(pea.Degraded):
+        pea.read_token("T")
+    path.write_text("")
+    with pytest.raises(pea.Degraded):
+        pea.read_token("T")
+
+
+def test_main_uses_rotated_token_and_records_missing_file_as_degraded(tmp_path, monkeypatch):
+    bff, gov = tmp_path / "bff", tmp_path / "gov"
+    bff.write_text("bff-1"), gov.write_text("gov-1")
+    seen = []
+    monkeypatch.setattr(pea, "serve", lambda *a: None)
+    monkeypatch.setattr(pea, "run_once", lambda **kw: seen.append((kw["bff_headers"], kw["governance_token"])) or {"status": "ok"})
+    for key, value in {"PERSONA_EVALUATOR_BFF_TOKEN_FILE": bff, "PERSONA_EVALUATOR_GOVERNANCE_TOKEN_FILE": gov,
+                       "PERSONA_EVALUATOR_STATE_PATH": tmp_path / "state.json", "PERSONA_EVALUATOR_ONCE": "1"}.items():
+        monkeypatch.setenv(key, str(value))
+    pea.main()
+    bff.write_text("bff-2"), gov.write_text("gov-2")
+    pea.main()
+    gov.unlink()
+    pea.main()
+    assert seen == [({"Authorization": "Bearer bff-1"}, "gov-1"), ({"Authorization": "Bearer bff-2"}, "gov-2")]
+    assert pea.Store(tmp_path / "state.json").load()["last_run"]["status"] == "degraded"

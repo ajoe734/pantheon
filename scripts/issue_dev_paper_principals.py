@@ -38,11 +38,18 @@ READERS = {
     "CAPITAL_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-capital-approval-reader", "approval_reader"),
     "EVOLUTION_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-evolution-approval-reader", "approval_reader"),
     "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-registry-reader", "registry-reader"),
+    "PERSONA_EVALUATOR_BFF_TOKEN": ("pantheon-dev-persona-evaluator-bff-reader", "viewer"),
 }
 WRITERS = {
     "DISTILLATION_REGISTRY_SERVICE_TOKEN": (
         "pantheon-dev-distillation-registry-writer",
         "registry-writer",
+        "pantheon:dev-owner-write",
+    ),
+    # Subject is the evaluator's owner/actor id; propose-only, no decide/revoke role.
+    "PERSONA_EVALUATOR_GOVERNANCE_TOKEN": (
+        "persona-evaluator-agent",
+        "approval_proposer",
         "pantheon:dev-owner-write",
     ),
 }
@@ -61,6 +68,7 @@ CONSUMER_FILES = {
     "operator-bff": ("PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN",),
     "strategy-distillation-worker": ("DISTILLATION_REGISTRY_SERVICE_TOKEN",),
     "alpha-replication-worker": ("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN",),
+    "persona-evaluator-agent": ("PERSONA_EVALUATOR_BFF_TOKEN", "PERSONA_EVALUATOR_GOVERNANCE_TOKEN"),
 }
 REFRESH_SECONDS = 60 * 60
 

@@ -63,3 +63,25 @@ def test_tenant_bound_credential_is_never_sent_for_another_tenant(transport):
     with pytest.raises(RuntimeError, match="tenant-dev only"):
         client.get("governance", "/api/governance/approvals/a")
     assert not requests
+
+
+def test_evaluator_bff_principal_reads_ranking_but_cannot_write(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    from services.control_plane.bff.test_bff_management_delta_routes import _build_app, ManagementDeltaTestReadPorts
+
+    for key, value in {"PANTHEON_BFF_AUTH_STUB": "false", "PANTHEON_BFF_AUTH_MODE": "strict",
+                       "PANTHEON_BFF_JWT_SECRET": "synthetic-transport-verifier-secret-0001",
+                       "PANTHEON_BFF_JWT_ISSUER": "test-issuer", "PANTHEON_BFF_JWT_AUDIENCE": "test-audience"}.items():
+        monkeypatch.setenv(key, value)
+    minted = issue_environment({
+        "PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
+        "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true",
+        "PANTHEON_DEV_BFF_JWT_SECRET": "synthetic-transport-verifier-secret-0001",
+        "PANTHEON_DEV_BFF_JWT_ISSUER": "test-issuer", "PANTHEON_DEV_BFF_JWT_AUDIENCE": "test-audience",
+    })
+    headers = {"Authorization": "Bearer " + minted["PERSONA_EVALUATOR_BFF_TOKEN"]}
+    client = TestClient(_build_app(ManagementDeltaTestReadPorts(allow_fallback=True)), raise_server_exceptions=False)
+    assert client.get("/bff/management/quarterly-ranking", headers=headers, params={"quarter": "2026-Q1"}).status_code == 200
+    denied = client.post("/bff/management/quarterly-ranking/recommendations/r1/submit",
+                         headers={**headers, "Idempotency-Key": "evaluator-denied"}, json={"quarter": "2026-Q1"})
+    assert denied.status_code == 403

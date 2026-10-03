@@ -407,20 +407,44 @@ def serve(store: Store, token: str, port: int) -> ThreadingHTTPServer:
     return server
 
 
+def read_token(name: str) -> str:
+    """Token file (re-read every run so rotation needs no restart); env only without a file path."""
+    path = os.environ.get(name + "_FILE")
+    if not path:
+        return os.environ.get(name, "")
+    try:
+        token = Path(path).read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise Degraded(f"{name} file unreadable") from exc
+    if not token:
+        raise Degraded(f"{name} file empty")
+    return token
+
+
 def main() -> None:
     env = os.environ.get
     store = Store(Path(env("PERSONA_EVALUATOR_STATE_PATH", "/data/persona-evaluator-agent/state.json")))
     serve(store, env("PERSONA_EVALUATOR_READ_TOKEN", ""), int(env("PERSONA_EVALUATOR_PORT", "8105")))
     interval = float(env("PERSONA_EVALUATOR_INTERVAL_SECONDS", "900"))
     while True:
+        try:
+            bff_token, governance_token = read_token("PERSONA_EVALUATOR_BFF_TOKEN"), read_token("PERSONA_EVALUATOR_GOVERNANCE_TOKEN")
+        except Degraded as exc:
+            record = {"status": "degraded", "reason": str(exc), "created": 0, "at": datetime.now(timezone.utc).isoformat()}
+            store.update(lambda s: s.update(last_run=record))
+            print(json.dumps(record), flush=True)
+            if env("PERSONA_EVALUATOR_ONCE"):
+                return
+            time.sleep(interval)
+            continue
         record = run_once(
             store=store,
             bff_url=env("PERSONA_EVALUATOR_BFF_URL", "http://operator-bff:8001"),
-            bff_headers={"Authorization": f"Bearer {env('PERSONA_EVALUATOR_BFF_TOKEN', '')}"},
+            bff_headers={"Authorization": f"Bearer {bff_token}"},
             adapter_url=env("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-gateway-adapter:8104"),
             adapter_token=env("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", ""),
             governance_url=env("PANTHEON_GOVERNANCE_API_URL", "http://governance:8082"),
-            governance_token=env("PERSONA_EVALUATOR_GOVERNANCE_TOKEN", ""),
+            governance_token=governance_token,
             tenant=env("PANTHEON_TENANT_ID", "default"),
             actor=env("PERSONA_EVALUATOR_ACTOR_ID", "persona-evaluator-agent"),
         )

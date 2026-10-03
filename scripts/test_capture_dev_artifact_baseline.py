@@ -92,6 +92,8 @@ def manifest(identity=None):
             "baseline_nonsecret_config": {
                 "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE": "/run/pantheon-principals/PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN",
                 "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": "pantheon-dev-paper-provisioner",
+                "PERSONA_EVALUATOR_BFF_TOKEN_FILE": "/run/pantheon-principals/PERSONA_EVALUATOR_BFF_TOKEN",
+                "PERSONA_EVALUATOR_GOVERNANCE_TOKEN_FILE": "/run/pantheon-principals/PERSONA_EVALUATOR_GOVERNANCE_TOKEN",
                 **dict.fromkeys(primitive.BASELINE_AUTH_FLAGS, "true")}}
 
 

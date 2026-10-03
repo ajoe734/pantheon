@@ -29,6 +29,8 @@ CONTAINER_FORMAT = '{"image_id":{{json .Image}},"status":{{json .State.Status}},
 BASELINE_PRINCIPAL_CONFIG = {
     "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE": "/run/pantheon-principals/PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN",
     "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": "pantheon-dev-paper-provisioner",
+    "PERSONA_EVALUATOR_BFF_TOKEN_FILE": "/run/pantheon-principals/PERSONA_EVALUATOR_BFF_TOKEN",
+    "PERSONA_EVALUATOR_GOVERNANCE_TOKEN_FILE": "/run/pantheon-principals/PERSONA_EVALUATOR_GOVERNANCE_TOKEN",
 }
 # Historical auth configuration, not defaults for new candidate token issuance.
 # Keep the exact strings (including absence/empty) in the existing sealed manifest.
