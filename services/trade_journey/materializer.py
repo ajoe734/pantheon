@@ -22,6 +22,22 @@ IDENTIFIER_FIELDS = (
     "risk_decision_id", "client_order_id", "order_id", "broker_order_id",
     "fill_id", "broker_trade_id", "ledger_entry_id", "reconciliation_id",
 )
+# Dimensions shared by many journeys; they are read from journeys.current_identity_summary,
+# never bound one-journey-per-value in identity_links.
+SHARED_IDENTIFIER_TYPES = frozenset({
+    "strategy_id", "runtime_id", "binding_id", "capital_pool_id", "persona_id",
+    "persona_capital_binding_id", "artifact_id", "artifact_version", "plan_id",
+})
+
+
+def identity_summary(identity: Mapping[str, Any], identifiers: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Nested journeys.current_identity_summary keeping every shared dimension."""
+    return {"identifiers": {
+        **{name: [identity[name]] for name in SHARED_IDENTIFIER_TYPES if identity.get(name)},
+        **(identifiers or {}),
+    }}
+
+
 CLOCK_DRIFT_THRESHOLD_SECONDS = float(os.getenv("PANTHEON_TRADE_JOURNEY_CLOCK_DRIFT_SECONDS", "5"))
 
 

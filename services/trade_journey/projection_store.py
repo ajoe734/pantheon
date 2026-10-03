@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
+from services.trade_journey.materializer import SHARED_IDENTIFIER_TYPES
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_PROJECTION_SCHEMA = "trade_journey_projection"
@@ -1169,6 +1171,7 @@ class ProjectionStore:
                     for link in mutation.identity_links
                     if (link.tenant_id, link.environment, link.journey_id)
                     in new_journey_keys
+                    and link.identifier_type not in SHARED_IDENTIFIER_TYPES
                 ]
                 effective_journeys = [
                     journey

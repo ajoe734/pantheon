@@ -19,6 +19,7 @@ from uuid import uuid4
 import pytest
 
 from services.trade_journey.lifecycle_projector import STABLE_IDENTITY_FIELDS
+from services.trade_journey.materializer import SHARED_IDENTIFIER_TYPES
 from services.trade_journey.materializer import IDENTIFIER_FIELDS
 from services.trade_journey.projection_store import (
     DEFAULT_PROJECTION_TIMEOUT_SECONDS,
@@ -1964,3 +1965,39 @@ def test_projection_store_connect_timeout_publication_race_controlled_interleavi
     unblock_close.set()
     assert close_finished.wait(timeout=1.0), "connection close was not completed"
     assert conn_instance.closed is True
+
+
+def test_shared_dimensions_do_not_conflict_but_per_journey_ids_do(postgres_dsn: str) -> None:
+    import psycopg  # type: ignore[import]
+
+    schema_name = f"test_proj_{uuid4().hex[:8]}"
+    store = ProjectionStore(postgres_dsn, schema=schema_name)
+    store.bootstrap_schema()
+    now = datetime.now(timezone.utc)
+
+    def batch(seq: int, journey: str, types: tuple[str, ...]) -> BatchProjectionMutation:
+        return BatchProjectionMutation(
+            receipts=[EventReceiptRow(f"evt-{seq}", seq, f"fp-{seq}", "t-1", "paper", journey, "", "opened", now, "applied", seq)],
+            identity_links=[
+                IdentityLinkRow("t-1", "paper", kind, f"{kind}-value", journey, seq, seq, now, now)
+                for kind in types
+            ],
+            new_checkpoint_seq=seq,
+        )
+
+    shared = tuple(sorted(SHARED_IDENTIFIER_TYPES))
+    # Resume case: a row bound by the old code for the first journey already exists.
+    with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            f"INSERT INTO {schema_name}.identity_links VALUES ('t-1','paper','artifact_id','artifact_id-value','j-old',1,1,%s,%s,%s,%s)",
+            (now, now, now, now),
+        )
+    store.execute_batch_transaction("ctrl-1", "t-1", "paper", batch(1, "j-1", shared + ("signal_id",)))
+    store.execute_batch_transaction("ctrl-1", "t-1", "paper", batch(2, "j-2", shared + ("order_id",)))
+    with pytest.raises(IdentityConflictException):
+        store.execute_batch_transaction("ctrl-1", "t-1", "paper", batch(3, "j-3", ("signal_id",)))
+
+    with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+        cur.execute(f"SELECT count(*) FROM {schema_name}.identity_links WHERE identifier_type = ANY(%s)", (list(shared),))
+        assert cur.fetchone()[0] == 1
+        cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
