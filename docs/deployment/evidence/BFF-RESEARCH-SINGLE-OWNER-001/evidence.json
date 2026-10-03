@@ -1,7 +1,7 @@
 {
   "task_id": "BFF-RESEARCH-SINGLE-OWNER-001",
   "environment": "isolated read-only venv ~/pantheon-ci-deploy/runtime/research-test-python/20261003-f9fd19209; no hosted deployment or live capital actions",
-  "independent_review": "Codex2 review rejected PR #6103 head 72e108af6adf64a662031a8611a15b1064fa2e6a. 1) Removed sys._current_frames() stack inspection in services/research/main.py; concurrency synchronization uses standard threading condition notifications and test uses explicit coordination. 2) Stage execution claim key now uses authoritative owner run/stage identity (agora-stage-claim:{run_id}:{stage_id}) across background workers and HTTP entrypoint; transport keys are mapped and checked for conflicting run/stage reuse (returning 409). 3) In evidence_synthesis, missing persisted artifacts fail closed with HTTP 400; predecessor artifacts from candidate runs/artifacts in the same plan are resolved when artifact_refs is omitted; and provider structured output is validated for required summary/interpretation/recommendation fields, returning 502 on malformed response.",
+  "independent_review": "Codex2 review round 2 rejected PR #6103 head 1772cc044ff48ad8dde748971a0c8803bcdab057 with 3 defects reproduced in /tmp/test_codex2_research_round2.py. 1) Tenant isolation: services/research/main.py resolves artifact ownership authoritatively from artifact record, producing run, or producing task (including legacy runs/tasks), failing closed with 403 on tenant mismatch or unknown ownership across both explicit inputs and inferred plan predecessors. Generated artifacts and completed runs explicitly persist tenant_id. 2) Duplicate execution: stage claim derives authoritative stage_id from run record before claiming; rejects missing or mismatched stage_id with 400; builds claim key agora-stage-claim:{run_id}:{stage_id}, preventing unauthenticated duplicate execution. 3) Provider schema: structured output validates required field types (summary, interpretation, recommendation as strings, confidence_score as number), returning 502 and persisting failed claim/run on malformed provider response.",
   "hosted_track": "external_wait per Human/Ops 2026-10-01 decision; no hosted probes performed",
   "design_items": {
     "D1": "services/research/main.py validates execution modes before backend selection; durable off-request stages reconcile completed predecessors at restart, and serialized progression schedules roots/joins without duplicate attempts. Authoritative in_progress execution claim (agora-stage-claim:{run_id}:{stage_id}) serializes concurrent stage execution replays across workers and HTTP callers, guaranteeing single backend call and identical receipt/artifacts, with transport keys tracked and checked for conflict. Cancellation fences survive late worker errors, stale worker starts are fenced atomically, retried runs unblock task fences, and legacy completions are adopted without replay.",
@@ -13,11 +13,11 @@
   "validation": [
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py",
-      "result": "47 passed; includes authoritative stage execution claim deduplication, transport key conflict rejection, evidence synthesis artifact resolution (explicit and plan predecessor) and provider wireup, 503 provider unavailable fail-closed, task cancellation fence against successor progression and restart, failed-stage retry, retry after plan/run cancellation, atomic worker-start fencing, in-flight cancellation fencing, multi-root/fan-in and async dispatch"
+      "result": "50 passed; includes authoritative stage execution claim deduplication, transport key conflict rejection, missing stage_id rejection, artifact tenant isolation resolution and 403 fail-closed rejection, evidence synthesis artifact resolution (explicit and plan predecessor) and provider wireup, provider malformed schema 502 fail-closed, 503 provider unavailable fail-closed, task cancellation fence against successor progression and restart, failed-stage retry, retry after plan/run cancellation, atomic worker-start fencing, in-flight cancellation fencing, multi-root/fan-in and async dispatch"
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q /tmp/test_codex2_research_review.py",
-      "result": "3 passed; covers test_sys_frames_removed, test_stage_claim_identity_authoritative, and test_evidence_synthesis_resolves_and_validates"
+      "command": ".venv-pantheon/bin/python3 -m pytest -q /tmp/test_codex2_research_round2.py",
+      "result": "3 passed; reproduces and verifies Codex2 round 2 review items: test_generated_foreign_artifact_is_rejected (tenant isolation 403), test_omitted_stage_id_cannot_bypass_owner_claim (claim stage deduplication 400), and test_provider_wrong_field_types_are_rejected (provider schema 502)"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
@@ -33,9 +33,9 @@
     },
     {
       "command": "python3 scripts/git/diff_budget.py --base 14eaf55e0528984df21b17a0a64e7a56ceb57708 --change-class simplify --budget 0",
-      "result": "exact-base simplify budget passed (net production -16 lines)"
+      "result": "exact-base simplify budget passed (net production -17 lines)"
     }
   ],
-  "suite_note": "Codex2 review rejection resolved: 1) stack frame inspection removed from services/research/main.py; 2) stage claim key uses agora-stage-claim:{run_id}:{stage_id} with transport key conflict protection; 3) evidence synthesis fails closed on missing artifacts, resolves predecessor artifacts, and validates structured extraction output. All unit and regression suites pass. Net production diff is -16 lines (budget <= 0). Hosted acceptance remains external_wait; no hosted probes performed.",
+  "suite_note": "Codex2 round 2 review rejection resolved: 1) tenant isolation resolves artifact ownership from producing run/task and fails closed (403) on mismatch/unknown ownership across explicit and predecessor artifacts, with tenant_id persisted on artifacts and runs; 2) stage claim derives authoritative stage_id before claiming and rejects missing/mismatched identity with 400; 3) provider structured extraction validates declared schema types and fails closed with 502 on malformed response. All 50 research tests and 3 Codex2 round 2 reproduction tests pass. Net production diff is -17 lines (budget <= 0). Hosted acceptance remains external_wait; no hosted probes performed.",
   "scope": "Source and local isolated functional evidence only; no hosted deployment, hosted probe, or real capital action is claimed."
 }

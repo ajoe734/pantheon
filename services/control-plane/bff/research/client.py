@@ -98,18 +98,9 @@ class ResearchServiceClient:
         return self._call("PATCH", f"/api/research/tickets/{ticket_id}", {"patch": patch, **kw}, allow_none=(404,))
     def get_research_ticket(self, ticket_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self._call("GET", f"/api/research/tickets/{ticket_id}", allow_none=(404,)) if ticket_id else None
-    def list_research_tickets(
-        self,
-        *,
-        statuses: Optional[Any] = None,
-        owner: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        params = []
-        if statuses:
-            values = ",".join(str(status) for status in statuses) if isinstance(statuses, (list, tuple, set)) else statuses
-            params.append(f"status={values}")
-        if owner:
-            params.append(f"owner={owner}")
+    def list_research_tickets(self, *, statuses: Optional[Any] = None, owner: Optional[str] = None) -> List[Dict[str, Any]]:
+        params = [f"status={','.join(str(s) for s in statuses) if isinstance(statuses, (list, tuple, set)) else statuses}"] if statuses else []
+        if owner: params.append(f"owner={owner}")
         query = f"?{'&'.join(params)}" if params else ""
         res = self._call("GET", f"/api/research/tickets{query}", allow_none=(404,))
         return res if isinstance(res, list) else []
@@ -119,19 +110,8 @@ class ResearchServiceClient:
         return self._call("POST", "/api/research/experiments", kwargs) or {}
     def get_research_experiment(self, experiment_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self._call("GET", f"/api/research/experiments/{experiment_id}", allow_none=(404,)) if experiment_id else None
-    def list_research_experiments(
-        self,
-        *,
-        ticket_id: Optional[str] = None,
-        status: Optional[str] = None,
-        include_archived: bool = False,
-    ) -> List[Dict[str, Any]]:
-        filters = (
-            ("ticket_id", ticket_id),
-            ("status", status),
-            ("include_archived", "true" if include_archived else None),
-        )
-        params = [f"{key}={value}" for key, value in filters if value is not None]
+    def list_research_experiments(self, *, ticket_id: Optional[str] = None, status: Optional[str] = None, include_archived: bool = False) -> List[Dict[str, Any]]:
+        params = [f"{k}={v}" for k, v in (("ticket_id", ticket_id), ("status", status), ("include_archived", "true" if include_archived else None)) if v is not None]
         query = f"?{'&'.join(params)}" if params else ""
         res = self._call("GET", f"/api/research/experiments{query}", allow_none=(404,))
         return res if isinstance(res, list) else []
@@ -165,22 +145,17 @@ class ResearchServiceClient:
 
     def list_research_runs(self, *, task_id: Optional[str] = None) -> List[Dict[str, Any]]:
         query = f"?task_id={urllib.parse.quote(task_id, safe='')}" if task_id else ""
-        value = self._call("GET", f"/api/research-orchestrator/runs{query}", allow_none=(404,))
-        return value if isinstance(value, list) else []
+        res = self._call("GET", f"/api/research-orchestrator/runs{query}", allow_none=(404,))
+        return res if isinstance(res, list) else []
 
     def cancel_research_run(self, run_id: str, *, reason: Optional[str] = None) -> Optional[Dict[str, Any]]:
         path = f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}/cancel"
-        return self._call(
-            "POST",
-            path,
-            {"reason": reason or "Research run canceled by operator."},
-            allow_none=(404, 409),
-        )
+        return self._call("POST", path, {"reason": reason or "Research run canceled by operator."}, allow_none=(404, 409))
 
     def get_research_artifacts(self, run_id: str) -> List[Dict[str, Any]]:
         path = f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}/artifacts"
-        value = self._call("GET", path, allow_none=(404,))
-        return value if isinstance(value, list) else []
+        res = self._call("GET", path, allow_none=(404,))
+        return res if isinstance(res, list) else []
 
     # Notes (KW-02)
     def list_research_notes(self) -> List[Dict[str, Any]]:

@@ -2107,8 +2107,20 @@ def execute_research_stage(
         raise HTTPException(status_code=400, detail="Missing required execution field: 'correlation_id'")
 
     exec_storage_path = store.data_dir / "stage_executions.json"
-    stage_id = str(stage.get("stage_id") or "")
-    stage_claim_key = f"agora-stage-claim:{run_id}:{stage_id or stage_type}"
+    run_record = store.get_run(run_id)
+    rec_stage_id = str((run_record or {}).get("stage_id") or "").strip()
+    if run_record and not rec_stage_id:
+        for ref in (run_record.get("input_refs") or []):
+            if isinstance(ref, dict) and ref.get("type") == "stage" and ref.get("id"):
+                rec_stage_id = str(ref["id"]).strip(); break
+    caller_stage_id = str(stage.get("stage_id") or "").strip()
+    if caller_stage_id and rec_stage_id and caller_stage_id != rec_stage_id:
+        raise HTTPException(status_code=400, detail=f"Stage identity mismatch: run '{run_id}' stage '{rec_stage_id}' != '{caller_stage_id}'")
+    stage_id = caller_stage_id or rec_stage_id
+    if not stage_id:
+        raise HTTPException(status_code=400, detail=f"Missing required stage identity: 'stage_id' must be specified in request or derived from stored run '{run_id}'")
+    stage["stage_id"] = stage_id
+    stage_claim_key = f"agora-stage-claim:{run_id}:{stage_id}"
     claim_token = uuid.uuid4().hex
 
     def _persist_failure(exc: Exception) -> None:
@@ -2440,16 +2452,37 @@ def execute_research_stage(
                     detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode",
                 )
             resolved_artifacts = []
+            expected_tenant = str((run_record.get("tenant_id") if run_record else None) or plan.get("tenant_id") or body.get("tenant_id") or "").strip()
+
+            def _resolve_artifact_tenant(art_doc: Dict[str, Any]) -> Optional[str]:
+                if not isinstance(art_doc, dict): return None
+                if tid := art_doc.get("tenant_id"): return str(tid)
+                if p_run_id := art_doc.get("run_id"):
+                    if (p_run := store.get_run(str(p_run_id))) and isinstance(p_run, dict) and p_run.get("tenant_id"):
+                        return str(p_run["tenant_id"])
+                if p_task_id := art_doc.get("task_id"):
+                    if (p_task := store.get_task(str(p_task_id))) and isinstance(p_task, dict) and p_task.get("tenant_id"):
+                        return str(p_task["tenant_id"])
+                return None
+
+            def _validate_artifact_tenant(art_doc: Dict[str, Any], aid: str) -> None:
+                art_tenant = _resolve_artifact_tenant(art_doc)
+                if expected_tenant:
+                    if not art_tenant:
+                        raise HTTPException(status_code=403, detail=f"Unauthorized access to artifact '{aid}' with unknown tenant ownership")
+                    if art_tenant != expected_tenant:
+                        raise HTTPException(status_code=403, detail=f"Unauthorized access to artifact '{aid}' across tenant boundary: '{art_tenant}' != '{expected_tenant}'")
+                elif art_tenant:
+                    raise HTTPException(status_code=403, detail=f"Unauthorized access to tenant-owned artifact '{aid}' from tenantless execution")
+
             if artifact_refs_input:
-                tenant_id = (run_record.get("tenant_id") if run_record else None) or plan.get("tenant_id")
                 for ref in artifact_refs_input:
                     aid = ref.get("artifact_id") or ref.get("id") if isinstance(ref, dict) else str(ref)
                     if not aid: continue
                     stored = store.get_artifact(aid)
                     if not stored:
                         raise HTTPException(status_code=400, detail=f"Required persisted artifact '{aid}' was not found in research store")
-                    if tenant_id and stored.get("tenant_id") and stored["tenant_id"] != tenant_id:
-                        raise HTTPException(status_code=403, detail=f"Unauthorized access to artifact '{aid}' across tenant boundary")
+                    _validate_artifact_tenant(stored, aid)
                     resolved_artifacts.append(stored)
             else:
                 task_id = str(plan.get("task_id") or (run_record.get("task_id") if run_record else "") or "")
@@ -2462,11 +2495,13 @@ def execute_research_stage(
                     for aref in c_run.get("artifact_refs") or []:
                         aid = aref.get("artifact_id") if isinstance(aref, dict) else str(aref)
                         if aid and aid not in seen_ids and (stored := store.get_artifact(aid)):
+                            _validate_artifact_tenant(stored, aid)
                             seen_ids.add(aid); resolved_artifacts.append(stored)
                 if not resolved_artifacts and task_id:
                     for art in store.list_artifacts():
                         aid = art.get("artifact_id") or art.get("id")
                         if aid and aid not in seen_ids and str(art.get("task_id") or "") == task_id and str(art.get("run_id") or "") != str(run_id):
+                            _validate_artifact_tenant(art, str(aid))
                             seen_ids.add(aid); resolved_artifacts.append(art)
 
             if not resolved_artifacts:
@@ -2480,8 +2515,17 @@ def execute_research_stage(
                 )
                 data = res.get("data") if isinstance(res, dict) else None
                 report_data = (data.get("output") or {}).get("structured_data") if isinstance(data, dict) else None
-                if not isinstance(report_data, dict) or not all(k in report_data and report_data[k] for k in ["summary", "interpretation", "recommendation"]):
-                    raise HTTPException(status_code=502, detail=f"Structured agent provider returned invalid extraction output: {res}")
+                is_valid = (
+                    isinstance(report_data, dict)
+                    and isinstance(report_data.get("summary"), str) and bool(report_data["summary"].strip())
+                    and isinstance(report_data.get("interpretation"), str) and bool(report_data["interpretation"].strip())
+                    and isinstance(report_data.get("recommendation"), str) and bool(report_data["recommendation"].strip())
+                    and ("confidence_score" not in report_data or isinstance(report_data["confidence_score"], (int, float)))
+                )
+                if not is_valid:
+                    err = ValueError(f"Structured agent provider returned invalid extraction output schema: {res}")
+                    _persist_failure(err)
+                    raise HTTPException(status_code=502, detail=str(err))
                 provenance = "real"
             else:
                 provenance = "simulation"
@@ -2531,6 +2575,7 @@ def execute_research_stage(
                 metric["provenance"] = provenance
             break
 
+    target_tenant_id = (run_record.get("tenant_id") if run_record else None) or plan.get("tenant_id") or body.get("tenant_id")
     artifact_id = f"rart-{uuid.uuid4().hex[:12]}"
     artifact_record = {
         "id": artifact_id, "artifact_id": artifact_id, "run_id": run_id,
@@ -2540,6 +2585,7 @@ def execute_research_stage(
         "title": f"Execution artifact for {stage_type} ({run_id})", "payload": artifact_bundle,
         "created_at": now_iso, "provenance": provenance,
     }
+    if target_tenant_id: artifact_record["tenant_id"] = str(target_tenant_id)
     persisted_art = store.put_artifact(artifact_record)
     artifact_bytes = json.dumps(persisted_art, sort_keys=True, default=str).encode("utf-8")
     digest = f"sha256:{hashlib.sha256(artifact_bytes).hexdigest()}"
@@ -2570,6 +2616,7 @@ def execute_research_stage(
             if not any(a.get("artifact_id") == artifact_id for a in arts if isinstance(a, dict)):
                 arts.append(artifact_ref_entry)
             latest_run.update({"status": "completed", "completed_at": now_iso, "metrics": metrics, "provenance": provenance, "receipt": receipt, "artifact_refs": arts})
+            if target_tenant_id and not latest_run.get("tenant_id"): latest_run["tenant_id"] = str(target_tenant_id)
             store.put_run(latest_run)
 
         result = {
