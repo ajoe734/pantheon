@@ -88,10 +88,142 @@
       "caller_proof": "Mounted callers in agora/research/routes/candidates.py:379 and :445 resolve scope via ctx.read_scope / resolve_agora_user_scope which fails closed with 403 on missing tenant claims under strict JWT auth; tenant_id kwarg is omitted by routes so scope.tenant_id is always used; pool access is verified via require_pool_access(pool, scope) before listing discussions."
     },
     {
-      "site": "services/control-plane/bff/agora/research/store.py:131, :149 (get_plan, update_plan caller-None guards)",
+      "site": "services/control-plane/bff/agora/research/store.py:131 (InMemoryResearchStore.get_plan)",
       "disposition": "proven safe",
-      "trusted_source": "scope.tenant_id from resolve_agora_user_scope / dispatcher / service",
-      "caller_proof": "Callers in research/service.py and research/dispatcher.py pass verified scope.tenant_id. HTTP routes (agora/research/routes/common.py, candidates.py) resolve scope via ctx.read_scope / resolve_agora_user_scope which validates JWT tenant claims and denies tenantless callers with 403 before calling store; store internal methods default tenant_id to None only when called within already-authorized boundaries."
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py / dispatcher.py",
+      "caller_proof": "Callers in research/service.py and research/dispatcher.py pass verified scope.tenant_id resolved via resolve_agora_user_scope, which fails closed with 403 under strict JWT auth when tenant claims are missing; guard skips filtering only when caller explicitly passes None during internal/test usage."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:149 (InMemoryResearchStore.update_plan)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py / dispatcher.py",
+      "caller_proof": "Callers in research/service.py and research/dispatcher.py pass verified scope.tenant_id resolved via resolve_agora_user_scope; update is scoped to verified tenant."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:169 (InMemoryResearchStore.list_plans_for_workshop)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Callers in research/service.py pass verified scope.tenant_id from resolve_agora_user_scope; plans for foreign tenants are filtered out."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:197 (InMemoryResearchStore.get_run)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py / dispatcher.py",
+      "caller_proof": "Callers in research/service.py and research/dispatcher.py pass verified scope.tenant_id from resolve_agora_user_scope."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:215 (InMemoryResearchStore.update_run)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py / dispatcher.py",
+      "caller_proof": "Callers in research/service.py and research/dispatcher.py pass verified scope.tenant_id from resolve_agora_user_scope."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:235 (InMemoryResearchStore.list_runs_for_plan)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py / dispatcher.py",
+      "caller_proof": "Callers in research/service.py and research/dispatcher.py pass verified scope.tenant_id from resolve_agora_user_scope."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:294 (InMemoryResearchStore.get_candidate_pool)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Callers in research/service.py pass verified scope.tenant_id from resolve_agora_user_scope; foreign pools are not returned."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:386 (InMemoryResearchStore.update_candidate_pool)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Callers in research/service.py pass verified scope.tenant_id from resolve_agora_user_scope."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:406 (InMemoryResearchStore.get_candidate_member)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Callers in research/service.py pass verified scope.tenant_id from resolve_agora_user_scope."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:428 (InMemoryResearchStore.update_candidate_member)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Callers in research/service.py pass verified scope.tenant_id from resolve_agora_user_scope."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:526 (InMemoryResearchStore.list_candidate_discussions)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Callers in research/service.py pass verified scope.tenant_id; pool access verified via require_pool_access before discussion enumeration."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:597 (InMemoryResearchStore.get_outbox_record)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/dispatcher.py",
+      "caller_proof": "Callers in research/dispatcher.py pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:615 (InMemoryResearchStore.update_outbox_record)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/dispatcher.py",
+      "caller_proof": "Callers in research/dispatcher.py pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:662 (InMemoryResearchStore.list_outbox_records)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/dispatcher.py",
+      "caller_proof": "Callers in research/dispatcher.py pass verified scope.tenant_id; drain_outbox filters by tenant."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:698 (InMemoryResearchStore.list_audit_actions)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Callers in research/service.py pass verified scope.tenant_id from resolve_agora_user_scope."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:842 (PostgresResearchStore.get_plan)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py / dispatcher.py",
+      "caller_proof": "Postgres store implementation of get_plan; callers in research/service.py and dispatcher.py pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:889 (PostgresResearchStore.get_run)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py / dispatcher.py",
+      "caller_proof": "Postgres store implementation of get_run; callers pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:963 (PostgresResearchStore.get_candidate_pool)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Postgres store implementation of get_candidate_pool; callers pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:1095 (PostgresResearchStore.update_candidate_member)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Postgres store implementation of update_candidate_member; callers pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:1160 (PostgresResearchStore.list_candidate_discussions)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Postgres store implementation of list_candidate_discussions; callers pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:1201 (PostgresResearchStore.get_outbox_record)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/dispatcher.py",
+      "caller_proof": "Postgres store implementation of get_outbox_record; callers pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:1263 (PostgresResearchStore.list_outbox_records)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/dispatcher.py",
+      "caller_proof": "Postgres store implementation of list_outbox_records; callers pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:1291 (PostgresResearchStore.list_audit_actions)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Postgres store implementation of list_audit_actions; callers pass verified scope.tenant_id."
     },
     {
       "site": "services/control-plane/bff/command_adapters/evolution_adapter.py:289",

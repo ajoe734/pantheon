@@ -741,14 +741,35 @@ def bff_me_tenant_payload(
     *,
     requested_tenant: Optional[str] = None,
 ) -> Dict[str, Any]:
-    claim_paths = [
-        "tenant_id", "tenantId", "tenant.id", "tid", "org_id",
-        "organization.id", "organization_id", "tenant_ids", "tenantIds",
-    ]
-    claim_default = first_nonblank(*identity_claim_strings(identity, claim_paths))
+    claim_default = first_nonblank(
+        *identity_claim_strings(
+            identity,
+            [
+                "tenant_id",
+                "tenantId",
+                "tenant.id",
+                "tid",
+                "org_id",
+                "organization.id",
+                "tenant_ids",
+                "tenantIds",
+            ],
+        )
+    )
     claim_allowed = identity_claim_strings(
         identity,
-        ["allowed_tenants", "allowedTenants", "tenants", *claim_paths],
+        [
+            "allowed_tenants",
+            "allowedTenants",
+            "tenant_ids",
+            "tenantIds",
+            "tenants",
+            "tenant_id",
+            "tenantId",
+            "tenant.id",
+            "tid",
+            "org_id",
+        ],
     )
     is_strict = getattr(identity, "token_kind", "") in ("jwt", "structured", "cookie") or bff_auth_mode() == "strict"
     env_default = first_nonblank(
@@ -756,50 +777,44 @@ def bff_me_tenant_payload(
         os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
         os.getenv("PANTHEON_TENANT_ID"),
     )
-    if not is_strict and not claim_allowed:
-        allowed_tenants = env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [env_default or "pantheon-dev"]
-    else:
+    if is_strict:
         allowed_tenants = list(claim_allowed)
-
-    if not allowed_tenants:
-        raise bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Tenant access denied",
-            "Caller has no verified tenant authority",
-            precondition_failed="tenant_scope",
-            suggestion="Authenticate with a token containing tenant authority",
-            details_extra={"tenantId": str(requested_tenant or "").strip(), "allowedTenantIds": []},
-        )
+    else:
+        allowed_tenants = claim_allowed or env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [env_default or "pantheon-dev"]
 
     clean_req = str(requested_tenant or "").strip()
-    if claim_default and (claim_default in allowed_tenants or "*" in allowed_tenants):
-        default_tenant = claim_default
+    if clean_req:
+        if "*" not in allowed_tenants and clean_req not in allowed_tenants:
+            raise bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Tenant access denied",
+                "Requested tenant is outside the caller tenant scope",
+                precondition_failed="tenant_scope",
+                suggestion="Switch to an allowed tenant or request access from an administrator",
+                details_extra={
+                    "tenantId": clean_req,
+                    "allowedTenantIds": allowed_tenants,
+                },
+            )
+        effective_tenant = clean_req
+    elif claim_default and (claim_default in allowed_tenants or "*" in allowed_tenants):
+        effective_tenant = claim_default
     elif env_default and (env_default in allowed_tenants or "*" in allowed_tenants):
-        default_tenant = env_default
+        effective_tenant = env_default
+    elif not is_strict:
+        effective_tenant = next((t for t in allowed_tenants if t != "*"), "") or (env_default or "pantheon-dev")
+    elif allowed_tenants:
+        effective_tenant = next((t for t in allowed_tenants if t != "*"), "")
     else:
-        default_tenant = next((t for t in allowed_tenants if t != "*"), "") or (env_default or "pantheon-dev")
+        effective_tenant = None
 
-    effective_tenant = clean_req or default_tenant
-    if "*" not in allowed_tenants and effective_tenant not in allowed_tenants:
-        raise bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Tenant access denied",
-            "Requested tenant is outside the caller tenant scope",
-            precondition_failed="tenant_scope",
-            suggestion="Switch to an allowed tenant or request access from an administrator",
-            details_extra={
-                "tenantId": effective_tenant,
-                "allowedTenantIds": allowed_tenants,
-            },
-        )
     return {
         "id": effective_tenant,
         "requested_id": clean_req or None,
-        "default_id": default_tenant,
+        "default_id": effective_tenant,
         "allowed_ids": allowed_tenants,
-        "scope": "global" if "*" in allowed_tenants else "tenant",
+        "scope": "global" if "*" in allowed_tenants else ("tenant" if effective_tenant else "none"),
     }
 
 

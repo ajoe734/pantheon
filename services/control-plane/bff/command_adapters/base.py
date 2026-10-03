@@ -130,32 +130,54 @@ def record_downstream_outcome(url: str, ok: bool, status_code: int, detail: Opti
         log.debug("failed to record downstream outcome for %s: %s", url, exc)
 
 
-def _token_tenant(token: Optional[str]) -> Optional[str]:
+def _token_tenants(token: Optional[str]) -> Tuple[Optional[str], set[str]]:
     try:
         raw = str(token or "").removeprefix("Bearer ").strip().split(".")[1]
         c = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
-        tid = str(c.get("tenant_id") or "").strip()
-        if tid and tid != "*":
-            return tid
-        al = [str(t).strip() for t in c.get("allowed_tenants") or [] if str(t).strip() and str(t).strip() != "*"]
-        return al[0] if len(al) == 1 and c.get("allowed_tenants") == [al[0]] else None
+        tid = str(c.get("tenant_id") or c.get("tenantId") or c.get("tid") or "").strip()
+        primary = tid if tid and tid != "*" else None
+        al: set[str] = set()
+        for k in ("allowed_tenants", "allowedTenants", "tenant_ids", "tenantIds", "tenants"):
+            v = c.get(k)
+            if isinstance(v, (list, tuple, set)):
+                al.update(str(t).strip() for t in v if str(t).strip())
+            elif isinstance(v, str) and v.strip():
+                al.update(str(t).strip() for t in v.split(",") if str(t).strip())
+        if primary:
+            al.add(primary)
+        return primary, al
     except Exception:
-        return None
+        return None, set()
+
+
+def _token_tenant(token: Optional[str]) -> Optional[str]:
+    primary, allowed = _token_tenants(token)
+    concrete = {t for t in allowed if t != "*"}
+    return primary or (next(iter(concrete)) if len(concrete) == 1 else None)
 
 
 def bound_tenant(payload: Any, tenant_id: Optional[str] = None, auth_token: Optional[str] = None) -> str:
     """Return the trusted tenant; a payload tenant may only equal it, never fill it."""
     raw = str(auth_token or "").removeprefix("Bearer ").strip()
+    req_tid = str(tenant_id or "").strip()
     if raw.count(".") == 2:
-        tok = _token_tenant(auth_token)
-        if not tok or (tenant_id and str(tenant_id).strip() != tok):
-            raise ActionUnavailableError("Caller tenant_id is not the verified caller tenant.", error_code="TENANT_MISMATCH")
-        trusted = tok
+        primary, allowed = _token_tenants(auth_token)
+        if req_tid:
+            if req_tid not in allowed and "*" not in allowed and req_tid != primary:
+                raise ActionUnavailableError("Caller tenant_id is not the verified caller tenant.", error_code="TENANT_MISMATCH", downstream_status=403)
+            trusted = req_tid
+        else:
+            concrete = {t for t in allowed if t != "*"}
+            trusted = primary or (next(iter(concrete)) if len(concrete) == 1 else "")
+        if not trusted:
+            raise ActionUnavailableError("Caller tenant_id is not the verified caller tenant.", error_code="TENANT_MISMATCH", downstream_status=403)
     else:
-        trusted = str(tenant_id or "").strip()
+        trusted = req_tid
+        if payload is not None and not auth_token and not req_tid:
+            raise ActionUnavailableError("Payload tenant_id is not the verified caller tenant.", error_code="TENANT_MISMATCH", downstream_status=403)
     claimed = str(payload.get("tenant_id") or payload.get("tenant") or "").strip() if isinstance(payload, dict) else ""
-    if not trusted or (claimed and claimed != trusted):
-        raise ActionUnavailableError("Payload tenant_id is not the verified caller tenant.", error_code="TENANT_MISMATCH")
+    if claimed and (not trusted or claimed != trusted):
+        raise ActionUnavailableError("Payload tenant_id is not the verified caller tenant.", error_code="TENANT_MISMATCH", downstream_status=403)
     return trusted
 
 

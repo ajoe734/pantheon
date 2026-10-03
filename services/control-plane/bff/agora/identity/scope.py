@@ -180,7 +180,7 @@ def resolve_agora_user_scope(
         )
 
     user_id = _first_nonblank(*_claim_strings(claims, _USER_CLAIM_PATHS), operator_id)
-    is_strict = getattr(identity, "token_kind", "") == "jwt" or os.getenv("PANTHEON_BFF_AUTH_MODE") == "strict"
+    is_strict = os.getenv("PANTHEON_BFF_AUTH_MODE") == "strict"
 
     claim_tenants = _claim_strings(claims, _TENANT_CLAIM_PATHS)
     ident_tenant = str(_ident_prop(identity, "tenant_id") or "").strip()
