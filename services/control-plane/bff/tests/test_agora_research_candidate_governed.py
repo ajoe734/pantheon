@@ -956,9 +956,17 @@ def test_bff_plan_projects_all_owner_roots_and_terminal_state(monkeypatch: pytes
     assert {run["stage_id"] for run in owner_runs} == {"root-a", "root-b"}
     assert all(run["status"] == "completed" for run in owner_runs)
 
+    bff_store = client.router.research_store
+    bff_store._runs.clear()
+    bff_store._save_to_storage()
     listed = client.get(f"/bff/agora/research-plans/{plan_id}/runs", headers=_headers())
     assert listed.status_code == 200, listed.text
     assert {run["stage_id"] for run in listed.json()["items"]} == {"root-a", "root-b"}
+    for run in listed.json()["items"]:
+        detail = client.get(f"/bff/agora/research-runs/{run['run_id']}", headers=_headers())
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["plan_id"] == plan_id
+        assert detail.json()["stage_id"] == run["stage_id"]
     readback = client.get(f"/bff/agora/research-plans/{plan_id}", headers=_headers())
     assert readback.status_code == 200, readback.text
     assert readback.json()["data"]["status"] == "completed"

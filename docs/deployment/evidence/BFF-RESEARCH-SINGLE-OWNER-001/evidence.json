@@ -6,8 +6,8 @@
   "design_items": {
     "D1": "services/research/main.py:367, 1042-1157; durable queued runs execute off-request, one latest-attempt/dependency progression schedules all roots and joins, startup requeues interrupted running attempts. services/research/store.py serializes and atomically replaces file-backed records.",
     "D2": "Retired by anchor 3deb0fd30: removed duplicate BFF ResearchDispatcher wiring, unused interaction-worker registry/dispatcher dependencies, and tests that only covered the deleted stack.",
-    "D3": "services/control-plane/bff/research/client.py:37-170 is the shared ResearchServiceClient HTTP transport; WorkshopCanonicalOperations delegates its default research-owner requests to it, and ResearchCommandsPort delegates its default POST transport to it.",
-    "D4": "services/control-plane/bff/agora/research/service.py:207-283, 388-424 reads owner runs to project complete plan stages/status and run lists; mounted multi-root test covers repeat dispatch and terminal readback.",
+    "D3": "services/control-plane/bff/research/client.py:38-175 is the shared ResearchServiceClient HTTP transport; WorkshopCanonicalOperations delegates its default research-owner requests to it, and ResearchCommandsPort delegates its default POST transport to it.",
+    "D4": "services/control-plane/bff/agora/research/service.py:207-283, 400-424 reads owner runs to project complete plan stages/status and run lists; mounted multi-root test clears BFF run cache, preserves plan/stage identities, verifies terminal readback, and repeats dispatch without duplicating owner effects.",
     "D5": "Reverted statement joining introduced by 69f5b5a05 in services/research/main.py and BFF research/client, service, and workshop operations code; retained ordinary multi-line formatting."
   },
   "validation": [
@@ -21,11 +21,11 @@
     },
     {
       "command": "BFF test_agora_research_candidate_governed.py using the isolated venv",
-      "result": "12 passed; includes mounted create/approve/multi-root dispatch, owner-backed plan/run readback, repeat dispatch, and async end-to-end owner completion"
+      "result": "12 passed; includes mounted create/approve/multi-root dispatch, BFF run-cache clearing, owner-backed plan/run readback, repeat dispatch, and async end-to-end owner completion"
     },
     {
       "command": "git diff --check; python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget 0",
-      "result": "both passed; production +1123/-1823 = net -700; tests +1163/-3791 = net -2628; docs/evidence +108 lines"
+      "result": "both passed; production +1319/-1823 = net -504; tests +1163/-3791 = net -2628; docs/evidence +110 lines"
     }
   ],
   "suite_note": "The historical eight-file manifest run (184 passed, 1 skipped) was verified on prior head 38141ba6f only. Two files in that command were deliberately removed under D2; on this head all retained manifest files were run as individual bounded batches (130 passed total). No claim is made that the removed tests ran on this head.",

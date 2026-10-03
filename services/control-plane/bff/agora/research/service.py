@@ -491,22 +491,51 @@ class AgoraResearchService:
 
         routing = dispatch_stage.get("routing") or {}
         stage_type = str(dispatch_stage.get("stage_type") or "")
-        preferred_backend = str(routing.get("preferred_backend") or ALLOWLISTED_STAGE_BACKENDS.get(stage_type) or dispatch_stage.get("framework") or dispatch_stage.get("backend") or "stub").strip().lower()
+        preferred_backend = str(
+            routing.get("preferred_backend")
+            or ALLOWLISTED_STAGE_BACKENDS.get(stage_type)
+            or dispatch_stage.get("framework")
+            or dispatch_stage.get("backend")
+            or "stub"
+        ).strip().lower()
         backend_mode = str(routing.get("backend_mode") or "real").strip().lower()
 
-        if os.getenv(f"AGORA_RESEARCH_{stage_type.upper()}_UNAVAILABLE") == "1" or os.getenv(f"AGORA_RESEARCH_{preferred_backend.upper()}_UNAVAILABLE") == "1":
-            raise self.bff_error(503, self._error_code("DEPENDENCY_UNAVAILABLE"), f"Backend execution owner for stage '{stage_type}' ({preferred_backend}) is currently unavailable", plan_id)
+        if (
+            os.getenv(f"AGORA_RESEARCH_{stage_type.upper()}_UNAVAILABLE") == "1"
+            or os.getenv(f"AGORA_RESEARCH_{preferred_backend.upper()}_UNAVAILABLE") == "1"
+        ):
+            raise self.bff_error(
+                503,
+                self._error_code("DEPENDENCY_UNAVAILABLE"),
+                f"Backend execution owner for stage '{stage_type}' ({preferred_backend}) is currently unavailable",
+                plan_id,
+            )
 
-        if backend_mode in ("real", "simulation") and preferred_backend not in {"vectorbt", "statsmodels", "quantlib", "stub"}:
-            raise self.bff_error(503, self._error_code("DEPENDENCY_UNAVAILABLE"), f"Backend execution owner for stage '{stage_type}' ({preferred_backend}) is absent or not configured", plan_id)
+        supported_real_backends = {"vectorbt", "statsmodels", "quantlib"}
+        if backend_mode in ("real", "simulation") and preferred_backend not in supported_real_backends and preferred_backend not in ("stub",):
+            raise self.bff_error(
+                503,
+                self._error_code("DEPENDENCY_UNAVAILABLE"),
+                f"Backend execution owner for stage '{stage_type}' ({preferred_backend}) is absent or not configured",
+                plan_id,
+            )
 
-        from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations, CanonicalOperationError
+        from services.control_plane.bff.agora.strategy_workshop.operations import (
+            WorkshopCanonicalOperations,
+            CanonicalOperationError,
+        )
 
         resolved_ds = dispatch_stage.get("dataset") or plan.get("dataset")
         if not resolved_ds:
             try:
                 from .dispatcher import resolve_governed_dataset
-                resolved_ds = resolve_governed_dataset(dispatch_stage, plan, dataset_store=getattr(self, "dataset_store", None), tenant_id=getattr(scope, "tenant_id", None), user_id=getattr(scope, "user_id", None))
+                resolved_ds = resolve_governed_dataset(
+                    dispatch_stage,
+                    plan,
+                    dataset_store=getattr(self, "dataset_store", None),
+                    tenant_id=getattr(scope, "tenant_id", None),
+                    user_id=getattr(scope, "user_id", None),
+                )
             except Exception as exc:
                 log.warning("Failed to resolve governed dataset for plan %s: %s", plan_id, exc)
                 resolved_ds = None
@@ -517,25 +546,43 @@ class AgoraResearchService:
 
         actor = getattr(scope, "user_id", "operator") or "operator"
         task_p = {
-            "title": plan.get("title") or f"Plan {plan_id}", "objective": plan.get("objective") or f"Execution {plan_id}",
-            "tenant_id": getattr(scope, "tenant_id", None), "user_id": getattr(scope, "user_id", None),
-            "source_refs": [{"type": "research_plan", "id": plan_id}, {"type": "strategy", "id": plan.get("strategy_id")}],
-            "constraints": {"environment": "research"}, "actor_id": actor, "idempotency_key": f"plan-task-{plan_id}",
+            "title": plan.get("title") or f"Plan {plan_id}",
+            "objective": plan.get("objective") or f"Execution {plan_id}",
+            "tenant_id": getattr(scope, "tenant_id", None),
+            "user_id": getattr(scope, "user_id", None),
+            "source_refs": [
+                {"type": "research_plan", "id": plan_id},
+                {"type": "strategy", "id": plan.get("strategy_id")},
+            ],
+            "constraints": {"environment": "research"},
+            "actor_id": actor,
+            "idempotency_key": f"plan-task-{plan_id}",
         }
-        input_refs = [{"type": "research_plan", "id": plan_id}, {"type": "stage", "id": dispatch_stage["stage_id"]}]
+        input_refs = [
+            {"type": "research_plan", "id": plan_id},
+            {"type": "stage", "id": dispatch_stage["stage_id"]},
+        ]
         if resolved_ds and isinstance(resolved_ds, dict) and resolved_ds.get("dataset_id"):
             input_refs.append({"type": "dataset", "id": resolved_ds["dataset_id"]})
 
         run_p = {
-            "adapter": preferred_backend, "requested_mode": backend_mode, "dispatch_mode": backend_mode,
-            "tenant_id": getattr(scope, "tenant_id", None), "user_id": getattr(scope, "user_id", None),
+            "adapter": preferred_backend,
+            "requested_mode": backend_mode,
+            "dispatch_mode": backend_mode,
+            "tenant_id": getattr(scope, "tenant_id", None),
+            "user_id": getattr(scope, "user_id", None),
             "input_refs": input_refs,
             "parameters": {
-                **(dispatch_stage.get("parameters") or {}), "stage": dispatch_stage_payload, "plan": plan, "dataset": resolved_ds,
-                "tenant_id": getattr(scope, "tenant_id", None), "user_id": getattr(scope, "user_id", None),
+                **(dispatch_stage.get("parameters") or {}),
+                "stage": dispatch_stage_payload,
+                "plan": plan,
+                "dataset": resolved_ds,
+                "tenant_id": getattr(scope, "tenant_id", None),
+                "user_id": getattr(scope, "user_id", None),
                 "correlation_id": plan.get("correlation_id") or f"corr-{plan_id}-{dispatch_stage['stage_id']}",
             },
-            "actor_id": actor, "idempotency_key": f"plan-run-{plan_id}-{dispatch_stage['stage_id']}",
+            "actor_id": actor,
+            "idempotency_key": f"plan-run-{plan_id}-{dispatch_stage['stage_id']}",
         }
 
         try:
