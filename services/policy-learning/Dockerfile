@@ -2,7 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /workspace
 
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/workspace:/workspace/services/policy-learning
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/workspace:/workspace/services/policy-learning
 
 COPY dependencies/locks/services-policy-learning.txt ./requirements.lock
 RUN pip install --no-cache-dir --require-hashes -r ./requirements.lock
