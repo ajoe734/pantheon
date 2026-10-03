@@ -1,7 +1,7 @@
 {
   "task_id": "BFF-RESEARCH-SINGLE-OWNER-001",
   "environment": "isolated read-only venv ~/pantheon-ci-deploy/runtime/research-test-python/20261003-f9fd19209; no hosted deployment or live capital actions",
-  "independent_review": "Codex2 rejected prior head 75ea801; cancellation fencing, completed-stage restart recovery, and stale inventory entries corrected; fresh exact-head review pending.",
+  "independent_review": "Codex2 reviewed head 15f6ffba5; cancellation fencing, completed-stage restart recovery, legacy history retention/merge, and multi-stage running progression corrected; fresh exact-head review pending.",
   "hosted_track": "external_wait per Human/Ops 2026-10-01 decision; no hosted probes performed",
   "design_items": {
     "D1": "services/research/main.py validates execution modes before backend selection; durable off-request stages reconcile completed predecessors at restart, and serialized progression schedules roots/joins without duplicate attempts. Cancellation fences survive late worker errors.",
@@ -13,7 +13,7 @@
   "validation": [
     {
       "command": "~/pantheon-ci-deploy/runtime/research-test-python/20261003-f9fd19209/bin/python3 -m pytest -q services/research/tests/test_research_single_owner_routes.py",
-      "result": "15 passed; includes failed-stage retry, crash after completed predecessor before successor enqueue, in-flight cancellation fencing, multi-root/fan-in and async dispatch"
+      "result": "16 passed; includes failed-stage retry, crash after completed predecessor before successor enqueue, in-flight cancellation fencing, multi-root/fan-in and async dispatch"
     },
     {
       "command": "~/pantheon-ci-deploy/runtime/research-test-python/20261003-f9fd19209/bin/python3 -m pytest -q services/research/tests/test_research_orchestrator_http_service.py",
@@ -29,7 +29,7 @@
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py (run sequentially as separate commands)",
-      "result": "15 passed and 21 passed respectively. Concurrent invocations are unsafe here because both use the shared /tmp/pantheon/research-orchestrator store; an initial concurrent batch failed with shared-store races and is not counted."
+      "result": "16 passed and 21 passed respectively. Concurrent invocations are unsafe here because both use the shared /tmp/pantheon/research-orchestrator store; an initial concurrent batch failed with shared-store races and is not counted."
     },
     {
       "command": "Broader nine-file BFF/research exploratory batch with the same isolated interpreter",
@@ -37,11 +37,11 @@
     },
     {
       "command": "git diff --check; python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget 0",
-      "result": "exact-base simplify budget passed at the current implementation diff: production +1446/-1909 net -463; tests +1556/-3077 net -1521; docs/evidence +134/-93 net +41."
+      "result": "exact-base simplify budget passed at the current implementation diff: production +1442/-1823 net -381; tests +1556/-2875 net -1319; docs/evidence +134/-0 net +134."
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_research_run_projection.py",
-      "result": "4 passed; retained projections use the owner-backed test transport and cover cancellation before and during active plans, completed legacy history readback and non-replay, provenance validation, artifact listing, and SSE."
+      "result": "4 passed; retained projections use the owner-backed test transport and cover cancellation before and during active plans, completed legacy history readback and non-replay, mixed legacy and owner run merge, provenance validation, artifact listing, and SSE."
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_research_single_owner_routes.py -k 'not three_stage_linear_progression and not fan_in_progression'",

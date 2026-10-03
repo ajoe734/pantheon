@@ -246,15 +246,16 @@ class AgoraResearchService:
             rank = int(record.get("attempt_number") or 1)
             if stage_id and (previous is None or rank >= int(previous.get("attempt_number") or 1)):
                 latest[stage_id] = record
+        legacy_runs = self.store.list_runs_for_plan(
+            str(plan.get("plan_id") or ""),
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
+        )
+        legacy_statuses = {str(run.get("stage_id") or ""): run.get("execution_status") for run in legacy_runs}
+        legacy_run_ids = [str(run.get("run_id") or run.get("id")) for run in legacy_runs]
         if not records:
-            legacy_runs = self.store.list_runs_for_plan(
-                str(plan.get("plan_id") or ""),
-                tenant_id=scope.tenant_id,
-                user_id=scope.user_id,
-            )
             if legacy_runs:
-                result["run_ids"] = [str(run.get("run_id") or run.get("id")) for run in legacy_runs]
-                legacy_statuses = {str(run.get("stage_id") or ""): run.get("execution_status") for run in legacy_runs}
+                result["run_ids"] = legacy_run_ids
                 result["stages"] = [
                     {**stage, **({"status": legacy_statuses[str(stage.get("stage_id") or "")]} if str(stage.get("stage_id") or "") in legacy_statuses else {})}
                     for stage in plan.get("stages") or []
@@ -262,7 +263,7 @@ class AgoraResearchService:
                 if plan.get("status") == "cancelled":
                     return result
                 statuses = [str(run.get("execution_status") or "").lower() for run in legacy_runs]
-                if all(status in {"succeeded", "completed"} for status in statuses):
+                if all(status in {"succeeded", "completed"} for status in statuses) and len(legacy_statuses) == len(result["stages"]):
                     result["status"] = "completed"
                 elif any(status in {"failed", "cancelled", "canceled"} for status in statuses):
                     result["status"] = "failed"
@@ -285,18 +286,27 @@ class AgoraResearchService:
         }
         stages = []
         for stage in plan.get("stages") or []:
-            owner = latest.get(str(stage.get("stage_id") or ""))
+            st_id = str(stage.get("stage_id") or "")
+            owner = latest.get(st_id)
             if owner:
                 status = str(owner.get("status") or "queued").lower()
                 stage = {**stage, "status": status_map.get(status, status)}
+            elif st_id in legacy_statuses:
+                stage = {**stage, "status": legacy_statuses[st_id]}
             stages.append(stage)
         result["stages"] = stages
-        result["run_ids"] = [str(record.get("run_id") or record.get("id")) for record in records]
+        seen_ids = set()
+        all_ids = []
+        for rid in legacy_run_ids + [str(record.get("run_id") or record.get("id")) for record in records]:
+            if rid not in seen_ids:
+                seen_ids.add(rid)
+                all_ids.append(rid)
+        result["run_ids"] = all_ids
         if plan.get("status") == "cancelled":
             result["status"] = "cancelled"
             return result
-        statuses = [str(record.get("status") or "").lower() for record in latest.values()]
-        if all(status in {"completed", "succeeded"} for status in statuses) and len(latest) == len(stages):
+        statuses = [str(s.get("status") or "").lower() for s in stages]
+        if all(status in {"completed", "succeeded"} for status in statuses) and len(stages) > 0 and all(s.get("status") for s in stages):
             result["status"] = "completed"
         elif any(status in {"failed", "rejected", "canceled", "cancelled"} for status in statuses):
             result["status"] = "failed"
@@ -465,9 +475,12 @@ class AgoraResearchService:
                     "updated_at": owner.get("updated_at") or owner.get("created_at"),
                 })
                 projected.append(run)
-            return projected
         runs = self.store.list_runs_for_plan(plan_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
-        return [_run_projection_with_defaults(r, store=self.store) for r in runs]
+        legacy_projected = [_run_projection_with_defaults(r, store=self.store) for r in runs]
+        if owner_runs:
+            seen_ids = {r.get("run_id") for r in projected}
+            return [r for r in legacy_projected if r.get("run_id") not in seen_ids] + projected
+        return legacy_projected
 
     def dispatch_plan(
         self,
@@ -481,7 +494,8 @@ class AgoraResearchService:
             raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), f"Research plan '{plan_id}' not found", plan_id)
         self._check_plan_if_match(plan, if_match)
         if plan["status"] != "approved":
-            if plan["status"] in {"running", "completed", "failed"}:
+            has_pending = any(stage.get("status") in ("pending", "ready") for stage in plan.get("stages", []))
+            if plan["status"] in {"running", "completed", "failed"} and not has_pending:
                 existing = self.list_runs_for_plan(plan_id, scope=scope)
                 if existing:
                     first = existing[0]
@@ -491,11 +505,12 @@ class AgoraResearchService:
                         "stage_id": first["stage_id"],
                         "stage_type": first["stage_type"],
                     }
-            raise self.bff_error(
-                409, self._error_code("RESOURCE_CONFLICT"),
-                f"Only approved plans may be dispatched; current status: '{plan['status']}'",
-                f"expected 'approved', got '{plan['status']}'",
-            )
+            if plan["status"] != "running" or not has_pending:
+                raise self.bff_error(
+                    409, self._error_code("RESOURCE_CONFLICT"),
+                    f"Only approved plans may be dispatched; current status: '{plan['status']}'",
+                    f"expected 'approved', got '{plan['status']}'",
+                )
         dispatch_stage = None
         for stage in plan.get("stages", []):
             if stage.get("status") in ("pending", "ready"):

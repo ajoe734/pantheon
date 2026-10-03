@@ -187,6 +187,70 @@ def test_cancelled_and_historical_plans_remain_terminal_without_owner_runs(
     assert redispatch_history.status_code == 202
     assert redispatch_history.json()["data"]["run_id"] == "legacy-completed-run"
 
+    mixed_res = client.post(
+        "/bff/agora/workshops/ws-mixed-plan/research-plans",
+        headers=_headers("mixed-create"),
+        json={
+            "spec_version": "1.0",
+            "strategy_id": "strat-mixed",
+            "strategy_spec_registry_id": "reg-mixed",
+            "stages": [
+                {
+                    "stage_id": "stage-1",
+                    "stage_type": "prototype_backtest",
+                    "status": "ready",
+                    "routing": {"backend_mode": "fixture", "fallback_policy": "explicit_fixture_only"},
+                },
+                {
+                    "stage_id": "stage-2",
+                    "stage_type": "prototype_backtest",
+                    "status": "pending",
+                    "dependencies": ["stage-1"],
+                    "routing": {"backend_mode": "fixture", "fallback_policy": "explicit_fixture_only"},
+                },
+            ],
+        },
+    )
+    assert mixed_res.status_code == 201
+    mixed_id = mixed_res.json()["data"]["plan_id"]
+    _approve_plan(client, mixed_id, mixed_res.json()["meta"]["etag"], "mixed-approve")
+    stored_mixed = store.get_plan(mixed_id)
+    store.create_run({
+        "run_id": "legacy-s1-run",
+        "plan_id": mixed_id,
+        "stage_id": "stage-1",
+        "stage_type": "prototype_backtest",
+        "execution_status": "succeeded",
+        "outcome": "pass",
+        "tenant_id": stored_mixed["tenant_id"],
+        "user_id": stored_mixed["user_id"],
+        "created_at": "2026-09-01T00:00:00Z",
+        "artifact_refs": [],
+        "evidence_refs": [],
+    })
+    mixed_mid = _get_plan(client, mixed_id)
+    assert mixed_mid["data"]["status"] == "running"
+    assert mixed_mid["data"]["run_ids"] == ["legacy-s1-run"]
+
+    mixed_s2 = client.post(
+        f"/bff/agora/research-plans/{mixed_id}/runs",
+        headers=_headers("mixed-s2-dispatch", mixed_mid["meta"]["etag"]),
+    )
+    assert mixed_s2.status_code == 202
+    owner_s2_run_id = mixed_s2.json()["data"]["run_id"]
+    client.owner_research_runs[owner_s2_run_id]["status"] = "completed"
+
+    mixed_final = _get_plan(client, mixed_id)
+    assert mixed_final["data"]["status"] == "completed"
+    assert "legacy-s1-run" in mixed_final["data"]["run_ids"]
+    assert owner_s2_run_id in mixed_final["data"]["run_ids"]
+
+    mixed_listed = client.get(f"/bff/agora/research-plans/{mixed_id}/runs", headers=_headers())
+    assert mixed_listed.status_code == 200
+    listed_ids = [r["run_id"] for r in mixed_listed.json()["items"]]
+    assert "legacy-s1-run" in listed_ids
+    assert owner_s2_run_id in listed_ids
+
 
 def test_research_run_detail_returns_schema_projection(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _client(monkeypatch)
