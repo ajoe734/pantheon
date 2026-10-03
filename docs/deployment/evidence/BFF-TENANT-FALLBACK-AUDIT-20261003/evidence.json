@@ -263,11 +263,57 @@
       },
       {
         "site": "management_read_models/router.py:274-325 _extract_tenant_id default 'pantheon-dev'",
-        "disposition": "proven safe in production wiring",
-        "trusted_source": "core/app_factory.py:1010-1022 passes tenant_payload_fn=bff_me_tenant_payload (auth/policy.py:739-806): verified identity + deployment default env tenant, 403 when outside allowed set; the claim/env fallback branch is unused in production. Residual: multi-tenant deployments must set PANTHEON_BFF_TENANT_ID because a tenantless-claim token maps to the deployment default tenant."
+        "disposition": "fixed (formally granted artifact)",
+        "trusted_source": "authenticated caller identity claims/tenant_id and allowed_tenants",
+        "note": "Defect fixed: removed display fallback to bff_me_tenant_payload, os.environ.get('PANTHEON_BFF_TENANT_ID'), and 'pantheon-dev'. Authenticated caller identity is the sole authority; caller without trusted tenant returns '' (failing closed on persona operations read models) or raises 403 when requested_tenant is specified without authority. Mounted signed-JWT tests cover missing/foreign/same controls for both built-in ('pantheon-dev') and environment ('custom-default') fallback defaults."
       }
     ],
     "validation": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q -p no:cacheprovider test_tenant_fallback_audit test_receipt_owner_routes test_evolution_program_action_receipts test_agora_chain_001_natural_owner_and_receipt test_agora_operational_readiness_live_binding => 102 passed, 1 skipped, exit 0; services/capital/test_tenant_scoping.py => 11 passed, 1 skipped (PostgreSQL unavailable; not PG acceptance).",
     "commit_trailers": "History squashed onto current dev base (14eaf55e0) to eliminate non-compliant trailer commits ea64e01f8 and 037e4fbc9 per reviewer requirement (3). The single squashed commit satisfies subject length (<=72 chars) and all required LLM-Agent, Task-ID, and Reviewer trailers."
+  },
+  "review_round_6": {
+    "base": "14eaf55e0528984df21b17a0a64e7a56ceb57708",
+    "sites": [
+      {
+        "site": "services/control-plane/bff/management_read_models/router.py:274-325 (_extract_tenant_id)",
+        "disposition": "fixed",
+        "trusted_source": "authenticated caller identity claims/tenant_id and allowed_tenants",
+        "note": "Defect fixed: removed display fallback to bff_me_tenant_payload, os.environ.get('PANTHEON_BFF_TENANT_ID'), and 'pantheon-dev'. Authenticated caller identity is the sole authority; caller without trusted tenant returns '' (failing closed on persona operations read models) or raises 403 when requested_tenant is specified without authority. Mounted signed-JWT tests cover missing/foreign/same controls for both built-in ('pantheon-dev') and environment ('custom-default') fallback defaults."
+      },
+      {
+        "site": "services/control-plane/bff/governance/decision_journal_write_owner.py:272-292 (_recover_committed_entry_result)",
+        "disposition": "fixed (coverage completed)",
+        "trusted_source": "tenant_id kwarg from the Agora scope",
+        "note": "Closed missing journal recovery test coverage with actual committed recoverable journal entry. Negative recovery verified for None, '', '  ', and foreign tenant 'tenant-a' (all return None); positive recovery verified for same-tenant 'tenant-b' returning committed journal entry data."
+      },
+      {
+        "site": "services/control-plane/bff/command_adapters/strategy_adapter.py:312 (_validate_scoped_receipt readback)",
+        "disposition": "fixed (mounted signed-JWT coverage completed)",
+        "trusted_source": "verified JWT tenant claim from _authenticate_caller",
+        "note": "Mounted signed-JWT test added for StrategyCommandAdapter.execute: missing tenant JWT raises ActionUnavailableError(FORBIDDEN), foreign tenant raises ActionUnavailableError(READBACK_MISMATCH), and same-tenant positive control succeeds with status metadata_updated."
+      }
+    ],
+    "caller_proofs": {
+      "assistant_conversation_store.py:373-377,699-703": "Proven safe: only caller in production is assistant/management_service.py:448 (management_ai_list_conversations), which always passes owner_id=identity.operator_id so (not clean_owner_id and not clean_tenant_id) is never reached. Furthermore, all returned sessions are filtered through management_ai_require_session_access which enforces tenant isolation.",
+      "main.py:3749-3755": "Proven safe: _PersonaOwnerHttpTransport in main.py is dead code with zero internal calls and zero external imports (all runtime imports use personas.service).",
+      "migrations/overlay_retirement.py:457,597,796,994,1087,1432": "Proven safe for request paths: migration/shadow-comparison adapters used only by migration test/CLI harnesses, never reached by HTTP request handlers.",
+      "dispatcher.py:1129 (ResearchDispatcher.execute_stage)": "Proven safe (background-only exception): exclusively called by ResearchDispatcher.drain_outbox which is driven by background worker InteractionWorker.drain_outbox (agora/interaction/worker.py:170); no request-reachable HTTP routes."
+    },
+    "mounted_signed_jwt_tests": [
+      "test_mounted_operations_read_model_route_scopes_to_the_jwt_tenant: validates missing, foreign, and same signed JWTs against custom tenant, built-in fallback default ('pantheon-dev'), and env fallback default ('custom-default').",
+      "test_mounted_strategy_registry_readback_scopes_to_the_jwt_tenant: validates StrategyCommandAdapter.execute with signed JWTs (absent -> FORBIDDEN, foreign -> READBACK_MISMATCH, same -> metadata_updated).",
+      "test_persona_operations_read_model_and_journal_recovery_require_the_caller_tenant: validates genuine committed journal entry negative recovery (None, '', '  ', foreign) and positive same-tenant recovery."
+    ],
+    "local_postgresql_acceptance": {
+      "host": "127.0.0.1:32804",
+      "database": "pantheon",
+      "credentials": "postgres:postgres",
+      "dsns": [
+        "CAPITAL_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:32804/pantheon",
+        "CAPITAL_TEST_ADMIN_DSN=postgresql://postgres:postgres@127.0.0.1:32804/pantheon",
+        "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:32804/pantheon"
+      ],
+      "results": "ZERO skipped tests across services/capital/test_tenant_scoping.py (12 passed, 0 skipped) and all focused BFF test suites (104 passed, 0 skipped)."
+    }
   }
 }

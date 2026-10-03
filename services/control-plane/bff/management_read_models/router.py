@@ -276,54 +276,58 @@ def _extract_tenant_id(
     tenant_payload_fn: Optional[Callable[..., Any]] = None,
     requested_tenant: Optional[str] = None,
 ) -> str:
-    if tenant_payload_fn:
-        try:
-            import inspect
-            sig = inspect.signature(tenant_payload_fn)
-            if "requested_tenant" in sig.parameters:
-                payload = tenant_payload_fn(identity, requested_tenant=requested_tenant)
-            else:
-                payload = tenant_payload_fn(identity)
-        except TypeError:
-            payload = tenant_payload_fn(identity)
-        if isinstance(payload, dict):
-            val = payload.get("id") or payload.get("tenant_id")
-            return str(val) if val is not None else "pantheon-dev"
-        if isinstance(payload, str):
-            return payload.strip() or "pantheon-dev"
-        return "pantheon-dev"
-
-    identity_tenant = getattr(identity, "tenant_id", None)
     claims = getattr(identity, "claims", {}) or {}
-    claim_tenant = claims.get("tenant_id") or claims.get("tenantId") or claims.get("tid") or claims.get("org_id")
-    allowed_tenants = getattr(identity, "allowed_tenants", None)
-    if allowed_tenants is None:
-        raw_allowed = claims.get("allowed_tenants") or claims.get("allowedTenants") or claims.get("tenant_ids") or claims.get("tenantIds") or claims.get("tenants")
-        if isinstance(raw_allowed, (list, tuple, set)):
-            allowed_tenants = set(raw_allowed)
-        elif isinstance(raw_allowed, str):
-            allowed_tenants = {t.strip() for t in raw_allowed.split(",") if t.strip()}
-        elif claim_tenant or identity_tenant:
-            allowed_tenants = {claim_tenant or identity_tenant}
-        else:
-            allowed_tenants = set()
+    claim_tenant = str(
+        claims.get("tenant_id")
+        or claims.get("tenantId")
+        or claims.get("tid")
+        or claims.get("org_id")
+        or getattr(identity, "tenant_id", None)
+        or ""
+    ).strip()
+    raw_allowed = (
+        getattr(identity, "allowed_tenants", None)
+        or claims.get("allowed_tenants")
+        or claims.get("allowedTenants")
+        or claims.get("tenant_ids")
+        or claims.get("tenantIds")
+        or claims.get("tenants")
+    )
+    if isinstance(raw_allowed, (list, tuple, set)):
+        allowed_tenants = {str(t).strip() for t in raw_allowed if str(t).strip()}
+    elif isinstance(raw_allowed, str):
+        allowed_tenants = {t.strip() for t in raw_allowed.split(",") if t.strip()}
+    elif claim_tenant:
+        allowed_tenants = {claim_tenant}
+    else:
+        allowed_tenants = set()
 
-    default_tenant = claim_tenant or identity_tenant or os.environ.get("PANTHEON_BFF_TENANT_ID") or "pantheon-dev"
-    effective_tenant = requested_tenant or default_tenant
+    req = str(requested_tenant or "").strip()
+    if req:
+        if claim_tenant and req != claim_tenant and "*" not in allowed_tenants and req not in allowed_tenants:
+            raise _default_bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Tenant access denied",
+                "Requested tenant is outside the caller tenant scope",
+                precondition_failed="tenant_scope",
+                details_extra={"tenantId": req, "allowedTenantIds": sorted(list(allowed_tenants))},
+            )
+        if not claim_tenant and (not allowed_tenants or ("*" not in allowed_tenants and req not in allowed_tenants)):
+            raise _default_bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Tenant access denied",
+                "Caller has no verified tenant authority to request tenant scope",
+                precondition_failed="tenant_scope",
+            )
+        return req
 
-    if allowed_tenants and "*" not in allowed_tenants and effective_tenant not in allowed_tenants:
-        raise _default_bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Tenant access denied",
-            "Requested tenant is outside the caller tenant scope",
-            precondition_failed="tenant_scope",
-            details_extra={
-                "tenantId": effective_tenant,
-                "allowedTenantIds": sorted(list(allowed_tenants)),
-            },
-        )
-    return effective_tenant
+    if claim_tenant:
+        return claim_tenant
+    if len(allowed_tenants) == 1 and "*" not in allowed_tenants:
+        return next(iter(allowed_tenants))
+    return ""
 
 
 def _default_extract_identity(

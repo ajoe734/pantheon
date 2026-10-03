@@ -511,9 +511,18 @@ def test_persona_operations_read_model_and_journal_recovery_require_the_caller_t
     assert service.get_operations_read_model("p1", tenant_id="tenant-b") is not None
 
     owner = build_decision_journal_write_owner(data_dir=str(tmp_path))
-    for tenant in (None, "", "  "):
+    entry = owner.create_decision_journal_entry(
+        title="Recoverable Decision", body="Audit body", created_at="2026-10-03T00:00:00Z",
+        tenant_id="tenant-b", user_id="u", actor_id="u",
+    )
+    record = {"idempotency_key": "idem-rec", "tenant_id": "tenant-b", "user_id": "u", "entry_id": entry["id"]}
+    for tenant in (None, "", "  ", "tenant-a"):
         assert owner._recover_committed_entry_result(
-            {"tenant_id": "tenant-b", "user_id": "u"}, entry_id="missing", tenant_id=tenant, user_id="u") is None
+            record, entry_id=entry["id"], tenant_id=tenant, user_id="u") is None
+    positive = owner._recover_committed_entry_result(
+        record, entry_id=entry["id"], tenant_id="tenant-b", user_id="u")
+    assert positive is not None and positive.get("data", {}).get("id") == entry["id"]
+    assert positive.get("data", {}).get("tenant_id") == "tenant-b"
 
 
 def test_runtime_pause_binding_tenant_never_fills_the_caller_tenant(monkeypatch):
@@ -623,9 +632,15 @@ def test_mounted_operations_read_model_route_scopes_to_the_jwt_tenant(monkeypatc
     from services.control_plane.bff.core.errors import register_error_handlers
     from services.control_plane.bff.management_read_models.router import create_management_router
 
+    personas = {
+        "p1": {"persona_id": "p1", "tenant_id": "tenant-b"},
+        "p-dev": {"persona_id": "p-dev", "tenant_id": "pantheon-dev"},
+        "p-custom": {"persona_id": "p-custom", "tenant_id": "custom-default"},
+    }
+
     class _Store:
         def get_persona(self, persona_id):
-            return {"persona_id": "p1", "tenant_id": "tenant-b"} if persona_id == "p1" else None
+            return personas.get(persona_id)
 
     app = FastAPI()
     register_error_handlers(app)
@@ -634,9 +649,78 @@ def test_mounted_operations_read_model_route_scopes_to_the_jwt_tenant(monkeypatc
         tenant_payload_fn=bff_me_tenant_payload,
     ))
     client = TestClient(app, raise_server_exceptions=False)
-    url = "/bff/management/operations-read-model/p1"
-    foreign = client.get(url, headers=_jwt_headers(monkeypatch, "tenant-a"))
-    absent = client.get(url, headers=_jwt_without_tenant())
-    assert foreign.status_code == 404 and absent.status_code == 404, (foreign.text, absent.text)
-    same = client.get(url, headers=_jwt_headers(monkeypatch, "tenant-b"))
-    assert same.status_code == 200, same.text
+
+    # 1. Custom tenant: absent/foreign return 404; same tenant returns 200
+    url_b = "/bff/management/operations-read-model/p1"
+    assert client.get(url_b, headers=_jwt_headers(monkeypatch, "tenant-a")).status_code == 404
+    assert client.get(url_b, headers=_jwt_without_tenant()).status_code == 404
+    assert client.get(url_b, headers=_jwt_headers(monkeypatch, "tenant-b")).status_code == 200
+
+    # 2. Built-in default fallback ("pantheon-dev"): absent/foreign return 404; same returns 200
+    url_dev = "/bff/management/operations-read-model/p-dev"
+    assert client.get(url_dev, headers=_jwt_headers(monkeypatch, "tenant-a")).status_code == 404
+    assert client.get(url_dev, headers=_jwt_without_tenant()).status_code == 404
+    assert client.get(url_dev, headers=_jwt_headers(monkeypatch, "pantheon-dev")).status_code == 200
+
+    # 3. Environment default fallback ("custom-default"): absent/foreign return 404; same returns 200
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "custom-default")
+    url_custom = "/bff/management/operations-read-model/p-custom"
+    assert client.get(url_custom, headers=_jwt_headers(monkeypatch, "tenant-a")).status_code == 404
+    assert client.get(url_custom, headers=_jwt_without_tenant()).status_code == 404
+    assert client.get(url_custom, headers=_jwt_headers(monkeypatch, "custom-default")).status_code == 200
+
+
+def test_mounted_strategy_registry_readback_scopes_to_the_jwt_tenant(monkeypatch):
+    import base64
+    from services.control_plane.bff.command_adapters import strategy_adapter
+    from services.control_plane.bff.command_adapters.strategy_adapter import StrategyCommandAdapter
+    from services.registry.pg_store import PostgresRegistryStore, _request_digest
+
+    entry_b = {
+        "registry_id": "reg-1", "strategy_id": "s-1", "checksum": "sha256:123", "version": 1,
+        "owner_tenant": "tenant-b", "metadata": {"note": "old"}, "updated_at": "2026-10-03T00:00:00Z",
+        "last_actor": {"actor_id": "op"},
+    }
+    patched_b = {**entry_b, "metadata": {"note": "new"}}
+    rd = _request_digest({"registry_id": "reg-1", "expected_metadata": {"note": "old"}, "metadata": {"note": "new"}})
+
+    def mock_http(url, method="GET", auth_token=None, **kwargs):
+        raw = (auth_token or "").removeprefix("Bearer ").strip()
+        claims = json.loads(base64.urlsafe_b64decode(raw.split(".")[1] + "==")) if "." in raw else {}
+        tenant = claims.get("tenant_id")
+        rk = PostgresRegistryStore.receipt_key("cmd-1", "reg-1", actor={"actor_id": "op", "tenant": tenant}, command_type="metadata")
+        receipt = {"command_key": "cmd-1", "registry_id": "reg-1", "receipt_key": rk, "request_digest": rd, "committed_at": "2026-10-03T00:00:00Z", "committed_entry": patched_b}
+        if method == "GET":
+            return 200, {}, {"entry": entry_b, "receipt": receipt}
+        elif method == "PATCH":
+            return 200, {"X-Idempotent-Replay": "false"}, {"entry": patched_b, "receipt": receipt}
+        return 404, {}, {}
+
+    monkeypatch.setenv("PANTHEON_RUNTIME_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", _SECRET)
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_ISSUER", _ISSUER)
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_AUDIENCE", _AUDIENCE)
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://127.0.0.1:9999")
+    monkeypatch.setattr(strategy_adapter, "http_request_json_with_headers", mock_http)
+
+    adapter = StrategyCommandAdapter()
+    params = {
+        "action_id": "update_params", "strategy_id": "s-1", "registry_id": "reg-1",
+        "expected_metadata": {"note": "old"}, "metadata": {"note": "new"},
+    }
+
+    # Absent tenant fails closed
+    with pytest.raises(ActionUnavailableError) as exc_absent:
+        adapter.execute("cmd-1", "StrategyAction", params, auth_token=_jwt_without_tenant()["Authorization"])
+    assert exc_absent.value.error_code == "FORBIDDEN"
+
+    # Foreign tenant fails closed on receipt readback mismatch
+    with pytest.raises(ActionUnavailableError) as exc_foreign:
+        adapter.execute("cmd-1", "StrategyAction", params, auth_token=_tok_for("tenant-a"))
+    assert exc_foreign.value.error_code == "READBACK_MISMATCH"
+
+    # Same tenant positive control succeeds
+    res = adapter.execute("cmd-1", "StrategyAction", params, auth_token=_tok_for("tenant-b"))
+    assert res["status"] == "metadata_updated"
+    assert res["entity_id"] == "s-1"
+
