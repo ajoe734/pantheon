@@ -89,51 +89,56 @@
     "Replace source-SHA rollback skip expectations with executable verify/restore selection for equal source SHAs, ACK present/absent and driver success/failure; original deployment remains failed in every case.",
     "Replace the handwritten build/rebuild simulation with the actual BFF case arm and actual environment/candidate/bootstrap shell helpers. Assert build/bootstrap/recreate order, exact GIT_SHA, freshness forwarding, sealed override and exactly the three admitted BFF services.",
     "Run negative mutations removing bootstrap, ACK guard, freshness forwarding, sealed override and restart admission; every mutated protection causes its passing behavioral oracle to fail.",
-    "Add six missing artifact authority and five wrong-identity executions that fail before acquiring a lease or invoking transport. Original 231 cases become 240 after 12 obsolete parameter cases retire and 21 behavioral cases are added."
+    "Add six missing artifact authority and five wrong-identity executions that fail before acquiring a lease or invoking transport. Original 231 cases become 240 after 12 obsolete parameter cases retire and 21 behavioral cases are added.",
+    "After the explicit artifact grant, align both readiness assertions with sealed candidate Compose and BFF runtime environment; require build/seal/bootstrap/start/projector-recreate/readiness order while retaining subsequent auth/source/smoke gates."
   ],
   "production_net_lines": 0,
   "production_line_budget": 80,
   "production_changes": [],
   "validation": [
     {
-      "command": "RANKING_STORE_DSN=<isolated-unused-loopback-DSN> RANKING_STORE_BOOTSTRAP=0 timeout 180 /tmp/dev-projection-bootstrap-venv/bin/python -m pytest scripts/test_dev_environment_lease_deploy_contract.py services/trade_journey/test_lifecycle_projector_compose.py -q --tb=short -rs --disable-warnings",
-      "result": "248 passed, 95 warnings in 87.66s (0:01:27)",
+      "command": "RANKING_STORE_DSN=<isolated-unused-loopback-DSN> RANKING_STORE_BOOTSTRAP=0 timeout 180 .venv-pantheon/bin/python -m pytest scripts/test_dev_environment_lease_deploy_contract.py services/trade_journey/test_lifecycle_projector_compose.py -q --tb=short -rs --disable-warnings",
+      "result": "248 passed, 95 warnings in 82.74s (0:01:22)",
       "exit_status": 0,
-      "local_log": "/tmp/ops-contract-final-current.log",
-      "log_sha256": "655cc9b54d44ded3afcc5f77c024f6ad668279f56defbb0f573652d5ff9f7de4"
+      "local_log": "/tmp/ops-contract-resume-main.log",
+      "log_sha256": "f1d7d8cb968990eaaaa25cf033d38ca7e8fe666eba77565f6776f679a5bce29e"
     },
     {
-      "command": "PANTHEON_FE_RELEASE_CANDIDATE_HELPER=/tmp/ops-contract-fe-current-20261003/scripts/release-candidate.mjs timeout 180 /tmp/dev-projection-bootstrap-venv/bin/python -m pytest scripts/test_dev_release_artifacts.py scripts/test_dev_release_artifact_driver.py scripts/test_dev_artifact_compensation_evidence.py -q --tb=short -rs",
-      "result": "382 passed in 84.40s (0:01:24)",
+      "command": "PANTHEON_FE_RELEASE_CANDIDATE_HELPER=/tmp/ops-contract-fe-current-20261003/scripts/release-candidate.mjs timeout 180 .venv-pantheon/bin/python -m pytest scripts/test_dev_release_artifacts.py scripts/test_dev_release_artifact_driver.py scripts/test_dev_artifact_compensation_evidence.py -q --tb=short -rs",
+      "result": "382 passed in 78.75s (0:01:18)",
       "exit_status": 0,
-      "local_log": "/tmp/ops-contract-artifacts-current.log",
-      "log_sha256": "c0ddba45c48bd8389252cd7b7fbd5c20f921231856c3230e8e90097a33e04349"
+      "local_log": "/tmp/ops-contract-resume-artifacts.log",
+      "log_sha256": "129ec0bc42fdb385dab9493d56fe39b30cc9a8b716ce90ad7be3d9eb3d236e1e"
     },
     {
-      "command": "TEST_DATABASE_ADMIN_URL=<task-owned-loopback-PostgreSQL> timeout 180 /tmp/dev-projection-bootstrap-venv/bin/python -m pytest scripts/test_nonprod_dev_artifact_workflow.py scripts/test_cross_repo_release_controller.py scripts/test_deploy_nonprod_bootstrap_contract.py -q --tb=short -rs",
-      "result": "292 passed in 55.36s",
+      "command": "TEST_DATABASE_ADMIN_URL=<task-owned-loopback-PostgreSQL> timeout 180 .venv-pantheon/bin/python -m pytest scripts/test_nonprod_dev_artifact_workflow.py scripts/test_cross_repo_release_controller.py scripts/test_deploy_nonprod_bootstrap_contract.py -q --tb=short -rs",
+      "result": "292 passed in 51.41s",
       "exit_status": 0,
-      "local_log": "/tmp/ops-contract-workflow-current.log",
-      "log_sha256": "6425b72d3366005ba567c2bd0fab619d943ede76a27b3d0c142da9702dcdb32d"
+      "local_log": "/tmp/ops-contract-resume-workflow.log",
+      "log_sha256": "29269ea297c13ce8916f00f4ae1defe8a47e47f4ade096d8836ddec29ee830e9"
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python -m pytest scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py scripts/test_dev_environment_lease_guard.py scripts/test_wait_for_bff_lifecycle_readiness.py -q --tb=short -rs",
+      "result": "86 passed in 35.21s",
+      "exit_status": 0
     }
   ],
-  "total_scoped_validation": "922 passed, zero failed, zero skipped across the three complete final batches.",
+  "total_scoped_validation": "1008 passed, zero failed, zero skipped across four complete final batches.",
   "validation_dependencies": {
-    "python": "/tmp/dev-projection-bootstrap-venv/bin/python; reused without package mutation",
-    "postgres": "Task-owned postgres:16-alpine, host unix socket Docker, random loopback port 32808; fresh per-test databases and roles; two actual bootstrap/CLI executions including forced migration failure.",
+    "python": "Checkout-scoped .venv-pantheon provisioned with scripts/dev/provision_python_distribution.py --dependency-python /tmp/dev-projection-bootstrap-venv/bin/python; foreign-cwd import verification passed; shared dependencies unchanged.",
+    "postgres": "Task-owned postgres:16-alpine ops-contract-resume-pg-20261003, host unix socket Docker, random loopback port 32809; fresh per-test databases and roles; actual bootstrap/CLI success and forced migration failure; container stopped/removed after terminal exit 0.",
     "frontend_sha": "86a4314b947e241f985a16b9c98f19d816230fc5",
     "frontend_source": "Separate sparse clone of ajoe734/execute-plans dev under /tmp/ops-contract-fe-current-20261003; no FE source copied into Pantheon."
   },
   "additional_validation": {
-    "command": "timeout 120 /tmp/dev-projection-bootstrap-venv/bin/python -m pytest scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py scripts/test_dev_environment_lease_guard.py scripts/test_wait_for_bff_lifecycle_readiness.py -q --tb=short -rs",
-    "result": "84 passed, 2 failed; exit 1. Not reported as a passing batch.",
-    "remaining_outside_declared_artifacts": [
-      "scripts/test_wait_for_bff_lifecycle_readiness.py::test_root_initial_readiness_uses_exact_waiter_before_residual_smoke",
-      "scripts/test_wait_for_bff_lifecycle_readiness.py::test_bff_only_readiness_also_uses_exact_waiter"
-    ],
-    "baseline_verification": "Both fail identically at lines 748/801 against git-show extracted files from 3728879abc87f070603d67567fe8eea80787cb50. They assert obsolete raw Compose strings, not an observed runtime failure. The two scoped lifecycle literal failures were also reproduced against that frozen base, and are repaired here. No additional artifact grant was assumed.",
-    "baseline_log_sha256": "3c98ea6dc8abdfad6901eaa4c45a23bae69e99a6e7ab4bc7f0677264d716c10e"
+    "command": "timeout 30 .venv-pantheon/bin/python /tmp/ops-contract-readiness-mutations.py",
+    "result": "2 unchanged ordering controls pass; 8/8 mutations detected: missing root seal/bootstrap/projector recreate, early root readiness, missing BFF runtime env/worker/bootstrap, early BFF readiness. Existing executable bootstrap/ACK/freshness/sealed-override/restart mutations also pass in the 248-case batch.",
+    "exit_status": 0,
+    "log_sha256": "18eb1204655e517ae8a19f47413ba5318dcaa19fc7ee79dd066219b473c531b9",
+    "source_sha256": "67e6ef5f6ae38f9dc26549178710c14f457773267d1dd1e0e3fbf1c98e79fcbb",
+    "static_checks": "bash -n scripts/deploy_nonprod_vm.sh; git diff --check: exit 0"
   },
-  "earlier_attempts": "System python lacked pytest; used existing venv. Intermediate fixture runs failed and were corrected. One 30-second batch timed out because the old SSH stub spawned a sleep descendant; replaced it with exec sleep to model the real exec-SSH transport. Initial optional dependency skips were subsequently rerun in complete final batches without skips. Initial FE parity failed against an August checkout 4fd6088d; current isolated dev passes. None of these earlier failures/timeouts/skips is counted as passed.",
-  "delivery": "Independent Claude review, required CI and supervisor merge remain separate gates; no approval or hosted acceptance is claimed."
+  "earlier_attempts": "System python lacked pytest; used existing venv. Intermediate fixture runs failed and were corrected. One 30-second batch timed out because the old SSH stub spawned a sleep descendant; replaced it with exec sleep to model the real exec-SSH transport. Initial optional dependency skips were subsequently rerun in complete final batches without skips. Initial FE parity failed against an August checkout 4fd6088d; current isolated dev passes. None of these earlier failures/timeouts/skips is counted as passed. The prior adjacent readiness batch had 84 passed/2 failed; both stale literals are now within the explicit artifact grant and fixed. Final rerun: 86 passed, exit 0.",
+  "delivery": "Independent Claude review, required CI and supervisor merge remain separate gates; no approval or hosted acceptance is claimed.",
+  "tested_source_commit": "8c09f60cda00f5ac34592f98532d027d95e50e93"
 }
