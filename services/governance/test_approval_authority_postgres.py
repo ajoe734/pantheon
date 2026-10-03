@@ -258,6 +258,29 @@ def test_private_ids_and_body_escalation(mounted, owner_env):
     assert r.status_code == 404
 
 
+def test_foreign_and_absent_targets_deny_without_commits(mounted, owner_env):
+    decision = approved(mounted, owner_env)
+    private = decision['decision_id']
+    actor = dict(actor_id='synthetic-reviewer', actor_role='governance_reviewer')
+    readback = httpx.get(mounted+'/api/governance/approvals/'+private, headers=headers(owner_env)).json()
+    before = approval_records(owner_env, private)
+    commands = [('review', dict(actor)), ('decide', dict(actor, outcome='approved', rationale='foreign attempt')),
+                ('revoke', dict(actor))]
+    for action, body in commands:
+        for version in (0, 1, 3, 999):
+            r = post(mounted, f'/{private}/{action}', owner_env, dict(body, expected_version=version),
+                     tenant_id='other', roles=['governance_reviewer', 'risk_owner'])
+            assert r.status_code == 404, (action, version, r.text)
+            assert private not in r.text
+            absent = 'absent-' + uuid.uuid4().hex
+            r = post(mounted, f'/{absent}/{action}', owner_env, dict(body, expected_version=version),
+                     roles=['governance_reviewer', 'risk_owner'])
+            assert r.status_code == 404, (action, version, r.text)
+            assert approval_records(owner_env, absent) == [[], [], []]
+    assert approval_records(owner_env, private) == before
+    assert httpx.get(mounted+'/api/governance/approvals/'+private, headers=headers(owner_env)).json() == readback
+
+
 def test_two_process_cas_and_original_replay(mounted, owner_env):
     key = uuid.uuid4().hex
     body = proposal()
