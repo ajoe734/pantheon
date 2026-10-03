@@ -88,10 +88,10 @@
       "note": "params/sub_payload tenant, EVOLUTION_DEFAULT_TENANT_ID, PANTHEON_TENANT_ID and 'default' no longer supply X-Tenant-Id; missing -> TENANT_REQUIRED, mismatch -> TENANT_MISMATCH before http_request_json."
     },
     {
-      "site": "services/control-plane/bff/command_adapters/capital_adapter.py:70 and :188",
-      "disposition": "proven safe",
-      "trusted_source": "tenant_id kwarg bound by caller else verified JWT claim (_token_tenant)",
-      "note": "No payload tenant can fill it; _post_json compares payload tenant against trusted tenant."
+      "site": "services/control-plane/bff/command_adapters/capital_adapter.py:55 (_tenant) and :174 (_ctx) and base.py:146-160 (bound_tenant / _headers)",
+      "disposition": "fixed",
+      "trusted_source": "verified JWT tenant claim of auth_token (_token_tenant)",
+      "note": "CapitalCommandAdapter.execute, _ctx, and CapitalOwnerWriter._tenant validate authenticated caller authority against payload tenant; absent verified tenant and mismatched tenant fail closed with zero downstream calls and zero owner writes; base.py bound_tenant ensures tenant_id kwarg cannot override or fill a missing verified JWT tenant claim."
     },
     {
       "site": "services/capital/capital_guard.py:192 (_tenant_of metadata fallback)",
@@ -227,7 +227,8 @@
     "test_mounted_strategy_command_route_with_tenant_enforcing_owner: mounted POST /bff/v1/commands StrategyAction with tenant-enforcing owner (absent -> 0 writes; foreign -> 0 writes; same -> 202, 1 write).",
     "test_mounted_workspace_route_scopes_to_the_jwt_tenant: mounted GET /bff/agora/trading-room/workspaces/{id} (absent tenant in JWT claims -> 403, zero data disclosed; foreign tenant -> 403; same tenant -> 200).",
     "test_authorized_configured_default_is_not_replaced_by_allowlist_order: mounted GET /bff/agora/performance/action-receipts/{id} with multi-tenant allowed_tenants selects active configured default (PANTHEON_BFF_TENANT_ID) over allowlist position -> 200.",
-    "test_event_stream_requires_verified_tenant_authority: mounted GET /api/v1/stream/system with synthetic private event (missing tenant -> 403, zero data disclosed; foreign tenant -> 200, private event withheld; same tenant -> 200, private event delivered)."
+    "test_event_stream_requires_verified_tenant_authority: mounted GET /api/v1/stream/system with synthetic private event (missing tenant -> 403, zero data disclosed; foreign tenant -> 200, private event withheld; same tenant -> 200, private event delivered).",
+    "test_mounted_capital_command_route_scopes_to_the_jwt_tenant: mounted POST /bff/v1/commands CapitalPoolAction target CapitalPool/pool-b (tenantless JWT and foreign tenant JWT fail closed with zero downstream calls and failed command record status; same-tenant JWT positive control executes with 1 PATCH and 1 GET call with X-Tenant-Id)."
   ],
   "validation": {
     "local_postgresql_acceptance": {
@@ -238,9 +239,15 @@
         "CAPITAL_TEST_ADMIN_DSN=postgresql://postgres:postgres@127.0.0.1:32804/pantheon",
         "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:32804/pantheon"
       ],
-      "results": "207 passed, 9 subtests passed, 0 failed, ZERO skipped across all 9 focused BFF and Capital test suites against local PostgreSQL 127.0.0.1:32804/pantheon; 44 passed in test_tenant_fallback_audit.py."
+      "results": "207 passed, 9 subtests passed, 0 failed, ZERO skipped across all 9 focused BFF and Capital test suites against local PostgreSQL 127.0.0.1:32804/pantheon; 47 passed in test_tenant_fallback_audit.py."
     },
-    "diff_budget": "diff_budget.py --change-class corrective --budget 60 passes with zero violations (production net +47 <= 60)."
+    "test_commands": [
+      "pytest -q services/control-plane/bff/tests/test_tenant_fallback_audit.py => 47 passed",
+      "pytest -q services/capital/test_capital_guard.py services/capital/test_capital_guard_routes.py services/control-plane/bff/tests/test_agora_identity_scope.py services/control-plane/bff/tests/test_dev_login_pantheon_local_tenant_contract.py => 128 passed",
+      "pytest -q services/control-plane/bff/tests/{test_tenant_fallback_audit,test_events_router,test_management_domain_actions,test_receipt_owner_routes,test_evolution_program_action_receipts,test_agora_chain_001_natural_owner_and_receipt}.py services/capital/test_tenant_scoping.py => 146 passed, 4 failed (pre-existing retired-action failures in test_management_domain_actions at base), 2 skipped, 2 subtests passed",
+      "pytest -q -s /tmp/test_bff_reviewer_capital.py => 3 passed"
+    ],
+    "diff_budget": "diff_budget.py --change-class corrective --budget 60 passes with zero violations (production net <= 60)."
   }
 }
 

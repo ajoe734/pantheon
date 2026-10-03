@@ -143,9 +143,17 @@ def _token_tenant(token: Optional[str]) -> Optional[str]:
         return None
 
 
-def bound_tenant(payload: Any, tenant_id: Optional[str]) -> str:
+def bound_tenant(payload: Any, tenant_id: Optional[str] = None, auth_token: Optional[str] = None) -> str:
     """Return the trusted tenant; a payload tenant may only equal it, never fill it."""
-    trusted, claimed = str(tenant_id or "").strip(), str(payload.get("tenant_id") or "").strip() if isinstance(payload, dict) else ""
+    raw = str(auth_token or "").removeprefix("Bearer ").strip()
+    if raw.count(".") == 2:
+        tok = _token_tenant(auth_token)
+        if not tok or (tenant_id and str(tenant_id).strip() != tok):
+            raise ActionUnavailableError("Caller tenant_id is not the verified caller tenant.", error_code="TENANT_MISMATCH")
+        trusted = tok
+    else:
+        trusted = str(tenant_id or "").strip()
+    claimed = str(payload.get("tenant_id") or payload.get("tenant") or "").strip() if isinstance(payload, dict) else ""
     if not trusted or (claimed and claimed != trusted):
         raise ActionUnavailableError("Payload tenant_id is not the verified caller tenant.", error_code="TENANT_MISMATCH")
     return trusted
@@ -153,7 +161,7 @@ def bound_tenant(payload: Any, tenant_id: Optional[str]) -> str:
 
 def _headers(payload: Any, auth_token: Optional[str], mfa_token: Optional[str], tenant_id: Optional[str]) -> Dict[str, str]:
     h = {"Accept": "application/json", "X-Pantheon-Service": "control-plane-bff"}
-    t = bound_tenant(payload, tenant_id or _token_tenant(auth_token))
+    t = bound_tenant(payload, tenant_id, auth_token)
     if t:
         h["X-Tenant-Id"] = t
     if payload is not None:

@@ -242,7 +242,7 @@ def _post_json(
     """POST JSON to url and return parsed response. Raises on HTTP error."""
     data = json.dumps(payload).encode("utf-8")
     headers: Dict[str, str] = {"Content-Type": "application/json", "X-Pantheon-Service": "control-plane-bff"}
-    trusted_tenant = bound_tenant(payload, tenant_id or _token_tenant(auth_token))
+    trusted_tenant = bound_tenant(payload, tenant_id, auth_token)
     if trusted_tenant:
         headers["X-Tenant-Id"] = trusted_tenant
     if auth_token:
@@ -277,8 +277,9 @@ def _get_json(
 ) -> Any:
     """GET JSON from an owner API for post-error receipt reconciliation."""
     headers: Dict[str, str] = {"Accept": "application/json", "X-Pantheon-Service": "control-plane-bff"}
-    if tenant_id:
-        headers["X-Tenant-Id"] = str(tenant_id).strip()
+    trusted = bound_tenant({}, tenant_id, auth_token) if (auth_token or tenant_id) else None
+    if trusted:
+        headers["X-Tenant-Id"] = trusted
     if auth_token:
         headers["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
     if mfa_token:

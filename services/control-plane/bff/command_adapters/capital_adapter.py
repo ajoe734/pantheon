@@ -19,6 +19,7 @@ from .base import (
     _token_tenant,
     ActionUnavailableError,
     DomainCommandAdapter,
+    bound_tenant,
     build_domain_receipt,
     capital_url,
     http_request_json,
@@ -52,14 +53,14 @@ class CapitalOwnerWriter:
     """Forward pool, binding, rebalance and containment writes to the Capital owner."""
 
     @staticmethod
-    def _tenant(tenant_id: Optional[str], auth_token: Optional[str]) -> Optional[str]:
-        return str(tenant_id or "").strip() or _token_tenant(auth_token)
+    def _tenant(tenant_id: Optional[str], auth_token: Optional[str], payload: Any = None) -> str:
+        return bound_tenant(payload, tenant_id, auth_token)
 
     def create_pool(self, payload, *, actor_id, actor_role, auth_token=None, key="", tenant_id=None, **_) -> Dict[str, Any]:
         pool_id = str(payload.get("pool_id") or payload.get("id") or "").strip()
         if not pool_id:
             raise CapitalValidationError("pool_id is required")
-        tenant = self._tenant(tenant_id, auth_token)
+        tenant = self._tenant(tenant_id, auth_token, payload)
         body = {**_owner_body(payload, actor_id, actor_role, key), "pool_id": pool_id}
         return _executor().create_capital_pool(body, auth_token=auth_token, **({"tenant_id": tenant} if tenant else {}))
 
@@ -68,17 +69,17 @@ class CapitalOwnerWriter:
         status = _POOL_ACTION_STATUS.get(action.lower())
         if status is None:
             raise ActionUnavailableError(f"CapitalPool action {action!r} is not supported by Capital authority.", action_id=action, entity_type="CapitalPool")
-        tenant = self._tenant(tenant_id, auth_token)
+        tenant = self._tenant(tenant_id, auth_token, payload)
         return self._set_status(f"/api/capital-pools/{quote(target_id, safe='')}", {"status": status, "approval_decision_id": payload.get("approval_decision_id")}, actor_id, actor_role, auth_token, tenant_id=tenant)
 
     def activate_binding(self, payload, *, actor_id, actor_role, target_id, auth_token=None, tenant_id=None, **_) -> Dict[str, Any]:
         path = f"/api/bindings/{quote(target_id, safe='')}"
-        tenant = self._tenant(tenant_id, auth_token)
+        tenant = self._tenant(tenant_id, auth_token, payload)
         http_request_json(capital_url(f"{path}/activate"), method="POST", payload={"actor_id": actor_id, "actor_role": actor_role, "approval_decision_id": payload.get("approval_decision_id")}, auth_token=auth_token, tenant_id=tenant)
         return http_request_json(capital_url(path), auth_token=auth_token, tenant_id=tenant)
 
     def binding_status(self, payload, *, actor_id, actor_role, target_id, auth_token=None, tenant_id=None, **_) -> Dict[str, Any]:
-        tenant = self._tenant(tenant_id, auth_token)
+        tenant = self._tenant(tenant_id, auth_token, payload)
         return self._set_status(f"/api/bindings/{quote(target_id, safe='')}", {"status": payload.get("status")}, actor_id, actor_role, auth_token, tenant_id=tenant)
 
     def create_rebalance(self, payload, *, actor_id, actor_role, auth_token=None, key="", tenant_id=None, **_) -> Dict[str, Any]:
@@ -86,14 +87,14 @@ class CapitalOwnerWriter:
         body.setdefault("capital_pool_id", payload.get("pool_id"))
         if payload.get("id") and not payload.get("rebalance_id"):
             body["rebalance_id"] = payload["id"]
-        tenant = self._tenant(tenant_id, auth_token)
+        tenant = self._tenant(tenant_id, auth_token, payload)
         return _executor().create_capital_rebalance_proposal(body, auth_token=auth_token, **({"tenant_id": tenant} if tenant else {}))
 
     def apply_rebalance(self, payload, *, actor_id, actor_role, target_id, auth_token=None, key="", tenant_id=None, **_) -> Dict[str, Any]:
         params = {"entity_type": "Rebalance", "entity_id": target_id, "idempotency_key": key, "request_hash": _request_hash(payload),
                   "approval_ref": payload.get("approval_ref") or payload.get("approval_decision_id") or "", "proposal_version": payload.get("proposal_version"),
                   "actor_id": actor_id, "actor_role": actor_role}
-        tenant = self._tenant(tenant_id, auth_token)
+        tenant = self._tenant(tenant_id, auth_token, payload)
         if tenant:
             params["tenant_id"] = tenant
         return _executor()._execute_approved_rebalance_apply(str(payload.get("command_id") or key), params, auth_token=auth_token)
@@ -144,14 +145,15 @@ class CapitalCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        caller_tenant = bound_tenant(params, None, auth_token)
         entity_type = str(params.get("entity_type") or "").strip().lower().replace("_", "-")
         action_id = str(params.get("action_id") or "").strip()
         entity_id = str(params.get("entity_id") or params.get("pool_id") or params.get("rebalance_id") or params.get("binding_id") or "").strip()
 
         if command_type == "EmergencyContainment":
-            return _executor()._execute_emergency_containment_authority(command_id, params, auth_token=auth_token)
+            return _executor()._execute_emergency_containment_authority(command_id, {**params, "tenant_id": caller_tenant}, auth_token=auth_token)
         if command_type == "ApprovedApply":
-            return _executor()._execute_approved_rebalance_apply(command_id, params, auth_token=auth_token)
+            return _executor()._execute_approved_rebalance_apply(command_id, {**params, "tenant_id": caller_tenant}, auth_token=auth_token)
         if entity_type in {"capitalpool", "capital-pool"}:
             return self._pool(command_id, entity_id, action_id, params, auth_token)
         if entity_type == "rebalance" or command_type in {"RebalanceProposal", "PatchRebalance"}:
@@ -171,7 +173,7 @@ class CapitalCommandAdapter(DomainCommandAdapter):
             "actor_role": str(params.get("actor_role") or ""),
             "key": str(params.get("idempotency_key") or ""),
             "auth_token": auth_token,
-            "tenant_id": str(params.get("tenant_id") or params.get("tenant") or "").strip() or _token_tenant(auth_token),
+            "tenant_id": bound_tenant(params, None, auth_token),
         }
 
     def _pool(self, command_id, pool_id, action_id, params, auth_token) -> Dict[str, Any]:
