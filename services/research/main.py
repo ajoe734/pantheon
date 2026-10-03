@@ -378,8 +378,10 @@ def _cancel_stage_claims(run_ids: Any, timestamp: str) -> None:
                 if k.startswith("agora-stage-claim:") and isinstance(v, dict) and v.get("status") == "in_progress" and str(v.get("run_id") or "") in run_ids:
                     v["status"], v["updated_at"] = "canceled", timestamp
                     ch = True
-            if ch: store._write_map(exec_path, claims)
-    with _stage_execution_cond: _stage_execution_cond.notify_all()
+            if ch:
+                store._write_map(exec_path, claims)
+    with _stage_execution_cond:
+        _stage_execution_cond.notify_all()
 
 
 def _format_run_completion_result(run_record: Dict[str, Any], stage_type: str) -> Dict[str, Any]:
@@ -424,9 +426,11 @@ def resume_queued_plan_stages() -> None:
                     r = store.get_run(str(c.get("run_id") or "")) if c.get("run_id") else None
                     if r and str(r.get("status") or "").lower() == "completed" and r.get("receipt"):
                         c["status"], c["updated_at"] = "succeeded", utc_now()
-                    else: claims.pop(k, None)
+                    else:
+                        claims.pop(k, None)
                     ch = True
-            if ch: store._write_map(exec_path, claims)
+            if ch:
+                store._write_map(exec_path, claims)
     grouped: Dict[str, Dict[str, Any]] = {}
     for record in store.list_runs():
         params = record.get("parameters") or {}
@@ -1136,7 +1140,7 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         store.append_event(event)
     if not rejected and "decision_id" in body.parameters and "target_artifact_id" in body.parameters:
         _trigger_retrain_execution(run["run_id"], body.parameters)
-    if not rejected and is_stage_backend and body.parameters.get("stage") and (body.parameters.get("dataset") or (body.parameters.get("plan") and body.parameters["plan"].get("dataset"))):
+    if not rejected and is_stage_backend and (body.parameters.get("stage") or (body.parameters.get("plan") and body.parameters["plan"].get("stages"))):
         _progress_plan_stages(body.parameters.get("plan") or {}, run, body.actor_id, store, timestamp)
     return run
 
@@ -1173,7 +1177,10 @@ def _progress_plan_stages_locked(
         return
 
     stages = plan_payload.get("stages") or []
-    if not isinstance(stages, list):
+    if not stages and parent_run.get("parameters", {}).get("stage"):
+        stages = [parent_run["parameters"]["stage"]]
+        plan_payload["stages"] = stages
+    if not isinstance(stages, list) or not stages:
         return
 
     records = [r for r in store.list_runs() if str(r.get("task_id")) == task_id and r.get("stage_id")]
@@ -1703,11 +1710,11 @@ def retry_run(run_id: str, body: Optional[RetryRunBody] = None) -> Dict[str, Any
                     stage["dataset"] = params["dataset"]
                 break
     adapter = new_run.get("adapter", "stub")
-    supported_stage_backends = {"vectorbt", "statsmodels", "quantlib", "prototype_backtest", "econometric_validation", "derivatives_pricing_risk"}
+    supported_stage_backends = {"vectorbt", "statsmodels", "quantlib", "openclaw_result_synthesis", "prototype_backtest", "econometric_validation", "derivatives_pricing_risk", "evidence_synthesis"}
     is_stage_backend = adapter in supported_stage_backends or params.get("stage") is not None
     if "decision_id" in params and "target_artifact_id" in params:
         _trigger_retrain_execution(new_run["run_id"], params)
-    elif is_stage_backend and params.get("stage"):
+    elif is_stage_backend and (params.get("stage") or (params.get("plan") and params["plan"].get("stages"))):
         _progress_plan_stages(params.get("plan") or {}, new_run, b.actor_id, store, timestamp)
     return new_run
 
@@ -2135,7 +2142,8 @@ def execute_research_stage(
     if run_record and not rec_stage_id:
         for ref in (run_record.get("input_refs") or []):
             if isinstance(ref, dict) and ref.get("type") == "stage" and ref.get("id"):
-                rec_stage_id = str(ref["id"]).strip(); break
+                rec_stage_id = str(ref["id"]).strip()
+                break
     caller_stage_id = str(stage.get("stage_id") or "").strip()
     if caller_stage_id and rec_stage_id and caller_stage_id != rec_stage_id:
         raise HTTPException(status_code=400, detail=f"Stage identity mismatch: run '{run_id}' stage '{rec_stage_id}' != '{caller_stage_id}'")
@@ -2191,6 +2199,12 @@ def execute_research_stage(
         )
 
     transport_keys = [str(k) for k in (body.get("downstream_key"), body.get("idempotency_key")) if isinstance(k, str) and k]
+
+    def _record_transport_keys() -> None:
+        key_payload = {"run_id": run_id, "stage_id": stage_id, "stage_type": stage_type}
+        for tk in transport_keys:
+            store._put_record(exec_storage_path, f"agora-transport-key:{tk}", key_payload)
+
     for tk in transport_keys:
         if isinstance(bound := store._get_record(exec_storage_path, f"agora-transport-key:{tk}"), dict):
             brun, bstage = str(bound.get("run_id") or ""), str(bound.get("stage_id") or "")
@@ -2214,12 +2228,12 @@ def execute_research_stage(
                 if rec_stage_id and stage_id and rec_stage_id != stage_id:
                     raise HTTPException(status_code=400, detail=f"Stage identity mismatch: run '{run_id}' stage '{rec_stage_id}' != '{stage_id}'")
                 if status_str == "completed" and run_record.get("receipt"):
-                    for tk in transport_keys: store._put_record(exec_storage_path, f"agora-transport-key:{tk}", {"run_id": run_id, "stage_id": stage_id, "stage_type": stage_type})
+                    _record_transport_keys()
                     return _format_run_completion_result(run_record, stage_type)
 
             if (cached_result := store._get_record(exec_storage_path, stage_claim_key)) is not None:
                 if cached_result.get("status") == "succeeded":
-                    for tk in transport_keys: store._put_record(exec_storage_path, f"agora-transport-key:{tk}", {"run_id": run_id, "stage_id": stage_id, "stage_type": stage_type})
+                    _record_transport_keys()
                     return _sync_run_and_return_cached(run_id, cached_result)
                 if cached_result.get("status") == "in_progress":
                     if time.time() - wait_start > 30.0:
@@ -2233,7 +2247,7 @@ def execute_research_stage(
                 "transport_keys": transport_keys,
             }
             store._put_record(exec_storage_path, stage_claim_key, claim_record)
-            for tk in transport_keys: store._put_record(exec_storage_path, f"agora-transport-key:{tk}", {"run_id": run_id, "stage_id": stage_id, "stage_type": stage_type})
+            _record_transport_keys()
             if run_record and isinstance(run_record, dict):
                 run_record["status"], run_record["claim_token"] = "running", claim_token
                 store.put_run(run_record)
@@ -2477,8 +2491,10 @@ def execute_research_stage(
             expected_tenant = str((run_record.get("tenant_id") if run_record else None) or plan.get("tenant_id") or body.get("tenant_id") or "").strip()
 
             def _resolve_artifact_tenant(art_doc: Dict[str, Any]) -> Optional[str]:
-                if not isinstance(art_doc, dict): return None
-                if tid := art_doc.get("tenant_id"): return str(tid)
+                if not isinstance(art_doc, dict):
+                    return None
+                if tid := art_doc.get("tenant_id"):
+                    return str(tid)
                 if p_run_id := art_doc.get("run_id"):
                     if (p_run := store.get_run(str(p_run_id))) and isinstance(p_run, dict) and p_run.get("tenant_id"):
                         return str(p_run["tenant_id"])
@@ -2500,7 +2516,8 @@ def execute_research_stage(
             if artifact_refs_input:
                 for ref in artifact_refs_input:
                     aid = ref.get("artifact_id") or ref.get("id") if isinstance(ref, dict) else str(ref)
-                    if not aid: continue
+                    if not aid:
+                        continue
                     stored = store.get_artifact(aid)
                     if not stored:
                         raise HTTPException(status_code=400, detail=f"Required persisted artifact '{aid}' was not found in research store")
@@ -2511,20 +2528,23 @@ def execute_research_stage(
                 raw_deps = stage.get("dependencies") or stage.get("depends_on") or []
                 deps = {str(d) for d in (raw_deps if isinstance(raw_deps, (list, tuple, set)) else [raw_deps]) if d}
                 c_runs = [r for r in store.list_runs() if str(r.get("task_id") or "") == task_id and str(r.get("run_id") or "") != str(run_id)]
-                if deps: c_runs = [r for r in c_runs if str(r.get("stage_id") or "") in deps]
+                if deps:
+                    c_runs = [r for r in c_runs if str(r.get("stage_id") or "") in deps]
                 seen_ids = set()
                 for c_run in c_runs:
                     for aref in c_run.get("artifact_refs") or []:
                         aid = aref.get("artifact_id") if isinstance(aref, dict) else str(aref)
                         if aid and aid not in seen_ids and (stored := store.get_artifact(aid)):
                             _validate_artifact_tenant(stored, aid)
-                            seen_ids.add(aid); resolved_artifacts.append(stored)
+                            seen_ids.add(aid)
+                            resolved_artifacts.append(stored)
                 if not resolved_artifacts and task_id:
                     for art in store.list_artifacts():
                         aid = art.get("artifact_id") or art.get("id")
                         if aid and aid not in seen_ids and str(art.get("task_id") or "") == task_id and str(art.get("run_id") or "") != str(run_id):
                             _validate_artifact_tenant(art, str(aid))
-                            seen_ids.add(aid); resolved_artifacts.append(art)
+                            seen_ids.add(aid)
+                            resolved_artifacts.append(art)
 
             if not resolved_artifacts:
                 raise HTTPException(status_code=400, detail=f"Missing required persisted input artifacts for stage '{stage_type}'")
@@ -2631,7 +2651,8 @@ def execute_research_stage(
         "title": f"Execution artifact for {stage_type} ({run_id})", "payload": artifact_bundle,
         "created_at": now_iso, "provenance": provenance,
     }
-    if target_tenant_id: artifact_record["tenant_id"] = str(target_tenant_id)
+    if target_tenant_id:
+        artifact_record["tenant_id"] = str(target_tenant_id)
     try:
         persisted_art = store.put_artifact(artifact_record)
         digest = f"sha256:{hashlib.sha256(json.dumps(persisted_art, sort_keys=True, default=str).encode('utf-8')).hexdigest()}"
@@ -2654,7 +2675,8 @@ def execute_research_stage(
         if not any(a.get("artifact_id") == artifact_id for a in arts if isinstance(a, dict)):
             arts.append(artifact_ref_entry)
         latest_run.update({"status": "completed", "completed_at": now_iso, "metrics": metrics, "provenance": provenance, "receipt": receipt, "artifact_refs": arts})
-        if target_tenant_id and not latest_run.get("tenant_id"): latest_run["tenant_id"] = str(target_tenant_id)
+        if target_tenant_id and not latest_run.get("tenant_id"):
+            latest_run["tenant_id"] = str(target_tenant_id)
         saved_run = store.put_run(latest_run)
         if saved_run and str(saved_run.get("status") or "").lower() in {"canceled", "cancelled"}:
             _abort_canceled()
@@ -2666,8 +2688,7 @@ def execute_research_stage(
     }
     with _stage_execution_cond:
         store._put_record(exec_storage_path, stage_claim_key, result)
-        for tk in transport_keys:
-            store._put_record(exec_storage_path, f"agora-transport-key:{tk}", {"run_id": run_id, "stage_id": stage_id, "stage_type": stage_type})
+        _record_transport_keys()
         _stage_execution_cond.notify_all()
     return result
 

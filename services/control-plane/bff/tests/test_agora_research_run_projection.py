@@ -933,3 +933,38 @@ def test_cancel_owner_disappears_after_initial_read(monkeypatch: pytest.MonkeyPa
     assert response.status_code == 503, "Unavailable cancellation/readback must not commit terminal local success"
     store = getattr(client, "router", None) and getattr(client.router, "research_store", None) or getattr(client, "app_instance", None) and getattr(client.app_instance, "research_store", None)
     assert store.get_plan(pid)["status"] != "cancelled", "Plan must not be cancelled locally when owner fails"
+
+
+def test_bff_accepts_supported_synthesis_owner(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from services.control_plane.bff.agora.research.service import AgoraResearchService
+    from services.control_plane.bff.agora.research.store import MemoryResearchPlanStore
+    from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
+
+    monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://research-owner.invalid")
+    monkeypatch.setattr(WorkshopCanonicalOperations, "list_research_runs", lambda *a, **k: [])
+    sent = Mock(return_value={"task": {"task_id": "t"}, "run": {"run_id": "r", "status": "queued"}})
+    monkeypatch.setattr(WorkshopCanonicalOperations, "dispatch_research_run", sent)
+    store = MemoryResearchPlanStore()
+    store.create_plan({
+        "plan_id": "p",
+        "status": "draft",
+        "tenant_id": "a",
+        "user_id": "u",
+        "lock_version": 1,
+        "approval": {"state": "approved", "decided_by": "u"},
+        "stages": [{
+            "stage_id": "s",
+            "stage_type": "evidence_synthesis",
+            "status": "ready",
+            "routing": {"backend_mode": "real"},
+            "artifact_refs": [{"artifact_id": "input"}],
+        }],
+    })
+    service = AgoraResearchService(store=store)
+    service.approve_plan("p", scope=SimpleNamespace(tenant_id="a", user_id="u", roles=["operator"]))
+    service.dispatch_plan("p", scope=SimpleNamespace(tenant_id="a", user_id="u", roles=["operator"]))
+    assert sent.call_count == 1
+

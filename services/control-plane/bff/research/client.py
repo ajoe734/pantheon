@@ -100,7 +100,8 @@ class ResearchServiceClient:
         return self._call("GET", f"/api/research/tickets/{ticket_id}", allow_none=(404,)) if ticket_id else None
     def list_research_tickets(self, *, statuses: Optional[Any] = None, owner: Optional[str] = None) -> List[Dict[str, Any]]:
         params = [f"status={','.join(str(s) for s in statuses) if isinstance(statuses, (list, tuple, set)) else statuses}"] if statuses else []
-        if owner: params.append(f"owner={owner}")
+        if owner:
+            params.append(f"owner={owner}")
         query = f"?{'&'.join(params)}" if params else ""
         res = self._call("GET", f"/api/research/tickets{query}", allow_none=(404,))
         return res if isinstance(res, list) else []
@@ -123,39 +124,6 @@ class ResearchServiceClient:
         return self._call("POST", f"/api/research/experiments/{eid}/archive", kw or None, allow_none=(404, 409))
     def invalidate_research_experiment(self, eid: str, **kw: Any) -> Optional[Dict[str, Any]]:
         return self._call("POST", f"/api/research/experiments/{eid}/invalidate", kw or None, allow_none=(404, 409))
-
-    # Research orchestrator runs (single-owner execution API)
-    def dispatch_research_run(
-        self,
-        *,
-        task_payload: Dict[str, Any],
-        run_payload: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        task = self._call("POST", "/api/research-orchestrator/tasks", task_payload) or {}
-        task_id = str(task.get("task_id") or task.get("id") or "")
-        if not task_id:
-            raise ResearchCommandError("Research owner did not return task_id", status_code=502)
-        task_path = f"/api/research-orchestrator/tasks/{urllib.parse.quote(task_id, safe='')}/runs"
-        run = self._call("POST", task_path, run_payload) or {}
-        return {"task": task, "run": run}
-
-    def get_research_run(self, run_id: str) -> Optional[Dict[str, Any]]:
-        path = f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}"
-        return self._call("GET", path, allow_none=(404,))
-
-    def list_research_runs(self, *, task_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        query = f"?task_id={urllib.parse.quote(task_id, safe='')}" if task_id else ""
-        res = self._call("GET", f"/api/research-orchestrator/runs{query}", allow_none=(404,))
-        return res if isinstance(res, list) else []
-
-    def cancel_research_run(self, run_id: str, *, reason: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        path = f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}/cancel"
-        return self._call("POST", path, {"reason": reason or "Research run canceled by operator."}, allow_none=(404, 409))
-
-    def get_research_artifacts(self, run_id: str) -> List[Dict[str, Any]]:
-        path = f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}/artifacts"
-        res = self._call("GET", path, allow_none=(404,))
-        return res if isinstance(res, list) else []
 
     # Notes (KW-02)
     def list_research_notes(self) -> List[Dict[str, Any]]:

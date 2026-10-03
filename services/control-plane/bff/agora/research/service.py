@@ -23,6 +23,15 @@ from services.control_plane.bff.agora.trading_room.store import TradingRoomStore
 from services.control_plane.bff.research.client import resolve_orchestrator_base_url
 from services.research.constants import ALLOWLISTED_STAGE_BACKENDS
 
+_OWNER_STATUS_TO_EXEC_STATUS: dict[str, str] = {
+    "completed": "succeeded",
+    "succeeded": "succeeded",
+    "failed": "failed",
+    "rejected": "failed",
+    "canceled": "cancelled",
+    "cancelled": "cancelled",
+}
+
 from .routes.common import (
     CandidateDiscussionRequest,
     CandidateMemberReviewRequest,
@@ -282,21 +291,13 @@ class AgoraResearchService:
                 return result
             result["status"] = "approved" if plan.get("approved_at") else "draft"
             return result
-        status_map = {
-            "completed": "succeeded",
-            "succeeded": "succeeded",
-            "failed": "failed",
-            "rejected": "failed",
-            "canceled": "cancelled",
-            "cancelled": "cancelled",
-        }
         stages = []
         for stage in plan.get("stages") or []:
             st_id = str(stage.get("stage_id") or "")
             owner = latest.get(st_id)
             if owner:
                 status = str(owner.get("status") or "queued").lower()
-                stage = {**stage, "status": status_map.get(status, status)}
+                stage = {**stage, "status": _OWNER_STATUS_TO_EXEC_STATUS.get(status, status)}
             elif st_id in legacy_statuses:
                 stage = {**stage, "status": legacy_statuses[st_id]}
             stages.append(stage)
@@ -494,10 +495,7 @@ class AgoraResearchService:
                         owner_status = str(owner_by_id[l_rid].get("status") or "").lower()
                         if owner_status in terminal_statuses:
                             active_run_ids.discard(l_rid)
-                            mapped = (
-                                "succeeded" if owner_status in ("completed", "succeeded")
-                                else ("cancelled" if owner_status in ("canceled", "cancelled") else "failed")
-                            )
+                            mapped = _OWNER_STATUS_TO_EXEC_STATUS.get(owner_status, "failed")
                             if str(lr.get("execution_status") or "").lower() != mapped and hasattr(self.store, "update_run"):
                                 self.store.update_run(
                                     l_rid,
@@ -565,10 +563,7 @@ class AgoraResearchService:
                             if current_status in terminal_statuses or (
                                 recheck is None and "terminal research run in status" in str(exc.reason or "")
                             ):
-                                mapped = (
-                                    "succeeded" if current_status in ("completed", "succeeded")
-                                    else ("cancelled" if current_status in ("canceled", "cancelled") else "failed")
-                                )
+                                mapped = _OWNER_STATUS_TO_EXEC_STATUS.get(current_status, "failed")
                                 if hasattr(self.store, "update_run"):
                                     self.store.update_run(
                                         rid,
@@ -750,16 +745,6 @@ class AgoraResearchService:
                 f"Backend execution owner for stage '{stage_type}' ({preferred_backend}) is currently unavailable",
                 plan_id,
             )
-
-        supported_real_backends = {"vectorbt", "statsmodels", "quantlib"}
-        if backend_mode in ("real", "simulation") and preferred_backend not in supported_real_backends and preferred_backend not in ("stub",):
-            raise self.bff_error(
-                503,
-                self._error_code("DEPENDENCY_UNAVAILABLE"),
-                f"Backend execution owner for stage '{stage_type}' ({preferred_backend}) is absent or not configured",
-                plan_id,
-            )
-
         from services.control_plane.bff.agora.strategy_workshop.operations import (
             WorkshopCanonicalOperations,
             CanonicalOperationError,
@@ -952,14 +937,7 @@ class AgoraResearchService:
                 owner_run = WorkshopCanonicalOperations(research_base_url=r_url).get_research_run(run_id)
                 if owner_run and isinstance(owner_run, dict):
                     owner_status = str(owner_run.get("status") or "").lower()
-                    status_map = {
-                        "completed": "succeeded",
-                        "failed": "failed",
-                        "rejected": "failed",
-                        "canceled": "cancelled",
-                        "cancelled": "cancelled",
-                    }
-                    mapped_status = status_map.get(owner_status, owner_status or "queued")
+                    mapped_status = _OWNER_STATUS_TO_EXEC_STATUS.get(owner_status, owner_status or "queued")
                     mapped_outcome = "pass" if owner_status == "completed" else (
                         "fail" if owner_status in ("failed", "rejected") else "pending"
                     )

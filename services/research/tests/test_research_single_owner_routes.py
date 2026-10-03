@@ -1283,3 +1283,54 @@ def test_owner_restart_reconciles_abandoned_execution_claim(client: TestClient, 
         time.sleep(0.05)
     final = store.get_run("r-rec")
     assert final["status"] == "completed", f"restart produced {final['status']}: {final.get('error')}"
+
+
+def test_artifact_only_synthesis_dispatch_runs_without_restart(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = research_main.store
+    monkeypatch.setenv("PANTHEON_OPENCLAW_BACKEND", "stub")
+    monkeypatch.delenv("PANTHEON_OPENCLAW_UNAVAILABLE", raising=False)
+    task = client.post(
+        "/api/research-orchestrator/tasks",
+        json={"title": "report", "objective": "synthesize persisted evidence"},
+    ).json()
+    tid = task["task_id"]
+    store.put_artifact(
+        {
+            "artifact_id": "input",
+            "task_id": tid,
+            "payload": {"observed": 42},
+            "provenance": "simulation",
+        }
+    )
+    stage = {
+        "stage_id": "report",
+        "stage_type": "evidence_synthesis",
+        "artifact_refs": [{"artifact_id": "input"}],
+    }
+    plan = {"plan_id": "p", "task_id": tid, "stages": [stage]}
+    response = client.post(
+        f"/api/research-orchestrator/tasks/{tid}/runs",
+        json={
+            "adapter": "openclaw_result_synthesis",
+            "requested_mode": "stub",
+            "dispatch_mode": "stub",
+            "parameters": {"stage": stage, "plan": plan},
+            "idempotency_key": "report-run",
+        },
+    )
+    assert response.status_code == 201, response.text
+    rid = response.json()["run_id"]
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and store.get_run(rid)["status"] in {"queued", "running"}:
+        time.sleep(0.01)
+    dispatch_status = store.get_run(rid)["status"]
+    direct = client.post(
+        "/api/research-orchestrator/stages/evidence_synthesis/execute",
+        json={"run_id": rid, "correlation_id": "c", "stage": stage, "plan": plan},
+    )
+    assert direct.status_code == 200, direct.text
+    assert store.get_run(rid)["status"] == "completed"
+    assert dispatch_status == "completed", f"Normal task-runs dispatch remained {dispatch_status}; same inputs succeed via direct execute"
+
