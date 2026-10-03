@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
-TRL_VERSION_PIN = "0.8.0"
+TRL_VERSION_PIN = "1.14.1"
 PRIMARY_BACKEND = "trl_dpo"
 STUB_BACKEND = "stub_dpo"
 
@@ -474,7 +474,7 @@ class StubDPOBackend:
             metrics=metrics,
             notes=(
                 "Stub DPO backend is intended for governed smoke tests and packaging validation.",
-                "Production training requires trl>=0.8.0 and real FB-002 event volume.",
+                "Production training requires the configured TRL runtime and real FB-002 event volume.",
             ),
         )
 
@@ -491,7 +491,7 @@ class TRLDPOBackend:
     ) -> DPOTrainingResult:
         try:
             from trl import DPOConfig, DPOTrainer  # type: ignore
-            from transformers import AutoModelForSequenceClassification, AutoTokenizer  # type: ignore
+            from transformers import AutoModelForCausalLM, AutoTokenizer  # type: ignore
             import torch  # type: ignore
         except ImportError as exc:
             raise TRLWorkflowError(
@@ -510,13 +510,11 @@ class TRLDPOBackend:
         ]
 
         # Lightweight model for smoke validation — distilbert or equivalent
-        model_name = "distilbert-base-uncased"
+        model_name = "sshleifer/tiny-gpt2"
         try:
             tokenizer = AutoTokenizer.from_pretrained(model_name)
-            model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=1)
-            ref_model = AutoModelForSequenceClassification.from_pretrained(
-                model_name, num_labels=1
-            )
+            model = AutoModelForCausalLM.from_pretrained(model_name)
+            ref_model = AutoModelForCausalLM.from_pretrained(model_name)
         except Exception as exc:
             raise TRLWorkflowError(
                 f"Failed to load base model '{model_name}' for TRL DPO smoke: {exc}"
@@ -534,7 +532,7 @@ class TRLDPOBackend:
             )
 
             dpo_config = DPOConfig(
-                output_dir="/tmp/trl-dpo-smoke",
+                output_dir="/tmp/trl-dpo-smoke", use_cpu=True,
                 num_train_epochs=1,
                 per_device_train_batch_size=min(config.batch_size, len(dataset.pairs)),
                 learning_rate=config.learning_rate,
