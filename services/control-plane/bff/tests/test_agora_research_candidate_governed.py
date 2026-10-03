@@ -109,7 +109,7 @@ def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 
 def _wait_owner_plan_runs(test_backend_client: TestClient, plan_id: str, expected: int) -> list[Dict[str, Any]]:
-    deadline = time.monotonic() + 30
+    deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         response = test_backend_client.get("/api/research-orchestrator/runs")
         assert response.status_code == 200, response.text

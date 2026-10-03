@@ -389,6 +389,15 @@ class WorkshopCanonicalOperations:
             {"reason": reason or "Research run canceled by operator."},
         )
 
+    def cancel_research_task(self, task_id: str, *, reason: Optional[str] = None) -> Dict[str, Any]:
+        return self._request_json(
+            "research_orchestrator",
+            "POST",
+            self.research_base_url,
+            f"/api/research-orchestrator/tasks/{urllib.parse.quote(task_id, safe='')}/cancel",
+            {"reason": reason or "Research task canceled by operator."},
+        )
+
     def get_research_artifacts(self, run_id: str) -> List[Dict[str, Any]]:
         value = self._request_json(
             "research_orchestrator",

@@ -525,6 +525,55 @@ def test_in_flight_stage_cancel_is_not_overwritten_by_late_backend_error(
     assert persisted["cancellation_fence"]
 
 
+def test_task_cancel_fences_stage_progression_and_restart(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    task_id = "task-cancel-fenced"
+    stage1 = {"stage_id": "s1", "stage_type": "prototype_backtest", "dependencies": []}
+    stage2 = {"stage_id": "s2", "stage_type": "econometric_validation", "dependencies": ["s1"]}
+    plan = {"plan_id": f"plan-{task_id}", "task_id": task_id, "stages": [stage1, stage2]}
+    research_main.store.put_task({"task_id": task_id, "status": "running"})
+    run = {
+        "run_id": "run-fenced-s1", "task_id": task_id, "stage_id": "s1",
+        "attempt_number": 1, "status": "queued", "adapter": stage1["stage_type"],
+        "parameters": {"stage": stage1, "plan": plan}, "events": [],
+    }
+    research_main.store.put_run(run)
+
+    def mock_stage_exec(*args: Any, **kwargs: Any) -> None:
+        started.set()
+        assert release.wait(3)
+        r = research_main.store.get_run("run-fenced-s1")
+        r["status"] = "completed"
+        research_main.store.put_run(r)
+
+    monkeypatch.setattr(research_main, "execute_research_stage", mock_stage_exec)
+    worker = threading.Thread(
+        target=research_main._execute_plan_stage,
+        args=(run, stage1, plan, research_main.store, "tester"),
+    )
+    worker.start()
+    assert started.wait(1)
+
+    cancel_res = client.post(f"/api/research-orchestrator/tasks/{task_id}/cancel")
+    assert cancel_res.status_code == 200
+    assert cancel_res.json()["status"] == "canceled"
+    assert cancel_res.json()["cancellation_fence"]
+
+    release.set()
+    worker.join(timeout=3)
+    assert not worker.is_alive()
+
+    task_runs = [r for r in research_main.store.list_runs() if r.get("task_id") == task_id]
+    assert not any(r.get("stage_id") == "s2" for r in task_runs)
+
+    research_main.resume_queued_plan_stages()
+    task_runs_after = [r for r in research_main.store.list_runs() if r.get("task_id") == task_id]
+    assert not any(r.get("stage_id") == "s2" for r in task_runs_after)
+
+
 def test_stage_idempotency_restart_exactly_once(client: TestClient) -> None:
     ds = _valid_multimodal_dataset()
     t_res = client.post("/api/research-orchestrator/tasks", json={"title": "Idemp Task", "objective": "idemp", "source_refs": [], "constraints": {}})

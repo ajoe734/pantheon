@@ -791,3 +791,108 @@ def test_cancel_reconciles_terminal_race_when_owner_returns_conflict(monkeypatch
     )
     assert response.status_code == 200, response.text
     assert response.json()["data"]["status"] == "cancelled"
+
+
+def test_list_includes_owner_only_successor_and_authoritative_root_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, store, pid, root_id, child_id = _setup_two_stages(monkeypatch, "review-list")
+    response = client.get(f"/bff/agora/research-plans/{pid}/runs", headers=_headers())
+    assert response.status_code == 200, response.text
+    rows = {r["run_id"]: r for r in response.json()["items"]}
+    assert child_id in rows, (response.json(), list(client.owner_research_runs))
+    assert rows[root_id]["execution_status"] == "succeeded"
+
+
+def test_cancel_fences_successor_created_during_terminal_race(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, store, pid, root_id, child_id = _setup_two_stages(monkeypatch, "review-race")
+    plan = store.get_plan(pid)
+    stages = deepcopy(plan["stages"])
+    stages.append({**deepcopy(stages[-1]), "stage_id": "stage-third", "dependencies": ["stage-second"]})
+    store.update_plan(pid, {"stages": stages})
+    third_id = "owner-run-3"
+
+    def race_cancel(_self, run_id, **kwargs):
+        record = client.owner_research_runs[run_id]
+        if run_id == child_id:
+            record["status"] = "completed"
+            client.owner_research_runs[third_id] = {
+                **deepcopy(record),
+                "run_id": third_id,
+                "stage_id": "stage-third",
+                "status": "running",
+                "execution_status": "running",
+                "input_refs": [{"type": "research_plan", "id": pid}, {"type": "stage", "id": "stage-third"}],
+            }
+            from services.control_plane.bff.agora.strategy_workshop.operations import CanonicalOperationError
+            raise CanonicalOperationError(
+                "research_orchestrator",
+                "terminal research run in status 'completed' cannot be canceled",
+                status_code=409,
+            )
+        record["status"] = "canceled"
+        return record
+
+    from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
+    monkeypatch.setattr(WorkshopCanonicalOperations, "cancel_research_run", race_cancel)
+    response = client.post(
+        f"/bff/agora/research-plans/{pid}/cancel",
+        headers=_headers("review-race-cancel", _get_plan(client, pid)["meta"]["etag"]),
+    )
+    assert response.status_code == 200, response.text
+    assert client.owner_research_runs[third_id]["status"] == "canceled", (
+        response.json(),
+        client.owner_research_runs[third_id]["status"],
+        store.get_plan(pid)["status"],
+    )
+
+
+def test_cancel_must_not_acknowledge_success_with_new_running_successor(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch)
+    created = _create_plan(client, "ws-cancel-progress-race", "race-create")
+    pid = created["data"]["plan_id"]
+    store = getattr(client, "router", None) and getattr(client.router, "research_store", None) or getattr(client, "app_instance", None) and getattr(client.app_instance, "research_store", None)
+    plan = store.get_plan(pid)
+    stages = deepcopy(plan["stages"])
+    stages.append({**deepcopy(stages[0]), "stage_id": "successor", "dependencies": [stages[0]["stage_id"]]})
+    store.update_plan(pid, {"stages": stages})
+    _approve_plan(client, pid, created["meta"]["etag"], "race-approve")
+    rid = _dispatch_plan(client, pid, _get_plan(client, pid)["meta"]["etag"], "race-dispatch")
+    client.owner_research_runs[rid]["status"] = "running"
+    calls = []
+
+    def concurrent_progress_then_cancel(_self, run_id, **kwargs):
+        calls.append(run_id)
+        if run_id == rid:
+            root = client.owner_research_runs[rid]
+            root["status"] = "completed"
+            root["execution_status"] = "completed"
+            client.owner_research_runs["owner-successor"] = {
+                **deepcopy(root),
+                "run_id": "owner-successor",
+                "stage_id": "successor",
+                "status": "running",
+                "execution_status": "running",
+                "input_refs": [{"type": "research_plan", "id": pid}, {"type": "stage", "id": "successor"}],
+            }
+            from services.control_plane.bff.agora.strategy_workshop.operations import CanonicalOperationError
+            raise CanonicalOperationError(
+                "research",
+                "terminal research run in status 'completed' cannot be canceled",
+                status_code=409,
+            )
+        run = client.owner_research_runs[run_id]
+        run["status"] = "canceled"
+        return run
+
+    from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
+    monkeypatch.setattr(WorkshopCanonicalOperations, "cancel_research_run", concurrent_progress_then_cancel)
+    response = client.post(
+        f"/bff/agora/research-plans/{pid}/cancel",
+        headers=_headers("race-cancel", _get_plan(client, pid)["meta"]["etag"]),
+    )
+    active = [r["run_id"] for r in client.owner_research_runs.values() if r["status"] == "running"]
+    assert not (response.status_code == 200 and active), {
+        "http_status": response.status_code,
+        "active_owner_runs": active,
+        "owner_cancel_calls": calls,
+        "stored_plan_status": store.get_plan(pid)["status"],
+    }

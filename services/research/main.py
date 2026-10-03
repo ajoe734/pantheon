@@ -383,7 +383,7 @@ def resume_queued_plan_stages() -> None:
         task_id = str(record.get("task_id") or "")
         task = store.get_task(task_id) if task_id else None
         if (
-            (task and str(task.get("status") or "").lower() in {"canceled", "cancelled"})
+            (task and (str(task.get("status") or "").lower() in {"canceled", "cancelled"} or task.get("cancellation_fence")))
             or str(plan.get("status") or "").lower() in {"canceled", "cancelled"}
         ):
             if status in {"queued", "running"}:
@@ -860,6 +860,30 @@ def get_task(task_id: str) -> Dict[str, Any]:
     return task
 
 
+@app.post("/api/research-orchestrator/tasks/{task_id}/cancel")
+def cancel_task(task_id: str, body: Optional[CancelRunBody] = None) -> Dict[str, Any]:
+    task = store.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="research task not found")
+    b = body or CancelRunBody()
+    timestamp = b.canceled_at or utc_now()
+    with _plan_progress_lock:
+        task["status"] = "canceled"
+        task["cancellation_fence"] = timestamp
+        task["updated_at"] = timestamp
+        store.put_task(task)
+        for r in store.list_runs():
+            if str(r.get("task_id")) == task_id:
+                r_status = str(r.get("status") or "").lower()
+                if r_status in ACTIVE_STATUSES:
+                    r["status"] = "canceled"
+                    r["cancellation_fence"] = timestamp
+                    r["completed_at"] = timestamp
+                    r["updated_at"] = timestamp
+                    store.put_run(r)
+    return task
+
+
 @app.post("/api/research-orchestrator/tasks/{task_id}/runs", status_code=201)
 def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
     task = store.get_task(task_id)
@@ -1088,7 +1112,7 @@ def _progress_plan_stages_locked(
     ):
         return
     task = store.get_task(task_id) if task_id else None
-    if task and str(task.get("status") or "").lower() in {"canceled", "cancelled"}:
+    if task and (str(task.get("status") or "").lower() in {"canceled", "cancelled"} or task.get("cancellation_fence")):
         return
 
     stages = plan_payload.get("stages") or []
@@ -1210,7 +1234,7 @@ def _execute_plan_stage(
             _active_stage_workers.discard(run_id)
         return
     task = store.get_task(str(current.get("task_id") or "")) if current.get("task_id") else None
-    if task and str(task.get("status") or "").lower() in {"canceled", "cancelled"}:
+    if task and (str(task.get("status") or "").lower() in {"canceled", "cancelled"} or task.get("cancellation_fence")):
         with _stage_workers_lock:
             _active_stage_workers.discard(run_id)
         return
@@ -1232,7 +1256,9 @@ def _execute_plan_stage(
     with _stage_workers_lock:
         _active_stage_workers.discard(run_id)
     if str(completed.get("status") or "").lower() not in {"canceled", "cancelled", "rejected"} and not completed.get("cancellation_fence"):
-        _progress_plan_stages(plan, completed, actor_id, store, str(completed.get("updated_at") or utc_now()))
+        fresh_task = store.get_task(str(completed.get("task_id") or "")) if completed.get("task_id") else None
+        if not (fresh_task and (str(fresh_task.get("status") or "").lower() in {"canceled", "cancelled"} or fresh_task.get("cancellation_fence"))):
+            _progress_plan_stages(plan, completed, actor_id, store, str(completed.get("updated_at") or utc_now()))
 
 
 def _trigger_retrain_execution(run_id: str, params: dict) -> None:
@@ -1485,22 +1511,24 @@ def cancel_run(run_id: str, body: Optional[CancelRunBody] = None) -> Dict[str, A
             events,
         )
     )
-    run["status"] = "canceled"
-    run["completed_at"] = timestamp
-    run["cancellation_fence"] = timestamp
-    run["updated_at"] = timestamp
-    run["events"] = events
+    with _plan_progress_lock:
+        run["status"] = "canceled"
+        run["completed_at"] = timestamp
+        run["cancellation_fence"] = timestamp
+        run["updated_at"] = timestamp
+        run["events"] = events
 
-    task = store.get_task(run["task_id"])
-    if task:
-        sibling_runs = [r for r in store.list_runs() if r.get("task_id") == run["task_id"] and r.get("run_id") != run_id]
-        if not any(str(r.get("status") or "").lower() in ACTIVE_STATUSES for r in sibling_runs):
-            task["status"] = "canceled"
-            task["updated_at"] = timestamp
-            store.put_task(task)
+        task = store.get_task(run["task_id"])
+        if task:
+            sibling_runs = [r for r in store.list_runs() if r.get("task_id") == run["task_id"] and r.get("run_id") != run_id]
+            if not any(str(r.get("status") or "").lower() in ACTIVE_STATUSES for r in sibling_runs):
+                task["status"] = "canceled"
+                task["cancellation_fence"] = task.get("cancellation_fence") or timestamp
+                task["updated_at"] = timestamp
+                store.put_task(task)
 
-    store.put_run(run)
-    store.append_event(events[-1])
+        store.put_run(run)
+        store.append_event(events[-1])
     return run
 
 
