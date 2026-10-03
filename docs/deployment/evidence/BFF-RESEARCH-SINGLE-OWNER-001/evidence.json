@@ -29,7 +29,7 @@
     },
     {
       "command": "git diff --check; python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget 0",
-      "result": "both passed; committed PR diff production +1366/-1823 net -457 (below zero), BFF production decreases; tests +1171/-3791 before restored untracked tests; docs/evidence +110 lines before refreshed manifest"
+      "result": "both passed at head f2325c59dbe5b91138b440d06751a1b08df162bf; production +1389/-1823 net -434 (below zero), BFF production decreases; tests +1345/-2857 net -1512; docs/evidence +114 lines"
     }
   ],
   "suite_note": "The retained test functions from the deleted chain file were migrated into services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py; research receipt and owner provenance controls are in test_research_receipt_provenance.py and test_research_single_owner_routes.py. Deleted-stack-only cases are enumerated in the exact-head handoff message. Hosted acceptance remains external_wait; no hosted probes performed.",
