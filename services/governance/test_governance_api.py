@@ -909,3 +909,31 @@ def test_evaluator_principal_proposes_and_reads_lifecycle_request_but_cannot_dec
                                    "actor_id": "persona-evaluator-agent", **body})
         assert denied.status_code == 403, denied.text
     assert client.get(f"/api/governance/approvals/{did}", headers=auth).json()["decision_state"] == "proposed"
+
+
+@pytest.mark.parametrize('expected_version', [0, 1, 999])
+def test_unknown_approval_is_not_a_stale_existing_approval(expected_version):
+    before = main.store._records.list_all()
+    response = client.post('/api/governance/approvals/not-an-existing-approval/decide',
+        headers={**_signed_headers(actor='synthetic-reviewer', role='governance_reviewer'),
+                 'Idempotency-Key': f'missing-{expected_version}'},
+        json={'outcome': 'approved', 'rationale': 'Isolated nonexistent-target probe', 'actor_id': 'synthetic-reviewer',
+              'actor_role': 'governance_reviewer', 'expected_version': expected_version})
+    assert response.status_code == 404, response.text
+    assert main.store._records.list_all() == before
+    assert main.store._receipts.list_all() == []
+    assert main.audit_store._records.list_all() == []
+
+
+@pytest.mark.parametrize('operation', ['review', 'revoke'])
+@pytest.mark.parametrize('expected_version', [0, 1, 999])
+def test_unknown_approval_review_revoke_not_found(operation, expected_version):
+    response = client.post(f'/api/governance/approvals/not-an-existing-approval/{operation}',
+        headers={**_signed_headers(actor='synthetic-reviewer', role='governance_reviewer'),
+                 'Idempotency-Key': f'missing-{operation}-{expected_version}'},
+        json={'actor_id': 'synthetic-reviewer', 'actor_role': 'governance_reviewer',
+              'expected_version': expected_version})
+    assert response.status_code == 404, response.text
+    assert main.store._records.list_all() == []
+    assert main.store._receipts.list_all() == []
+    assert main.audit_store._records.list_all() == []
