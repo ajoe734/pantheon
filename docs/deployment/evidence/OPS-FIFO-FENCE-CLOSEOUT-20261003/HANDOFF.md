@@ -35,7 +35,8 @@ After exact-head merge, the existing coordinator should:
 2. Use the current sync/promoter path with the merged source. Its normal
    termination deadline is 15 seconds and health deadline is 600 seconds;
    allow the existing bounded rollback health check to finish too. Collect
-   the terminal result and exit code; a timeout is not a passing promotion.
+   the terminal result and exit code; the existing promoter's `--json` and
+   `--evidence-path` options can capture it. A timeout is not a passing promotion.
 3. Require `storage_migration.upgraded_fences` to list the converted retired
    FIFO paths. Verify each with `lstat` only: directory, mode 0700, no symlink.
    The ordinary layout has retired state/approval siblings plus journal
