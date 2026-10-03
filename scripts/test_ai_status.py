@@ -4569,6 +4569,139 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 ["REG-002", "functional", "done", "Missing proof"],
             )
 
+    def test_hosted_finalization_rejects_pending_and_malformed_tracks(self) -> None:
+        invalid = [None, [], "done", {}, *(
+            {"status": status, "evidence": ["run-123"]}
+            for status in ("pending", "in_progress", "external_wait", "unknown", None)
+        ), *(
+            {"status": "done", "evidence": evidence}
+            for evidence in (None, [], "run-123", {}, [""], [" "], [123], ["run-123", None])
+        )]
+        original = deepcopy(self.state)
+        for command, actor in (("done", "Codex"), ("reconcile_merged_done", "Claude")):
+            for tracks in ([{"hosted": value} for value in invalid] + [None, [], "invalid"]):
+                with self.subTest(command=command, tracks=tracks):
+                    self.state = deepcopy(original)
+                    task = self.state["tasks"][0]
+                    task.update(status="review_approved", completion_tracks=tracks)
+                    before = deepcopy(self.state)
+                    with (
+                        mock.patch.dict(os.environ, {"AI_NAME": actor}),
+                        mock.patch.object(ai_status, "collect_done_delivery_metadata") as collect,
+                        mock.patch.object(ai_status, "validate_merged_done_evidence") as merged,
+                        ai_status.buffer_activity_events() as events,
+                        self.assertRaisesRegex(SystemExit, "declared hosted completion"),
+                    ):
+                        _execute_external_mutation_command(command, self.state, [task["id"], "Finalize"])
+                    self.assertEqual(self.state, before)
+                    self.assertEqual(events, [])
+                    collect.assert_not_called()
+                    merged.assert_not_called()
+                    self.assertFalse(list(task_archive.ARCHIVE_TASKS_DIR.iterdir()))
+
+    def test_hosted_finalization_preserves_research_hold_in_task_store(self) -> None:
+        # Minimal historical PR6103 shape; external delivery verification is mocked,
+        # not represented as newly issued review or hosted evidence.
+        task = self.state["tasks"][0]
+        task.update(
+            id="BFF-RESEARCH-SINGLE-OWNER-001", status="review_approved",
+            owner="Antigravity", reviewer="Codex2",
+            completion_tracks={
+                "functional": {"status": "done", "evidence": ["source-evidence.json"],
+                               "message": "Do NOT full-finalize/archive; leave hosted blocker."},
+                "hosted": {"status": "external_wait", "updated_by": "Human/Ops"},
+            },
+            review_binding={"pr": 6103, "head_sha": "85f74a90cf1fc9b543c31f4280273b1b0272828f"},
+            integration_receipt={"result": "landed", "pr": 6103,
+                                 "merge_commit_sha": "8af1ef2d0946d7eac7c87fba21af52233bc8a789"},
+        )
+        self._set_pr_delivery_binding(pr=6103, head_sha=task["review_binding"]["head_sha"])
+        self.state["handoffs"] = []
+        journal = self._test_root / "events.jsonl"
+        task_state_store.append_state_commit(journal, self.state, source="historical-fixture")
+        before = journal.read_bytes()
+        for command, actor in (("done", "Antigravity"), ("reconcile_merged_done", "Codex2")):
+            state = task_state_store.load_snapshot(journal)["state"]
+            with (
+                mock.patch.dict(os.environ, {"AI_NAME": actor}),
+                mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
+                mock.patch.object(ai_status, "validate_merged_done_evidence", return_value={}),
+                mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
+                ai_status.buffer_activity_events() as events,
+                self.assertRaisesRegex(SystemExit, "declared hosted completion"),
+            ):
+                _execute_external_mutation_command(command, state, [task["id"], "Finalize"])
+            self.assertEqual(state, self.state)
+            self.assertEqual(events, [])
+            self.assertEqual(journal.read_bytes(), before)
+            self.assertNotIn(ai_status.STATUS_ARCHIVE_OUTBOX_KEY, state)
+            self.assertFalse(list(task_archive.ARCHIVE_TASKS_DIR.iterdir()))
+
+    def test_hosted_finalization_allows_source_only_and_completed_tracks(self) -> None:
+        original = deepcopy(self.state)
+        for command, actor in (("done", "Codex"), ("reconcile_merged_done", "Claude")):
+            for tracks in (None, {}, {"functional": {"status": "done"}},
+                           {"hosted": {"status": "done", "evidence": ["run-123"]}}):
+                with self.subTest(command=command, tracks=tracks):
+                    self.state = deepcopy(original)
+                    task = self.state["tasks"][0]
+                    task["status"] = "review_approved"
+                    if tracks is not None:
+                        task["completion_tracks"] = tracks
+                    self._set_pr_delivery_binding(pr=4820, head_sha="a" * 40)
+                    with (
+                        mock.patch.dict(os.environ, {"AI_NAME": actor}),
+                        mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}) as collect,
+                        mock.patch.object(ai_status, "validate_merged_done_evidence", return_value={}) as merged,
+                        mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
+                        ai_status.buffer_activity_events() as events,
+                    ):
+                        _execute_external_mutation_command(command, self.state, [task["id"], "Finalize"])
+                    (collect if command == "done" else merged).assert_called_once()
+                    self.assertEqual(task["status"], "done")
+                    self.assertEqual([event["type"] for event in events], [command])
+                    archived = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
+                    self.assertEqual(archived["status"], "done")
+                    self.assertEqual(archived.get("completion_tracks"), tracks)
+
+    def test_hosted_hold_preserves_functional_dependency_and_blocker_commands(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "review_approved"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex", "TASK_MILESTONE_EVIDENCE": "run-123"}):
+            ai_status.command_milestone(self.state, ["REG-002", "functional", "done", "Source complete"])
+            ai_status.command_milestone(self.state, ["REG-002", "hosted", "external_wait", "Hosted held"])
+            ai_status.command_blocker(self.state, ["REG-002", "Hosted proof outstanding", "Human/Ops", "external"])
+        self.assertEqual(task["status"], "blocked")
+        self.assertEqual(self.state["blockers"][0]["status"], "open")
+        for track, expected in (("functional", True), ("hosted", False), ("terminal", False)):
+            consumer = {"depends_on": ["REG-002"], "dependency_tracks": {"REG-002": track}}
+            self.assertEqual(ai_status.dependency_is_satisfied(
+                ai_status.task_resolver(self.state), "REG-002", consumer), expected)
+
+    def test_hosted_finalization_rejects_held_immutable_archive_recovery(self) -> None:
+        task = self.state["tasks"][0]
+        task.update(status="blocked", generation=1)
+        delivery = {"commit": "a" * 40, "review_evidence": {"owner": "Codex", "reviewer": "Claude"}}
+        archived_task = deepcopy(task)
+        archived_task.update(status="done", terminal_outcome="completed", delivery=delivery,
+                             completion_tracks={"hosted": {"status": "external_wait"}})
+        snapshot = {"version": 1, "task_id": "REG-002", "archived_at": "2026-10-03T15:23:14Z",
+                    "terminal_status": "done", "terminal_outcome": "completed",
+                    "task": archived_task, "handoffs": [], "blockers": []}
+        path = task_archive.archive_task_path("REG-002")
+        path.write_text(json.dumps(snapshot), encoding="utf-8")
+        before, raw = deepcopy(self.state), path.read_bytes()
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}),
+            mock.patch.object(ai_status, "validate_merged_done_evidence", return_value=delivery),
+            ai_status.buffer_activity_events() as events,
+            self.assertRaisesRegex(SystemExit, "declared hosted completion"),
+        ):
+            _command_reconcile_merged_done(self.state, ["REG-002", "Recover archive"])
+        self.assertEqual(self.state, before)
+        self.assertEqual(path.read_bytes(), raw)
+        self.assertEqual(events, [])
+
     def test_review_evidence_file_committed_uses_exact_head_get_query(self) -> None:
         review_file = "docs/deployment/evidence/task/evidence.json"
         head_sha = "a" * 40
