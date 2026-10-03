@@ -45,12 +45,12 @@ def test_shared_dimension_filter_reads_journey_summary_and_legacy_links():
     assert params == ["t", "paper", "persona_id", "p-1", "persona_id", "p-1", "order_id", "o-1"]
 
 
-def test_resolve_shared_dimension_uses_journey_rows():
+def test_resolve_shared_dimension_unions_journey_rows_and_legacy_links():
     calls = []
     _store(calls).resolve(tenant_id="t", environment="paper", identifier_type="artifact_id", identifier_value="a-1")
     sql, params = calls[0]
-    assert ".journeys" in sql and "identity_links" not in sql
-    assert params == ("t", "paper", "artifact_id", "a-1")
+    assert ".journeys" in sql and "identity_links" in sql
+    assert params == ("t", "paper", "artifact_id", "a-1") * 2
 
 
 def test_every_shared_dimension_filters_real_store_with_nested_and_flat_summaries():
@@ -108,9 +108,11 @@ def test_projector_restart_and_backfill_expose_every_shared_dimension(tmp_path):
     try:
         store = ProjectionStore(dsn, schema=live, bootstrap=True)
         RelationalLifecycleProjector(store, deployment_sha="t", controller_id="c").project_records([first], mode="live", source_high_watermark=1)
-        # Old code bound a shared dimension to the first journey; restart must still advance, idempotently.
+        # Old code bound every shared dimension to the first journey and summarised none of them; restart must still advance, idempotently.
         with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
-            cur.execute(f"INSERT INTO {live}.identity_links (tenant_id,environment,identifier_type,identifier_value,journey_id,first_ingested_seq,last_ingested_seq,first_occurred_at,last_occurred_at) VALUES ('tenant-a','paper','strategy_id',%s,'tj-paper-001',1,1,now(),now())", (IDENTITY["strategy_id"],))
+            for name in sorted(SHARED_IDENTIFIER_TYPES):
+                cur.execute(f"INSERT INTO {live}.identity_links (tenant_id,environment,identifier_type,identifier_value,journey_id,first_ingested_seq,last_ingested_seq,first_occurred_at,last_occurred_at) VALUES ('tenant-a','paper',%s,%s,'tj-paper-001',1,1,now(),now())", (name, IDENTITY[name]))
+            cur.execute(f"UPDATE {live}.journeys SET current_identity_summary = %s::jsonb WHERE journey_id='tj-paper-001'", (json.dumps({"identifiers": {"signal_id": ["signal-paper-001"]}}),))
         for _ in range(2):
             RelationalLifecycleProjector(ProjectionStore(dsn, schema=live), deployment_sha="t", controller_id="c").project_records([second], mode="live", source_high_watermark=2)
         BackfillCoordinator(ProjectionStore(dsn, schema=migrated, bootstrap=True), controller_id="m", tenant_scope="tenant-a", environment_scope="paper", fetch_batch=_paged_fetch(lifecycle_rows()), snapshot_path=tmp_path / "snap.json", batch_size=4).run()
@@ -120,6 +122,8 @@ def test_projector_restart_and_backfill_expose_every_shared_dimension(tmp_path):
                 assert reader.page_journeys(tenant_id="tenant-a", environment="paper", filters={name: IDENTITY[name]}).total == expected, (schema, name)
                 assert len(reader.resolve(tenant_id="tenant-a", environment="paper", identifier_type=name, identifier_value=IDENTITY[name])) == expected
                 assert reader.page_journeys(tenant_id="tenant-a", environment="paper", filters={name: "absent"}).total == 0
+                assert reader.page_journeys(tenant_id="tenant-a", environment="paper", filters={"q": IDENTITY[name]}).total == expected, (schema, name, "q")
+                assert reader.page_journeys(tenant_id="tenant-a", environment="paper", filters={"q": IDENTITY[name], "q_journey_only": True}).total == 0
     finally:
         with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
             for schema in (live, migrated):

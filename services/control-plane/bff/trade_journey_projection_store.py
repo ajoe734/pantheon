@@ -263,8 +263,8 @@ class TradeJourneyProjectionStore:
                 clauses.append("journey_id ILIKE %s")
                 params.append(f"%{filters['q']}%")
             else:
-                clauses.append(f"(journey_id ILIKE %s OR EXISTS (SELECT 1 FROM {self.schema}.identity_links link WHERE link.tenant_id={self.schema}.journeys.tenant_id AND link.environment={self.schema}.journeys.environment AND link.journey_id={self.schema}.journeys.journey_id AND link.identifier_value ILIKE %s))")
-                params.extend((f"%{filters['q']}%", f"%{filters['q']}%"))
+                clauses.append(f"(journey_id ILIKE %s OR EXISTS (SELECT 1 FROM {self.schema}.identity_links link WHERE link.tenant_id={self.schema}.journeys.tenant_id AND link.environment={self.schema}.journeys.environment AND link.journey_id={self.schema}.journeys.journey_id AND link.identifier_value ILIKE %s) OR EXISTS (SELECT 1 FROM jsonb_each(COALESCE({self.schema}.journeys.current_identity_summary -> 'identifiers', {self.schema}.journeys.current_identity_summary)) dim(k, v), jsonb_array_elements_text(CASE WHEN jsonb_typeof(v)='array' THEN v ELSE jsonb_build_array(v) END) val WHERE k = ANY(%s) AND val ILIKE %s))")
+                params.extend((f"%{filters['q']}%", f"%{filters['q']}%", sorted(SHARED_IDENTIFIER_TYPES), f"%{filters['q']}%"))
         return clauses, params
 
     def page_journeys(self, *, tenant_id: str, environment: str, filters: Optional[Mapping[str, Any]] = None, sort: str = "updated_at_desc", page_size: int = DEFAULT_PAGE_SIZE, page_token: Optional[str] = None) -> ProjectionPage:
@@ -338,7 +338,7 @@ class TradeJourneyProjectionStore:
         if identifier_type == "journey_id":
             rows = self._rows(f"SELECT journey_id FROM {self.schema}.journeys WHERE tenant_id=%s AND environment=%s AND journey_id=%s", (tenant_id, environment, identifier_value))
         elif identifier_type in SHARED_IDENTIFIER_TYPES:
-            rows = self._rows(f"SELECT journey_id FROM {self.schema}.journeys WHERE tenant_id=%s AND environment=%s AND COALESCE(current_identity_summary -> 'identifiers', current_identity_summary) -> %s ? %s ORDER BY journey_id ASC LIMIT {MAX_PAGE_SIZE}", (tenant_id, environment, identifier_type, identifier_value))
+            rows = self._rows(f"SELECT journey_id FROM {self.schema}.journeys WHERE tenant_id=%s AND environment=%s AND COALESCE(current_identity_summary -> 'identifiers', current_identity_summary) -> %s ? %s UNION SELECT journey_id FROM {self.schema}.identity_links WHERE tenant_id=%s AND environment=%s AND identifier_type=%s AND identifier_value=%s ORDER BY journey_id ASC LIMIT {MAX_PAGE_SIZE}", (tenant_id, environment, identifier_type, identifier_value, tenant_id, environment, identifier_type, identifier_value))
         else:
             rows = self._rows(f"SELECT journey_id FROM {self.schema}.identity_links WHERE tenant_id=%s AND environment=%s AND identifier_type=%s AND identifier_value=%s ORDER BY journey_id ASC LIMIT {MAX_PAGE_SIZE}", (tenant_id, environment, identifier_type, identifier_value))
         return sorted({str(row.get("journey_id") or "") for row in rows if row.get("journey_id")})
