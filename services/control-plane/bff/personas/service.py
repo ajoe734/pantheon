@@ -5636,11 +5636,13 @@ def _lifecycle_owner_review_state(saved: Dict[str, Any], *, tenant_id: str) -> D
         return {**state, "submitted": True, "submit_status": "owner_unavailable", "status": "owner_unavailable",
                 "decision_status": "unavailable", "owner_decision": {"decision_id": decision_id, "available": False}}
     votes = ((row.get("metadata") or {}).get("approvals")) or []
-    decided = str(row.get("decision_state") or "") == "decided"
+    decision_state = str(row.get("decision_state") or "")
+    decided = decision_state == "decided"
+    pending = decision_state in ("", "proposed", "under_review")
     return {
         **state, "submitted": True, "submit_status": "owner_proposed",
-        "status": "decision_accepted" if decided else "pending_human_gate",
-        "decision_status": "decided" if decided else "pending",
+        "status": "pending_human_gate" if pending else "decision_accepted" if decided else f"decision_{decision_state}",
+        "decision_status": "pending" if pending else decision_state,
         "decision": row.get("decision") if decided else None,
         "decided_at": row.get("decided_at") if decided else None,
         "decided_by": row.get("actor_id") if decided else None,
@@ -5741,7 +5743,7 @@ def _promotion_review_item_from_recommendation(
     decision_status = str(owner_state.get("decision_status") or "not_applicable")
     owner = owner_state.get("owner_decision") or {}
     # Terminal decisions leave the approval queue; their authoritative readback is the Governance owner.
-    inbox_id = f"approval:{owner['decision_id']}" if owner.get("available") and decision_status != "decided" else None
+    inbox_id = f"approval:{owner['decision_id']}" if owner.get("available") and decision_status == "pending" else None
     owner_href = f"/api/v1/approval-decisions/{quote(str(owner['decision_id']), safe='')}" if owner.get("available") else None
     governance = {
         "requires_human_gate_decision": True,

@@ -167,6 +167,22 @@ def test_pending_ranking_link_resolves_through_real_inbox_port(saved_proposal, o
         assert detail.json()["data"]["status"] == state
 
 
+@pytest.mark.parametrize("terminal", ["revoked", "superseded"])
+def test_revoked_or_superseded_owner_state_is_terminal_without_inbox_link(saved_proposal, terminal):
+    with gov_test._isolated_client() as (client, store, _commands):
+        ref = saved_proposal(client, {"decision_id": "pev-1", "to_state": "frozen"})
+        row = _decision(ref, decision_state=terminal)
+        store.get_approval_decision = lambda decision_id: row if decision_id == "pev-1" else None
+        queue = ManagementReviewQueuePort(approval_decisions_reader=lambda: [row])
+        store.list_approval_queue_items = queue.list_approval_queue_items
+        rec, review = _both(client)
+        assert rec["human_review_state"]["status"] == review["status"] == f"decision_{terminal}"
+        assert rec["human_review_state"]["decision_status"] == terminal
+        assert rec["links"]["human_inbox"] is None and review["human_inbox_id"] is None
+        assert review["owner_decision"]["decision_state"] == terminal and review["owner_decision"]["available"] is True
+        assert rec["links"]["owner_decision"] == "/api/v1/approval-decisions/pev-1"
+
+
 def test_final_decision_hands_off_to_governance_owner_not_terminal_inbox(saved_proposal):
     with gov_test._isolated_client() as (client, store, _commands):
         ref = saved_proposal(client, {"decision_id": "pev-1", "to_state": "frozen"})
