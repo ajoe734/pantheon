@@ -8,23 +8,35 @@ def resolve_governed_dataset(
     dataset_store: Optional[Any] = None, tenant_id: Optional[str] = None, user_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Resolve canonical input references into tenant-scoped dataset inputs."""
-    if stage.get("dataset"):
-        return stage["dataset"]
-    if plan and plan.get("dataset"):
-        return plan["dataset"]
-    input_refs = stage.get("input_refs") or (plan.get("input_refs") if plan else None)
-    if not isinstance(input_refs, (list, tuple)):
-        return None
+    input_refs = stage.get("input_refs") or stage.get("approved_input_refs") or (plan.get("input_refs") if plan else None)
     refs = [
-        str((r.get("id") or r.get("ref") or r.get("uri")) if isinstance(r, dict) else r).strip()
-        for r in input_refs
-        if (r.get("id") or r.get("ref") or r.get("uri") if isinstance(r, dict) else r)
+        str((r.get("id") or r.get("dataset_id") or r.get("ref") or r.get("uri")) if isinstance(r, dict) else r).strip()
+        for r in (input_refs if isinstance(input_refs, (list, tuple)) else [])
+        if (r.get("id") or r.get("dataset_id") or r.get("ref") or r.get("uri") if isinstance(r, dict) else r)
     ]
     refs = [r for r in refs if r]
-    if not refs:
-        return None
     tenant = str(tenant_id or stage.get("tenant_id") or (plan or {}).get("tenant_id") or "").strip()
     user = str(user_id or stage.get("user_id") or (plan or {}).get("user_id") or "").strip()
+
+    def _matches_and_tenant_ok(ds: Any) -> bool:
+        if not isinstance(ds, dict):
+            return False
+        ds_id = str(ds.get("dataset_id") or ds.get("id") or "").strip()
+        clean = ds_id.split(":", 1)[-1] if ":" in ds_id else ds_id
+        if refs and not any(ds_id == r or clean == (r.split(":", 1)[-1] if ":" in r else r) for r in refs):
+            return False
+        ds_tenant = str(ds.get("tenant_id") or "").strip()
+        if tenant and ds_tenant and ds_tenant != tenant:
+            return False
+        return True
+
+    if stage.get("dataset") and _matches_and_tenant_ok(stage["dataset"]):
+        return stage["dataset"]
+    if plan and plan.get("dataset") and _matches_and_tenant_ok(plan["dataset"]):
+        return plan["dataset"]
+    if not refs:
+        return stage.get("dataset") or (plan.get("dataset") if plan else None)
+
     store = dataset_store
     if store is None:
         try:
@@ -53,6 +65,9 @@ def resolve_governed_dataset(
                 None,
             )
         if record is None:
+            continue
+        rec_tenant = getattr(record, "tenant_id", None)
+        if tenant and rec_tenant and rec_tenant != tenant:
             continue
         content = getattr(record, "content", {}) or {}
         dataset = dict(content) if isinstance(content, dict) else {"records": content}

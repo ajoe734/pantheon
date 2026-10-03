@@ -641,13 +641,10 @@ def _artifact_quality(run: Dict[str, Any], body: ArtifactBody) -> Dict[str, Any]
     if not source_evidence_refs:
         reasons.append("missing_source_evidence_refs")
     return {
-        "producer_mode": producer_mode,
-        "artifact_origin": _artifact_origin(producer_mode),
-        "storage_status": storage_status,
-        "checksum_status": checksum_status,
+        "producer_mode": producer_mode, "artifact_origin": _artifact_origin(producer_mode),
+        "storage_status": storage_status, "checksum_status": checksum_status,
         "source_evidence_refs": source_evidence_refs,
-        "evidence_eligible": not reasons,
-        "evidence_ineligibility_reasons": reasons,
+        "evidence_eligible": not reasons, "evidence_ineligibility_reasons": reasons,
     }
 
 
@@ -660,36 +657,26 @@ def _writeback_target_quality(
     artifact_metadata = _as_mapping(artifact.get("metadata"))
     quality = _as_mapping(artifact.get("quality"))
     source_evidence_refs = _evidence_source_refs(
-        quality.get("source_evidence_refs"),
-        artifact.get("source_evidence_refs"),
-        artifact_metadata.get("source_evidence_refs"),
-        artifact_metadata.get("evidence_refs"),
-        hints.get("source_evidence_refs"),
-        hints.get("evidence_refs"),
-        body.metadata.get("source_evidence_refs"),
-        body.metadata.get("evidence_refs"),
+        quality.get("source_evidence_refs"), artifact.get("source_evidence_refs"),
+        artifact_metadata.get("source_evidence_refs"), artifact_metadata.get("evidence_refs"),
+        hints.get("source_evidence_refs"), hints.get("evidence_refs"),
+        body.metadata.get("source_evidence_refs"), body.metadata.get("evidence_refs"),
     )
     source_strategy_spec_id = _first_text(
-        body.source_strategy_spec_id,
-        hints.get("source_strategy_spec_id"),
-        hints.get("strategy_spec_id"),
-        artifact.get("source_strategy_spec_id"),
+        body.source_strategy_spec_id, hints.get("source_strategy_spec_id"),
+        hints.get("strategy_spec_id"), artifact.get("source_strategy_spec_id"),
         artifact_metadata.get("source_strategy_spec_id"),
     )
     source_dataset_refs = _evidence_source_refs(
-        body.source_dataset_refs,
-        hints.get("source_dataset_refs"),
-        artifact.get("source_dataset_refs"),
-        _input_ref_id(run, "dataset", "dataset_version"),
+        body.source_dataset_refs, hints.get("source_dataset_refs"),
+        artifact.get("source_dataset_refs"), _input_ref_id(run, "dataset", "dataset_version"),
     )
     return {
         "producer_mode": quality.get("producer_mode") or _producer_mode(run),
         "storage_status": _storage_status(_first_value(body.storage_ref, hints.get("storage_ref"), artifact.get("storage_ref"))),
         "checksum_status": _checksum_status(_first_text(body.checksum, hints.get("checksum"), artifact.get("checksum"))),
-        "source_strategy_spec_id": source_strategy_spec_id,
-        "source_dataset_refs": source_dataset_refs,
-        "source_evidence_refs": source_evidence_refs,
-        "artifact_evidence_eligible": bool(artifact.get("evidence_eligible")),
+        "source_strategy_spec_id": source_strategy_spec_id, "source_dataset_refs": source_dataset_refs,
+        "source_evidence_refs": source_evidence_refs, "artifact_evidence_eligible": bool(artifact.get("evidence_eligible")),
     }
 
 
@@ -769,29 +756,21 @@ def _experiment_run_for_writeback(
         "strategy_spec_version",
     )
     return ExperimentRun(
-        run_id=str(run["run_id"]),
-        task_id=str(run["task_id"]),
-        strategy_id=strategy_id,
+        run_id=str(run["run_id"]), task_id=str(run["task_id"]), strategy_id=strategy_id,
         strategy_spec_version=strategy_spec_version,
         backend_id=str(_first_text(run.get("adapter"), params.get("backend_id"), "research-orchestrator")),
-        runtime_env=body.runtime_env,
-        status=str(run.get("status") or ""),
+        runtime_env=body.runtime_env, status=str(run.get("status") or ""),
         started_at=str(_first_text(run.get("started_at"), run.get("created_at"), timestamp)),
         finished_at=str(_first_text(run.get("finished_at"), run.get("updated_at"), timestamp)),
-        dataset_version_id=dataset_version_id,
-        code_version=code_version,
+        dataset_version_id=dataset_version_id, code_version=code_version,
         input_manifest_ref=str(_first_text(body.input_manifest_ref, run.get("input_manifest_ref"), f"research-run://{run['run_id']}/input")),
         output_manifest_ref=output_manifest_ref,
         metric_bundle_id=_first_text(body.metric_bundle_id, artifact_metadata.get("metric_bundle_id")),
-        artifact_refs=[str(artifact["artifact_id"])],
-        logs_ref=_first_text(run.get("logs_ref")),
+        artifact_refs=[str(artifact["artifact_id"])], logs_ref=_first_text(run.get("logs_ref")),
         trace_id=str(_first_text(run.get("trace_id"), run.get("run_id"))),
         created_at=str(_first_text(run.get("created_at"), timestamp)),
         updated_at=str(_first_text(run.get("updated_at"), timestamp)),
-        metadata={
-            "source_strategy_spec_id": body.source_strategy_spec_id,
-            "research_orchestrator_run_record": True,
-        },
+        metadata={"source_strategy_spec_id": body.source_strategy_spec_id, "research_orchestrator_run_record": True},
     )
 
 
@@ -894,16 +873,9 @@ def create_task(body: CreateTaskBody) -> Dict[str, Any]:
     timestamp = body.created_at or utc_now()
     task_id = _next_id("rtask", timestamp, {str(task.get("task_id") or "") for task in store.list_tasks()})
     task = {
-        "id": task_id,
-        "task_id": task_id,
-        "title": body.title,
-        "objective": body.objective,
-        "status": "ready",
-        "source_refs": body.source_refs,
-        "constraints": body.constraints,
-        "created_by": body.actor_id,
-        "created_at": timestamp,
-        "updated_at": timestamp,
+        "id": task_id, "task_id": task_id, "title": body.title, "objective": body.objective,
+        "status": "ready", "source_refs": body.source_refs, "constraints": body.constraints,
+        "created_by": body.actor_id, "created_at": timestamp, "updated_at": timestamp,
         "idempotency_key": body.idempotency_key,
     }
     return store.put_task(task)
@@ -925,21 +897,14 @@ def cancel_task(task_id: str, body: Optional[CancelRunBody] = None) -> Dict[str,
     b = body or CancelRunBody()
     timestamp = b.canceled_at or utc_now()
     with _plan_progress_lock:
-        task["status"] = "canceled"
-        task["cancellation_fence"] = timestamp
-        task["updated_at"] = timestamp
+        task.update({"status": "canceled", "cancellation_fence": timestamp, "updated_at": timestamp})
         store.put_task(task)
         canceled_run_ids = set()
         for r in store.list_runs():
-            if str(r.get("task_id")) == task_id:
-                r_status = str(r.get("status") or "").lower()
-                if r_status in ACTIVE_STATUSES:
-                    r["status"] = "canceled"
-                    r["cancellation_fence"] = timestamp
-                    r["completed_at"] = timestamp
-                    r["updated_at"] = timestamp
-                    store.put_run(r)
-                    canceled_run_ids.add(str(r.get("run_id") or ""))
+            if str(r.get("task_id")) == task_id and str(r.get("status") or "").lower() in ACTIVE_STATUSES:
+                r.update({"status": "canceled", "cancellation_fence": timestamp, "completed_at": timestamp, "updated_at": timestamp})
+                store.put_run(r)
+                canceled_run_ids.add(str(r.get("run_id") or ""))
         _cancel_stage_claims(canceled_run_ids, timestamp)
     return task
 
@@ -986,41 +951,39 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
                     detail=f"Backend execution owner for adapter '{adapter}' ({backend_name}) is unavailable in real mode ({env_var}!=real)",
                 )
 
+    def _reject(reason: str, detail: str) -> None:
+        nonlocal rejected, rejection
+        rejected = True
+        rejection = {
+            "reason": reason,
+            "detail": detail,
+            "rejected_at": timestamp,
+            "rejected_by": "research-orchestrator-service",
+        }
+
     if any(token in request_text for token in ("registry_write", "direct_registry_write", "promote_to_registry")):
-        rejected = True
-        rejection = {
-            "reason": "registry_write_disabled",
-            "detail": "Research orchestrator may emit draft handoff records only; canonical registry writes are not allowed.",
-            "rejected_at": timestamp,
-            "rejected_by": "research-orchestrator-service",
-        }
+        _reject(
+            "registry_write_disabled",
+            "Research orchestrator may emit draft handoff records only; canonical registry writes are not allowed.",
+        )
     elif any(token in request_text for token in ("governance_write", "governance_stage", "approve_governance")):
-        rejected = True
-        rejection = {
-            "reason": "governance_write_disabled",
-            "detail": "Research orchestrator cannot approve governance decisions or change deployment stages.",
-            "rejected_at": timestamp,
-            "rejected_by": "research-orchestrator-service",
-        }
+        _reject(
+            "governance_write_disabled",
+            "Research orchestrator cannot approve governance decisions or change deployment stages.",
+        )
     elif adapter not in STUB_ADAPTERS and adapter not in CAPABILITY_REGISTRY and not is_stage_backend:
-        rejected = True
-        rejection = {
-            "reason": "unknown_adapter",
-            "detail": f"Adapter family '{adapter}' is not registered for research orchestration.",
-            "rejected_at": timestamp,
-            "rejected_by": "research-orchestrator-service",
-        }
+        _reject(
+            "unknown_adapter",
+            f"Adapter family '{adapter}' is not registered for research orchestration.",
+        )
     elif OFFLINE_GATE_ENABLED and adapter in OFFLINE_ADAPTERS and requested_mode == "offline" and dispatch_mode == "offline":
         # Offline gate path: route to gateway and record the dispatch.
         pass  # Handled below after run_id is assigned.
     elif OFFLINE_GATE_ENABLED and adapter in OFFLINE_ADAPTERS and requested_mode not in PRODUCTION_MODES:
-        rejected = True
-        rejection = {
-            "reason": "offline_mode_required",
-            "detail": "Offline-gated adapter dispatch requires requested_mode=offline and dispatch_mode=offline.",
-            "rejected_at": timestamp,
-            "rejected_by": "research-orchestrator-service",
-        }
+        _reject(
+            "offline_mode_required",
+            "Offline-gated adapter dispatch requires requested_mode=offline and dispatch_mode=offline.",
+        )
     elif (
         adapter in PRODUCTION_ADAPTERS
         or requested_mode in PRODUCTION_MODES
@@ -1028,29 +991,45 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         or requested_mode in ("live", "canary")
         or dispatch_mode in ("live", "canary")
     ):
-        rejected = True
-        rejection = {
-            "reason": "production_adapter_disabled",
-            "detail": "Research orchestrator production adapters and paper/canary/live modes are fail-closed in this service boundary.",
-            "rejected_at": timestamp,
-            "rejected_by": "research-orchestrator-service",
-        }
+        _reject(
+            "production_adapter_disabled",
+            "Research orchestrator production adapters and paper/canary/live modes are fail-closed in this service boundary.",
+        )
     elif is_stage_backend and (requested_mode not in ALLOWED_STAGE_MODES or dispatch_mode not in ALLOWED_STAGE_MODES):
-        rejected = True
-        rejection = {
-            "reason": "dispatch_mode_disabled",
-            "detail": f"Stage execution adapter '{adapter}' only supports allowed non-live modes: {sorted(ALLOWED_STAGE_MODES)}.",
-            "rejected_at": timestamp,
-            "rejected_by": "research-orchestrator-service",
-        }
+        _reject(
+            "dispatch_mode_disabled",
+            f"Stage execution adapter '{adapter}' only supports allowed non-live modes: {sorted(ALLOWED_STAGE_MODES)}.",
+        )
     if not rejected and not is_stage_backend and dispatch_mode not in STUB_ADAPTERS and not (OFFLINE_GATE_ENABLED and adapter in OFFLINE_ADAPTERS and requested_mode == "offline" and dispatch_mode == "offline"):
-        rejected = True
-        rejection = {
-            "reason": "dispatch_mode_disabled",
-            "detail": "Only stub/handoff-only research orchestration is enabled.",
-            "rejected_at": timestamp,
-            "rejected_by": "research-orchestrator-service",
-        }
+        _reject(
+            "dispatch_mode_disabled",
+            "Only stub/handoff-only research orchestration is enabled.",
+        )
+
+    stage_param = body.parameters.get("stage") if isinstance(body.parameters.get("stage"), dict) else {}
+    stage_ds_refs = [
+        str(r.get("id") or r.get("dataset_id") if isinstance(r, dict) else r).strip()
+        for r in (body.input_refs or []) + (stage_param.get("input_refs") or []) + (stage_param.get("approved_input_refs") or [])
+        if (isinstance(r, str) and (r.startswith("dataset:") or r.startswith("ds-") or r.startswith("dataset-")))
+        or (isinstance(r, dict) and r.get("type") == "dataset" and (r.get("id") or r.get("dataset_id")))
+    ]
+    expected_tid = str(body.parameters.get("tenant_id") or getattr(body, "tenant_id", None) or task.get("tenant_id") or "").strip()
+    ds_val = body.parameters.get("dataset") or stage_param.get("dataset")
+    if is_stage_backend and stage_ds_refs and not rejected:
+        ds_id_val = str((ds_val or {}).get("dataset_id") or (ds_val or {}).get("id") or "").strip()
+        clean_ds_id = ds_id_val.split(":", 1)[-1] if ":" in ds_id_val else ds_id_val
+        if not ds_val or not any(ds_id_val == ref or clean_ds_id == (ref.split(":", 1)[-1] if ":" in ref else ref) for ref in stage_ds_refs):
+            _reject(
+                "dataset_unavailable",
+                f"Referenced governed research dataset '{stage_ds_refs}' is unavailable or mismatched",
+            )
+        elif ds_val and isinstance(ds_val, dict) and expected_tid:
+            ds_tid = str(ds_val.get("tenant_id") or "").strip()
+            if ds_tid and ds_tid != expected_tid:
+                _reject(
+                    "tenant_boundary_violation",
+                    f"Unauthorized access to dataset across tenant boundary: '{ds_tid}' != '{expected_tid}'",
+                )
 
     active_count = len([run for run in store.list_runs() if str(run.get("status") or "").lower() in ACTIVE_STATUSES])
     if not rejected and active_count >= MAX_ACTIVE_RUNS:
@@ -1086,13 +1065,13 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         status = "dispatched"
         summary = f"Offline-gated adapter '{adapter}' dispatched to research-worker-gateway (gateway_job_id={gateway_ref.get('gateway_job_id') if gateway_ref else None})."
         events.append(_event(timestamp, "run_dispatched", summary, body.actor_id, run_id, events))
-    elif is_stage_backend:
-        status = "queued"
-        summary = f"Stage execution adapter '{adapter}' queued for authentic dispatch."
-        events.append(_event(timestamp, "run_queued", summary, body.actor_id, run_id, events))
     else:
         status = "queued"
-        summary = "Stub research orchestration run queued for bounded dispatch."
+        summary = (
+            f"Stage execution adapter '{adapter}' queued for authentic dispatch."
+            if is_stage_backend
+            else "Stub research orchestration run queued for bounded dispatch."
+        )
         events.append(_event(timestamp, "run_queued", summary, body.actor_id, run_id, events))
     stage_id_val = None
     if body.parameters.get("stage") and isinstance(body.parameters["stage"], dict):
@@ -1104,31 +1083,16 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
                 break
 
     run: Dict[str, Any] = {
-        "id": run_id,
-        "run_id": run_id,
-        "task_id": task_id,
-        "stage_id": stage_id_val,
-        "attempt_number": 1,
-        "parent_run_id": None,
-        "root_run_id": run_id,
-        "adapter": adapter,
-        "requested_mode": requested_mode,
-        "dispatch_mode": dispatch_mode,
-        "status": status,
-        "production_activation": "disabled",
-        "input_refs": body.input_refs,
-        "parameters": body.parameters,
-        "created_by": body.actor_id,
+        "id": run_id, "run_id": run_id, "task_id": task_id, "stage_id": stage_id_val,
+        "attempt_number": 1, "parent_run_id": None, "root_run_id": run_id,
+        "adapter": adapter, "requested_mode": requested_mode, "dispatch_mode": dispatch_mode,
+        "status": status, "production_activation": "disabled",
+        "input_refs": body.input_refs, "parameters": body.parameters, "created_by": body.actor_id,
         "tenant_id": body.parameters.get("tenant_id") or getattr(body, "tenant_id", None) or task.get("tenant_id"),
         "user_id": body.parameters.get("user_id") or body.actor_id or getattr(body, "user_id", None) or task.get("user_id"),
-        "created_at": timestamp,
-        "updated_at": timestamp,
-        "idempotency_key": body.idempotency_key,
-        "rejection": rejection,
-        "events": events,
-        "artifact_refs": [],
-        "proposal_refs": [],
-        "registry_writebacks": [],
+        "created_at": timestamp, "updated_at": timestamp, "idempotency_key": body.idempotency_key,
+        "rejection": rejection, "events": events, "artifact_refs": [],
+        "proposal_refs": [], "registry_writebacks": [],
     }
     if gateway_ref is not None:
         run["gateway_ref"] = gateway_ref
@@ -1237,26 +1201,89 @@ def _progress_plan_stages_locked(
             continue
         if stage_id != str(parent_run.get("stage_id") or ""):
             backend = str(stage.get("stage_type") or parent_run.get("adapter") or "prototype_backtest")
-            ds = stage.get("dataset") or plan_payload.get("dataset") or (parent_run.get("parameters") or {}).get("dataset")
+            st_refs = (stage.get("input_refs") or []) + (stage.get("approved_input_refs") or [])
+            st_ds_refs = [
+                str(r.get("id") or r.get("dataset_id") if isinstance(r, dict) else r).strip()
+                for r in st_refs
+                if (isinstance(r, str) and (r.startswith("dataset:") or r.startswith("ds-") or r.startswith("dataset-")))
+                or (isinstance(r, dict) and r.get("type") == "dataset" and (r.get("id") or r.get("dataset_id")))
+            ]
+            exp_tid = str(parent_run.get("tenant_id") or plan_payload.get("tenant_id") or "").strip()
+
+            def _match_candidate(cand: Any) -> bool:
+                if not isinstance(cand, dict):
+                    return False
+                cid = str(cand.get("dataset_id") or cand.get("id") or "").strip()
+                clean_cid = cid.split(":", 1)[-1] if ":" in cid else cid
+                return any(cid == ref or clean_cid == (ref.split(":", 1)[-1] if ":" in ref else ref) for ref in st_ds_refs)
+
+            ds = None
+            if stage.get("dataset") and (not st_ds_refs or _match_candidate(stage["dataset"])):
+                ds = stage["dataset"]
+            elif plan_payload.get("datasets"):
+                p_dss = plan_payload["datasets"]
+                if isinstance(p_dss, dict):
+                    for d_key, d_obj in p_dss.items():
+                        if _match_candidate(d_obj) or (isinstance(d_obj, dict) and d_key in st_ds_refs):
+                            ds = d_obj
+                            break
+                elif isinstance(p_dss, list):
+                    for d_obj in p_dss:
+                        if _match_candidate(d_obj):
+                            ds = d_obj
+                            break
+            elif not st_ds_refs:
+                ds = plan_payload.get("dataset") or (parent_run.get("parameters") or {}).get("dataset")
+
+            tenant_ok = True
+            if ds and isinstance(ds, dict) and exp_tid:
+                ds_tid = str(ds.get("tenant_id") or "").strip()
+                if ds_tid and ds_tid != exp_tid:
+                    tenant_ok = False
+
+            is_failed = False
+            fail_reason = ""
+            if st_ds_refs and not ds:
+                is_failed = True
+                fail_reason = f"Referenced governed research dataset '{st_ds_refs}' is unavailable"
+            elif not tenant_ok:
+                is_failed = True
+                fail_reason = f"Unauthorized access to dataset across tenant boundary for stage '{stage_id}'"
+            elif backend != "evidence_synthesis" and not ds:
+                is_failed = True
+                fail_reason = f"Missing required governed dataset for stage '{stage_id}'"
+
             rid = _next_id("rrun", timestamp, {str(r.get("run_id") or "") for r in store.list_runs()})
             pred = next((r_id for d in reversed(deps) if d in latest for r_id in [latest[d].get("run_id") or latest[d].get("id")] if r_id), parent_run.get("run_id") or parent_run.get("id"))
+            in_refs = [{"type": "stage", "id": stage_id}]
+            if plan_payload.get("plan_id"):
+                in_refs.insert(0, {"type": "research_plan", "id": plan_payload["plan_id"]})
+            if ds and isinstance(ds, dict):
+                ds_id_clean = str(ds.get("dataset_id") or ds.get("id") or "").strip()
+                if ds_id_clean:
+                    in_refs.append({"type": "dataset", "id": ds_id_clean})
+
             record = {
                 "id": rid, "run_id": rid, "task_id": task_id, "stage_id": stage_id, "attempt_number": 1,
                 "parent_run_id": pred if deps else None,
                 "root_run_id": parent_run.get("root_run_id") or parent_run.get("run_id") or parent_run.get("id"),
                 "adapter": backend, "requested_mode": parent_run.get("requested_mode", "stub"),
-                "dispatch_mode": parent_run.get("dispatch_mode", "stub"), "status": "queued",
+                "dispatch_mode": parent_run.get("dispatch_mode", "stub"),
+                "status": "failed" if is_failed else "queued",
                 "production_activation": "disabled",
-                "input_refs": ([{"type": "research_plan", "id": plan_payload.get("plan_id")}] if plan_payload.get("plan_id") else []) + [{"type": "stage", "id": stage_id}],
+                "input_refs": in_refs,
                 "parameters": {**(parent_run.get("parameters") or {}), "stage": stage, "plan": plan_payload, "dataset": ds},
                 "created_by": actor_id or parent_run.get("created_by"), "tenant_id": parent_run.get("tenant_id"),
                 "user_id": parent_run.get("user_id"), "created_at": timestamp, "updated_at": timestamp,
                 "idempotency_key": f"stage:{task_id}:{stage_id}", "events": [], "artifact_refs": [],
                 "proposal_refs": [], "registry_writebacks": [],
             }
+            if is_failed:
+                record["error"] = fail_reason
+                stage["status"] = "failed"
             store.put_run(record)
             latest[stage_id] = record
-            states[stage_id] = "queued"
+            states[stage_id] = "failed" if is_failed else "queued"
 
     for stage in stages:
         if not isinstance(stage, dict):
@@ -1487,23 +1514,14 @@ def get_run(run_id: str) -> Dict[str, Any]:
 def get_run_status(run_id: str) -> Dict[str, Any]:
     run = get_run(run_id)
     return {
-        "run_id": run["run_id"],
-        "task_id": run["task_id"],
-        "status": run["status"],
-        "attempt_number": run.get("attempt_number", 1),
-        "parent_run_id": run.get("parent_run_id"),
-        "root_run_id": run.get("root_run_id"),
-        "cancellation_fence": run.get("cancellation_fence"),
-        "adapter": run["adapter"],
-        "requested_mode": run["requested_mode"],
-        "dispatch_mode": run["dispatch_mode"],
-        "production_activation": run["production_activation"],
-        "rejection": run.get("rejection"),
-        "gateway_ref": run.get("gateway_ref"),
-        "artifact_refs": run.get("artifact_refs", []),
-        "proposal_refs": run.get("proposal_refs", []),
-        "registry_writebacks": run.get("registry_writebacks", []),
-        "events": run.get("events", []),
+        "run_id": run["run_id"], "task_id": run["task_id"], "status": run["status"],
+        "attempt_number": run.get("attempt_number", 1), "parent_run_id": run.get("parent_run_id"),
+        "root_run_id": run.get("root_run_id"), "cancellation_fence": run.get("cancellation_fence"),
+        "adapter": run["adapter"], "requested_mode": run["requested_mode"],
+        "dispatch_mode": run["dispatch_mode"], "production_activation": run["production_activation"],
+        "rejection": run.get("rejection"), "gateway_ref": run.get("gateway_ref"),
+        "artifact_refs": run.get("artifact_refs", []), "proposal_refs": run.get("proposal_refs", []),
+        "registry_writebacks": run.get("registry_writebacks", []), "events": run.get("events", []),
         "updated_at": run.get("updated_at"),
     }
 
@@ -1581,19 +1599,12 @@ def cancel_run(run_id: str, body: Optional[CancelRunBody] = None) -> Dict[str, A
         )
     )
     with _plan_progress_lock:
-        run["status"] = "canceled"
-        run["completed_at"] = timestamp
-        run["cancellation_fence"] = timestamp
-        run["updated_at"] = timestamp
-        run["events"] = events
-
+        run.update({"status": "canceled", "completed_at": timestamp, "cancellation_fence": timestamp, "updated_at": timestamp, "events": events})
         task = store.get_task(run["task_id"])
         if task:
             sibling_runs = [r for r in store.list_runs() if r.get("task_id") == run["task_id"] and r.get("run_id") != run_id]
             if not any(str(r.get("status") or "").lower() in ACTIVE_STATUSES for r in sibling_runs):
-                task["status"] = "canceled"
-                task["cancellation_fence"] = task.get("cancellation_fence") or timestamp
-                task["updated_at"] = timestamp
+                task.update({"status": "canceled", "cancellation_fence": task.get("cancellation_fence") or timestamp, "updated_at": timestamp})
                 store.put_task(task)
 
         store.put_run(run)
@@ -1645,30 +1656,15 @@ def retry_run(run_id: str, body: Optional[RetryRunBody] = None) -> Dict[str, Any
     )
 
     new_run: Dict[str, Any] = {
-        "id": new_run_id,
-        "run_id": new_run_id,
-        "task_id": task_id,
-        "stage_id": run.get("stage_id"),
-        "attempt_number": attempt_number,
-        "parent_run_id": parent_run_id,
-        "root_run_id": root_run_id,
-        "adapter": run.get("adapter", "stub"),
-        "requested_mode": run.get("requested_mode", "stub"),
-        "dispatch_mode": run.get("dispatch_mode", "stub"),
-        "status": "queued",
-        "production_activation": "disabled",
-        "input_refs": run.get("input_refs", []),
-        "parameters": run.get("parameters", {}),
-        "created_by": b.actor_id or run.get("created_by"),
-        "tenant_id": run.get("tenant_id") or task.get("tenant_id"),
-        "user_id": run.get("user_id") or task.get("user_id"),
-        "created_at": timestamp,
-        "updated_at": timestamp,
-        "idempotency_key": b.idempotency_key,
-        "events": events,
-        "artifact_refs": [],
-        "proposal_refs": [],
-        "registry_writebacks": [],
+        "id": new_run_id, "run_id": new_run_id, "task_id": task_id, "stage_id": run.get("stage_id"),
+        "attempt_number": attempt_number, "parent_run_id": parent_run_id, "root_run_id": root_run_id,
+        "adapter": run.get("adapter", "stub"), "requested_mode": run.get("requested_mode", "stub"),
+        "dispatch_mode": run.get("dispatch_mode", "stub"), "status": "queued",
+        "production_activation": "disabled", "input_refs": run.get("input_refs", []),
+        "parameters": run.get("parameters", {}), "created_by": b.actor_id or run.get("created_by"),
+        "tenant_id": run.get("tenant_id") or task.get("tenant_id"), "user_id": run.get("user_id") or task.get("user_id"),
+        "created_at": timestamp, "updated_at": timestamp, "idempotency_key": b.idempotency_key,
+        "events": events, "artifact_refs": [], "proposal_refs": [], "registry_writebacks": [],
     }
 
     old_events = list(run.get("events") or [])
@@ -1738,35 +1734,19 @@ def handoff_artifact(run_id: str, body: ArtifactBody) -> Dict[str, Any]:
         "quality": quality,
     }
     artifact = {
-        "id": artifact_id,
-        "artifact_id": artifact_id,
-        "run_id": run_id,
-        "task_id": run["task_id"],
-        "artifact_type": body.artifact_type,
-        "artifact_family": body.artifact_family,
-        "title": body.title,
-        "storage_ref": body.storage_ref,
-        "checksum": body.checksum,
-        "artifact_state": "draft",
-        "deployment_stage": "none",
-        "producer_mode": quality["producer_mode"],
-        "artifact_origin": quality["artifact_origin"],
-        "storage_status": quality["storage_status"],
-        "checksum_status": quality["checksum_status"],
-        "source_evidence_refs": quality["source_evidence_refs"],
-        "evidence_eligible": quality["evidence_eligible"],
-        "evidence_ineligibility_reasons": quality["evidence_ineligibility_reasons"],
-        "quality": quality,
+        "id": artifact_id, "artifact_id": artifact_id, "run_id": run_id, "task_id": run["task_id"],
+        "artifact_type": body.artifact_type, "artifact_family": body.artifact_family, "title": body.title,
+        "storage_ref": body.storage_ref, "checksum": body.checksum, "artifact_state": "draft",
+        "deployment_stage": "none", "producer_mode": quality["producer_mode"], "artifact_origin": quality["artifact_origin"],
+        "storage_status": quality["storage_status"], "checksum_status": quality["checksum_status"],
+        "source_evidence_refs": quality["source_evidence_refs"], "evidence_eligible": quality["evidence_eligible"],
+        "evidence_ineligibility_reasons": quality["evidence_ineligibility_reasons"], "quality": quality,
         "governance": {
-            "direct_live_influence": False,
-            "lean_consumption": "research_only_not_direct_action",
+            "direct_live_influence": False, "lean_consumption": "research_only_not_direct_action",
             "write_boundary": "research_plane_only",
         },
-        "registry_hints": body.registry_hints,
-        "registry_projection": registry_projection,
-        "metadata": body.metadata,
-        "created_by": body.actor_id,
-        "created_at": timestamp,
+        "registry_hints": body.registry_hints, "registry_projection": registry_projection,
+        "metadata": body.metadata, "created_by": body.actor_id, "created_at": timestamp,
         "idempotency_key": body.idempotency_key,
     }
     refs = list(run.get("artifact_refs") or [])
@@ -2190,8 +2170,26 @@ def execute_research_stage(
             detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is absent or not configured",
         )
 
-    dataset_input = stage.get("dataset") or plan.get("dataset") or body.get("dataset")
+    dataset_input = stage.get("dataset") or body.get("dataset") or plan.get("dataset")
     artifact_refs_input = stage.get("artifact_refs") or body.get("artifact_refs") or plan.get("artifact_refs") or []
+    st_refs = (stage.get("input_refs") or []) + (stage.get("approved_input_refs") or [])
+    st_ds_refs = [
+        str(r.get("id") or r.get("dataset_id") if isinstance(r, dict) else r).strip()
+        for r in st_refs
+        if (isinstance(r, str) and (r.startswith("dataset:") or r.startswith("ds-") or r.startswith("dataset-")))
+        or (isinstance(r, dict) and r.get("type") == "dataset" and (r.get("id") or r.get("dataset_id")))
+    ]
+    if st_ds_refs:
+        ds_id_val = str((dataset_input or {}).get("dataset_id") or (dataset_input or {}).get("id") or "").strip()
+        clean_ds_id = ds_id_val.split(":", 1)[-1] if ":" in ds_id_val else ds_id_val
+        if not dataset_input or not any(ds_id_val == ref or clean_ds_id == (ref.split(":", 1)[-1] if ":" in ref else ref) for ref in st_ds_refs):
+            _persist_failure(f"Governed dataset mismatch for stage '{stage_id}': expected one of '{st_ds_refs}', got '{ds_id_val}'")
+            raise HTTPException(status_code=400, detail=f"Governed dataset mismatch for stage '{stage_id}': expected one of '{st_ds_refs}', got '{ds_id_val}'")
+    exp_tenant = str((run_record or {}).get("tenant_id") or plan.get("tenant_id") or body.get("tenant_id") or "").strip()
+    ds_tenant = str((dataset_input or {}).get("tenant_id") or "").strip() if isinstance(dataset_input, dict) else ""
+    if exp_tenant and ds_tenant and exp_tenant != ds_tenant:
+        _persist_failure(f"Unauthorized access to dataset across tenant boundary: '{ds_tenant}' != '{exp_tenant}'")
+        raise HTTPException(status_code=403, detail=f"Unauthorized access to dataset across tenant boundary: '{ds_tenant}' != '{exp_tenant}'")
     if not dataset_input and stage_type != "evidence_synthesis":
         raise HTTPException(
             status_code=400,
@@ -2262,14 +2260,32 @@ def execute_research_stage(
     backend_ref = f"research-orchestrator://stages/{stage_type}/{run_id}"
     resolved_artifacts = []
 
-    req_mode = str(
-        body.get("requested_mode")
-        or body.get("dispatch_mode")
-        or (stage.get("routing") or {}).get("backend_mode")
-        or (run_record.get("requested_mode") if run_record else "")
+    persisted_mode = str(
+        (run_record.get("requested_mode") if run_record else "")
         or (run_record.get("dispatch_mode") if run_record else "")
         or ""
     ).lower().strip()
+    caller_hints = [
+        str(h).lower().strip()
+        for h in (
+            body.get("requested_mode"),
+            body.get("dispatch_mode"),
+            (stage.get("routing") or {}).get("backend_mode") if isinstance(stage, dict) else None,
+        )
+        if h
+    ]
+    if persisted_mode:
+        for h in caller_hints:
+            if h != persisted_mode and not (persisted_mode in {"stub", "simulation"} and h in {"stub", "simulation"}):
+                _persist_failure(f"Conflicting execution mode hint '{h}' does not match persisted run mode '{persisted_mode}'")
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Conflicting execution mode hint '{h}' does not match persisted run mode '{persisted_mode}'",
+                )
+        req_mode = persisted_mode
+    else:
+        req_mode = caller_hints[0] if caller_hints else ""
+
     if req_mode and req_mode not in {"real", "simulation", "fixture", "stub", "offline"}:
         _persist_failure(f"Unknown research execution mode '{req_mode}'")
         raise HTTPException(status_code=400, detail=f"Unknown research execution mode '{req_mode}'")
@@ -2285,10 +2301,9 @@ def execute_research_stage(
             )
             use_real = os.environ.get("PANTHEON_VECTORBT_BACKEND", "stub").lower() == "real"
             if req_mode == "real" and not use_real:
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode",
-                )
+                err = f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode"
+                _persist_failure(err)
+                raise HTTPException(status_code=503, detail=err)
             # The real owner checks its dependencies; never fall back to a stub
             # while retaining a real receipt label.
             backend_runner = VectorbtBackend() if use_real else StubVectorbtBackend()
@@ -2363,10 +2378,9 @@ def execute_research_stage(
 
             use_real = os.environ.get("PANTHEON_STATSMODELS_BACKEND", "stub").lower() == "real"
             if req_mode == "real" and not use_real:
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode",
-                )
+                err = f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode"
+                _persist_failure(err)
+                raise HTTPException(status_code=503, detail=err)
             backend_runner = StatsmodelsBackend() if use_real else StubStatsmodelsBackend()
             provenance = "real" if use_real else "simulation"
 
@@ -2408,26 +2422,19 @@ def execute_research_stage(
                 QuantLibWorkflowError,
             )
             if isinstance(dataset_input, dict) and not isinstance(dataset_input, GovernedMarketSnapshot):
-                option_specs_raw = dataset_input.get("option_specs") or []
-                bond_specs_raw = dataset_input.get("bond_specs") or []
-                opt_specs = []
-                for o in option_specs_raw:
-                    if isinstance(o, GovernedOptionSpec):
-                        opt_specs.append(o)
-                    elif isinstance(o, dict):
-                        opt_specs.append(GovernedOptionSpec(**o))
-                bond_specs = []
-                for b in bond_specs_raw:
-                    if isinstance(b, GovernedBondSpec):
-                        bond_specs.append(b)
-                    elif isinstance(b, dict):
-                        bond_specs.append(GovernedBondSpec(**b))
+                opt_specs = [
+                    o if isinstance(o, GovernedOptionSpec) else GovernedOptionSpec(**o)
+                    for o in (dataset_input.get("option_specs") or []) if isinstance(o, (GovernedOptionSpec, dict))
+                ]
+                bond_specs = [
+                    b if isinstance(b, GovernedBondSpec) else GovernedBondSpec(**b)
+                    for b in (dataset_input.get("bond_specs") or []) if isinstance(b, (GovernedBondSpec, dict))
+                ]
                 snapshot = GovernedMarketSnapshot(
                     dataset_id=str(dataset_input.get("dataset_id") or ""),
                     source_dataset_refs=tuple(dataset_input.get("source_dataset_refs") or ()),
                     valuation_date=str(dataset_input.get("valuation_date") or ""),
-                    option_specs=tuple(opt_specs),
-                    bond_specs=tuple(bond_specs),
+                    option_specs=tuple(opt_specs), bond_specs=tuple(bond_specs),
                     metadata=dataset_input.get("metadata") or {},
                 )
             else:
@@ -2435,10 +2442,9 @@ def execute_research_stage(
 
             use_real = os.environ.get("PANTHEON_QUANTLIB_BACKEND", "stub").lower() == "real"
             if req_mode == "real" and not use_real:
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode",
-                )
+                err = f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable in real mode"
+                _persist_failure(err)
+                raise HTTPException(status_code=503, detail=err)
             backend_runner = QuantLibBackend() if use_real else StubQuantLibBackend()
             provenance = "real" if use_real else "simulation"
 
@@ -2677,6 +2683,14 @@ def execute_research_stage(
         latest_run.update({"status": "completed", "completed_at": now_iso, "metrics": metrics, "provenance": provenance, "receipt": receipt, "artifact_refs": arts})
         if target_tenant_id and not latest_run.get("tenant_id"):
             latest_run["tenant_id"] = str(target_tenant_id)
+        if dataset_input and isinstance(dataset_input, dict):
+            latest_run.setdefault("parameters", {})["dataset"] = dataset_input
+            ds_id = str(dataset_input.get("dataset_id") or dataset_input.get("id") or "").strip()
+            if ds_id:
+                cur_refs = list(latest_run.get("input_refs") or [])
+                if not any((isinstance(r, dict) and r.get("type") == "dataset" and r.get("id") == ds_id) or r == ds_id for r in cur_refs):
+                    cur_refs.append({"type": "dataset", "id": ds_id})
+                    latest_run["input_refs"] = cur_refs
         saved_run = store.put_run(latest_run)
         if saved_run and str(saved_run.get("status") or "").lower() in {"canceled", "cancelled"}:
             _abort_canceled()

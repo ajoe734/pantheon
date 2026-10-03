@@ -750,51 +750,45 @@ class AgoraResearchService:
             CanonicalOperationError,
         )
 
-        resolved_ds = dispatch_stage.get("dataset") or plan.get("dataset")
-        if not resolved_ds:
-            try:
-                from .dispatcher import resolve_governed_dataset
-                resolved_ds = resolve_governed_dataset(
-                    dispatch_stage,
-                    plan,
-                    dataset_store=getattr(self, "dataset_store", None),
-                    tenant_id=getattr(scope, "tenant_id", None),
-                    user_id=getattr(scope, "user_id", None),
-                )
-            except Exception as exc:
-                log.warning("Failed to resolve governed dataset for plan %s: %s", plan_id, exc)
-                resolved_ds = None
+        from .dispatcher import resolve_governed_dataset
 
-        has_dataset_reference = any(
-            (isinstance(ref, str) and ref.startswith("dataset:"))
-            or (isinstance(ref, dict) and ref.get("type") == "dataset" and ref.get("id"))
-            for ref in dispatch_stage.get("input_refs") or []
-        )
-        if has_dataset_reference and not resolved_ds:
-            raise self.bff_error(
-                503,
-                self._error_code("DEPENDENCY_UNAVAILABLE"),
-                "The referenced governed research dataset is unavailable",
-                plan_id,
+        resolved_stages = []
+        for st in plan.get("stages", []):
+            st_payload = dict(st)
+            st_ds = st_payload.get("dataset")
+            has_ref = any(
+                (isinstance(r, str) and (r.startswith("dataset:") or r.startswith("ds-")))
+                or (isinstance(r, dict) and r.get("type") == "dataset" and (r.get("id") or r.get("dataset_id")))
+                for r in (st_payload.get("input_refs") or []) + (st_payload.get("approved_input_refs") or [])
             )
+            if not st_ds:
+                try:
+                    st_ds = resolve_governed_dataset(
+                        st_payload, plan, dataset_store=getattr(self, "dataset_store", None),
+                        tenant_id=getattr(scope, "tenant_id", None), user_id=getattr(scope, "user_id", None),
+                    )
+                except Exception as exc:
+                    log.warning("Failed to resolve governed dataset for stage %s: %s", st_payload.get("stage_id"), exc)
+                    st_ds = None
+            if has_ref and not st_ds:
+                raise self.bff_error(503, self._error_code("DEPENDENCY_UNAVAILABLE"), "The referenced governed research dataset is unavailable", plan_id)
+            if st_ds and "dataset" not in st_payload:
+                st_payload["dataset"] = st_ds
+            resolved_stages.append(st_payload)
 
-        dispatch_stage_payload = dict(dispatch_stage)
-        if resolved_ds and "dataset" not in dispatch_stage_payload:
-            dispatch_stage_payload["dataset"] = resolved_ds
+        plan = {**plan, "stages": resolved_stages}
+        dispatch_stage_payload = next((s for s in resolved_stages if s.get("stage_id") == dispatch_stage["stage_id"]), dict(dispatch_stage))
+        resolved_ds = dispatch_stage_payload.get("dataset")
 
         actor = getattr(scope, "user_id", "operator") or "operator"
         task_p = {
-            "title": plan.get("title") or f"Plan {plan_id}",
-            "objective": plan.get("objective") or f"Execution {plan_id}",
-            "tenant_id": getattr(scope, "tenant_id", None),
-            "user_id": getattr(scope, "user_id", None),
+            "title": plan.get("title") or f"Plan {plan_id}", "objective": plan.get("objective") or f"Execution {plan_id}",
+            "tenant_id": getattr(scope, "tenant_id", None), "user_id": getattr(scope, "user_id", None),
             "source_refs": [
                 {"type": "research_plan", "id": plan_id},
                 {"type": "strategy", "id": plan.get("strategy_id")},
             ],
-            "constraints": {"environment": "research"},
-            "actor_id": actor,
-            "idempotency_key": f"plan-task-{plan_id}",
+            "constraints": {"environment": "research"}, "actor_id": actor, "idempotency_key": f"plan-task-{plan_id}",
         }
         input_refs = [
             {"type": "research_plan", "id": plan_id},
@@ -804,23 +798,16 @@ class AgoraResearchService:
             input_refs.append({"type": "dataset", "id": resolved_ds["dataset_id"]})
 
         run_p = {
-            "adapter": preferred_backend,
-            "requested_mode": backend_mode,
-            "dispatch_mode": backend_mode,
-            "tenant_id": getattr(scope, "tenant_id", None),
-            "user_id": getattr(scope, "user_id", None),
+            "adapter": preferred_backend, "requested_mode": backend_mode, "dispatch_mode": backend_mode,
+            "tenant_id": getattr(scope, "tenant_id", None), "user_id": getattr(scope, "user_id", None),
             "input_refs": input_refs,
             "parameters": {
-                **(dispatch_stage.get("parameters") or {}),
-                "stage": dispatch_stage_payload,
-                "plan": plan,
-                "dataset": resolved_ds,
-                "tenant_id": getattr(scope, "tenant_id", None),
+                **(dispatch_stage.get("parameters") or {}), "stage": dispatch_stage_payload, "plan": plan,
+                "dataset": resolved_ds, "tenant_id": getattr(scope, "tenant_id", None),
                 "user_id": getattr(scope, "user_id", None),
                 "correlation_id": plan.get("correlation_id") or f"corr-{plan_id}-{dispatch_stage['stage_id']}",
             },
-            "actor_id": actor,
-            "idempotency_key": f"plan-run-{plan_id}-{dispatch_stage['stage_id']}",
+            "actor_id": actor, "idempotency_key": f"plan-run-{plan_id}-{dispatch_stage['stage_id']}",
         }
 
         try:
@@ -975,20 +962,12 @@ class AgoraResearchService:
                             except Exception:
                                 pass
                         raw_run = {
-                            "run_id": run_id,
-                            "task_id": owner_run.get("task_id") or f"task-{run_id}",
-                            "plan_id": plan_id,
-                            "stage_id": stage_id,
-                            "stage_type": st_type,
-                            "workshop_id": ws_id,
-                            "strategy_id": strat_id,
-                            "strategy_spec_registry_id": reg_id,
-                            "tenant_id": owner_tenant_id or scope.tenant_id,
-                            "user_id": owner_user_id or scope.user_id,
-                            "execution_status": mapped_status,
-                            "outcome": mapped_outcome,
-                            "artifact_refs": owner_run.get("artifact_refs") or [],
-                            "metrics": owner_run.get("metrics") or [],
+                            "run_id": run_id, "task_id": owner_run.get("task_id") or f"task-{run_id}",
+                            "plan_id": plan_id, "stage_id": stage_id, "stage_type": st_type,
+                            "workshop_id": ws_id, "strategy_id": strat_id, "strategy_spec_registry_id": reg_id,
+                            "tenant_id": owner_tenant_id or scope.tenant_id, "user_id": owner_user_id or scope.user_id,
+                            "execution_status": mapped_status, "outcome": mapped_outcome,
+                            "artifact_refs": owner_run.get("artifact_refs") or [], "metrics": owner_run.get("metrics") or [],
                             "backend": {"mode": owner_run.get("requested_mode") or owner_run.get("dispatch_mode") or "real"},
                             "provenance": owner_run.get("provenance") or "real",
                             "created_at": owner_run.get("created_at") or self.utc_now(),
@@ -1045,34 +1024,20 @@ class AgoraResearchService:
             WorkshopCanonicalOperations(research_base_url=r_url).cancel_research_run(run_id)
         except CanonicalOperationError as exc:
             if exc.status_code == 404:
-                raise self.bff_error(
-                    404, self._error_code("RESOURCE_NOT_FOUND"), exc.reason, run_id
-                ) from exc
+                raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), exc.reason, run_id) from exc
             if exc.status_code == 409:
-                raise self.bff_error(
-                    409, self._error_code("RESOURCE_CONFLICT"), exc.reason, run_id
-                ) from exc
-            raise self.bff_error(
-                503, self._error_code("UPSTREAM_UNAVAILABLE"), exc.reason, run_id
-            ) from exc
+                raise self.bff_error(409, self._error_code("RESOURCE_CONFLICT"), exc.reason, run_id) from exc
+            raise self.bff_error(503, self._error_code("UPSTREAM_UNAVAILABLE"), exc.reason, run_id) from exc
         except Exception as exc:
-            raise self.bff_error(
-                503, self._error_code("UPSTREAM_UNAVAILABLE"), str(exc), run_id
-            ) from exc
+            raise self.bff_error(503, self._error_code("UPSTREAM_UNAVAILABLE"), str(exc), run_id) from exc
         now = self.utc_now()
         if hasattr(self.store, "update_run"):
             self.store.update_run(
                 run_id,
                 {
                     "execution_status": "cancelled",
-                    "progress": {
-                        **(raw_run.get("progress") or {}),
-                        "phase": "cancelled",
-                        "message": "Run cancellation accepted",
-                        "updated_at": now,
-                    },
-                    "completed_at": now,
-                    "updated_at": now,
+                    "progress": {**(raw_run.get("progress") or {}), "phase": "cancelled", "message": "Run cancellation accepted", "updated_at": now},
+                    "completed_at": now, "updated_at": now,
                 },
                 tenant_id=scope.tenant_id,
                 user_id=scope.user_id,

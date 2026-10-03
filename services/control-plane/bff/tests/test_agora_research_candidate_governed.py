@@ -1214,3 +1214,40 @@ def test_mounted_cancel_running_plan_reaches_owner_and_fences(monkeypatch: pytes
     assert owner_run["status"] in {"canceled", "completed"}
     if owner_run["status"] == "canceled":
         assert owner_run.get("cancellation_fence") is not None
+
+
+def test_bff_dispatch_fails_closed_when_successor_dataset_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch)
+
+    res_create = client.post(
+        "/bff/agora/workshops/ws-multi-ds/research-plans",
+        headers=_headers(idempotency_key="multi-ds-create"),
+        json={
+            "spec_version": "1.0",
+            "strategy_id": "strat-multi",
+            "strategy_spec_registry_id": "reg-multi",
+            "dataset": {"dataset_id": "ds-root", "strategy_id": "strat-multi", "source_dataset_refs": ["ds-root"], "records": _sample_ohlcv_records()},
+            "stages": [
+                {
+                    "stage_id": "stage-root", "stage_type": "prototype_backtest", "status": "ready",
+                    "dependencies": [], "routing": {"backend_mode": "fixture", "preferred_backend": "vectorbt"},
+                },
+                {
+                    "stage_id": "stage-succ", "stage_type": "prototype_backtest", "status": "pending",
+                    "dependencies": ["stage-root"], "input_refs": ["dataset:ds-nonexistent"],
+                    "routing": {"backend_mode": "fixture", "preferred_backend": "vectorbt"},
+                },
+            ],
+        },
+    )
+    assert res_create.status_code == 201
+    plan_id = res_create.json()["data"]["plan_id"]
+    etag = res_create.json()["meta"]["etag"]
+
+    res_app = client.post(f"/bff/agora/research-plans/{plan_id}/approve", headers=_headers(idempotency_key="multi-ds-app", if_match=etag))
+    assert res_app.status_code == 200
+
+    res_disp = client.post(f"/bff/agora/research-plans/{plan_id}/runs", headers=_headers(idempotency_key="multi-ds-disp", if_match=res_app.json()["meta"]["etag"]))
+    assert res_disp.status_code == 503
+    assert "DEPENDENCY_UNAVAILABLE" in res_disp.text or "unavailable" in res_disp.text.lower()
+

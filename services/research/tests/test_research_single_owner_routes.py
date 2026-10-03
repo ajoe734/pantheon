@@ -1334,3 +1334,258 @@ def test_artifact_only_synthesis_dispatch_runs_without_restart(
     assert store.get_run(rid)["status"] == "completed"
     assert dispatch_status == "completed", f"Normal task-runs dispatch remained {dispatch_status}; same inputs succeed via direct execute"
 
+
+def _make_test_dataset(ds_id: str, tenant_id: str = "tenant-001") -> Dict[str, Any]:
+    ds = dict(_valid_multimodal_dataset())
+    ds["dataset_id"] = ds_id
+    ds["source_dataset_refs"] = [ds_id]
+    ds["tenant_id"] = tenant_id
+    return ds
+
+
+def test_multi_stage_dag_distinct_datasets_reach_backends(client: TestClient) -> None:
+    store = research_main.store
+    task = client.post(
+        "/api/research-orchestrator/tasks",
+        json={"title": "multi-ds", "objective": "execute distinct governed datasets", "tenant_id": "tenant-001"},
+    ).json()
+    tid = task["task_id"]
+    ds_a = _make_test_dataset("ds-A", "tenant-001")
+    ds_b = _make_test_dataset("ds-B", "tenant-001")
+    s1 = {
+        "stage_id": "stage-1", "stage_type": "prototype_backtest",
+        "input_refs": [{"type": "dataset", "id": "ds-A"}], "dataset": ds_a,
+    }
+    s2 = {
+        "stage_id": "stage-2", "stage_type": "prototype_backtest",
+        "depends_on": ["stage-1"], "input_refs": [{"type": "dataset", "id": "ds-B"}], "dataset": ds_b,
+    }
+    plan = {"plan_id": "plan-distinct", "task_id": tid, "tenant_id": "tenant-001", "stages": [s1, s2]}
+
+    resp = client.post(
+        f"/api/research-orchestrator/tasks/{tid}/runs",
+        json={
+            "adapter": "prototype_backtest", "requested_mode": "stub", "dispatch_mode": "stub",
+            "parameters": {"stage": s1, "plan": plan, "dataset": ds_a, "tenant_id": "tenant-001"},
+            "input_refs": [{"type": "stage", "id": "stage-1"}, {"type": "dataset", "id": "ds-A"}],
+            "idempotency_key": "distinct-ds-run-s1",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        runs = [r for r in store.list_runs() if str(r.get("task_id")) == tid]
+        if len(runs) >= 2 and all(str(r.get("status") or "").lower() == "completed" for r in runs):
+            break
+        time.sleep(0.05)
+
+    all_runs = {str(r.get("stage_id")): r for r in store.list_runs() if str(r.get("task_id")) == tid}
+    assert "stage-1" in all_runs and "stage-2" in all_runs
+    r1, r2 = all_runs["stage-1"], all_runs["stage-2"]
+
+    assert r1["status"] == "completed"
+    assert r2["status"] == "completed"
+
+    assert r1["parameters"]["dataset"]["dataset_id"] == "ds-A"
+    assert any(ref.get("type") == "dataset" and ref.get("id") == "ds-A" for ref in r1["input_refs"] if isinstance(ref, dict))
+
+    assert r2["parameters"]["dataset"]["dataset_id"] == "ds-B"
+    assert any(ref.get("type") == "dataset" and ref.get("id") == "ds-B" for ref in r2["input_refs"] if isinstance(ref, dict))
+    assert not any(ref.get("id") == "ds-A" for ref in r2["input_refs"] if isinstance(ref, dict))
+
+    assert r1["artifact_refs"][0]["artifact_id"] != r2["artifact_refs"][0]["artifact_id"]
+
+
+def test_multi_stage_dag_missing_dataset_fails_closed(client: TestClient) -> None:
+    store = research_main.store
+    task = client.post(
+        "/api/research-orchestrator/tasks",
+        json={"title": "missing-ds", "objective": "fail closed when successor dataset missing", "tenant_id": "tenant-001"},
+    ).json()
+    tid = task["task_id"]
+    ds_a = _make_test_dataset("ds-A", "tenant-001")
+    s1 = {
+        "stage_id": "stage-1", "stage_type": "prototype_backtest",
+        "input_refs": [{"type": "dataset", "id": "ds-A"}], "dataset": ds_a,
+    }
+    s2 = {
+        "stage_id": "stage-2", "stage_type": "prototype_backtest",
+        "depends_on": ["stage-1"], "input_refs": [{"type": "dataset", "id": "ds-B"}],
+    }
+    plan = {"plan_id": "plan-missing-ds", "task_id": tid, "tenant_id": "tenant-001", "stages": [s1, s2], "dataset": ds_a}
+
+    resp = client.post(
+        f"/api/research-orchestrator/tasks/{tid}/runs",
+        json={
+            "adapter": "prototype_backtest", "requested_mode": "stub", "dispatch_mode": "stub",
+            "parameters": {"stage": s1, "plan": plan, "dataset": ds_a, "tenant_id": "tenant-001"},
+            "input_refs": [{"type": "stage", "id": "stage-1"}, {"type": "dataset", "id": "ds-A"}],
+            "idempotency_key": "missing-ds-run-s1",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        runs = [r for r in store.list_runs() if str(r.get("task_id")) == tid]
+        if len(runs) >= 2:
+            break
+        time.sleep(0.05)
+
+    all_runs = {str(r.get("stage_id")): r for r in store.list_runs() if str(r.get("task_id")) == tid}
+    assert "stage-1" in all_runs
+    assert "stage-2" in all_runs
+    r1, r2 = all_runs["stage-1"], all_runs["stage-2"]
+
+    assert r1["status"] == "completed"
+    assert r2["status"] == "failed"
+    assert "unavailable" in str(r2.get("error") or "").lower()
+    assert not r2.get("artifact_refs")
+
+    direct_resp = client.post(
+        "/api/research-orchestrator/stages/prototype_backtest/execute",
+        json={
+            "run_id": r2["run_id"], "correlation_id": "corr-missing-test",
+            "stage": s2, "plan": plan, "dataset": ds_a,
+        },
+    )
+    assert direct_resp.status_code == 400
+    assert "mismatch" in direct_resp.text.lower()
+
+
+def test_multi_stage_dag_foreign_tenant_fails_closed(client: TestClient) -> None:
+    store = research_main.store
+    task = client.post(
+        "/api/research-orchestrator/tasks",
+        json={"title": "foreign-tenant", "objective": "fail closed across tenant boundary", "tenant_id": "tenant-alpha"},
+    ).json()
+    tid = task["task_id"]
+    ds_a = _make_test_dataset("ds-A", "tenant-alpha")
+    ds_b_foreign = _make_test_dataset("ds-B", "tenant-beta")
+    s1 = {
+        "stage_id": "stage-1", "stage_type": "prototype_backtest",
+        "input_refs": [{"type": "dataset", "id": "ds-A"}], "dataset": ds_a,
+    }
+    s2 = {
+        "stage_id": "stage-2", "stage_type": "prototype_backtest",
+        "depends_on": ["stage-1"], "input_refs": [{"type": "dataset", "id": "ds-B"}], "dataset": ds_b_foreign,
+    }
+    plan = {"plan_id": "plan-foreign", "task_id": tid, "tenant_id": "tenant-alpha", "stages": [s1, s2]}
+
+    resp = client.post(
+        f"/api/research-orchestrator/tasks/{tid}/runs",
+        json={
+            "adapter": "prototype_backtest", "requested_mode": "stub", "dispatch_mode": "stub",
+            "parameters": {"stage": s1, "plan": plan, "dataset": ds_a, "tenant_id": "tenant-alpha"},
+            "input_refs": [{"type": "stage", "id": "stage-1"}, {"type": "dataset", "id": "ds-A"}],
+            "idempotency_key": "foreign-ds-run-s1",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        runs = [r for r in store.list_runs() if str(r.get("task_id")) == tid]
+        if len(runs) >= 2:
+            break
+        time.sleep(0.05)
+
+    all_runs = {str(r.get("stage_id")): r for r in store.list_runs() if str(r.get("task_id")) == tid}
+    assert "stage-1" in all_runs
+    assert "stage-2" in all_runs
+    r1, r2 = all_runs["stage-1"], all_runs["stage-2"]
+
+    assert r1["status"] == "completed"
+    assert r2["status"] == "failed"
+    assert "tenant" in str(r2.get("error") or "").lower()
+
+    direct_resp = client.post(
+        "/api/research-orchestrator/stages/prototype_backtest/execute",
+        json={
+            "run_id": r2["run_id"], "correlation_id": "corr-foreign-test",
+            "stage": s2, "plan": plan, "dataset": ds_b_foreign,
+        },
+    )
+    assert direct_resp.status_code == 403
+    assert "tenant" in direct_resp.text.lower()
+
+
+def test_multi_stage_dag_restart_and_readback_preserves_dataset_binding(client: TestClient) -> None:
+    store = research_main.store
+    task = client.post(
+        "/api/research-orchestrator/tasks",
+        json={"title": "restart-preserves-binding", "objective": "verify restart retains dataset bindings", "tenant_id": "tenant-001"},
+    ).json()
+    tid = task["task_id"]
+    ds_a = _make_test_dataset("ds-A", "tenant-001")
+    ds_b = _make_test_dataset("ds-B", "tenant-001")
+    s1 = {
+        "stage_id": "stage-1", "stage_type": "prototype_backtest",
+        "input_refs": [{"type": "dataset", "id": "ds-A"}], "dataset": ds_a,
+    }
+    s2 = {
+        "stage_id": "stage-2", "stage_type": "prototype_backtest",
+        "depends_on": ["stage-1"], "input_refs": [{"type": "dataset", "id": "ds-B"}], "dataset": ds_b,
+    }
+    plan = {"plan_id": "plan-restart", "task_id": tid, "tenant_id": "tenant-001", "stages": [s1, s2]}
+
+    resp = client.post(
+        f"/api/research-orchestrator/tasks/{tid}/runs",
+        json={
+            "adapter": "prototype_backtest", "requested_mode": "stub", "dispatch_mode": "stub",
+            "parameters": {"stage": s1, "plan": plan, "dataset": ds_a, "tenant_id": "tenant-001"},
+            "input_refs": [{"type": "stage", "id": "stage-1"}, {"type": "dataset", "id": "ds-A"}],
+            "idempotency_key": "restart-binding-s1",
+        },
+    )
+    assert resp.status_code == 201
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        runs = [r for r in store.list_runs() if str(r.get("task_id")) == tid]
+        if len(runs) >= 2 and all(str(r.get("status") or "").lower() == "completed" for r in runs):
+            break
+        time.sleep(0.05)
+
+    all_runs = {str(r.get("stage_id")): r for r in store.list_runs() if str(r.get("task_id")) == tid}
+    r2_id = all_runs["stage-2"]["run_id"]
+
+    research_main.resume_queued_plan_stages()
+
+    readback = client.get(f"/api/research-orchestrator/runs/{r2_id}").json()
+    assert readback["parameters"]["dataset"]["dataset_id"] == "ds-B"
+    assert any(ref.get("type") == "dataset" and ref.get("id") == "ds-B" for ref in readback["input_refs"] if isinstance(ref, dict))
+    assert not any(ref.get("id") == "ds-A" for ref in readback["input_refs"] if isinstance(ref, dict))
+
+    status_readback = client.get(f"/api/research-orchestrator/runs/{r2_id}/status").json()
+    assert status_readback["status"] == "completed"
+
+
+@pytest.mark.parametrize("override", ["requested_mode", "dispatch_mode", "stage_routing"])
+def test_http_cannot_downgrade_a_persisted_real_run_to_stub(client: TestClient, monkeypatch: pytest.MonkeyPatch, override: str) -> None:
+    store = research_main.store
+    monkeypatch.setenv("PANTHEON_QUANTLIB_BACKEND", "stub")
+    store.put_task({"task_id": f"t-persisted-{override}", "tenant_id": "tenant-a", "status": "ready"})
+    store.put_run({
+        "run_id": f"r-persisted-{override}", "task_id": f"t-persisted-{override}",
+        "stage_id": "price", "tenant_id": "tenant-a", "status": "queued",
+        "requested_mode": "real", "dispatch_mode": "real", "adapter": "stage:quantlib",
+    })
+    from services.research.tests.test_research_orchestrator_http_service import _make_sample_quantlib_dataset
+    payload: Dict[str, Any] = {
+        "run_id": f"r-persisted-{override}", "correlation_id": "c",
+        "stage": {"stage_id": "price"},
+        "plan": {"plan_id": "p", "task_id": f"t-persisted-{override}", "tenant_id": "tenant-a"},
+        "dataset": _make_sample_quantlib_dataset(),
+    }
+    if override == "stage_routing":
+        payload["stage"]["routing"] = {"backend_mode": "stub"}
+    else:
+        payload[override] = "stub"
+    response = client.post("/api/research-orchestrator/stages/derivatives_pricing_risk/execute", json=payload)
+    assert response.status_code in {400, 409, 422, 503}
+    assert store.get_run(f"r-persisted-{override}")["status"] != "completed"
+    assert [a for a in store.list_artifacts() if a.get("run_id") == f"r-persisted-{override}"] == []
+
+
+
