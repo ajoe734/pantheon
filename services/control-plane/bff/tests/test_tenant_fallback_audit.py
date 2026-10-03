@@ -601,6 +601,70 @@ def test_journal_create_denies_jwt_without_tenant_authority_under_all_defaults(m
     assert _stored_journal_tenants(owner) == ["tenant-a", "tenant-a"]
 
 
+@pytest.mark.parametrize("auth_mode", [None, "STRICT", "permissive"])
+def test_journal_create_regressions_under_auth_modes(monkeypatch, tmp_path, auth_mode):
+    owner = build_decision_journal_write_owner(data_dir=str(tmp_path))
+    client = _journal_client(owner)
+    _jwt_headers(monkeypatch, "tenant-a")
+    if auth_mode is None:
+        monkeypatch.delenv("PANTHEON_BFF_AUTH_MODE", raising=False)
+    else:
+        monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", auth_mode)
+
+    no_tenant_headers = _jwt_without_tenant()
+
+    # 1. Missing tenant in verified JWT fails closed with 403 and zero stored rows
+    res_absent = client.post(
+        "/bff/agora/journal",
+        headers={**no_tenant_headers, "Idempotency-Key": f"idem-mode-absent-{auth_mode}"},
+        json={"title": "x", "body": "y"},
+    )
+    assert res_absent.status_code == 403, res_absent.text
+    assert _stored_journal_tenants(owner) == []
+
+    res_builtin = client.post(
+        "/bff/agora/journal",
+        headers={**no_tenant_headers, "Idempotency-Key": f"idem-mode-builtin-{auth_mode}"},
+        json={"title": "x", "body": "y", "tenant_id": "pantheon-dev"},
+    )
+    assert res_builtin.status_code == 403, res_builtin.text
+    assert _stored_journal_tenants(owner) == []
+
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-b")
+    res_env = client.post(
+        "/bff/agora/journal",
+        headers={**no_tenant_headers, "Idempotency-Key": f"idem-mode-env-{auth_mode}"},
+        json={"title": "x", "body": "y", "tenant_id": "tenant-b"},
+    )
+    assert res_env.status_code == 403, res_env.text
+    assert _stored_journal_tenants(owner) == []
+
+    # 2. Foreign tenant fails closed with 403 and zero stored rows
+    valid_headers = _jwt_headers(monkeypatch, "tenant-a")
+    if auth_mode is None:
+        monkeypatch.delenv("PANTHEON_BFF_AUTH_MODE", raising=False)
+    else:
+        monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", auth_mode)
+
+    res_foreign = client.post(
+        "/bff/agora/journal",
+        headers={**valid_headers, "Idempotency-Key": f"idem-mode-foreign-{auth_mode}"},
+        json={"title": "x", "body": "y", "tenant_id": "tenant-b"},
+    )
+    assert res_foreign.status_code == 403, res_foreign.text
+    assert _stored_journal_tenants(owner) == []
+
+    # 3. Same tenant positive control succeeds with 201 and persists exactly one row
+    res_same = client.post(
+        "/bff/agora/journal",
+        headers={**valid_headers, "Idempotency-Key": f"idem-mode-same-{auth_mode}"},
+        json={"title": "x", "body": "y", "tenant_id": "tenant-a"},
+    )
+    assert res_same.status_code == 201, res_same.text
+    assert _stored_journal_tenants(owner) == ["tenant-a"]
+
+
+
 
 def _jwt_without_tenant() -> dict[str, str]:
     now = int(time.time())

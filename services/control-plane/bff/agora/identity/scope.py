@@ -20,6 +20,11 @@ from ..models import (
     AgoraReadPredicate,
     AgoraServantPolicy,
 )
+try:
+    from ...auth.policy import bff_auth_mode
+except (ImportError, ValueError):
+    from services.control_plane.bff.auth.policy import bff_auth_mode
+
 
 
 _TENANT_CLAIM_PATHS = [
@@ -180,7 +185,8 @@ def resolve_agora_user_scope(
         )
 
     user_id = _first_nonblank(*_claim_strings(claims, _USER_CLAIM_PATHS), operator_id)
-    is_strict = os.getenv("PANTHEON_BFF_AUTH_MODE") == "strict"
+    token_kind = str(_ident_prop(identity, "token_kind") or claims.get("token_kind") or "").strip().lower()
+    is_strict = token_kind in ("jwt", "structured", "cookie") or bff_auth_mode() == "strict"
 
     claim_tenants = _claim_strings(claims, _TENANT_CLAIM_PATHS)
     ident_tenant = str(_ident_prop(identity, "tenant_id") or "").strip()
