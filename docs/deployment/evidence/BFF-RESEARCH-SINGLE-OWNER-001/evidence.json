@@ -1,7 +1,7 @@
 {
   "task_id": "BFF-RESEARCH-SINGLE-OWNER-001",
   "environment": "local isolated owners; no hosted deployment or live capital actions",
-  "production_net_lines": -1,
+  "production_net_lines": -57,
   "independent_review": "pending; canonical handoff binds this manifest to the exact PR head",
   "changes": [
     "Established research service (services/research/main.py) as sole execution and mutation owner for research tickets (RW-01), experiments (RW-04), notes (KW-02), and stage execution syncing.",
@@ -25,6 +25,6 @@
   ],
   "validation_total": 178,
   "diff_check": "git diff origin/dev --check: exit 0",
-  "diff_budget": "python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget 0: exit 0; production +1105/-1106 = net -1 lines",
+  "diff_budget": "python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget 0: exit 0; production +1032/-1089 = net -57 lines",
   "scope_check": "All changed files matched the governed artifact contract; no out-of-scope paths."
 }
