@@ -466,6 +466,19 @@ def test_capture_verify_and_sanitized_external_seal(case):
     no_replacement(case)
 
 
+@pytest.mark.parametrize("health", ["unhealthy", "starting", None])
+def test_degraded_predecessor_can_be_captured_and_candidate_admitted(case, health):
+    service = "loop-run-projector-scheduler"
+    case.docker.containers[service]["health"] = health
+    captured = seal(case)
+    assert captured["manifest"]["image_bundle"]["services"][service]["image_id"] == IDS[2]
+    assert case.args.candidate_image_manifest.is_file()
+    no_replacement(case)
+    # Saving the exact predecessor is not a successful health verification.
+    with pytest.raises(d.a.ArtifactError, match="not running and healthy"):
+        execute(case, "verify")
+
+
 def test_same_source_different_images_requires_exact_restore(case):
     captured = seal(case)
     for row in case.docker.containers.values(): row["image_id"] = "sha256:" + "9" * 64
