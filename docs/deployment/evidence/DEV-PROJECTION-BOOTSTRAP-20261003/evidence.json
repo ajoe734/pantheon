@@ -1,0 +1,52 @@
+{
+  "task_id": "DEV-PROJECTION-BOOTSTRAP-20261003",
+  "scope": "source-only; local disposable PostgreSQL; no SSH, deployment or hosted mutation",
+  "base_sha": "361fd3b34fb94687a259d677edd1bea2138a50f1",
+  "validated_source_commit": "8878051f3a09c3fdb69e8776948cb8ce0bb2c7a7",
+  "head_binding": "Canonical handoff binds the final PR head and this committed manifest blob; the final commit adds evidence only.",
+  "reviewer": "Codex",
+  "review_status": "pending independent exact-head review",
+  "production_net_lines": 82,
+  "production_net_line_limit": 180,
+  "postgres": {
+    "image": "postgres:16-alpine",
+    "image_id": "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+    "isolation": "task-owned disposable container, loopback-only random port, fresh per-test databases and non-admin roles",
+    "drivers": "psycopg 3.3.6; asyncpg 0.31.0; pytest 9.1.1"
+  },
+  "regression": {
+    "fresh_database": "Runtime bootstrap=False raises UndefinedTable before bootstrap; no projection tables are created by the fixture.",
+    "base_cli": "The frozen-base CLI has no bootstrap mode and exits 2 without required backfill inputs.",
+    "repair": "Existing ProjectionStore migration and seven-table DML grants commit atomically before root/bff candidate runtime startup.",
+    "readback": "Live projection persists all eight lifecycle receipts and one journey; a second bootstrap preserves the exact controller, then a fresh projector resumes the remaining records.",
+    "owner_data": "Unrelated tables inside and outside the projection schema retain data and receive no runtime grants.",
+    "negatives": "Wrong schema/database/authority, superuser, role administrator, inherited owner, runtime schema owner and PUBLIC CREATE are rejected; mid-migration DDL failure rolls back controller creation.",
+    "runtime_ddl": "Non-admin CREATE/ALTER/DROP TABLE denied; separate database-owner probe also confirms DROP SCHEMA denied, matching the existing app database ownership layout.",
+    "startup_gate": "Deployment shell helper executes the real CLI against PostgreSQL twice; migration failure enters compensation and never starts the configured runtime. Docker transport alone is stubbed; no VM is contacted."
+  },
+  "validation": [
+    {
+      "command": "TEST_DATABASE_URL=<local-pg> TEST_DATABASE_ADMIN_URL=<local-pg> timeout 240 python -m pytest services/trade_journey/test_projection_store.py services/trade_journey/test_projection_migration.py services/trade_journey/test_lifecycle_projector.py scripts/test_deploy_nonprod_bootstrap_contract.py -q --tb=short",
+      "result": "238 passed, no skips; exit 0; 75.75 seconds"
+    },
+    {
+      "command": "Same local PostgreSQL variables plus RANKING_STORE_DSN=<local-pg> RANKING_STORE_BOOTSTRAP=0; pytest every remaining services/trade_journey/test_*.py except the three suites above, test_lifecycle_projector_compose.py and test_canonical_paper_lifecycle_integration.py",
+      "result": "130 passed, no skips; exit 0; 66.40 seconds"
+    },
+    {
+      "command": "RANKING_STORE_DSN=<local-pg> RANKING_STORE_BOOTSTRAP=0 timeout 60 python -m pytest services/trade_journey/test_lifecycle_projector_compose.py services/trade_journey/test_canonical_paper_lifecycle_integration.py -q --tb=short --disable-warnings",
+      "result": "7 passed, 2 pre-existing failures, no skips; exit 1; 20.64 seconds"
+    },
+    {
+      "command": "Extract test_lifecycle_projector_compose.py, deploy_nonprod_vm.sh and nonprod-deploy.yml with git show 361fd3b34:<path>; run the two failing tests against those frozen files",
+      "result": "Both fail identically at lines 219 and 230: obsolete literal BFF environment/compose command assertions. The tests remain unchanged."
+    },
+    {
+      "command": "git diff --check; bash -n scripts/deploy_nonprod_vm.sh; python3 scripts/git/diff_budget.py --base 361fd3b34 --change-class corrective --budget 180",
+      "result": "All exit 0; production net +82."
+    }
+  ],
+  "complete_suite_total": "375 passed, 2 unchanged baseline failures, zero skips across bounded batches covering all Trade Journey tests and the full deploy bootstrap contract suite",
+  "earlier_attempts": "Initial broad run: 298 passed and 4 failures (two missing FastAPI, two baseline assertions). After installing local dependencies, a monolithic 240-second batch timed out with exit 124 and is not counted as passed. BFF tests also required local Rankings DSN configuration. All suites were subsequently collected to terminal results in the batches above.",
+  "delivery": "Required CI, independent approval and supervisor merge remain external delivery gates; local evidence does not claim them or hosted acceptance."
+}
