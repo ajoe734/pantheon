@@ -43,6 +43,137 @@ from services.trade_journey.projection_migration import (
 from services.trade_journey.test_lifecycle_projector import lifecycle_rows
 
 
+@pytest.fixture
+def fresh_bootstrap_database():
+    """Disposable database with no projection tables and an unprivileged runtime."""
+    import uuid
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+
+    admin = os.getenv("TEST_DATABASE_ADMIN_URL")
+    if not admin:
+        pytest.skip("TEST_DATABASE_ADMIN_URL is not set")
+    name = "bootstrap_" + uuid.uuid4().hex[:12]
+    role = name + "_runtime"
+    with psycopg.connect(admin, autocommit=True) as conn:
+        conn.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD 'isolated-test'").format(sql.Identifier(role)))
+        conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+    migration = make_conninfo(admin, dbname=name)
+    runtime = make_conninfo(migration, user=role, password="isolated-test")
+    try:
+        yield migration, runtime
+    finally:
+        with psycopg.connect(admin, autocommit=True) as conn:
+            conn.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
+            conn.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
+
+
+def _bootstrap_cli(migration, runtime, *, schema="trade_journey_projection"):
+    import subprocess
+    import sys
+
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.lifecycle_projector_migrate", "--bootstrap-only",
+         "--dsn", migration, "--runtime-dsn", runtime, "--schema", schema],
+        env={**os.environ, "LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA": "trade_journey_projection"},
+        capture_output=True, text=True, timeout=30,
+    )
+
+
+def test_fresh_bootstrap_runtime_projection_restart_and_ddl_denial(fresh_bootstrap_database):
+    import psycopg
+    from services.trade_journey.lifecycle_projector import RelationalLifecycleProjector
+    from services.trade_journey.projection_store import ProjectionStore
+
+    migration, runtime = fresh_bootstrap_database
+    store = ProjectionStore(runtime, bootstrap=False)
+    # Reproduces the actual fresh-start gap without fixture-created projection tables.
+    with pytest.raises(psycopg.errors.UndefinedTable):
+        RelationalLifecycleProjector(store)
+    with psycopg.connect(migration) as conn:
+        conn.execute("CREATE TABLE public.owner_sentinel (value text)")
+        conn.execute("INSERT INTO public.owner_sentinel VALUES ('retained')")
+    boot = _bootstrap_cli(migration, runtime)
+    assert boot.returncode == 0, boot.stderr
+    with psycopg.connect(migration) as conn:
+        conn.execute("CREATE TABLE trade_journey_projection.owner_sentinel (value text)")
+        conn.execute("INSERT INTO trade_journey_projection.owner_sentinel VALUES ('retained')")
+    projector = RelationalLifecycleProjector(store, deployment_sha="bootstrap-test")
+    rows = lifecycle_rows()
+    result = projector.project_records(rows[:3], mode="live", source_high_watermark=3)
+    assert result.accepted == result.checkpoint == 3
+    before = projector.controller
+    boot = _bootstrap_cli(migration, runtime)
+    assert boot.returncode == 0, boot.stderr
+    restarted = RelationalLifecycleProjector(ProjectionStore(runtime), deployment_sha="bootstrap-test")
+    assert restarted.controller == before
+    result = restarted.project_records(rows[3:], mode="live", source_high_watermark=len(rows))
+    assert result.checkpoint == len(rows)
+    with psycopg.connect(runtime) as conn:
+        assert conn.execute("SELECT count(*) FROM trade_journey_projection.journeys").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM trade_journey_projection.event_receipts").fetchone()[0] == len(rows)
+    for ddl in ("CREATE TABLE trade_journey_projection.forbidden (id int)",
+                "ALTER TABLE trade_journey_projection.controller ADD COLUMN forbidden int",
+                "DROP TABLE trade_journey_projection.controller"):
+        with psycopg.connect(runtime) as conn, pytest.raises(psycopg.errors.InsufficientPrivilege):
+            conn.execute(ddl)
+    with psycopg.connect(runtime) as conn, pytest.raises(psycopg.errors.InsufficientPrivilege):
+        conn.execute("SELECT * FROM public.owner_sentinel")
+    with psycopg.connect(runtime) as conn, pytest.raises(psycopg.errors.InsufficientPrivilege):
+        conn.execute("SELECT * FROM trade_journey_projection.owner_sentinel")
+    with psycopg.connect(migration) as conn:
+        assert conn.execute("SELECT value FROM public.owner_sentinel").fetchone() == ("retained",)
+        assert conn.execute("SELECT value FROM trade_journey_projection.owner_sentinel").fetchone() == ("retained",)
+
+
+@pytest.mark.parametrize("failure", [
+    "schema", "authority", "database", "elevated", "superuser", "createrole",
+    "runtime_owner", "inherited_owner", "public_create", "ddl",
+])
+def test_bootstrap_rejects_wrong_target_or_authority_atomically(fresh_bootstrap_database, failure):
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo, conninfo_to_dict
+
+    migration, runtime = fresh_bootstrap_database
+    schema = "trade_journey_projection"
+    role = conninfo_to_dict(runtime)["user"]
+    if failure == "schema":
+        schema = "unrelated_owner"
+    elif failure == "authority":
+        migration = runtime
+    elif failure == "database":
+        runtime = make_conninfo(runtime, dbname="postgres")
+    elif failure == "elevated":
+        runtime = migration
+    elif failure in ("superuser", "createrole"):
+        with psycopg.connect(migration) as conn:
+            conn.execute(sql.SQL("ALTER ROLE {} " + failure.upper()).format(sql.Identifier(role)))
+    elif failure == "inherited_owner":
+        with psycopg.connect(migration) as conn:
+            conn.execute(sql.SQL("GRANT {} TO {}").format(
+                sql.Identifier(conninfo_to_dict(migration)["user"]), sql.Identifier(role)))
+    elif failure == "public_create":
+        with psycopg.connect(migration) as conn:
+            conn.execute("CREATE SCHEMA trade_journey_projection")
+            conn.execute("GRANT CREATE ON SCHEMA trade_journey_projection TO PUBLIC")
+    elif failure == "runtime_owner":
+        with psycopg.connect(migration) as conn:
+            conn.execute(sql.SQL("CREATE SCHEMA trade_journey_projection AUTHORIZATION {}").format(sql.Identifier(role)))
+    elif failure == "ddl":
+        # A conflicting relation causes the existing migration to fail halfway through.
+        with psycopg.connect(migration) as conn:
+            conn.execute("CREATE SCHEMA trade_journey_projection")
+            conn.execute("CREATE VIEW trade_journey_projection.event_receipts AS SELECT 1 AS sentinel")
+    result = _bootstrap_cli(migration, runtime, schema=schema)
+    assert result.returncode != 0
+    admin = os.getenv("TEST_DATABASE_ADMIN_URL")
+    with psycopg.connect(make_conninfo(admin, dbname=conninfo_to_dict(migration)["dbname"])) as conn:
+        assert conn.execute("SELECT to_regclass('trade_journey_projection.controller')").fetchone() == (None,)
+        assert conn.execute("SELECT to_regnamespace('unrelated_owner')").fetchone() == (None,)
+
+
 # ---------------------------------------------------------------------------
 # migration_controller_id
 # ---------------------------------------------------------------------------

@@ -2316,6 +2316,16 @@ ensure_dev_management_ai_bucket() {
   fi
 }
 
+bootstrap_dev_lifecycle_projection() {
+  # One-shot migration from the sealed candidate, before starting its runtime.
+  # Migration credentials exist only in this container, never in the projector.
+  docker compose -p pantheon -f docker-compose.yml up -d --wait postgres || return
+  docker compose -p pantheon -f docker-compose.yml config --format json | \
+    run_dev_candidate_compose run --rm --no-deps -T \
+    --entrypoint python loop-run-projector-scheduler \
+    -m scripts.lifecycle_projector_migrate --bootstrap-only --compose-config-stdin
+}
+
 ensure_dev_management_ai_postgres_role() {
   if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" ]]; then
     return
@@ -3785,6 +3795,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       docker compose -p pantheon -f docker-compose.yml build \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     seal_dev_candidate_images || rollback_dev_bff_on_failure "candidate_image_seal"
+    bootstrap_dev_lifecycle_projection || rollback_dev_bff_on_failure "projection_bootstrap"
     start_dev_paper_principal_issuer || rollback_dev_bff_on_failure "paper_principal_issuer"
     resolve_bounded_source_refresh_active_symbols \
       || rollback_dev_bff_on_failure "source_refresh_active_symbols"
@@ -3939,6 +3950,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       docker compose -p pantheon -f docker-compose.yml build operator-bff agora-interaction-worker loop-run-projector-scheduler "${DEV_PAPER_ISSUER_BUILD_TARGETS[@]}" \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     seal_dev_candidate_images || rollback_dev_bff_on_failure "candidate_image_seal"
+    bootstrap_dev_lifecycle_projection || rollback_dev_bff_on_failure "projection_bootstrap"
     start_dev_paper_principal_issuer || rollback_dev_bff_on_failure "paper_principal_issuer"
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
