@@ -842,45 +842,6 @@ def test_agora_routers_have_zero_reverse_imports_of_main():
     assert "from main import" not in svc_src, "agora.service still imports from main"
 
 
-def test_default_allowlisted_adapter_emits_simulation_provenance_by_default():
-    """OP-G01: Locally generated results cannot claim real execution."""
-    try:
-        from agora.research.dispatcher import DefaultAllowlistedAdapter
-    except (ImportError, ValueError):
-        from services.control_plane.bff.agora.research.dispatcher import DefaultAllowlistedAdapter
-
-    adapter = DefaultAllowlistedAdapter("backtest", "vectorbt_runner")
-    assert adapter.default_provenance == "simulation"
-
-    result = adapter.execute(
-        stage={"stage_id": "stg-1", "routing": {}},
-        plan={"strategy_id": "strat-1"},
-        context={},
-        downstream_key="key-1",
-    )
-    assert result.provenance == "simulation"
-    assert result.outcome == "succeeded"
-    assert result.metrics[0]["provenance"] == "simulation"
-
-    # When real mode is requested WITHOUT real receipt, must emit simulation
-    result_unverified_real = adapter.execute(
-        stage={"stage_id": "stg-2", "routing": {"backend_mode": "real"}},
-        plan={"strategy_id": "strat-1"},
-        context={},
-        downstream_key="key-2",
-    )
-    assert result_unverified_real.provenance == "simulation"
-
-    # A claimed receipt is not owner readback and cannot promote synthetic data.
-    result_verified_real = adapter.execute(
-        stage={"stage_id": "stg-3", "routing": {"backend_mode": "real"}, "real_backend_receipt_id": "rcpt-123"},
-        plan={"strategy_id": "strat-1"},
-        context={"has_real_receipt": True},
-        downstream_key="key-3",
-    )
-    assert result_verified_real.provenance == "simulation"
-
-
 def test_main_py_has_zero_legacy_agora_route_decorators():
     """Acceptance: main.py must have 0 legacy @app Agora route decorators remaining."""
     import re

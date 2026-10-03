@@ -1540,13 +1540,6 @@
       "rationale": "Already decoupled from main composition globals"
     },
     {
-      "file": "tests/test_agora_authentic_adapter_negative_controls.py",
-      "layer": "adapter",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
-    },
-    {
       "file": "tests/test_agora_candidate_decisions.py",
       "layer": "application",
       "imports_main": false,
@@ -2647,13 +2640,6 @@
     },
     {
       "file": "tests/test_read_surface_port_cutover.py",
-      "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
-    },
-    {
-      "file": "tests/test_research_default_provenance.py",
       "layer": "application",
       "imports_main": false,
       "disposition": "DECOUPLED",

@@ -8,7 +8,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from services.control_plane.bff.agora.research.dispatcher import AdapterRegistry
 from services.control_plane.bff.agora.research.router import create_research_router
 from services.control_plane.bff.agora.research.store import MemoryResearchPlanStore
 from services.control_plane.bff.agora.servant import research_proposal
@@ -66,7 +65,6 @@ def client(monkeypatch):
         utc_now=lambda: "2026-09-30T00:00:00Z",
         research_plan_store=MemoryResearchPlanStore(),
         workshop_store=workshops,
-        adapter_registry=AdapterRegistry(),
     )
     monkeypatch.setattr(router.service, "_publish_research_event", lambda *args: None)
     app = FastAPI()

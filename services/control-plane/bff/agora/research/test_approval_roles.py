@@ -6,7 +6,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from services.control_plane.bff.agora.identity.scope import resolve_agora_user_scope
-from services.control_plane.bff.agora.research.dispatcher import AdapterRegistry
 from services.control_plane.bff.agora.research.router import create_research_router
 from services.control_plane.bff.agora.research.store import MemoryResearchPlanStore
 from services.control_plane.bff.agora.strategy_workshop.store import MemoryWorkshopStore
@@ -36,7 +35,6 @@ def setup(monkeypatch):
             utc_now=lambda: "2026-09-30T00:00:00Z",
             research_plan_store=store,
             workshop_store=workshops,
-            adapter_registry=AdapterRegistry(),
         )
         monkeypatch.setattr(router.service, "_publish_research_event", lambda *args: events.append(args))
         app = FastAPI()
