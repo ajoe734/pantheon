@@ -101,6 +101,7 @@ from multi_repo_registry import (
     task_target_repository_id,
     validate_task_repository_scope,
 )
+from common import runtime_source_regular_file
 from runtime_state import (
     _resolve_runtime_source_leaf,
     activity_audit_lock_file,
@@ -319,11 +320,11 @@ def resolve_orchestrator_state_file(status_root: Path) -> Path:
     legacy_path = status_root / ".orchestrator" / "state.json"
     worker_runtime_queue = status_root / ".orchestrator" / "worker-runtime" / "approval-queue.json"
     legacy_queue = status_root / ".orchestrator" / "approval-queue.json"
-    if worker_runtime_path.exists():
+    if runtime_source_regular_file(worker_runtime_path):
         return worker_runtime_path
-    if legacy_path.exists():
+    if runtime_source_regular_file(legacy_path):
         return legacy_path
-    if legacy_queue.exists() and not worker_runtime_queue.exists():
+    if runtime_source_regular_file(legacy_queue) and not runtime_source_regular_file(worker_runtime_queue):
         return legacy_path
     return worker_runtime_path
 
@@ -333,11 +334,11 @@ def resolve_approval_queue_file(status_root: Path) -> Path:
     legacy_state = status_root / ".orchestrator" / "state.json"
     worker_runtime_queue = status_root / ".orchestrator" / "worker-runtime" / "approval-queue.json"
     legacy_queue = status_root / ".orchestrator" / "approval-queue.json"
-    if worker_runtime_queue.exists():
+    if runtime_source_regular_file(worker_runtime_queue):
         return worker_runtime_queue
-    if legacy_queue.exists():
+    if runtime_source_regular_file(legacy_queue):
         return legacy_queue
-    if legacy_state.exists() and not worker_runtime_state.exists():
+    if runtime_source_regular_file(legacy_state) and not runtime_source_regular_file(worker_runtime_state):
         return legacy_queue
     return worker_runtime_queue
 

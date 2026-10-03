@@ -611,6 +611,8 @@ def ensure_parent(path: Path) -> None:
 def load_json(path: Path, default: Any | None = None) -> Any:
     if not path.exists():
         return deepcopy(default)
+    if not path.is_file():
+        raise RuntimeError(f"cannot load JSON from a non-regular file: {path}")
     last_error: json.JSONDecodeError | None = None
     for attempt in range(10):
         text = path.read_text(encoding="utf-8").strip()
@@ -776,6 +778,11 @@ def repo_root_for_config(config: dict[str, Any]) -> Path:
     return config_path(config, "status_file").parents[0]
 
 
+def runtime_source_regular_file(path: Path) -> bool:
+    """A retired FIFO/directory or symlink must never nominate a runtime layout."""
+    return not path.is_symlink() and path.is_file()
+
+
 def canonical_status_paths(
     repo_config: dict[str, Any],
     status_root: Path,
@@ -788,8 +795,8 @@ def canonical_status_paths(
     legacy_queue = (status_root / ".orchestrator" / "approval-queue.json").resolve()
     worker_runtime_queue = (status_root / ".orchestrator" / "worker-runtime" / "approval-queue.json").resolve()
 
-    use_legacy = (legacy_state.exists() or legacy_queue.exists()) and not (
-        worker_runtime_state.exists() or worker_runtime_queue.exists()
+    use_legacy = (runtime_source_regular_file(legacy_state) or runtime_source_regular_file(legacy_queue)) and not (
+        runtime_source_regular_file(worker_runtime_state) or runtime_source_regular_file(worker_runtime_queue)
     )
 
     if fill_defaults:
@@ -834,7 +841,7 @@ def canonical_status_paths(
     if (
         rendered.get("state_file") == str(worker_runtime_state)
         and not worker_runtime_state.exists()
-        and legacy_state.exists()
+        and runtime_source_regular_file(legacy_state)
     ):
         rendered["state_file"] = str(legacy_state)
         if rendered.get("approval_queue") == str(worker_runtime_queue) and not worker_runtime_queue.exists():
@@ -842,7 +849,7 @@ def canonical_status_paths(
     elif (
         rendered.get("state_file") == str(legacy_state)
         and not legacy_state.exists()
-        and worker_runtime_state.exists()
+        and runtime_source_regular_file(worker_runtime_state)
     ):
         rendered["state_file"] = str(worker_runtime_state)
         if rendered.get("approval_queue") == str(legacy_queue) and not legacy_queue.exists():

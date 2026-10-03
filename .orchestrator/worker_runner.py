@@ -35,6 +35,7 @@ from common import (  # noqa: E402 - worker_runner must bootstrap its sibling mo
     canonical_task_state_lock_file,
     durable_write_bytes,
     read_regular_file_bytes,
+    runtime_source_regular_file,
     task_branch_matches,
     worker_process_generation_id,
     first_symlink_component as _first_symlink_component,
@@ -1058,7 +1059,7 @@ def _runtime_worker_receipt(coordination_root: Path, run_id: str) -> dict[str, A
     # retired path only for isolated legacy fixtures that have no V2 file; a
     # worker must never fail entry binding merely because the canonical state
     # moved into its runtime directory.
-    if not runtime_state.exists():
+    if not runtime_state.exists() and runtime_source_regular_file(coordination_root / ".orchestrator" / "state.json"):
         runtime_state = coordination_root / ".orchestrator" / "state.json"
     # Atomic supervisor writes are not lease revocations. Retry only that
     # specific race; malformed files, symlinks and binding failures still fail.

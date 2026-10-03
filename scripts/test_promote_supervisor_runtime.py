@@ -1034,12 +1034,12 @@ def test_migrate_storage_paths_moves_task_state_and_worker_runtime_files(tmp_pat
     assert (runtime / "task-state" / "events.jsonl.legacy-anchor.json").exists()
 
     assert not old_state.is_file()
-    assert old_state.is_fifo()
+    assert old_state.is_dir()
     assert new_state.exists()
     assert json.loads(new_state.read_text(encoding="utf-8")) == {"workers": {}}
 
     assert not old_queue.is_file()
-    assert old_queue.is_fifo()
+    assert old_queue.is_dir()
     assert new_queue.exists()
     assert json.loads(new_queue.read_text(encoding="utf-8")) == {"version": 2}
 
@@ -1879,7 +1879,7 @@ def test_retained_immutable_writer_fails_closed_and_does_not_recreate_retired_st
 
     record = promotion._migrate_storage_paths(old_cfg, new_cfg)
     assert record["migrated"] is True
-    assert old_state.is_fifo()
+    assert old_state.is_dir()
     assert not old_state.is_file()
 
     old_root = Path(os.environ.get("PANTHEON_COMMAND_ROOT", Path.cwd()))
@@ -1900,7 +1900,7 @@ with runtime_state.runtime_state_update(cfg) as s:
     )
 
     assert proc.returncode != 0
-    assert old_state.is_fifo()
+    assert old_state.is_dir()
     assert not old_state.is_file()
     new_token = json.loads(new_state.read_text())["auto_commit_archive"]["pending_token"]
     assert new_token == "before-migration"
@@ -2592,3 +2592,85 @@ def test_first_activation_requires_quiescent_legacy_workers_and_reservations(tmp
     with promotion.runtime_state.runtime_state_update(config) as state:
         state["supervisor"]["runtime_phase_reservations"] = {}
     _REAL_VERIFY_DRAIN_CAPABILITY(config, identity)
+
+
+# --- retired-path fences must fail fast, never block (2026-09-08 FIFO hang) ---
+
+
+def test_create_retired_path_fence_is_a_directory_that_fails_fast(tmp_path: Path) -> None:
+    fence = tmp_path / "state.json"
+    promotion._create_retired_path_fence(fence)
+    assert fence.is_dir()
+    assert not fence.is_fifo()
+    assert promotion._is_retired_path_fence(fence)
+    with pytest.raises(IsADirectoryError):
+        open(fence, "rb")
+    # idempotent
+    promotion._create_retired_path_fence(fence)
+    assert fence.is_dir()
+
+
+def test_create_retired_path_fence_never_uses_mkfifo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def forbidden(*args, **kwargs):
+        raise AssertionError("mkfifo must never be used for a retired-path fence")
+
+    monkeypatch.setattr(os, "mkfifo", forbidden)
+    fence = tmp_path / "approval-queue.json"
+    promotion._create_retired_path_fence(fence)
+    assert fence.is_dir()
+
+
+def test_create_retired_path_fence_upgrades_existing_fifo_fence(tmp_path: Path) -> None:
+    fence = tmp_path / "state.json"
+    os.mkfifo(str(fence), 0o600)
+    promotion._create_retired_path_fence(fence)
+    assert fence.is_dir()
+    assert not fence.is_fifo()
+
+
+def test_migrate_storage_paths_upgrades_fifo_fences_and_ignores_fenced_old_paths(
+    tmp_path: Path,
+) -> None:
+    orch = tmp_path / "status" / ".orchestrator"
+    modern = orch / "worker-runtime"
+    modern.mkdir(parents=True)
+    (modern / "state.json").write_text('{"workers": {}}', encoding="utf-8")
+    (modern / "approval-queue.json").write_text("{}", encoding="utf-8")
+    legacy_state = orch / "state.json"
+    legacy_queue = orch / "approval-queue.json"
+    os.mkfifo(str(legacy_state), 0o600)
+    os.mkfifo(str(legacy_queue), 0o600)
+
+    old_log = tmp_path / "runtime" / "events.jsonl"
+    old_lock = old_log.with_name("events.jsonl.lock")
+    new_log = tmp_path / "runtime" / "task-state" / "events.jsonl"
+    new_log.parent.mkdir(parents=True)
+    new_log.write_text("", encoding="utf-8")
+    os.mkfifo(str(old_lock), 0o600)
+
+    incumbent = {
+        "paths": {"state_file": str(legacy_state), "approval_queue": str(legacy_queue)},
+        "task_state_store": {"event_log": str(old_log)},
+    }
+    rendered = {
+        "paths": {
+            "state_file": str(modern / "state.json"),
+            "approval_queue": str(modern / "approval-queue.json"),
+        },
+        "task_state_store": {"event_log": str(new_log)},
+    }
+
+    # Before: the FIFO at the incumbent path "exists", so this used to raise a
+    # target collision instead of recognising the fence.
+    record = promotion._migrate_storage_paths(incumbent, rendered)
+
+    assert record["migrated"] is False
+    assert sorted(record["upgraded_fences"]) == sorted(
+        [str(legacy_state), str(legacy_queue), str(old_lock)]
+    )
+    for fence in (legacy_state, legacy_queue, old_lock):
+        assert fence.is_dir(), fence
+    assert (modern / "state.json").read_text(encoding="utf-8") == '{"workers": {}}'
+    assert new_log.exists()
