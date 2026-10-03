@@ -361,6 +361,7 @@ def get_store() -> ResearchOrchestratorStore:
 
 _write_owner: Optional[Any] = None
 _stage_workers_lock = threading.Lock()
+_plan_progress_lock = threading.Lock()
 _active_stage_workers: set[str] = set()
 
 
@@ -1049,6 +1050,18 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
 
 
 def _progress_plan_stages(
+    plan_payload: Dict[str, Any],
+    parent_run: Dict[str, Any],
+    actor_id: Optional[str],
+    store: ResearchOrchestratorStore,
+    timestamp: str,
+) -> None:
+    """Serialize stage reconciliation so concurrent completions cannot enqueue duplicates."""
+    with _plan_progress_lock:
+        _progress_plan_stages_locked(plan_payload, parent_run, actor_id, store, timestamp)
+
+
+def _progress_plan_stages_locked(
     plan_payload: Dict[str, Any],
     parent_run: Dict[str, Any],
     actor_id: Optional[str],

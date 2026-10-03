@@ -4,7 +4,7 @@
   "independent_review": "Codex2 rejected prior head 75ea801; cancellation fencing, completed-stage restart recovery, and stale inventory entries corrected; fresh exact-head review pending.",
   "hosted_track": "external_wait per Human/Ops 2026-10-01 decision; no hosted probes performed",
   "design_items": {
-    "D1": "services/research/main.py:367, 1042-1157 validates execution modes before backend selection; durable runs execute off-request and latest attempt/dependency progression schedules roots and joins. File-backed records survive restart.",
+    "D1": "services/research/main.py validates execution modes before backend selection; durable off-request stages reconcile completed predecessors at restart, and serialized progression schedules roots/joins without duplicate attempts. Cancellation fences survive late worker errors.",
     "D2": "Removed duplicate BFF ResearchDispatcher wiring and research-outbox worker ownership. Retained persona interaction worker launcher and restored its six healthcheck/help/persona-client regressions.",
     "D3": "services/control-plane/bff/research/client.py is the shared ResearchServiceClient transport for workshop and command-port owner requests.",
     "D4": "services/control-plane/bff/agora/research/service.py rejects unresolved governed dataset references before owner dispatch. Owner run sets project complete plan stages/status and run lists; mounted multi-root test clears BFF run cache, preserves identities, verifies terminal readback and idempotent repeated dispatch.",
@@ -28,14 +28,18 @@
       "result": "39 passed; includes test_every_entry_has_valid_layer_and_disposition"
     },
     {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py (run sequentially as separate commands)",
+      "result": "15 passed and 21 passed respectively. Concurrent invocations are unsafe here because both use the shared /tmp/pantheon/research-orchestrator store; an initial concurrent batch failed with shared-store races and is not counted."
+    },
+    {
       "command": "Broader nine-file BFF/research exploratory batch with the same isolated interpreter",
       "result": "186 passed, 6 failed; the failures were 4 pre-existing unrelated BFF composition/router assertions, one alternate-import-path test, and one shared-store interaction in the combined research batch. The corrected scoped suites passed in the separate bounded batches above; this exploratory batch is not counted as passed."
     },
     {
       "command": "git diff --check; python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget 0",
-      "result": "previous exact-base budget passed at head 75ea80191d78f40ecfe14964afad91003bb3e856: production +1389/-1823 net -434; tests +1345/-2857 net -1512; docs/evidence +114. Re-run against refreshed committed head before handoff."
+      "result": "exact-base simplify budget passed at head 80e68e23a9e7363114035ffeeab038930c187846: production +1399/-1823 net -424; tests +1386/-2871 net -1485; docs/evidence +118. Re-run after the current stage-progression serialization refresh."
     }
   ],
-  "suite_note": "Codex2's reproduced AC6 defects are covered by the new owner regressions. The BFF architecture inventory no longer lists the two deleted suites; the full architecture gate passes. Hosted acceptance remains external_wait; no hosted probes performed.",
+  "suite_note": "Codex2's reproduced AC6 defects are covered by owner regressions. Full BFF architecture gate: 39 passed; deleted inventory references removed. Do not run these research suites concurrently: shared /tmp store writes race. Hosted acceptance remains external_wait; no hosted probes performed.",
   "scope": "Source and local isolated functional evidence only; no hosted deployment, hosted probe, or real capital action is claimed."
 }
