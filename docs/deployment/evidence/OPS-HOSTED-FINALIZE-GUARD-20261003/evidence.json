@@ -1,0 +1,35 @@
+{
+  "task_id": "OPS-HOSTED-FINALIZE-GUARD-20261003",
+  "change_class": "corrective",
+  "scope": "Source tooling: existing terminal preflight and immutable archive recovery",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "review_status": "Owner evidence; independent exact-head review pending",
+  "historical_reproduction": {
+    "task_id": "BFF-RESEARCH-SINGLE-OWNER-001",
+    "pr": "https://github.com/ajoe734/pantheon/pull/6103",
+    "approved_head": "85f74a90cf1fc9b543c31f4280273b1b0272828f",
+    "merge_commit": "8af1ef2d0946d7eac7c87fba21af52233bc8a789",
+    "input": "Governed show snapshot copied into an isolated TaskStore; review_approved restored only in the test fixture; external delivery metadata lookup mocked from historical delivery",
+    "before": "Owner done accepted functional done + hosted external_wait despite explicit no-full-finalization message; emitted done and queued terminal archive",
+    "after": "Rejected with declared hosted completion error; no event or terminal archive queued; hosted hold preserved",
+    "live_state": "Original archive read only; no historical task mutation"
+  },
+  "coverage": [
+    "Owner done and reviewer merged reconciliation reject pending, in_progress, external_wait and malformed hosted tracks",
+    "Hosted done requires a nonempty list of nonblank string evidence references",
+    "Source-only tasks remain valid; completed hosted tracks retain existing delivery gates",
+    "Rejected commands preserve task state, journal bytes, review/merge evidence and immutable archive bytes",
+    "Functional milestone and external blocker remain available; functional dependencies open while hosted/terminal dependencies hold",
+    "Held historical archives cannot be recovered as successful terminal completion"
+  ],
+  "validation": [
+    {"command": "TMPDIR=/dev/shm AI_NAME=Codex python3 -m unittest scripts.test_ai_status -q", "result": "531 tests passed in 246.456s; exit 0"},
+    {"command": "TMPDIR=/dev/shm AI_NAME=Codex python3 -m unittest scripts.test_ai_status.ReviewApprovedWorkflowTests -q", "result": "159 tests passed; exit 0"},
+    {"command": "git diff --check", "result": "passed; exit 0"},
+    {"command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD --change-class corrective --budget 30", "result": "production +24/-0, net +24 <= 30; exit 0"}
+  ],
+  "environment_note": "Initial /tmp review-suite attempt failed with ENOSPC and is not counted as passed; isolated tmpfs rerun passed",
+  "activation": "Source delivery only. Existing governed runtime promotion is required to activate this guard in running command roots; local tests and source merge are not live activation proof.",
+  "unchanged_authority": "No command-root or supervisor patches, product changes, synthetic reviewer attestation, deployments, or canonical JSON hand edits"
+}

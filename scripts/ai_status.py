@@ -8939,6 +8939,26 @@ def _preflight_from_review_intent(
     return payload
 
 
+def validate_hosted_completion(task: Mapping[str, Any]) -> None:
+    tracks = task.get("completion_tracks", {})
+    if isinstance(tracks, Mapping) and "hosted" not in tracks:
+        return
+    hosted = tracks.get("hosted") if isinstance(tracks, Mapping) else None
+    evidence = hosted.get("evidence") if isinstance(hosted, Mapping) else None
+    if (
+        not isinstance(hosted, Mapping)
+        or hosted.get("status") != "done"
+        or not isinstance(evidence, list)
+        or not evidence
+        or any(not isinstance(ref, str) or not ref.strip() for ref in evidence)
+    ):
+        raise SystemExit(
+            f"Task {task.get('id') or '?'} cannot finalize: declared hosted completion "
+            "must be done with evidence. Preserve functional/review/merge evidence "
+            "and record the outstanding hosted proof with the existing blocker command."
+        )
+
+
 def validate_task_lifecycle_transition(task: Mapping[str, Any], action: str) -> None:
     try:
         task_machine.transition(task.get("status"), action)
@@ -8946,6 +8966,8 @@ def validate_task_lifecycle_transition(task: Mapping[str, Any], action: str) -> 
         raise SystemExit(
             f"Task {task.get('id') or '?'} cannot {action}: {exc}"
         ) from exc
+    if action in {"done", "reconcile_done"}:
+        validate_hosted_completion(task)
 
 
 def prepare_external_mutation_preflight(
@@ -9310,6 +9332,8 @@ def prepare_external_mutation_preflight(
                 if existing_archive is not None
                 else None
             )
+            if recovered_archive is not None:
+                validate_hosted_completion(recovered_archive["task"])
             verdict_ref = validate_protected_closeout_transition(
                 task,
                 transition="done",
