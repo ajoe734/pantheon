@@ -186,7 +186,7 @@ def resolve_agora_user_scope(
 
     user_id = _first_nonblank(*_claim_strings(claims, _USER_CLAIM_PATHS), operator_id)
     token_kind = str(_ident_prop(identity, "token_kind") or claims.get("token_kind") or "").strip().lower()
-    is_strict = token_kind in ("jwt", "structured", "cookie") or bff_auth_mode() == "strict"
+    is_token = token_kind in ("jwt", "structured", "cookie") or bool(claims and any(k in claims for k in ("iss", "aud", "exp", "iat")))
 
     claim_tenants = _claim_strings(claims, _TENANT_CLAIM_PATHS)
     ident_tenant = str(_ident_prop(identity, "tenant_id") or "").strip()
@@ -197,15 +197,15 @@ def resolve_agora_user_scope(
         allowed_tenants.append(ident_tenant)
 
     env_default = _first_nonblank(os.getenv("PANTHEON_BFF_TENANT_ID"), os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"), os.getenv("PANTHEON_TENANT_ID"))
-    if not is_strict and not allowed_tenants:
+    if not is_token and not allowed_tenants:
         allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [env_default or "pantheon-dev"]
 
     if not allowed_tenants:
         raise AgoraScopeResolutionError("Tenant access denied for Agora scope", reason="AGORA_SCOPE_TENANT_DENIED", status_code=403, details={"tenantId": requested_tenant_id or "", "allowedTenantIds": []})
 
     clean_req = str(requested_tenant_id or "").strip()
-    default_match = env_default if (env_default and (env_default in allowed_tenants or "*" in allowed_tenants)) else ("" if is_strict else (env_default or "pantheon-dev"))
-    tenant_id = clean_req or _first_nonblank(*claim_tenants, default_match, *[t for t in allowed_tenants if t != "*"])
+    default_tenant = _first_nonblank(env_default, *claim_tenants, *[t for t in allowed_tenants if t != "*"], "pantheon-dev")
+    tenant_id = clean_req or default_tenant
     if not tenant_id and "*" in allowed_tenants:
         tenant_id = env_default or "pantheon-dev"
 

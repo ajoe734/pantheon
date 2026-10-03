@@ -55,7 +55,7 @@
       "site": "services/control-plane/bff/agora/identity/scope.py:186-196 (resolve_agora_user_scope / resolve_canonical_agora_scope)",
       "disposition": "fixed",
       "trusted_source": "caller identity token claims and allowed_tenants",
-      "note": "resolve_agora_user_scope distinguishes strict and verified caller authentication (token_kind in ('jwt', 'structured', 'cookie') or bff_auth_mode() == 'strict') from non-strict stub mode. Under strict or verified auth, verified token claims are sole authority: callers lacking tenant claims fail closed with 403 AGORA_SCOPE_TENANT_DENIED before storage read/write. Configured env defaults (PANTHEON_BFF_TENANT_ID, PANTHEON_BFF_DEFAULT_TENANT_ID, PANTHEON_TENANT_ID) and built-in 'pantheon-dev' are never inherited by verified callers even in permissive mode; requested_tenant_id is checked strictly against allowed_tenants. Mounted regressions verify absent/foreign/same controls under unset, normalized strict ('STRICT'), and permissive modes with zero stored rows on denial."
+      "note": "resolve_agora_user_scope distinguishes token callers (token_kind in ('jwt', 'structured', 'cookie') or token claims) from unauthenticated stub/direct callers. Under verified token auth, token claims are sole authority: callers lacking tenant claims fail closed with 403 AGORA_SCOPE_TENANT_DENIED before storage read/write. Configured env defaults take precedence when within authorized scope, while callers without tenant claims fail closed under all defaults."
     },
     {
       "site": "services/control-plane/bff/agora/router.py:448 and :518",
