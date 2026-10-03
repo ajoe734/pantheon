@@ -483,14 +483,27 @@ class ProjectionStore:
         )
         if cur.fetchone()[0]:
             raise ValueError("Runtime role upgrade refuses custom projection routines or types")
+        cur.execute(
+            "SELECT EXISTS (SELECT 1 FROM pg_class c, "
+            "LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) a "
+            "WHERE c.relnamespace=%s AND c.relkind='r' AND a.privilege_type='TRIGGER' "
+            "AND a.grantee<>%s AND (a.grantee=0 OR pg_has_role(%s, a.grantee, 'MEMBER'))) "
+            "OR EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid "
+            "WHERE c.relnamespace=%s AND NOT t.tgisinternal)",
+            (schema_oid, runtime_oid, runtime_oid, schema_oid),
+        )
+        if cur.fetchone()[0]:
+            raise ValueError("Runtime role upgrade refuses inherited TRIGGER or custom triggers")
         # All admission checks precede changes; failures below roll back ownership and ACLs.
         schema = pgsql.Identifier(self.schema)
         authority = pgsql.Identifier(migration_role)
         runtime = pgsql.Identifier(runtime_role)
         for name, kind, owner, _ in objects:
-            if kind == 'r' and owner == runtime_oid:
-                cur.execute(pgsql.SQL("ALTER TABLE {}.{} OWNER TO {}").format(
-                    schema, pgsql.Identifier(name), authority))
+            if kind == 'r':
+                table = pgsql.Identifier(name)
+                if owner == runtime_oid:
+                    cur.execute(pgsql.SQL("ALTER TABLE {}.{} OWNER TO {}").format(schema, table, authority))
+                cur.execute(pgsql.SQL("REVOKE TRIGGER ON {}.{} FROM {} RESTRICT").format(schema, table, runtime))
         if namespace[1] == runtime_oid:
             cur.execute(pgsql.SQL("ALTER SCHEMA {} OWNER TO {}").format(schema, authority))
         cur.execute(pgsql.SQL("REVOKE CREATE ON SCHEMA {} FROM {} RESTRICT").format(schema, runtime))
@@ -521,9 +534,11 @@ class ProjectionStore:
                     "SELECT has_schema_privilege(%s, n.oid, 'CREATE') OR "
                     "pg_has_role(%s, n.nspowner, 'MEMBER') OR EXISTS ("
                     "SELECT 1 FROM pg_class c WHERE c.relnamespace=n.oid "
-                    "AND pg_has_role(%s, c.relowner, 'MEMBER')) "
+                    "AND (pg_has_role(%s, c.relowner, 'MEMBER') OR EXISTS ("
+                    "SELECT 1 FROM aclexplode(c.relacl) a WHERE a.privilege_type='TRIGGER' "
+                    "AND (a.grantee=0 OR pg_has_role(%s, a.grantee, 'MEMBER'))))) "
                     "FROM pg_namespace n WHERE n.nspname=%s",
-                    (runtime_role, runtime_role, runtime_role, self.schema),
+                    (runtime_role, runtime_role, runtime_role, runtime_role, self.schema),
                 )
                 if cur.fetchone()[0]:
                     raise ValueError("Projection runtime must not hold schema/table DDL authority")
