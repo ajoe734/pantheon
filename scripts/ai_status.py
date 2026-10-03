@@ -7232,7 +7232,7 @@ def _assert_no_active_execution(
     state_file = ORCHESTRATOR_STATE_FILE if ORCHESTRATOR_STATE_FILE.exists() else (STATUS_ROOT / ".orchestrator" / "state.json")
     if state_file.exists():
         try:
-            orc_state = json.loads(state_file.read_text(encoding="utf-8"))
+            orc_state = json.loads(read_regular_file_bytes(state_file, source="orchestrator runtime state"))
         except Exception as exc:
             raise RuntimeError(
                 f"orchestrator runtime state is unavailable or malformed: {exc}"
@@ -10346,7 +10346,7 @@ def _assert_collision_fence_idle(task: Mapping[str, Any]) -> None:
     state_file = ORCHESTRATOR_STATE_FILE if ORCHESTRATOR_STATE_FILE.exists() else STATUS_ROOT / ".orchestrator/state.json"
     if not state_file.exists():
         raise SystemExit("Collision fence requires available runtime state")
-    runtime = json.loads(state_file.read_text(encoding="utf-8"))
+    runtime = json.loads(read_regular_file_bytes(state_file, source="orchestrator runtime state"))
     if not isinstance(runtime, dict) or runtime.get("version") != 2:
         raise SystemExit("Collision fence requires a valid V2 runtime inventory")
     _assert_no_active_execution(str(task["id"]), active_task=task)

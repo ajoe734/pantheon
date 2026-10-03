@@ -272,11 +272,11 @@ class JsonLoadResilienceTests(unittest.TestCase):
     def test_load_json_retries_after_transient_decode_error(self) -> None:
         payload = {"ok": True}
         with (
-            mock.patch.object(Path, "exists", return_value=True),
+            tempfile.NamedTemporaryFile() as source,
             mock.patch.object(Path, "read_text", side_effect=['{"broken": 1}{"extra": 2}', json.dumps(payload)]),
             mock.patch.object(common.time, "sleep") as sleep,
         ):
-            result = common.load_json(Path("/tmp/transient.json"), default={})
+            result = common.load_json(Path(source.name), default={})
 
         self.assertEqual(result, payload)
         sleep.assert_called_once()
@@ -4480,3 +4480,49 @@ class RunCommandStdinIsolationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CanonicalStatusPathsFenceTests(unittest.TestCase):
+    """A promotion fence (directory, or FIFO from older promotions) at a retired
+    ``.orchestrator/{state,approval-queue}.json`` path must never nominate the
+    legacy layout: every later open() on it would fail or block forever."""
+
+    def test_retired_path_fences_never_nominate_the_legacy_layout(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="status-paths-fence-") as temp_dir:
+            status_root = Path(temp_dir).resolve()
+            orch = status_root / ".orchestrator"
+            modern = orch / "worker-runtime"
+            modern.mkdir(parents=True)
+            (modern / "state.json").write_text("{}", encoding="utf-8")
+            (orch / "state.json").mkdir()
+            os.mkfifo(str(orch / "approval-queue.json"), 0o600)
+
+            rendered = common.canonical_status_paths({}, status_root, fill_defaults=True)
+            self.assertEqual(rendered["state_file"], str(modern / "state.json"))
+            self.assertEqual(rendered["approval_queue"], str(modern / "approval-queue.json"))
+
+    def test_fences_without_modern_files_still_choose_the_modern_layout(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="status-paths-fence-") as temp_dir:
+            status_root = Path(temp_dir).resolve()
+            orch = status_root / ".orchestrator"
+            orch.mkdir()
+            (orch / "state.json").mkdir()
+            os.mkfifo(str(orch / "approval-queue.json"), 0o600)
+
+            rendered = common.canonical_status_paths({}, status_root, fill_defaults=True)
+            self.assertEqual(rendered["state_file"], str(orch / "worker-runtime" / "state.json"))
+            self.assertEqual(
+                rendered["approval_queue"], str(orch / "worker-runtime" / "approval-queue.json")
+            )
+
+    def test_real_legacy_files_still_win_while_modern_layout_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="status-paths-fence-") as temp_dir:
+            status_root = Path(temp_dir).resolve()
+            orch = status_root / ".orchestrator"
+            orch.mkdir()
+            (orch / "state.json").write_text("{}", encoding="utf-8")
+            (orch / "approval-queue.json").write_text("{}", encoding="utf-8")
+
+            rendered = common.canonical_status_paths({}, status_root, fill_defaults=True)
+            self.assertEqual(rendered["state_file"], str(orch / "state.json"))
+            self.assertEqual(rendered["approval_queue"], str(orch / "approval-queue.json"))

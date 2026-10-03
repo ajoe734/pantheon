@@ -782,7 +782,9 @@ def _create_retired_path_fence(path: Path) -> None:
     _fsync_dir(p.parent)
 
 
-def _upgrade_retired_fifo_fences(incumbent, rendered) -> list[str]:
+def _upgrade_retired_fifo_fences(
+    incumbent: Mapping[str, Any] | None, rendered: Mapping[str, Any],
+) -> list[str]:
     """Upgrade only retired siblings, never a configured active data path."""
     paths = rendered.get("paths", {})
     candidates = []

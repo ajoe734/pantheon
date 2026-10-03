@@ -19429,3 +19429,74 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RuntimeSourceFenceResolutionTests(unittest.TestCase):
+    """Retired ``.orchestrator/{state,approval-queue}.json`` paths may carry a
+    promotion fence (directory, or FIFO from older promotions).  The resolvers
+    must never hand one back: opening a FIFO blocks forever."""
+
+    def test_configured_fifo_blocks_reconciliation_without_hanging(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-fence-") as temp_dir:
+            root = Path(temp_dir)
+            fifo = root / "state.json"
+            os.mkfifo(fifo, 0o600)
+            program = '''import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import ai_status
+ai_status.ORCHESTRATOR_STATE_FILE = Path(sys.argv[2])
+ai_status._assert_no_active_execution("FIFO-TEST")
+'''
+            env = {k: v for k, v in os.environ.items() if not k.startswith(("PANTHEON_", "ORCH_", "AI_"))}
+            env.update(AI_NAME="Codex", PANTHEON_STATUS_ROOT=str(root))
+            result = subprocess.run([sys.executable, "-c", program, str(Path(ai_status.__file__).parent), str(fifo)],
+                                    env=env, capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("must be a stable regular file", result.stderr)
+
+    def test_resolvers_skip_retired_path_fences(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-fence-") as temp_dir:
+            root = Path(temp_dir)
+            orch = root / ".orchestrator"
+            modern = orch / "worker-runtime"
+            modern.mkdir(parents=True)
+            (modern / "state.json").write_text("{}", encoding="utf-8")
+            (modern / "approval-queue.json").write_text("{}", encoding="utf-8")
+            (orch / "state.json").mkdir()
+            os.mkfifo(str(orch / "approval-queue.json"), 0o600)
+
+            self.assertEqual(ai_status.resolve_orchestrator_state_file(root), modern / "state.json")
+            self.assertEqual(
+                ai_status.resolve_approval_queue_file(root), modern / "approval-queue.json"
+            )
+
+    def test_resolvers_default_to_modern_layout_when_only_fences_remain(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-fence-") as temp_dir:
+            root = Path(temp_dir)
+            orch = root / ".orchestrator"
+            orch.mkdir()
+            os.mkfifo(str(orch / "state.json"), 0o600)
+            (orch / "approval-queue.json").mkdir()
+
+            self.assertEqual(
+                ai_status.resolve_orchestrator_state_file(root),
+                orch / "worker-runtime" / "state.json",
+            )
+            self.assertEqual(
+                ai_status.resolve_approval_queue_file(root),
+                orch / "worker-runtime" / "approval-queue.json",
+            )
+
+    def test_real_legacy_files_still_win_while_modern_layout_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-fence-") as temp_dir:
+            root = Path(temp_dir)
+            orch = root / ".orchestrator"
+            orch.mkdir()
+            (orch / "state.json").write_text("{}", encoding="utf-8")
+            (orch / "approval-queue.json").write_text("{}", encoding="utf-8")
+
+            self.assertEqual(ai_status.resolve_orchestrator_state_file(root), orch / "state.json")
+            self.assertEqual(
+                ai_status.resolve_approval_queue_file(root), orch / "approval-queue.json"
+            )
