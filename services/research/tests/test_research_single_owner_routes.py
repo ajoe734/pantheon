@@ -1220,3 +1220,66 @@ def test_real_provider_cannot_promote_simulated_input_evidence(client, monkeypat
     if result.status_code == 200:
         assert result.json()["provenance"] == "simulation", result.json()
         assert result.json()["receipt"]["mode"] == "simulation"
+
+
+def test_cancel_between_fence_check_and_artifact_write(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from services.research.tests.test_research_orchestrator_http_service import _make_sample_quantlib_dataset
+
+    store = research_main.store
+    monkeypatch.setenv("PANTHEON_QUANTLIB_BACKEND", "stub")
+    store.put_task({"task_id": "t-canc", "tenant_id": "a", "status": "running"})
+    store.put_run({"run_id": "r-canc", "task_id": "t-canc", "stage_id": "s", "tenant_id": "a", "status": "queued", "requested_mode": "stub"})
+
+    entered, release = threading.Event(), threading.Event()
+    original = store.put_artifact
+
+    def paused_put(artifact):
+        entered.set()
+        assert release.wait(5)
+        return original(artifact)
+
+    monkeypatch.setattr(store, "put_artifact", paused_put)
+    body = {"run_id": "r-canc", "correlation_id": "c", "stage": {"stage_id": "s"}, "plan": {"plan_id": "p", "task_id": "t-canc"}, "dataset": _make_sample_quantlib_dataset()}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        execution = pool.submit(client.post, "/api/research-orchestrator/stages/derivatives_pricing_risk/execute", json=body)
+        try:
+            assert entered.wait(5)
+            cancellation = pool.submit(client.post, "/api/research-orchestrator/tasks/t-canc/cancel")
+            canceled = cancellation.result(timeout=2)
+            assert canceled.status_code == 200
+            assert store.get_run("r-canc")["status"] == "canceled"
+        finally:
+            release.set()
+        result = execution.result(timeout=10)
+    assert not [a for a in store.list_artifacts() if a.get("run_id") == "r-canc"], f"cancel returned before publication, but execute={result.status_code}, run={store.get_run('r-canc')['status']}, artifacts={len(store.list_artifacts())}"
+
+
+def test_synthesis_validation_failure_releases_claim(client: TestClient) -> None:
+    store = research_main.store
+    store.put_task({"task_id": "t-synth", "tenant_id": "a", "status": "running"})
+    store.put_run({"run_id": "r-synth", "task_id": "t-synth", "stage_id": "s", "tenant_id": "a", "status": "queued", "requested_mode": "stub"})
+    result = client.post("/api/research-orchestrator/stages/evidence_synthesis/execute", json={"run_id": "r-synth", "correlation_id": "c", "stage": {"stage_id": "s"}, "plan": {"plan_id": "p", "task_id": "t-synth"}, "artifact_refs": [{"artifact_id": "missing"}]})
+    assert result.status_code == 400
+    claim = store._get_record(store.data_dir / "stage_executions.json", "agora-stage-claim:r-synth:s")
+    assert claim["status"] == "failed"
+    assert store.get_run("r-synth")["status"] == "failed"
+
+
+def test_owner_restart_reconciles_abandoned_execution_claim(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.research.tests.test_research_orchestrator_http_service import _make_sample_quantlib_dataset
+    store = research_main.store
+    monkeypatch.setenv("PANTHEON_QUANTLIB_BACKEND", "stub")
+    store.put_task({"task_id": "t-rec", "tenant_id": "a", "status": "running"})
+    stage = {"stage_id": "s", "stage_type": "derivatives_pricing_risk"}
+    plan = {"plan_id": "p", "task_id": "t-rec", "stages": [stage], "dataset": _make_sample_quantlib_dataset()}
+    store.put_run({"run_id": "r-rec", "task_id": "t-rec", "stage_id": "s", "tenant_id": "a", "status": "running", "adapter": "derivatives_pricing_risk", "parameters": {"stage": stage, "plan": plan, "dataset": plan["dataset"]}})
+    store._put_record(store.data_dir / "stage_executions.json", "agora-stage-claim:r-rec:s", {"status": "in_progress", "claim_token": "dead-owner-process", "claimed_at": "2026-01-01T00:00:00Z", "run_id": "r-rec", "stage_id": "s"})
+    research_main.resume_queued_plan_stages()
+    deadline = time.monotonic() + 35
+    while time.monotonic() < deadline:
+        if store.get_run("r-rec")["status"] not in {"queued", "running"}:
+            break
+        time.sleep(0.05)
+    final = store.get_run("r-rec")
+    assert final["status"] == "completed", f"restart produced {final['status']}: {final.get('error')}"

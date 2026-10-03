@@ -191,7 +191,17 @@ class ResearchOrchestratorStore:
         artifact_id = str(artifact.get("artifact_id") or artifact.get("id") or "").strip()
         artifact["artifact_id"] = artifact_id
         artifact["id"] = artifact_id
-        return self._put_record(self.artifacts_path, artifact_id, artifact)
+        with self._lock:
+            run_id = str(artifact.get("run_id") or "").strip()
+            task_id = str(artifact.get("task_id") or "").strip()
+            run = self._get_record(self.runs_path, run_id) if run_id else None
+            task = self._get_record(self.tasks_path, task_id) if task_id else None
+            if (
+                (run and (str(run.get("status") or "").lower() in {"canceled", "cancelled"} or run.get("cancellation_fence")))
+                or (task and (str(task.get("status") or "").lower() in {"canceled", "cancelled"} or task.get("cancellation_fence")))
+            ):
+                raise RuntimeError(f"Cannot persist artifact for canceled research run '{run_id}' or task '{task_id}'")
+            return self._put_record(self.artifacts_path, artifact_id, artifact)
 
     def list_proposals(self) -> List[Dict[str, Any]]:
         return self._list_records(self.proposals_path)

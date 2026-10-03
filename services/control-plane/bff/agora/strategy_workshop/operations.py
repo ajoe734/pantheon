@@ -360,51 +360,23 @@ class WorkshopCanonicalOperations:
 
     def list_research_runs(self, *, task_id: Optional[str] = None) -> List[Dict[str, Any]]:
         query = f"?task_id={urllib.parse.quote(task_id, safe='')}" if task_id else ""
-        value = self._request_json(
-            "research_orchestrator", "GET", self.research_base_url,
-            f"/api/research-orchestrator/runs{query}",
-        )
+        value = self._request_json("research_orchestrator", "GET", self.research_base_url, f"/api/research-orchestrator/runs{query}")
         return value if isinstance(value, list) else []
 
     def get_research_run(self, run_id: str) -> Dict[str, Any]:
-        value = self._request_json(
-            "research_orchestrator",
-            "GET",
-            self.research_base_url,
-            f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}",
-        )
+        value = self._request_json("research_orchestrator", "GET", self.research_base_url, f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}")
         if not isinstance(value, dict) or str(value.get("run_id") or value.get("id") or "") != run_id:
-            raise CanonicalOperationError(
-                "research_orchestrator",
-                "authoritative research run readback id mismatch",
-            )
+            raise CanonicalOperationError("research_orchestrator", "authoritative research run readback id mismatch")
         return value
 
     def cancel_research_run(self, run_id: str, *, reason: Optional[str] = None) -> Dict[str, Any]:
-        return self._request_json(
-            "research_orchestrator",
-            "POST",
-            self.research_base_url,
-            f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}/cancel",
-            {"reason": reason or "Research run canceled by operator."},
-        )
+        return self._request_json("research_orchestrator", "POST", self.research_base_url, f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}/cancel", {"reason": reason or "Research run canceled by operator."})
 
     def cancel_research_task(self, task_id: str, *, reason: Optional[str] = None) -> Dict[str, Any]:
-        return self._request_json(
-            "research_orchestrator",
-            "POST",
-            self.research_base_url,
-            f"/api/research-orchestrator/tasks/{urllib.parse.quote(task_id, safe='')}/cancel",
-            {"reason": reason or "Research task canceled by operator."},
-        )
+        return self._request_json("research_orchestrator", "POST", self.research_base_url, f"/api/research-orchestrator/tasks/{urllib.parse.quote(task_id, safe='')}/cancel", {"reason": reason or "Research task canceled by operator."})
 
     def get_research_artifacts(self, run_id: str) -> List[Dict[str, Any]]:
-        value = self._request_json(
-            "research_orchestrator",
-            "GET",
-            self.research_base_url,
-            f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}/artifacts",
-        )
+        value = self._request_json("research_orchestrator", "GET", self.research_base_url, f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}/artifacts")
         return value if isinstance(value, list) else []
 
     # -- Consultation Service --------------------------------------------
