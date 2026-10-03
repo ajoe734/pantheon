@@ -98,6 +98,7 @@ from assistant_claude_provider import AssistantClaudeProvider, ClaudeProviderErr
 from assistant_openclaw_provider import (
     AssistantOpenClawProvider,
     DEFAULT_AGENT_ID as OPENCLAW_DEFAULT_AGENT_ID,
+    STRUCTURED_AGENT_ID as OPENCLAW_STRUCTURED_AGENT_ID,
     OpenClawProviderError as GatewayOpenClawProviderError,
     delegates_kernel_mode_to_codex,
     derive_session_user,
@@ -1859,21 +1860,23 @@ def invoke_openclaw_structured_provider(
     # AssistantProviderInvokeRequest.validate_agent_selection). Structured
     # extraction is a restricted, data-only capability: it must never let a
     # caller route to an arbitrary/persona agent without going through that
-    # admission/runtime-policy path, so only the default agent is permitted.
-    if req.agent_id is not None and req.agent_id != OPENCLAW_DEFAULT_AGENT_ID:
+    # admission/runtime-policy path, so only the dedicated deny-all extraction
+    # agent (provisioned by openclaw-configure-shared-model-pool.sh) is
+    # permitted. `main` keeps native tools for ordinary invoke routes.
+    if req.agent_id is not None and req.agent_id != OPENCLAW_STRUCTURED_AGENT_ID:
         return JSONResponse(
             status_code=422,
             content={
                 "status": "provider_error",
                 "error_code": "OPENCLAW_STRUCTURED_AGENT_NOT_ALLOWED",
                 "message": (
-                    "Structured extraction is restricted to the default agent; "
+                    "Structured extraction is restricted to its dedicated agent; "
                     "persona/tool routing requires the admitted invoke endpoint."
                 ),
             },
         )
     invoke_kwargs: Dict[str, Any] = {
-        "agent_id": OPENCLAW_DEFAULT_AGENT_ID,
+        "agent_id": OPENCLAW_STRUCTURED_AGENT_ID,
         "extraction_schema": req.extraction_schema,
         "mode": mode,
         "messages": req.messages,
@@ -1886,7 +1889,7 @@ def invoke_openclaw_structured_provider(
         invoke_kwargs["session_id"] = req.session_id
     try:
         deadline = time.monotonic() + _OPENCLAW_AGENT_PROVIDER._timeout
-        _assert_structured_gateway_policy(OPENCLAW_DEFAULT_AGENT_ID, deadline=deadline)
+        _assert_structured_gateway_policy(OPENCLAW_STRUCTURED_AGENT_ID, deadline=deadline)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise GatewayOpenClawProviderError(
