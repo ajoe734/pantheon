@@ -327,7 +327,13 @@ def _extract_tenant_id(
         return claim_tenant
     if len(allowed_tenants) == 1 and "*" not in allowed_tenants:
         return next(iter(allowed_tenants))
-    return ""
+    raise _default_bff_error(
+        403,
+        ErrorCode.FORBIDDEN,
+        "Tenant access denied",
+        "Caller has no verified tenant authority",
+        precondition_failed="tenant_scope",
+    )
 
 
 def _default_extract_identity(
@@ -356,6 +362,7 @@ def _default_extract_identity(
             else:
                 ident.roles = {"operator", "viewer", "admin", "reader", "reviewer"}
             ident.display_name = ident.operator_id
+            ident.tenant_id = parts[2] if len(parts) > 2 else "default"
     return ident
 
 

@@ -525,6 +525,57 @@ def test_persona_operations_read_model_and_journal_recovery_require_the_caller_t
     assert positive.get("data", {}).get("tenant_id") == "tenant-b"
 
 
+def test_mounted_journal_crash_recovery_scopes_to_the_jwt_tenant(monkeypatch, tmp_path):
+    owner = build_decision_journal_write_owner(data_dir=str(tmp_path))
+    entry = owner.create_decision_journal_entry(
+        title="Crash Recoverable", body="Audit body", created_at="2026-10-03T00:00:00Z",
+        tenant_id="tenant-b", user_id="low-priv-operator", actor_id="low-priv-operator",
+    )
+    headers_b = _jwt_headers(monkeypatch, "tenant-b")
+    client = _journal_client(owner)
+    payload = {"id": entry["id"], "title": "Crash Recoverable", "body": "Audit body"}
+
+    captured = []
+    real_check = owner.check_create_idempotency
+
+    def get_hash(*a, **kw):
+        captured.append(kw.get("request_hash"))
+        return real_check(*a, **kw)
+
+    owner.check_create_idempotency = get_hash
+    client.post("/bff/agora/journal", headers={**headers_b, "Idempotency-Key": "probe-key"}, json=payload)
+    owner.check_create_idempotency = real_check
+
+    scoped_key = "create:tenant-b:low-priv-operator:idem-rec"
+    owner.stores.idempotency.put({
+        "idempotency_key": scoped_key,
+        "raw_idempotency_key": "idem-rec",
+        "tenant_id": "tenant-b",
+        "user_id": "low-priv-operator",
+        "actor_id": "low-priv-operator",
+        "entry_id": entry["id"],
+        "status": "pending",
+        "created_pid": 9999999,
+        "request_hash": captured[0],
+        "created_at": time.time(),
+    })
+
+    # 1. Absent tenant fails closed
+    absent = client.post("/bff/agora/journal", headers={**_jwt_without_tenant(), "Idempotency-Key": "idem-rec"}, json=payload)
+    assert absent.status_code >= 400
+
+    # 2. Foreign tenant denied recovery
+    headers_a = _jwt_headers(monkeypatch, "tenant-a")
+    foreign = client.post("/bff/agora/journal", headers={**headers_a, "Idempotency-Key": "idem-rec"}, json={**payload, "tenant_id": "tenant-b"})
+    assert foreign.status_code == 403
+
+    # 3. Same tenant recovery succeeds
+    same = client.post("/bff/agora/journal", headers={**headers_b, "Idempotency-Key": "idem-rec"}, json=payload)
+    assert same.status_code in (200, 201), same.text
+    assert same.json().get("data", {}).get("id") == entry["id"]
+    assert same.json().get("data", {}).get("tenant_id") == "tenant-b"
+
+
 def test_runtime_pause_binding_tenant_never_fills_the_caller_tenant(monkeypatch):
     from unittest.mock import MagicMock
 
@@ -628,6 +679,7 @@ def test_mounted_runtime_pause_resume_use_the_jwt_tenant(mounted, monkeypatch, c
 
 
 def test_mounted_operations_read_model_route_scopes_to_the_jwt_tenant(monkeypatch):
+    import os
     from services.control_plane.bff.auth.policy import bff_me_tenant_payload
     from services.control_plane.bff.core.errors import register_error_handlers
     from services.control_plane.bff.management_read_models.router import create_management_router
@@ -636,6 +688,7 @@ def test_mounted_operations_read_model_route_scopes_to_the_jwt_tenant(monkeypatc
         "p1": {"persona_id": "p1", "tenant_id": "tenant-b"},
         "p-dev": {"persona_id": "p-dev", "tenant_id": "pantheon-dev"},
         "p-custom": {"persona_id": "p-custom", "tenant_id": "custom-default"},
+        "p-unscoped": {"persona_id": "p-unscoped"},
     }
 
     class _Store:
@@ -650,27 +703,201 @@ def test_mounted_operations_read_model_route_scopes_to_the_jwt_tenant(monkeypatc
     ))
     client = TestClient(app, raise_server_exceptions=False)
 
-    # 1. Custom tenant: absent/foreign return 404; same tenant returns 200
+    # 1. Custom tenant: absent fails closed with 403; foreign returns 404; same tenant returns 200
     url_b = "/bff/management/operations-read-model/p1"
+    assert client.get(url_b, headers=_jwt_without_tenant()).status_code == 403
     assert client.get(url_b, headers=_jwt_headers(monkeypatch, "tenant-a")).status_code == 404
-    assert client.get(url_b, headers=_jwt_without_tenant()).status_code == 404
     assert client.get(url_b, headers=_jwt_headers(monkeypatch, "tenant-b")).status_code == 200
 
-    # 2. Built-in default fallback ("pantheon-dev"): absent/foreign return 404; same returns 200
+    # 2. Built-in default fallback ("pantheon-dev"): absent fails closed with 403; foreign returns 404; same returns 200
     url_dev = "/bff/management/operations-read-model/p-dev"
+    assert client.get(url_dev, headers=_jwt_without_tenant()).status_code == 403
     assert client.get(url_dev, headers=_jwt_headers(monkeypatch, "tenant-a")).status_code == 404
-    assert client.get(url_dev, headers=_jwt_without_tenant()).status_code == 404
     assert client.get(url_dev, headers=_jwt_headers(monkeypatch, "pantheon-dev")).status_code == 200
 
-    # 3. Environment default fallback ("custom-default"): absent/foreign return 404; same returns 200
+    # 3. Environment default fallback ("custom-default"): absent fails closed with 403; foreign returns 404; same returns 200
+    tok_absent = _jwt_without_tenant()
+    tok_a = _jwt_headers_for("tenant-a")
+    tok_custom = _jwt_headers_for("custom-default")
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "custom-default")
+    assert os.environ.get("PANTHEON_BFF_TENANT_ID") == "custom-default"
+
     url_custom = "/bff/management/operations-read-model/p-custom"
-    assert client.get(url_custom, headers=_jwt_headers(monkeypatch, "tenant-a")).status_code == 404
-    assert client.get(url_custom, headers=_jwt_without_tenant()).status_code == 404
-    assert client.get(url_custom, headers=_jwt_headers(monkeypatch, "custom-default")).status_code == 200
+    assert client.get(url_custom, headers=tok_absent).status_code == 403
+    assert os.environ.get("PANTHEON_BFF_TENANT_ID") == "custom-default"
+    assert client.get(url_custom, headers=tok_a).status_code == 404
+    assert os.environ.get("PANTHEON_BFF_TENANT_ID") == "custom-default"
+    assert client.get(url_custom, headers=tok_custom).status_code == 200
+    assert os.environ.get("PANTHEON_BFF_TENANT_ID") == "custom-default"
+
+    # 4. Tenantless stored persona: absent fails closed with 403 at shared resolver before service is called
+    url_unscoped = "/bff/management/operations-read-model/p-unscoped"
+    assert client.get(url_unscoped, headers=_jwt_without_tenant()).status_code == 403
+    assert client.get(url_unscoped, headers=_jwt_headers(monkeypatch, "tenant-a")).status_code == 200
 
 
-def test_mounted_strategy_registry_readback_scopes_to_the_jwt_tenant(monkeypatch):
+def test_mounted_risk_radar_scopes_to_the_jwt_tenant(monkeypatch):
+    from services.control_plane.bff.auth.policy import bff_me_tenant_payload
+    from services.control_plane.bff.core.errors import register_error_handlers
+    from services.control_plane.bff.management_read_models.router import create_management_router
+
+    class _RadarStore:
+        def list_personas(self, tenant_id=None):
+            personas = {
+                "tenant-a": [{"persona_id": "p-a", "name": "Persona A", "tenant_id": "tenant-a"}],
+                "tenant-b": [{"persona_id": "p-b", "name": "Persona B", "tenant_id": "tenant-b"}],
+            }
+            if tenant_id is None:
+                return personas["tenant-a"] + personas["tenant-b"]
+            return personas.get(tenant_id, [])
+
+        def list_risk_radar_rows(self):
+            return [
+                {"persona_id": "p-a", "risk_state": "normal"},
+                {"persona_id": "p-b", "risk_state": "normal"},
+            ]
+
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(create_management_router(
+        read_surface=_RadarStore(), extract_identity=_extract_identity, require_read_role=_require_read_role,
+        tenant_payload_fn=bff_me_tenant_payload,
+    ))
+    client = TestClient(app, raise_server_exceptions=False)
+
+    # 1. Absent tenant claim fails closed at resolver with 403 before store is called
+    assert client.get("/bff/management/risk-radar", headers=_jwt_without_tenant()).status_code == 403
+
+    # 2. Foreign tenant (tenant-a) sees Persona A label, does not leak Persona B label
+    res_a = client.get("/bff/management/risk-radar", headers=_jwt_headers(monkeypatch, "tenant-a"))
+    assert res_a.status_code == 200
+    rows_a = {r["persona_id"]: r["persona_label"] for r in (res_a.json().get("data") or {}).get("items", [])}
+    assert rows_a.get("p-a") == "Persona A"
+    assert rows_a.get("p-b") != "Persona B"
+
+    # 3. Same tenant (tenant-b) sees Persona B label
+    res_b = client.get("/bff/management/risk-radar", headers=_jwt_headers(monkeypatch, "tenant-b"))
+    assert res_b.status_code == 200
+    rows_b = {r["persona_id"]: r["persona_label"] for r in (res_b.json().get("data") or {}).get("items", [])}
+    assert rows_b.get("p-b") == "Persona B"
+
+
+def test_mounted_strategy_command_route_with_tenant_enforcing_owner(mounted, monkeypatch):
+    import base64
+    from test_receipt_owner_routes import _JWT_ENV
+    from services.control_plane.bff.command_adapters import strategy_adapter
+    from services.registry.pg_store import PostgresRegistryStore, _request_digest
+
+    client, store, _ = mounted
+
+    entry_b = {
+        "registry_id": "reg-1",
+        "strategy_id": "s-1",
+        "checksum": "sha256:123",
+        "version": 1,
+        "owner_tenant": "tenant-b",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-10-03T00:00:00Z",
+        "last_actor": {"actor_id": "tenant-b", "tenant": "tenant-b"},
+    }
+    patched_b = {**entry_b, "metadata": {"note": "new"}, "updated_at": "2026-10-03T00:00:01Z"}
+    rd = _request_digest({"registry_id": "reg-1", "expected_metadata": {"note": "old"}, "metadata": {"note": "new"}})
+
+    owner_state = {"writes": 0, "downstream_calls": []}
+    last_cmd = [None]
+
+    def mock_registry_owner(url, method="GET", auth_token=None, payload=None, **kwargs):
+        owner_state["downstream_calls"].append((method, url))
+        raw = (auth_token or "").removeprefix("Bearer ").strip()
+        claims = json.loads(base64.urlsafe_b64decode(raw.split(".")[1] + "==")) if "." in raw else {}
+        tenant = claims.get("tenant_id")
+        actor = claims.get("sub")
+
+        if tenant != entry_b["owner_tenant"]:
+            return 403, {}, {"detail": "Tenant access denied"}
+
+        if method == "GET" and "/receipts/" not in url:
+            return 200, {}, {"entry": entry_b}
+        elif method == "PATCH":
+            owner_state["writes"] += 1
+            cmd_key = (payload or {}).get("command_key") or "cmd-1"
+            last_cmd[0] = cmd_key
+            rk = PostgresRegistryStore.receipt_key(
+                cmd_key, "reg-1", actor={"actor_id": actor, "tenant": tenant}, command_type="metadata",
+            )
+            receipt = {
+                "command_key": cmd_key, "registry_id": "reg-1", "receipt_key": rk,
+                "request_digest": rd, "committed_at": "2026-10-03T00:00:01Z", "committed_entry": patched_b,
+            }
+            return 200, {"X-Idempotent-Replay": "false"}, {"entry": patched_b, "receipt": receipt}
+        elif method == "GET" and "/receipts/" in url:
+            cmd_key = last_cmd[0] or url.split("/receipts/")[1].split("?")[0]
+            rk = PostgresRegistryStore.receipt_key(
+                cmd_key, "reg-1", actor={"actor_id": actor, "tenant": tenant}, command_type="metadata",
+            )
+            receipt = {
+                "command_key": cmd_key, "registry_id": "reg-1", "receipt_key": rk,
+                "request_digest": rd, "committed_at": "2026-10-03T00:00:01Z", "committed_entry": patched_b,
+            }
+            return 200, {}, {"receipt": receipt}
+        return 404, {}, {}
+
+    monkeypatch.setenv("PANTHEON_RUNTIME_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", _JWT_ENV["PANTHEON_BFF_JWT_SECRET"])
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_ISSUER", _JWT_ENV["PANTHEON_BFF_JWT_ISSUER"])
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_AUDIENCE", _JWT_ENV["PANTHEON_BFF_JWT_AUDIENCE"])
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://127.0.0.1:9999")
+    monkeypatch.setattr(strategy_adapter, "http_request_json_with_headers", mock_registry_owner)
+
+    def submit_command(key, token):
+        return client.post(
+            "/bff/v1/commands",
+            json={
+                "command": "StrategyAction",
+                "target": {"type": "Strategy", "id": "s-1"},
+                "params": {
+                    "action_id": "update_params",
+                    "strategy_id": "s-1",
+                    "registry_id": "reg-1",
+                    "expected_metadata": {"note": "old"},
+                    "metadata": {"note": "new"},
+                },
+                "audit_context": {"reason": "tenant authority audit"},
+            },
+            headers={"Authorization": token, "Idempotency-Key": key},
+        )
+
+    # 1. Absent tenant JWT fails closed before any owner call
+    resp_absent = submit_command("strat-absent", _tok(None))
+    rec_absent = store.get_command_by_idempotency_key("strat-absent", operator_id="no-tenant")
+    assert resp_absent.status_code >= 400 or (rec_absent or {}).get("status") != "executed"
+    assert (rec_absent or {}).get("status") != "executed"
+    assert owner_state["downstream_calls"] == []
+    assert owner_state["writes"] == 0
+
+    # 2. Foreign tenant denied by tenant-enforcing owner before mutating write
+    resp_foreign = submit_command("strat-foreign", _tok("tenant-a"))
+    rec_foreign = store.get_command_by_idempotency_key("strat-foreign", operator_id="tenant-a")
+    assert resp_foreign.status_code >= 400 or (rec_foreign or {}).get("status") != "executed"
+    assert (rec_foreign or {}).get("status") != "executed"
+    assert owner_state["writes"] == 0
+
+    # 3. Same tenant positive control succeeds and commits write
+    resp_same = submit_command("strat-same", _tok("tenant-b"))
+    rec_same = store.get_command_by_idempotency_key("strat-same", operator_id="tenant-b")
+    assert resp_same.status_code == 202
+    assert rec_same["status"] == "executed"
+    assert owner_state["writes"] == 1
+
+
+def test_strategy_registry_receipt_mismatch_post_write_semantics(monkeypatch):
+    """Direct adapter test verifying post-write readback receipt verification.
+
+    If a downstream registry owner permitted a PATCH from a foreign caller,
+    StrategyCommandAdapter._validate_scoped_receipt catches the tenant
+    divergence during post-write readback verification and raises
+    ActionUnavailableError(READBACK_MISMATCH).
+    """
     import base64
     from services.control_plane.bff.command_adapters import strategy_adapter
     from services.control_plane.bff.command_adapters.strategy_adapter import StrategyCommandAdapter
@@ -714,7 +941,7 @@ def test_mounted_strategy_registry_readback_scopes_to_the_jwt_tenant(monkeypatch
         adapter.execute("cmd-1", "StrategyAction", params, auth_token=_jwt_without_tenant()["Authorization"])
     assert exc_absent.value.error_code == "FORBIDDEN"
 
-    # Foreign tenant fails closed on receipt readback mismatch
+    # Foreign tenant fails closed on receipt readback mismatch if owner accepted write
     with pytest.raises(ActionUnavailableError) as exc_foreign:
         adapter.execute("cmd-1", "StrategyAction", params, auth_token=_tok_for("tenant-a"))
     assert exc_foreign.value.error_code == "READBACK_MISMATCH"

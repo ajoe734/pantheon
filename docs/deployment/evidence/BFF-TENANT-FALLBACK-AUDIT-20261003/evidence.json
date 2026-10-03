@@ -122,6 +122,12 @@
       "disposition": "finding, not edited",
       "trusted_source": "caller identity where passed",
       "note": "same empty-tenant-skips-filter shape as :2338; file is owned by concurrent tasks."
+    },
+    {
+      "site": "services/control-plane/bff/management_read_models/router.py:1729 (/bff/management/risk-radar)",
+      "disposition": "fixed",
+      "trusted_source": "authenticated caller identity via _extract_tenant_id",
+      "note": "missing tenant previously returned '' which caused service.py:4320 to call list_personas(None) and leak other tenants' personas; now fails closed with 403 at _extract_tenant_id before service/store is called. Mounted signed-JWT test covers missing (403), foreign (200, Persona B masked), and same-tenant (200, Persona B returned) controls."
     }
   ],
   "regressions": "test_tenant_fallback_audit.py (25 tests). Mounted signed-JWT: journal route (foreign/same/absent body tenant and a JWT with no tenant claim; zero stored rows on denial), /bff/v1/commands for CreateDeployment and EvolutionProgramAction (foreign body tenant, JWT without tenant claim, absent and same-tenant controls; zero owner requests and zero owner writes on denial), operational-readiness route (tenant-a and tenant-b JWTs). Direct-call (no mounted route reaches them): _post_json/_headers None/''/whitespace/foreign, EvolutionCommandAdapter, PerformanceSuggestionStore, journal owner, registry receipt, resolve_governed_dataset, drain_outbox.",
@@ -275,22 +281,28 @@
     "base": "14eaf55e0528984df21b17a0a64e7a56ceb57708",
     "sites": [
       {
-        "site": "services/control-plane/bff/management_read_models/router.py:274-325 (_extract_tenant_id)",
+        "site": "services/control-plane/bff/management_read_models/router.py:330 (_extract_tenant_id)",
         "disposition": "fixed",
         "trusted_source": "authenticated caller identity claims/tenant_id and allowed_tenants",
-        "note": "Defect fixed: removed display fallback to bff_me_tenant_payload, os.environ.get('PANTHEON_BFF_TENANT_ID'), and 'pantheon-dev'. Authenticated caller identity is the sole authority; caller without trusted tenant returns '' (failing closed on persona operations read models) or raises 403 when requested_tenant is specified without authority. Mounted signed-JWT tests cover missing/foreign/same controls for both built-in ('pantheon-dev') and environment ('custom-default') fallback defaults."
+        "note": "Defect fixed: _extract_tenant_id now raises 403 when caller has no verified tenant claim instead of returning empty string. Both GET /bff/management/risk-radar and GET /bff/management/operations-read-model/p-unscoped fail closed with 403 before service/store is called. Mounted signed-JWT tests cover missing/foreign/same controls for custom tenant, built-in ('pantheon-dev'), and environment ('custom-default') fallback defaults."
+      },
+      {
+        "site": "services/control-plane/bff/management_read_models/router.py:1729 (/bff/management/risk-radar)",
+        "disposition": "fixed",
+        "trusted_source": "authenticated caller identity via _extract_tenant_id",
+        "note": "Included in inventory. Fails closed with 403 on missing tenant claim before service/store is called. Mounted signed-JWT regression covers absent (403), foreign (200, Persona B masked), and same (200, Persona B returned)."
       },
       {
         "site": "services/control-plane/bff/governance/decision_journal_write_owner.py:272-292 (_recover_committed_entry_result)",
-        "disposition": "fixed (coverage completed)",
+        "disposition": "fixed (mounted crash recovery test completed)",
         "trusted_source": "tenant_id kwarg from the Agora scope",
-        "note": "Closed missing journal recovery test coverage with actual committed recoverable journal entry. Negative recovery verified for None, '', '  ', and foreign tenant 'tenant-a' (all return None); positive recovery verified for same-tenant 'tenant-b' returning committed journal entry data."
+        "note": "Mounted crash/replay recovery route test added (test_mounted_journal_crash_recovery_scopes_to_the_jwt_tenant) exercising POST /bff/agora/journal with dead PID pending idempotency record: missing tenant fails closed with >=400, foreign tenant denied recovery with 403, same-tenant succeeds (201) returning entry."
       },
       {
-        "site": "services/control-plane/bff/command_adapters/strategy_adapter.py:312 (_validate_scoped_receipt readback)",
-        "disposition": "fixed (mounted signed-JWT coverage completed)",
+        "site": "services/control-plane/bff/command_adapters/strategy_adapter.py:312 (_validate_scoped_receipt readback & mounted command route)",
+        "disposition": "fixed (mounted command route with tenant-enforcing owner & post-write receipt mismatch completed)",
         "trusted_source": "verified JWT tenant claim from _authenticate_caller",
-        "note": "Mounted signed-JWT test added for StrategyCommandAdapter.execute: missing tenant JWT raises ActionUnavailableError(FORBIDDEN), foreign tenant raises ActionUnavailableError(READBACK_MISMATCH), and same-tenant positive control succeeds with status metadata_updated."
+        "note": "Added real mounted command-route signed-JWT regression (test_mounted_strategy_command_route_with_tenant_enforcing_owner) for POST /bff/v1/commands with StrategyAction: absent tenant JWT fails closed with 0 owner calls and 0 writes; foreign tenant denied by tenant-enforcing owner before mutation with 0 writes; same-tenant control executes and commits 1 write. Preserved direct adapter test (test_strategy_registry_receipt_mismatch_post_write_semantics) accurately documenting post-write readback receipt verification failure (READBACK_MISMATCH) if a downstream owner accepted a foreign caller write."
       }
     ],
     "caller_proofs": {
@@ -300,9 +312,11 @@
       "dispatcher.py:1129 (ResearchDispatcher.execute_stage)": "Proven safe (background-only exception): exclusively called by ResearchDispatcher.drain_outbox which is driven by background worker InteractionWorker.drain_outbox (agora/interaction/worker.py:170); no request-reachable HTTP routes."
     },
     "mounted_signed_jwt_tests": [
-      "test_mounted_operations_read_model_route_scopes_to_the_jwt_tenant: validates missing, foreign, and same signed JWTs against custom tenant, built-in fallback default ('pantheon-dev'), and env fallback default ('custom-default').",
-      "test_mounted_strategy_registry_readback_scopes_to_the_jwt_tenant: validates StrategyCommandAdapter.execute with signed JWTs (absent -> FORBIDDEN, foreign -> READBACK_MISMATCH, same -> metadata_updated).",
-      "test_persona_operations_read_model_and_journal_recovery_require_the_caller_tenant: validates genuine committed journal entry negative recovery (None, '', '  ', foreign) and positive same-tenant recovery."
+      "test_mounted_operations_read_model_route_scopes_to_the_jwt_tenant: validates missing (403), foreign (404), and same (200) signed JWTs against custom tenant, built-in fallback ('pantheon-dev'), env fallback ('custom-default') where tokens are pre-minted before setenv and env stays active, and tenantless stored persona p-unscoped (absent -> 403 at resolver, foreign -> 200).",
+      "test_mounted_risk_radar_scopes_to_the_jwt_tenant: validates GET /bff/management/risk-radar (absent -> 403 at resolver before store call, foreign -> 200 without leaking Persona B, same -> 200 with Persona B).",
+      "test_mounted_strategy_command_route_with_tenant_enforcing_owner: mounted POST /bff/v1/commands StrategyAction with tenant-enforcing owner (absent -> rejected, 0 owner calls, 0 writes; foreign -> denied before mutation, 0 writes; same -> 202 executed, 1 write).",
+      "test_strategy_registry_receipt_mismatch_post_write_semantics: direct adapter test verifying post-write readback receipt verification catches tenant divergence (READBACK_MISMATCH) if downstream owner permitted write.",
+      "test_mounted_journal_crash_recovery_scopes_to_the_jwt_tenant: mounted POST /bff/agora/journal with pending dead-PID idempotency record (absent -> >=400, foreign -> 403, same -> 201)."
     ],
     "local_postgresql_acceptance": {
       "host": "127.0.0.1:32804",
