@@ -9,7 +9,7 @@
     "draft_commit": "0443aea936696eecad0899b431101a8d949e06ed",
     "author": "PiAstra <piastra-agent@pantheon.local>",
     "history_preserved": true,
-    "blocker_resolved": "Separated generated dependency packaging (+16186 net lines) into child task with corrective budget 16500; parent keeps zero budget"
+    "blocker_resolved": "Separated generated dependency packaging into child task with corrective budget 16500; parent keeps zero budget"
   },
   "transferred_artifacts": {
     "count": 32,
@@ -54,13 +54,13 @@
   },
   "line_budget_counters": {
     "budget": 16500,
-    "total_production_net_lines": 16186,
+    "total_production_net_lines": 16189,
     "production_breakdown": {
       "generated_locks": {
         "files_count": 11,
-        "additions": 16174,
+        "additions": 16177,
         "deletions": 0,
-        "net": 16174
+        "net": 16177
       },
       "application_python": {
         "files_count": 3,
@@ -88,7 +88,12 @@
   },
   "packaging_and_closure_resolution": {
     "cpu_imitation_closure": {
-      "resolution": "Resolved official CPU closure using --extra-index-url https://download.pytorch.org/whl/cpu and torch==2.14.1+cpu",
+      "resolution": "Resolved official CPU closure using --extra-index-url https://download.pytorch.org/whl/cpu and torch==2.14.1+cpu in locks and Dockerfile",
+      "install_commands": {
+        "imitation": "pip install --no-cache-dir --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r dependencies/locks/services-learning-imitation.txt",
+        "trl": "pip install --no-cache-dir --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r dependencies/locks/services-learning-trl.txt",
+        "finrl": "pip install --no-cache-dir --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r dependencies/locks/services-research-finrl.txt"
+      },
       "removed_cuda_stack": [
         "cuda-bindings",
         "cuda-pathfinder",
@@ -110,84 +115,113 @@
         "nvidia-nvtx",
         "triton"
       ],
-      "impact": "Eliminated CUDA stack footprint; mitigated host ENOSPC hazard; lock size reduced by 121 lines"
+      "resource_reclamation": "Reclaimed task-owned exited container 6e16b662b295 and test images pantheon-research-dspy-shim-oss-residual:local (587MB) and pantheon-research-worker-gateway-oss-residual:local (487MB), freeing 1.1GB without global prune; disk available increased from 817MB to 4.3GB"
     },
     "docker_formatting": "Restored readable multi-line ENV formatting with backslashes across policy-learning, gateway, research, and training-session Dockerfiles",
     "quantlib": "Retained QuantLib 1.43 in services/research/runtime-requirements.txt and dependencies/locks/services-research.txt for the Research owner image",
     "isolation": "Independent hash-locked profiles for Python 3.11 and Python 3.12 without shared requirements mixing"
   },
   "exact_head_verification": {
-    "unit_and_adapter_tests": [
-      {
-        "test": "services/training-session/tests/test_compose_activation.py",
-        "passed": 2,
-        "result": "pass"
+    "interpreter_identities": {
+      "worker_test_runner": "Python 3.12.3 (.venv-pantheon/bin/python3, pytest-9.1.1, pluggy-1.6.0)",
+      "imitation_docker_image": "python:3.12-slim (3.12.15, GCC 14.2.0)"
+    },
+    "tested_lock_hashes": {
+      "services-learning-dspy.txt": "sha256:e8a9200aed20a78aef6b79e416b2c3307afeb211c1b0b3e5359467890921745f",
+      "services-learning-imitation.txt": "sha256:0bda7b4505a2b72073794ede3d95d1bc58ed68ba2a0511ca6c39516b2e43422f",
+      "services-learning-trl.txt": "sha256:6aa9aeab0d92e64abca15e1e921034355f80316b2a63013b68a156ee7bb1ea38",
+      "services-policy-learning.txt": "sha256:9171a596917aeada1e179c494e16f5fdd03237d71f4a57193f388ff38146694d",
+      "services-research-finrl.txt": "sha256:e403a94a0df20523d4be76c3226482b57b5a81511680baf36878f71f0efef0ff",
+      "services-research-qlib.txt": "sha256:12104b0e093e2c4f38bd65141a2823e864a0248310278d11b5752e3226536871",
+      "services-research-statsmodels.txt": "sha256:463823c829c6cff32ac9feae6be3944b76c0dc4cbd51be9afe42a186ce9ab3d4",
+      "services-research-vectorbt.txt": "sha256:b8c439442caf00ec1b4198b690f3b86c8c54db315d37f666d57a0b28a240e499",
+      "services-research-worker-gateway.txt": "sha256:f1dcb1a3a641e58e51810a8d13f5d1b037b464b2e815ae2813a52d7e8b062a9f",
+      "services-research.txt": "sha256:ac0b3c2c7abe0790b869a7cff98ea8f8cb959f5ad98024a23a1594df6f040be1",
+      "services-training-session.txt": "sha256:d51b354168e167a27fdfe3ea23975a693b7a3e0c9419f80735c5e325eb29a5be"
+    },
+    "upstream_wheel_provenance": {
+      "torch": {
+        "version": "2.14.1+cpu",
+        "wheel": "torch-2.14.1%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl",
+        "index": "https://download.pytorch.org/whl/cpu"
       },
-      {
-        "test": "services/learning/imitation/test_adapter.py + smoke_test.py",
-        "passed": 4,
-        "result": "pass"
+      "imitation": {
+        "version": "1.0.1",
+        "wheel": "imitation-1.0.1-py3-none-any.whl",
+        "source": "PyPI"
       },
-      {
-        "test": "services/learning/trl/test_adapter.py + test_activation_smoke.py + test_preflight.py + smoke_test.py",
-        "passed": 43,
-        "result": "pass"
+      "trl": {
+        "version": "1.14.1",
+        "wheel": "trl-1.14.1-py3-none-any.whl",
+        "source": "PyPI"
       },
-      {
-        "test": "services/research/qlib/test_adapter.py + test_preflight.py + smoke_test.py",
-        "passed": 30,
-        "result": "pass"
+      "pyqlib": {
+        "version": "0.9.7",
+        "source": "PyPI"
       },
-      {
-        "test": "services/learning/dspy/test_adapter.py + smoke_test.py",
-        "passed": 4,
-        "result": "pass"
-      },
-      {
-        "test": "services/research/statsmodels/test_adapter.py",
-        "passed": 24,
-        "skipped": 1,
-        "result": "pass"
-      },
-      {
-        "test": "services/research/vectorbt/test_adapter.py",
-        "passed": 33,
-        "result": "pass"
-      },
-      {
-        "test": "services/research/finrl/test_adapter.py",
-        "passed": 17,
-        "result": "pass"
-      },
-      {
-        "test": "services/research/tests/test_research_orchestrator_compose_activation.py",
-        "passed": 1,
-        "result": "pass"
-      },
-      {
-        "test": "services/policy-learning/tests/test_policy_learning_compose_activation.py",
-        "passed": 3,
-        "result": "pass"
-      },
-      {
-        "test": "services/research-worker-gateway/tests/test_research_worker_gateway_compose_activation.py",
-        "passed": 2,
-        "result": "pass"
-      },
-      {
-        "test": "services/research/quantlib/test_adapter.py (in QuantLib container)",
-        "passed": 36,
-        "skipped": 1,
-        "result": "pass"
+      "quantlib": {
+        "version": "1.43",
+        "source": "PyPI"
       }
-    ],
-    "container_builds": [
-      {
-        "service": "services/research-worker-gateway/Dockerfile",
-        "build_status": "pass with pip --no-cache-dir --require-hashes",
-        "runtime_probe": "container spawned and verified responding on /healthz"
+    },
+    "isolated_install_and_training_evidence": {
+      "imitation_docker_build": {
+        "command": "docker build -t pantheon/research-imitation:test -f services/research/imitation/Dockerfile .",
+        "image_id": "0776160728e7",
+        "size": "2.46GB",
+        "install_log_summary": "Successfully installed torch-2.14.1+cpu, imitation-1.0.1, gymnasium-0.29.1, stable-baselines3-2.2.1 with hashes"
+      },
+      "imitation_real_cpu_bc_smoke": {
+        "command": "docker run --rm -v /tmp/pantheon-worker-worktrees/pantheon/oss-research-packaging-20261003:/workspace -w /workspace pantheon/research-imitation:test python services/learning/imitation/smoke_test.py --backend imitation",
+        "exit_code": 0,
+        "backend": "imitation_bc",
+        "demonstrations_batch_size": 4,
+        "epochs": 1,
+        "metrics": {
+          "ent_loss": -0.000693,
+          "entropy": 0.693,
+          "l2_loss": 0.0,
+          "l2_norm": 70.5,
+          "loss": 0.696,
+          "neglogp": 0.697,
+          "prob_true_act": 0.498
+        },
+        "registry_id": "reg-alpha-mean-reversion-imitation-0.1.0",
+        "checksum": "sha256:c857cf482c3d469b26574708c7ef046cee8a6f1107922bac6a65fa79978168e5"
+      },
+      "imitation_unit_tests_in_image": {
+        "command": "docker run --rm -v /tmp/pantheon-worker-worktrees/pantheon/oss-research-packaging-20261003:/workspace -w /workspace/services/research/imitation pantheon/research-imitation:test python -m unittest test_bc_trainer.py test_dataset_builder.py",
+        "exit_code": 0,
+        "passed": 27
+      },
+      "dspy_unavailable_provider_behavior": {
+        "command": "python3 -c \"import adapter; adapter.DSPyBootstrapFewShotBackend().train(None, None)\"",
+        "observed_behavior": "Raises DSPyWorkflowError: DSPy backend requires PANTHEON_DSPY_MODEL or an explicit model_name (fails closed; no manufactured credentials)",
+        "preservation": "Genuine provider verification remains parent residual task obligation"
+      },
+      "trl_preference_smoke": {
+        "command": "python services/learning/trl/smoke_test.py --backend stub",
+        "exit_code": 0,
+        "passed": true,
+        "coupled_fix": "Pinned trl==1.14.1, AutoModelForCausalLM, sshleifer/tiny-gpt2, use_cpu=True"
+      },
+      "qlib_smoke": {
+        "command": "python services/research/qlib/smoke_test.py --backend stub",
+        "exit_code": 0,
+        "passed": true,
+        "coupled_fix": "Pinned pyqlib==0.9.7; worker entrypoint initialization remains parent obligation"
+      },
+      "training_session_compose": {
+        "command": "pytest services/training-session/tests/test_compose_activation.py",
+        "exit_code": 0,
+        "passed": 2
       }
-    ]
+    },
+    "test_battery_summary": {
+      "focused_pytest_passed": 76,
+      "focused_smoke_and_unit_total": 82,
+      "exit_code": 0
+    }
   },
   "scope_and_parent_obligations": {
     "excluded_from_child": [
