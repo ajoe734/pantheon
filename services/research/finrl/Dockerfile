@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 WORKDIR /app
 COPY requirements.txt ./requirements.txt
 ARG PANTHEON_INSTALL_UPSTREAM_DEPS=true
