@@ -782,3 +782,95 @@ def test_cancel_fence_is_not_overwritten_by_worker_start(monkeypatch: pytest.Mon
     assert actual["status"] == "canceled", "A completed task cancellation must fence a stale worker-start write"
     assert actual.get("cancellation_fence") is not None
     assert len(actual.get("artifact_refs") or []) == 0
+
+
+def test_concurrent_stage_executions_deduplicate_to_single_effect(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store = research_main.build_research_orchestrator_store(str(tmp_path / "owner"))
+    monkeypatch.setattr(research_main, "store", store)
+    from services.research.quantlib.adapter import quantlib_adapter
+    original = quantlib_adapter.run_quantlib_workflow
+    barrier = threading.Barrier(2, timeout=10)
+    calls = []
+
+    def synchronized_workflow(*args: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        barrier.wait()
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(quantlib_adapter, "run_quantlib_workflow", synchronized_workflow)
+    monkeypatch.setenv("PANTHEON_QUANTLIB_BACKEND", "stub")
+    client = TestClient(research_main.app)
+    task = client.post("/api/research-orchestrator/tasks", json={"title": "review", "objective": "same stage"}).json()
+    run = client.post(f"/api/research-orchestrator/tasks/{task['task_id']}/runs", json={
+        "adapter": "quantlib", "requested_mode": "stub", "dispatch_mode": "stub",
+        "input_refs": [{"type": "stage", "id": "same-stage"}],
+        "idempotency_key": "registered-run",
+    }).json()
+    from services.research.tests.test_research_orchestrator_http_service import _make_sample_quantlib_dataset
+    body = {
+        "stage": {"stage_id": "same-stage", "stage_type": "derivatives_pricing_risk"},
+        "plan": {"plan_id": "same-plan"},
+        "dataset": _make_sample_quantlib_dataset(),
+        "run_id": run["run_id"], "correlation_id": "same-correlation",
+        "idempotency_key": "same-key",
+    }
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(client.post, "/api/research-orchestrator/stages/derivatives_pricing_risk/execute", json=body) for _ in range(2)]
+        replies = [f.result(timeout=15) for f in futures]
+    assert [r.status_code for r in replies] == [200, 200]
+    artifacts = store.list_artifacts()
+    assert len(calls) == 1
+    assert len(artifacts) == 1
+    assert replies[0].json()["receipt"]["receipt_id"] == replies[1].json()["receipt"]["receipt_id"]
+    assert replies[0].json()["artifact_id"] == replies[1].json()["artifact_id"]
+
+
+def test_evidence_synthesis_resolves_artifacts_and_reaches_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store = research_main.build_research_orchestrator_store(str(tmp_path / "owner"))
+    monkeypatch.setattr(research_main, "store", store)
+    store.put_artifact({
+        "artifact_id": "art-prior-1", "id": "art-prior-1", "run_id": "prior-run",
+        "artifact_family": "prototype_backtest_artifact", "payload": {"summary": "sharpe 1.8"},
+    })
+    client = TestClient(research_main.app)
+    task = client.post("/api/research-orchestrator/tasks", json={"title": "synth", "objective": "synthesis"}).json()
+    run = client.post(f"/api/research-orchestrator/tasks/{task['task_id']}/runs", json={
+        "adapter": "openclaw_result_synthesis", "requested_mode": "stub", "dispatch_mode": "stub",
+        "input_refs": [{"type": "stage", "id": "stage-synth"}],
+        "idempotency_key": "synth-run",
+    }).json()
+
+    response = client.post("/api/research-orchestrator/stages/evidence_synthesis/execute", json={
+        "stage": {"stage_id": "stage-synth", "stage_type": "evidence_synthesis"},
+        "plan": {"plan_id": "plan-synth"},
+        "run_id": run["run_id"],
+        "correlation_id": "corr-synth",
+        "artifact_refs": [{"artifact_id": "art-prior-1"}],
+    })
+    assert response.status_code == 200
+    res_data = response.json()
+    assert res_data["status"] == "succeeded"
+    assert res_data["receipt"]["executor"]
+    assert res_data["artifact_id"]
+    art = store.get_artifact(res_data["artifact_id"])
+    assert art is not None
+    assert art["payload"]["synthesized_by"] == "openclaw_result_synthesis"
+    assert len(art["payload"]["input_artifacts"]) == 1
+    assert art["payload"]["input_artifacts"][0]["artifact_id"] == "art-prior-1"
+
+
+def test_evidence_synthesis_unavailable_provider_fails_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store = research_main.build_research_orchestrator_store(str(tmp_path / "owner"))
+    monkeypatch.setattr(research_main, "store", store)
+    monkeypatch.setenv("PANTHEON_OPENCLAW_UNAVAILABLE", "1")
+    client = TestClient(research_main.app)
+    response = client.post("/api/research-orchestrator/stages/evidence_synthesis/execute", json={
+        "stage": {"stage_id": "stage-synth", "stage_type": "evidence_synthesis"},
+        "plan": {"plan_id": "plan-synth"},
+        "run_id": "r-synth-fail",
+        "correlation_id": "corr-fail",
+        "artifact_refs": [{"artifact_id": "art-prior-1"}],
+    })
+    assert response.status_code == 503
+    assert "unavailable" in response.json()["detail"].lower()
