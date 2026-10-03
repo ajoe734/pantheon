@@ -132,13 +132,16 @@ def record_downstream_outcome(url: str, ok: bool, status_code: int, detail: Opti
 
 def _token_tenants(token: Optional[str]) -> Tuple[Optional[str], set[str]]:
     try:
+        from services.control_plane.bff.auth.policy import (
+            TENANT_ALLOWED_CLAIM_PATHS,
+            TENANT_PRIMARY_CLAIM_PATHS,
+            identity_claim_strings,
+        )
         raw = str(token or "").removeprefix("Bearer ").strip().split(".")[1]
         c = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
-        p = str(c.get("tenant_id") or c.get("tenantId") or c.get("tid") or "").strip() or None
-        al = {p} if p and p != "*" else set()
-        for k in ("allowed_tenants", "allowedTenants", "tenant_ids", "tenantIds", "tenants"):
-            v = c.get(k)
-            al.update(str(t).strip() for t in (v if isinstance(v, (list, tuple, set)) else str(v or "").split(",")) if str(t).strip())
+        primaries = identity_claim_strings(c, TENANT_PRIMARY_CLAIM_PATHS)
+        p = primaries[0] if primaries else None
+        al = set(identity_claim_strings(c, TENANT_ALLOWED_CLAIM_PATHS))
         return (p if p != "*" else None), al
     except Exception:
         return None, set()

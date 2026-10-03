@@ -728,9 +728,18 @@ def _claim_value_as_strings(value: Any) -> List[str]:
     return [str(value).strip()]
 
 
-def identity_claim_strings(identity: OperatorIdentity, paths: List[str]) -> List[str]:
+TENANT_PRIMARY_CLAIM_PATHS = ["tenant_id", "tenantId", "tenant.id", "tid", "org_id", "organization.id", "organization_id", "tenant_ids", "tenantIds"]
+TENANT_ALLOWED_CLAIM_PATHS = ["allowed_tenants", "allowedTenants", "tenant_ids", "tenantIds", "tenants", "tenant_id", "tenantId", "tenant.id", "tid", "org_id", "organization.id", "organization_id"]
+
+
+def identity_claim_strings(identity: Any, paths: List[str]) -> List[str]:
     values: List[Any] = []
-    claims = identity.claims if isinstance(identity.claims, dict) else {}
+    if isinstance(identity, dict):
+        claims = identity
+    elif hasattr(identity, "claims") and isinstance(identity.claims, dict):
+        claims = identity.claims
+    else:
+        claims = {}
     for path in paths:
         values.extend(_claim_value_as_strings(_claim_path_value(claims, path)))
     return dedupe_nonblank_strings(values)
@@ -741,8 +750,8 @@ def bff_me_tenant_payload(
     *,
     requested_tenant: Optional[str] = None,
 ) -> Dict[str, Any]:
-    claim_default = first_nonblank(*identity_claim_strings(identity, ["tenant_id", "tenantId", "tenant.id", "tid", "org_id", "organization.id", "tenant_ids", "tenantIds"]))
-    claim_allowed = identity_claim_strings(identity, ["allowed_tenants", "allowedTenants", "tenant_ids", "tenantIds", "tenants", "tenant_id", "tenantId", "tenant.id", "tid", "org_id"])
+    claim_default = first_nonblank(*identity_claim_strings(identity, TENANT_PRIMARY_CLAIM_PATHS))
+    claim_allowed = identity_claim_strings(identity, TENANT_ALLOWED_CLAIM_PATHS)
     is_strict = getattr(identity, "token_kind", "") in ("jwt", "structured", "cookie") or bff_auth_mode() == "strict"
     env_default = first_nonblank(os.getenv("PANTHEON_BFF_TENANT_ID"), os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"), os.getenv("PANTHEON_TENANT_ID"))
     allowed_tenants = list(claim_allowed) if is_strict else (claim_allowed or env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [env_default or "pantheon-dev"])

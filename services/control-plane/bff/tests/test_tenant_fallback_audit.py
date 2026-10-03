@@ -1545,3 +1545,57 @@ def test_mounted_assistant_audit_projection_scopes_to_the_jwt_tenant(monkeypatch
         assert response.status_code == 201 and leaked
 
 
+@pytest.mark.parametrize("shape", [
+    "tenant_id", "tenantId", "tid", "tenant.id", "org_id", "organization.id",
+    "organization_id", "tenant_ids", "tenantIds", "allowed_tenants",
+    "allowedTenants", "tenants",
+])
+@pytest.mark.parametrize("scope", ["same", "foreign"])
+def test_signed_supported_claims_are_preserved(monkeypatch, shape, scope):
+    tenant = "pantheon-dev" if scope == "same" else "foreign-tenant"
+    claims = {
+        "sub": "claim-compat-operator",
+        "roles": ["operator"],
+        "exp": int(time.time()) + 600,
+        "iss": _ISSUER,
+        "aud": _AUDIENCE,
+    }
+    if "." in shape:
+        outer, inner = shape.split(".")
+        claims[outer] = {inner: tenant}
+    elif shape in {"tenant_ids", "tenantIds", "allowed_tenants", "allowedTenants", "tenants"}:
+        claims[shape] = [tenant]
+    else:
+        claims[shape] = tenant
+    token = encode_jwt_hs256(claims, secret=_SECRET)
+    auth_header = f"Bearer {token}"
+    if scope == "same":
+        assert adapter_base.bound_tenant({"tenant_id": "pantheon-dev"}, tenant_id="pantheon-dev", auth_token=auth_header) == "pantheon-dev"
+        assert adapter_base.bound_tenant({}, tenant_id="pantheon-dev", auth_token=auth_header) == "pantheon-dev"
+    else:
+        with pytest.raises(ActionUnavailableError):
+            adapter_base.bound_tenant({"tenant_id": "pantheon-dev"}, tenant_id="pantheon-dev", auth_token=auth_header)
+
+
+@pytest.mark.parametrize("shape", [
+    "tenant_id", "tenantId", "tid", "tenant.id", "org_id", "organization.id",
+    "organization_id", "tenant_ids", "tenantIds", "allowed_tenants",
+    "allowedTenants", "tenants",
+])
+def test_bff_me_tenant_payload_supported_claims(shape):
+    from services.control_plane.bff.auth.policy import bff_me_tenant_payload
+    from services.control_plane.bff.models import OperatorIdentity
+    claims = {"sub": "test-user", "roles": ["operator"]}
+    if "." in shape:
+        outer, inner = shape.split(".")
+        claims[outer] = {inner: "pantheon-dev"}
+    elif shape in {"tenant_ids", "tenantIds", "allowed_tenants", "allowedTenants", "tenants"}:
+        claims[shape] = ["pantheon-dev"]
+    else:
+        claims[shape] = "pantheon-dev"
+    identity = OperatorIdentity(operator_id="test-user", roles=["operator"], claims=claims, token_kind="jwt")
+    payload = bff_me_tenant_payload(identity)
+    assert "pantheon-dev" in payload["allowed_ids"]
+
+
+
