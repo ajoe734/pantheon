@@ -126,3 +126,36 @@ def test_obsolete_submit_route_is_retired():
         response = client.post(f"{URL}/anything/submit", headers=HEADERS, json={})
         assert response.status_code == 410, response.text
         assert commands._get_all_commands() == []
+
+
+@pytest.mark.parametrize(("over", "state"), [
+    ({}, "proposed"),
+    ({"decision_state": "under_review", "metadata": {"approvals": [{"actor_id": "a"}]}}, "under_review"),
+    ({"decision_state": "decided", "decision": "approved", "decided_at": "t", "actor_id": "b"}, "decided"),
+])
+def test_ranking_link_resolves_to_the_same_owner_decision_in_human_inbox(saved_proposal, over, state):
+    with gov_test._isolated_client() as (client, store, _commands):
+        ref = saved_proposal(client, {"decision_id": "pev-1", "to_state": "frozen"})
+        row = _decision(ref, **over)
+        store.get_approval_decision = lambda decision_id: row if decision_id == "pev-1" else None
+        store.list_approval_queue_items = lambda **_: [{**row, "decision_type": "ApprovalDecision"}]
+        rec, review = _both(client)
+        link = rec["links"]["human_inbox"]
+        assert link == review["links"]["human_inbox"] == "/bff/management/human-inbox/approval:pev-1"
+        assert review["human_inbox_id"] == "approval:pev-1"
+        assert rec["governance"]["decision_type"] == "ApprovalDecision"
+        assert "human_gate_decision" not in rec["governance"]["destinations"]
+        detail = client.get(link, headers=HEADERS)
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["data"]["approval_decision_id"] == "pev-1"
+        assert detail.json()["data"]["status"] == state
+        listed = client.get("/bff/management/human-inbox", headers=HEADERS, params={"source_type": "approval"})
+        assert [i["source_id"] for i in listed.json()["data"]["items"]] == ["pev-1"]
+
+
+def test_unavailable_owner_has_no_inbox_handoff(saved_proposal):
+    with gov_test._isolated_client() as (client, store, _commands):
+        saved_proposal(client, {"decision_id": "pev-1", "to_state": "frozen"})
+        store.get_approval_decision = lambda decision_id: None
+        _rec, review = _both(client)
+        assert review["human_inbox_id"] is None and review["links"]["human_inbox"] is None

@@ -5729,6 +5729,8 @@ def _promotion_review_item_from_recommendation(
     target_stage = str(stage_path.get("target_stage") or "governance_review")
     status = str(owner_state.get("status") or "advisory_report")
     decision_status = str(owner_state.get("decision_status") or "not_applicable")
+    owner = owner_state.get("owner_decision") or {}
+    inbox_id = f"approval:{owner['decision_id']}" if owner.get("available") else None
     governance = {
         "requires_human_gate_decision": True,
         "decision_status": decision_status,
@@ -5774,7 +5776,7 @@ def _promotion_review_item_from_recommendation(
         "decision_status": decision_status,
         "submitted": bool(owner_state.get("submitted")),
         "submit_status": owner_state.get("submit_status"),
-        "human_inbox_id": f"{_PROMOTION_REVIEW_TARGET_PREFIX}{review_id}",
+        "human_inbox_id": inbox_id,
         "allowed_decisions": sorted(_PROMOTION_REVIEW_DECISIONS),
         "owner_decision": owner_state.get("owner_decision"),
         "allowedActions": {
@@ -5802,7 +5804,7 @@ def _promotion_review_item_from_recommendation(
             "recommendation": "/bff/management/quarterly-ranking/recommendations",
             "detail": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}",
             "decisions": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}/decisions",
-            "human_inbox": f"/bff/management/human-inbox/{quote(_promotion_review_target_id(review_id), safe='')}",
+            "human_inbox": f"/bff/management/human-inbox/{quote(inbox_id, safe=':')}" if inbox_id else None,
         },
     }
     return item
@@ -12900,10 +12902,10 @@ def _pm12_quarterly_recommendation_item(
 
     governance = {
         "requires_human_gate_decision": True,
-        "destinations": ["human_inbox", "governance_queue", "human_gate_decision"],
+        "destinations": ["human_inbox", "governance_queue"],
         "human_inbox_route": "/bff/management/human-inbox",
         "governance_queue_route": "/api/v1/operator/governance/approval-queue",
-        "decision_type": "HumanGateDecision",
+        "decision_type": "ApprovalDecision",
         "live_capital_mutation": False,
     }
     return {
@@ -12993,7 +12995,11 @@ def _pm12_quarterly_recommendation_item(
         "policy": "read_only_governance_advisory",
         "links": {
             "persona": f"/bff/personas/{persona_id}",
-            "human_inbox": "/bff/management/human-inbox",
+            "human_inbox": (
+                f"/bff/management/human-inbox/approval:{quote(str(request['decision_id']), safe='')}"
+                if isinstance(request := saved.get("governance_request"), dict) and request.get("decision_id")
+                else "/bff/management/human-inbox"
+            ),
             "governance_queue": "/api/v1/operator/governance/approval-queue",
         },
     }

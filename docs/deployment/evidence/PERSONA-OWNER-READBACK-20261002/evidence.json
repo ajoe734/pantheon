@@ -13,15 +13,16 @@
     "ranking_item.human_review_state": "{status, decision_status, submitted, submit_status, decision, decided_at, decided_by, owner_decision}",
     "promotion_review_item": "status in advisory_report|pending_human_gate|decision_accepted|owner_unavailable; owner_decision={decision_id, available, to_state, decision_state, version, vote_count, proposal_content_digest} or {decision_id, available:false}; allowedActions all false; links.submit removed",
     "submit_route": "POST .../recommendations/{id}/submit -> 410 ACTION_RETIRED",
-    "decisions": "taken only in Governance (/bff/approvals/{decision_id}/decide); no BFF HumanGateDecision"
+    "decisions": "taken only in Governance (/bff/approvals/{decision_id}/decide); no BFF HumanGateDecision",
+    "human_inbox_handoff": "links.human_inbox and human_inbox_id = approval:{decision_id} (existing Inbox approval item, source_type=approval) only when owner_decision.available; null otherwise. governance.decision_type=ApprovalDecision; destinations=[human_inbox, governance_queue]; no promotion_review Inbox identity."
   },
   "tests": {
     "command": "pytest services/control-plane/bff/tests/test_persona_governance_owner_readback.py services/control-plane/bff/tests/test_persona_evaluator_projection.py services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py",
-    "result": "pass (readback 10 cases incl. pending/first vote/final, conflict, foreign tenant, missing/failing owner, refresh + independent app, 410 route; stale mounted_ranking fake governance fixed to echo the proposal body)"
+    "result": "pass (readback 10 cases incl. pending/first vote/final, conflict, foreign tenant, missing/failing owner, refresh + independent app, 410 route; stale mounted_ranking fake governance fixed to echo the proposal body); plus mounted Inbox detail/list handoff for pending/first vote/final and unavailable owner (23 passed)"
   },
   "not_verified_or_residual": [
     "test_bff_promotion_review_governance.py, test_ppl_alloc_012_ranking_projection.py still fail (38 across 4 related files, 40 before): they exercise the already-retired submit command or a stale CommandAdapterService test-support kwarg (final_contract_idempotency); outside scoped artifacts",
-    "Human Inbox list contributor (governance/human_inbox.py, main.py) still derives from legacy submit commands; not in scoped artifacts, needs separate disposition",
+    "Inbox approval item depends on the approval queue read store listing the evaluator ApprovalDecision (fixture-verified; no governance/human_inbox.py edit needed)",
     "personas/service.py helpers ~2338/~3330 (AC4 tenant handoff): not traced to a retained-flow exploit in this change; caller evidence not collected",
     "pm12/service.py and main.py still import legacy submit resolvers via command_adapters/preconditions.py; removal needs out-of-scope edits",
     "no hosted calls; generated schemas untouched"
