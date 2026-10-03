@@ -11,19 +11,20 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 # service -> (env key, resolved tenant when only PANTHEON_BFF_TENANT_ID=tenant-dev is set)
-# reconciliation-drift-incident-listener stays "default": it must match
-# reconciliation-drift-svc, which compose never configures with a tenant and
-# whose _configured_tenant_id() falls back to "default".
+# reconciliation-drift-incident-listener reads from incidents, which already
+# resolves the PANTHEON_TENANT_ID -> PANTHEON_BFF_TENANT_ID chain.
 CASES = {
     "agora-interaction-worker": ("PANTHEON_TENANT_ID", "tenant-dev"),
     "training-session-preview-worker": ("TRAINING_SESSION_TENANT_ID", "tenant-dev"),
-    "reconciliation-drift-incident-listener": ("PANTHEON_TENANT_ID", "default"),
+    "reconciliation-drift-incident-listener": ("PANTHEON_TENANT_ID", "tenant-dev"),
 }
 
 
 def _render(env: dict[str, str]) -> dict:
-    if shutil.which("docker") is None:
-        pytest.skip("docker unavailable")
+    if shutil.which("docker") is None or subprocess.run(
+        ["docker", "compose", "version"], capture_output=True, check=False
+    ).returncode != 0:
+        pytest.skip("docker compose unavailable")
     result = subprocess.run(
         ["docker", "compose", "-f", "docker-compose.yml", "config", "--format", "json"],
         cwd=ROOT,
@@ -32,8 +33,7 @@ def _render(env: dict[str, str]) -> dict:
         text=True,
         check=False,
     )
-    if result.returncode != 0:
-        pytest.skip(f"compose config unavailable: {result.stderr[:200]}")
+    assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)["services"]
 
 
