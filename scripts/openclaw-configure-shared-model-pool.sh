@@ -47,6 +47,15 @@ if compose exec -T -u node openclaw-gateway node -e \
   # The argv contains only the literal reference, never the credential value.
   openclaw config set --batch-json "$CLAUDE_TOKEN_BATCH" >/dev/null
 fi
+# Dedicated deny-all agent for the structured extraction route (adapter
+# STRUCTURED_AGENT_ID). Upsert so main and other agents stay unchanged.
+# Fail closed: a read/shape error must never replace the whole registry.
+agents_cfg="$(openclaw config get agents --json)"
+agents_list="$(jq -ce '(if has("list") then .list else [] end) | if type == "array" then . else error("agents.list is not an array") end
+  | if any(.[]; .id == "structured-extraction") then
+      map(if .id == "structured-extraction" then .tools = ((.tools // {}) + {"deny":["*"]}) else . end)
+    else . + [{"id":"structured-extraction","tools":{"deny":["*"]}}] end' <<<"$agents_cfg")"
+openclaw config set agents.list "$agents_list" --strict-json --replace >/dev/null
 openclaw config validate
 
 # OpenClaw reports that a restart is required after config mutation. Apply it
@@ -73,6 +82,8 @@ responses_enabled="$(openclaw config get gateway.http.endpoints.responses.enable
 jq -e '. == "anthropic/claude-opus-4-8"' <<<"$primary" >/dev/null
 jq -e '. == ["openai/gpt-5.6-sol", "openai/gpt-5.5"]' <<<"$fallbacks" >/dev/null
 jq -e '. == true' <<<"$responses_enabled" >/dev/null
+openclaw config get agents.list --json \
+  | jq -e 'map(select(.id == "structured-extraction")) | length == 1 and .[0].tools.deny == ["*"]' >/dev/null
 for model_ref in \
   openai/gpt-5.6-sol \
   openai/gpt-5.5 \

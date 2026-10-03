@@ -539,7 +539,7 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
         import main as adapter_main
         with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "_gateway_call", return_value={
             "valid": True, "config": {"agents": {"list": [
-                {"id": adapter_main.OPENCLAW_DEFAULT_AGENT_ID, "tools": {"deny": ["*"]}},
+                {"id": adapter_main.OPENCLAW_STRUCTURED_AGENT_ID, "tools": {"deny": ["*"]}},
             ]}},
         }) as rpc:
             yield rpc
@@ -547,11 +547,11 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
     @pytest.mark.parametrize("snapshot", [
         None, {}, {"valid": False},
         {"valid": True, "config": {"agents": {"list": []}}},
-        {"valid": True, "config": {"agents": {"list": [{"id": "main"}]}}},
+        {"valid": True, "config": {"agents": {"list": [{"id": "structured-extraction"}]}}},
         {"valid": True, "config": {"agents": {"list": [{"id": "other", "tools": {"deny": ["*"]}}]}}},
-        {"valid": True, "config": {"agents": {"list": [{"id": "main", "tools": {"deny": ["exec"]}}]}}},
+        {"valid": True, "config": {"agents": {"list": [{"id": "structured-extraction", "tools": {"deny": ["exec"]}}]}}},
         {"valid": True, "config": {"agents": {"list": [
-            {"id": "main", "tools": {"deny": ["*"]}}, {"id": "main"},
+            {"id": "structured-extraction", "tools": {"deny": ["*"]}}, {"id": "structured-extraction"},
         ]}}},
     ])
     def test_unverified_policy_blocks_before_dispatch(self, gateway_policy, snapshot):
@@ -693,7 +693,7 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
         assert resp.status_code == 200, resp.text
         assert resp.json()["data"]["output"]["structured_data"] == {"title": "ok"}
         assert mocked.call_args.kwargs["extraction_schema"] == EXTRACTION_SCHEMA
-        assert mocked.call_args.kwargs["agent_id"] == adapter_main.OPENCLAW_DEFAULT_AGENT_ID
+        assert mocked.call_args.kwargs["agent_id"] == adapter_main.OPENCLAW_STRUCTURED_AGENT_ID
         assert 0 < mocked.call_args.kwargs["timeout_seconds"] <= adapter_main._OPENCLAW_AGENT_PROVIDER._timeout
 
     def test_schema_invalid_tool_call_is_typed_422_never_500(self):
@@ -777,7 +777,7 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
                 json={
                     "prompt": "extract",
                     "extraction_schema": EXTRACTION_SCHEMA,
-                    "agent_id": adapter_main.OPENCLAW_DEFAULT_AGENT_ID,
+                    "agent_id": adapter_main.OPENCLAW_STRUCTURED_AGENT_ID,
                 },
                 headers={"X-Operator-Id": "operator-1"},
             )

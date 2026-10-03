@@ -69,6 +69,159 @@ def test_port_initialization_and_surface_status():
     assert surface["source"] == "missing"
 
 
+class _FakeResearchWriteOwner:
+    """Minimal stand-in for ``services.research.write_owner.ResearchWriteOwner``.
+
+    BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001 and BFF-RESEARCH-SINGLE-OWNER-001:
+    notes, tickets, and experiments persistence belongs exclusively to
+    ResearchWriteOwner / Research service. This fake is injected via the port's
+    ``research_write_owner`` constructor kwarg (dependency injection for testing),
+    not a production fallback.
+    """
+
+    _CANCELABLE = frozenset({"queued", "running"})
+
+    def __init__(self) -> None:
+        self._experiments: dict[str, dict] = {}
+        self._notes: dict[str, dict] = {}
+        self._tickets: dict[str, dict] = {}
+
+    def create_research_note(self, note: dict) -> dict:
+        note_id = str(note.get("note_id") or "").strip()
+        payload = dict(note)
+        self._notes[note_id] = payload
+        return payload
+
+    def create_research_ticket(
+        self,
+        *,
+        title: str,
+        description: str,
+        priority: str,
+        owner: str,
+        actor_id: str,
+        created_at: str | None = None,
+    ) -> dict:
+        timestamp = created_at or _utc_now_rfc3339()
+        ticket_id = f"rt-{timestamp[:10].replace('-', '')}-{len(self._tickets) + 1:03d}"
+        ticket = {
+            "ticket_id": ticket_id,
+            "title": title,
+            "description": description,
+            "status": "open",
+            "priority": priority,
+            "owner": owner,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "closed_at": None,
+            "archived_at": None,
+            "lifecycle_history": [
+                {
+                    "from_status": None,
+                    "to_status": "open",
+                    "transitioned_at": timestamp,
+                    "transitioned_by": actor_id,
+                }
+            ],
+            "linked_experiments": [],
+            "linked_artifacts": [],
+            "allowedActions": {"canEdit": True, "canClose": True, "canArchive": False},
+        }
+        self._tickets[ticket_id] = ticket
+        return dict(ticket)
+
+    def patch_research_ticket(
+        self,
+        ticket_id: str,
+        *,
+        patch: dict,
+        actor_id: str,
+        updated_at: str | None = None,
+    ) -> dict | None:
+        ticket = self._tickets.get(str(ticket_id))
+        if ticket is None:
+            return None
+        timestamp = updated_at or _utc_now_rfc3339()
+        for f in {"title", "description", "priority", "owner"}:
+            if f in patch:
+                ticket[f] = patch[f]
+        next_status = patch.get("status")
+        if next_status is not None and next_status != ticket.get("status"):
+            prev_status = ticket.get("status")
+            ticket["status"] = next_status
+            if next_status == "closed":
+                ticket["closed_at"] = timestamp
+                ticket["archived_at"] = None
+                ticket["allowedActions"] = {"canEdit": False, "canClose": False, "canArchive": True}
+            elif next_status == "archived":
+                ticket["archived_at"] = timestamp
+                ticket["allowedActions"] = {"canEdit": False, "canClose": False, "canArchive": False}
+            else:
+                if next_status in {"open", "in_progress"}:
+                    ticket["closed_at"] = None
+                if next_status != "archived":
+                    ticket["archived_at"] = None
+                ticket["allowedActions"] = {"canEdit": True, "canClose": True, "canArchive": False}
+            ticket.setdefault("lifecycle_history", []).append({
+                "from_status": prev_status,
+                "to_status": next_status,
+                "transitioned_at": timestamp,
+                "transitioned_by": actor_id,
+            })
+        ticket["updated_at"] = timestamp
+        return dict(ticket)
+
+    def create_research_experiment(
+        self,
+        *,
+        ticket_id,
+        experiment_name,
+        strategy_selector,
+        parameter_set,
+        run_config,
+        launch_context,
+        queued_at=None,
+    ):
+        timestamp = queued_at or _utc_now_rfc3339()
+        date_part = timestamp[:10].replace("-", "")
+        exp_id = f"exp-{date_part}-{len(self._experiments) + 1:03d}"
+        record = {
+            "experiment_id": exp_id,
+            "ticket_id": ticket_id,
+            "experiment_name": experiment_name,
+            "status": "queued",
+            "queued_at": timestamp,
+            "strategy_selector": strategy_selector,
+            "parameter_set": parameter_set,
+            "run_config": run_config,
+            "launch_context": launch_context,
+            "allowedActions": {"canCancel": True},
+        }
+        self._experiments[exp_id] = record
+        return dict(record)
+
+    def get_research_experiment(self, experiment_id):
+        record = self._experiments.get(str(experiment_id))
+        return dict(record) if record else None
+
+    def list_research_experiments(self, *, ticket_id=None, status=None):
+        items = list(self._experiments.values())
+        if ticket_id:
+            items = [e for e in items if e.get("ticket_id") == ticket_id]
+        if status:
+            items = [e for e in items if e.get("status") == status]
+        return [dict(e) for e in items]
+
+    def cancel_research_experiment(self, experiment_id, *, completed_at=None):
+        record = self._experiments.get(str(experiment_id))
+        if record is None or record.get("status") not in self._CANCELABLE:
+            return None
+        record["status"] = "canceled"
+        record["completed_at"] = completed_at or _utc_now_rfc3339()
+        record["allowedActions"] = {"canCancel": False}
+        return dict(record)
+
+
 def test_research_notes_crud_and_sorting():
     port = DefaultResearchKnowledgeSourcePort(
         research_notes_store={
@@ -86,7 +239,8 @@ def test_research_notes_crud_and_sorting():
                 "created_at": "2026-08-25T12:00:00Z",
                 "updated_at": "2026-08-26T14:00:00Z",
             },
-        }
+        },
+        research_write_owner=_FakeResearchWriteOwner(),
     )
     assert port.dataset_source("research_notes") == "typed_store"
 
@@ -279,7 +433,7 @@ def test_institutional_memory_integration():
 
 
 def test_research_tickets_lifecycle():
-    port = DefaultResearchKnowledgeSourcePort()
+    port = DefaultResearchKnowledgeSourcePort(research_write_owner=_FakeResearchWriteOwner())
 
     # Create ticket
     created = port.create_research_ticket(
@@ -313,71 +467,23 @@ def test_research_tickets_lifecycle():
     assert tickets[0]["ticket_id"] == ticket_id
 
 
-class _FakeResearchWriteOwner:
-    """Minimal stand-in for ``services.research.write_owner.ResearchWriteOwner``.
+def test_research_notes_and_tickets_fail_closed_without_write_owner():
+    port = DefaultResearchKnowledgeSourcePort()
 
-    BFF-RESEARCH-JOBS-OWNER-BINDING-CORRECTIVE-001 deletes the port's own
-    in-memory ``_experiments`` overlay: experiment persistence now belongs
-    exclusively to ``ResearchWriteOwner`` (Postgres). This fake is injected via
-    the port's ``research_write_owner`` constructor kwarg (legitimate
-    dependency injection for a unit test), not a hidden fallback the
-    production code reaches for on its own.
-    """
+    with pytest.raises(ResearchWriteOwnerUnavailableError):
+        port.create_research_note({"note_id": "n1", "title": "Fail"})
 
-    _CANCELABLE = frozenset({"queued", "running"})
+    with pytest.raises(ResearchWriteOwnerUnavailableError):
+        port.create_research_ticket(
+            title="Fail Ticket",
+            description="desc",
+            priority="high",
+            owner="Antigravity",
+            actor_id="op1",
+        )
 
-    def __init__(self) -> None:
-        self._experiments: dict[str, dict] = {}
-
-    def create_research_experiment(
-        self,
-        *,
-        ticket_id,
-        experiment_name,
-        strategy_selector,
-        parameter_set,
-        run_config,
-        launch_context,
-        queued_at=None,
-    ):
-        timestamp = queued_at or _utc_now_rfc3339()
-        date_part = timestamp[:10].replace("-", "")
-        exp_id = f"exp-{date_part}-{len(self._experiments) + 1:03d}"
-        record = {
-            "experiment_id": exp_id,
-            "ticket_id": ticket_id,
-            "experiment_name": experiment_name,
-            "status": "queued",
-            "queued_at": timestamp,
-            "strategy_selector": strategy_selector,
-            "parameter_set": parameter_set,
-            "run_config": run_config,
-            "launch_context": launch_context,
-            "allowedActions": {"canCancel": True},
-        }
-        self._experiments[exp_id] = record
-        return dict(record)
-
-    def get_research_experiment(self, experiment_id):
-        record = self._experiments.get(str(experiment_id))
-        return dict(record) if record else None
-
-    def list_research_experiments(self, *, ticket_id=None, status=None):
-        items = list(self._experiments.values())
-        if ticket_id:
-            items = [e for e in items if e.get("ticket_id") == ticket_id]
-        if status:
-            items = [e for e in items if e.get("status") == status]
-        return [dict(e) for e in items]
-
-    def cancel_research_experiment(self, experiment_id, *, completed_at=None):
-        record = self._experiments.get(str(experiment_id))
-        if record is None or record.get("status") not in self._CANCELABLE:
-            return None
-        record["status"] = "canceled"
-        record["completed_at"] = completed_at or _utc_now_rfc3339()
-        record["allowedActions"] = {"canCancel": False}
-        return dict(record)
+    with pytest.raises(ResearchWriteOwnerUnavailableError):
+        port.patch_research_ticket("rt-1", patch={"status": "closed"}, actor_id="op1")
 
 
 def test_research_analyses_and_experiments_no_overlays():

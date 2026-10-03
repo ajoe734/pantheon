@@ -1665,7 +1665,6 @@ def mount_bff_routers(
     app.state.workshop_store = agora_router.workshop_store
     app.state.proposal_store = agora_router.proposal_store
     app.state.research_store = getattr(agora_router, "research_store", None)
-    app.state.research_dispatcher = getattr(agora_router, "research_dispatcher", None)
     app.state.dataset_store = getattr(agora_router, "dataset_store", None)
     app.state.assistant_session_store = asst_session_store
     app.state.assistant_transcript_store = asst_transcript_store
