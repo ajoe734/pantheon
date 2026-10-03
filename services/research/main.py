@@ -2106,6 +2106,13 @@ def list_run_proposals(run_id: str) -> List[Dict[str, Any]]:
 from services.research.constants import ALLOWLISTED_STAGE_BACKENDS, ALLOWLISTED_STAGE_TYPES
 
 
+def _first_present(*sources: Any) -> Any:
+    for s in sources:
+        if s is not None:
+            return s
+    return None
+
+
 def _extract_artifact_ids(raw_refs: Any) -> List[str]:
     if not raw_refs:
         return []
@@ -2133,10 +2140,7 @@ def execute_research_stage(
 ) -> Dict[str, Any]:
     """Execute an allowlisted research stage on the authentic research backend."""
     if not body or not isinstance(body, dict):
-        raise HTTPException(
-            status_code=400,
-            detail="Missing required execution request body",
-        )
+        raise HTTPException(status_code=400, detail="Missing required execution request body")
 
     stage = body.get("stage")
     plan = body.get("plan")
@@ -2248,21 +2252,15 @@ def execute_research_stage(
         raise HTTPException(status_code=status_code, detail=msg) from cause
 
     if stage_type not in ALLOWLISTED_STAGE_TYPES:
-        raise HTTPException(
-            status_code=400, detail=f"Unknown or non-allowlisted research stage '{stage_type}'. Allowed: {sorted(ALLOWLISTED_STAGE_TYPES)}"
-        )
+        raise HTTPException(status_code=400, detail=f"Unknown or non-allowlisted research stage '{stage_type}'. Allowed: {sorted(ALLOWLISTED_STAGE_TYPES)}")
 
     backend_name = ALLOWLISTED_STAGE_BACKENDS.get(stage_type, stage_type)
     if os.getenv(f"AGORA_RESEARCH_{stage_type.upper()}_UNAVAILABLE") == "1" or os.getenv(f"AGORA_RESEARCH_{backend_name.upper()}_UNAVAILABLE") == "1":
-        raise HTTPException(
-            status_code=503, detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable"
-        )
+        raise HTTPException(status_code=503, detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is currently unavailable")
 
     SUPPORTED_EXECUTION_STAGES = {"prototype_backtest", "econometric_validation", "derivatives_pricing_risk", "evidence_synthesis"}
     if stage_type not in SUPPORTED_EXECUTION_STAGES and backend_name not in {"vectorbt", "statsmodels", "quantlib", "openclaw_result_synthesis"}:
-        raise HTTPException(
-            status_code=503, detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is absent or not configured"
-        )
+        raise HTTPException(status_code=503, detail=f"Backend execution owner for stage '{stage_type}' ({backend_name}) is absent or not configured")
 
     persisted_refs = (
         ((persisted_stage or {}).get("input_refs") or [])
@@ -2316,19 +2314,19 @@ def execute_research_stage(
     effective_stage_params = dict(persisted_stage_params) if has_persisted_stage else dict(caller_stage_params)
     stage["parameters"] = effective_stage_params
 
-    persisted_art_candidates = (
-        ((persisted_stage or {}).get("artifact_refs") if isinstance(persisted_stage, dict) else None)
-        or ((persisted_stage or {}).get("approved_artifact_refs") if isinstance(persisted_stage, dict) else None)
-        or (persisted_params.get("artifact_refs") if isinstance(persisted_params, dict) else None)
-        or (persisted_plan.get("artifact_refs") if isinstance(persisted_plan, dict) else None)
+    persisted_art_candidates = _first_present(
+        (persisted_stage.get("artifact_refs") if isinstance(persisted_stage, dict) and "artifact_refs" in persisted_stage else None),
+        (persisted_stage.get("approved_artifact_refs") if isinstance(persisted_stage, dict) and "approved_artifact_refs" in persisted_stage else None),
+        (persisted_params.get("artifact_refs") if isinstance(persisted_params, dict) and "artifact_refs" in persisted_params else None),
+        (persisted_plan.get("artifact_refs") if isinstance(persisted_plan, dict) and "artifact_refs" in persisted_plan else None),
     )
     persisted_art_ids = _extract_artifact_ids(persisted_art_candidates)
 
-    caller_art_candidates = (
-        (stage.get("artifact_refs") if isinstance(stage, dict) else None)
-        or (stage.get("approved_artifact_refs") if isinstance(stage, dict) else None)
-        or body.get("artifact_refs")
-        or (plan.get("artifact_refs") if isinstance(plan, dict) else None)
+    caller_art_candidates = _first_present(
+        (stage.get("artifact_refs") if isinstance(stage, dict) and "artifact_refs" in stage else None),
+        (stage.get("approved_artifact_refs") if isinstance(stage, dict) and "approved_artifact_refs" in stage else None),
+        (body.get("artifact_refs") if isinstance(body, dict) and "artifact_refs" in body else None),
+        (plan.get("artifact_refs") if isinstance(plan, dict) and "artifact_refs" in plan else None),
     )
     caller_art_ids = _extract_artifact_ids(caller_art_candidates)
 
@@ -2360,10 +2358,7 @@ def execute_research_stage(
     if exp_tenant and ds_tenant and exp_tenant != ds_tenant:
         _fail_stage(f"Unauthorized access to dataset across tenant boundary: '{ds_tenant}' != '{exp_tenant}'", 403)
     if not dataset_input and stage_type != "evidence_synthesis":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Missing required governed dataset or input for stage '{stage_type}'",
-        )
+        raise HTTPException(status_code=400, detail=f"Missing required governed dataset or input for stage '{stage_type}'")
 
     transport_keys = [str(k) for k in (body.get("downstream_key"), body.get("idempotency_key")) if isinstance(k, str) and k]
 
@@ -2659,13 +2654,13 @@ def execute_research_stage(
                     resolved_artifacts.append(stored)
             else:
                 task_id = effective_task_id
-                persisted_deps_raw = (
-                    ((persisted_stage or {}).get("dependencies") if isinstance(persisted_stage, dict) else None)
-                    or ((persisted_stage or {}).get("depends_on") if isinstance(persisted_stage, dict) else None)
+                persisted_deps_raw = _first_present(
+                    (persisted_stage.get("dependencies") if isinstance(persisted_stage, dict) and "dependencies" in persisted_stage else None),
+                    (persisted_stage.get("depends_on") if isinstance(persisted_stage, dict) and "depends_on" in persisted_stage else None),
                 )
-                caller_deps_raw = (
-                    (stage.get("dependencies") if isinstance(stage, dict) else None)
-                    or (stage.get("depends_on") if isinstance(stage, dict) else None)
+                caller_deps_raw = _first_present(
+                    (stage.get("dependencies") if isinstance(stage, dict) and "dependencies" in stage else None),
+                    (stage.get("depends_on") if isinstance(stage, dict) and "depends_on" in stage else None),
                 )
                 p_deps = [str(d).strip() for d in (persisted_deps_raw if isinstance(persisted_deps_raw, (list, tuple, set)) else [persisted_deps_raw]) if d] if persisted_deps_raw is not None else []
                 c_deps = [str(d).strip() for d in (caller_deps_raw if isinstance(caller_deps_raw, (list, tuple, set)) else [caller_deps_raw]) if d] if caller_deps_raw is not None else []
@@ -2681,30 +2676,28 @@ def execute_research_stage(
                         status_code=400, detail=f"Unapproved dependency selection for stage '{stage_id}': caller supplied '{c_deps}' but stage has no approved dependencies"
                     )
                 else:
-                    deps = set(c_deps)
+                    deps = set(c_deps) if not has_persisted_stage else set()
 
-                c_runs = [r for r in store.list_runs() if str(r.get("task_id") or "") == task_id and str(r.get("run_id") or "") != str(run_id)]
                 if deps:
-                    c_runs = [r for r in c_runs if str(r.get("stage_id") or "") in deps]
-                seen_ids = set()
-                for c_run in c_runs:
-                    for aref in c_run.get("artifact_refs") or []:
-                        aid = aref.get("artifact_id") if isinstance(aref, dict) else str(aref)
-                        if aid and aid not in seen_ids and (stored := store.get_artifact(aid)):
-                            _validate_artifact_tenant(stored, aid)
-                            seen_ids.add(aid)
-                            resolved_artifacts.append(stored)
-                if not resolved_artifacts and task_id:
-                    for art in store.list_artifacts():
-                        aid = art.get("artifact_id") or art.get("id")
-                        if (
-                            aid and aid not in seen_ids and str(art.get("task_id") or "") == task_id
-                            and (not deps or str(art.get("stage_id") or "") in deps)
-                            and str(art.get("run_id") or "") != str(run_id)
-                        ):
-                            _validate_artifact_tenant(art, str(aid))
-                            seen_ids.add(aid)
-                            resolved_artifacts.append(art)
+                    seen_ids = set()
+                    c_runs = [r for r in store.list_runs() if str(r.get("task_id") or "") == task_id and str(r.get("run_id") or "") != str(run_id) and str(r.get("stage_id") or "") in deps]
+                    for c_run in c_runs:
+                        for aref in c_run.get("artifact_refs") or []:
+                            aid = aref.get("artifact_id") if isinstance(aref, dict) else str(aref)
+                            if aid and aid not in seen_ids and (stored := store.get_artifact(aid)):
+                                _validate_artifact_tenant(stored, aid)
+                                seen_ids.add(aid)
+                                resolved_artifacts.append(stored)
+                    if not resolved_artifacts and task_id:
+                        for art in store.list_artifacts():
+                            aid = art.get("artifact_id") or art.get("id")
+                            if (
+                                aid and aid not in seen_ids and str(art.get("task_id") or "") == task_id
+                                and str(art.get("stage_id") or "") in deps and str(art.get("run_id") or "") != str(run_id)
+                            ):
+                                _validate_artifact_tenant(art, str(aid))
+                                seen_ids.add(aid)
+                                resolved_artifacts.append(art)
 
             if not resolved_artifacts:
                 raise HTTPException(status_code=400, detail=f"Missing required persisted input artifacts for stage '{stage_type}'")

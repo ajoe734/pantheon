@@ -2080,3 +2080,86 @@ def test_execute_research_stage_evidence_synthesis_binds_persisted_dependencies(
     assert art is not None
     assert len(art["payload"]["input_artifacts"]) == 1
     assert art["payload"]["input_artifacts"][0]["artifact_id"] == "art-dep-approved"
+
+
+@pytest.mark.parametrize("attach_run", [True, False])
+def test_execute_research_stage_evidence_synthesis_empty_approved_inputs_rejects_unapproved_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, attach_run: bool) -> None:
+    from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient
+    store = research_main.build_research_orchestrator_store(str(tmp_path / "owner"))
+    monkeypatch.setattr(research_main, "store", store)
+    monkeypatch.setenv("PANTHEON_OPENCLAW_BACKEND", "real")
+    monkeypatch.delenv("PANTHEON_OPENCLAW_UNAVAILABLE", raising=False)
+    monkeypatch.setattr(OpenClawOpsClient, "configured", property(lambda self: True))
+    calls = []
+
+    def provider(self, **kwargs):
+        calls.append(kwargs)
+        return {"data": {"output": {"structured_data": {
+            "summary": "fixture report", "interpretation": "fixture", "recommendation": "reject"
+        }}}}
+
+    monkeypatch.setattr(OpenClawOpsClient, "invoke_structured_extraction", provider)
+    store.put_task({"task_id": "task-review", "tenant_id": "tenant-review"})
+    store.put_artifact({
+        "artifact_id": "unapproved-history", "task_id": "task-review", "run_id": "prior-run",
+        "stage_id": "unapproved-stage", "tenant_id": "tenant-review", "payload": {"unapproved": True},
+    })
+    if attach_run:
+        store.put_run({
+            "run_id": "prior-run", "task_id": "task-review", "stage_id": "unapproved-stage",
+            "status": "completed", "tenant_id": "tenant-review",
+            "artifact_refs": [{"artifact_id": "unapproved-history"}],
+        })
+    approved_stage = {
+        "stage_id": "synthesis", "stage_type": "evidence_synthesis",
+        "parameters": {}, "artifact_refs": [], "dependencies": [],
+    }
+    plan = {"plan_id": "plan-review", "task_id": "task-review", "stages": [approved_stage]}
+    store.put_run({
+        "run_id": "review-run", "task_id": "task-review", "stage_id": "synthesis",
+        "tenant_id": "tenant-review", "status": "queued", "requested_mode": "real",
+        "parameters": {"stage": approved_stage, "plan": plan},
+    })
+    response = TestClient(research_main.app).post(
+        "/api/research-orchestrator/stages/evidence_synthesis/execute",
+        json={"stage": {"stage_id": "synthesis"}, "plan": plan,
+              "run_id": "review-run", "correlation_id": "corr-review"},
+    )
+    assert response.status_code == 400 and not calls
+
+
+def test_execute_research_stage_evidence_synthesis_omitted_dependencies_resolves_store_artifact_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = research_main.build_research_orchestrator_store(str(tmp_path / "owner"))
+    monkeypatch.setattr(research_main, "store", store)
+    task_id = "task-synth-fallback-art"
+    store.put_task({"task_id": task_id, "tenant_id": "tenant-001"})
+    store.put_artifact({
+        "artifact_id": "art-dep-approved", "task_id": task_id, "stage_id": "stage-prior",
+        "tenant_id": "tenant-001", "payload": {"summary": "prior"},
+    })
+    stage_def = {
+        "stage_id": "stage-synth", "stage_type": "evidence_synthesis",
+        "dependencies": ["stage-prior"],
+    }
+    plan_def = {"plan_id": "plan-synth-fb", "task_id": task_id, "stages": [stage_def]}
+    store.put_run({
+        "run_id": "r-synth-fb", "task_id": task_id, "stage_id": "stage-synth",
+        "tenant_id": "tenant-001", "status": "queued", "requested_mode": "stub",
+        "parameters": {"stage": stage_def, "plan": plan_def},
+    })
+    client = TestClient(research_main.app)
+    res_ok = client.post(
+        "/api/research-orchestrator/stages/evidence_synthesis/execute",
+        json={
+            "stage": {"stage_id": "stage-synth"},
+            "plan": plan_def,
+            "run_id": "r-synth-fb",
+            "correlation_id": "corr-fb-ok",
+            "requested_mode": "stub",
+        },
+    )
+    assert res_ok.status_code == 200
+    art = store.get_artifact(res_ok.json()["artifact_id"])
+    assert art is not None
+    assert len(art["payload"]["input_artifacts"]) == 1
+    assert art["payload"]["input_artifacts"][0]["artifact_id"] == "art-dep-approved"
