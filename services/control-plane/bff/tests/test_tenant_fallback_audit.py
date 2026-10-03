@@ -1662,4 +1662,131 @@ def test_bff_me_tenant_payload_supported_claims(shape):
     assert "pantheon-dev" in payload["allowed_ids"]
 
 
+@pytest.mark.parametrize("tenant", [None, "tenant-foreign", "pantheon-dev"])
+def test_mounted_management_ai_conversations_scope_to_the_jwt_tenant(monkeypatch, tmp_path, tenant):
+    from services.control_plane.bff.assistant import management_service as m
+    from services.control_plane.bff.assistant_conversation_store import JsonAssistantConversationStore
+    for k, v in {
+        "PANTHEON_BFF_AUTH_MODE": "strict",
+        "PANTHEON_BFF_AUTH_STUB": "",
+        "PANTHEON_BFF_JWT_SECRET": _SECRET,
+        "PANTHEON_BFF_JWT_ISSUER": _ISSUER,
+        "PANTHEON_BFF_JWT_AUDIENCE": _AUDIENCE,
+    }.items():
+        monkeypatch.setenv(k, v)
 
+    store = JsonAssistantConversationStore(storage_path=str(tmp_path / "sessions.json"))
+    store.create_session(
+        session_id="private-default-session",
+        owner_id="different-owner",
+        tenant_id="pantheon-dev",
+        now="2026-10-03T00:00:00Z",
+        title="PRIVATE_DEFAULT_TENANT_TITLE",
+    )
+    monkeypatch.setattr(m, "get_management_ai_conversation_store", lambda: store)
+
+    app = FastAPI()
+    app.add_api_route("/bff/management/ai/conversations", m.bff_management_ai_conversations, methods=["GET"])
+    app.add_api_route("/bff/management/ai/conversations/{session_id}", m.bff_management_ai_conversation, methods=["GET"])
+    client = TestClient(app)
+
+    claims = {
+        "sub": "review-caller",
+        "roles": ["operator"],
+        "iss": _ISSUER,
+        "aud": _AUDIENCE,
+        "exp": int(time.time()) + 600,
+    }
+    if tenant:
+        claims["tenant_id"] = tenant
+    tok = "Bearer " + encode_jwt_hs256(claims, secret=_SECRET)
+
+    res_list = client.get("/bff/management/ai/conversations", headers={"Authorization": tok})
+    res_get = client.get("/bff/management/ai/conversations/private-default-session", headers={"Authorization": tok})
+
+    if tenant is None:
+        assert res_list.status_code == 403
+        assert "PRIVATE_DEFAULT_TENANT_TITLE" not in res_list.text
+        assert res_get.status_code == 403
+        assert "PRIVATE_DEFAULT_TENANT_TITLE" not in res_get.text
+    elif tenant == "tenant-foreign":
+        assert res_list.status_code == 200
+        assert res_list.json()["data"]["items"] == []
+        assert "PRIVATE_DEFAULT_TENANT_TITLE" not in res_list.text
+        assert res_get.status_code == 404
+        assert "PRIVATE_DEFAULT_TENANT_TITLE" not in res_get.text
+    else:
+        assert res_list.status_code == 200
+        assert any(item["id"] == "private-default-session" for item in res_list.json()["data"]["items"])
+        assert "PRIVATE_DEFAULT_TENANT_TITLE" in res_list.text
+        assert res_get.status_code == 200
+        assert res_get.json()["data"]["session_id"] == "private-default-session"
+
+
+@pytest.mark.parametrize("tenant", [None, "tenant-foreign", "pantheon-dev"])
+def test_mounted_management_ai_ask_write_scopes_to_the_jwt_tenant(monkeypatch, tmp_path, tenant):
+    from services.control_plane.bff.assistant import management_service as m
+    from services.control_plane.bff.management_ai_store import ManagementAiConversationStore
+    for k, v in {
+        "PANTHEON_BFF_AUTH_MODE": "strict",
+        "PANTHEON_BFF_AUTH_STUB": "",
+        "PANTHEON_BFF_JWT_SECRET": _SECRET,
+        "PANTHEON_BFF_JWT_ISSUER": _ISSUER,
+        "PANTHEON_BFF_JWT_AUDIENCE": _AUDIENCE,
+        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH": str(tmp_path / "idem.json"),
+    }.items():
+        monkeypatch.setenv(k, v)
+
+    store = ManagementAiConversationStore(storage_path=str(tmp_path / "sessions.db"))
+    store.upsert_session(
+        session_id="private-default-session",
+        owner_id="different-owner",
+        tenant_id="pantheon-dev",
+        now="2026-10-03T00:00:00Z",
+        title="PRIVATE_DEFAULT_TENANT_TITLE",
+    )
+    monkeypatch.setattr(m, "get_management_ai_conversation_store", lambda: store)
+
+    app = FastAPI()
+    app.add_api_route("/bff/management/nl/ask", m.bff_management_nl_ask, methods=["POST"])
+    client = TestClient(app)
+
+    claims = {
+        "sub": "review-caller",
+        "roles": ["operator"],
+        "iss": _ISSUER,
+        "aud": _AUDIENCE,
+        "exp": int(time.time()) + 600,
+    }
+    if tenant:
+        claims["tenant_id"] = tenant
+    tok = "Bearer " + encode_jwt_hs256(claims, secret=_SECRET)
+
+    turns_before = len(store.list_turns("private-default-session"))
+    sessions_before = len(store.list_sessions(tenant_id="pantheon-dev"))
+
+    if tenant is None:
+        res = client.post(
+            "/bff/management/nl/ask",
+            headers={"Authorization": tok, "Idempotency-Key": "ik-absent"},
+            json={"question": "what is system health", "session_id": "private-default-session"},
+        )
+        assert res.status_code == 403
+        assert len(store.list_turns("private-default-session")) == turns_before
+        assert len(store.list_sessions(tenant_id="pantheon-dev")) == sessions_before
+    elif tenant == "tenant-foreign":
+        res = client.post(
+            "/bff/management/nl/ask",
+            headers={"Authorization": tok, "Idempotency-Key": "ik-foreign"},
+            json={"question": "foreign question", "session_id": "private-default-session"},
+        )
+        assert res.status_code == 403
+        assert len(store.list_turns("private-default-session")) == turns_before
+        assert len(store.list_sessions(tenant_id="pantheon-dev")) == sessions_before
+    else:
+        res = client.post(
+            "/bff/management/nl/ask",
+            headers={"Authorization": tok, "Idempotency-Key": "ik-same"},
+            json={"question": "what is system health"},
+        )
+        assert res.status_code == 202

@@ -4083,7 +4083,16 @@ def _mgmt_nl_caller_tenant(
     requested_tenant: Optional[str] = None,
 ) -> str:
     tenant = _bff_me_tenant_payload(identity, requested_tenant=requested_tenant)
-    return str(tenant.get("id") or "pantheon-dev")
+    caller_tenant = str(tenant.get("id") or "").strip()
+    if not caller_tenant:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Tenant access denied",
+            "Caller has no verified tenant authority",
+            precondition_failed="tenant_scope",
+        )
+    return caller_tenant
 def _mgmt_nl_scope_values(value: Any) -> List[str]:
     if value in (None, ""):
         return []
