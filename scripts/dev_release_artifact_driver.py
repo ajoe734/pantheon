@@ -53,6 +53,9 @@ IDENTITY_FIELDS = ("candidate_id", "run_id", "attempt", "controller_sha", "candi
                    "candidate_frontend_sha", "previous_backend_sha", "previous_frontend_sha")
 OWNER_FORMAT = '{"container_id":{{json .Id}},"image_id":{{json .Image}},"started_at":{{json .State.StartedAt}},"restart_count":{{json .RestartCount}}}'
 BASELINE_CONFIG = a.BASELINE_CONFIG_KEYS
+# Nonsecret token-file paths of the evaluator live on its own container/service.
+CONFIG_SERVICES = {"operator-bff": tuple(key for key in BASELINE_CONFIG if not key.startswith("PERSONA_EVALUATOR_")),
+                   "persona-evaluator-agent": tuple(key for key in BASELINE_CONFIG if key.startswith("PERSONA_EVALUATOR_"))}
 # Filtering happens inside Docker's formatter. No unrelated entry crosses the
 # subprocess boundary; unexpected values in these fields fail without echo.
 CONFIG_FORMAT = '{{range .Config.Env}}{{$v := split . "="}}{{if or ' + ' '.join(
@@ -280,21 +283,22 @@ def _validate_config(value):
 
 
 def _config(docker):
-    ids = docker.call("ps", "--all", "--quiet", "--filter", "label=com.docker.compose.project=pantheon",
-                      "--filter", "label=com.docker.compose.service=operator-bff").split()
-    if len(ids) != 1 or not re.fullmatch(r"[0-9a-f]{12,64}", ids[0]):
-        raise a.ArtifactError("baseline BFF identity is missing or ambiguous")
     result = dict.fromkeys(BASELINE_CONFIG)
-    seen = set()
-    for raw in docker.call("inspect", "--format", CONFIG_FORMAT, ids[0]).strip().splitlines():
-        entry = a._json(raw)
-        if not isinstance(entry, str) or "=" not in entry:
-            raise a.ArtifactError("invalid filtered configuration")
-        key, value = entry.split("=", 1)
-        if key not in BASELINE_CONFIG or key in seen:
-            raise a.ArtifactError("unexpected or duplicate filtered configuration")
-        seen.add(key)
-        result[key] = value
+    for service, keys in CONFIG_SERVICES.items():
+        ids = docker.call("ps", "--all", "--quiet", "--filter", "label=com.docker.compose.project=pantheon",
+                          "--filter", f"label=com.docker.compose.service={service}").split()
+        if len(ids) != 1 or not re.fullmatch(r"[0-9a-f]{12,64}", ids[0]):
+            raise a.ArtifactError("baseline config container identity is missing or ambiguous")
+        seen = set()
+        for raw in docker.call("inspect", "--format", CONFIG_FORMAT, ids[0]).strip().splitlines():
+            entry = a._json(raw)
+            if not isinstance(entry, str) or "=" not in entry:
+                raise a.ArtifactError("invalid filtered configuration")
+            key, value = entry.split("=", 1)
+            if key not in keys or key in seen:
+                raise a.ArtifactError("unexpected or duplicate filtered configuration")
+            seen.add(key)
+            result[key] = value
     return _validate_config(result)
 
 
@@ -308,12 +312,13 @@ def _check_compose_config(compose_file, expected, docker):
     model = a._json(docker.call("compose", "-p", "pantheon", "-f", str(compose_file),
                                "config", "--no-interpolate", "--no-env-resolution", "--format", "json"))
     try:
-        fields = model["services"]["operator-bff"].get("environment", {})
-        selected = {key: fields[key] for key in BASELINE_CONFIG if key in fields}
+        selected = {service: {key: fields[key] for key in keys if key in fields}
+                    for service, keys in CONFIG_SERVICES.items()
+                    for fields in [model["services"][service].get("environment", {})]}
     except (KeyError, TypeError, AttributeError):
         raise a.ArtifactError("baseline Compose configuration is unavailable") from None
-    del model, fields
-    if not all(value is None or isinstance(value, str) for value in selected.values()):
+    del model
+    if not all(value is None or isinstance(value, str) for fields in selected.values() for value in fields.values()):
         raise a.ArtifactError("baseline Compose configuration fields are invalid")
     before = {key: os.environ.get(key) for key in BASELINE_CONFIG}
     try:
@@ -322,8 +327,8 @@ def _check_compose_config(compose_file, expected, docker):
         # it is not another release artifact, manifest or configuration store.
         with tempfile.TemporaryDirectory(prefix=".config-render-", dir=ROOT) as temporary:
             path = Path(temporary) / "compose.json"
-            path.write_bytes(a.manifest_bytes({"services": {"operator-bff": {
-                "image": "pantheon-config-render-only", "environment": selected}}}))
+            path.write_bytes(a.manifest_bytes({"services": {service: {
+                "image": "pantheon-config-render-only", "environment": fields} for service, fields in selected.items()}}))
             rendered = a._json(docker.call("compose", "-p", "pantheon", "--env-file", "/dev/null",
                                            "-f", str(path), "config", "--format", "json"))
     finally:
@@ -333,11 +338,11 @@ def _check_compose_config(compose_file, expected, docker):
             else:
                 os.environ[key] = value
     try:
-        fields = rendered["services"]["operator-bff"].get("environment", {})
-        observed = {key: fields.get(key) for key in BASELINE_CONFIG}
+        observed = {key: rendered["services"][service].get("environment", {}).get(key)
+                    for service, keys in CONFIG_SERVICES.items() for key in keys}
     except (KeyError, TypeError, AttributeError):
         raise a.ArtifactError("rendered baseline configuration is unavailable") from None
-    del rendered, fields
+    del rendered
     if observed != expected:
         raise a.ArtifactError("baseline configuration cannot be represented by prior Compose")
 
