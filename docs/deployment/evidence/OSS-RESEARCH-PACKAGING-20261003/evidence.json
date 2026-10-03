@@ -1,0 +1,205 @@
+{
+  "task_id": "OSS-RESEARCH-PACKAGING-20261003",
+  "change_class": "corrective",
+  "title": "Deliver bounded Research dependency locks and coupled compatibility fixes",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "predecessor": {
+    "task_id": "OSS-RESEARCH-RESIDUAL-002",
+    "draft_commit": "0443aea936696eecad0899b431101a8d949e06ed",
+    "author": "PiAstra <piastra-agent@pantheon.local>",
+    "history_preserved": true,
+    "blocker_resolved": "Separated generated dependency packaging (+16186 net lines) into child task with corrective budget 16500; parent keeps zero budget"
+  },
+  "transferred_artifacts": {
+    "count": 32,
+    "locks": [
+      "dependencies/locks/services-learning-dspy.txt",
+      "dependencies/locks/services-learning-imitation.txt",
+      "dependencies/locks/services-learning-trl.txt",
+      "dependencies/locks/services-policy-learning.txt",
+      "dependencies/locks/services-research-finrl.txt",
+      "dependencies/locks/services-research-qlib.txt",
+      "dependencies/locks/services-research-statsmodels.txt",
+      "dependencies/locks/services-research-vectorbt.txt",
+      "dependencies/locks/services-research-worker-gateway.txt",
+      "dependencies/locks/services-research.txt",
+      "dependencies/locks/services-training-session.txt"
+    ],
+    "compatibility_fixes": [
+      "services/learning/imitation/adapter.py",
+      "services/learning/trl/adapter/trl_adapter.py",
+      "services/research/qlib/adapter/qlib_adapter.py"
+    ],
+    "service_declarations_and_dockerfiles": [
+      "services/learning/dspy/requirements.txt",
+      "services/learning/trl/requirements.txt",
+      "services/policy-learning/Dockerfile",
+      "services/policy-learning/requirements.txt",
+      "services/research-worker-gateway/Dockerfile",
+      "services/research-worker-gateway/requirements.txt",
+      "services/research/Dockerfile",
+      "services/research/dspy/Dockerfile",
+      "services/research/finrl/Dockerfile",
+      "services/research/finrl/requirements.txt",
+      "services/research/imitation/Dockerfile",
+      "services/research/qlib/requirements.txt",
+      "services/research/runtime-requirements.txt",
+      "services/research/statsmodels/requirements.txt",
+      "services/research/vectorbt/requirements.txt",
+      "services/training-session/Dockerfile",
+      "services/training-session/requirements.txt",
+      "services/training-session/tests/test_compose_activation.py"
+    ]
+  },
+  "line_budget_counters": {
+    "budget": 16500,
+    "total_production_net_lines": 16186,
+    "production_breakdown": {
+      "generated_locks": {
+        "files_count": 11,
+        "additions": 16174,
+        "deletions": 0,
+        "net": 16174
+      },
+      "application_python": {
+        "files_count": 3,
+        "additions": 10,
+        "deletions": 12,
+        "net": -2,
+        "budget_limit": 0,
+        "satisfied": true
+      },
+      "non_lock_production_combined": {
+        "files_count": 20,
+        "additions": 79,
+        "deletions": 67,
+        "net": 12,
+        "budget_limit": 20,
+        "satisfied": true
+      }
+    },
+    "test_lines": {
+      "files_count": 1,
+      "additions": 7,
+      "deletions": 6,
+      "net": 1
+    }
+  },
+  "packaging_and_closure_resolution": {
+    "cpu_imitation_closure": {
+      "resolution": "Resolved official CPU closure using --extra-index-url https://download.pytorch.org/whl/cpu and torch==2.14.1+cpu",
+      "removed_cuda_stack": [
+        "cuda-bindings",
+        "cuda-pathfinder",
+        "cuda-toolkit",
+        "nvidia-cublas",
+        "nvidia-cuda-cupti",
+        "nvidia-cuda-nvrtc",
+        "nvidia-cuda-runtime",
+        "nvidia-cudnn-cu13",
+        "nvidia-cufft",
+        "nvidia-cufile",
+        "nvidia-curand",
+        "nvidia-cusolver",
+        "nvidia-cusparse",
+        "nvidia-cusparselt-cu13",
+        "nvidia-nccl-cu13",
+        "nvidia-nvjitlink",
+        "nvidia-nvshmem-cu13",
+        "nvidia-nvtx",
+        "triton"
+      ],
+      "impact": "Eliminated CUDA stack footprint; mitigated host ENOSPC hazard; lock size reduced by 121 lines"
+    },
+    "docker_formatting": "Restored readable multi-line ENV formatting with backslashes across policy-learning, gateway, research, and training-session Dockerfiles",
+    "quantlib": "Retained QuantLib 1.43 in services/research/runtime-requirements.txt and dependencies/locks/services-research.txt for the Research owner image",
+    "isolation": "Independent hash-locked profiles for Python 3.11 and Python 3.12 without shared requirements mixing"
+  },
+  "exact_head_verification": {
+    "unit_and_adapter_tests": [
+      {
+        "test": "services/training-session/tests/test_compose_activation.py",
+        "passed": 2,
+        "result": "pass"
+      },
+      {
+        "test": "services/learning/imitation/test_adapter.py + smoke_test.py",
+        "passed": 4,
+        "result": "pass"
+      },
+      {
+        "test": "services/learning/trl/test_adapter.py + test_activation_smoke.py + test_preflight.py + smoke_test.py",
+        "passed": 43,
+        "result": "pass"
+      },
+      {
+        "test": "services/research/qlib/test_adapter.py + test_preflight.py + smoke_test.py",
+        "passed": 30,
+        "result": "pass"
+      },
+      {
+        "test": "services/learning/dspy/test_adapter.py + smoke_test.py",
+        "passed": 4,
+        "result": "pass"
+      },
+      {
+        "test": "services/research/statsmodels/test_adapter.py",
+        "passed": 24,
+        "skipped": 1,
+        "result": "pass"
+      },
+      {
+        "test": "services/research/vectorbt/test_adapter.py",
+        "passed": 33,
+        "result": "pass"
+      },
+      {
+        "test": "services/research/finrl/test_adapter.py",
+        "passed": 17,
+        "result": "pass"
+      },
+      {
+        "test": "services/research/tests/test_research_orchestrator_compose_activation.py",
+        "passed": 1,
+        "result": "pass"
+      },
+      {
+        "test": "services/policy-learning/tests/test_policy_learning_compose_activation.py",
+        "passed": 3,
+        "result": "pass"
+      },
+      {
+        "test": "services/research-worker-gateway/tests/test_research_worker_gateway_compose_activation.py",
+        "passed": 2,
+        "result": "pass"
+      },
+      {
+        "test": "services/research/quantlib/test_adapter.py (in QuantLib container)",
+        "passed": 36,
+        "skipped": 1,
+        "result": "pass"
+      }
+    ],
+    "container_builds": [
+      {
+        "service": "services/research-worker-gateway/Dockerfile",
+        "build_status": "pass with pip --no-cache-dir --require-hashes",
+        "runtime_probe": "container spawned and verified responding on /healthz"
+      }
+    ]
+  },
+  "scope_and_parent_obligations": {
+    "excluded_from_child": [
+      "RLlib and Ray source and locks (owned by DIRECT-RAY-BASELINE-001)",
+      "docs/operations/research-framework-disposition.md (parent task documentation)",
+      "services/research-worker-gateway/tests/test_research_worker_gateway_gate_dispatch.py (parent runtime tests)"
+    ],
+    "remaining_parent_obligations": [
+      "Qlib worker entrypoint initialization",
+      "DSPy real provider credentials and remote training verification",
+      "Full end-to-end multi-service profile orchestration and runtime holdout testing"
+    ],
+    "commit_trailers_validated": "All commits in origin/dev..HEAD verified via scripts/git/check_commit_trailers.py"
+  }
+}
