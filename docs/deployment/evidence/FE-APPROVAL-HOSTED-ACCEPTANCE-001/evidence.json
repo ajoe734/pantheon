@@ -1,0 +1,271 @@
+{
+  "task_id": "FE-APPROVAL-HOSTED-ACCEPTANCE-001",
+  "parent_task_id": "FE-APPROVAL-OWNER-READBACK-001",
+  "parent_obligation": "AC11: hosted acceptance using the exact released FE/BFF pair and real owner persistence/readback, reported separately from local harness results",
+  "kind": "coordinator_hosted_acceptance",
+  "authorization": {
+    "granted_by": "operator (chat, 2026-10-03)",
+    "scope": [
+      "create one labelled paper persona fixture through POST /bff/personas and propose one approval on its binding",
+      "approval probes: stale version, first vote, identical retry, same key with changed content, same-decider second vote, unknown id",
+      "final vote: the operator explicitly chose approve as the genuine human decision for the final vote"
+    ],
+    "granted_at": "scope granted in chat before the first write at 2026-10-03T09:57Z; final-vote decision granted in chat before 2026-10-03T10:38Z; all times UTC",
+    "worker_access": "none; no SSH key, credential or VM access was handed to any worker",
+    "transport": "coordinator SSH to the dev VM; requests issued from inside pantheon-operator-bff-1 to its own loopback listener with the existing dev-login identities; client secrets were read from that container's environment and never printed or copied",
+    "provenance": "coordinator_attestation"
+  },
+  "release": {
+    "deploy_workflow": "nonprod-deploy.yml",
+    "deploy_run": "https://github.com/ajoe734/pantheon/actions/runs/37105169338",
+    "integration_gate_run": "https://github.com/ajoe734/execute-plans/actions/runs/37106391202",
+    "backend_sha": "9304d19c005218205d637c8016b78abd02418b57",
+    "frontend_sha": "86a4314b947e241f985a16b9c98f19d816230fc5",
+    "frontend_profile": "operator-live",
+    "pair_id": "a0e4f43ac41c5db3bc01deb155d44b500c90162c94a335dc1f871a6020beb7e4",
+    "deployment_state": "accepted",
+    "accepted_at": "2026-10-03T08:09:05Z",
+    "provenance": "coordinator_observation: deploy run and integration gate pages plus the served manifest"
+  },
+  "served_identities": {
+    "observed_at": "2026-10-03T11:00:47Z to 2026-10-03T11:05:03Z",
+    "frontend": {
+      "url": "https://app.dev.mvl-cap.tw/deployment.json",
+      "frontendSha": "86a4314b947e241f985a16b9c98f19d816230fc5",
+      "bffCommit": "9304d19c005218205d637c8016b78abd02418b57",
+      "manifest_sha256_on_vm": "3c55a6a6cfa88156407f6efece5db8eb1142f1c07329b93a2e88d04242305998"
+    },
+    "bff": {
+      "url": "https://api.dev.mvl-cap.tw/bff/version",
+      "source_commit_sha": "9304d19c005218205d637c8016b78abd02418b57",
+      "image_digest": "sha256:193acb2e2b3a649ac2dcefa00e6ddf8e59caf024fa1825ac31b4668f802b1ca0",
+      "auth_mode": "strict",
+      "auth_mode_provenance": "config_posture.auth_mode of /bff/version, coordinator capture"
+    },
+    "owners": [
+      {
+        "service": "governance",
+        "container": "pantheon-governance-1",
+        "image_id": "sha256:42ef75c302990c9e8a76061ec5b5ed2c97d61332ff81a83e66cc219d6577ac3b",
+        "provenance": "coordinator observation: the running container's image has an empty org.opencontainers.image.revision label; this exact manifest list was exported at 2026-10-03T07:10:43Z (line 13788) by job 111152143624 of deploy run 37105169338, whose TARGET_REF (line 53) and checkout ref (line 149) are 9304d19c005218205d637c8016b78abd02418b57"
+      }
+    ],
+    "provenance": "coordinator_observation: curl of the two public URLs and docker inspect on the VM at observed_at; not part of the probe outputs"
+  },
+  "fixture": {
+    "label": "hosted-acceptance-20261003",
+    "tenant": "tenant-dev",
+    "persona_id": "persona-839a3016a40783f4dbbc",
+    "persona_name": "hosted-acceptance-20261003-capital-fwd",
+    "capital_pool_id": "pool-persona-paper-cf8fe181b7d7ff9b0097",
+    "binding_id": "pcb-persona-paper-cf8fe181b7d7ff9b0097",
+    "capital_mode": "paper",
+    "real_money": false,
+    "existing_dev_pools_or_bindings_changed": false,
+    "note": "shared with CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001, which created it",
+    "provenance": "probe_output of POST /bff/personas (HTTP 201) for the persona, pool, binding, paper mode and label; preservation of other dev pools and the absence of real-money effects are coordinator attestations (paper-only route, no other pool or binding was addressed)"
+  },
+  "approval": {
+    "decision_id": "apv-hosted-acceptance-20261003-fe-approval",
+    "target_type": "capital_binding_activation",
+    "target_id": "pcb-persona-paper-cf8fe181b7d7ff9b0097",
+    "risk_level": "medium",
+    "subject": {
+      "binding_id": "pcb-persona-paper-cf8fe181b7d7ff9b0097",
+      "persona_id": "persona-839a3016a40783f4dbbc",
+      "capital_pool_id": "pool-persona-paper-cf8fe181b7d7ff9b0097",
+      "risk_direction": "increase"
+    },
+    "why_this_target": "the only owner targets that require two distinct deciders are capital_pool_activation, capital_binding_activation and rebalance_apply with risk_direction=increase (services/governance/approval_targets.py required_deciders); a two-decider target is needed to observe a pending first vote and a separate final vote",
+    "side_effects": "writes the owner's decision row with its audit event and scoped receipt (per services/governance/contract.md), and after each accepted vote the BFF publishes approval.stage.changed or approval.decided (services/control-plane/bff/governance/router.py _publish_decision, called from bff_approvals_decide). The coordinator did not observe or audit downstream subscribers; the claim that no consumer applies this decision is a coordinator assessment, not verified. Whether the fixture binding was already active comes from the provisioning receipt (persona_capital_binding_active), a coordinator observation"
+  },
+  "steps": [
+    {
+      "step": "propose",
+      "actor": "pantheon-dev-operator-a (operator)",
+      "request": "POST /api/v1/approval-decisions, expected_version 0",
+      "http": 201,
+      "observed": {
+        "status": "pending",
+        "decision_state": "proposed",
+        "version": 1,
+        "event_id": "ccd0fc1e-a8d4-45ee-868b-afd4b850919f"
+      }
+    },
+    {
+      "step": "readback before voting",
+      "actor": "pantheon-dev-approver (approver, governance_reviewer)",
+      "request": "GET /bff/approvals/{id}",
+      "http": 200,
+      "observed": {
+        "status": "pending",
+        "decision_state": "proposed",
+        "version": 1
+      }
+    },
+    {
+      "step": "stale-version vote",
+      "request": "POST /bff/approvals/{id}/decide, expected_version 0 (observed version is 1)",
+      "http": 409,
+      "observed": {
+        "code": "RESOURCE_CONFLICT",
+        "message": "Approval base version is stale"
+      }
+    },
+    {
+      "step": "first vote",
+      "actor": "pantheon-dev-approver as governance_reviewer",
+      "request": "POST /bff/approvals/{id}/decide {decision: approve, memo, expected_version: 1}, Idempotency-Key K1",
+      "http": 202,
+      "observed": {
+        "status": "pending",
+        "decision_state": "under_review",
+        "version": 2,
+        "event_id": "998a0a02-be60-4303-9122-ad36c69c617d",
+        "approvals": 1
+      }
+    },
+    {
+      "step": "identical retry",
+      "request": "same body and same Idempotency-Key K1",
+      "http": 202,
+      "observed": {
+        "version": 2,
+        "event_id": "998a0a02-be60-4303-9122-ad36c69c617d",
+        "approvals": 1,
+        "normalized_json_equal_to_first_vote": true
+      }
+    },
+    {
+      "step": "same key, changed content",
+      "request": "Idempotency-Key K1 with a different memo",
+      "http": 409,
+      "observed": {
+        "code": "RESOURCE_CONFLICT",
+        "message": "Idempotency key has different command content"
+      }
+    },
+    {
+      "step": "same decider second vote",
+      "request": "approver votes again with a new key at version 2",
+      "http": 400,
+      "observed": {
+        "code": "VALIDATION_FAILED",
+        "message": "decider has already approved this decision"
+      },
+      "state_after": {
+        "status": "pending",
+        "decision_state": "under_review",
+        "version": 2,
+        "approvals": 1
+      }
+    },
+    {
+      "step": "final vote (genuine human decision: approve)",
+      "actor": "pantheon-dev-risk-owner as risk_owner",
+      "request": "POST /bff/approvals/{id}/decide {decision: approve, memo, expected_version: 2}, Idempotency-Key K2",
+      "http": 202,
+      "observed": {
+        "status": "decided",
+        "decision_state": "decided",
+        "decision": "approved",
+        "version": 3,
+        "event_id": "fe804bac-0a72-4968-a0eb-26c02af88e0b",
+        "decided_at": "2026-10-03T10:38:44Z",
+        "approvals": [
+          "pantheon-dev-approver/governance_reviewer",
+          "pantheon-dev-risk-owner/risk_owner"
+        ]
+      }
+    },
+    {
+      "step": "final vote identical retry",
+      "request": "same body and same Idempotency-Key K2",
+      "http": 202,
+      "observed": {
+        "normalized_json_equal_to_final_vote": true
+      }
+    },
+    {
+      "step": "readback after finality",
+      "actor": "pantheon-dev-approver",
+      "request": "GET /bff/approvals/{id} and GET /api/v1/approval-decisions/{id}",
+      "http": 200,
+      "observed": {
+        "both_routes": {
+          "status": "decided",
+          "decision": "approved",
+          "version": 3,
+          "event_id": "fe804bac-0a72-4968-a0eb-26c02af88e0b"
+        }
+      }
+    },
+    {
+      "step": "vote after finality",
+      "request": "approver votes reject at version 3",
+      "http": 400,
+      "observed": {
+        "code": "VALIDATION_FAILED",
+        "message": "Can only decide from 'under_review', got 'decided'"
+      }
+    },
+    {
+      "step": "unknown approval id",
+      "request": "POST /bff/approvals/apv-hosted-acceptance-20261003-does-not-exist/decide, expected_version 1",
+      "http": 409,
+      "observed": {
+        "code": "RESOURCE_CONFLICT",
+        "message": "Approval base version is stale"
+      },
+      "deviation": "services/governance/contract.md (lines 376-377) says unknown or other-tenant ids return 404; for an unknown id the owner answered 409 stale-version instead. The error is explicit; by source the command is rejected before any write, which this probe did not observe directly. Other-tenant ids were not tested. The wording would send a user to refresh rather than tell them the approval does not exist"
+    }
+  ],
+  "acceptance": [
+    {
+      "criterion": "preserve parent hosted AC11 as outstanding; historical source merge and local fixtures are not hosted evidence",
+      "result": "met",
+      "detail": "only hosted observations at the exact released pair are recorded here; parent source and local harness results are not reused"
+    },
+    {
+      "criterion": "one existing nonprod-deploy.yml release of an exact protected FE/BFF pair; no new deployment or acceptance platform",
+      "result": "met",
+      "detail": "deploy run 37105169338, pair 86a4314b/9304d19c0, deploymentState accepted; requests used existing BFF routes from inside the running BFF container"
+    },
+    {
+      "criterion": "fresh explicit operator authorization for every bounded coordinator VM operation; workers get no SSH keys or VM access",
+      "result": "met",
+      "detail": "coordinator attestation; see authorization"
+    },
+    {
+      "criterion": "exact served identities; owner persistence/readback with observed versions; first-vote pending and genuine finality; retry idempotency and stale-version failure; visible owner/readback errors",
+      "result": "met for owner persistence, versioning, idempotency and conflicts; served identities are coordinator observations; failed-readback display not exercised; one deviation",
+      "detail": "versions 1 and 2 were read back through GET /bff/approvals/{id}; version 3 through both GET /bff/approvals/{id} and GET /api/v1/approval-decisions/{id}; the first vote stayed under_review/pending and the final vote decided; identical retries returned normalized-JSON-equal responses with the same version and event id; stale version and changed-content key were rejected with 409; every readback succeeded, so the behaviour on a failed readback was not exercised; unknown id returns 409 stale instead of the documented 404"
+    },
+    {
+      "criterion": "only a new specifically authorized labelled paper fixture; existing dev pools preserved; no real-money writes; product approval is a separate genuine human decision",
+      "result": "met",
+      "detail": "fixture label and paper mode are in the creation probe output; preservation of existing pools and no real-money effect are coordinator attestations; the final approve was the operator's own decision (attested)"
+    },
+    {
+      "criterion": "truthful focused hosted evidence and independent review before closure",
+      "result": "met",
+      "detail": "independent review by Codex2 (codex-cli 0.153.0, read-only, run by the coordinator): round 1 REJECT (7 findings), round 2 REJECT (3 findings), round 3 ACCEPT; all findings addressed in this file"
+    }
+  ],
+  "limitations": [
+    "The approval pages were not driven in a browser. The vote calls used the route and body that the released frontend's decideApproval helper sends: execute-plans 86a4314b src/lib/bff-v1/writes.ts:1158-1180 posts {decision, memo, stageName, expected_version} to paths.approvalDecide(id) (paths.ts:88, /approvals/{id}/decide) and reuses the attempt's Idempotency-Key on retry; stageName was omitted here, as it is for whole-request votes. This comparison is a coordinator reading of that source, not an executed frontend test. The proposal and readback calls are coordinator calls, not frontend calls. Frontend rendering of pending versus final, its 409 refresh and its handling of a failed readback are not verified by this hosted run.",
+    "Capital reads of the fixture through the BFF were unavailable on this release (probe output: GET /bff/capital-pools/{id} 404 and binding list unavailable; tracked as BFF-CAPITAL-OWNER-READS-20261003); the Governance approval owner exercised here does not depend on them."
+  ],
+  "follow_ups": [
+    {
+      "item": "unknown approval id returns 409 stale instead of 404",
+      "disposition": "recorded only; not opened as a task"
+    }
+  ],
+  "status": "hosted_acceptance_observed_independently_reviewed",
+  "evidence_sources": {
+    "probe_outputs": "verbatim stdout of the coordinator's in-container probe scripts (approval steps, fixture creation, capital readback); they back every entry under steps",
+    "coordinator_observations": "release, served_identities and owner provenance come from coordinator curl / docker inspect / deploy job log captures taken at the stated times, not from the probe outputs",
+    "coordinator_attestations": "authorization scope and times and the absence of worker access are attested by the coordinator from the operator chat and are not machine-verifiable here"
+  }
+}
