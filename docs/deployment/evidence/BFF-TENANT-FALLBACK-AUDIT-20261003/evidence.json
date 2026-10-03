@@ -383,6 +383,6 @@
       "PYTHONPATH=.:services/control-plane/bff/tests pytest -q /tmp/pantheon-closeout-execution-20261003-1326/test_public_identity_metadata.py => 1 passed",
       "PYTHONPATH=. PANTHEON_CAPITAL_API_URL=http://localhost:8000 python3 /tmp/bff6109_review_multitenant.py => 5/5 cases passed (single, multi, primary_plus_allowed 201; foreign, missing 403)"
     ],
-    "diff_budget": "diff_budget.py --base origin/dev --head HEAD --change-class corrective --budget 60 passes (production +245/-243 net +2 <= 60)."
+    "diff_budget": "diff_budget.py --base origin/dev --head HEAD --change-class corrective --budget 60 passes (production +245/-219 net +26 <= 60)."
   }
 }
