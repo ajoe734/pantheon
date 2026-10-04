@@ -29,7 +29,10 @@
   },
   "validation_scope_incident": "The inherited provider-management test and its baseline reproduction made real TDCC/TAIFEX reads and received StockTwits HTTP403, contrary to the task's no-provider-network instruction. On discovery the broad run was stopped and the operator informed. Do not treat these reads as availability or acceptance evidence; do not rerun that test for this task. No hosted mutations or deployment were performed.",
   "diff_budget": "Production +23/-6 = net +17, within corrective budget 60; git diff origin/dev --check passed.",
-  "remaining_delivery": "Publish corrected evidence to PR6141; canonical external blocker for Human/Ops incident disposition, then fresh exact-head independent review, required CI, supervisor MERGE, and owner closeout. No merge or done claimed.",
+  "remaining_delivery": "Human/Ops disposition is recorded; publish this corrected manifest to PR6141 for fresh exact-head Codex2 review, required CI, supervisor MERGE, and owner closeout. No source approval, merge, hosted acceptance or done claimed.",
+  "incident_record": "The same test services/source_ingestion/tests/test_provider_management_coverage.py::test_provider_owned_adapters_execute_bounded_fetches_when_payload_omitted ran in the interrupted broad suite and base reproduction. Retained log final-write times are 2026-10-04T09:45:16.015484157Z (broad) and 2026-10-04T09:45:07.669875878Z (base); these are filesystem timestamps, not exact request timestamps, which the logs do not record. Both log hashes remain above. Historical provider access violated acceptance 4 and is never represented as compliant or hosted success.",
+  "independent_prior_review": "Codex2 rejected 131693f98ba0d5993447e860d70ef43cd14554cb at 2026-10-04T09:57:24Z for incident disposition and incomplete broad coverage, requesting evidence corrections without production changes. Its separate offline seven-file run was 190 passed, 1 explicit network skip, exit 0 in 185.35s; this is distinct from owner validation and does not replace the full offline inventory or new-head approval.",
+  "delivery_refresh": "Read /tmp/pantheon-closeout-execution-20261003/PLAN.md and /tmp/pantheon-closeout-continuation-20261004-0925/PLAN.md. Merged current dev f60a8aa3755f4f6543cd05faf3c04316e0dd3013, which adds only separate Research evidence. Verified every retained offline batch terminal count/exit/log hash, inventory union and baseline hash; source, tests and offline harness are byte-identical to validated 100e9fade46db9eec5b1a7ce9507279c37c66dc6. No test rerun or provider access during this evidence-only continuation.",
   "offline_review_correction": {
     "validated_head": "100e9fade46db9eec5b1a7ce9507279c37c66dc6",
     "base": "61980f66457b9199f7c1a4e77b88228c9e6ca899",
@@ -242,6 +245,6 @@
       "log_sha256": "2a506d55e4efa4b012639b8bec3d2aee20e5cc155febe32c9926f26d44af2456"
     },
     "logs": "/tmp/persona-tw-offline-20261004/<batch>.log; exact command plans, selected node IDs and per-case result JSON retained alongside logs.",
-    "incident_disposition": "UNRESOLVED: prior TDCC/TAIFEX/StockTwits provider reads remain an acceptance-4 violation. Offline reruns neither erase nor authorize that incident. Human/Ops disposition is required before a renewed acceptance claim."
+    "incident_disposition": "Human/Ops recorded disposition in canonical state and https://github.com/ajoe734/pantheon/pull/6141#issuecomment-5978964301 (2026-10-04T10:19:17Z); canonical reopen at 10:25:12Z explicitly permits delivery of completed OFFLINE3243cb28 evidence and fresh independent review/CI. Prior TDCC/TAIFEX/StockTwits reads remain an acceptance-4 violation. Offline reruns neither erase nor authorize that incident. No further provider access, retroactive approval, source approval or hosted acceptance is granted; no additional incident authorization is pending."
   }
 }
