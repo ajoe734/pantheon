@@ -30,7 +30,7 @@
       "platform": "x86_64-unknown-linux-gnu",
       "source": "https://pypi.org/project/dspy/",
       "lock": "dependencies/locks/services-learning-dspy.txt",
-      "validation": "uv pip sync lock; uv pip check; test_adapter.py: 6 passed; explicit optional offline disposition (StubBootstrapFewShotBackend and smoke_test.py --backend stub) verified on deterministic 8-example holdout, producing valid prompt_bundle and lineage; upstream DSPyBootstrapFewShotBackend verified denied when unconfigured or missing provider credentials (DSPyWorkflowError); semantic judgments preserved under authorized structured provider",
+      "validation": "uv pip sync lock; uv pip check; test_adapter.py: 6 passed; explicit optional offline disposition (StubBootstrapFewShotBackend and smoke_test.py --backend stub) verified on deterministic 8-example holdout, producing valid prompt_bundle and lineage; upstream DSPyBootstrapFewShotBackend verified denied when unconfigured (missing model) or when dependency is unavailable (DSPyWorkflowError); semantic judgments preserved under authorized structured provider",
       "profile": "Explicit optional offline route with tested availability; unconfigured upstream provider route denied"
     },
     "imitation": {
@@ -111,7 +111,7 @@
   "not_run_or_not_accepted": [
     "RLlib/Ray: excluded per artifact contract (owned by DIRECT-RAY-BASELINE-001)"
   ],
-  "production_code_line_delta": -1,
-  "diff_budget_status": "passed: production code net line delta is -1 (budget <= 0); child locks delivered on dev in PR 6125; evidence line count within cap",
+  "production_code_line_delta": -6,
+  "diff_budget_status": "passed: production code net line delta is -6 (budget <= 0); child locks delivered on dev in PR 6125; evidence line count within cap",
   "note": "Unblocked runtime closures, gateway failure semantics, Qlib worker disposable initialization and real backend execution verified; DSPy explicit optional offline disposition and unconfigured denial verified under existing contract."
 }
