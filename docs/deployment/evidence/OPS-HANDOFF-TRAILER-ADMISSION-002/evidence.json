@@ -9,7 +9,8 @@
     "PYTHONPATH=.orchestrator .venv-pantheon/bin/python -m pytest -q .orchestrator/rewrite/test_task_contract.py scripts/git/test_check_commit_trailers_independent_review.py — 41 passed",
     "PYTHONPATH=.orchestrator .venv-pantheon/bin/python -m pytest -q scripts/test_ai_status.py -k 'handoff or artifact_diff_scope' — 35 passed, 496 deselected, 2 subtests passed",
     "PYTHONPATH=.orchestrator .venv-pantheon/bin/python -m pytest -q scripts/git/test_diff_budget.py — 9 passed",
-    "python3 scripts/git/diff_budget.py --base 61980f66457b9199f7c1a4e77b88228c9e6ca899 --head HEAD --change-class corrective --budget 60 — production +81/-43, net +38 (within +60)",
+    "python3 scripts/git/check_commit_trailers.py --range f60a8aa3755f4f6543cd05faf3c04316e0dd3013..HEAD --skip-merge --delivery-class auto --task-id OPS-HANDOFF-TRAILER-ADMISSION-002 — passed; commits classified and checked as product",
+    "python3 scripts/git/diff_budget.py --base f60a8aa3755f4f6543cd05faf3c04316e0dd3013 --head HEAD --change-class corrective --budget 60 — production +81/-43, net +38 (within +60)",
     "git diff --check — passed",
     "Full scripts/test_ai_status.py suite attempted twice but exceeded 180s and 360s timeouts; neither run counted as passed."
   ]
