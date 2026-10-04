@@ -38,55 +38,85 @@ def bff(capital_test_env, monkeypatch):  # noqa: F811
     monkeypatch.delenv("PANTHEON_BFF_TENANT_ID", raising=False)
     for key, val in {"PANTHEON_BFF_JWT_SECRET": JWT_SECRET, "PANTHEON_BFF_AUTH_MODE": "strict"}.items():
         monkeypatch.setenv(key, val)
-    for tenant in ("tenant-a", "tenant-b"):
-        res = capital.post("/api/capital-pools", headers=_auth_headers(tenant, actor_id="admin"), json={
-            "actor_id": "admin", "actor_role": "capital.admin", "pool_id": f"pool-{tenant}", "name": tenant,
-            "owner_id": "fund", "owner_type": "fund", "approval_decision_id": "approval", "risk_policy_ref": "risk-main",
-        })
-        assert res.status_code == 201, res.text
-
     def urlopen(req, timeout=None):
         res = capital.get(req.full_url.removeprefix("http://capital"), headers=dict(req.header_items()))
         if res.status_code >= 400:
             raise urllib.error.HTTPError(req.full_url, res.status_code, res.text, {}, io.BytesIO(res.content))
         return _Resp(res.content)
 
-    res = capital.post("/api/bindings", headers=_auth_headers("tenant-a", actor_id="admin"), json={
-        "actor_id": "admin", "actor_role": "persona.admin", "binding_id": "binding-a", "persona_id": "persona-a",
-        "capital_pool_id": "pool-tenant-a", "capital_sleeve_id": "sleeve-1", "role": "live_owner",
-        "allowed_deployment_scope": "paper",
-    })
-    assert res.status_code == 201, res.text
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
-    from services.control_plane.bff.main import app
-    return TestClient(app)
+    _onboard(capital, "tenant-a")
+    return _fresh_bff
 
 
 def _fresh_bff():
-    """A new client over a fresh app handle models a BFF restart: owner reads keep no state."""
-    from services.control_plane.bff.main import app
-    return TestClient(app)
+    """A newly composed BFF instance (the supported composition seam) models a BFF restart."""
+    from services.control_plane.bff.core.app_factory import compose_bff_app
+    return TestClient(compose_bff_app())
+
+
+def _onboard(capital, tenant):
+    """Paper onboarding: the real provisioning coordinator drives the real Capital owner."""
+    from services.control_plane.bff.test_persona_provisioning_coordinator import (
+        FakeOwnerTransport, _coordinator, _record_and_store, _schedule_receipt,
+    )
+    from services.control_plane.bff.tests.test_persona_paper_onboarding_capital_integration import (
+        _CapitalOwnerBackedTransport,
+    )
+
+    class _Tenant:
+        def __getattr__(self, verb):
+            return lambda path, **kw: getattr(capital, verb)(path, headers=_auth_headers(tenant, actor_id="pantheon-persona-provisioner"), **kw)
+
+    store, record = _record_and_store()
+    transport = _CapitalOwnerBackedTransport(_Tenant(), FakeOwnerTransport())
+    result = _coordinator(store, transport, _schedule_receipt).coordinate(record)
+    assert result.current_step == "schedule_registered", result.error
+
+
+def _ids():
+    from services.control_plane.bff.persona_provisioning_coordinator import deterministic_provisioning_ids
+    from services.control_plane.bff.test_persona_provisioning_coordinator import _record_and_store
+    ids = deterministic_provisioning_ids(_record_and_store()[1])
+    return ids.capital_pool_id, ids.persona_capital_binding_id
 
 
 @pytest.mark.parametrize("restart", [False, True])
-def test_owner_records_readable_by_caller_tenant_on_bff_routes(bff, restart):
-    client = _fresh_bff() if restart else bff
+def test_onboarded_records_readable_by_caller_tenant_on_bff_routes(bff, restart):
+    pool_id, binding_id = _ids()
+    client = bff()
+    if restart:
+        client = bff()  # a second, freshly composed BFF: nothing is carried over
     headers = _bearer("tenant-a")
     pools = client.get("/bff/capital-pools", headers=headers)
-    assert [p["pool_id"] for p in pools.json()["data"]] == ["pool-tenant-a"], pools.text
-    detail = client.get("/bff/capital-pools/pool-tenant-a", headers=headers)
-    assert detail.status_code == 200, detail.text
+    assert [p["pool_id"] for p in pools.json()["data"]] == [pool_id], pools.text
+    assert client.get(f"/bff/capital-pools/{pool_id}", headers=headers).status_code == 200
     bindings = client.get("/api/v1/bindings?persona_id=persona-a", headers=headers)
-    assert [b["binding_id"] for b in bindings.json()["data"]] == ["binding-a"], bindings.text
+    assert [b["binding_id"] for b in bindings.json()["data"]] == [binding_id], bindings.text
 
 
 def test_other_tenant_cannot_read_records_on_bff_routes(bff):
-    headers = _bearer("tenant-b")
-    assert [p["pool_id"] for p in bff.get("/bff/capital-pools", headers=headers).json()["data"]] == ["pool-tenant-b"]
-    assert bff.get("/bff/capital-pools/pool-tenant-a", headers=headers).status_code == 404
-    assert bff.get("/api/v1/bindings?persona_id=persona-a", headers=headers).json()["data"] == []
+    pool_id, _ = _ids()
+    client, headers = bff(), _bearer("tenant-b")
+    assert client.get("/bff/capital-pools", headers=headers).json()["data"] == []
+    assert client.get(f"/bff/capital-pools/{pool_id}", headers=headers).status_code == 404
+    assert client.get("/api/v1/bindings?persona_id=persona-a", headers=headers).json()["data"] == []
 
 
-def test_owner_error_is_an_unavailable_surface_not_empty_success(bff):
-    res = bff.get("/bff/capital-pools", headers=_bearer("tenant-a", "tenant-b"))
-    assert res.json()["meta"]["surfaces"]["capital_pools"]["status"] == "unavailable", res.text
+def _unavailable(res):
+    return res.json()["meta"]["surfaces"]["capital_pools"]["status"] == "unavailable"
+
+
+def test_ambiguous_tenant_is_an_unavailable_surface_not_empty_success(bff):
+    res = bff().get("/bff/capital-pools", headers=_bearer("tenant-a", "tenant-b"))
+    assert _unavailable(res), res.text
+
+
+def test_downstream_capital_failure_is_an_unavailable_surface_not_empty_success(bff, monkeypatch):
+    def refused(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 503, "capital down", {}, io.BytesIO(b"{}"))
+
+    client = bff()
+    monkeypatch.setattr(urllib.request, "urlopen", refused)
+    res = client.get("/bff/capital-pools", headers=_bearer("tenant-a"))
+    assert _unavailable(res), res.text
