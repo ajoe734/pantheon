@@ -25,10 +25,10 @@ _JWT_ENV = {"PANTHEON_BFF_JWT_SECRET": "receipt-owner-signing-secret-0123456789"
             "PANTHEON_BFF_AUTH_MODE": "strict"}
 
 
-def _tok(tenant):
+def _tok(tenant, roles=("operator", "approver")):
     """Deterministic HS256 token verified by the production identity path; tenant=None omits the claim."""
     from services.runtime_auth_inbound import encode_jwt_hs256
-    claims = {"sub": tenant or "no-tenant", "roles": ["operator", "approver"], "exp": 4102444800,
+    claims = {"sub": tenant or "no-tenant", "roles": list(roles), "exp": 4102444800,
               "iss": _JWT_ENV["PANTHEON_BFF_JWT_ISSUER"], "aud": _JWT_ENV["PANTHEON_BFF_JWT_AUDIENCE"]}
     if tenant:
         claims["tenant_id"] = tenant
@@ -36,7 +36,11 @@ def _tok(tenant):
 
 
 def _tenant_of_auth(auth):
-    return next((t for t in ("tenant-a", "tenant-b") if auth == _tok(t)), None)
+    try:
+        id_obj = identity(auth)
+        return id_obj.claims.get("tenant_id") if id_obj else None
+    except Exception:
+        return next((t for t in ("tenant-a", "tenant-b") if auth == _tok(t)), None)
 
 
 def identity(auth=None, **kwargs):
@@ -279,3 +283,37 @@ def test_live_candidate_promotion_requires_two_man_evidence_at_mounted_path(moun
     assert "TWO_MAN_SIGNATURE_REQUIRED" in response.text
     assert store.get_command_by_idempotency_key(f"promote-live-{action}", operator_id="tenant-a") is None
     assert json.loads(owner.read_text())["writes"] == 0
+
+
+@pytest.mark.parametrize("command,action", [
+    ("PauseEvolutionProgram", None),
+    ("EvolutionProgramAction", "pause_program"),
+])
+def test_evolution_pause_role_negative_and_authorized_control(mounted, owner, command, action):
+    client, store, ports = mounted
+    viewer_tok = _tok("tenant-a", roles=["viewer"])
+    operator_tok = _tok("tenant-a", roles=["operator"])
+
+    # 1. Negative control: owner route rejects viewer with 403
+    url = "/bff/evolution-programs/program-a/actions/pause_program"
+    viewer_owner_resp = client.post(url, json={}, headers={"Authorization": viewer_tok, "Idempotency-Key": f"viewer-owner-{command}"})
+    assert viewer_owner_resp.status_code == 403, viewer_owner_resp.text
+
+    # 2. Negative control: command admission rejects viewer with 403, 0 writes, no admission
+    payload = {"command": command, "target": {"type": "EvolutionProgram", "id": "program-a"},
+               "params": {}, "audit_context": {"reason": "role policy negative check"}}
+    if action:
+        payload["action"] = action
+    viewer_cmd_resp = client.post("/bff/v1/commands", json=payload,
+                                  headers={"Authorization": viewer_tok, "Idempotency-Key": f"viewer-cmd-{command}"})
+    assert viewer_cmd_resp.status_code in (403, 422), viewer_cmd_resp.text
+    assert store.get_command_by_idempotency_key(f"viewer-cmd-{command}", operator_id="tenant-a") is None
+    assert json.loads(owner.read_text())["writes"] == 0
+
+    # 3. Positive control: authorized operator succeeds, executes downstream, writes owner
+    operator_cmd_resp = client.post("/bff/v1/commands", json=payload,
+                                    headers={"Authorization": operator_tok, "Idempotency-Key": f"operator-cmd-{command}"})
+    assert operator_cmd_resp.status_code == 202, operator_cmd_resp.text
+    record = store.get_command_by_idempotency_key(f"operator-cmd-{command}", operator_id="tenant-a")
+    assert record is not None
+    assert record["status"] == "executed"

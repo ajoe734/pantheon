@@ -2479,7 +2479,7 @@ def _validate_evolution_program_action(
                 suggestion="Escalate to a user with approver or admin role",
             )
     elif norm in {"submitevolutionreview"}:
-        if not {"reviewer", "approver", "admin"}.intersection(identity.roles):
+        if not {"reviewer", "approver", "admin", "operator"}.intersection(identity.roles):
             raise _err(
                 403,
                 ErrorCode.FORBIDDEN,
@@ -2487,6 +2487,16 @@ def _validate_evolution_program_action(
                 "Operator does not hold the required role",
                 precondition_failed="role_check",
                 suggestion="Escalate to a user with reviewer, approver, or admin role",
+            )
+    else:
+        if not {"operator", "approver", "admin"}.intersection(identity.roles):
+            raise _err(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Evolution program action requires 'operator', 'approver', or 'admin' role",
+                "Operator does not hold the required role",
+                precondition_failed="role_check",
+                suggestion="Escalate to a user with operator, approver, or admin role",
             )
 
 
