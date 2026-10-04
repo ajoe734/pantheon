@@ -337,11 +337,13 @@ def test_personas_service_no_import_time_stores_and_explicit_constructor() -> No
     # Verify _get_ranking_write_owner raises RuntimeError if not configured, rather than self-creating defaults
     original_owner = ps._ranking_write_owner
     ps._ranking_write_owner = None
+    context_token = ps._current_persona_service.set(None)
     try:
         with pytest.raises(RuntimeError):
             ps._get_ranking_write_owner()
     finally:
         ps._ranking_write_owner = original_owner
+        ps._current_persona_service.reset(context_token)
 
     with pytest.raises((TypeError, RuntimeError)):
         ps.PersonaService()  # type: ignore[call-arg]
