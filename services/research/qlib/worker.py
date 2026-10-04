@@ -36,7 +36,7 @@ def init_qlib_runtime() -> None:
                 client.create_experiment(exp_name, artifact_location=f"file://{tempfile.mkdtemp(prefix='qlib-artifacts-')}")
         except Exception:
             pass
-        qlib.init(provider_uri=p_dir, exp_manager={"class": "MLflowExpManager", "module_path": "qlib.workflow.expm", "kwargs": {"uri": t_uri, "default_exp_name": exp}})
+        qlib.init(provider_uri=p_dir, exp_manager={"class": "MLflowExpManager", "module_path": "qlib.workflow.expm", "kwargs": {"uri": t_uri, "default_exp_name": exp_name}})
 
 
 def main() -> int:
