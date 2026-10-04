@@ -1,0 +1,49 @@
+{
+  "task_id": "OPS-CLOSEOUT-ACTIVATION-EVIDENCE-20261004",
+  "owner": "PiAstra",
+  "reviewer": "Codex2",
+  "status": "evidence prepared; independent exact-head review and merge pending",
+  "delivery_scope": "Evidence-only documentation for local development tooling activation; no product deployment or hosted business acceptance.",
+  "source": {
+    "branch_base": "13b44eadb65e2ec7452df453050857a4baca7fc3 (current origin/dev at task start)",
+    "installed_runtime_source": "13b44eadb65e2ec7452df453050857a4baca7fc3",
+    "source_worktree_clean": true,
+    "required_merged_commits_ancestry_verified": [
+      "5856d270912d0477aa63724de3ed9f1d2ce3881b",
+      "9333e40933c6f9c64e9a96fdc255dd83ab8dc665"
+    ],
+    "installed_guard_sha256": "927d46a2b2a4f9a290fc1cfa55d338a80d23949c5329ac526a544b2dd0827da6"
+  },
+  "activation_evidence": "docs/deployment/evidence/OPS-CLOSEOUT-RUNTIME-ACTIVATION-20261003/activation-evidence.json",
+  "verification": [
+    {
+      "command": "cd <installed command runtime at source 13b44eadb65e2ec7452df453050857a4baca7fc3> && <shared worker-test python> -B -m unittest -v scripts.test_ai_status.ReviewApprovedWorkflowTests.test_hosted_finalization_rejects_pending_and_malformed_tracks scripts.test_ai_status.ReviewApprovedWorkflowTests.test_hosted_finalization_preserves_research_hold_in_task_store scripts.test_ai_status.ReviewApprovedWorkflowTests.test_hosted_finalization_allows_source_only_and_completed_tracks scripts.test_ai_status.ReviewApprovedWorkflowTests.test_hosted_hold_preserves_functional_dependency_and_blocker_commands scripts.test_ai_status.ReviewApprovedWorkflowTests.test_hosted_finalization_rejects_held_immutable_archive_recovery",
+      "result": "5 tests passed in 0.232s; exit 0",
+      "safety": "Used -B and existing tests' isolated temporary fixtures; no real task or archive was mutated."
+    },
+    {
+      "command": "python3 -B /tmp/pantheon-authorized-closeout-20261003-2349/runtime_postflight.py",
+      "result": "Could not obtain a newer snapshot: recorded supervisor PID had exited and /proc/<pid>/cmdline was unavailable. Exit 1; captured 00:31:36 UTC postflight remains the only health observation.",
+      "safety": "Read-only script inspected retired fence metadata only with lstat; no FIFO body was opened."
+    }
+  ],
+  "test_scope": "Installed-source hosted-finalization guard only: source-only/completed tracks succeed; pending, malformed, held and immutable-archive recovery cases deny as expected. Historical 531-test results from 2f98043 are not attributed to installed 13b44ead results.",
+  "diff_budget": {
+    "change_class": "simplify",
+    "production_code_net_lines": 0,
+    "files_changed": 2,
+    "scope": "Only the two admitted evidence directories; no source, state, or runtime changes."
+  },
+  "limitations": [
+    "Evidence is a record of a Human/Ops-authorized local tooling activation, not an activation performed by PiAstra.",
+    "The captured postflight records ready runtime, consumed drain receipts, materialized recovery continuations, and caught-up authoritative health at its recorded time; its health was not freshly re-established during this evidence task.",
+    "No hosted product, six-area hosted obligation, or business acceptance is claimed complete."
+  ],
+  "source_record_sha256": {
+    "runtime-promotion.log": "2f1ce57e15f3fa0bca2308ff5414d99a1f35978704bc61149bc9c77019f6a118",
+    "runtime-promotion.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "runtime-activation-postflight.json": "2101968f4d65b194b532a12676ed23693f75729a402c7c8de7e9ff97eda2c654",
+    "runtime_postflight.py": "70d77579a21a035532b1223e0112fbaa38013657a505f219a6a15eb6334d7430",
+    "installed-hosted-guard-tests.log": "012b87276cd07f381e8567ad29468370491e42875cdbbc9d66aef5c7f1bf64cd"
+  }
+}
