@@ -195,6 +195,7 @@ from services.control_plane.bff.persona_provisioning import (
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.ports.rankings import RankingSnapshotReadPort
 from services.rankings.snapshots import (
+    FORMULA_VERSION as _PM12_LEAGUE_FORMULA_VERSION,
     snapshot_record, _pm12_ranking_snapshot_content, _pm12_ranking_snapshot_payload_items,
 )
 from services.control_plane.bff.ports.persona_write_owner import PersonaRegistryHttpWritePort
@@ -4562,7 +4563,6 @@ _PM12_LEAGUE_MOVER_DIRECTIONS = {"all", "up", "down", "flat", "new"}
 
 
 # --- _PM12_LEAGUE_FORMULA_VERSION ---
-_PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
 
 
 # --- _PM12_QUARTERLY_FORMULA_DOC_REF ---
@@ -9187,23 +9187,14 @@ def _list_governance_audit_events(
 
 # --- _pm12_recommendation_snapshot_record ---
 def _pm12_recommendation_snapshot_record(snapshot_id: str) -> Dict[str, Any]:
-    """Read back a previously admitted PM12 ranking snapshot.
-
-    ``_pm12_attach_ranking_snapshot`` durably persists quarterly ranking
-    snapshots through the canonical Rankings write-owner port
-    (``_get_ranking_write_owner()``, see ``ports/rankings.py``). Recommendation
-    submission must re-admit a caller-asserted ``ranking_snapshot_id`` against
-    that same canonical store -- not the retired ``ReadSurfacePorts`` local
-    overlay, which is a distinct store that never observes snapshots written
-    here.
-    """
+    """Read the evaluator-admitted snapshot from the sole Rankings table."""
     record = _get_ranking_write_owner().get_ranking_snapshot(snapshot_id)
     if not isinstance(record, dict):
         raise _bff_error(
             422,
             ErrorCode.VALIDATION_FAILED,
             "unknown ranking snapshot",
-            "The submitted ranking_snapshot_id does not match a BFF-admitted quarterly ranking snapshot.",
+            "The submitted ranking_snapshot_id does not match an evaluator-admitted quarterly ranking snapshot.",
             precondition_failed="ranking_snapshot_id",
         )
     return record
@@ -11513,7 +11504,6 @@ _PM12_LEAGUE_RANKING_CRITERIA = {
     "activity": ("activity_score", "Activity"),
 }
 _PM12_LEAGUE_MOVER_DIRECTIONS = {"all", "up", "down", "flat", "new"}
-_PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
 _PM12_QUARTERLY_FORMULA_DOC_REF = (
     "docs/04/pantheon_bff_api_gap_2026-05-23/"
     "BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources"

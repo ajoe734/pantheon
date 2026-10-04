@@ -234,3 +234,14 @@ Agora 清理依賴是為了先完成同區域的刪除，避免並行改寫；�
 - 已刪除舊的 `submit_quarterly_ranking_recommendation` 服務分支；`POST …/recommendations/{id}/submit` 只回 410（`ACTION_RETIRED`），不產生 command。
 - 狀態集合：`advisory_report`（無提案，不可執行）、`pending_human_gate`（owner 提案存在，尚未 decided，含首票）、`decision_accepted`（owner 已 decided）、`decision_revoked`／`decision_superseded`（owner 終態；`decision_status` 為 `revoked`／`superseded`，保留 owner readback，`links.human_inbox` 為 null）、`owner_unavailable`（owner 讀不到，或 tenant／persona／proposal_id／target_type／subject（persona、from_state、to_state）／proposal_content_digest 與已存提案不符；ranking 與 review 的 `links.human_inbox` 此時皆為 null）。`recommended_not_submitted` 不再出現。
 - Human Inbox：owner 提案尚未 decided 時 `links.human_inbox`／`human_inbox_id` 指向既有 `approval:{decision_id}` 項目（`source_type=approval`）；decided 後該項目已離開 approval queue，故兩者為 null，改以 `links.owner_decision`（`/api/v1/approval-decisions/{decision_id}`）作最終決議讀回。owner subject 讀自 `ApprovalDecision.metadata.subject`。
+
+### Rankings snapshot ownership (RANKING-SNAPSHOT-OWNER-20261002)
+
+Ranking GETs attach deterministic content IDs without persisting. The existing
+scheduled persona evaluator verifies complete quarterly inputs and admits their
+snapshot to the sole `services.rankings.store` table before saving advice or
+proposing Governance work. The BFF composes a read-only Rankings reader and
+resolves saved recommendations against that durable snapshot; missing/unavailable
+saved snapshots return 503. Replay retains creation time and rejects content or
+evidence-assertion divergence. No new service, store or scheduler is introduced;
+Persona tenant visibility and the single Governance decision consumer are unchanged.

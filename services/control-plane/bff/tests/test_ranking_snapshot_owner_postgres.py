@@ -62,7 +62,7 @@ def mounted(pg, tmp_path, monkeypatch):
     monkeypatch.setenv('BFF_DATA_DIR', str(tmp_path / 'bff'))
     monkeypatch.setenv('PANTHEON_BFF_TENANT_ID', g._PM12_ELIGIBLE_TENANT_ID)
     # A read-only DB transaction also rejects DDL, including CREATE IF NOT EXISTS.
-    monkeypatch.setenv('RANKING_STORE_DSN', pg[0] + '?options=-cdefault_transaction_read_only=on')
+    monkeypatch.setenv('RANKING_STORE_DSN', pg[0] + '?options=-cdefault_transaction_read_only%3Don')
     projection = g.PromotionReviewTestReadPorts(allow_fallback=True)
     with monkeypatch.context() as no_writer:
         no_writer.setattr(RankingWriteStore, '__init__', lambda *a, **kw: pytest.fail('BFF constructed a Rankings writer'))
@@ -128,6 +128,7 @@ def test_mounted_get_owner_admission_restart_and_saved_readback(pg, mounted, eva
     repeat = evaluator.run_once(**{**args, 'store': evaluator.Store(state_path), 'ranking_store': RankingWriteStore(pg[0], pg[1], False), 'now': lambda: NOW + 60})
     assert repeat['reused'] and len(asks) == 1 and proposals == []
     assert pg[2].get_ranking_snapshot(snapshot_id).created_at == stored.created_at
+    assert deps.ranking_write_owner.get_ranking_snapshot(snapshot_id) == stored.to_canonical_dict()
     # Genuine evaluator HTTP readback after reopening its result file.
     server = evaluator.serve(evaluator.Store(state_path), 'local-read-token', 0)
     monkeypatch.setenv('PERSONA_EVALUATOR_URL', f'http://127.0.0.1:{server.server_port}')
@@ -139,9 +140,17 @@ def test_mounted_get_owner_admission_restart_and_saved_readback(pg, mounted, eva
         assert rec['ranking_snapshot_id'] == snapshot_id and rec['rationale'] == 'Saved advisory evidence.'
         assert len(pg[2]._records_table.list_all()) == 1
         # Saved result exists but backing snapshot is unavailable: explicit failure.
-        monkeypatch.setattr(deps.ranking_write_owner._store, 'get_ranking_snapshot', lambda _: None)
+        state = evaluator.Store(state_path)
+        original = state.load()
+        absent = json.loads(json.dumps(original))
+        absent['results'][f'{QUARTER}|{snapshot_id}']['items'][0]['ranking_snapshot_id'] = 'not-admitted'
+        state.save(absent)
         missing = client.get('/bff/management/quarterly-ranking/recommendations', headers=g.OPERATOR_HEADERS, params={'quarter': QUARTER})
         assert missing.status_code == 503, missing.text
+        state.save(original)
+        deps.ranking_write_owner._store._records_table.dsn = 'postgresql://test:test@127.0.0.1:1/test?connect_timeout=1'
+        offline = client.get('/bff/management/quarterly-ranking/recommendations', headers=g.OPERATOR_HEADERS, params={'quarter': QUARTER})
+        assert offline.status_code == 503, offline.text
     finally:
         server.shutdown()
         server.server_close()
@@ -179,4 +188,68 @@ def test_signed_unauthorized_tenant_cannot_produce_snapshot(pg, mounted, monkeyp
     response = client.get('/bff/management/quarterly-ranking', headers={'Authorization': f'Bearer {token}'}, params={'quarter': QUARTER})
     assert response.status_code in (200, 403), response.text
     assert not (response.json().get('data') or {}).get('items')
+    assert pg[2]._records_table.list_all() == []
+
+
+def test_default_projection_also_receives_reader(pg, tmp_path, monkeypatch):
+    monkeypatch.setenv('BFF_DATA_DIR', str(tmp_path))
+    monkeypatch.setenv('RANKING_STORE_DSN', pg[0] + '?options=-cdefault_transaction_read_only%3Don')
+    monkeypatch.setattr(RankingWriteStore, '__init__', lambda *a, **kw: pytest.fail('BFF constructed writer'))
+    deps = AppDependencies.create_default()
+    assert deps.read_surface.list_rankings() == []
+    assert pg[2]._records_table.list_all() == []
+
+
+def _candidate_payload(items):
+    record = snapshot_record(items, surface='quarterly', period=QUARTER)
+    return {'data': {'items': items, 'ranking_snapshot_id': record.ranking_snapshot_id}}
+
+
+def _evidence_item(pid):
+    return {'persona_id': pid, 'owner_lifecycle_state': 'paper_owner', 'score': 50,
+            'evidence_refs': [{'refId': 'ev-' + pid}], 'evidence_ref_ids': ['ev-' + pid]}
+
+
+def test_pagination_admits_complete_content_and_rejects_changed_or_redacted(evaluator):
+    items = [_evidence_item('p1'), _evidence_item('p2')]
+    full = _candidate_payload(items)
+    pages = [{**full, 'data': {**full['data'], 'items': items[:1]}, 'page_info': {'next_page_token': 'page2'}},
+             {**full, 'data': {**full['data'], 'items': items[1:]}}]
+    calls = []
+    def fetch(url, **kwargs):
+        calls.append(url)
+        return pages[len(calls) - 1]
+    inputs, record = evaluator.collect_evidence('http://local', QUARTER, {}, fetch)
+    assert len(record.items) == len(inputs) == 2 and 'page_token=page2' in calls[1]
+    pages[1]['data']['ranking_snapshot_id'] = 'changed'
+    calls.clear()
+    with pytest.raises(evaluator.Degraded, match='changed during pagination'):
+        evaluator.collect_evidence('http://local', QUARTER, {}, fetch)
+    # Hidden evidence identifiers must never be inferred or silently discarded.
+    redacted = {**full, 'data': {**full['data'], 'items': [{**items[0], 'evidence_ref_ids': []}, items[1]]}}
+    with pytest.raises(evaluator.Degraded, match='incomplete, redacted or changed'):
+        evaluator.collect_evidence('http://local', QUARTER, {}, lambda *a, **k: redacted)
+
+
+@pytest.mark.parametrize('failure', ['no_dsn', 'missing_table', 'offline'])
+def test_failed_actual_admission_never_asks_provider_or_saves_advice(pg, evaluator, tmp_path, monkeypatch, failure):
+    if failure == 'no_dsn':
+        monkeypatch.delenv('RANKING_STORE_DSN')
+        monkeypatch.delenv('DATABASE_URL', raising=False)
+    elif failure == 'missing_table':
+        monkeypatch.setenv('RANKING_STORE_TABLE', pg[1] + '_missing')
+    else:
+        monkeypatch.setenv('RANKING_STORE_DSN', 'postgresql://test:test@127.0.0.1:1/test?connect_timeout=1')
+    state = evaluator.Store(tmp_path / 'failed.json')
+    calls = []
+    def fetch(url, **kwargs):
+        calls.append(url)
+        assert 'quarterly-ranking?' in url
+        return _candidate_payload([_evidence_item('p1')])
+    outcome = evaluator.run_once(store=state, bff_url='http://local', bff_headers={}, adapter_url='http://provider',
+        adapter_token='', governance_url='http://governance', governance_token='', tenant='tenant', actor='evaluator',
+        fetch=fetch, now=lambda: NOW)
+    assert outcome['status'] == 'degraded' and outcome['created'] == 0
+    assert 'admission unavailable' in outcome['reason']
+    assert state.load()['results'] == {} and len(calls) == 1
     assert pg[2]._records_table.list_all() == []

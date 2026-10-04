@@ -8,6 +8,8 @@ from typing import Any, Dict, List
 
 from .store import RankingSnapshotRecord, RankingConflictError, utc_now
 
+FORMULA_VERSION = "pm12-default-v1"
+
 
 def _stable_json_hash(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
@@ -112,7 +114,7 @@ def _pm12_ranking_snapshot_content(
     return {
         "surface": surface,
         "period": period,
-        "formula_version": "pm12-default-v1",
+        "formula_version": FORMULA_VERSION,
         "items": _pm12_ranking_snapshot_payload_items(items),
     }
 

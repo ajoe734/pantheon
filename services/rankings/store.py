@@ -413,7 +413,6 @@ class RankingReadStore:
         self,
         dsn: str,
         table: str = "rankings.rankings",
-        bootstrap: bool = True,
     ) -> None:
         self._records_table = PostgresJsonOwnerStore(
             dsn=dsn,

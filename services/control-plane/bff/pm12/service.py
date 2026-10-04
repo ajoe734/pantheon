@@ -36,7 +36,7 @@ from ..governance.promotion_review import (
 
 _NUMERIC_TYPES = (int, float, Decimal)
 
-_PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
+from services.rankings.snapshots import FORMULA_VERSION as _PM12_LEAGUE_FORMULA_VERSION
 _PM12_RANKING_SNAPSHOT_DEFAULT_TTL_SECONDS = 3600
 _PM12_RANKING_SNAPSHOT_MAX_TTL_SECONDS = 86400 * 7
 _PM12_QUARTER_PATTERN = re.compile(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", re.IGNORECASE)
@@ -231,7 +231,7 @@ def _pm12_allocation_snapshot_record(
             422,
             ErrorCode.VALIDATION_FAILED,
             "unknown ranking snapshot",
-            "Allocation evaluation requires a BFF-admitted quarterly ranking snapshot.",
+            "Allocation evaluation requires an evaluator-admitted quarterly ranking snapshot.",
             precondition_failed="ranking_snapshot_id",
         )
     expected_content_digest = _stable_json_hash({
