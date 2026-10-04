@@ -45,6 +45,34 @@ from services.control_plane.bff.agora.strategy_workshop.operations import (
 from services.research.tests.test_research_orchestrator_http_service import _load_service_module
 
 
+class OwnerRuns:
+    """Research-owner run fixture: the owner is the only run source."""
+
+    def __init__(self) -> None:
+        self.runs: Dict[str, Dict[str, Any]] = {}
+
+    def create_run(self, run: Dict[str, Any]) -> None:
+        status = str(run.get("execution_status") or "queued")
+        self.runs[run["run_id"]] = {
+            **{k: v for k, v in run.items() if k not in {"execution_status", "plan_id", "user_id"}},
+            "status": {"succeeded": "completed", "cancelled": "canceled"}.get(status, status),
+            "created_by": run.get("user_id"),
+            "input_refs": [{"type": "research_plan", "id": run["plan_id"]}] if run.get("plan_id") else [],
+        }
+
+    def record_execution_receipt(self, receipt: Dict[str, Any]) -> None:
+        run = self.runs[receipt["run_id"]]
+        run["receipt"] = receipt
+        run.setdefault("provenance", receipt.get("mode"))
+
+
+def install_owner_runs(monkeypatch: pytest.MonkeyPatch) -> OwnerRuns:
+    owner = OwnerRuns()
+    monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://research-owner.test")
+    monkeypatch.setattr(WorkshopCanonicalOperations, "get_research_run", lambda self, run_id: owner.runs.get(run_id))
+    return owner
+
+
 def test_build_plan_with_injected_workshop_store_makes_no_main_import_attempts() -> None:
     """Verify _build_plan with injected workshop_store makes no BFF main import or execution attempts."""
     import sys
@@ -104,6 +132,7 @@ def test_public_candidate_admission_receipt_provenance_and_trust_flag_negative_c
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     monkeypatch.setenv("AGORA_CANDIDATE_POOL_PROFILE", "production")
 
+    owner = install_owner_runs(monkeypatch)
     client = _workshop_client(monkeypatch)
     router = getattr(client, "router", None)
     app = getattr(client, "app_instance", None)
@@ -156,7 +185,7 @@ def test_public_candidate_admission_receipt_provenance_and_trust_flag_negative_c
         "executor": "vectorbt_executor",
         "correlation_id": "corr-running-001",
     }
-    store.create_run(run_running)
+    owner.create_run(run_running)
     resp_running = client.post(
         "/bff/agora/candidate-pools",
         headers={
@@ -194,7 +223,7 @@ def test_public_candidate_admission_receipt_provenance_and_trust_flag_negative_c
         "executor": "vectorbt_executor",
         "correlation_id": "corr-no-rec-001",
     }
-    store.create_run(run_no_rec)
+    owner.create_run(run_no_rec)
     resp_no_rec = client.post(
         "/bff/agora/candidate-pools",
         headers={
@@ -232,7 +261,7 @@ def test_public_candidate_admission_receipt_provenance_and_trust_flag_negative_c
         "executor": "vectorbt_executor",
         "correlation_id": "corr-wrong-owner-001",
     }
-    store.create_run(run_wrong_owner)
+    owner.create_run(run_wrong_owner)
     rec_wrong_owner = ResearchExecutionReceipt(
         receipt_id="rec-wrong-owner-001",
         run_id="run-wrong-owner-001",
@@ -241,7 +270,7 @@ def test_public_candidate_admission_receipt_provenance_and_trust_flag_negative_c
         correlation_id="corr-wrong-owner-001",
         completed_at="2026-09-08T07:00:00Z",
     )
-    store.record_execution_receipt(rec_wrong_owner.to_dict())
+    owner.record_execution_receipt(rec_wrong_owner.to_dict())
     resp_wrong_owner = client.post(
         "/bff/agora/candidate-pools",
         headers={
@@ -278,7 +307,7 @@ def test_public_candidate_admission_receipt_provenance_and_trust_flag_negative_c
         "executor": "vectorbt_executor",
         "correlation_id": "expected-corr-123",
     }
-    store.create_run(run_wrong_corr)
+    owner.create_run(run_wrong_corr)
     rec_wrong_corr = ResearchExecutionReceipt(
         receipt_id="rec-wrong-corr-001",
         run_id="run-wrong-corr-001",
@@ -287,7 +316,7 @@ def test_public_candidate_admission_receipt_provenance_and_trust_flag_negative_c
         correlation_id="mismatched-corr-999",
         completed_at="2026-09-08T07:00:00Z",
     )
-    store.record_execution_receipt(rec_wrong_corr.to_dict())
+    owner.record_execution_receipt(rec_wrong_corr.to_dict())
     resp_wrong_corr = client.post(
         "/bff/agora/candidate-pools",
         headers={
@@ -324,7 +353,7 @@ def test_public_candidate_admission_receipt_provenance_and_trust_flag_negative_c
         "executor": "vectorbt_executor",
         "correlation_id": "corr-foreign-001",
     }
-    store.create_run(run_foreign)
+    owner.create_run(run_foreign)
     rec_foreign = ResearchExecutionReceipt(
         receipt_id="rec-foreign-001",
         run_id="run-foreign-001",
@@ -333,7 +362,7 @@ def test_public_candidate_admission_receipt_provenance_and_trust_flag_negative_c
         correlation_id="corr-foreign-001",
         completed_at="2026-09-08T07:00:00Z",
     )
-    store.record_execution_receipt(rec_foreign.to_dict())
+    owner.record_execution_receipt(rec_foreign.to_dict())
     resp_foreign = client.post(
         "/bff/agora/candidate-pools",
         headers={
@@ -377,7 +406,7 @@ def test_public_candidate_admission_receipt_provenance_and_trust_flag_negative_c
         ],
         "metrics": {"sharpe_ratio": 1.85, "max_drawdown": 0.08},
     }
-    store.create_run(run_real)
+    owner.create_run(run_real)
     rec_real = ResearchExecutionReceipt(
         receipt_id="rec-authentic-001",
         run_id="run-authentic-real-001",
@@ -387,7 +416,7 @@ def test_public_candidate_admission_receipt_provenance_and_trust_flag_negative_c
         completed_at="2026-09-08T07:00:00Z",
         artifact_digest="sha256:cand-authentic-real",
     )
-    store.record_execution_receipt(rec_real.to_dict())
+    owner.record_execution_receipt(rec_real.to_dict())
     resp_real = client.post(
         "/bff/agora/candidate-pools",
         headers={
@@ -416,13 +445,14 @@ def test_public_candidate_admission_receipt_provenance_and_trust_flag_negative_c
     assert cand_real.get("artifact_digest") == "sha256:cand-authentic-real"
 
 
-def test_unrelated_artifact_cannot_borrow_run_receipt_regression() -> None:
+def test_unrelated_artifact_cannot_borrow_run_receipt_regression(monkeypatch: pytest.MonkeyPatch) -> None:
+    owner = install_owner_runs(monkeypatch)
     """Unrelated candidate artifact_id referencing a valid real run fails closed."""
     from agora.research.routes.common import AgoraResearchRouteContext, CandidatePoolCreateRequest
     from types import SimpleNamespace
 
     store = MemoryResearchPlanStore()
-    store.create_run({
+    owner.create_run({
         "run_id": "review-run-unrelated",
         "plan_id": "review-plan-1",
         "tenant_id": "review-tenant",
@@ -434,7 +464,7 @@ def test_unrelated_artifact_cannot_borrow_run_receipt_regression() -> None:
         "artifact_refs": [{"artifact_id": "actual-artifact", "ref": "artifact://actual-artifact"}],
         "metrics": {"sharpe_ratio": 2.1},
     })
-    store.record_execution_receipt({
+    owner.record_execution_receipt({
         "receipt_id": "review-receipt-1",
         "run_id": "review-run-unrelated",
         "executor": "vectorbt_executor",
@@ -489,13 +519,14 @@ def test_unrelated_artifact_cannot_borrow_run_receipt_regression() -> None:
     assert neg_res["candidates"][0]["has_real_receipt"] is False
 
 
-def test_multiple_mismatches_fail_closed_without_crashing_regression() -> None:
+def test_multiple_mismatches_fail_closed_without_crashing_regression(monkeypatch: pytest.MonkeyPatch) -> None:
+    owner = install_owner_runs(monkeypatch)
     """Candidate with multiple mismatched fields fails closed without crashing."""
     from agora.research.routes.common import AgoraResearchRouteContext, CandidatePoolCreateRequest
     from types import SimpleNamespace
 
     store = MemoryResearchPlanStore()
-    store.create_run({
+    owner.create_run({
         "run_id": "review-run-multi",
         "plan_id": "review-plan-1",
         "tenant_id": "review-tenant",
@@ -506,7 +537,7 @@ def test_multiple_mismatches_fail_closed_without_crashing_regression() -> None:
         "provenance": "real",
         "artifact_refs": [{"artifact_id": "actual-artifact", "ref": "artifact://actual-artifact"}],
     })
-    store.record_execution_receipt({
+    owner.record_execution_receipt({
         "receipt_id": "review-receipt-1",
         "run_id": "review-run-multi",
         "executor": "vectorbt_executor",
@@ -594,20 +625,21 @@ def test_postgres_dataset_owner_bootstrap_read_restart_regression() -> None:
             conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
 
 
-def test_owner_metric_list_cannot_be_replaced_by_client() -> None:
+def test_owner_metric_list_cannot_be_replaced_by_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    owner = install_owner_runs(monkeypatch)
     from agora.research.routes.common import AgoraResearchRouteContext, CandidatePoolCreateRequest
     from agora.research.store import MemoryResearchPlanStore
     from types import SimpleNamespace
 
     store = MemoryResearchPlanStore()
     artifact = {"artifact_id": "actual-artifact", "ref": "artifact://actual-artifact"}
-    store.create_run(dict(
+    owner.create_run(dict(
         run_id="run-review", plan_id="plan-review", tenant_id="tenant",
         user_id="user", execution_status="succeeded", executor="vectorbt_executor",
         correlation_id="corr-review", provenance="real", artifact_refs=[artifact],
         metrics=[{"metric": "sharpe_ratio", "value": 0.1, "provenance": "real"}],
     ))
-    store.record_execution_receipt(dict(
+    owner.record_execution_receipt(dict(
         receipt_id="receipt-review", run_id="run-review",
         executor="vectorbt_executor", mode="real", correlation_id="corr-review",
         artifact_digest="sha256:actual", spec_version="1.0", completed_at="2026-09-08T07:00:00Z",
@@ -634,20 +666,21 @@ def test_owner_metric_list_cannot_be_replaced_by_client() -> None:
     assert ctx.store.get_candidate_metrics(pool["pool_id"], "actual-artifact")["sharpe_ratio"] == 0.1
 
 
-def test_artifact_dict_digest_mismatch_fails_closed() -> None:
+def test_artifact_dict_digest_mismatch_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    owner = install_owner_runs(monkeypatch)
     from agora.research.routes.common import AgoraResearchRouteContext, CandidatePoolCreateRequest
     from agora.research.store import MemoryResearchPlanStore
     from types import SimpleNamespace
 
     store = MemoryResearchPlanStore()
     artifact = {"artifact_id": "actual-artifact", "ref": "artifact://actual-artifact", "digest": "sha256:wrong"}
-    store.create_run(dict(
+    owner.create_run(dict(
         run_id="run-review", plan_id="plan-review", tenant_id="tenant",
         user_id="user", execution_status="succeeded", executor="vectorbt_executor",
         correlation_id="corr-review", provenance="real", artifact_refs=[artifact],
         metrics=[],
     ))
-    store.record_execution_receipt(dict(
+    owner.record_execution_receipt(dict(
         receipt_id="receipt-review", run_id="run-review",
         executor="vectorbt_executor", mode="real", correlation_id="corr-review",
         artifact_digest="sha256:actual", spec_version="1.0", completed_at="2026-09-08T07:00:00Z",
@@ -672,7 +705,8 @@ def test_artifact_dict_digest_mismatch_fails_closed() -> None:
     assert candidate["has_real_receipt"] is False, candidate
 
 
-def test_real_candidate_cannot_acquire_client_only_scoring_metrics() -> None:
+def test_real_candidate_cannot_acquire_client_only_scoring_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    owner = install_owner_runs(monkeypatch)
     from agora.research.routes.common import (
         AgoraResearchRouteContext,
         CandidatePoolCreateRequest,
@@ -683,7 +717,7 @@ def test_real_candidate_cannot_acquire_client_only_scoring_metrics() -> None:
 
     store = MemoryResearchPlanStore()
     artifact = {"artifact_id": "actual-artifact", "ref": "artifact://actual-artifact"}
-    store.create_run(dict(
+    owner.create_run(dict(
         run_id="run-review",
         plan_id="plan-review",
         tenant_id="tenant",
@@ -695,7 +729,7 @@ def test_real_candidate_cannot_acquire_client_only_scoring_metrics() -> None:
         artifact_refs=[artifact],
         metrics=[{"metric": "mean_sharpe_ratio", "value": 0.1, "provenance": "real"}],
     ))
-    store.record_execution_receipt(dict(
+    owner.record_execution_receipt(dict(
         receipt_id="receipt-review",
         run_id="run-review",
         executor="vectorbt_executor",
@@ -744,7 +778,8 @@ def test_real_candidate_cannot_acquire_client_only_scoring_metrics() -> None:
     assert score["band"] != "priority_review"
 
 
-def test_negative_controls_for_absent_owner_keys_and_nested_components() -> None:
+def test_negative_controls_for_absent_owner_keys_and_nested_components(monkeypatch: pytest.MonkeyPatch) -> None:
+    owner = install_owner_runs(monkeypatch)
     """Absent owner keys, nested components, and evidence_refs must not be filled by client inputs."""
     from agora.research.routes.common import (
         AgoraResearchRouteContext,
@@ -756,7 +791,7 @@ def test_negative_controls_for_absent_owner_keys_and_nested_components() -> None
 
     store = MemoryResearchPlanStore()
     artifact = {"artifact_id": "actual-artifact", "ref": "artifact://actual-artifact"}
-    store.create_run(dict(
+    owner.create_run(dict(
         run_id="run-review-neg",
         plan_id="plan-review-neg",
         tenant_id="tenant",
@@ -768,7 +803,7 @@ def test_negative_controls_for_absent_owner_keys_and_nested_components() -> None
         artifact_refs=[artifact],
         metrics=[{"metric": "mean_sharpe_ratio", "value": 0.1, "provenance": "real"}],
     ))
-    store.record_execution_receipt(dict(
+    owner.record_execution_receipt(dict(
         receipt_id="receipt-review-neg",
         run_id="run-review-neg",
         executor="vectorbt_executor",
@@ -846,13 +881,14 @@ def test_negative_controls_for_absent_owner_keys_and_nested_components() -> None
 
 
 
-def test_missing_identities_fail_closed_through_candidate_admission() -> None:
+def test_missing_identities_fail_closed_through_candidate_admission(monkeypatch: pytest.MonkeyPatch) -> None:
+    owner = install_owner_runs(monkeypatch)
     """AgoraResearchRouteContext.build_candidate_pool must fail closed when run lacks owner artifact identities."""
     from agora.research.routes.common import AgoraResearchRouteContext, CandidatePoolCreateRequest
     from agora.research.store import MemoryResearchPlanStore
 
     store = MemoryResearchPlanStore()
-    store.create_run(dict(
+    owner.create_run(dict(
         run_id="run-no-art",
         plan_id="plan-no-art",
         tenant_id="tenant",
@@ -864,7 +900,7 @@ def test_missing_identities_fail_closed_through_candidate_admission() -> None:
         artifact_refs=[],
         metrics=[{"metric": "mean_sharpe_ratio", "value": 0.1, "provenance": "real"}],
     ))
-    store.record_execution_receipt(dict(
+    owner.record_execution_receipt(dict(
         receipt_id="receipt-no-art",
         run_id="run-no-art",
         executor="vectorbt_executor",

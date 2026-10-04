@@ -307,9 +307,34 @@ def test_route_get_research_run_provenance_validation(monkeypatch: pytest.Monkey
     assert client.get(url, headers=_headers()).json()["provenance"] == "unavailable"
     owner_run["receipt"].update({"correlation_id": correlation, "spec_version": "2.0"})
     assert client.get(url, headers=_headers()).json()["provenance"] == "unavailable"
-    owner_run["status"] = "running"
     owner_run["receipt"]["spec_version"] = "1.0"
+    owner_run["status"] = "running"
     assert client.get(url, headers=_headers()).json()["provenance"] == "unavailable"
+    owner_run["status"] = "completed"
+    assert client.get(url, headers=_headers()).json()["provenance"] == "real"
+    receipt = owner_run.pop("receipt")
+    assert client.get(url, headers=_headers()).json()["provenance"] == "simulation"
+    for field, value in (("receipt_id", ""), ("completed_at", "")):
+        owner_run["receipt"] = {**receipt, field: value}
+        assert client.get(url, headers=_headers()).json()["provenance"] == "unavailable"
+    owner_run["receipt"] = receipt
+    owner_run["provenance"] = "simulation"
+    assert client.get(url, headers=_headers()).json()["provenance"] == "unavailable"
+
+
+def test_list_runs_empty_plan_and_unavailable_owner(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.control_plane.bff.agora.research.service import AgoraResearchService
+
+    client = _client(monkeypatch)
+    plan_id = _create_plan(client, "ws-empty-runs", "empty-runs-create")["data"]["plan_id"]
+    url = f"/bff/agora/research-plans/{plan_id}/runs"
+    response = client.get(url, headers=_headers())
+    assert response.status_code == 200, response.text
+    assert response.json()["items"] == []
+
+    monkeypatch.setattr(AgoraResearchService, "_owner_run_records", lambda *_a, **_k: None)
+    response = client.get(url, headers=_headers())
+    assert response.status_code == 503, response.text
 
 
 def test_workshop_preserves_research_owner_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
