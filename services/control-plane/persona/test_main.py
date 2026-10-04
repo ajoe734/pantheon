@@ -234,6 +234,12 @@ def test_mounted_session_reads_require_verified_tenant_and_existing_persona_owne
         actor_id="reader", persona_id=service.DEFAULT_PERSONA_ID, name="Owned", mandate="research",
         tenant_id="tenant-a",
     ))
+    owner.try_metadata_cas(
+        service.DEFAULT_PERSONA_ID,
+        guard=lambda _: True,
+        metadata_updates={"trade_reflections": [{"environment": "paper", "review_state": "pending"}]},
+        actor_id="reader",
+    )
     with patch.object(service, "_invoke_openclaw", return_value=("ok", service.RuntimeStatus(mode="openclaw", gateway_ready=True))):
         assert TestClient(service.app).post("/invoke", json=_invoke_payload()).status_code == 200
     client = TestClient(service.app)
@@ -244,6 +250,16 @@ def test_mounted_session_reads_require_verified_tenant_and_existing_persona_owne
     assert visible.json()["session_id"] == "sess-001"
     assert client.get("/api/sessions", headers={**headers, "X-Tenant-Id": "tenant-b"}).status_code == 403
     assert client.get("/api/sessions/sess-001", headers={**headers, "X-Tenant-Id": "tenant-b"}).status_code == 403
+    foreign_token = encode_jwt_hs256(
+        {"sub": "foreign", "roles": ["persona.admin"], "tenant_id": "tenant-foreign", "exp": now + 600},
+        secret="session-read-secret",
+    )
+    foreign_headers = {"Authorization": f"Bearer {foreign_token}"}
+    assert client.get("/api/sessions", headers=foreign_headers).json() == []
+    assert client.get("/api/sessions/sess-001", headers=foreign_headers).status_code == 404
+    assert client.get(f"/api/personas/{service.DEFAULT_PERSONA_ID}").status_code == 401
+    assert client.get(f"/api/personas/{service.DEFAULT_PERSONA_ID}", headers=foreign_headers).status_code == 403
+    assert client.get(f"/api/personas/{service.DEFAULT_PERSONA_ID}", headers=headers).status_code == 200
 
 
 def test_deployed_main_exposes_authenticated_owner_api_and_restart_readback(
