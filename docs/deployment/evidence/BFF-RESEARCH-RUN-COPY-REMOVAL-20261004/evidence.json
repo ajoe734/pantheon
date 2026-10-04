@@ -25,5 +25,5 @@
     "store.update_run/get_run assertions in test_durable_dispatcher_outbox_lease_and_provenance and test_drain_outbox_partial_failure_and_outbox_status_update: subject was the deleted BFF run record update; outbox assertions retained",
     "BFF run-store seeding in drain-outbox tests and _runs.clear() cache resets: subject was the deleted BFF run copy"
   ],
-  "fixture_migration": "Candidate admission provenance and receipt negative controls now read owner-provided runs and receipts via tests/agora_owner_run_fake.py"
+  "fixture_migration": "Candidate admission provenance and receipt negative controls now read owner-provided runs and receipts via the OwnerRuns fixture in test_agora_chain_001_natural_owner_and_receipt.py"
 }
