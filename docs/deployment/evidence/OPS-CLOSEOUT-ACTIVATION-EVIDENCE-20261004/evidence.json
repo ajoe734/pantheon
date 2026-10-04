@@ -23,10 +23,38 @@
     },
     {
       "command": "python3 -B /tmp/pantheon-authorized-closeout-20261003-2349/runtime_postflight.py",
-      "result": "Could not obtain a newer snapshot: recorded supervisor PID had exited and /proc/<pid>/cmdline was unavailable. Exit 1; captured 00:31:36 UTC postflight remains the only health observation.",
+      "result": "Could not obtain a newer snapshot from this worker's process namespace: /proc/<pid>/cmdline for the recorded supervisor PID was not visible. This does not establish that the supervisor exited. Exit 1; the read-only postflight did not complete.",
       "safety": "Read-only script inspected retired fence metadata only with lstat; no FIFO body was opened."
     }
   ],
+  "current_read_only_verification": {
+    "observed_at": "2026-10-04T00:43:00Z",
+    "provenance": "Timestamped canonical supervisor observations reported in the independent review correction and re-read in the task dispatch context; read-only only. No process namespace probing, promotion, restart, or VM operation was performed by this evidence worker.",
+    "supervisor": {
+      "recorded_pid": 1561978,
+      "observation_at": "2026-10-04T00:42:58Z",
+      "heartbeat": {
+        "prior_at": "2026-10-04T00:41:52Z",
+        "current_at": "2026-10-04T00:43:22Z",
+        "pid_unchanged": true
+      },
+      "successful_loop": {
+        "prior_at": "2026-10-04T00:41:22Z",
+        "current_at": "2026-10-04T00:43:16Z"
+      }
+    },
+    "health": {
+      "observed_at": "2026-10-04T00:42:00Z",
+      "status": "healthy"
+    },
+    "authoritative_projection": {
+      "observed_at": "2026-10-04T00:41:12Z",
+      "status": "caught_up",
+      "digests_match": true,
+      "replayed_tail_events": 0
+    },
+    "limitation": "These are timestamped read-only observations, not a new postflight run. The failed worker-namespace /proc lookup cannot establish supervisor termination."
+  },
   "test_scope": "Installed-source hosted-finalization guard only: source-only/completed tracks succeed; pending, malformed, held and immutable-archive recovery cases deny as expected. Historical 531-test results from 2f98043 are not attributed to installed 13b44ead results.",
   "diff_budget": {
     "change_class": "simplify",
