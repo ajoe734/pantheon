@@ -483,8 +483,17 @@ class ReadSurfacePorts:
             # The incident owner can be down while list_incidents() swallows
             # the outage and returns []; surface its real availability.
             return self.lifecycle_telemetry_governance.dataset_source("incidents")
+        if dataset == "telemetry_summaries":
+            try:
+                self.lifecycle_telemetry_governance.list_telemetry_summaries()
+                return "typed_store"
+            except Exception:
+                return "unavailable"
         owner_ports = {
             "personas": self.persona_capital_runtime.persona,
+            "capability_snapshots": self.persona_capital_runtime.persona,
+            "sessions": self.persona_capital_runtime.persona,
+            "persona_sessions": self.persona_capital_runtime.persona,
             "capital_pools": self.persona_capital_runtime.capital,
             "bindings": self.persona_capital_runtime.capital,
             "persona_bindings": self.persona_capital_runtime.capital,
@@ -494,7 +503,7 @@ class ReadSurfacePorts:
         if dataset in owner_ports:
             status = owner_ports[dataset].get_surface_status()
             source = status.get("bindings_source") if dataset in {"bindings", "persona_bindings"} else status["source"]
-            return "missing" if source in {None, "missing", "unavailable"} else source
+            return "missing" if source in {None, "missing"} else source
         if dataset in {"rankings", "ranking_formulas", "rebalances", "capital_allocations", "containments", "evolution_programs", "evolution_decisions"}:
             port = self.persona_capital_runtime.evolution if dataset.startswith("evolution_") else self.persona_capital_runtime.ranking
             status = port.get_surface_status()["surfaces"][dataset]
