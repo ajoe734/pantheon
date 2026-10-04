@@ -17,15 +17,23 @@
     },
     {
       "command": "PANTHEON_PY -m pytest -q services/source_ingestion/test_service.py -k 'not registry_reads_each_persistent_store_once_at_production_scale'",
-      "result": "passed: 24; one known existing registry freshness call-count test deselected"
+      "result": "historical prior-worker report: 24 passed; not freshly reproduced in this dispatch; excludes the freshness test and is not a broad-suite pass"
     },
     {
       "command": "PANTHEON_PY -m pytest -q services/source_ingestion/test_service.py::test_registry_reads_each_persistent_store_once_at_production_scale",
-      "result": "failed baseline: freshness called 2 times, expected 1; not changed by owner-read implementation"
+      "result": "historical prior-worker report: expected 1 freshness read, observed 2; exact failure, frozen-base reproduction, and head comparison remain unverified"
     },
     {
       "command": "PANTHEON_PY -m pytest -q services/source_ingestion/test_src001_source_record_contract.py",
-      "result": "2 passed, 1 legacy unauthenticated private read failed with 401; test lives outside declared artifact scope"
+      "result": "prior report: 2 passed, 1 failed because private GET was anonymous; regression test now uses a signed admitted tenant and retains anonymous/foreign denial assertions; fresh run pending"
+    },
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
+      "result": "exit 1: checkout .venv-pantheon interpreter missing; configured PANTHEON_DEPENDENCY_PYTHON resolves to /usr/bin/python3 without pytest; no test run in this dispatch"
+    },
+    {
+      "command": "python3 -m py_compile services/source_ingestion/test_src001_source_record_contract.py && git diff --check",
+      "result": "passed; static syntax and whitespace only, not behavioral validation"
     }
   ],
   "production_net_lines": 157,
