@@ -249,3 +249,20 @@ def test_default_owner_services_are_not_hidden_behind_profiles() -> None:
     assert {
         name for name in canonical_default_owners if "profiles" in SERVICES[name]
     } == set()
+
+
+def test_benchmark_and_static_fallback_opt_in_are_preserved() -> None:
+    benchmark = SERVICES["lifecycle-projector-capacity-benchmark"]
+    assert benchmark.get("profiles") == ["lifecycle-capacity-benchmark"]
+
+    static_paper = SERVICES["pantheon-paper-runtime"]
+    assert static_paper.get("profiles") == ["static-paper-runtime"]
+
+    projector = SERVICES["source-ingest-agora-projector"]
+    assert set(projector.get("profiles", [])) == {"source-ingest-scheduler", "workers"}
+    assert projector["depends_on"]["source-ingest-scheduler"]["condition"] == "service_healthy"
+
+    exec_compose = yaml.safe_load((ROOT / "docker-compose.exec.yml").read_text(encoding="utf-8"))
+    lean_live = exec_compose["services"]["pantheon-lean-live"]
+    assert lean_live.get("profiles") == ["live"]
+

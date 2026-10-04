@@ -1,6 +1,6 @@
 services:
   signal-store:
-    image: redis:alpine
+    image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
     ports:
       - "127.0.0.1:6379:6379"
 

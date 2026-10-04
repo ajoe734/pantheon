@@ -46,7 +46,7 @@ services:
       start_period: 5s
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     restart: unless-stopped
     shm_size: 256m
     environment:
@@ -109,7 +109,7 @@ services:
     restart: on-failure
 
   nats:
-    image: nats:2.11-alpine
+    image: nats:2.11-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00
     restart: unless-stopped
     command: ["--jetstream", "--http_port", "8222", "--store_dir", "/data/jetstream"]
     volumes:
@@ -125,7 +125,7 @@ services:
       start_period: 10s
 
   signal-store:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -332,7 +332,7 @@ services:
       dockerfile: services/source_ingestion/Dockerfile
     command: ["python", "scripts/project_market_data_to_bff_agora_surfaces.py"]
     restart: "no"
-    profiles: ["source-ingest-scheduler"]
+    profiles: ["source-ingest-scheduler", "workers"]
     environment:
       SOURCE_INGEST_URL: http://source-ingest:8097
       OUT_DIR: /data/bff
@@ -343,7 +343,7 @@ services:
       source-ingest:
         condition: service_healthy
       source-ingest-scheduler:
-        condition: service_completed_successfully
+        condition: service_healthy
 
   strategy-distillation-worker:
     build:
@@ -764,14 +764,14 @@ services:
       start_period: 5s
 
   openclaw-data-init:
-    profiles: ["openclaw"]
-    image: busybox:1.36
+    profiles: ["openclaw", "management-ai"]
+    image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
     command: ["sh", "-c", "mkdir -p /home/node/.openclaw && chown -R 1000:1000 /home/node/.openclaw"]
     volumes:
       - openclaw-data:/home/node/.openclaw
 
   openclaw-gateway:
-    profiles: ["openclaw"]
+    profiles: ["openclaw", "management-ai"]
     # Pantheon-derived image: governed upstream OpenClaw 2026.7.1 plus Claude
     # Code and Gemini CLIs, so the shared model pool can serve Anthropic and
     # Google CLI-backed routes. Upstream pin governed (see
@@ -2818,7 +2818,7 @@ services:
   # ===========================================================================
 
   openclaw-activation-ready-e2e:
-    profiles: ["openclaw-activation-ready-e2e"]
+    profiles: ["openclaw-activation-ready-e2e", "management-ai"]
     image: pantheon-openclaw-activation-ready-e2e-adapter:latest
     pull_policy: build
     build:
@@ -2881,7 +2881,7 @@ services:
   # ===========================================================================
 
   mlflow-dormant-smoke:
-    profiles: ["dormant-smoke"]
+    profiles: ["dormant-smoke", "research"]
     build:
       context: services/research/mlflow
       dockerfile: Dockerfile
@@ -2913,7 +2913,7 @@ services:
     restart: "no"
 
   finrl-dormant-smoke:
-    profiles: ["dormant-smoke"]
+    profiles: ["dormant-smoke", "research"]
     build:
       context: services/research/finrl
       dockerfile: Dockerfile
@@ -2932,7 +2932,7 @@ services:
     restart: "no"
 
   rllib-dormant-smoke:
-    profiles: ["dormant-smoke"]
+    profiles: ["dormant-smoke", "research"]
     build:
       context: .
       dockerfile: services/research/rllib/Dockerfile
@@ -2953,7 +2953,7 @@ services:
     restart: "no"
 
   ray-tune-dormant-smoke:
-    profiles: ["dormant-smoke"]
+    profiles: ["dormant-smoke", "research"]
     build:
       context: .
       dockerfile: services/research/rllib/Dockerfile
@@ -2974,7 +2974,7 @@ services:
     restart: "no"
 
   qlib-dormant-smoke:
-    profiles: ["dormant-smoke"]
+    profiles: ["dormant-smoke", "research"]
     build:
       context: .
       dockerfile: services/research/qlib/Dockerfile
@@ -2987,7 +2987,7 @@ services:
     restart: "no"
 
   trl-dormant-smoke:
-    profiles: ["dormant-smoke"]
+    profiles: ["dormant-smoke", "research"]
     build:
       context: .
       dockerfile: services/learning/trl/Dockerfile
@@ -2998,7 +2998,7 @@ services:
     restart: "no"
 
   experiments-dormant-smoke:
-    profiles: ["dormant-smoke"]
+    profiles: ["dormant-smoke", "research"]
     build:
       context: .
       dockerfile: services/registry/experiments/Dockerfile

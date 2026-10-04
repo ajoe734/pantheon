@@ -1,8 +1,8 @@
 {
-  "task_id": "OSS-INFRA-CHOICE-001",
-  "status": "design_contract_only",
-  "generated_at": "2026-09-06T00:00:00Z",
-  "note": "This is a design artifact only. No Compose file was edited, no hostname was provisioned, no data was migrated, no runtime was promoted or deployed by this task. OSS-INFRA-PROFILES-001 is the sole later Compose writer that implements this contract; OSS-OBJECT-STORE-CUTOVER-001 consumes the storage disposition below.",
+  "task_id": "OSS-INFRA-PROFILES-002",
+  "status": "implemented",
+  "generated_at": "2026-10-04T10:30:00Z",
+  "note": "Contract converged and implemented by OSS-INFRA-PROFILES-002. Core/workers/research/management-ai/execution profiles are converged across docker-compose.yml and docker-compose.exec.yml, preserving default root stack and dependency closure. OSS-OBJECT-STORE-CUTOVER-002 consumes the storage disposition below.",
   "source_of_truth_read": {
     "environment_identity_plan": "docs/04/pantheon_environment_closure_sa_sd_2026-09/SA.md",
     "profile_table_cited": "SA.md §5 Component Profiles & Resource Bounds",
@@ -139,5 +139,18 @@
       "isolation_requirements": "Prod Execution VM has zero public IP / zero public ingress and accepts traffic only from Prod Control over private VPC peering, per SA.md Architecture Invariant #3; this profile must never be co-activated with prod_control."
     }
   },
-  "unclassified_services_default_rule": "Any docker-compose service not explicitly listed above and not carrying its own `profiles:` array (for example capital, registry, promotion, evaluation, persona, memory, consultation-svc, feedback, search-svc, source-ingest, evolution) remains scoped to `core` by default until OSS-INFRA-PROFILES-001 assigns it a profile during Compose convergence; this contract intentionally does not force every one of the ~80 declared services into a bucket, since that assignment is that task's implementation work, not this task's choice-and-design scope. Services that already declare their own Compose `profiles:` array (dormant-smoke placeholders at docker-compose.yml:2607,2639,2658,2679,2700,2713,2724; `openclaw-activation-ready-e2e` at :2544; `lifecycle-projector-capacity-benchmark` at :1519; `pantheon-lean-live` in docker-compose.exec.yml:195) are explicitly opt-in and are excluded from this default-to-core rule entirely — they are never started by any of the four environment activations above unless their named Compose profile is passed explicitly, so 'default' does not apply to them at all."
+  "observed_dev_baseline": {
+    "evidence_manifest": "docs/deployment/evidence/OSS-INFRA-PROFILES-002/evidence.json",
+    "source": "coordinator-provided read-only container/image/config-label/mount metadata; no worker VM access",
+    "observed_at": "2026-10-04T05:55:36.694770+00:00",
+    "target": ["pantheon-dev-20260902", "pantheon-dev-deploy", "asia-east1-b"],
+    "counts": {"containers": 57, "running": 54, "exited": 3},
+    "accepted_served_pair": {
+      "pantheon_backend": "5743158b02ad5e463d4cba19d79521071daf4778",
+      "execute_plans_frontend": "7d01b1ae125246b952120ffd718b1df3ec242769"
+    },
+    "profile_selector": "unknown; do not infer from source profiles or FE deploymentProfile",
+    "limits": "Image IDs/config hashes/mount destinations are observations, not proof of source labels when absent. No env values, mounted data, or runtime mutations were collected."
+  },
+  "unclassified_services_default_rule": "Any docker-compose service not explicitly listed above and not carrying its own `profiles:` array (for example capital, registry, promotion, evaluation, persona, memory, consultation-svc, feedback, search-svc, source-ingest, evolution) remains scoped to `core` by default as converged under OSS-INFRA-PROFILES-002; this contract preserves the ~80 declared services in the default root stack. Services that already declare their own Compose `profiles:` array (dormant-smoke placeholders at docker-compose.yml:2607,2639,2658,2679,2700,2713,2724; `openclaw-activation-ready-e2e` at :2544; `lifecycle-projector-capacity-benchmark` at :1519; `pantheon-lean-live` in docker-compose.exec.yml:195) are explicitly opt-in and are excluded from this default-to-core rule entirely — they are never started by any of the four environment activations above unless their named Compose profile is passed explicitly, so 'default' does not apply to them at all."
 }
