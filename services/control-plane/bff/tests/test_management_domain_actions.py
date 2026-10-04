@@ -38,6 +38,18 @@ from services.control_plane.bff.command_adapters import (
     find_adapter,
 )
 from services.control_plane.bff.command_executor import execute_command, execute_command_with_status
+from services.runtime_auth_inbound import encode_jwt_hs256
+
+_DEFAULT_TENANT_TOKEN = "Bearer " + encode_jwt_hs256({"sub": "op", "tenant_id": "tenant-default"}, secret="unit-secret")
+
+
+def _as_default_tenant(fn):
+    """Run commands as the verified caller of tenant-default (the trusted tenant authority)."""
+    return lambda *a, **k: fn(*a, **{"auth_token": _DEFAULT_TENANT_TOKEN, **k})
+
+
+execute_command = _as_default_tenant(execute_command)
+execute_command_with_status = _as_default_tenant(execute_command_with_status)
 
 
 def _load_main_command_helpers():

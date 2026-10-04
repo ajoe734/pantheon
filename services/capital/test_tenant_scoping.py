@@ -510,6 +510,33 @@ def test_23_routes_same_tenant_and_cross_tenant_isolation(capital_test_env):
     assert len(TESTED_ROUTES) == 23, f"Expected 23 routes tested, got {len(TESTED_ROUTES)}: {TESTED_ROUTES}"
 
 
+def test_read_routes_never_run_without_a_resolved_tenant(capital_test_env):
+    """Allocation/audit store guards skip tenant checks for None; mounted callers never pass None."""
+    client, _module, _tempdir = capital_test_env
+    token = encode_jwt_hs256(
+        {
+            "sub": "control-plane-bff",
+            "service": "control-plane-bff",
+            "roles": ["capital.admin", "viewer", "reader", "capital-reader"],
+            "allowed_tenants": ["tenant-alpha", "tenant-beta"],
+            "exp": int(time.time()) + 3600,
+        },
+        secret=JWT_SECRET,
+    )
+    headers = {"Authorization": f"Bearer {token}", "X-Pantheon-Service": "control-plane-bff"}
+    for path in (
+        "/api/rebalances/rb-any",
+        "/api/rebalances/receipts/cmd-any",
+        "/api/containments/receipts/cmd-any",
+        "/api/capital/audit",
+    ):
+        res = client.get(path, headers=headers)
+        assert res.status_code == 400, path
+        assert res.json()["error"]["code"] == "TENANT_REQUIRED", path
+    scoped = client.get("/api/capital/audit", headers={**headers, "X-Tenant-Id": "tenant-alpha"})
+    assert scoped.status_code == 200
+
+
 def test_untenanted_rows_visible_to_no_caller(capital_test_env):
     client, module, tempdir = capital_test_env
     headers_a = _auth_headers("tenant-alpha")

@@ -40,6 +40,14 @@ class PerformanceSuggestionConflict(PerformanceSuggestionError):
     """CAS, terminal-state, or idempotency conflict."""
 
 
+def _require_tenant(tenant_id: Optional[str]) -> str:
+    """Reads must be scoped by a trusted tenant; an empty one never widens the query."""
+    clean = str(tenant_id or "").strip()
+    if not clean:
+        raise ValueError("performance suggestion reads require a trusted tenant_id")
+    return clean
+
+
 class PerformanceSuggestionStore:
     """Durable suggestion source/disposition and receipt ledger."""
 
@@ -240,7 +248,7 @@ class PerformanceSuggestionStore:
         owner_user_id: Optional[str] = None,
         **kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
-        t_id = tenant_id or kwargs.get("tenant_id", "")
+        t_id = _require_tenant(tenant_id)
         s_id = strategy_id or kwargs.get("strategy_id")
         sugg_id = suggestion_id or kwargs.get("suggestion_id")
         u_id = owner_user_id or kwargs.get("owner_user_id")
@@ -296,7 +304,7 @@ class PerformanceSuggestionStore:
         period: Optional[str] = None,
         **kwargs: Any,
     ) -> List[Dict[str, Any]]:
-        t_id = tenant_id or kwargs.get("tenant_id", "")
+        t_id = _require_tenant(tenant_id)
         s_id = strategy_id or kwargs.get("strategy_id")
         u_id = owner_user_id or kwargs.get("owner_user_id")
         p = period or kwargs.get("period")
@@ -354,6 +362,8 @@ class PerformanceSuggestionStore:
         owner_user_id: str,
         receipt_id: str,
     ) -> Optional[Dict[str, Any]]:
+        if not str(tenant_id or "").strip():
+            return None
         if self.incidents_api_url:
             query_params = {}
             if tenant_id:

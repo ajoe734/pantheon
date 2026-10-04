@@ -13,6 +13,7 @@ from urllib.parse import quote
 
 from .base import (
     ActionUnavailableError,
+    _token_tenant,
     DomainCommandAdapter,
     build_domain_receipt,
     governance_approval_url,
@@ -145,7 +146,10 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
         actual_action = canonical_action if is_canonical_paper else ("PauseRuntime" if pause_action == "pause" else "ResumeRuntime")
 
         target_runtime_id = str(entity_id or "").strip()
-        expected_tenant = str(params.get("tenant_id") or (params.get("metadata") or {}).get("tenant_id") or "").strip()
+        expected_tenant = str(_token_tenant(auth_token) or "").strip()
+        claimed_tenants = {str(t).strip() for t in (params.get("tenant_id"), (params.get("metadata") or {}).get("tenant_id")) if t}
+        if is_canonical_paper and (not expected_tenant or claimed_tenants - {expected_tenant}):
+            raise ActionUnavailableError("Runtime tenant is not the verified caller tenant", error_code="TENANT_MISMATCH")
 
         if is_canonical_paper:
             if any(str(params.get(key) or target_runtime_id).strip() != target_runtime_id for key in ("runtime_id", "runtimeId")):
@@ -229,8 +233,6 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
                 )
 
             b_meta = binding.get("metadata") or {} if isinstance(binding, dict) else getattr(binding, "metadata", {}) or {}
-            if not expected_tenant:
-                expected_tenant = str(b_meta.get("tenant_id") or b_meta.get("tenantId") or binding.get("tenant_id") or binding.get("tenantId") or "").strip()
             binding_tenant = str(b_meta.get("tenant_id") or b_meta.get("tenantId") or binding.get("tenant_id") or binding.get("tenantId") or "").strip()
             if not expected_tenant or binding_tenant != expected_tenant:
                 raise ActionUnavailableError("Runtime owner tenant changed before execution", error_code="TENANT_MISMATCH")

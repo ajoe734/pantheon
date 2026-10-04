@@ -5185,7 +5185,7 @@ class ManagementService:
             return None
 
         # Tenant isolation check: if persona belongs to a specific tenant, ensure tenant_id matches
-        if tenant_id and persona.get("tenant_id") and persona.get("tenant_id") != tenant_id:
+        if persona.get("tenant_id") and persona.get("tenant_id") != tenant_id:
             return None
 
         league_entry: Dict[str, Any] = {}

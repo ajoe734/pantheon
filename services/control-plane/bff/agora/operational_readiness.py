@@ -268,7 +268,7 @@ def _visible_to_scope(record: Mapping[str, Any], scope: Optional[AgoraCapability
     visibility = str(record.get("visibility") or "").strip().lower()
     if scope is None:
         return not tenant_id and not owner_id or visibility in {"public", "shared"}
-    if tenant_id and tenant_id != scope.tenant_id:
+    if tenant_id != scope.tenant_id and (tenant_id or visibility not in {"public", "shared"}):
         return False
     if owner_id and owner_id != scope.user_id and visibility not in {"public", "shared"}:
         return False
