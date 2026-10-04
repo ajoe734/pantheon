@@ -405,23 +405,8 @@ class AgoraJourneyVerifier:
         if not approved_plan or approved_plan.get("status") != "approved":
             raise AgoraVerificationError("research_candidate_pool", "Research plan approval failed")
 
-        # Record completed research run with verifiable artifact checksums
+        # The run id is an owner-issued reference; BFF verification never stores a run copy.
         artifact_checksum = hashlib.sha256(f"artifact-{run_id}".encode("utf-8")).hexdigest()
-        run_record = research_store.create_run(
-            {
-                "run_id": run_id,
-                "plan_id": plan_id,
-                "tenant_id": self.tenant_a,
-                "user_id": self.user_a1,
-                "status": "completed",
-                "metrics": {"sharpe_ratio": 1.85, "max_drawdown": 0.08, "win_rate": 0.58},
-                "artifact_refs": [f"pantheon://artifacts/research/{run_id}/model.bin"],
-                "artifact_checksum": artifact_checksum,
-                "completed_at": _utc_now(),
-            }
-        )
-        if not run_record:
-            raise AgoraVerificationError("research_candidate_pool", "Failed to record research run")
 
         # Project Candidate Pool (no fixtures, verified lineage)
         candidate_id = f"cand-{uuid.uuid4().hex[:10]}"
@@ -599,8 +584,8 @@ class AgoraJourneyVerifier:
     # ----------------------------------------------------------------------- #
     def verify_performance_suggestions(self) -> Dict[str, Any]:
         """Verify StrategyPerformanceIndex and governed suggestions."""
-        from agora.performance.store import PerformanceSuggestionStore
-        from agora.performance.models import AdjustmentSuggestion, SuggestionProvenance
+        from services.control_plane.bff.agora.performance.store import PerformanceSuggestionStore
+        from services.control_plane.bff.agora.performance.models import AdjustmentSuggestion, SuggestionProvenance
 
         db_path = str(Path(self.temp_dir.name) / "perf.sqlite3")
         store = PerformanceSuggestionStore(path=db_path)

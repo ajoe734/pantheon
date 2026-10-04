@@ -258,14 +258,6 @@ class AgoraResearchService:
             rank = int(record.get("attempt_number") or 1)
             if stage_id and (previous is None or rank >= int(previous.get("attempt_number") or 1)):
                 latest[stage_id] = record
-        target_user = plan.get("user_id") or getattr(scope, "user_id", None)
-        legacy_runs = self.store.list_runs_for_plan(
-            str(plan.get("plan_id") or ""),
-            tenant_id=scope.tenant_id,
-            user_id=target_user,
-        )
-        legacy_statuses = {str(run.get("stage_id") or ""): run.get("execution_status") for run in legacy_runs}
-        legacy_run_ids = [str(run.get("run_id") or run.get("id")) for run in legacy_runs]
         stages = []
         for stage in plan.get("stages") or []:
             st_id = str(stage.get("stage_id") or "")
@@ -273,17 +265,15 @@ class AgoraResearchService:
             if owner:
                 status = str(owner.get("status") or "queued").lower()
                 stage = {**stage, "status": _OWNER_STATUS_TO_EXEC_STATUS.get(status, status)}
-            elif st_id in legacy_statuses:
-                stage = {**stage, "status": legacy_statuses[st_id]}
-            elif not records and not legacy_runs:
+            elif not records:
                 stage = {**stage, "status": "pending"}
             stages.append(stage)
         result["stages"] = stages
-        result["run_ids"] = list(dict.fromkeys(legacy_run_ids + [str(record.get("run_id") or record.get("id")) for record in records]))
+        result["run_ids"] = [str(record.get("run_id") or record.get("id")) for record in records]
         if plan.get("status") == "cancelled":
             result["status"] = "cancelled"
             return result
-        if not records and not legacy_runs:
+        if not records:
             result["status"] = "approved" if plan.get("approved_at") else "draft"
             return result
         statuses = [str(s.get("status") or "").lower() for s in stages]
@@ -366,35 +356,6 @@ class AgoraResearchService:
         )
         return {"plan_id": plan_id, "status": "approved", "lock_version": new_version}
 
-    def _mark_local_runs_cancelled(
-        self,
-        plan_id: str,
-        scope: Any,
-        run_ids: Optional[Set[str]] = None,
-        *,
-        user_id: Optional[str] = None,
-        message: str = "Run cancelled on owner",
-    ) -> None:
-        if not hasattr(self.store, "list_runs_for_plan") or not hasattr(self.store, "update_run") or (run_ids is not None and not run_ids):
-            return
-        now = self.utc_now()
-        target_user = user_id or getattr(scope, "user_id", None)
-        active = {"pending", "queued", "running"}
-        for r in self.store.list_runs_for_plan(plan_id, tenant_id=scope.tenant_id, user_id=target_user):
-            rid = str(r.get("run_id") or r.get("id") or "")
-            if rid and ((run_ids is None and str(r.get("execution_status") or "").lower() in active) or (run_ids and rid in run_ids)):
-                self.store.update_run(
-                    rid,
-                    {
-                        "execution_status": "cancelled",
-                        "progress": {**(r.get("progress") or {}), "phase": "cancelled", "message": message, "updated_at": now},
-                        "completed_at": now,
-                        "updated_at": now,
-                    },
-                    tenant_id=scope.tenant_id,
-                    user_id=target_user,
-                )
-
     def cancel_plan(
         self,
         plan_id: str,
@@ -414,20 +375,8 @@ class AgoraResearchService:
         active_statuses = {"running", "queued", "pending", "dispatched"}
         terminal_statuses = {"completed", "succeeded", "failed", "rejected", "canceled", "cancelled"}
         target_user = plan.get("user_id") or getattr(scope, "user_id", None)
-        local_runs = (
-            self.store.list_runs_for_plan(plan_id, tenant_id=scope.tenant_id, user_id=target_user)
-            if hasattr(self.store, "list_runs_for_plan")
-            else []
-        )
-        local_active_ids = {
-            str(lr.get("run_id") or lr.get("id") or "")
-            for lr in local_runs
-            if str(lr.get("execution_status") or "").lower() in active_statuses
-        }
-        local_active_ids.discard("")
-
         r_url = resolve_orchestrator_base_url()
-        if not r_url and (local_active_ids or plan.get("status") == "running"):
+        if not r_url and plan.get("status") == "running":
             raise self.bff_error(
                 503,
                 self._error_code("UPSTREAM_UNAVAILABLE"),
@@ -435,34 +384,17 @@ class AgoraResearchService:
                 plan_id,
             )
 
-        active_run_ids = set()
         if r_url:
             owner_records = self._owner_run_records(plan, scope)
-            if owner_records is None and (local_active_ids or plan.get("status") == "running"):
+            if owner_records is None and plan.get("status") == "running":
                 raise self.bff_error(
                     503,
                     self._error_code("UPSTREAM_UNAVAILABLE"),
                     "Research execution owner is unavailable; running plan cancellation cannot be verified",
                     plan_id,
                 )
-            if owner_records is not None:
-                owner_by_id = {str(rec.get("run_id") or rec.get("id") or ""): rec for rec in owner_records if isinstance(rec, dict)}
-                active_run_ids = {rid for rid, rec in owner_by_id.items() if rid and str(rec.get("status") or "").lower() in active_statuses}
-                for lr in local_runs:
-                    l_rid = str(lr.get("run_id") or lr.get("id") or "")
-                    if l_rid and l_rid in owner_by_id:
-                        owner_status = str(owner_by_id[l_rid].get("status") or "").lower()
-                        if owner_status in terminal_statuses:
-                            active_run_ids.discard(l_rid)
-                            mapped = _OWNER_STATUS_TO_EXEC_STATUS.get(owner_status, "failed")
-                            if str(lr.get("execution_status") or "").lower() != mapped and hasattr(self.store, "update_run"):
-                                self.store.update_run(l_rid, {"execution_status": mapped}, tenant_id=scope.tenant_id, user_id=target_user)
-        else:
-            active_run_ids = set(local_active_ids)
-
         cancelled_run_ids = set()
         def _fail(exc: Any, msg: str, code: int = 503, err: str = "UPSTREAM_UNAVAILABLE"):
-            self._mark_local_runs_cancelled(plan_id, scope, cancelled_run_ids, user_id=target_user)
             reason = getattr(exc, "reason", None) or (str(exc) if exc and str(exc) != msg else "")
             raise self.bff_error(code, self._error_code(err), f"{msg}: {reason}" if reason else msg, plan_id) from (exc if isinstance(exc, Exception) else None)
 
@@ -499,8 +431,6 @@ class AgoraResearchService:
                             recheck = {str(r.get("run_id") or r.get("id") or ""): r for r in (self._owner_run_records(plan, scope) or []) if isinstance(r, dict)}
                             cur_status = str((recheck.get(rid) or {}).get("status") or "").lower()
                             if cur_status in terminal_statuses or "terminal research run in status" in str(getattr(exc, "reason", "") or ""):
-                                if hasattr(self.store, "update_run"):
-                                    self.store.update_run(rid, {"execution_status": _OWNER_STATUS_TO_EXEC_STATUS.get(cur_status, "failed")}, tenant_id=scope.tenant_id, user_id=target_user)
                                 continue
                         sc = exc.status_code if exc.status_code and exc.status_code >= 400 else 503
                         err_name = "RESOURCE_NOT_FOUND" if sc == 404 else ("RESOURCE_CONFLICT" if sc == 409 else "UPSTREAM_UNAVAILABLE")
@@ -535,7 +465,6 @@ class AgoraResearchService:
             tenant_id=scope.tenant_id,
             user_id=target_user,
         )
-        self._mark_local_runs_cancelled(plan_id, scope, None, user_id=target_user, message="Plan cancelled by operator")
         self.store.record_audit_action({
             "action_type": "research_plan.cancel",
             "tenant_id": scope.tenant_id,
@@ -560,43 +489,38 @@ class AgoraResearchService:
         if plan is None:
             raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), f"Research plan '{plan_id}' not found", plan_id)
         owner_runs = self._owner_run_records(plan, scope)
-        if owner_runs:
-            stages = {str(stage.get("stage_id")): stage for stage in plan.get("stages") or []}
-            projected = []
-            for owner in owner_runs:
-                stage = stages.get(str(owner.get("stage_id") or ""), {})
-                run = _build_run_projection(
-                    plan=plan,
-                    stage=stage or {
-                        "stage_id": owner.get("stage_id", "unknown"),
-                        "stage_type": owner.get("adapter", "unknown"),
-                    },
-                    run_id=str(owner.get("run_id") or owner.get("id")),
-                    now=str(owner.get("created_at") or self.utc_now()),
-                    scope=scope,
-                )
-                status = str(owner.get("status") or "queued").lower()
-                outcome = "pass" if status == "completed" else (
-                    "fail" if status in {"failed", "rejected"} else "pending"
-                )
-                run.update({
-                    "task_id": owner.get("task_id"),
-                    "attempt_number": owner.get("attempt_number", 1),
-                    "parent_run_id": owner.get("parent_run_id"),
-                    "execution_status": _OWNER_STATUS_TO_EXEC_STATUS.get(status, status),
-                    "outcome": outcome,
-                    "artifact_refs": owner.get("artifact_refs") or [],
-                    "evidence_refs": owner.get("evidence_refs") or [],
-                    "updated_at": owner.get("updated_at") or owner.get("created_at"),
-                })
-                projected.append(run)
-        target_user = plan.get("user_id") or getattr(scope, "user_id", None)
-        runs = self.store.list_runs_for_plan(plan_id, tenant_id=scope.tenant_id, user_id=target_user)
-        legacy_projected = [_run_projection_with_defaults(r, store=self.store) for r in runs]
-        if owner_runs:
-            seen_ids = {r.get("run_id") for r in projected}
-            return [r for r in legacy_projected if r.get("run_id") not in seen_ids] + projected
-        return legacy_projected
+        if owner_runs is None:
+            raise self.bff_error(503, self._error_code("DEPENDENCY_UNAVAILABLE"), "Research execution owner is unavailable", plan_id)
+        stages = {str(stage.get("stage_id")): stage for stage in plan.get("stages") or []}
+        projected = []
+        for owner in owner_runs:
+            stage = stages.get(str(owner.get("stage_id") or ""), {})
+            run = _build_run_projection(
+                plan=plan,
+                stage=stage or {
+                    "stage_id": owner.get("stage_id", "unknown"),
+                    "stage_type": owner.get("adapter", "unknown"),
+                },
+                run_id=str(owner.get("run_id") or owner.get("id")),
+                now=str(owner.get("created_at") or self.utc_now()),
+                scope=scope,
+            )
+            status = str(owner.get("status") or "queued").lower()
+            outcome = "pass" if status == "completed" else (
+                "fail" if status in {"failed", "rejected"} else "pending"
+            )
+            run.update({
+                "task_id": owner.get("task_id"),
+                "attempt_number": owner.get("attempt_number", 1),
+                "parent_run_id": owner.get("parent_run_id"),
+                "execution_status": _OWNER_STATUS_TO_EXEC_STATUS.get(status, status),
+                "outcome": outcome,
+                "artifact_refs": owner.get("artifact_refs") or [],
+                "evidence_refs": owner.get("evidence_refs") or [],
+                "updated_at": owner.get("updated_at") or owner.get("created_at"),
+            })
+            projected.append(run)
+        return projected
 
     def dispatch_plan(
         self,
@@ -741,38 +665,16 @@ class AgoraResearchService:
                 plan_id,
             )
 
-        run = _build_run_projection(
-            plan=plan,
-            stage=dispatch_stage,
-            run_id=run_id,
-            now=now,
-            scope=scope,
-        )
-        run["task_id"] = task_id
         owner_status = str(run_obj.get("status") or "").lower()
-        run["execution_status"] = _OWNER_STATUS_TO_EXEC_STATUS.get(owner_status, "queued")
-        run["outcome"] = "pass" if owner_status == "completed" else ("fail" if owner_status in ("failed", "rejected") else "pending")
-        if owner_status == "completed":
-            for k in ("artifact_refs", "metrics", "receipt"):
-                if run_obj.get(k):
-                    run[k] = run_obj[k]
-            if run_obj.get("receipt") and hasattr(self.store, "record_execution_receipt"):
-                self.store.record_execution_receipt(run_obj["receipt"])
-
-        self.store.create_run(run)
         stage_status = "succeeded" if owner_status == "completed" else ("failed" if owner_status in ("failed", "rejected") else "queued")
         updated_stages = [
             {**s, "status": stage_status} if s["stage_id"] == dispatch_stage["stage_id"] else s
             for s in plan.get("stages", [])
         ]
-        plan_run_ids = list(plan.get("run_ids") or [])
-        if run_id not in plan_run_ids:
-            plan_run_ids.append(run_id)
         self.store.update_plan(
             plan_id,
             {
                 "stages": updated_stages,
-                "run_ids": plan_run_ids,
                 "status": "running",
                 "lock_version": plan.get("lock_version", 1) + 1,
                 "updated_at": now,
@@ -808,70 +710,53 @@ class AgoraResearchService:
         }
 
     def get_run(self, run_id: str, *, scope: Any) -> Optional[Dict[str, Any]]:
-        raw_run = self.store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id) if hasattr(self.store, "get_run") else None
-        r_url = resolve_orchestrator_base_url()
-        if r_url:
-            try:
-                from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
-                owner_run = WorkshopCanonicalOperations(research_base_url=r_url).get_research_run(run_id)
-                if owner_run and isinstance(owner_run, dict):
-                    owner_status = str(owner_run.get("status") or "").lower()
-                    mapped_status = _OWNER_STATUS_TO_EXEC_STATUS.get(owner_status, owner_status or "queued")
-                    mapped_outcome = "pass" if owner_status == "completed" else (
-                        "fail" if owner_status in ("failed", "rejected") else "pending"
-                    )
-                    owner_user_id = str(owner_run.get("created_by") or owner_run.get("user_id") or (owner_run.get("parameters") or {}).get("user_id") or "").strip()
-                    owner_tenant_id = str(owner_run.get("tenant_id") or (owner_run.get("parameters") or {}).get("tenant_id") or "").strip()
-                    if owner_user_id and getattr(scope, "user_id", None) and owner_user_id != scope.user_id:
-                        return None
-                    if owner_tenant_id and getattr(scope, "tenant_id", None) and owner_tenant_id != scope.tenant_id:
-                        return None
-
-                    if raw_run is None:
-                        plan_id, stage_id = "plan-unknown", "stage-unknown"
-                        for ref in owner_run.get("input_refs") or []:
-                            if isinstance(ref, dict) and ref.get("id"):
-                                if ref.get("type") == "research_plan":
-                                    plan_id = str(ref["id"])
-                                elif ref.get("type") == "stage":
-                                    stage_id = str(ref["id"])
-                        st_type = owner_run.get("stage_type") or owner_run.get("adapter") or "prototype_backtest"
-                        sp = (self.store.get_plan(plan_id) or {}) if (self.store and hasattr(self.store, "get_plan") and plan_id != "plan-unknown") else {}
-                        ws_id, strat_id, reg_id = sp.get("workshop_id", ""), sp.get("strategy_id", ""), sp.get("strategy_spec_registry_id", "")
-                        st_type = next((s.get("stage_type") for s in sp.get("stages", []) if s.get("stage_id") == stage_id and s.get("stage_type")), st_type)
-                        raw_run = {
-                            "run_id": run_id, "task_id": owner_run.get("task_id") or f"task-{run_id}",
-                            "plan_id": plan_id, "stage_id": stage_id, "stage_type": st_type,
-                            "workshop_id": ws_id, "strategy_id": strat_id, "strategy_spec_registry_id": reg_id,
-                            "tenant_id": owner_tenant_id or scope.tenant_id, "user_id": owner_user_id or scope.user_id,
-                            "execution_status": mapped_status, "outcome": mapped_outcome,
-                            "artifact_refs": owner_run.get("artifact_refs") or [], "metrics": owner_run.get("metrics") or [],
-                            "backend": {"mode": owner_run.get("requested_mode") or owner_run.get("dispatch_mode") or "real"},
-                            "provenance": owner_run.get("provenance") or "real",
-                            "created_at": owner_run.get("created_at") or self.utc_now(),
-                            "updated_at": owner_run.get("updated_at") or self.utc_now(),
-                        }
-                        if hasattr(self.store, "create_run"):
-                            self.store.create_run(raw_run)
-                    else:
-                        raw_run.update({"execution_status": mapped_status, "outcome": mapped_outcome})
-                        for k in ("artifact_refs", "metrics", "provenance"):
-                            if owner_run.get(k):
-                                raw_run[k] = owner_run[k]
-                        if owner_run.get("provenance") and isinstance(raw_run.get("backend"), dict):
-                            raw_run["backend"]["mode"] = owner_run["provenance"]
-                        if hasattr(self.store, "update_run"):
-                            self.store.update_run(run_id, raw_run, tenant_id=scope.tenant_id, user_id=scope.user_id)
-                    if owner_run.get("receipt") and hasattr(self.store, "record_execution_receipt"):
-                        self.store.record_execution_receipt(owner_run["receipt"])
-            except Exception as exc:
-                log.warning("Research orchestrator get_run readback error: %s", exc)
-
-        if not raw_run or (
-            raw_run.get("user_id") and getattr(scope, "user_id", None) and raw_run.get("user_id") != scope.user_id
-        ) or (raw_run.get("tenant_id") and getattr(scope, "tenant_id", None) and raw_run.get("tenant_id") != scope.tenant_id):
+        base_url = resolve_orchestrator_base_url()
+        if not base_url:
             return None
-        return _run_projection_with_defaults(raw_run, store=self.store)
+        try:
+            from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
+            owner_run = WorkshopCanonicalOperations(research_base_url=base_url).get_research_run(run_id)
+        except Exception as exc:
+            log.warning("Research orchestrator get_run readback error: %s", exc)
+            return None
+        if not isinstance(owner_run, dict):
+            return None
+
+        parameters = owner_run.get("parameters") or {}
+        user_id = str(owner_run.get("created_by") or owner_run.get("user_id") or parameters.get("user_id") or "").strip()
+        tenant_id = str(owner_run.get("tenant_id") or parameters.get("tenant_id") or "").strip()
+        if user_id and user_id != scope.user_id or tenant_id and tenant_id != scope.tenant_id:
+            return None
+
+        refs = owner_run.get("input_refs") or []
+        plan_id = next((str(ref["id"]) for ref in refs if isinstance(ref, dict) and ref.get("type") == "research_plan" and ref.get("id")), "plan-unknown")
+        stage_id = next((str(ref["id"]) for ref in refs if isinstance(ref, dict) and ref.get("type") == "stage" and ref.get("id")), str(owner_run.get("stage_id") or "stage-unknown"))
+        plan = self.store.get_plan(plan_id) if plan_id != "plan-unknown" else None
+        stage = next((st for st in (plan or {}).get("stages", []) if str(st.get("stage_id")) == stage_id), {})
+        status = str(owner_run.get("status") or "queued").lower()
+        run = _build_run_projection(
+            plan=plan or {"plan_id": plan_id},
+            stage=stage or {"stage_id": stage_id, "stage_type": owner_run.get("adapter") or "unknown"},
+            run_id=run_id,
+            now=str(owner_run.get("created_at") or self.utc_now()),
+            scope=scope,
+        )
+        run.update({
+            "task_id": owner_run.get("task_id"),
+            "execution_status": _OWNER_STATUS_TO_EXEC_STATUS.get(status, status),
+            "outcome": "pass" if status == "completed" else "fail" if status in {"failed", "rejected"} else "pending",
+            "artifact_refs": owner_run.get("artifact_refs") or [],
+            "evidence_refs": owner_run.get("evidence_refs") or [],
+            "metrics": owner_run.get("metrics") or [],
+            "receipt": owner_run.get("receipt"),
+            "correlation_id": owner_run.get("correlation_id"),
+            "executor": owner_run.get("executor"),
+            "provenance": owner_run.get("provenance") or "unavailable",
+            "created_at": owner_run.get("created_at") or self.utc_now(),
+            "updated_at": owner_run.get("updated_at") or owner_run.get("created_at") or self.utc_now(),
+        })
+        from .routes.common import _run_projection_with_defaults
+        return _run_projection_with_defaults(run, store=self.store)
 
     def get_run_or_404(self, run_id: str, *, scope: Any) -> Dict[str, Any]:
         run = self.get_run(run_id, scope=scope)
@@ -880,7 +765,6 @@ class AgoraResearchService:
         return run
 
     def cancel_run(self, run_id: str, *, scope: Any) -> Dict[str, Any]:
-        raw_run = self.get_run_or_404(run_id, scope=scope)
         r_url = resolve_orchestrator_base_url()
         if not r_url:
             raise self.bff_error(
@@ -889,6 +773,7 @@ class AgoraResearchService:
                 "Research execution owner is unconfigured or unavailable; run cancellation cannot be processed locally",
                 run_id,
             )
+        raw_run = self.get_run_or_404(run_id, scope=scope)
         from services.control_plane.bff.agora.strategy_workshop.operations import CanonicalOperationError, WorkshopCanonicalOperations
         try:
             WorkshopCanonicalOperations(research_base_url=r_url).cancel_research_run(run_id)
@@ -897,18 +782,6 @@ class AgoraResearchService:
             raise self.bff_error(exc.status_code or 503, self._error_code(err_code), exc.reason, run_id) from exc
         except Exception as exc:
             raise self.bff_error(503, self._error_code("UPSTREAM_UNAVAILABLE"), str(exc), run_id) from exc
-        now = self.utc_now()
-        if hasattr(self.store, "update_run"):
-            self.store.update_run(
-                run_id,
-                {
-                    "execution_status": "cancelled",
-                    "progress": {**(raw_run.get("progress") or {}), "phase": "cancelled", "message": "Run cancellation accepted", "updated_at": now},
-                    "completed_at": now, "updated_at": now,
-                },
-                tenant_id=scope.tenant_id,
-                user_id=scope.user_id,
-            )
         publish_research_progress(
             raw_run.get("workshop_id", ""),
             run_id,
@@ -1057,12 +930,16 @@ class AgoraResearchService:
                     ref_str = str(candidate["run_ref"])
                     run_id = ref_str.split("/")[-1] if "/" in ref_str else ref_str
 
-                run = None
-                if run_id and self.store and hasattr(self.store, "get_run"):
-                    try:
-                        run = self.store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
-                    except TypeError:
-                        run = self.store.get_run(run_id)
+                run = self.get_run(run_id, scope=scope) if run_id else None
+                if run:
+                    base_url = resolve_orchestrator_base_url()
+                    if base_url:
+                        try:
+                            from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
+                            owner_run = WorkshopCanonicalOperations(research_base_url=base_url).get_research_run(str(run_id))
+                            run["receipt"] = owner_run.get("receipt") if isinstance(owner_run, dict) else None
+                        except Exception as exc:
+                            log.warning("Research owner receipt lookup unavailable: %s", exc)
 
                 # Strictly verify tenant isolation
                 if run:
