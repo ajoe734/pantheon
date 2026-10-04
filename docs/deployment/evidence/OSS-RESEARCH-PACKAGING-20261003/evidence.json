@@ -2,7 +2,7 @@
   "task_id": "OSS-RESEARCH-PACKAGING-20261003",
   "change_class": "corrective",
   "title": "Deliver bounded Research dependency locks and coupled compatibility fixes",
-  "owner": "Antigravity2",
+  "owner": "Antigravity",
   "reviewer": "Codex2",
   "predecessor": {
     "task_id": "OSS-RESEARCH-RESIDUAL-002",
@@ -72,8 +72,8 @@
       },
       "non_lock_production_combined": {
         "files_count": 20,
-        "additions": 79,
-        "deletions": 67,
+        "additions": 83,
+        "deletions": 71,
         "net": 12,
         "budget_limit": 20,
         "satisfied": true
@@ -127,7 +127,8 @@
       "isolated_venv_runner": "uv 0.12.9 with Python 3.12.3 per-framework hash-locked virtualenvs",
       "worker_test_runner": "Python 3.12.3 (.venv-pantheon/bin/python3, pytest-9.1.1, pluggy-1.6.0)",
       "imitation_docker_image": "python:3.12-slim (3.12.15, image 0776160728e7)",
-      "research_quantlib_docker_image": "python:3.11-slim (QuantLib 1.43, image 28458e27d4a9)"
+      "research_owner_docker_image": "python:3.11-slim (FastAPI 0.142.2, QuantLib 1.43, Uvicorn 0.54.0, image 4759cfb5ed1e)",
+      "finrl_docker_image": "python:3.12-slim (FinRL 0.3.7, Torch 2.14.1+cpu, SB3 2.9.0, image b9e33fbddbea)"
     },
     "tested_lock_hashes": {
       "services-learning-dspy.txt": "sha256:e8a9200aed20a78aef6b79e416b2c3307afeb211c1b0b3e5359467890921745f",
@@ -261,10 +262,13 @@
         "checksum": "016252267637129889b5611ddaa371b47c5d7b14d32c26417b89b379b4ae9fb4"
       },
       "finrl_training_probe": {
-        "install_command": "uv pip sync --require-hashes --index-strategy unsafe-best-match dependencies/locks/services-research-finrl.txt",
-        "pytest_command": "pytest services/research/finrl/test_adapter.py services/research/finrl/test_production_drl_run.py",
+        "docker_build_command": "docker build -t pantheon/research-finrl:test -f services/research/finrl/Dockerfile .",
+        "image_id": "b9e33fbddbea",
+        "lock": "dependencies/locks/services-research-finrl.txt",
+        "install_command": "pip install --no-cache-dir --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r ./requirements.lock",
+        "pytest_command": "docker run --rm pantheon/research-finrl:test pytest -q test_adapter.py test_production_drl_run.py",
         "pytest_passed": 22,
-        "smoke_command": "python services/research/finrl/smoke_test.py",
+        "smoke_command": "docker run --rm pantheon/research-finrl:test python smoke_test.py",
         "exit_code": 0,
         "version": "finrl 0.3.7 / stable-baselines3 2.9.0 / torch 2.14.1+cpu",
         "dqn_metrics": {"steps": 57, "sharpe": 139.78, "max_q_value": 0.218},
@@ -282,11 +286,12 @@
         "preservation": "Genuine provider verification remains parent residual task obligation"
       },
       "research_owner_quantlib_behavior": {
-        "image_id": "28458e27d4a9",
+        "docker_build_command": "docker build -t pantheon/research:test -f services/research/Dockerfile .",
+        "image_id": "4759cfb5ed1e",
         "lock": "dependencies/locks/services-research.txt",
-        "import_command": "docker run --rm pantheon-test-research-quantlib:latest python -c 'import QuantLib; print(QuantLib.__version__)'",
-        "import_version": "1.43",
-        "smoke_command": "docker run --rm -v /workspace pantheon-test-research-quantlib:latest python services/research/quantlib/smoke_test.py",
+        "installed_closure_command": "docker run --rm pantheon/research:test python -c 'import fastapi, QuantLib, uvicorn; print(\"FastAPI:\", fastapi.__version__, \"QuantLib:\", QuantLib.__version__, \"Uvicorn:\", uvicorn.__version__)'",
+        "installed_closure_output": "FastAPI: 0.142.2 QuantLib: 1.43 Uvicorn: 0.54.0",
+        "smoke_command": "docker run --rm -v /tmp/pantheon-worker-worktrees/pantheon/oss-research-packaging-20261003:/workspace -w /workspace pantheon/research:test python services/research/quantlib/smoke_test.py",
         "exit_code": 0,
         "pricing_models": ["black_scholes", "crr_binomial"],
         "checksum": "36756edc406bb29ffcedbb968a9f798dd1f6ed67cbe283c2bb869956349dbb6f",
