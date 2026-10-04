@@ -45,7 +45,16 @@
     "/tmp/ranking-baseline-composition.log": "0929c9f75d96e6fa7f053e543533a854d8cd191ebb67a7d9de969d86be587b19",
     "/tmp/ranking-baseline-probe.log": "6999b9bc8adf65bb0581eb9c8c113b08e9c50991d30114b822af94ed7b07f72d",
     "/tmp/ranking-image-build.log": "3b4b384e5c54d852ed18f43abbd7cf7de3bbf6d4ba48553bd2c5035479857599",
-    "/tmp/ranking-context-order.log": "87e468bd6f4cb3cf5b49e78f622d936bd79e9a56d4f4856c0db4eda969a674e2"
+    "/tmp/ranking-context-order.log": "87e468bd6f4cb3cf5b49e78f622d936bd79e9a56d4f4856c0db4eda969a674e2",
+    "/tmp/ranking-current-base.log": "54a7a3dc639b79a3e1c296637dd1a514c4da5a036f6d799d461be2f46d287a52",
+    "/tmp/ranking-pg-current-base.log": "5535b16b1fd9dc05647e2e3fd9876c7e80197e459c60564e6e69841e9c9c92e9"
   },
-  "independent_review": "Pending canonical exact-head handoff; no owner approval or hosted acceptance claimed."
+  "independent_review": "Pending canonical exact-head handoff; no owner approval or hosted acceptance claimed.",
+  "current_base_validation": {
+    "commit": "d18e0d660e8481edcc5c2c51fd239203130e1306",
+    "base": "ed4d2cd191bdebf87c1d3961b6d2cf44210a3672",
+    "result": "144 passed, 4 known baseline failures deselected; exit 0. Actual PostgreSQL suite 9 passed; exit 0. No skips in either current-base batch.",
+    "scope": "Repeated store, evaluator, snapshot-port, mounted evaluator, Governance readback, representative league route and main composition tests after merging independent Research PR 6134. Python snapshot implementation unchanged.",
+    "command": "timeout 240 .venv-pantheon/bin/python -m pytest -q services/rankings/test_store.py services/persona-evaluator-agent/test_persona_evaluator_agent.py services/control-plane/bff/tests/test_ranking_snapshot_write_port.py services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py services/control-plane/bff/tests/test_persona_governance_owner_readback.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py::test_pm12_persona_league_returns_composed_table services/control-plane/bff/tests/test_bff_main_composition.py -k 'not test_all_canonical_domain_routers_mounted and not test_training_v3_router_mounted and not test_zero_unreferenced_dead_functions_in_main_py and not test_main_py_zero_lambda_read_store_service_locator_seams' --disable-warnings"
+  }
 }
