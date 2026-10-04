@@ -161,19 +161,15 @@ def _token_tenant(token: Optional[str]) -> Optional[str]:
 
 def bound_tenant(payload: Any, tenant_id: Optional[str] = None, auth_token: Optional[str] = None) -> str:
     """Return the trusted tenant; a payload tenant may only equal it, never fill it."""
-    raw = str(auth_token or "").removeprefix("Bearer ").strip()
     req_tid = str(tenant_id or "").strip()
     primary, allowed = _token_tenants(auth_token)
-    if raw.count(".") == 2 or allowed or primary:
-        if req_tid:
-            if req_tid not in allowed and "*" not in allowed and req_tid != primary:
-                raise ActionUnavailableError("Caller tenant_id is not the verified caller tenant.", error_code="TENANT_MISMATCH", downstream_status=403)
-            trusted = req_tid
-        else:
-            concrete = {t for t in allowed if t != "*"}
-            trusted = primary or (next(iter(concrete)) if len(concrete) == 1 else "")
-    else:
+    if req_tid:
+        if req_tid not in allowed and "*" not in allowed and req_tid != primary:
+            raise ActionUnavailableError("Caller tenant_id is not the verified caller tenant.", error_code="TENANT_MISMATCH", downstream_status=403)
         trusted = req_tid
+    else:
+        concrete = {t for t in allowed if t != "*"}
+        trusted = primary or (next(iter(concrete)) if len(concrete) == 1 else "")
     if not trusted:
         raise ActionUnavailableError("Caller tenant_id is not the verified caller tenant.", error_code="TENANT_MISMATCH", downstream_status=403)
     claimed = str(payload.get("tenant_id") or payload.get("tenant") or "").strip() if isinstance(payload, dict) else ""
@@ -184,9 +180,15 @@ def bound_tenant(payload: Any, tenant_id: Optional[str] = None, auth_token: Opti
 
 def _headers(payload: Any, auth_token: Optional[str], mfa_token: Optional[str], tenant_id: Optional[str]) -> Dict[str, str]:
     h = {"Accept": "application/json", "X-Pantheon-Service": "control-plane-bff"}
-    t = bound_tenant(payload, tenant_id, auth_token)
-    if t:
-        h["X-Tenant-Id"] = t
+    has_claimed = bool(isinstance(payload, dict) and (payload.get("tenant_id") or payload.get("tenant")))
+    if tenant_id or has_claimed or (payload is not None and not auth_token):
+        t = bound_tenant(payload, tenant_id, auth_token)
+        if t:
+            h["X-Tenant-Id"] = t
+    elif auth_token:
+        t = _token_tenant(auth_token)
+        if t:
+            h["X-Tenant-Id"] = t
     if payload is not None:
         h["Content-Type"] = "application/json"
     if auth_token:

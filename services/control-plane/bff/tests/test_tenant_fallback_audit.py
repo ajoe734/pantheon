@@ -128,6 +128,19 @@ class _Resp:
         return False
 
 
+def _valid_tok(tenant: str = "tenant-a") -> str:
+    now = int(time.time())
+    tok = encode_jwt_hs256(
+        {
+            "sub": "caller", "roles": ["operator"], "tenant_id": tenant,
+            "allowed_tenants": [tenant], "iss": _ISSUER, "aud": _AUDIENCE,
+            "iat": now, "exp": now + 3600,
+        },
+        secret=_SECRET,
+    )
+    return f"Bearer {tok}"
+
+
 def _post_calls(monkeypatch, payload, **kw):
     calls: list[dict[str, str]] = []
 
@@ -136,7 +149,8 @@ def _post_calls(monkeypatch, payload, **kw):
         return _Resp()
 
     monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
-    command_executor._post_json("http://owner.invalid/x", payload, auth_token="Bearer t", **kw)
+    token = kw.pop("auth_token", _valid_tok("tenant-a"))
+    command_executor._post_json("http://owner.invalid/x", payload, auth_token=token, **kw)
     return calls
 
 
@@ -144,8 +158,9 @@ def _post_calls(monkeypatch, payload, **kw):
 def test_post_json_rejects_payload_tenant_that_is_not_the_trusted_tenant(monkeypatch, trusted):
     calls: list = []
     monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: calls.append(a) or _Resp())
+    tok = _valid_tok("tenant-a") if (trusted and trusted.strip() == "tenant-a") else None
     with pytest.raises(ActionUnavailableError) as exc:
-        command_executor._post_json("http://owner.invalid/x", {"tenant_id": "tenant-b"}, tenant_id=trusted)
+        command_executor._post_json("http://owner.invalid/x", {"tenant_id": "tenant-b"}, tenant_id=trusted, auth_token=tok)
     assert exc.value.error_code == "TENANT_MISMATCH"
     assert calls == []
 
@@ -168,9 +183,37 @@ def test_post_json_positive_and_tenantless_controls(monkeypatch):
 
 @pytest.mark.parametrize("trusted", [None, "", "tenant-a"])
 def test_adapter_headers_reject_payload_tenant_that_is_not_the_trusted_tenant(trusted):
+    tok = _valid_tok("tenant-a") if trusted == "tenant-a" else None
     with pytest.raises(ActionUnavailableError):
-        adapter_base._headers({"tenant_id": "tenant-b"}, None, None, trusted)
-    assert adapter_base._headers({"tenant_id": "tenant-a"}, None, None, "tenant-a")["X-Tenant-Id"] == "tenant-a"
+        adapter_base._headers({"tenant_id": "tenant-b"}, tok, None, trusted)
+    assert adapter_base._headers({"tenant_id": "tenant-a"}, _valid_tok("tenant-a"), None, "tenant-a")["X-Tenant-Id"] == "tenant-a"
+
+
+@pytest.mark.parametrize("auth_token", [
+    None,
+    "Bearer reviewer:operator:mfa",
+    "Bearer not-a-jwt",
+])
+def test_post_json_and_adapters_reject_tenant_kwarg_without_verified_tenant_claims(monkeypatch, auth_token):
+    """Regress P1 AC1/AC5: kwargs must not manufacture tenant authority when auth_token lacks verified tenant claims."""
+    calls: list = []
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: calls.append(a) or _Resp())
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+
+    with pytest.raises(ActionUnavailableError) as exc:
+        command_executor._post_json("http://owner.invalid/probe", {"tenant_id": "tenant-b"}, tenant_id="tenant-b", auth_token=auth_token)
+    assert exc.value.error_code == "TENANT_MISMATCH"
+    assert calls == []
+
+    with pytest.raises(ActionUnavailableError) as exc:
+        adapter_base._headers({"tenant_id": "tenant-b"}, auth_token, None, "tenant-b")
+    assert exc.value.error_code == "TENANT_MISMATCH"
+    assert calls == []
+
+    with pytest.raises(ActionUnavailableError) as exc:
+        adapter_base.http_request_json("http://owner.invalid/probe", method="POST", payload={"tenant_id": "tenant-b"}, tenant_id="tenant-b", auth_token=auth_token)
+    assert exc.value.error_code == "TENANT_MISMATCH"
+    assert calls == []
 
 
 def _suggestion_store(tmp_path) -> PerformanceSuggestionStore:
@@ -1946,7 +1989,12 @@ def test_mounted_management_ai_ask_write_scopes_to_the_jwt_tenant(monkeypatch, t
         assert res.status_code == 202
 
 
-def test_tenantless_structured_caller_never_dispatches(mounted, monkeypatch):
+@pytest.mark.parametrize("params", [
+    {},
+    {"tenant_id": "tenant-b"},
+    {"tenant": "tenant-b"},
+])
+def test_tenantless_structured_caller_never_dispatches(mounted, monkeypatch, params):
     """Regress AC1/AC5: non-JWT/structured callers without trusted tenant must fail closed before downstream HTTP calls."""
     client, store, _ = mounted
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
@@ -1960,9 +2008,9 @@ def test_tenantless_structured_caller_never_dispatches(mounted, monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", capture)
     response = client.post(
         "/bff/v1/commands",
-        headers={"Authorization": "Bearer reviewer:operator:mfa", "Idempotency-Key": "reviewer-missing-tenant"},
+        headers={"Authorization": "Bearer reviewer:operator:mfa", "Idempotency-Key": f"reviewer-missing-tenant-{len(params)}"},
         json={"command": "CreateDeployment", "target": {"type": "Deployment", "id": "plan-a"},
-              "params": {}, "audit_context": {"reason": "missing tenant reviewer regression"}},
+              "params": params, "audit_context": {"reason": "missing tenant reviewer regression"}},
     )
     assert seen == [], f"Missing trusted tenant must fail before downstream calls, got {seen}"
 
@@ -2004,4 +2052,59 @@ def test_journal_verified_selection(monkeypatch, tmp_path, primary, allowed, con
         assert response.status_code == 403 and observed == [], (response.status_code, response.text, observed)
     else:
         assert response.status_code == 201 and observed == [expected], (response.status_code, response.text, observed)
+
+
+@pytest.mark.parametrize("claim_field", ["allowed_tenants", "tenant_ids", "tenantIds"])
+@pytest.mark.parametrize("order", [("tenant-a", "tenant-b"), ("tenant-b", "tenant-a")])
+def test_operations_read_model_multi_tenant_lists_fail_closed_without_selector(monkeypatch, claim_field, order):
+    """Regress P2: tenant_ids and tenantIds lists must not arbitrarily pick the first tenant."""
+    from services.control_plane.bff.auth.policy import bff_me_tenant_payload, extract_identity, require_read_role
+    from services.control_plane.bff.core.errors import register_error_handlers
+    from services.control_plane.bff.management_read_models.router import create_management_router
+
+    personas = {
+        "p-a": {"persona_id": "p-a", "tenant_id": "tenant-a"},
+        "p-b": {"persona_id": "p-b", "tenant_id": "tenant-b"},
+    }
+
+    class _Store:
+        def get_persona(self, persona_id):
+            return personas.get(persona_id)
+
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(create_management_router(
+        read_surface=_Store(),
+        extract_identity=extract_identity,
+        require_read_role=require_read_role,
+        tenant_payload_fn=bff_me_tenant_payload,
+    ))
+    client = TestClient(app, raise_server_exceptions=False)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", _SECRET)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", _ISSUER)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", _AUDIENCE)
+    for k in ("PANTHEON_BFF_TENANT_ID", "PANTHEON_BFF_DEFAULT_TENANT_ID", "PANTHEON_TENANT_ID"):
+        monkeypatch.delenv(k, raising=False)
+
+    now = int(time.time())
+    tok = encode_jwt_hs256({
+        "sub": "test-multi", "roles": ["operator"], "iss": _ISSUER, "aud": _AUDIENCE,
+        "iat": now, "exp": now + 3600, claim_field: list(order),
+    }, secret=_SECRET)
+    headers = {"Authorization": f"Bearer {tok}"}
+
+    # Both personas fail closed to 403 because no primary tenant or selector was given
+    assert client.get("/bff/management/operations-read-model/p-a", headers=headers).status_code == 403
+    assert client.get("/bff/management/operations-read-model/p-b", headers=headers).status_code == 403
+
+    # Singleton positive control works
+    tok_single = encode_jwt_hs256({
+        "sub": "test-single", "roles": ["operator"], "iss": _ISSUER, "aud": _AUDIENCE,
+        "iat": now, "exp": now + 3600, claim_field: ["tenant-a"],
+    }, secret=_SECRET)
+    headers_single = {"Authorization": f"Bearer {tok_single}"}
+    assert client.get("/bff/management/operations-read-model/p-a", headers=headers_single).status_code == 200
+    assert client.get("/bff/management/operations-read-model/p-b", headers=headers_single).status_code == 404
+
 

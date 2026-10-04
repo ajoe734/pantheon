@@ -728,7 +728,7 @@ def _claim_value_as_strings(value: Any) -> List[str]:
     return [str(value).strip()]
 
 
-TENANT_PRIMARY_CLAIM_PATHS = ["tenant_id", "tenantId", "tenant.id", "tid", "org_id", "organization.id", "organization_id", "tenant_ids", "tenantIds"]
+TENANT_PRIMARY_CLAIM_PATHS = ["tenant_id", "tenantId", "tenant.id", "tid", "org_id", "organization.id", "organization_id"]
 TENANT_ALLOWED_CLAIM_PATHS = ["allowed_tenants", "allowedTenants", "tenant_ids", "tenantIds", "tenants", "tenant_id", "tenantId", "tenant.id", "tid", "org_id", "organization.id", "organization_id"]
 
 
