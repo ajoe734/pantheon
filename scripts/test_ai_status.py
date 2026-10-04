@@ -9044,8 +9044,12 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             "docs/evidence/MANIFEST-SCOPE/evidence.json",
         )
         mock_bridge.validate_review_admission.return_value = admitted
-        with mock.patch.object(
-            ai_status, "_github_review_bridge_module", return_value=mock_bridge
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "git"))
+        import check_commit_trailers
+        with (
+            mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge),
+            mock.patch.object(check_commit_trailers, "check_range", return_value=[]),
         ):
             accepted = ai_status.validate_handoff_pr_delivery_binding(
                 task,

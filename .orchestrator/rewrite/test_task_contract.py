@@ -107,6 +107,8 @@ class HandoffDiffBudgetGateTests(unittest.TestCase):
         config = {"branch_workflow": {"diff_budget": {"enabled": True}}}
         binding = {"pr": 7, "head_sha": "a" * 40, "head_branch": "task/T-1", "base": "dev"}
         validated = SimpleNamespace(as_dict=lambda: {**binding, "base_sha": "b" * 40}, base_sha="b" * 40)
+        task = {"id": "T-1"}
+        original = (dict(task), dict(config), dict(binding))
         with (
             mock.patch.object(task_contract, "validate_task_repository_scope", return_value="pantheon"),
             mock.patch.object(task_contract, "repository_slug", return_value="o/r"),
@@ -120,7 +122,7 @@ class HandoffDiffBudgetGateTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(SystemExit, "worker_commit.py") as ctx:
                 task_contract.validate_handoff_pr_delivery_binding(
-                    {"id": "T-1"}, config, binding, review_file="docs/e.json"
+                    task, config, binding, review_file="docs/e.json"
                 )
         self.assertIn("deadbeef", str(ctx.exception))
         self.assertIn("missing trailer: Reviewer", str(ctx.exception))
@@ -132,6 +134,7 @@ class HandoffDiffBudgetGateTests(unittest.TestCase):
             repository_root=task_contract.Path.cwd(),
         )
         revalidate.assert_not_called()
+        self.assertEqual((task, config, binding), original)
 
     def test_missing_frozen_range_objects_reject_handoff_clearly(self) -> None:
         from types import SimpleNamespace
