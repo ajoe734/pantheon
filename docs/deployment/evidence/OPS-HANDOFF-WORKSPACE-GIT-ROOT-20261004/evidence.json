@@ -1,0 +1,39 @@
+{
+  "task_id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004",
+  "environment": "isolated worker workspace /tmp/pantheon-worker-worktrees/pantheon/ops-handoff-workspace-git-root-20261004; command root /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/b12d170341ea217f1381972757d2a5e34d2ca036; coordination root /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root",
+  "owner_claims": "Owner Antigravity implemented corrective fix for authentic PR #6151 handoff rejection: 1) Replaced raw repository_local_path in task_contract.py with ai_status._done_delivery_repository_root(config, dict(task), repository_id, action='handoff'), resolving repository git root from validated worker delivery workspace and lease binding instead of resolving '.' under non-git canonical coordination root. 2) Extended _done_delivery_repository_root and _validate_delivery_workspace_repository in scripts/ai_status.py to accept action parameter ('handoff' or 'finalize') for clear error attribution. 3) Added operator path support in _done_delivery_repository_root when action is 'handoff' to inspect repository integration_path before falling back to local_path, ensuring absolute path without symlink components. 4) Added complete test suite covering isolated genuine git repos with coordination root outside git, leased source workspace containing exact base and head, normal worker and operator paths, forged workspace, repo mismatch, lease mismatch, unavailable objects, and stale PR head negatives.",
+  "design_items": {
+    "D1": "task_contract.py admit_review_handoff_proposal now calls ai_status._done_delivery_repository_root(config, dict(task), repository_id, action='handoff') to obtain the authoritative repository root for check_commit_trailers.check_range.",
+    "D2": "scripts/ai_status.py _done_delivery_repository_root validates worker workspace and active lease against binding['workspace_source_root'], returning the worker's worktree for Git operations when run_id is set. For operator calls (run_id unset), it resolves integration_path when action is 'handoff' or local_path, requiring absolute paths and verifying no symlink components.",
+    "D3": ".orchestrator/rewrite/test_task_contract.py adds HandoffWorkspaceGitRootAdmissionTests covering genuine git repositories, outside-git coordination root, valid worker path, operator integration_path path, forged workspace, repo mismatch, lease mismatch, missing objects, and stale PR head.",
+    "D4": "scripts/test_ai_status.py adds tests to DeliveryWorkspaceAuthorityTests for action='handoff' error message formatting, operator integration_path selection, and relative/symlink path rejection."
+  },
+  "validation": [
+    {
+      "command": "PYTHONPATH=.orchestrator python3 .orchestrator/rewrite/test_task_contract.py",
+      "result": "16 passed; verifies valid worker and operator paths with genuine Git repos and non-Git coordination root, bad trailers, missing objects, forged workspace, repo mismatch, lease mismatch, and stale PR head"
+    },
+    {
+      "command": "python3 -m unittest scripts.test_ai_status.DeliveryWorkspaceAuthorityTests",
+      "result": "8 passed; includes explicit workspace execute_plans worktree, live root registration across runtime, environment variable requirements, worker lease repository matching, registry fallback, handoff action error formatting, operator integration_path resolution, and relative/symlink rejection"
+    },
+    {
+      "command": "python3 -m unittest scripts.test_ai_status.ReviewApprovedWorkflowTests scripts.test_ai_status.DeliveryMetadataValidationTests",
+      "result": "208 passed; all review-approved workflows and delivery metadata validations pass"
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base 829015b2016e528358cec30a3f5ac4bfb9112795 --change-class corrective --budget 40",
+      "result": "diff budget check: net production additions = 23 lines <= 40 lines budget"
+    }
+  ],
+  "diff_budget": {
+    "change_class": "corrective",
+    "net_prod_line_budget": 40,
+    "actual_net_prod_lines": 23,
+    "production_files": [
+      ".orchestrator/rewrite/task_contract.py",
+      "scripts/ai_status.py"
+    ]
+  },
+  "scope": "Tooling and task-contract repository root resolution corrective repair only; no product runtime, credentials, or capital-affecting changes."
+}
