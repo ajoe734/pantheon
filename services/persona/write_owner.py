@@ -205,12 +205,13 @@ class TrainingTargetApprovalUnavailable(PersonaAuthorityError):
 
 @dataclass(frozen=True)
 class PersonaInboundAuthority:
-    """Authenticated identity used for Persona mutation policy decisions."""
+    """Authenticated identity used for Persona owner policy decisions."""
 
     actor_id: str
     roles: frozenset[str]
     token_kind: str
     tenant_id: str | None = None
+    claims: Mapping[str, Any] | None = None
 
 
 class GovernanceDecisionVerifier(Protocol):
@@ -435,7 +436,60 @@ def _authenticate_persona_mutation(
         roles=context.roles,
         token_kind=context.token_kind,
         tenant_id=str(context.claims.get("tenant_id") or "").strip() or None,
+        claims=context.claims,
     )
+
+
+def resolve_persona_tenant_scope(
+    authorization: str | None, requested_tenant: str | None = None
+) -> tuple[PersonaInboundAuthority, str]:
+    """Authenticate and select only a tenant admitted by verified claims."""
+    authority = _authenticate_persona_mutation(authorization)
+    if authority.token_kind == "service":
+        default = str(os.getenv("PERSONA_DEFAULT_TENANT_ID") or os.getenv("PANTHEON_TENANT_ID") or "").strip()
+        chosen = str(requested_tenant or "").strip() or default
+        if not chosen or chosen == "*":
+            raise PersonaAuthorityError("TENANT_SCOPE_DENIED", "An explicitly admitted tenant is required", 403)
+        return authority, chosen
+    claims = dict(authority.claims or {})
+    primary = ("tenant_id", "tenantId", "tenant.id", "tid", "org_id", "organization.id", "organization_id")
+    paths = ("allowed_tenants", "allowedTenants", "tenant_ids", "tenantIds", "tenants", *primary)
+
+    def values(names: tuple[str, ...]) -> list[str]:
+        found: list[str] = []
+        for path in names:
+            value: Any = claims
+            for part in path.split("."):
+                value = value.get(part) if isinstance(value, Mapping) else None
+            for item in value if isinstance(value, (list, tuple, set)) else (value,):
+                text = str(item or "").strip()
+                if text and text not in found: found.append(text)
+        return found
+
+    scoped, admitted = values(primary), values(paths)
+    default = str(os.getenv("PERSONA_DEFAULT_TENANT_ID") or os.getenv("PANTHEON_TENANT_ID") or "").strip()
+    chosen = str(requested_tenant or "").strip() or (default if default in admitted else "")
+    if not chosen and len(scoped or admitted) == 1: chosen = (scoped or admitted)[0]
+    if not chosen or chosen == "*" or ("*" not in admitted and chosen not in admitted):
+        raise PersonaAuthorityError("TENANT_SCOPE_DENIED", "An explicitly admitted tenant is required", 403)
+    return authority, chosen
+
+
+def _require_owner_persona(
+    owner: PersistentPersonaOwner,
+    persona_id: str,
+    authorization: str | None,
+) -> tuple[PersonaInboundAuthority, PersonaBody]:
+    authority = _authenticate_persona_mutation(authorization)
+    raw = owner._records.get(persona_id)
+    if raw is None:
+        raise PersonaNotFound(f"Persona {persona_id!r} not found")
+    if authority.token_kind != "service":
+        tenant = raw.get("tenant_id")
+        if not tenant:
+            raise PersonaAuthorityError("FORBIDDEN", "Persona has no tenant binding", 403)
+        resolve_persona_tenant_scope(authorization, tenant)
+    return authority, owner.get(persona_id)
 
 
 def _bind_authenticated_actor(
@@ -693,6 +747,11 @@ class AdvancePersonaLifecycleRequest(BaseModel):
     governance_decision_id: str | None = Field(default=None, min_length=1)
 
 
+def _is_private_persona(record: Any) -> bool:
+    meta = (record.metadata if isinstance(record, PersonaBody) else (record.get("metadata") if isinstance(record, dict) else None)) or {}
+    return bool(meta.get("trade_reflections") or meta.get("trade_reflection_idempotency"))
+
+
 class PersistentPersonaOwner:
     """Persona registry application service over one persistent owner store."""
 
@@ -742,17 +801,14 @@ class PersistentPersonaOwner:
         return PersonaBody.model_validate(record)
 
     def list(
-        self,
-        *,
-        lifecycle_state: str | None = None,
-        status_value: str | None = None,
+        self, *, lifecycle_state: str | None = None, status_value: str | None = None, tenant_id: str | None = None,
     ) -> list[PersonaBody]:
-        records = [PersonaBody.model_validate(record) for record in self._records.list_all()]
-        if lifecycle_state is not None:
-            records = [item for item in records if item.lifecycle_state == lifecycle_state]
-        if status_value is not None:
-            records = [item for item in records if item.status == status_value]
+        raw = [r for r in self._records.list_all() if tenant_id is None or r.get("tenant_id") == tenant_id or not _is_private_persona(r)]
+        records = [PersonaBody.model_validate(r) for r in raw]
+        if lifecycle_state is not None: records = [i for i in records if i.lifecycle_state == lifecycle_state]
+        if status_value is not None: records = [i for i in records if i.status == status_value]
         return sorted(records, key=lambda item: item.persona_id)
+
 
     def patch(self, persona_id: str, request: PatchPersonaRequest) -> PersonaBody:
         for _attempt in range(4):
@@ -1685,6 +1741,7 @@ def create_app(
         version="1.0.0",
         description="Persistent Persona registry write-owner service",
     )
+    app.state.persona_owner = persistent_owner
 
     @app.post(
         "/api/personas",
@@ -1709,20 +1766,41 @@ def create_app(
 
     @app.get("/api/personas", response_model=list[PersonaBody])
     def list_personas(
-        lifecycle_state: str | None = Query(default=None),
-        status_value: str | None = Query(default=None, alias="status"),
+        lifecycle_state: str | None = Query(default=None), status_value: str | None = Query(default=None, alias="status"),
+        authorization: str | None = Header(default=None), tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
     ) -> list[PersonaBody]:
-        return persistent_owner.list(
-            lifecycle_state=lifecycle_state,
-            status_value=status_value,
-        )
+        has_private = any(_is_private_persona(r) for r in persistent_owner._records.list_all())
+        if not authorization:
+            if has_private: raise HTTPException(status_code=401, detail="UNAUTHORIZED: Missing authorization")
+            return persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value)
+        try:
+            authority = _authenticate_persona_mutation(authorization)
+            if authority.token_kind == "service" and not tenant_id:
+                return persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value)
+            if not tenant_id and not has_private:
+                return persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value)
+            _, admitted = resolve_persona_tenant_scope(authorization, tenant_id)
+            return persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value, tenant_id=admitted)
+        except PersonaAuthorityError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
 
     @app.get("/api/personas/{persona_id}", response_model=PersonaBody)
-    def get_persona(persona_id: str) -> PersonaBody:
-        try:
+    def get_persona(persona_id: str, authorization: str | None = Header(default=None)) -> PersonaBody:
+        raw = persistent_owner._records.get(persona_id)
+        if raw is None: raise HTTPException(status_code=404, detail=f"Persona {persona_id!r} not found")
+        has_private = _is_private_persona(raw)
+        if not authorization:
+            if has_private: raise HTTPException(status_code=401, detail="UNAUTHORIZED: Missing authorization")
             return persistent_owner.get(persona_id)
-        except PersonaNotFound as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        try:
+            authority = _authenticate_persona_mutation(authorization)
+            if has_private and authority.token_kind != "service":
+                tenant = raw.get("tenant_id")
+                if not tenant: raise HTTPException(status_code=403, detail="FORBIDDEN: Persona has no tenant binding")
+                resolve_persona_tenant_scope(authorization, tenant)
+            return persistent_owner.get(persona_id)
+        except PersonaAuthorityError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
 
     @app.patch("/api/personas/{persona_id}", response_model=PersonaBody)
     def patch_persona(
@@ -1886,15 +1964,12 @@ def create_app(
             raise HTTPException(status_code=400, detail={"error": {"code": "VALIDATION_FAILED", "message": "Idempotency-Key is required"}})
         clean_key = idempotency_key.strip()
         try:
-            authority = _authenticate_persona_mutation(authorization)
+            authority, persona = _require_owner_persona(persistent_owner, persona_id, authorization)
             if not authority.tenant_id: raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Exact tenant match required"}})
-            persona = persistent_owner.get(persona_id)
         except PersonaAuthorityError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
+            raise HTTPException(status_code=exc.status_code, detail={"error": {"code": exc.code, "message": exc.message}}) from exc
         except PersonaNotFound as exc:
             raise HTTPException(status_code=404, detail={"error": {"code": "RESOURCE_NOT_FOUND", "message": str(exc)}}) from exc
-        if not persona.tenant_id or authority.tenant_id != persona.tenant_id:
-            raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Exact tenant match required"}})
         reason = str(body.get("reason") or "").strip()
         if not reason:
             raise HTTPException(status_code=422, detail={"error": {"code": "VALIDATION_FAILED", "message": "reason is required"}})
@@ -1961,15 +2036,12 @@ def create_app(
     @app.get("/api/personas/{persona_id}/trade-reflections")
     def list_trade_reflections(persona_id: str, environment: str | None = Query(default=None), review_state: str | None = Query(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
         try:
-            authority = _authenticate_persona_mutation(authorization)
+            authority, persona = _require_owner_persona(persistent_owner, persona_id, authorization)
             if not authority.tenant_id: raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Exact tenant match required"}})
-            persona = persistent_owner.get(persona_id)
         except PersonaAuthorityError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
+            raise HTTPException(status_code=exc.status_code, detail={"error": {"code": exc.code, "message": exc.message}}) from exc
         except PersonaNotFound as exc:
             raise HTTPException(status_code=404, detail={"error": {"code": "RESOURCE_NOT_FOUND", "message": str(exc)}}) from exc
-        if not persona.tenant_id or authority.tenant_id != persona.tenant_id:
-            raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Exact tenant match required"}})
         rows = [r for r in list((persona.metadata or {}).get("trade_reflections") or []) if (not environment or r.get("environment") == environment) and (not review_state or r.get("review_state") == review_state)]
         return {"data": rows, "meta": {"source": "persona_reflection", "count": len(rows)}}
 

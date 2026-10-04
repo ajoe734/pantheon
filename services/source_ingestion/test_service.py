@@ -25,10 +25,12 @@ def client():
         "SOURCE_INGEST_DLQ_PATH": os.environ.get("SOURCE_INGEST_DLQ_PATH"),
         "SOURCE_INGEST_AUDIT_PATH": os.environ.get("SOURCE_INGEST_AUDIT_PATH"),
         "SOURCE_INGEST_MAX_RECORDS": os.environ.get("SOURCE_INGEST_MAX_RECORDS"),
+        "PANTHEON_RUNTIME_JWT_SECRET": os.environ.get("PANTHEON_RUNTIME_JWT_SECRET"),
         "SEARCH_INGEST_NOTIFY_URL": os.environ.get("SEARCH_INGEST_NOTIFY_URL"),
     }
     os.environ["SOURCE_INGEST_DATA_DIR"] = tempdir
     os.environ["SOURCE_INGEST_MAX_RECORDS"] = "3"
+    os.environ["PANTHEON_RUNTIME_JWT_SECRET"] = "source-test-secret"
     os.environ["SEARCH_INGEST_NOTIFY_URL"] = ""
 
     sys.modules.pop("services.source_ingestion.main", None)
@@ -65,7 +67,18 @@ def _record(**overrides):
         "content_ref": "https://example.test/paper-1",
     }
     payload.update(overrides)
+    payload["metadata"] = {"tenant_id": "tenant-a", **dict(payload.get("metadata") or {})}
     return payload
+
+
+def _read_headers(tenant: str = "tenant-a") -> dict[str, str]:
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    token = encode_jwt_hs256(
+        {"sub": "test-reader", "roles": ["operator"], "tenant_id": tenant, "exp": int(__import__("time").time()) + 600},
+        secret=os.environ["PANTHEON_RUNTIME_JWT_SECRET"],
+    )
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _serve_json(payload: dict, *, robots_txt: str | None = None):
@@ -98,6 +111,69 @@ def _serve_json(payload: dict, *, robots_txt: str | None = None):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, f"http://127.0.0.1:{server.server_port}/feed.json"
+
+
+def test_private_evidence_reads_authenticate_and_scope_the_existing_repository(
+    client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    test_client, _, module = client
+    secret = "source-read-test-secret"
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", secret)
+    body = test_client.post(
+        "/api/source-ingest/jobs",
+        json={
+            "connector": _connector(connector_id="tenant-read"),
+            "trace_id": "tenant-read-trace",
+            "trigger_type": "manual",
+            "records": [_record(connector_id="tenant-read", source_id="tenant-a-source", metadata={"tenant_id": "tenant-a", "body": "private"})],
+        },
+    )
+    assert body.status_code == 201, body.text
+    token = encode_jwt_hs256(
+        {"sub": "reader", "roles": ["operator"], "organization": {"id": "tenant-a"}, "exp": int(__import__("time").time()) + 600},
+        secret=secret,
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    assert test_client.get("/api/source-ingest/source-records/tenant-a-source").status_code == 401
+    source = test_client.get("/api/source-ingest/source-records/tenant-a-source", headers=headers)
+    assert source.status_code == 200, source.text
+    assert source.json()["source_record"]["source_id"] == "tenant-a-source"
+    refs = body.json()["evidence_refs"]
+    for path, key, wrapper in (
+        ("/api/source-ingest/evidence/items", "evidence_item_ids", "items"),
+        ("/api/source-ingest/evidence/bundles", "evidence_bundle_id", "bundles"),
+        ("/api/source-ingest/evidence/knowledge-objects", "knowledge_object_ids", "knowledge_objects"),
+    ):
+        result = test_client.get(path, headers=headers)
+        assert result.status_code == 200, result.text
+        assert result.json()[wrapper]
+    assert test_client.get(f"/api/source-ingest/evidence/items/{refs['evidence_item_ids'][0]}", headers=headers).status_code == 200
+    assert test_client.get(f"/api/source-ingest/evidence/bundles/{refs['evidence_bundle_id']}", headers=headers).status_code == 200
+    assert test_client.get(f"/api/source-ingest/evidence/knowledge-objects/{refs['knowledge_object_ids'][0]}", headers=headers).status_code == 200
+    assert test_client.get("/api/source-ingest/source-records/tenant-a-source", headers={**headers, "X-Tenant-Id": "tenant-b"}).status_code == 403
+    assert test_client.get("/api/source-ingest/source-records/tenant-a-source", headers={"Authorization": "Bearer invalid"}).status_code == 401
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", "")
+    assert test_client.get("/api/source-ingest/source-records", headers=headers).status_code == 503
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", secret)
+    multi = encode_jwt_hs256(
+        {"sub": "reader", "roles": ["operator"], "tenant_ids": ["tenant-a", "tenant-b"], "exp": int(__import__("time").time()) + 600},
+        secret=secret,
+    )
+    assert test_client.get("/api/source-ingest/source-records", headers={"Authorization": f"Bearer {multi}"}).status_code == 403
+    other = encode_jwt_hs256(
+        {"sub": "reader", "roles": ["operator"], "tenant_id": "tenant-b", "exp": int(__import__("time").time()) + 600},
+        secret=secret,
+    )
+    assert test_client.get("/api/source-ingest/source-records/tenant-a-source", headers={"Authorization": f"Bearer {other}"}).status_code == 404
+
+    class DownOwner:
+        def list_source_records(self, **_kwargs):
+            raise OSError("owner down")
+
+    monkeypatch.setattr(module, "evidence_repository", DownOwner())
+    assert test_client.get("/api/source-ingest/source-records", headers=headers).status_code == 503
 
 
 def test_health_exposes_storage_contract(client) -> None:
@@ -359,7 +435,7 @@ def test_trigger_success_persists_run_and_watermark_for_replay(client) -> None:
     assert body["source_search_refresh"]["ingest_run_id"] == run_id
     assert body["run"]["events"][-1]["event_type"] == "SearchIndexRefreshObserved"
     assert (data_dir / "ingest_schedule.jsonl").exists()
-    source_record = test_client.get("/api/source-ingest/source-records/src-paper-1")
+    source_record = test_client.get("/api/source-ingest/source-records/src-paper-1", headers=_read_headers())
     assert source_record.status_code == 200
     assert source_record.json()["source_record"]["metadata"]["source_ingest_run_id"] == run_id
 
@@ -434,6 +510,7 @@ def test_configured_connector_fetch_runs_without_inline_records_and_persists_evi
                         "title": "Autonomous note",
                         "content_ref": "memory://autonomous/note-1",
                         "metadata": {
+                            "tenant_id": "tenant-a",
                             "body": "Autonomous source evidence persisted for downstream consumers.",
                             "access_scope": ["operator", "research"],
                             "keywords": ["autonomous", "evidence"],
@@ -466,20 +543,20 @@ def test_configured_connector_fetch_runs_without_inline_records_and_persists_evi
     assert (data_dir / "connector_config.jsonl").exists()
     assert (data_dir / "source_evidence.jsonl").exists()
 
-    source = test_client.get("/api/source-ingest/source-records/src-autonomous-note-1")
+    source = test_client.get("/api/source-ingest/source-records/src-autonomous-note-1", headers=_read_headers())
     assert source.status_code == 200
-    item = test_client.get(f"/api/source-ingest/evidence/items/{evidence_item_id}")
+    item = test_client.get(f"/api/source-ingest/evidence/items/{evidence_item_id}", headers=_read_headers())
     assert item.status_code == 200
     assert item.json()["item"]["source_id"] == "src-autonomous-note-1"
-    bundle = test_client.get(f"/api/source-ingest/evidence/bundles/{evidence_bundle_id}")
+    bundle = test_client.get(f"/api/source-ingest/evidence/bundles/{evidence_bundle_id}", headers=_read_headers())
     assert bundle.status_code == 200
     assert bundle.json()["bundle"]["source_ids"] == ["src-autonomous-note-1"]
 
     reloaded = importlib.reload(module)
     replay_client = TestClient(reloaded.app)
-    replayed_source = replay_client.get("/api/source-ingest/source-records/src-autonomous-note-1")
+    replayed_source = replay_client.get("/api/source-ingest/source-records/src-autonomous-note-1", headers=_read_headers())
     assert replayed_source.status_code == 200
-    replayed_item = replay_client.get(f"/api/source-ingest/evidence/items/{evidence_item_id}")
+    replayed_item = replay_client.get(f"/api/source-ingest/evidence/items/{evidence_item_id}", headers=_read_headers())
     assert replayed_item.status_code == 200
 
 
@@ -519,7 +596,7 @@ def test_source_evidence_normalization_sets_canonical_refs_and_dedupes_owner(cli
     assert body["run"]["status"] == "completed"
     assert set(body["evidence_refs"]["source_ids"]) == {"src-paper-owner"}
 
-    sources = test_client.get("/api/source-ingest/source-records")
+    sources = test_client.get("/api/source-ingest/source-records", headers=_read_headers())
     assert sources.status_code == 200
     persisted_sources = sources.json()["source_records"]
     assert [source["source_id"] for source in persisted_sources] == ["src-paper-owner"]
@@ -530,7 +607,7 @@ def test_source_evidence_normalization_sets_canonical_refs_and_dedupes_owner(cli
     assert metadata["license_scope"] == "open"
     assert metadata["access_scope"] == ["research"]
 
-    items = test_client.get("/api/source-ingest/evidence/items")
+    items = test_client.get("/api/source-ingest/evidence/items", headers=_read_headers())
     assert items.status_code == 200
     persisted_items = items.json()["items"]
     assert len(persisted_items) == 1
@@ -733,7 +810,7 @@ def test_news_connector_ingest_preserves_entitlement_pit_on_bundle(client) -> No
 
     assert response.status_code == 201, response.text
     body = response.json()
-    source = test_client.get("/api/source-ingest/source-records/src-news-vendor-1")
+    source = test_client.get("/api/source-ingest/source-records/src-news-vendor-1", headers=_read_headers())
     assert source.status_code == 200
     source_metadata = source.json()["source_record"]["metadata"]
     assert source_metadata["entitlement_tags"] == ["news-vendor-research"]
@@ -741,7 +818,7 @@ def test_news_connector_ingest_preserves_entitlement_pit_on_bundle(client) -> No
     assert source_metadata["pit"]["validated"] is True
     assert source_metadata["governance"]["direct_execution_allowed"] is False
 
-    bundle = test_client.get(f"/api/source-ingest/evidence/bundles/{body['evidence_refs']['evidence_bundle_id']}")
+    bundle = test_client.get(f"/api/source-ingest/evidence/bundles/{body['evidence_refs']['evidence_bundle_id']}", headers=_read_headers())
     assert bundle.status_code == 200
     bundle_payload = bundle.json()["bundle"]
     assert bundle_payload["available_time"] == "2026-05-01T12:01:00Z"
@@ -1072,6 +1149,7 @@ def test_configured_connector_preserves_per_record_access_scope_for_search_index
                         "title": "Public momentum note",
                         "content_ref": "memory://autonomous/public-momentum-note",
                         "metadata": {
+                            "tenant_id": "tenant-a",
                             "body": "Momentum volatility evidence visible to operator research.",
                             "access_scope": ["operator", "research"],
                             "keywords": ["momentum", "volatility"],
@@ -1082,6 +1160,7 @@ def test_configured_connector_preserves_per_record_access_scope_for_search_index
                         "title": "Private momentum note",
                         "content_ref": "memory://autonomous/private-momentum-note",
                         "metadata": {
+                            "tenant_id": "tenant-a",
                             "body": "Momentum volatility evidence limited to risk committee.",
                             "access_scope": ["risk-committee"],
                             "keywords": ["momentum", "volatility"],
@@ -1105,7 +1184,7 @@ def test_configured_connector_preserves_per_record_access_scope_for_search_index
     knowledge_object_ids = response.json()["evidence_refs"]["knowledge_object_ids"]
     assert len(knowledge_object_ids) == 2
 
-    listed = test_client.get("/api/source-ingest/evidence/knowledge-objects")
+    listed = test_client.get("/api/source-ingest/evidence/knowledge-objects", headers=_read_headers())
     assert listed.status_code == 200
     by_id = {item["knowledge_object_id"]: item for item in listed.json()["knowledge_objects"]}
     assert by_id[knowledge_object_ids[0]]["access_scope"] == ["operator", "research"]
@@ -1122,11 +1201,13 @@ def test_configured_connector_preserves_per_record_access_scope_for_search_index
             "query": "momentum volatility",
             "persona_id": "operator-workbench",
             "workspace_id": "research-workbench",
+            "tenant_id": "tenant-a",
             "source_types": ["internal_note"],
             "access_context": {
                 "persona_id": "operator-workbench",
                 "workspace_id": "research-workbench",
                 "environment": "paper",
+                "tenant_id": "tenant-a",
                 "access_scopes": ["operator", "research"],
                 "license_scopes": ["internal"],
             },
@@ -1155,6 +1236,7 @@ def test_dlq_replay_retries_configured_failure_and_persists_status(client) -> No
                         "source_id": "src-replayed-note-1",
                         "title": "Replayed note",
                         "content_ref": "memory://autonomous/replayed-note-1",
+                            "metadata": {"tenant_id": "tenant-a"},
                     }
                 ],
             },
@@ -1184,7 +1266,7 @@ def test_dlq_replay_retries_configured_failure_and_persists_status(client) -> No
     watermark = test_client.get("/api/source-ingest/watermarks/conn-replay-notes")
     assert watermark.status_code == 200
     assert watermark.json()["watermark"]["value"] == "2026-04-28T21:00:00Z"
-    source = test_client.get("/api/source-ingest/source-records/src-replayed-note-1")
+    source = test_client.get("/api/source-ingest/source-records/src-replayed-note-1", headers=_read_headers())
     assert source.status_code == 200
     replayed_dlq = test_client.get("/api/source-ingest/dlq?status=replayed")
     assert replayed_dlq.status_code == 200
