@@ -1,10 +1,9 @@
 """Request-scoped owner reads; no cache or BFF copy of domain records."""
-import os
 from contextvars import ContextVar
 from typing import Optional
 
 from ..command_adapters.base import (
-    _token_tenants, capital_url, deployment_url, evolution_url, http_request_json, get_base_url,
+    capital_url, deployment_url, evolution_url, http_request_json, get_base_url,
 )
 from ..governance import approval_owner
 
@@ -33,12 +32,8 @@ def read_records(url_builder, path, key=None):
     if not auth:
         raise RuntimeError("Owner reads require the caller's authorization")
     token = auth.removeprefix("Bearer ")
+    # No implicit selection: bound_tenant uses the verified primary/sole tenant or fails closed.
     tenant = selected_tenant.get()
-    if not tenant:
-        # Configured default selects only a tenant the verified claims already authorize.
-        default = os.getenv("PANTHEON_BFF_TENANT_ID", "").strip()
-        primary, allowed = _token_tenants(token)
-        tenant = default if default and (default in allowed or "*" in allowed) else None
     body = http_request_json(url_builder(path), auth_token=token, tenant_id=tenant)
     records = body.get(key) if key and isinstance(body, dict) else body
     if not isinstance(records, list) or any(not isinstance(r, dict) for r in records):

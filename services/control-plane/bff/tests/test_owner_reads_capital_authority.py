@@ -81,11 +81,21 @@ def test_multi_tenant_caller_selects_one_tenant(owner):
     assert [p["pool_id"] for p in _read(_user_jwt("tenant-a", "tenant-b"), "tenant-b")] == ["pool-tenant-b"]
 
 
-def test_configured_default_must_be_authorized(owner, monkeypatch):
+def test_configured_default_does_not_select_tenant_for_ambiguous_caller(owner, monkeypatch):
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-a")
-    assert [p["pool_id"] for p in _read(_user_jwt("tenant-a", "tenant-b"))] == ["pool-tenant-a"]
-    with pytest.raises(Exception):
-        _read(_user_jwt("tenant-b", "tenant-c"))
+    with pytest.raises(Exception) as err:
+        _read(_user_jwt("tenant-a", "tenant-b"))
+    assert "TENANT_MISMATCH" in repr(getattr(err.value, "error_code", err.value))
+
+
+def test_configured_default_does_not_override_primary_tenant(owner, monkeypatch):
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-a")
+    token = encode_jwt_hs256(
+        {"sub": "operator_b", "roles": ROLES, "tenant_id": "tenant-b",
+         "allowed_tenants": ["tenant-a", "tenant-b"], "exp": int(time.time()) + 3600},
+        secret=JWT_SECRET,
+    )
+    assert [p["pool_id"] for p in _read(token)] == ["pool-tenant-b"]
 
 
 def test_cross_tenant_selection_is_denied(owner):
