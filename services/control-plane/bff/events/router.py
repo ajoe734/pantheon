@@ -265,7 +265,7 @@ def _resolve_caller_tenant_scope(
         )
 
         eff = target_tenant or default_tenant
-        if allowed_tenants and not is_global and eff not in allowed_tenants:
+        if not is_global and (not allowed_tenants or eff not in allowed_tenants):
             err_fn = bff_error or _default_bff_error
             raise err_fn(
                 403,

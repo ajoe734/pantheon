@@ -728,9 +728,18 @@ def _claim_value_as_strings(value: Any) -> List[str]:
     return [str(value).strip()]
 
 
-def identity_claim_strings(identity: OperatorIdentity, paths: List[str]) -> List[str]:
+TENANT_PRIMARY_CLAIM_PATHS = ["tenant_id", "tenantId", "tenant.id", "tid", "org_id", "organization.id", "organization_id"]
+TENANT_ALLOWED_CLAIM_PATHS = ["allowed_tenants", "allowedTenants", "tenant_ids", "tenantIds", "tenants", "tenant_id", "tenantId", "tenant.id", "tid", "org_id", "organization.id", "organization_id"]
+
+
+def identity_claim_strings(identity: Any, paths: List[str]) -> List[str]:
     values: List[Any] = []
-    claims = identity.claims if isinstance(identity.claims, dict) else {}
+    if isinstance(identity, dict):
+        claims = identity
+    elif hasattr(identity, "claims") and isinstance(identity.claims, dict):
+        claims = identity.claims
+    else:
+        claims = {}
     for path in paths:
         values.extend(_claim_value_as_strings(_claim_path_value(claims, path)))
     return dedupe_nonblank_strings(values)
@@ -741,64 +750,31 @@ def bff_me_tenant_payload(
     *,
     requested_tenant: Optional[str] = None,
 ) -> Dict[str, Any]:
-    claim_default = first_nonblank(
-        *identity_claim_strings(
-            identity,
-            [
-                "tenant_id",
-                "tenantId",
-                "tenant.id",
-                "tid",
-                "org_id",
-                "organization.id",
-                "tenant_ids",
-                "tenantIds",
-            ],
-        )
-    )
-    default_tenant = first_nonblank(
-        os.getenv("PANTHEON_BFF_TENANT_ID"),
-        os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
-        os.getenv("PANTHEON_TENANT_ID"),
-        claim_default,
-        "pantheon-dev",
-    )
-    claim_allowed = identity_claim_strings(
-        identity,
-        [
-            "allowed_tenants",
-            "allowedTenants",
-            "tenant_ids",
-            "tenantIds",
-            "tenants",
-            "tenant_id",
-            "tenantId",
-            "tenant.id",
-            "tid",
-            "org_id",
-        ],
-    )
-    allowed_tenants = claim_allowed or env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [default_tenant]
-    effective_tenant = first_nonblank(requested_tenant, default_tenant) or "pantheon-dev"
-    if "*" not in allowed_tenants and effective_tenant not in allowed_tenants:
-        raise bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Tenant access denied",
-            "Requested tenant is outside the caller tenant scope",
-            precondition_failed="tenant_scope",
-            suggestion="Switch to an allowed tenant or request access from an administrator",
-            details_extra={
-                "tenantId": effective_tenant,
-                "allowedTenantIds": allowed_tenants,
-            },
-        )
+    claim_default = first_nonblank(*identity_claim_strings(identity, TENANT_PRIMARY_CLAIM_PATHS))
+    claim_allowed = identity_claim_strings(identity, TENANT_ALLOWED_CLAIM_PATHS)
+    is_strict = getattr(identity, "token_kind", "") in ("jwt", "structured", "cookie") or bff_auth_mode() == "strict"
+    env_default = first_nonblank(os.getenv("PANTHEON_BFF_TENANT_ID"), os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"), os.getenv("PANTHEON_TENANT_ID"))
+    allowed_tenants = list(claim_allowed) if is_strict else (claim_allowed or env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [env_default or "pantheon-dev"])
+
+    concrete = [t for t in allowed_tenants if t != "*"]
+    single = concrete[0] if len(concrete) == 1 else ""
+    clean_req = str(requested_tenant or "").strip()
+    if clean_req:
+        if "*" not in allowed_tenants and clean_req not in allowed_tenants:
+            raise bff_error(403, ErrorCode.FORBIDDEN, "Tenant access denied", "Requested tenant is outside the caller tenant scope", precondition_failed="tenant_scope", suggestion="Switch to an allowed tenant or request access from an administrator", details_extra={"tenantId": clean_req, "allowedTenantIds": allowed_tenants})
+        effective_tenant = clean_req
+    elif env_default and (env_default in allowed_tenants or "*" in allowed_tenants):
+        effective_tenant = env_default
+    elif claim_default and (claim_default in allowed_tenants or "*" in allowed_tenants):
+        effective_tenant = claim_default
+    elif not is_strict:
+        effective_tenant = single or (env_default or "pantheon-dev")
+    else:
+        effective_tenant = single or None
+
     return {
-        "id": effective_tenant,
-        "requested_id": str(requested_tenant or "").strip() or None,
-        "default_id": default_tenant,
-        "allowed_ids": allowed_tenants,
-        "scope": "global" if "*" in allowed_tenants else "tenant",
+        "id": effective_tenant, "requested_id": clean_req or None, "default_id": effective_tenant,
+        "allowed_ids": allowed_tenants, "scope": "global" if "*" in allowed_tenants else ("tenant" if effective_tenant else "none"),
     }
 
 

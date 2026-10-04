@@ -14,8 +14,9 @@ def resolve_governed_dataset(
         for r in (input_refs if isinstance(input_refs, (list, tuple)) else [])
         if (r.get("id") or r.get("dataset_id") or r.get("ref") or r.get("uri") if isinstance(r, dict) else r)
     ]
-    refs = [r for r in refs if r]
-    tenant = str(tenant_id or stage.get("tenant_id") or (plan or {}).get("tenant_id") or "").strip()
+    tenant = str(tenant_id or "").strip()
+    if not tenant:
+        raise ValueError("governed dataset resolution requires a trusted tenant_id")
     user = str(user_id or stage.get("user_id") or (plan or {}).get("user_id") or "").strip()
 
     def _matches_and_tenant_ok(ds: Any) -> bool:

@@ -171,7 +171,9 @@ class DecisionJournalOwnerAdapter:
             or payload.get("entryId")
             or f"dje-{uuid.uuid4().hex[:10]}"
         )
-        resolved_tenant = tenant_id or payload.get("tenant_id") or payload.get("tenantId")
+        resolved_tenant = str(tenant_id or "").strip()
+        if not resolved_tenant:
+            raise ValueError("create_decision_journal_entry requires a trusted tenant_id")
         resolved_user = user_id or payload.get("user_id") or payload.get("userId") or actor_id or ""
         return create_entry(
             self._stores,
@@ -270,6 +272,8 @@ class DecisionJournalOwnerAdapter:
         req_tenant = str(tenant_id or "").strip()
         req_user = str(user_id or "").strip()
 
+        if not req_tenant:
+            return None
         if rec_tenant and p_tenant and rec_tenant != p_tenant:
             return None
         if rec_user and p_user and rec_user != p_user and rec_user != p_actor:
@@ -287,7 +291,7 @@ class DecisionJournalOwnerAdapter:
         scoped_entry = get_entry(
             self._stores,
             clean_target_id,
-            tenant_id=req_tenant or rec_tenant or p_tenant,
+            tenant_id=req_tenant,
             actor_id=req_user or rec_user or p_actor,
             user_id=req_user or rec_user or p_user,
         )

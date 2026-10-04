@@ -7,6 +7,7 @@ production deployment. No fake completion receipts are emitted.
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -129,11 +130,61 @@ def record_downstream_outcome(url: str, ok: bool, status_code: int, detail: Opti
         log.debug("failed to record downstream outcome for %s: %s", url, exc)
 
 
+def _token_tenants(token: Optional[str]) -> Tuple[Optional[str], set[str]]:
+    try:
+        from services.control_plane.bff.auth.policy import (
+            TENANT_ALLOWED_CLAIM_PATHS,
+            TENANT_PRIMARY_CLAIM_PATHS,
+            extract_identity,
+            identity_claim_strings,
+        )
+        raw = str(token or "").removeprefix("Bearer ").strip()
+        if not raw:
+            return None, set()
+        if raw.count(".") == 2:
+            raw_b64 = raw.split(".")[1]
+            c = json.loads(base64.urlsafe_b64decode(raw_b64 + "=" * (-len(raw_b64) % 4)))
+        else:
+            c = getattr(extract_identity(f"Bearer {raw}"), "claims", {}) or {}
+        primaries = identity_claim_strings(c, TENANT_PRIMARY_CLAIM_PATHS)
+        al = set(identity_claim_strings(c, TENANT_ALLOWED_CLAIM_PATHS))
+        return (primaries[0] if primaries and primaries[0] != "*" else None), al
+    except Exception:
+        return None, set()
+
+
+def _token_tenant(token: Optional[str]) -> Optional[str]:
+    primary, allowed = _token_tenants(token)
+    concrete = {t for t in allowed if t != "*"}
+    return primary or (next(iter(concrete)) if len(concrete) == 1 else None)
+
+
+def bound_tenant(payload: Any, tenant_id: Optional[str] = None, auth_token: Optional[str] = None) -> str:
+    """Return the trusted tenant; a payload tenant may only equal it, never fill it."""
+    req_tid = str(tenant_id or "").strip()
+    primary, allowed = _token_tenants(auth_token)
+    if req_tid:
+        if req_tid not in allowed and "*" not in allowed and req_tid != primary:
+            raise ActionUnavailableError("Caller tenant_id is not the verified caller tenant.", error_code="TENANT_MISMATCH", downstream_status=403)
+        trusted = req_tid
+    else:
+        concrete = {t for t in allowed if t != "*"}
+        trusted = primary or (next(iter(concrete)) if len(concrete) == 1 else "")
+    if not trusted:
+        raise ActionUnavailableError("Caller tenant_id is not the verified caller tenant.", error_code="TENANT_MISMATCH", downstream_status=403)
+    claimed = str(payload.get("tenant_id") or payload.get("tenant") or "").strip() if isinstance(payload, dict) else ""
+    if claimed and (not trusted or claimed != trusted):
+        raise ActionUnavailableError("Payload tenant_id is not the verified caller tenant.", error_code="TENANT_MISMATCH", downstream_status=403)
+    return trusted
+
+
 def _headers(payload: Any, auth_token: Optional[str], mfa_token: Optional[str], tenant_id: Optional[str]) -> Dict[str, str]:
     h = {"Accept": "application/json", "X-Pantheon-Service": "control-plane-bff"}
-    t = tenant_id or (payload.get("tenant_id") if isinstance(payload, dict) else None)
-    if t:
-        h["X-Tenant-Id"] = str(t).strip()
+    if auth_token or tenant_id or payload is not None:
+        if not (os.getenv("CAPITAL_AUTH_DISABLED", "").strip().lower() in ("true", "1") and not tenant_id and not _token_tenant(auth_token)):
+            t = bound_tenant(payload, tenant_id, auth_token)
+            if t:
+                h["X-Tenant-Id"] = t
     if payload is not None:
         h["Content-Type"] = "application/json"
     if auth_token:

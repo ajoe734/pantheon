@@ -104,6 +104,8 @@ def _capability_scoped_viewer(monkeypatch) -> dict[str, str]:
             "user_id": "authority-user",
             "roles": ["viewer"],
             "capabilities": ["agora.workshop.v1"],
+            "tenant_id": "pantheon-dev",
+            "allowed_tenants": ["pantheon-dev"],
             "iss": issuer,
             "aud": audience,
             "iat": now,

@@ -939,12 +939,17 @@ class AgoraService:
     ) -> Any:
         self.reject_body_idempotency_key(payload)
         resolved_key = self.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        if identity is None:
+            raise self.bff_error(401, ErrorCode.AUTH_REQUIRED, "Journal entry creation requires a verified identity")
+        body_tenant = str(payload.get("tenant_id") or payload.get("tenantId") or "").strip()
         resolved_tenant, resolved_user = resolve_canonical_agora_scope(
             identity,
-            tenant_id=tenant_id or payload.get("tenant_id") or payload.get("tenantId"),
+            tenant_id=tenant_id,
             user_id=user_id or payload.get("user_id") or payload.get("userId"),
             utc_now=self.utc_now,
         )
+        if body_tenant and resolved_tenant and body_tenant != resolved_tenant:
+            raise self.bff_error(403, ErrorCode.FORBIDDEN, "Tenant access denied", "Payload tenant mismatch", precondition_failed="tenant_scope")
         title = self.agora_required_text(payload, "title")
         body_text = str(payload.get("body") or payload.get("decision") or payload.get("rationale") or "").strip()
         visibility = str(payload.get("visibility") or "private").strip().lower()
