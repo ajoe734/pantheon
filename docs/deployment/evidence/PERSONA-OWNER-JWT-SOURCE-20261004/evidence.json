@@ -1,0 +1,9 @@
+{
+  "task_id": "PERSONA-OWNER-JWT-SOURCE-20261004",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "continuation_of": "PERSONA-OWNER-JWT-VERIFIER-DEV-20261004",
+  "source_patch": "scoped PR6127 implementation eaa271b564ac222bb2bbdb6592a1a40220cdf101, reapplied on current dev without historical commits",
+  "tests": "services/persona/test_lifecycle_approval_verifier.py: 16 passed; tests/persona_capital_write_owner, scripts/test_persona_provisioning_compose_contract.py, bff test_persona_owner_transport_contract.py: 44 passed",
+  "hosted_verification": "not performed; external_wait on the parent task's release coordinator"
+}

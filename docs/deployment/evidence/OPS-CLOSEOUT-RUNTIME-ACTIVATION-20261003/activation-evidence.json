@@ -1,0 +1,48 @@
+{
+  "task_id": "OPS-CLOSEOUT-RUNTIME-ACTIVATION-20261003",
+  "evidence_owner": "Human/Ops",
+  "record_type": "sanitized manual local-tooling activation evidence",
+  "scope": "Pantheon development tooling only; not product deployment, hosted product acceptance, or business readiness",
+  "source_runtime": {
+    "source_sha": "13b44eadb65e2ec7452df453050857a4baca7fc3",
+    "source_clean_at_postflight": true,
+    "required_merged_commits": [
+      "5856d270912d0477aa63724de3ed9f1d2ce3881b",
+      "9333e40933c6f9c64e9a96fdc255dd83ab8dc665"
+    ],
+    "hosted_finalization_guard_sha256": "927d46a2b2a4f9a290fc1cfa55d338a80d23949c5329ac526a544b2dd0827da6"
+  },
+  "activation": {
+    "operation": "existing authorized local sync/promoter operation; not repeated by evidence worker",
+    "terminal_exit_code": 0,
+    "ready_epoch": "6d024d0c31604c6ebda0f1221b34e45b",
+    "finished_at": "2026-10-04T00:04:29Z",
+    "drain_receipts": 2,
+    "drain_receipts_consumed": 2,
+    "recovery_continuations_materialized": 2,
+    "canonical_state_mode": "authoritative",
+    "canonical_event_journal": "runtime/task-state/task-state-events-v2.jsonl",
+    "coordination_root": "coordination-root",
+    "postflight_observed_at": "2026-10-04T00:31:36.967534+00:00",
+    "postflight_health": "healthy; authoritative projection caught up; projected and expected state digests matched; zero replayed tail events",
+    "retired_fences": "Both inspected by lstat only: restrictive 0700 directories, not symlinks or FIFOs; no fence bodies opened.",
+    "code_root_deletion": "none",
+    "worker_test_interpreter": "shared worker-test interpreter reused"
+  },
+  "independent_evidence_verification": {
+    "records_directory": "authorized coordinator records at /tmp/pantheon-authorized-closeout-20261003-2349 (not copied into Git)",
+    "sha256": {
+      "runtime-promotion.log": "2f1ce57e15f3fa0bca2308ff5414d99a1f35978704bc61149bc9c77019f6a118",
+      "runtime-promotion.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "runtime-activation-postflight.json": "2101968f4d65b194b532a12676ed23693f75729a402c7c8de7e9ff97eda2c654",
+      "runtime_postflight.py": "70d77579a21a035532b1223e0112fbaa38013657a505f219a6a15eb6334d7430",
+      "installed-hosted-guard-tests.log": "012b87276cd07f381e8567ad29468370491e42875cdbbc9d66aef5c7f1bf64cd"
+    },
+    "postflight_record_hashes": {
+      "promotion_log": "2f1ce57e15f3fa0bca2308ff5414d99a1f35978704bc61149bc9c77019f6a118",
+      "installed_test_log": "012b87276cd07f381e8567ad29468370491e42875cdbbc9d66aef5c7f1bf64cd"
+    },
+    "postflight_rerun": "Attempted read-only with python3 -B; could not produce a newer snapshot because the recorded supervisor PID no longer had /proc/<pid>/cmdline. No live-health claim is made beyond the timestamped captured postflight.",
+    "secret_handling": "No raw configuration, credentials, auth material, process arguments, or private state files included."
+  }
+}
