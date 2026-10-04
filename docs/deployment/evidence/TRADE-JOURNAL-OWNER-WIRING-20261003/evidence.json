@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "task_id": "TRADE-JOURNAL-OWNER-WIRING-20261003",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "title": "Connect retained trade journal actions to existing domain owners",
+  "timestamp": "2026-10-04T10:35:00Z",
+  "summary": "Wired retained BFF trade journal actions (reflection.retry, lesson.submit_review, lesson.decide) and readback (trade-reflections) to real domain owners (Persona for reflections, Memory for lessons, Telemetry for canonical episode facts) instead of the nonexistent generic /v1/trade-journal/commands endpoint. Added durable CAS storage and Idempotency-Key support with replay conflict protection, strict caller tenant scoping, and authorization checks. Verified with 50 passing tests covering failure modes (missing owner 503, missing auth 401, cross-tenant 403, replay conflict 409, unauthorized decide 403) and persistence across restart. Net production diff is +197 lines against dev, strictly satisfying the 220 line budget.",
+  "acceptance_criteria_verification": {
+    "ac1_reuse_existing_domain_owners": {
+      "satisfied": true,
+      "evidence": "BFF routes reflection.retry to Persona service (/api/personas/{id}/trade-journal/{episode}/reflection:retry) and lesson actions (lesson.submit_review, lesson.decide) to Memory service (/api/memory/trade-lessons/{id}/submit-review, /decide). No new command service, queue, or scheduler created."
+    },
+    "ac2_canonical_admission_and_idempotency": {
+      "satisfied": true,
+      "evidence": "Persona and Memory enforce trusted JWT authentication and exact caller tenant matching. Reflections and lessons enforce content-bound Idempotency-Key handling with replay detection (202 idempotent_replay: true) and conflict detection (409 IDEMPOTENCY_CONFLICT). Lesson decisions enforce caller roles, CAS mutation, and target_env governance."
+    },
+    "ac3_default_bff_path_tested_against_isolated_owners": {
+      "satisfied": true,
+      "evidence": "test_default_mounted_bff_path_with_real_isolated_owners_and_durable_stores in test_ptj_004_trade_journal.py exercises default mounted BFF routes against isolated Persona and Memory owners with disk persistence across process reload. Validates missing owner (503), missing auth (401), cross-tenant denial (403), replay conflict (409), unauthorized decide (403), and durable readback across restart."
+    },
+    "ac4_governance_budget_and_boundaries": {
+      "satisfied": true,
+      "evidence": "Net production line change is +197 lines (budget 220). Product ownership verified across 24 aggregates and 206 mutation routes. Retired actions like RequestApprovalRevision remain retired. Evidence file line count is well within the 400 line cap."
+    }
+  },
+  "verification": {
+    "test_suites": [
+      {
+        "suite": "services/memory/test_lesson_governance_api.py",
+        "passed": 14,
+        "failed": 0
+      },
+      {
+        "suite": "services/persona/test_trade_reflection_owner.py",
+        "passed": 6,
+        "failed": 0
+      },
+      {
+        "suite": "services/persona/test_trade_reflection_pipeline.py",
+        "passed": 7,
+        "failed": 0
+      },
+      {
+        "suite": "services/persona/test_lesson_governance.py",
+        "passed": 13,
+        "failed": 0
+      },
+      {
+        "suite": "services/control-plane/bff/test_ptj_004_trade_journal.py",
+        "passed": 10,
+        "failed": 0
+      }
+    ],
+    "diff_budget": {
+      "change_class": "corrective",
+      "net_prod_budget": 220,
+      "production": {
+        "added": 270,
+        "deleted": 73,
+        "net": 197
+      },
+      "test": {
+        "added": 432,
+        "deleted": 7,
+        "net": 425
+      },
+      "passed": true
+    },
+    "product_ownership": {
+      "command": "python3 scripts/check_product_ownership.py",
+      "aggregates": 24,
+      "mutation_routes": 206,
+      "workers": 21,
+      "symbol_dispositions": 225,
+      "passed": true
+    }
+  },
+  "review": {
+    "reviewer": "Codex2",
+    "decision": "pending independent exact-head review"
+  }
+}
