@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "task_id": "OSS-RESEARCH-RESIDUAL-002",
+  "status": "accepted",
+  "base": "0e520cb618dffb3fe5c164028b3d7ed2325359b6",
+  "official_sources": {
+    "vectorbt": "https://pypi.org/pypi/vectorbt/json",
+    "statsmodels": "https://pypi.org/pypi/statsmodels/json"
+  },
+  "verified_runtimes": {
+    "vectorbt": {
+      "version": "1.1.1",
+      "python": "3.12.3",
+      "platform": "x86_64-unknown-linux-gnu",
+      "lock": "dependencies/locks/services-research-vectorbt.txt",
+      "validation": "uv pip sync lock; uv pip check; services/research/vectorbt/test_adapter.py: 33 passed, 5 subtests; real VectorbtBackend fixed 120-day/two-instrument sinusoidal-trend holdout: 10 trades, return -0.186615, Sharpe -8.038533, drawdown -0.196002",
+      "profile": "Separate Python 3.12 image; install only this framework lock"
+    },
+    "statsmodels": {
+      "version": "0.15.0",
+      "python": "3.12.3",
+      "platform": "x86_64-unknown-linux-gnu",
+      "lock": "dependencies/locks/services-research-statsmodels.txt",
+      "validation": "uv pip sync lock; uv pip check; services/research/statsmodels/test_adapter.py and test_production_cointegration.py: 31 passed; real cointegration/VAR/Markov run completed on 100-point seeded Python random.Random(42) holdout",
+      "profile": "Separate Python 3.12 image; install only this framework lock"
+    },
+    "dspy": {
+      "version": "3.4.0",
+      "python": "3.12.3",
+      "platform": "x86_64-unknown-linux-gnu",
+      "source": "https://pypi.org/project/dspy/",
+      "lock": "dependencies/locks/services-learning-dspy.txt",
+      "validation": "uv pip sync lock; uv pip check; test_adapter.py: 6 passed; explicit optional offline disposition (StubBootstrapFewShotBackend and smoke_test.py --backend stub) verified on deterministic 8-example holdout, producing valid prompt_bundle and lineage; upstream DSPyBootstrapFewShotBackend verified denied when unconfigured (missing model) or when dependency is unavailable (DSPyWorkflowError); semantic judgments preserved under authorized structured provider",
+      "profile": "Explicit optional offline route with tested availability; unconfigured upstream provider route denied"
+    },
+    "imitation": {
+      "version": "1.0.1",
+      "python": "3.12.3",
+      "platform": "x86_64-unknown-linux-gnu",
+      "source": "https://pypi.org/project/imitation/",
+      "lock": "dependencies/locks/services-learning-imitation.txt",
+      "validation": "uv pip sync lock; uv pip check; test_adapter.py: 3 passed; real behavior-cloning adapter trained governed 4-transition sample for 2 epochs; small-dataset batch size set to available transitions",
+      "profile": "Separate Python 3.12 scientific runtime"
+    },
+    "qlib": {
+      "version": "0.9.7",
+      "python": "3.12.3",
+      "platform": "x86_64-unknown-linux-gnu",
+      "source": "https://pypi.org/project/pyqlib/",
+      "lock": "dependencies/locks/services-research-qlib.txt",
+      "validation": "uv pip sync lock; uv pip check; test_adapter.py, test_preflight.py, test_production_activation.py: 35 passed; real QlibLightGBMBackend governed sample trained 12 rows/5 estimators, draft result; worker.py initialization exp_name NameError fixed; worker executed end-to-end with QLIB_BACKEND=real, QLIB_ENFORCE_DATA_FLOORS=false, QLIB_N_ESTIMATORS=5, producing valid artifact manifest and candidate packet without creating repository-root mlruns artifacts",
+      "profile": "Separate Python 3.12 runtime; worker initializes Qlib with disposable local configuration when QLIB_BACKEND=real"
+    },
+    "finrl": {
+      "version": "finrl 0.3.7 / stable-baselines3 2.9.0 / torch 2.14.1+cpu",
+      "python": "3.12.3",
+      "platform": "x86_64-unknown-linux-gnu",
+      "source": ["https://pypi.org/project/finrl/", "https://pypi.org/project/stable-baselines3/"],
+      "lock": "dependencies/locks/services-research-finrl.txt",
+      "validation": "uv pip sync from PyPI + official PyTorch CPU index; uv pip check; 22 focused adapter and production tests passed, including gated TWSE StockTradingEnv production_drl_run with 1,000+ training steps",
+      "profile": "Separate Python 3.12 CPU image; CPU wheel index and unsafe-best-match used at lock generation to permit PyPI packages while resolving Torch from the official CPU index"
+    },
+    "trl": {
+      "version": "trl 1.14.1 / transformers 5.18.0 / accelerate 1.15.0 / peft 0.21.2 / datasets 5.0.1 / torch 2.14.1+cpu",
+      "python": "3.12.3",
+      "platform": "x86_64-unknown-linux-gnu",
+      "source": "https://pypi.org/project/trl/",
+      "lock": "dependencies/locks/services-learning-trl.txt",
+      "validation": "uv pip sync from PyPI + official PyTorch CPU index; uv pip check; 42 adapter/preflight/activation tests passed; actual DPO adapter trained one epoch/two steps on five governed pairs with public sshleifer/tiny-gpt2, explicit CPU, draft artifact",
+      "profile": "Separate Python 3.12 CPU image; official PyTorch CPU index; adapter now uses a causal-LM policy rather than invalid sequence-classification models"
+    },
+    "research_base": {
+      "version": "fastapi 0.142.2 / uvicorn 0.54.0 / pydantic 2.13.5 / psycopg[binary] 3.3.6 / jsonschema 4.26.0 / quantlib 1.43 / numpy 1.26.4",
+      "python": "3.11.16",
+      "platform": "x86_64-unknown-linux-gnu",
+      "lock": "dependencies/locks/services-research.txt",
+      "validation": "uv pip sync lock; uv pip check; 80 Research HTTP/single-owner/Postgres-event-store tests passed with test-only httpx2 installed separately; Docker image built with pip --require-hashes; isolated container GET /readyz returned ready; QuantLib present for actual Research stage owner path",
+      "profile": "Docker installs the base-service hash lock only; scientific frameworks remain separate environments"
+    },
+    "policy_learning": {
+      "version": "fastapi 0.142.2 / uvicorn 0.54.0 / pydantic 2.13.5 / psycopg[binary] 3.3.6 / jsonschema 4.26.0",
+      "python": "3.11.16",
+      "platform": "x86_64-unknown-linux-gnu",
+      "lock": "dependencies/locks/services-policy-learning.txt",
+      "validation": "uv pip sync lock; uv pip check; all 143 policy-learning tests passed with ephemeral Postgres; Docker image built with pip --require-hashes",
+      "profile": "API-only image; governed CPU BC implementation and ML frameworks remain separate from service dependency closure"
+    },
+    "training_session": {
+      "version": "fastapi 0.142.2 / vectorbt 1.1.1 / pandas 3.0.6 / numpy 2.5.3 / plotly 6.7.0",
+      "python": "3.12.3",
+      "platform": "x86_64-unknown-linux-gnu",
+      "lock": "dependencies/locks/services-training-session.txt",
+      "validation": "uv pip sync lock; uv pip check; all 144 training-session tests passed with ephemeral Postgres; Docker image built with pip --require-hashes",
+      "profile": "Separate Python 3.12 API+vectorbt image: source imports and executes the governed vectorbt adapter directly"
+    },
+    "research_worker_gateway": {
+      "version": "fastapi 0.142.2 / uvicorn 0.54.0 / pydantic 2.13.5 / psycopg[binary] 3.3.6",
+      "python": "3.11.16",
+      "platform": "x86_64-unknown-linux-gnu",
+      "lock": "dependencies/locks/services-research-worker-gateway.txt",
+      "validation": "uv pip sync lock; uv pip check; 29 gateway tests passed, including closed production gates, unavailable worker entrypoints, spawn/timeout failures, exact-key idempotency and new-key retry behavior; Docker image built with pip --require-hashes",
+      "profile": "Isolated API-only gateway environment; model runtimes remain in worker-specific environments"
+    },
+    "research_legacy_shims": {
+      "canonical_locks": ["dependencies/locks/services-learning-dspy.txt", "dependencies/locks/services-learning-imitation.txt"],
+      "validation": "Deprecated Research DSPy Docker image built with pip --require-hashes from canonical DSPy lock; Research imitation dataset-builder smoke test passed; canonical CPU locks and dual-context Dockerfiles delivered in PR 6125",
+      "profile": "Aliases only; no independent Research framework lock or worker profile"
+    }
+  },
+  "excluded": ["RLlib and Ray files/lock: independent DIRECT-RAY-BASELINE-001 writer"],
+  "not_run_or_not_accepted": [
+    "RLlib/Ray: excluded per artifact contract (owned by DIRECT-RAY-BASELINE-001)"
+  ],
+  "production_code_line_delta": -6,
+  "diff_budget_status": "passed: production code net line delta is -6 (budget <= 0); child locks delivered on dev in PR 6125; evidence line count within cap",
+  "note": "Unblocked runtime closures, gateway failure semantics, Qlib worker disposable initialization and real backend execution verified; DSPy explicit optional offline disposition and unconfigured denial verified under existing contract."
+}
