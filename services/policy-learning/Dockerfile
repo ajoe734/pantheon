@@ -6,8 +6,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/workspace:/workspace/services/policy-learning
 
-COPY services/policy-learning/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+COPY dependencies/locks/services-policy-learning.txt ./requirements.lock
+RUN pip install --no-cache-dir --require-hashes -r ./requirements.lock
 
 COPY . /workspace
 
