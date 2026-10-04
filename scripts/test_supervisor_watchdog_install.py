@@ -64,10 +64,10 @@ def test_render_cron_line_is_idempotently_tagged() -> None:
 
     line = render_cron_line(repo)
 
-    assert line.startswith("* * * * * cd /home/lupin/pantheon")
-    assert line.split("cd ", 1)[0].split() == ["*", "*", "*", "*", "*"]
+    assert line.startswith("* * * * * ")
+    assert "cd /home/lupin/pantheon &&" in line
     assert "scripts/run-supervisor-watchdog.sh --restart" in line
-    assert ".orchestrator/logs/supervisor-watchdog-cron.log" in line
+    assert "supervisor-watchdog-cron.log" in line
     assert line.endswith(CRON_TAG)
 
 
@@ -92,3 +92,51 @@ def test_render_cron_line_loads_public_verifier_environment() -> None:
         "bash scripts/run-supervisor-watchdog.sh"
         in line
     )
+
+
+def test_cron_line_runs_from_read_only_runtime(tmp_path: Path) -> None:
+    import os
+    import subprocess
+
+    repo = tmp_path / "runtime"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "scripts" / "run-supervisor-watchdog.sh").write_text("echo watchdog-reached\n")
+    repo.chmod(0o555)
+    (repo / "scripts").chmod(0o555)
+    home = tmp_path / "home"
+    home.mkdir()
+    try:
+        line = render_cron_line(repo)
+        command = line.split("* * * * * ", 1)[1].rsplit(f" {CRON_TAG}", 1)[0]
+        env = {**os.environ, "HOME": str(home)}
+        env.pop("PANTHEON_DEPLOY_LOG_DIR", None)
+        subprocess.run(["bash", "-c", command], env=env, check=True)
+        log = home / "pantheon-ci-deploy" / "logs" / "supervisor-watchdog-cron.log"
+        assert "watchdog-reached" in log.read_text()
+        assert not (repo / ".orchestrator").exists()
+    finally:
+        (repo / "scripts").chmod(0o755)
+        repo.chmod(0o755)
+
+
+def test_systemd_install_tolerates_missing_crontab(monkeypatch, tmp_path: Path) -> None:
+    import subprocess
+
+    import supervisor_watchdog_install as mod
+
+    monkeypatch.setattr(mod.Path, "home", lambda: tmp_path)
+
+    def fake_run(cmd, *args, **kwargs):
+        if cmd[0] == "crontab":
+            raise FileNotFoundError("crontab")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    mod.install_systemd(
+        tmp_path,
+        config_path=None,
+        authority_env_file=tmp_path / "env",
+        dry_run=False,
+        start_now=False,
+    )
+    assert mod.current_crontab() == []

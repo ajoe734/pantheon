@@ -1,0 +1,8 @@
+{
+  "task_id": "OPS-WATCHDOG-CRON-READONLY-RUNTIME-20261004",
+  "change": "cron watchdog line logs under ${PANTHEON_DEPLOY_LOG_DIR:-$HOME/pantheon-ci-deploy/logs}; no mkdir inside the read-only command runtime",
+  "systemd_install_removes_stale_cron": true,
+  "auto_fallback_reports_systemd_unavailable": true,
+  "auto_integrator_cron_changed": false,
+  "tests": "scripts/test_supervisor_watchdog_install.py: 8 passed (run directly; pytest unavailable on host), incl. 0555 runtime executing rendered cron command"
+}

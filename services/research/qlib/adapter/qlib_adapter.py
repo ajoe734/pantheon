@@ -17,7 +17,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
-QLIB_VERSION_PIN = "0.9.6"
+QLIB_VERSION_PIN = "0.9.7"
 PRIMARY_BACKEND = "qlib_lgbm"
 STUB_BACKEND = "stub_lgbm"
 REQUIRED_OHLCV_FIELDS = ("open", "high", "low", "close", "volume")
@@ -387,7 +387,7 @@ class _QlibDatasetView:
 class QlibLightGBMBackend:
     """Optional upstream backend using pyqlib LGBModel.
 
-    Requires: pip install pyqlib==0.9.6 lightgbm
+    Requires: pip install pyqlib==0.9.7 lightgbm
     """
 
     def train(self, dataset: PreparedQlibDataset, config: TrainingConfig) -> BackendTrainingResult:
