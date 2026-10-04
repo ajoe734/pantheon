@@ -446,8 +446,8 @@ def resolve_persona_tenant_scope(
     """Authenticate and select only a tenant admitted by verified claims."""
     authority = _authenticate_persona_mutation(authorization)
     claims = dict(authority.claims or {})
-    paths = ("tenant_id", "tenantId", "tenant.id", "tid", "org_id", "organization.id", "organization_id")
-    admitted_paths = ("allowed_tenants", "allowedTenants", "tenant_ids", "tenantIds", "tenants", *paths)
+    primary = ("tenant_id", "tenantId", "tenant.id", "tid", "org_id", "organization.id", "organization_id")
+    paths = ("allowed_tenants", "allowedTenants", "tenant_ids", "tenantIds", "tenants", *primary)
 
     def values(names: tuple[str, ...]) -> list[str]:
         found: list[str] = []
@@ -455,23 +455,15 @@ def resolve_persona_tenant_scope(
             value: Any = claims
             for part in path.split("."):
                 value = value.get(part) if isinstance(value, Mapping) else None
-            items = value if isinstance(value, (list, tuple, set)) else [value]
-            for item in items:
+            for item in value if isinstance(value, (list, tuple, set)) else (value,):
                 text = str(item or "").strip()
-                if text and text not in found:
-                    found.append(text)
+                if text and text not in found: found.append(text)
         return found
 
-    scoped = values(paths)
-    admitted = values(admitted_paths) or scoped
+    scoped, admitted = values(primary), values(paths)
     default = str(os.getenv("PERSONA_DEFAULT_TENANT_ID") or os.getenv("PANTHEON_TENANT_ID") or "").strip()
-    chosen = str(requested_tenant or "").strip()
-    if not chosen and default and default in admitted:
-        chosen = default
-    if not chosen and len(scoped) == 1:
-        chosen = scoped[0]
-    if not chosen and len(admitted) == 1:
-        chosen = admitted[0]
+    chosen = str(requested_tenant or "").strip() or (default if default in admitted else "")
+    if not chosen and len(scoped or admitted) == 1: chosen = (scoped or admitted)[0]
     if not chosen or chosen == "*" or ("*" not in admitted and chosen not in admitted):
         raise PersonaAuthorityError("TENANT_SCOPE_DENIED", "An explicitly admitted tenant is required", 403)
     return authority, chosen

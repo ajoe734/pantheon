@@ -209,6 +209,43 @@ class TestPersonaMainInvoke(unittest.TestCase):
         self.assertEqual(stored.status, "active")
 
 
+def test_mounted_session_reads_require_verified_tenant_and_existing_persona_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    monkeypatch.setenv("PERSONA_STORE_BACKEND", "json")
+    monkeypatch.setenv("PERSONA_STORE_PATH", str(tmp_path / "persona.json"))
+    monkeypatch.setenv("PERSONA_CAPABILITY_STORE_BACKEND", "json")
+    monkeypatch.setenv("PERSONA_CAPABILITY_STORE_PATH", str(tmp_path / "caps.json"))
+    monkeypatch.setenv("PERSONA_AUTH_MODE", "strict")
+    monkeypatch.setenv("PERSONA_JWT_SECRET", "session-read-secret")
+    service = _load_module("persona_main_session_read", _MODULE_DIR / "main.py")
+    now = int(__import__("time").time())
+    token = encode_jwt_hs256(
+        {"sub": "reader", "roles": ["persona.admin"], "tenant_id": "tenant-a", "exp": now + 600},
+        secret="session-read-secret",
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    from services.persona.write_owner import CreatePersonaRequest
+
+    owner = service.PERSONA_OWNER_API.state.persona_owner
+    owner.create(CreatePersonaRequest(
+        actor_id="reader", persona_id=service.DEFAULT_PERSONA_ID, name="Owned", mandate="research",
+        tenant_id="tenant-a",
+    ))
+    with patch.object(service, "_invoke_openclaw", return_value=("ok", service.RuntimeStatus(mode="openclaw", gateway_ready=True))):
+        assert TestClient(service.app).post("/invoke", json=_invoke_payload()).status_code == 200
+    client = TestClient(service.app)
+    denied = client.get("/api/sessions/sess-001")
+    assert denied.status_code == 401
+    visible = client.get("/api/sessions/sess-001", headers=headers)
+    assert visible.status_code == 200, visible.text
+    assert visible.json()["session_id"] == "sess-001"
+    assert client.get("/api/sessions", headers={**headers, "X-Tenant-Id": "tenant-b"}).status_code == 403
+    assert client.get("/api/sessions/sess-001", headers={**headers, "X-Tenant-Id": "tenant-b"}).status_code == 403
+
+
 def test_deployed_main_exposes_authenticated_owner_api_and_restart_readback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

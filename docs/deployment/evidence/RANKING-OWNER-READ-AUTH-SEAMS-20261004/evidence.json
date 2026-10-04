@@ -1,0 +1,33 @@
+{
+  "task_id": "RANKING-OWNER-READ-AUTH-SEAMS-20261004",
+  "change_class": "corrective",
+  "owner_read_boundary": {
+    "persona_sessions": "verified tenant -> existing SESSION_STORE.list/get -> retained Persona owner tenant_id",
+    "source_evidence": "verified tenant -> existing tenant-indexed EvidenceRepository reads",
+    "session_persistence": "in-memory only; no fresh-process durability claim"
+  },
+  "validation": [
+    {
+      "command": "PANTHEON_PY -m pytest -q services/control-plane/persona/test_main.py",
+      "result": "passed: 9 tests, 3 subtests"
+    },
+    {
+      "command": "PANTHEON_PY -m pytest -q services/persona/test_trade_reflection_owner.py services/persona/test_training_target_owner.py",
+      "result": "passed: 24 tests"
+    },
+    {
+      "command": "PANTHEON_PY -m pytest -q services/source_ingestion/test_service.py -k 'not registry_reads_each_persistent_store_once_at_production_scale'",
+      "result": "passed: 24; one known existing registry freshness call-count test deselected"
+    },
+    {
+      "command": "PANTHEON_PY -m pytest -q services/source_ingestion/test_service.py::test_registry_reads_each_persistent_store_once_at_production_scale",
+      "result": "failed baseline: freshness called 2 times, expected 1; not changed by owner-read implementation"
+    },
+    {
+      "command": "PANTHEON_PY -m pytest -q services/source_ingestion/test_src001_source_record_contract.py",
+      "result": "2 passed, 1 legacy unauthenticated private read failed with 401; test lives outside declared artifact scope"
+    }
+  ],
+  "production_net_lines": 157,
+  "hosted_or_deployment_proof": false
+}

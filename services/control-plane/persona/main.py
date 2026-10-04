@@ -13,7 +13,7 @@ import os
 import uuid
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from integrations.openclaw.adapter import (
@@ -423,7 +423,7 @@ def list_sessions(
     persona_id: str | None = None,
     status: str | None = None,
     session_type: str | None = None,
-    tenant_id: str | None = Query(default=None, alias="tenant_id"),
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
     authorization: str | None = Header(default=None),
 ):
     try:
@@ -447,7 +447,7 @@ def list_sessions(
 @app.get("/api/sessions/{session_id}")
 def get_session(
     session_id: str,
-    tenant_id: str | None = Query(default=None, alias="tenant_id"),
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
     authorization: str | None = Header(default=None),
 ):
     try:
