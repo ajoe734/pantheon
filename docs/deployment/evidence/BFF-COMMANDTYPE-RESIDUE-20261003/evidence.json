@@ -6,5 +6,6 @@
   "tests": "test_action_catalog.py and test_action_catalog_safety_invariants.py pass in full; test_receipt_only_retirement.py (26 passed, includes fixed mounted 410 route tests, McpServerAction 410, enum removal); test_receipt_owner_routes.py live promotion test. Tests of removed executors were deleted (all failed at base).",
   "baseline": "Full recursive BFF suite run on base and head in chunks; no new failures on head. Baseline failures (identical on both sides, e.g. test_bff_promotion_review_governance.py 13, psycopg-missing collection errors in tests/) remain; one timing flake test_mgmt_load_005 passed alone.",
   "net_production_lines": "+28 / -765",
+  "revalidation_20261004": "On head a8f160fa4: test_action_catalog, test_receipt_only_retirement, test_receipt_owner_routes pass; 15 failures in test_command_executor/test_final_command_execution_bridge are environment/baseline (PANTHEON_EVOLUTION_API_URL unset; CommandAdapterService final_contract_idempotency kwarg) in lines this task does not touch.",
   "independent_review": "pending"
 }
