@@ -750,11 +750,7 @@ def _lesson_idemp(key: Optional[str], content: dict[str, Any], save: Optional[di
 
 
 @app.post("/api/memory/trade-lessons/{candidate_id}/submit-review")
-async def submit_trade_lesson_review(
-    candidate_id: str,
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    authorization: Optional[str] = Header(None, alias="Authorization"),
-):
+async def submit_trade_lesson_review(candidate_id: str, idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"), authorization: Optional[str] = Header(None, alias="Authorization")):
     _ctx, tenant_id = _lesson_identity(authorization, write=True)
     _owned_lesson(candidate_id, tenant_id)
     content = {"candidate_id": candidate_id, "action": "submit_review"}
@@ -780,14 +776,7 @@ class DecidePayload(BaseModel):
 
 
 @app.post("/api/memory/trade-lessons/{candidate_id}/decide")
-async def decide_trade_lesson(
-    candidate_id: str,
-    payload: DecidePayload,
-    x_actor_id: Optional[str] = Header(None, alias="X-Actor-ID"),
-    x_actor_roles: Optional[str] = Header(None, alias="X-Actor-Roles"),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    authorization: Optional[str] = Header(None, alias="Authorization"),
-):
+async def decide_trade_lesson(candidate_id: str, payload: DecidePayload, x_actor_id: Optional[str] = Header(None, alias="X-Actor-ID"), x_actor_roles: Optional[str] = Header(None, alias="X-Actor-Roles"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"), authorization: Optional[str] = Header(None, alias="Authorization")):
     ctx, tenant_id = _lesson_identity(authorization, write=True)
     if payload.operator_id != ctx.actor_id or (payload.actor_roles is not None and set(payload.actor_roles) != set(ctx.roles)):
         raise HTTPException(status_code=403, detail="Decision actor does not match verified identity")

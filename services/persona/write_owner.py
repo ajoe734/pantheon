@@ -1643,12 +1643,7 @@ class OpenClawReflectionProvider:
                 "required": ["expected_vs_actual", "attribution", "counterfactuals", "lesson_candidates"],
             },
         }
-        req = UrllibRequest(
-            f"{self.adapter_url}/api/openclaw-adapter/assistant/providers/openclaw/structured",
-            data=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json", "X-Operator-Id": "persona-reflection", "X-Pantheon-Service-Token": self.token},
-            method="POST",
-        )
+        req = UrllibRequest(f"{self.adapter_url}/api/openclaw-adapter/assistant/providers/openclaw/structured", data=json.dumps(body).encode("utf-8"), headers={"Content-Type": "application/json", "X-Operator-Id": "persona-reflection", "X-Pantheon-Service-Token": self.token}, method="POST")
         try:
             with urlopen(req, timeout=10) as resp:
                 return json.loads(resp.read().decode("utf-8"))["data"]["output"]["structured_data"]
@@ -1658,16 +1653,13 @@ class OpenClawReflectionProvider:
 
 def _default_telemetry_fetcher(episode_id: str, tenant_id: str | None, authorization: str | None) -> dict[str, Any] | None:
     telemetry_url = os.getenv("PANTHEON_TELEMETRY_SERVICE_URL", "").rstrip("/")
-    if not telemetry_url:
-        return None
+    if not telemetry_url: return None
     headers = {"Content-Type": "application/json", **({"Authorization": authorization} if authorization else {}), **({"X-Tenant-Id": tenant_id} if tenant_id else {})}
-    req = UrllibRequest(f"{telemetry_url}/api/telemetry/trade-episodes/{episode_id}", headers=headers, method="GET")
     try:
-        with urlopen(req, timeout=5) as resp:
+        with urlopen(UrllibRequest(f"{telemetry_url}/api/telemetry/trade-episodes/{episode_id}", headers=headers, method="GET"), timeout=5) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except HTTPError as exc:
-        if exc.code == 404:
-            return None
+        if exc.code == 404: return None
         raise
     except Exception:
         return None
@@ -1892,21 +1884,9 @@ def create_app(
         except PersonaOwnerError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    @app.post(
-        "/api/personas/{persona_id}/trade-journal/{episode_id}/reflection:retry",
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    @app.post(
-        "/api/personas/{persona_id}/trade-reflections/{episode_id}:retry",
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    def retry_trade_reflection(
-        persona_id: str,
-        episode_id: str,
-        body: dict[str, Any],
-        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-        authorization: str | None = Header(default=None),
-    ) -> dict[str, Any]:
+    @app.post("/api/personas/{persona_id}/trade-journal/{episode_id}/reflection:retry", status_code=status.HTTP_202_ACCEPTED)
+    @app.post("/api/personas/{persona_id}/trade-reflections/{episode_id}:retry", status_code=status.HTTP_202_ACCEPTED)
+    def retry_trade_reflection(persona_id: str, episode_id: str, body: dict[str, Any], idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), authorization: str | None = Header(default=None)) -> dict[str, Any]:
         if not idempotency_key or not idempotency_key.strip():
             raise HTTPException(status_code=400, detail={"error": {"code": "VALIDATION_FAILED", "message": "Idempotency-Key is required"}})
         clean_key = idempotency_key.strip()
