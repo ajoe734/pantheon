@@ -361,7 +361,7 @@ def test_app_dependencies_concrete_types_and_no_any_ports() -> None:
     assert getattr(hints["command_store"], "__name__", "") == "CommandStore", f"Expected CommandStore, got {hints['command_store']}"
     assert getattr(hints["settings_store"], "__name__", "") == "SettingsStore", f"Expected SettingsStore, got {hints['settings_store']}"
     assert getattr(hints["persona_write_owner"], "__name__", "") == "PersonaRegistryHttpWritePort", f"Expected PersonaRegistryHttpWritePort, got {hints['persona_write_owner']}"
-    assert getattr(hints["ranking_write_owner"], "__name__", "") == "RankingSnapshotWriteOwnerPort", f"Expected RankingSnapshotWriteOwnerPort, got {hints['ranking_write_owner']}"
+    assert getattr(hints["ranking_write_owner"], "__name__", "") == "RankingSnapshotReadPort", f"Expected RankingSnapshotReadPort, got {hints['ranking_write_owner']}"
 
     sig = inspect.signature(AppDependencies.create_default)
     for param_name, param in sig.parameters.items():

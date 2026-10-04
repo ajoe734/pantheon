@@ -24,6 +24,8 @@ def _item(pid, state="paper_owner", score=20.0):
 def _fetch(items, recs, *, snapshot="snap-1", ranking_down=False, agent_down=False, status=201, log=None,
            surfaces=None, gov_down=False, conflict_detail=None, readback_404=False, readback_data=None):
     log = log if log is not None else []
+    items = [{**item, "formula_version": snapshot} for item in items]
+    snapshot = pea.snapshot_record(items, surface="quarterly", period=QUARTER).ranking_snapshot_id
 
     def fetch(url, data=None, headers=None, timeout=20):
         log.append((url, data))
@@ -70,6 +72,21 @@ def _fetch(items, recs, *, snapshot="snap-1", ranking_down=False, agent_down=Fal
     return fetch, log
 
 
+
+def _sid(label="snap-1"):
+    return pea.snapshot_record([{**_item("p1"), "formula_version": label}], surface="quarterly", period=QUARTER).ranking_snapshot_id
+
+
+@pytest.fixture(autouse=True)
+def ranking_owner(monkeypatch):
+    from services.rankings.test_store import _FakeConnection, _fake_psycopg
+    from services.rankings.store import RankingWriteStore
+    monkeypatch.setattr(_FakeConnection, "rows", {})
+    monkeypatch.setattr(_FakeConnection, "statements", [])
+    monkeypatch.setitem(sys.modules, "psycopg", _fake_psycopg())
+    monkeypatch.setattr(pea, "build_rankings_store", lambda: RankingWriteStore("postgresql://isolated/evaluator"))
+
+
 def _run(tmp_path, fetch, now=NOW):
     return pea.run_once(
         store=pea.Store(tmp_path / "state.json"), bff_url="http://bff", bff_headers={}, adapter_url="http://ad",
@@ -93,8 +110,8 @@ def test_lifecycle_recommendation_creates_one_governance_request_and_saves_resul
     body = _proposals(log)[0]
     assert body["target_type"] == "persona_lifecycle_transition"
     assert body["subject"] == {"persona_id": "p1", "from_state": "paper_owner", "to_state": "frozen"}
-    saved = pea.Store(tmp_path / "state.json").load()["results"][f"{QUARTER}|snap-1"]
-    assert saved["ranking_snapshot_id"] == "snap-1" and saved["items"][0]["rationale"] == "weak risk posture"
+    saved = pea.Store(tmp_path / "state.json").load()["results"][f"{QUARTER}|{_sid()}"]
+    assert saved["ranking_snapshot_id"] == _sid() and saved["items"][0]["rationale"] == "weak risk posture"
     assert saved["items"][0]["governance_request"]["to_state"] == "frozen"
 
 
@@ -250,7 +267,7 @@ def test_distinct_conflict_kinds_unresolved_and_preserve_pending(tmp_path, confl
     assert out["skipped"] == 1
     assert out["conflicts"] == 1
     saved = pea.Store(tmp_path / "state.json").load()
-    assert saved["results"][f"{QUARTER}|snap-1"]["items"][0]["governance_request"] is None
+    assert saved["results"][f"{QUARTER}|{_sid()}"]["items"][0]["governance_request"] is None
     entry = saved["requests"]["p1|frozen"]
     assert entry.get("pending") is not None
     assert entry.get("conflict") is not None
@@ -264,7 +281,7 @@ def test_verified_same_content_replay(tmp_path):
     assert out["created"] == 0
     assert out["deduped"] == 1
     saved = pea.Store(tmp_path / "state.json").load()
-    req = saved["results"][f"{QUARTER}|snap-1"]["items"][0]["governance_request"]
+    req = saved["results"][f"{QUARTER}|{_sid()}"]["items"][0]["governance_request"]
     assert req is not None and req["to_state"] == "frozen"
     entry = saved["requests"]["p1|frozen"]
     assert "pending" not in entry
@@ -281,7 +298,7 @@ def test_mismatched_readback_treated_as_conflict(tmp_path):
     assert out["conflicts"] == 1
     assert out["deduped"] == 0
     saved = pea.Store(tmp_path / "state.json").load()
-    assert saved["results"][f"{QUARTER}|snap-1"]["items"][0]["governance_request"] is None
+    assert saved["results"][f"{QUARTER}|{_sid()}"]["items"][0]["governance_request"] is None
     assert saved["requests"]["p1|frozen"].get("pending") is not None
 
 
@@ -339,7 +356,7 @@ def test_changed_content_after_unknown_outcome_does_not_attach_old_proposal(tmp_
     _run(tmp_path, up, now=NOW + 30)
     assert _proposals(log2)[0] == original  # unknown identity must be retried unchanged
     saved = pea.Store(tmp_path / "state.json").load()
-    rec = saved["results"][f"{QUARTER}|snap-2"]["items"][0]
+    rec = saved["results"][f"{QUARTER}|{_sid('snap-2')}"]["items"][0]
     assert pea.proposal_digest(rec) != original["proposal_content_digest"]
     assert rec["governance_request"] is None, "changed recommendation attached to old content decision"
 
@@ -384,7 +401,7 @@ def test_owner_response_must_match_target_type_and_version(tmp_path):
     assert out["deduped"] == 0
     state = pea.Store(tmp_path / "state.json").load()
     assert state["requests"]["p1|frozen"].get("pending")
-    assert state["results"][f"{QUARTER}|snap-1"]["items"][0]["governance_request"] is None
+    assert state["results"][f"{QUARTER}|{_sid()}"]["items"][0]["governance_request"] is None
 
 
 def test_readback_resolved_201_is_treated_as_created(tmp_path):
@@ -399,7 +416,7 @@ def test_readback_resolved_201_is_treated_as_created(tmp_path):
     state = pea.Store(tmp_path / "state.json").load()
     assert len(state["created"]) == 1
     assert "pending" not in state["requests"]["p1|frozen"]
-    assert state["results"][f"{QUARTER}|snap-1"]["items"][0]["governance_request"] is not None
+    assert state["results"][f"{QUARTER}|{_sid()}"]["items"][0]["governance_request"] is not None
 
 
 def test_token_files_are_read_every_run_and_env_is_only_the_fallback(tmp_path, monkeypatch):

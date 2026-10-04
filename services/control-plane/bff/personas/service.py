@@ -176,7 +176,6 @@ from services.control_plane.bff.governance.promotion_review import (
 from services.control_plane.bff.ports import (
     ReadSurfacePorts,
     create_persona_registry_write_owner,
-    create_ranking_write_owner,
     create_read_surface_ports,
 )
 from services.control_plane.bff.ports.persona_capital_runtime import (
@@ -5676,8 +5675,14 @@ def _pm12_quarterly_recommendations(
             continue  # fail closed: caller cannot see this persona
         snapshot_id = str(saved.get("ranking_snapshot_id") or "")
         if snapshot_id not in snapshots:
-            record = _get_ranking_write_owner().get_ranking_snapshot(snapshot_id)
-            snapshots[snapshot_id] = record if isinstance(record, dict) else {}
+            try:
+                record = _get_ranking_write_owner().get_ranking_snapshot(snapshot_id)
+                if not isinstance(record, dict):
+                    raise LookupError("saved evaluator snapshot is missing")
+            except Exception as exc:
+                raise _bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Saved ranking snapshot unavailable",
+                                 "The evaluator result cannot be resolved from Rankings.") from exc
+            snapshots[snapshot_id] = record
         item = next(
             (
                 i for i in snapshots[snapshot_id].get("items") or []
