@@ -128,7 +128,7 @@
       "worker_test_runner": "Python 3.12.3 (.venv-pantheon/bin/python3, pytest-9.1.1, pluggy-1.6.0)",
       "imitation_docker_image": "python:3.12-slim (3.12.15, image 0776160728e7)",
       "research_owner_docker_image": "python:3.11-slim (FastAPI 0.142.2, QuantLib 1.43, Uvicorn 0.54.0, image 4759cfb5ed1e)",
-      "finrl_docker_image": "python:3.12-slim (FinRL 0.3.7, Torch 2.14.1+cpu, SB3 2.9.0, image 834d10784058)"
+      "finrl_docker_image": "python:3.12-slim (FinRL 0.3.7, Torch 2.14.1+cpu, SB3 2.9.0, image f89a99c0d88e)"
     },
     "tested_lock_hashes": {
       "services-learning-dspy.txt": "sha256:e8a9200aed20a78aef6b79e416b2c3307afeb211c1b0b3e5359467890921745f",
@@ -263,7 +263,7 @@
       },
       "finrl_training_probe": {
         "docker_build_command": "docker build -t pantheon/research-finrl:test -f services/research/finrl/Dockerfile .",
-        "image_id": "834d10784058",
+        "image_id": "f89a99c0d88e",
         "lock": "dependencies/locks/services-research-finrl.txt",
         "install_command": "pip install --no-cache-dir --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r /tmp/requirements/services-research-finrl.txt",
         "pytest_command": "docker run --rm pantheon/research-finrl:test pytest -q test_adapter.py test_production_drl_run.py",
@@ -277,11 +277,20 @@
       "finrl_dormant_smoke_verification": {
         "build_context": "services/research/finrl",
         "docker_build_command": "docker build --network=none --build-arg PANTHEON_INSTALL_UPSTREAM_DEPS=false -t pantheon/finrl-dormant:test -f services/research/finrl/Dockerfile services/research/finrl",
+        "image_id": "7ba46a3d0dae",
         "compose_build_command": "docker compose --profile dormant-smoke build finrl-dormant-smoke",
         "smoke_command": "docker compose --profile dormant-smoke run --rm finrl-dormant-smoke",
         "exit_code": 0,
         "backend": "stub",
         "status": "Dormant smoke build and run verified for existing service-directory context and compose profile"
+      },
+      "finrl_missing_lock_rejection_verification": {
+        "build_context": "services/research/finrl",
+        "docker_build_command": "docker build -t pantheon/finrl-missing-lock:test -f services/research/finrl/Dockerfile services/research/finrl",
+        "build_arg": "PANTHEON_INSTALL_UPSTREAM_DEPS=true (default)",
+        "expected_exit_code": 1,
+        "observed_error": "Canonical lock /tmp/requirements/services-research-finrl.txt required when PANTHEON_INSTALL_UPSTREAM_DEPS=true",
+        "status": "Verified unhashed fallback removed; build fails clearly when canonical lock is absent in service directory context"
       },
       "dspy_installed_import_and_denial": {
         "install_command": "uv pip sync --require-hashes dependencies/locks/services-learning-dspy.txt",
