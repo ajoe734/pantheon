@@ -428,7 +428,8 @@ def _authenticate_persona_mutation(
             env=_persona_auth_env(),
         )
     except AuthError as exc:
-        raise PersonaAuthorityError(exc.code, exc.message, exc.status_code) from exc
+        status = 503 if exc.status_code >= 500 else exc.status_code
+        raise PersonaAuthorityError(exc.code, exc.message, status) from exc
     return PersonaInboundAuthority(
         actor_id=context.actor_id,
         roles=context.roles,

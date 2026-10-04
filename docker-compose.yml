@@ -1742,6 +1742,11 @@ services:
       PERSONA_CAPABILITY_STORE_DSN: ${PERSONA_CAPABILITY_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PERSONA_CAPABILITY_STORE_TABLE: ${PERSONA_CAPABILITY_STORE_TABLE:-persona.capability_snapshots}
       PERSONA_AUTH_MODE: ${PERSONA_AUTH_MODE:-strict}
+      # Verify the operator JWT the BFF forwards using the BFF's own signing
+      # configuration (same secret/issuer/audience the BFF verifies with).
+      PERSONA_JWT_SECRET: ${PERSONA_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-pantheon-local-bff-jwt-secret}}
+      PERSONA_JWT_ISSUER: ${PERSONA_JWT_ISSUER:-${PANTHEON_BFF_JWT_ISSUER:-}}
+      PERSONA_JWT_AUDIENCE: ${PERSONA_JWT_AUDIENCE:-${PANTHEON_BFF_JWT_AUDIENCE:-}}
       PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}
       PANTHEON_PERSONA_SERVICE_ACTOR_ID: operator-bff
       PANTHEON_REGISTRY_URL: http://registry:8087

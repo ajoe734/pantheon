@@ -153,3 +153,24 @@ def test_verifier_reads_rotating_token_file_per_call_without_env_fallback(monkey
     path.unlink()
     with pytest.raises(RuntimeError):
         provider()
+
+
+def test_unconfigured_strict_verifier_is_503_and_compose_wires_it(monkeypatch):
+    from pathlib import Path
+
+    import yaml
+
+    from services.persona.write_owner import PersonaAuthorityError, _authenticate_persona_mutation
+
+    for name in ("PERSONA_JWT_SECRET", "PANTHEON_RUNTIME_JWT_SECRET", "PANTHEON_PERSONA_SERVICE_TOKEN", "PERSONA_SERVICE_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PERSONA_AUTH_MODE", "strict")
+    with pytest.raises(PersonaAuthorityError) as err:
+        _authenticate_persona_mutation("Bearer a.b.c")
+    assert (err.value.status_code, err.value.code) == (503, "AUTH_JWT_SECRET_MISSING")
+
+    compose = Path(__file__).resolve().parents[2] / "docker-compose.yml"
+    env = yaml.safe_load(compose.read_text())["services"]["persona"]["environment"]
+    assert env["PERSONA_AUTH_MODE"].endswith(":-strict}")
+    for key in ("PERSONA_JWT_SECRET", "PERSONA_JWT_ISSUER", "PERSONA_JWT_AUDIENCE"):
+        assert "PANTHEON_BFF_JWT_" in env[key]
