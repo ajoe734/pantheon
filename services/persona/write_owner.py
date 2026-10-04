@@ -1758,30 +1758,32 @@ def create_app(
 
     @app.get("/api/personas", response_model=list[PersonaBody])
     def list_personas(
-        lifecycle_state: str | None = Query(default=None),
-        status_value: str | None = Query(default=None, alias="status"),
+        lifecycle_state: str | None = Query(default=None), status_value: str | None = Query(default=None, alias="status"),
+        authorization: str | None = Header(default=None), tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
     ) -> list[PersonaBody]:
-        return persistent_owner.list(
-            lifecycle_state=lifecycle_state,
-            status_value=status_value,
-        )
+        has_private = any(bool((r.get("metadata") or {}).get("trade_reflections")) for r in persistent_owner._records.list_all())
+        if not authorization:
+            if has_private: raise HTTPException(status_code=401, detail="UNAUTHORIZED: Missing authorization")
+            return persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value)
+        try:
+            _, admitted = resolve_persona_tenant_scope(authorization, tenant_id)
+            return [r for r in persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value) if r.tenant_id == admitted or not (r.metadata or {}).get("trade_reflections")]
+        except PersonaAuthorityError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
 
     @app.get("/api/personas/{persona_id}", response_model=PersonaBody)
     def get_persona(persona_id: str, authorization: str | None = Header(default=None)) -> PersonaBody:
         raw = persistent_owner._records.get(persona_id)
-        if raw is None:
-            raise HTTPException(status_code=404, detail=f"Persona {persona_id!r} not found")
+        if raw is None: raise HTTPException(status_code=404, detail=f"Persona {persona_id!r} not found")
         has_private = bool((raw.get("metadata") or {}).get("trade_reflections"))
         if not authorization:
-            if has_private:
-                raise HTTPException(status_code=401, detail="UNAUTHORIZED: Missing authorization")
+            if has_private: raise HTTPException(status_code=401, detail="UNAUTHORIZED: Missing authorization")
             return persistent_owner.get(persona_id)
         try:
             authority = _authenticate_persona_mutation(authorization)
             if has_private and authority.token_kind != "service":
                 tenant = raw.get("tenant_id")
-                if not tenant:
-                    raise HTTPException(status_code=403, detail="FORBIDDEN: Persona has no tenant binding")
+                if not tenant: raise HTTPException(status_code=403, detail="FORBIDDEN: Persona has no tenant binding")
                 resolve_persona_tenant_scope(authorization, tenant)
             return persistent_owner.get(persona_id)
         except PersonaAuthorityError as exc:

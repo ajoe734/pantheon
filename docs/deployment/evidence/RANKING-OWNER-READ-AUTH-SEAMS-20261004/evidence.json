@@ -9,8 +9,8 @@
   },
   "validation": [
     {
-      "command": "PYTHONPATH=/tmp/pantheon-closeout-continuation-20261004-0925:. .venv-pantheon/bin/python3 -m pytest -q /tmp/pantheon-closeout-continuation-20261004-0925/test_trade_journal_direct_owner_contract.py /tmp/pantheon-closeout-continuation-20261004-0925/test_trade_journal_private_owner_reads.py /tmp/pantheon-closeout-continuation-20261004-0925/test_trade_journal_two_owner_claim.py",
-      "result": "9 passed in 6.05s"
+      "command": "PYTHONPATH=/tmp/pantheon-closeout-continuation-20261004-0925:. .venv-pantheon/bin/python3 -m pytest -q /tmp/pantheon-closeout-continuation-20261004-0925/test_trade_journal_direct_owner_contract.py /tmp/pantheon-closeout-continuation-20261004-0925/test_trade_journal_private_owner_reads.py /tmp/pantheon-closeout-continuation-20261004-0925/test_trade_journal_two_owner_claim.py /tmp/pantheon-closeout-continuation-20261004-0925/test_trade_journal_actual_served_parent.py",
+      "result": "13 passed in 7.00s"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/persona/test_main.py services/persona/test_trade_reflection_owner.py services/persona/test_training_target_owner.py services/persona/test_lifecycle_approval_verifier.py",
@@ -30,9 +30,9 @@
     },
     {
       "command": "git diff --numstat 6037745e6 -- docker-compose.yml services/control-plane/persona/main.py services/persona/write_owner.py services/source_ingestion/routers/ingest_operations.py",
-      "result": "passed; 198 added, 42 deleted, net 156 production lines (budget 160)"
+      "result": "passed; 189 added, 48 deleted, net 141 production lines (budget 160)"
     }
   ],
-  "production_net_lines": 156,
+  "production_net_lines": 141,
   "hosted_or_deployment_proof": false
 }

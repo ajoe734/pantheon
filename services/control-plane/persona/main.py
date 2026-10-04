@@ -404,52 +404,35 @@ async def invoke(req: InvokeRequest):
 
 def _admitted_persona_tenant(authorization: str | None, tenant_id: str | None) -> str:
     try:
-        _, admitted = resolve_persona_tenant_scope(authorization, tenant_id)
-        return admitted
+        return resolve_persona_tenant_scope(authorization, tenant_id)[1]
     except PersonaAuthorityError as exc:
         raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
 
 
 def _session_for_tenant(session_id: str, tenant_id: str):
     session = SESSION_STORE.get(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="session not found")
-    owner = getattr(PERSONA_OWNER_API.state, "persona_owner", None)
-    raw = getattr(owner, "_records", None)
-    record = raw.get(session.persona_id) if raw is not None else None
-    if record is None or record.get("tenant_id") != tenant_id:
+    raw = getattr(getattr(PERSONA_OWNER_API.state, "persona_owner", None), "_records", None)
+    if not session or not raw or (raw.get(session.persona_id) or {}).get("tenant_id") != tenant_id:
         raise HTTPException(status_code=404, detail="session not found")
     return session
 
 
 @app.get("/api/sessions")
 def list_sessions(
-    persona_id: str | None = None,
-    status: str | None = None,
-    session_type: str | None = None,
-    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
-    authorization: str | None = Header(default=None),
+    persona_id: str | None = None, status: str | None = None, session_type: str | None = None,
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"), authorization: str | None = Header(default=None),
 ):
     admitted = _admitted_persona_tenant(authorization, tenant_id)
     try:
-        sessions = SESSION_STORE.list(persona_id=persona_id, status=status, session_type=session_type)
-        return [
-            s.to_dict() for s in sessions
-            if (raw := getattr(getattr(PERSONA_OWNER_API.state, "persona_owner", None), "_records", None))
-            and (rec := raw.get(s.persona_id)) and rec.get("tenant_id") == admitted
-        ]
+        raw = getattr(getattr(PERSONA_OWNER_API.state, "persona_owner", None), "_records", None) or {}
+        return [s.to_dict() for s in SESSION_STORE.list(persona_id=persona_id, status=status, session_type=session_type) if (raw.get(s.persona_id) or {}).get("tenant_id") == admitted]
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Persona session owner unavailable") from exc
 
 
 @app.get("/api/sessions/{session_id}")
-def get_session(
-    session_id: str,
-    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
-    authorization: str | None = Header(default=None),
-):
-    admitted = _admitted_persona_tenant(authorization, tenant_id)
-    return _session_for_tenant(session_id, admitted).to_dict()
+def get_session(session_id: str, tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"), authorization: str | None = Header(default=None)):
+    return _session_for_tenant(session_id, _admitted_persona_tenant(authorization, tenant_id)).to_dict()
 
 
 # The deployed control-plane Persona process owns the durable Registry and
