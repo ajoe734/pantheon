@@ -1,0 +1,11 @@
+{
+  "task_id": "PERSONA-OWNER-JWT-VERIFIER-DEV-20261004",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "changes": [
+    "docker-compose.yml persona: PERSONA_JWT_SECRET/ISSUER/AUDIENCE chained from PANTHEON_BFF_JWT_* (strict mode unchanged)",
+    "services/persona/write_owner.py: auth 5xx (misconfigured verifier) surfaces as 503 with stable code AUTH_JWT_SECRET_MISSING"
+  ],
+  "tests": "services/persona/test_lifecycle_approval_verifier.py (503 + rendered compose), tests/persona_capital_write_owner: 42 passed",
+  "hosted_verification": "pending coordinator after next root deploy"
+}
