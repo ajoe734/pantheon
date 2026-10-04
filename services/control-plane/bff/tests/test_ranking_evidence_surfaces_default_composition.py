@@ -64,8 +64,10 @@ class MockOwnerServer:
         self.capital_pools: List[Dict[str, Any]] = []
         self.bindings: List[Dict[str, Any]] = []
         self.runtime_bindings: List[Dict[str, Any]] = []
+        self.evidence_items: List[Dict[str, Any]] = []
         self.should_fail_personas: bool = False
         self.should_fail_capital: bool = False
+        self.should_fail_source: bool = False
         self._server: Optional[HTTPServer] = None
         self._thread: Optional[threading.Thread] = None
         self.port: int = 0
@@ -85,21 +87,27 @@ class MockOwnerServer:
                 if outer.should_fail_capital and (self.path.startswith("/api/capital-pools") or self.path.startswith("/api/bindings")):
                     self.send_json(500, {"error": "Capital service internal error"})
                     return
+                if outer.should_fail_source and self.path.startswith("/api/source-ingest"):
+                    self.send_json(500, {"error": "Source ingest service internal error"})
+                    return
 
-                if self.path == "/api/personas":
+                if self.path.startswith("/api/personas"):
                     res = [p for p in outer.personas if tenant is None or p.get("tenant_id") == tenant]
                     self.send_json(200, res)
-                elif self.path == "/api/capital-pools":
+                elif self.path.startswith("/api/capital-pools"):
                     res = [p for p in outer.capital_pools if tenant is None or p.get("tenant_id") == tenant]
                     self.send_json(200, res)
-                elif self.path == "/api/bindings":
+                elif self.path.startswith("/api/bindings"):
                     res = [b for b in outer.bindings if tenant is None or b.get("tenant_id") == tenant]
                     self.send_json(200, res)
-                elif self.path == "/api/runtime-bindings":
+                elif self.path.startswith("/api/runtime-bindings"):
                     res = [r for r in outer.runtime_bindings if tenant is None or r.get("tenant_id") == tenant]
                     self.send_json(200, {"bindings": res})
+                elif self.path.startswith("/api/source-ingest/evidence/items"):
+                    res = [e for e in outer.evidence_items if tenant is None or e.get("tenant_id") == tenant]
+                    self.send_json(200, {"items": res})
                 else:
-                    self.send_json(200, [])
+                    self.send_json(404, {"error": "not found"})
 
             def send_json(self, status: int, body: Any) -> None:
                 raw = json.dumps(body).encode("utf-8")
@@ -150,6 +158,7 @@ def test_ranking_evidence_surfaces_ok_empty_default_composition(mock_owner: Mock
     monkeypatch.setenv("PANTHEON_PERSONA_URL", owner_url)
     monkeypatch.setenv("PANTHEON_CAPITAL_API_URL", owner_url)
     monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", owner_url)
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_URL", owner_url)
 
     app = compose_bff_app()
     client = TestClient(app)
@@ -191,6 +200,7 @@ def test_ranking_evidence_surfaces_ok_populated_default_composition(mock_owner: 
     monkeypatch.setenv("PANTHEON_PERSONA_URL", owner_url)
     monkeypatch.setenv("PANTHEON_CAPITAL_API_URL", owner_url)
     monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", owner_url)
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_URL", owner_url)
 
     mock_owner.personas = [
         {"persona_id": "persona-1", "name": "Alpha One", "tenant_id": "tenant-test", "status": "active", "lifecycle_state": "paper_owner"},
@@ -204,6 +214,9 @@ def test_ranking_evidence_surfaces_ok_populated_default_composition(mock_owner: 
     ]
     mock_owner.runtime_bindings = [
         {"runtime_id": "rt-test-1", "tenant_id": "tenant-test", "persona_id": "persona-1"},
+    ]
+    mock_owner.evidence_items = [
+        {"evidence_item_id": "ev-test-1", "tenant_id": "tenant-test", "title": "Evidence One", "created_at": "2026-01-15T00:00:00Z"},
     ]
 
     app = compose_bff_app()
@@ -229,6 +242,7 @@ def test_ranking_evidence_surfaces_owner_down_degrades_ranking_and_evaluator(moc
     monkeypatch.setenv("PANTHEON_PERSONA_URL", owner_url)
     monkeypatch.setenv("PANTHEON_CAPITAL_API_URL", owner_url)
     monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", owner_url)
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_URL", owner_url)
 
     mock_owner.should_fail_personas = True
 
@@ -264,16 +278,49 @@ def test_ranking_evidence_surfaces_owner_down_degrades_ranking_and_evaluator(moc
         pea.collect_evidence("http://bff", "2026-Q1", {"Authorization": auth}, fetch=lambda *a, **k: payload)
 
 
+def test_ranking_evidence_surfaces_source_owner_down_reports_unavailable(mock_owner: MockOwnerServer, monkeypatch: pytest.MonkeyPatch):
+    """When Source owner fails, evidence surfaces report status='unavailable', source='unavailable'."""
+    owner_url = f"http://127.0.0.1:{mock_owner.port}"
+    monkeypatch.setenv("PANTHEON_PERSONA_URL", owner_url)
+    monkeypatch.setenv("PANTHEON_CAPITAL_API_URL", owner_url)
+    monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", owner_url)
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_URL", owner_url)
+
+    mock_owner.should_fail_source = True
+
+    app = compose_bff_app()
+    client = TestClient(app)
+
+    auth = _make_auth_header("tenant-test")
+    resp = client.get("/bff/management/quarterly-ranking", headers={"Authorization": auth})
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    surfaces = payload.get("meta", {}).get("surfaces", {})
+
+    for failing_surface in ["evidence_refs", "knowledge_evidence"]:
+        s = surfaces.get(failing_surface)
+        assert s is not None, f"{failing_surface} missing from surfaces"
+        assert s.get("status") == "unavailable", f"{failing_surface} expected unavailable, got {s}"
+        assert s.get("source") == "unavailable", f"{failing_surface} source expected 'unavailable' (not 'missing'), got {s.get('source')}"
+
+    assert surfaces.get("quarterly_ranking", {}).get("status") == "degraded"
+
+
 def test_ranking_evidence_surfaces_cross_tenant_isolation_and_redaction(mock_owner: MockOwnerServer, monkeypatch: pytest.MonkeyPatch):
     """Tenant scoping and evidence redaction remain strictly isolated across tenants."""
     owner_url = f"http://127.0.0.1:{mock_owner.port}"
     monkeypatch.setenv("PANTHEON_PERSONA_URL", owner_url)
     monkeypatch.setenv("PANTHEON_CAPITAL_API_URL", owner_url)
     monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", owner_url)
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_URL", owner_url)
 
     mock_owner.personas = [
         {"persona_id": "persona-a", "name": "Persona A", "tenant_id": "tenant-a", "status": "active"},
         {"persona_id": "persona-b", "name": "Persona B", "tenant_id": "tenant-b", "status": "active"},
+    ]
+    mock_owner.evidence_items = [
+        {"evidence_item_id": "ev-a", "tenant_id": "tenant-a", "title": "Evidence A", "created_at": "2026-01-15T00:00:00Z"},
+        {"evidence_item_id": "ev-b", "tenant_id": "tenant-b", "title": "Evidence B", "created_at": "2026-01-15T00:00:00Z"},
     ]
 
     app = compose_bff_app()
