@@ -139,7 +139,7 @@ except ImportError:
     foundation_id = lambda: str(uuid.uuid4())
     sha256_checksum = lambda data: hashlib.sha256(data.encode() if isinstance(data, str) else data).hexdigest()
 
-from ..auth.policy import bool_from_env
+from ..auth.policy import bff_me_tenant_payload, bool_from_env
 from ..shared.cross_domain_utils import (
     _management_as_float,
     _management_first_float,
@@ -9887,65 +9887,17 @@ def _bff_me_tenant_payload(
     *,
     requested_tenant: Optional[str],
 ) -> Dict[str, Any]:
-    claim_default = _first_nonblank(
-        *_identity_claim_strings(
-            identity,
-            [
-                "tenant_id",
-                "tenantId",
-                "tenant.id",
-                "tid",
-                "org_id",
-                "organization.id",
-                "tenant_ids",
-                "tenantIds",
-            ],
-        )
-    )
-    default_tenant = _first_nonblank(
-        os.getenv("PANTHEON_BFF_TENANT_ID"),
-        os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
-        os.getenv("PANTHEON_TENANT_ID"),
-        claim_default,
-        "pantheon-dev",
-    )
-    claim_allowed = _identity_claim_strings(
-        identity,
-        [
-            "allowed_tenants",
-            "allowedTenants",
-            "tenant_ids",
-            "tenantIds",
-            "tenants",
-            "tenant_id",
-            "tenantId",
-            "tenant.id",
-            "tid",
-            "org_id",
-        ],
-    )
-    allowed_tenants = claim_allowed or _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [default_tenant]
-    effective_tenant = _first_nonblank(requested_tenant, default_tenant) or "pantheon-dev"
-    if "*" not in allowed_tenants and effective_tenant not in allowed_tenants:
+    payload = bff_me_tenant_payload(identity, requested_tenant=requested_tenant)
+    if not payload["id"]:
         raise _bff_error(
             403,
             ErrorCode.FORBIDDEN,
             "Tenant access denied",
-            "Requested tenant is outside the caller tenant scope",
+            "Caller has no tenant scope for this private read",
             precondition_failed="tenant_scope",
-            suggestion="Switch to an allowed tenant or request access from an administrator",
-            details_extra={
-                "tenantId": effective_tenant,
-                "allowedTenantIds": allowed_tenants,
-            },
+            suggestion="Re-authenticate with a tenant-scoped token",
         )
-    return {
-        "id": effective_tenant,
-        "requested_id": str(requested_tenant or "").strip() or None,
-        "default_id": default_tenant,
-        "allowed_ids": allowed_tenants,
-        "scope": "global" if "*" in allowed_tenants else "tenant",
-    }
+    return payload
 
 
 # --- _read_surface_and_page_helpers ---
