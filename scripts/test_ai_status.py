@@ -9044,8 +9044,12 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             "docs/evidence/MANIFEST-SCOPE/evidence.json",
         )
         mock_bridge.validate_review_admission.return_value = admitted
-        with mock.patch.object(
-            ai_status, "_github_review_bridge_module", return_value=mock_bridge
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "git"))
+        import check_commit_trailers
+        with (
+            mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge),
+            mock.patch.object(check_commit_trailers, "check_range", return_value=[]),
         ):
             accepted = ai_status.validate_handoff_pr_delivery_binding(
                 task,
@@ -9172,7 +9176,11 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 "status": "renamed",
             },
         ]
-        with mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge):
+        import check_commit_trailers
+        with (
+            mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge),
+            mock.patch.object(check_commit_trailers, "check_range", return_value=[]),
+        ):
             with self.assertRaisesRegex(SystemExit, "renamed file source 'secret/unauthorized_old.py' is outside"):
                 ai_status.validate_handoff_pr_delivery_binding(
                     task,
@@ -9221,7 +9229,11 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             {"filename": "services/telemetry/events.py", "sha": "c" * 40, "status": "modified"},
             {"filename": "scripts/ci/run_check.sh", "sha": "d" * 40, "status": "modified"},
         ]
-        with mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge):
+        import check_commit_trailers
+        with (
+            mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge),
+            mock.patch.object(check_commit_trailers, "check_range", return_value=[]),
+        ):
             accepted = ai_status.validate_handoff_pr_delivery_binding(
                 task,
                 {},
@@ -9307,7 +9319,11 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             {"filename": "docs/evidence/evidence.json", "sha": "a" * 40, "status": "added"}
         ]
         mock_bridge.revalidate_pull_request_snapshot.side_effect = github_review_bridge.ReviewBindingMismatch("head drifted concurrently")
-        with mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge):
+        import check_commit_trailers
+        with (
+            mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge),
+            mock.patch.object(check_commit_trailers, "check_range", return_value=[]),
+        ):
             with self.assertRaisesRegex(SystemExit, "GitHub rejected the proposed delivery binding"):
                 ai_status.validate_handoff_pr_delivery_binding(
                     task,
