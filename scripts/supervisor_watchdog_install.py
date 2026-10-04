@@ -121,10 +121,12 @@ def render_cron_line(
             "PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE="
             f"{shlex.quote(str(authority_env_file))} "
         )
+    # Command runtimes are read-only: log under the writable deploy area.
     return (
-        f"* * * * * cd {repo} && mkdir -p .orchestrator/logs && "
+        f"* * * * * L=\"${{PANTHEON_DEPLOY_LOG_DIR:-$HOME/pantheon-ci-deploy/logs}}\"; "
+        f"mkdir -p \"$L\"; cd {repo} && "
         f"{authority_prefix}bash scripts/run-supervisor-watchdog.sh --restart{config_argument} "
-        f">> .orchestrator/logs/supervisor-watchdog-cron.log 2>&1 {CRON_TAG}"
+        f">> \"$L/supervisor-watchdog-cron.log\" 2>&1 {CRON_TAG}"
     )
 
 
@@ -179,6 +181,8 @@ def install_systemd(
     if start_now:
         run_command(["systemctl", "--user", "start", SERVICE_NAME], dry_run=dry_run)
     print(f"installed systemd user timer: {TIMER_NAME}")
+    if any(CRON_TAG in raw for raw in current_crontab()):
+        uninstall_cron(dry_run=dry_run)
 
 
 def uninstall_systemd(*, dry_run: bool) -> None:
@@ -194,7 +198,10 @@ def uninstall_systemd(*, dry_run: bool) -> None:
 
 
 def current_crontab() -> list[str]:
-    result = subprocess.run(["crontab", "-l"], capture_output=True, text=True, check=False)
+    try:
+        result = subprocess.run(["crontab", "-l"], capture_output=True, text=True, check=False)
+    except FileNotFoundError:
+        return []
     if result.returncode != 0:
         return []
     return result.stdout.splitlines()
@@ -320,6 +327,8 @@ def main() -> int:
     method = args.method
     if method == "auto":
         method = "systemd" if user_systemd_available() else "cron"
+        if method == "cron":
+            print("systemd user bus unavailable; falling back to cron watchdog")
 
     try:
         if args.uninstall:
