@@ -378,7 +378,9 @@ def check_targets(
             capture_output=True, text=True, cwd=cwd,
         ).stdout.split()) > 2:
             continue
-        kind = commit_delivery_class(sha, manifest, repository_root=cwd) if manifest else delivery_class
+        kind = commit_delivery_class(sha, manifest, repository_root=cwd) if manifest is not None else delivery_class
+        if manifest is not None:
+            print(f"[trailers] {sha}: delivery_class={kind}")
         problems = check_message(message, required, prefix_required,
                                  expected_task_id=expected_task_id, delivery_class=kind)
         if problems:

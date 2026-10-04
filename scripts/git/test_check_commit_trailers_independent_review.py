@@ -96,7 +96,19 @@ def test_auto_cli_imports_component_boundary_from_repository_root() -> None:
         cwd=CHECKER.parents[2], capture_output=True, text=True, check=False,
     )
     assert "ModuleNotFoundError: No module named 'scripts'" not in result.stderr
-    assert "delivery_class=" in result.stdout or result.returncode in (0, 1)
+    assert "delivery_class=" in result.stdout
+
+
+@pytest.mark.parametrize("classified", ["tooling", "product", "product"])
+def test_auto_delivery_class_diagnostics_are_emitted(monkeypatch, capsys, classified: str) -> None:
+    from unittest import mock
+
+    from scripts import component_boundary
+    monkeypatch.setattr(CHECK, "load_settings", lambda: (REQUIRED, True))
+    monkeypatch.setattr(CHECK, "commit_delivery_class", lambda *args, **kwargs: classified)
+    with mock.patch.object(component_boundary, "load_manifest", return_value={}):
+        assert CHECK.check_targets([("commit", _message("Claude", "Codex2"))], delivery_class="auto") == []
+    assert f"delivery_class={classified}" in capsys.readouterr().out
 
 
 def test_check_targets_honors_expected_task_id_and_skips_merge_commits(monkeypatch) -> None:
