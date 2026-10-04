@@ -26,7 +26,7 @@ from .connectors.dev_paper_simulation import (
     _most_recent_completed_daily_close,
     is_dev_environment,
 )
-from .connectors.finmind_taiwan import FINMIND_TAIWAN_DATASETS, FinMindTaiwanDatasetAdapter
+from .connectors.finmind_taiwan import FINMIND_TAIWAN_DATASETS, FinMindLiveFetcher, FinMindTaiwanDatasetAdapter
 from .connectors.taiwan_official import (
     TAIWAN_OFFICIAL_ENDPOINTS,
     TW_OFFICIAL_CONNECTOR_ID,
@@ -463,10 +463,24 @@ class SourceProvisioningReconciler:
     def _select_connector_id(self, requirement: PersonaDataSourceRequirement) -> str | None:
         candidates = list(requirement.connector_candidates) or self._default_candidates(requirement)
         for candidate in candidates:
-            if self.connector_store.get_config(candidate) is not None:
-                return candidate
-            if candidate in self.provider_factories and self._provider_supports(candidate, requirement):
-                return candidate
+            if not self._provider_supports(candidate, requirement):
+                continue
+            existing = self.connector_store.get_config(candidate)
+            factory = self.provider_factories.get(candidate)
+            connector = existing.connector if existing else factory(candidate).connector() if factory else None
+            if connector is None:
+                continue
+            # Configuration availability is not proof of live provider health.
+            if candidate == "tw-finmind-datasets" and not (
+                FinMindLiveFetcher(secret_ref_id=connector.secret_ref_id or "").resolve_token() or ""
+            ).strip():
+                continue
+            # A sole explicit choice still reports its policy conflict below.
+            if len(candidates) > 1 and any(
+                not result["passed"] for result in self._policy_gate_results(connector, requirement).values()
+            ):
+                continue
+            return candidate
         return None
 
     def _default_candidates(self, requirement: PersonaDataSourceRequirement) -> list[str]:

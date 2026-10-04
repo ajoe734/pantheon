@@ -16,6 +16,11 @@ from services.source_ingestion.ingest_manager import IngestManager
 from services.source_ingestion.persona_source_reconciler import SourceProvisioningReconciler
 
 
+@pytest.fixture(autouse=True)
+def isolated_finmind_configuration(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("FINMIND_API_TOKEN", "local-test-token")
+
+
 def _persona(*, connector_candidates: list[str] | None = None, source_class: str = "live_pull") -> dict:
     return {
         "persona_id": "persona-alpha",
@@ -156,6 +161,96 @@ def test_default_tw_price_daily_candidate_uses_official_connector(tmp_path: Path
     assert result.actions[0].connector_id == "tw-twse-tpex-official-market"
     assert connector_store.get_config("tw-twse-tpex-official-market") is not None
     assert schedule_store.get_schedule("tw-twse-tpex-official-market").interval_seconds == 86400
+
+
+@pytest.mark.parametrize("registered", [False, True])
+@pytest.mark.parametrize("token", [None, "", "   ", "local-test-token", "expired-test-token"])
+def test_actual_persona_daily_requirement_prefers_public_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, registered: bool, token: str | None,
+) -> None:
+    from services.control_plane.bff.personas.service import _persona_create_required_data_sources
+    from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanDatasetAdapter
+
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.delenv("FINMIND_API_TOKEN", raising=False)
+    if token is not None:
+        monkeypatch.setenv("FINMIND_API_TOKEN", token)
+    reconciler, connector_store, schedule_store = _reconciler(tmp_path)
+    persona = _persona()
+    # Broker live_push provisioning is a separate requirement/owner.
+    persona["required_data_sources"] = _persona_create_required_data_sources({"market": "TW"})[:1]
+    if registered:
+        provider = FinMindTaiwanDatasetAdapter()
+        connector_store.upsert_config(provider.connector(), provider.fetch_config())
+        reconciler.reconcile_persona(persona)
+
+    first = reconciler.reconcile_persona(persona)
+    second = reconciler.reconcile_persona(persona)
+
+    assert first.actions[0].connector_id == "tw-twse-tpex-official-market"
+    assert second.summary["satisfied"] == 1
+    config = connector_store.get_config(first.actions[0].connector_id)
+    assert config.connector.auth_type.value == "none"
+    assert config.fetch["request"]["dataset"] == "tw_price_daily"
+    assert schedule_store.get_schedule(first.actions[0].connector_id).enabled
+    assert schedule_store.get_schedule("tw-finmind-datasets") is None
+    assert reconciler.snapshot_store.reload() == {}
+    gates = first.actions[0].details["policy_gate_results"]
+    assert gates["require_source_health_ok"]["authority"] == "terminal_actual_readback"
+
+
+@pytest.mark.parametrize("registered", [False, True])
+@pytest.mark.parametrize("fallback", [False, True])
+def test_missing_finmind_credential_respects_explicit_candidate_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, registered: bool, fallback: bool,
+) -> None:
+    from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanDatasetAdapter
+
+    monkeypatch.delenv("FINMIND_API_TOKEN", raising=False)
+    reconciler, connector_store, schedule_store = _reconciler(tmp_path)
+    if registered:
+        provider = FinMindTaiwanDatasetAdapter()
+        connector_store.upsert_config(provider.connector(), provider.fetch_config())
+    candidates = ["tw-finmind-datasets"]
+    if fallback:
+        candidates.append("tw-twse-tpex-official-market")
+    result = reconciler.reconcile_persona(_persona(connector_candidates=candidates))
+    action = result.actions[0]
+    assert action.connector_id == ("tw-twse-tpex-official-market" if fallback else None)
+    assert action.status == ("mutated" if fallback else "unsupported")
+    assert schedule_store.get_schedule("tw-finmind-datasets") is None
+
+
+@pytest.mark.parametrize("candidate", ["tw-finmind-datasets", "tw-twse-tpex-official-market"])
+@pytest.mark.parametrize("market,dataset", [("TW", "unavailable_dataset"), ("US", "tw_price_daily")])
+def test_registered_provider_cannot_bypass_dataset_or_market_support(
+    tmp_path: Path, candidate: str, market: str, dataset: str,
+) -> None:
+    reconciler, connector_store, schedule_store = _reconciler(tmp_path)
+    provider = reconciler.provider_factories[candidate](candidate)
+    connector_store.upsert_config(provider.connector(), provider.fetch_config())
+    persona = _persona(connector_candidates=[candidate])
+    persona["required_data_sources"][0].update(market=market, dataset=dataset)
+
+    assert reconciler.reconcile_persona(persona).summary["unsupported"] == 1
+    assert schedule_store.list_schedules() == []
+
+
+@pytest.mark.parametrize("public_only", [False, True])
+def test_explicit_finmind_preference_with_configured_key_obeys_policy(
+    tmp_path: Path, public_only: bool,
+) -> None:
+    reconciler, connector_store, _ = _reconciler(tmp_path)
+    persona = _persona(connector_candidates=["tw-finmind-datasets", "tw-twse-tpex-official-market"])
+    if public_only:
+        persona["required_data_sources"][0]["policy_gates"].append("public-source-only")
+    result = reconciler.reconcile_persona(persona)
+    expected = "tw-twse-tpex-official-market" if public_only else "tw-finmind-datasets"
+    assert result.actions[0].connector_id == expected
+    assert result.summary["mutated"] == 1
+    assert connector_store.get_config(expected).fetch["request"]["dataset"] == (
+        "tw_price_daily" if public_only else "TaiwanStockPrice"
+    )
 
 
 def test_controller_owned_connector_drift_is_repaired(tmp_path: Path) -> None:
