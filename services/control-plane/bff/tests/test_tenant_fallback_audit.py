@@ -517,7 +517,9 @@ def test_mounted_research_run_dispatch_scopes_to_the_jwt_tenant(monkeypatch):
     client = TestClient(app, raise_server_exceptions=False)
     monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://test-research-orchestrator")
     from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
+    owner_requests = []
     def _mock_req(self, authority, method, base_url, path, payload=None):
+        owner_requests.append((method, path, payload))
         if "tasks" in path:
             return {"task_id": "rtask-1", "id": "rtask-1", "status": "queued"}
         if "runs" in path:
@@ -534,30 +536,31 @@ def test_mounted_research_run_dispatch_scopes_to_the_jwt_tenant(monkeypatch):
     # 1. Built-in default active ("pantheon-dev"): absent tenant claim fails closed with 403, 0 runs
     res_absent = client.post(url, headers={**no_tenant, "Idempotency-Key": "k-abs", "If-Match": etag})
     assert res_absent.status_code == 403
-    assert len(store._runs) == 0
+    assert owner_requests == []
 
     res_absent_hdr = client.post(url, headers={**no_tenant, "X-Tenant-Id": "tenant-a", "Idempotency-Key": "k-abs-hdr", "If-Match": etag})
     assert res_absent_hdr.status_code == 403
-    assert len(store._runs) == 0
+    assert owner_requests == []
 
     # 2. Active matching environment default ("tenant-a"): tenantless JWT fails closed with 403, 0 runs
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-a")
     res_env = client.post(url, headers={**no_tenant, "Idempotency-Key": "k-env", "If-Match": etag})
     assert res_env.status_code == 403
-    assert len(store._runs) == 0
+    assert owner_requests == []
 
     # 3. Foreign tenant (tenant-b): plan-a not found in scope -> 404, 0 runs
     tok_b = _jwt_headers(monkeypatch, "tenant-b")
     res_foreign = client.post(url, headers={**tok_b, "Idempotency-Key": "k-foreign", "If-Match": etag})
     assert res_foreign.status_code == 404
-    assert len(store._runs) == 0
+    assert owner_requests == []
 
     # 4. Same tenant positive control (tenant-a): 202 queued, 1 run created
     tok_a = _jwt_headers(monkeypatch, "tenant-a")
     res_same = client.post(url, headers={**tok_a, "Idempotency-Key": "k-same", "If-Match": etag})
     assert res_same.status_code == 202, res_same.text
-    assert len(store._runs) == 1
-    assert list(store._runs.values())[0]["tenant_id"] == "tenant-a"
+    owner_writes = [request for request in owner_requests if request[0] == "POST"]
+    assert [request[1].rsplit("/", 1)[-1] for request in owner_writes] == ["tasks", "runs"]
+    assert all(request[2]["tenant_id"] == "tenant-a" for request in owner_writes)
 
 
 def test_journal_create_denies_jwt_without_tenant_authority_under_all_defaults(monkeypatch, tmp_path):
