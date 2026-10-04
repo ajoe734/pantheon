@@ -39,11 +39,7 @@ import os
 # ``command_adapters/contracts.py`` so real callers and tests share one
 # definition.
 _HUMAN_GATE_DECISIONS_BY_COMMAND = {
-    CommandType.HUMAN_GATE_APPROVE: "approve",
-    CommandType.HUMAN_GATE_REJECT: "reject",
-    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: "request_more_evidence",
     CommandType.HUMAN_GATE_REVOKE: "revoke",
-    CommandType.HUMAN_GATE_EXTEND_TTL: "extend_ttl",
 }
 _HUMAN_GATE_REQUIRED = {"human_gate_item_id", "decision"}
 _VALID_HUMAN_GATE_DECISIONS = set(_HUMAN_GATE_DECISIONS_BY_COMMAND.values())
@@ -139,11 +135,7 @@ def _validate_human_gate_decision(params: dict, identity: OperatorIdentity) -> N
 
 
 _B5_COMMAND_VALIDATORS = {
-    CommandType.HUMAN_GATE_APPROVE: _validate_human_gate_decision,
-    CommandType.HUMAN_GATE_REJECT: _validate_human_gate_decision,
-    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: _validate_human_gate_decision,
     CommandType.HUMAN_GATE_REVOKE: _validate_human_gate_decision,
-    CommandType.HUMAN_GATE_EXTEND_TTL: _validate_human_gate_decision,
     "HumanGateApprove": _validate_human_gate_decision,
     "HumanGateReject": _validate_human_gate_decision,
     "HumanGateRequestMoreEvidence": _validate_human_gate_decision,

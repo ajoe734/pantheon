@@ -152,6 +152,7 @@ from ..shared.cross_domain_utils import (
     _surface_degradation_reason,
 )
 from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.command_adapters.retired import reject_retired_command
 from services.control_plane.bff.command_adapters.service import (
     CommandAdapterService,
     _stable_json_hash,
@@ -4838,7 +4839,7 @@ def _pm12_quarterly_ranking_governance_state(persona_id: str, quarter: str) -> s
         cmd_type = record.get("type")
         cmd_status = record.get("status")
 
-        if cmd_type == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+        if cmd_type == "QuarterlyRankingRecommendationSubmit":
             rec_id = str(params.get("recommendation_id") or params.get("recommendationId") or "").strip().lower()
             if rec_id.startswith(f"pm12-{clean_quarter}-{clean_persona}-"):
                 has_submission = True
@@ -5714,22 +5715,6 @@ def _pm12_quarterly_recommendations(
     return recommendations
 
 
-# --- _promotion_review_scoped_idempotency_key ---
-def _promotion_review_scoped_idempotency_key(
-    idempotency_key: Optional[str],
-    x_idempotency_key: Optional[str],
-    review_revision_id: str,
-) -> str:
-    client_key = _resolve_final_idempotency_key(
-        idempotency_key,
-        x_idempotency_key,
-    )
-    revision_digest = hashlib.sha256(
-        _promotion_review_clean_id(review_revision_id).encode("utf-8")
-    ).hexdigest()[:32]
-    return f"{client_key}:promotion-review:{revision_digest}"
-
-
 # --- _promotion_review_item_from_recommendation ---
 def _promotion_review_item_from_recommendation(
     recommendation: Dict[str, Any],
@@ -5983,110 +5968,6 @@ def _promotion_review_rationale(payload: Dict[str, Any]) -> str:
         or payload.get("rejection_reason")
         or ""
     ).strip()
-
-
-# --- _promotion_review_decision_payload ---
-def _promotion_review_decision_payload(
-    *,
-    payload: Dict[str, Any],
-    review: Dict[str, Any],
-    decision: str,
-    rationale: str,
-    identity: OperatorIdentity,
-) -> Dict[str, Any]:
-    command_payload = {
-        **payload,
-        "decision": decision,
-        "review_id": review["review_id"],
-        "promotion_review_id": review["promotion_review_id"],
-        "recommendation_id": review["recommendation_id"],
-        "ranking_snapshot_id": review.get("ranking_snapshot_id"),
-        "persona_id": review.get("persona_id"),
-        "action_id": review.get("action_id"),
-        "promotion_stage_from": "paper",
-        "promotion_stage_to": (review.get("promotion_path") or {}).get("target_stage"),
-        "eventual_live_stage": "live",
-        "live_promotion_requires_separate_human_gate": True,
-        "requires_human_gate_decision": True,
-        "live_capital_mutation": False,
-        "liveCapitalMutation": False,
-        "liveCapitalSideEffects": False,
-        "direct_live_capital_mutation": False,
-        "runtime_mutation": False,
-        "audit_event": f"promotion_review.{decision}",
-        "actor_id": identity.operator_id,
-        "policy": "promotion_governance_human_gate_no_direct_live_capital",
-    }
-    if rationale:
-        command_payload["rationale"] = rationale
-    if decision == "reject":
-        command_payload["rejection_reason"] = rationale
-    if "conditions" in payload:
-        command_payload["conditions"] = json.loads(json.dumps(payload.get("conditions")))
-    return command_payload
-
-
-# --- _promotion_review_decision_response ---
-def _promotion_review_decision_response(
-    command_response: JSONResponse,
-    *,
-    review: Dict[str, Any],
-    decision: str,
-    command_payload: Dict[str, Any],
-    client_idempotency_key: Optional[str] = None,
-) -> JSONResponse:
-    content = json.loads(command_response.body.decode("utf-8") if command_response.body else "{}")
-    data = content.setdefault("data", {})
-    data.update(
-        {
-            "review_id": review["review_id"],
-            "promotion_review_id": review["promotion_review_id"],
-            "recommendation_id": review["recommendation_id"],
-            "persona_id": review.get("persona_id"),
-            "action_id": review.get("action_id"),
-            "ranking_snapshot_id": review.get("ranking_snapshot_id"),
-            "decision": decision,
-            "decision_status": "accepted",
-            "requires_human_gate_decision": True,
-            "live_capital_mutation": False,
-            "liveCapitalMutation": False,
-            "liveCapitalSideEffects": False,
-            "direct_live_capital_mutation": False,
-            "runtime_mutation": False,
-            "promotion_stage_from": "paper",
-            "promotion_stage_to": command_payload.get("promotion_stage_to"),
-            "eventual_live_stage": "live",
-        }
-    )
-    if command_payload.get("rationale"):
-        data["rationale"] = command_payload.get("rationale")
-    if "conditions" in command_payload:
-        data["conditions"] = json.loads(json.dumps(command_payload.get("conditions")))
-    meta = content.setdefault("meta", {})
-    if client_idempotency_key:
-        meta["idempotency"] = {
-            **(
-                meta.get("idempotency")
-                if isinstance(meta.get("idempotency"), dict)
-                else {}
-            ),
-            "key": client_idempotency_key,
-            "idempotencyKey": client_idempotency_key,
-        }
-    meta.update(
-        {
-            "live_capital_mutation": False,
-            "liveCapitalMutation": False,
-            "liveCapitalSideEffects": False,
-            "direct_live_capital_mutation": False,
-            "runtime_mutation": False,
-            "requires_human_gate_decision": True,
-            "decision_status": "accepted",
-            "decision": decision,
-            "governance_policy": "promotion_governance_human_gate_no_direct_live_capital",
-        }
-    )
-    return JSONResponse(status_code=command_response.status_code, content=jsonable_encoder(content))
 
 
 # --- _project_persona_league_row ---
@@ -11146,8 +11027,8 @@ def _human_inbox_sanitize_promotion_snapshot(
 def _human_inbox_decision_recommendation_id(command: Dict[str, Any]) -> str:
     command_type = str(command.get("type") or "")
     if command_type not in {
-        CommandType.HUMAN_GATE_APPROVE.value,
-        CommandType.HUMAN_GATE_REJECT.value,
+        "HumanGateApprove",
+        "HumanGateReject",
     }:
         return ""
     target = command.get("target") if isinstance(command.get("target"), dict) else {}
@@ -11215,9 +11096,9 @@ def _human_inbox_decision_projection_from_record(command: Dict[str, Any]) -> Opt
     if decision not in _PROMOTION_REVIEW_DECISIONS:
         return None
     command_type = str(command.get("type") or "")
-    if command_type == CommandType.HUMAN_GATE_REJECT.value and decision != "reject":
+    if command_type == "HumanGateReject" and decision != "reject":
         return None
-    if command_type == CommandType.HUMAN_GATE_APPROVE.value and decision not in {
+    if command_type == "HumanGateApprove" and decision not in {
         "approve",
         "approve_with_conditions",
     }:
@@ -11284,7 +11165,7 @@ def _submitted_promotion_review_records(
     decisions: Dict[str, Dict[str, Any]] = {}
     # One command-log read per aggregate, regardless of submitted row count.
     for command in _get_active_command_store()._get_all_commands():
-        if command.get("type") == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+        if command.get("type") == "QuarterlyRankingRecommendationSubmit":
             recommendation = _human_inbox_sanitize_promotion_snapshot(command)
             if recommendation is not None:
                 review_id = _promotion_review_record_revision_id(command)
@@ -12955,7 +12836,7 @@ def _human_inbox_promotion_recommendation_id(command: Dict[str, Any]) -> str:
 
 
 def _human_inbox_trusted_promotion_submission(command: Dict[str, Any]) -> bool:
-    if command.get("type") != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+    if command.get("type") != "QuarterlyRankingRecommendationSubmit":
         return False
     if str(command.get("status") or "").strip().lower() in _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES:
         return False
@@ -14574,42 +14455,7 @@ class PersonaService:
                 },
             )
 
-        command_type = (
-            CommandType.HUMAN_GATE_REJECT
-            if raw_decision == "reject"
-            else CommandType.HUMAN_GATE_APPROVE
-        )
-        command_payload = _promotion_review_decision_payload(
-            payload=payload,
-            review=review,
-            decision=raw_decision,
-            rationale=rationale,
-            identity=identity,
-        )
-        client_idempotency_key = _resolve_final_idempotency_key(
-            idempotency_key,
-            x_idempotency_key,
-        )
-        scoped_idempotency_key = _promotion_review_scoped_idempotency_key(
-            client_idempotency_key,
-            None,
-            review["review_id"],
-        )
-        command_response = _sem_command_response(
-            command_type=command_type,
-            target_type=ObjectType.HUMAN_GATE_ITEM,
-            target_id=_promotion_review_target_id(review["review_id"]),
-            payload=command_payload,
-            identity=identity,
-            idempotency_key=scoped_idempotency_key,
-        )
-        return _promotion_review_decision_response(
-            command_response,
-            review=review,
-            decision=raw_decision,
-            command_payload=command_payload,
-            client_idempotency_key=client_idempotency_key,
-        )
+        reject_retired_command("HumanGateReject" if raw_decision == "reject" else "HumanGateApprove")
 
     def _compose_quarterly_ranking_context(
         self,

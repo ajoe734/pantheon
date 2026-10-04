@@ -25,8 +25,6 @@ from services.control_plane.bff.command_executor import (
     _execute_pause_runtime,
     _execute_escalate_diff,
     _execute_rollback,
-    _execute_approve_rollback,
-    _execute_reject_rollback,
     _execute_activate_kill_switch,
     _execute_approve_evolution_decision,
     _execute_approve_mutation,
@@ -111,7 +109,7 @@ class TestApprovalDecisionExecutors(unittest.TestCase):
     def test_request_revision_is_retired_with_410_and_no_owner_call(self):
         with patch(self.OWNER) as owner:
             with self.assertRaises(HTTPException) as ctx:
-                execute_command("cmd-2", CommandType.REQUEST_APPROVAL_REVISION,
+                execute_command("cmd-2", "RequestApprovalRevision",
                                 {"decision_id": "appr-001", "expected_version": 1, "revision_notes": "rework"}, auth_token=self.TOKEN)
             self.assertEqual(ctx.exception.status_code, 410)
             self.assertIn("RejectDecision with notes", str(ctx.exception.detail))
@@ -119,7 +117,7 @@ class TestApprovalDecisionExecutors(unittest.TestCase):
 
         with patch(self.OWNER) as owner:
             status, result, error = execute_command_with_status(
-                "cmd-2", CommandType.REQUEST_APPROVAL_REVISION,
+                "cmd-2", "RequestApprovalRevision",
                 {"decision_id": "appr-001", "expected_version": 1, "revision_notes": "rework"}, auth_token=self.TOKEN
             )
             self.assertEqual(status, CommandStatus.FAILED)
@@ -177,49 +175,6 @@ class TestRollbackExecutor(unittest.TestCase):
         })
         self.assertTrue(result["rollback_id"].startswith("rb-dp-001-"))
         self.assertEqual(result["command_id"], "cmd-003")
-
-
-class TestRollbackReviewCommandExecutors(unittest.TestCase):
-    def setUp(self):
-        os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
-        os.environ["PANTHEON_GOVERNANCE_SERVICE_URL"] = "http://localhost:5002"
-
-    def tearDown(self):
-        os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
-
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_approve_rollback_success(self, mock_post):
-        mock_post.return_value = {
-            "rollback_id": "rollback-rb-001",
-            "decision": "approved",
-            "status": "submitted",
-            "audit_id": "audit-rb-001",
-            "approved_at": "2026-04-17T07:00:00Z",
-        }
-        result = _execute_approve_rollback("cmd-003a", {
-            "rollback_id": "rollback-rb-001",
-            "approval_notes": "Looks safe",
-        })
-        self.assertEqual(result["rollback_id"], "rollback-rb-001")
-        self.assertEqual(result["decision"], "approved")
-        self.assertEqual(result["command_id"], "cmd-003a")
-
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_reject_rollback_success(self, mock_post):
-        mock_post.return_value = {
-            "rollback_id": "rollback-rb-001",
-            "decision": "rejected",
-            "status": "submitted",
-            "audit_id": "audit-rb-001",
-            "rejected_at": "2026-04-17T07:05:00Z",
-        }
-        result = _execute_reject_rollback("cmd-003b", {
-            "rollback_id": "rollback-rb-001",
-            "rejection_reason": "Impact summary insufficient",
-        })
-        self.assertEqual(result["rollback_id"], "rollback-rb-001")
-        self.assertEqual(result["decision"], "rejected")
-        self.assertEqual(result["command_id"], "cmd-003b")
 
 
 class TestKillSwitchExecutor(unittest.TestCase):

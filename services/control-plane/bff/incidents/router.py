@@ -50,6 +50,7 @@ from typing import (
 )
 import uuid
 
+from services.control_plane.bff.command_adapters.retired import reject_retired_command
 from fastapi import APIRouter, Body, Header, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from starlette.responses import JSONResponse, StreamingResponse
@@ -1173,27 +1174,7 @@ def create_incident_router(
         """BFF: trigger audit export command."""
         identity = _extract_ident(authorization)
         _require_operator(identity)
-        resolved_key = _resolve_key(idempotency_key, x_idempotency_key)
-        snapshot_at = _utc_now()
-        if submit_sem_command is not None:
-            return submit_sem_command(
-                command_type=CommandType.AUDIT_EXPORT,
-                target_type=ObjectType.AUDIT_EXPORT,
-                target_id=str(payload.get("target_type") or payload.get("targetType") or "audit-export"),
-                payload=payload,
-                identity=identity,
-                idempotency_key=idempotency_key,
-                x_idempotency_key=x_idempotency_key,
-            )
-        return {
-            "command_id": str(uuid.uuid4()),
-            "status": "accepted",
-            "command_type": CommandType.AUDIT_EXPORT,
-            "target_type": ObjectType.AUDIT_EXPORT,
-            "target_id": str(payload.get("target_type") or payload.get("targetType") or "audit-export"),
-            "data": {"id": "audit-export", "status": "accepted"},
-            "meta": {"snapshot_at": snapshot_at, "idempotency_key": resolved_key},
-        }
+        reject_retired_command("AuditExport")
 
     # -------------------------------------------------------------------------
     # Route 23, 25, 27: Status Incident & Alert Command Handlers

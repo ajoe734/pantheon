@@ -1448,7 +1448,7 @@ def test_human_inbox_promotion_projection_reads_command_log_once(monkeypatch) ->
             _append_command(
                 command_store,
                 command_id=f"cmd-promotion-submit-{index}",
-                command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+                command_type="QuarterlyRankingRecommendationSubmit",
                 target_type=ObjectType.RANKING,
                 target_id=recommendation_id,
                 params=_legacy_promotion_submission_params(
@@ -1459,7 +1459,7 @@ def test_human_inbox_promotion_projection_reads_command_log_once(monkeypatch) ->
         _append_command(
             command_store,
             command_id="cmd-promotion-decision-1",
-            command_type=CommandType.HUMAN_GATE_APPROVE,
+            command_type="HumanGateApprove",
             target_type=ObjectType.HUMAN_GATE_ITEM,
             target_id=f"promotion_review:{recommendation_ids[0]}",
             params={
@@ -1529,7 +1529,7 @@ def test_human_inbox_omits_inconsistent_generic_snapshot_and_private_evidence() 
         _append_command(
             command_store,
             command_id="cmd-promotion-forged-snapshot",
-            command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+            command_type="QuarterlyRankingRecommendationSubmit",
             target_type=ObjectType.RANKING,
             target_id=recommendation_id,
             params=params,
@@ -1557,7 +1557,7 @@ def test_human_inbox_legacy_snapshotless_submission_is_safe_and_minimal() -> Non
         _append_command(
             command_store,
             command_id="cmd-promotion-legacy",
-            command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+            command_type="QuarterlyRankingRecommendationSubmit",
             target_type=ObjectType.RANKING,
             target_id=recommendation_id,
             params=params,
@@ -1588,7 +1588,7 @@ def test_human_inbox_omits_failed_promotion_submission() -> None:
         _append_command(
             command_store,
             command_id="cmd-promotion-failed",
-            command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+            command_type="QuarterlyRankingRecommendationSubmit",
             target_type=ObjectType.RANKING,
             target_id=recommendation_id,
             params=_legacy_promotion_submission_params(
@@ -1788,7 +1788,7 @@ def test_command_store_caching(tmp_path) -> None:
     target = TargetObject(type=ObjectType.RANKING, id="rec-1")
     store.submit_command(
         command_id="cmd-1",
-        command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+        command_type="QuarterlyRankingRecommendationSubmit",
         target=target,
         submitted_at="2026-07-13T12:00:00Z",
         params={},

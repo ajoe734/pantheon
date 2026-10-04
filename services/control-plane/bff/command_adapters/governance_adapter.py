@@ -35,14 +35,9 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
     _HANDLED_COMMANDS = {
         "ApproveDecision",
         "RejectDecision",
-        "HumanGateApprove",
-        "HumanGateReject",
-        "HumanGateRequestMoreEvidence",
         "HumanGateRevoke",
-        "HumanGateExtendTtl",
         "RecordSponsorDecision",
         "ReviewAction",
-        "RequestReview",
     }
 
     _HANDLED_ENTITIES = {
@@ -72,8 +67,6 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        from .retired import reject_retired_command
-        reject_retired_command(command_type)
         action_id = str(params.get("action_id") or command_type or "").strip()
         entity_id = str(params.get("decision_id") or params.get("gate_id") or params.get("committee_id") or params.get("review_id") or params.get("entity_id") or "").strip()
 
@@ -88,7 +81,7 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
             return self._execute_human_gate_action(command_id, entity_id, command_type or action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type == "RecordSponsorDecision":
             return self._execute_sponsor_decision(command_id, entity_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"ReviewAction", "RequestReview"}:
+        elif command_type in {"ReviewAction"}:
             return self._execute_review_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
         else:
             raise ActionUnavailableError(
@@ -164,9 +157,6 @@ class GovernanceCommandAdapter(DomainCommandAdapter):
         target_gate_id = gate_id or str(params.get("gate_id") or params.get("entity_id") or "").strip()
         if not target_gate_id:
             raise ValueError(f"{action_name} requires gate_id.")
-
-        from .retired import reject_retired_command
-        reject_retired_command(action_name)
         subpath = "revoke"
         payload = {
             "command_id": command_id,

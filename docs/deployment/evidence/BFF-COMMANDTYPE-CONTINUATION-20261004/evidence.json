@@ -1,0 +1,73 @@
+{
+  "task_id": "BFF-COMMANDTYPE-CONTINUATION-20261004",
+  "scope": "source/local validation only; continuation of BFF-COMMANDTYPE-RESIDUE-20261003",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "base_sha": "f0b7efc23a3085b266fb3b8fcb5a55d2496e9537",
+  "prior_base_sha": "f60a8aa3755f4f6543cd05faf3c04316e0dd3013",
+  "environment": "local isolated owners; test-bound loopback isolation via /tmp/codex2_commandtype_review_runner.py",
+  "classification": "All 15 listed CommandType values (ApproveRollback, RejectRollback, RankingFormulaAction, RankingAction, ToolAction, McpServerAction, SkillAction, AuditExport, HumanGateApprove, HumanGateReject, HumanGateRequestMoreEvidence, HumanGateExtendTtl, QuarterlyRankingRecommendationSubmit, RequestReview, RequestApprovalRevision) are retired at every mounted entry point and deleted from CommandType with their executors, adapters (capabilities/audit adapters removed), preconditions, and assistant allowlist entries. POST /bff/v1/commands, /bff/audit/export, /bff/mcp/servers/{id}/actions/{action}, /bff/tools|skills/.../actions, /bff/ranking*, /bff/management/promotion-reviews/{id}/decisions and /submit return 410 Gone before any side effect or admission.",
+  "alias_safe_admission": "Resolved review rejection on parent PR #6138 commit 5cca89a3 and independent review P1 on PR #6143. Evolution action alias canonicalization in command_adapters/contracts.py maps all camelCase, PascalCase, and snake_case variants (e.g. promote_candidate_live, PromoteEvolutionCandidateLive, promotecandidatelive) to canonical snake_case before precondition checks and command admission; unknown evolution action verbs are rejected with 422 before admission. Furthermore, _catalog_entry_for_command in preconditions.py and _guarded_command_confirm_token_id in service.py resolve the CRITICAL catalog entry with confirm token and two-man verification, ensuring both camelCase and snake_case variants fail closed with 409 TWO_MAN_SIGNATURE_REQUIRED with 0 writes and no command admitted to store. P1 resolution: preconditions.py _validate_evolution_program_action enforces operator/approver/admin role checks on all evolution program actions (including direct alias PauseEvolutionProgram and wrapped EvolutionProgramAction/pause_program), ensuring read-only viewer identities fail closed with 403 FORBIDDEN before command admission (0 writes, 0 commands admitted), matching the owner route policy.",
+  "action_catalog_invariants": "services/control-plane/bff/test_action_catalog.py passes in full: every CommandType has a catalog entry; PromoteEvolutionCandidateLive is RiskLevel.CRITICAL, requires_confirm_token=True, requires_two_man=True, and requires_approval=True.",
+  "focused_validation": {
+    "command": "$PANTHEON_DEPENDENCY_PYTHON /tmp/codex2_commandtype_review_runner.py -q services/control-plane/bff/test_action_catalog.py services/control-plane/bff/tests/test_receipt_only_retirement.py services/control-plane/bff/tests/test_receipt_owner_routes.py",
+    "base_result": "9 failed, 35 passed, 98 warnings in 71.02s (exit 1)",
+    "head_result": "50 passed, 98 warnings in 81.21s (exit 0)",
+    "notes": "Base failed 3 catalog tests and 6 retirement tests because residual CommandTypes were not retired or cataloged. Head passes all 50 tests in full with zero failures."
+  },
+  "role_control_reproducer": {
+    "command": "$PANTHEON_DEPENDENCY_PYTHON /tmp/codex2_commandtype_review_runner.py -s /tmp/test_codex2_commandtype_continuation_roles.py",
+    "base_result": "1 passed, 1 failed in 7.02s (exit 1)",
+    "prior_head_result": "2 failed in 9.81s (exit 1)",
+    "delivered_head_result": "2 passed, 1 warning in 9.19s (exit 0)",
+    "notes": "Verifies viewer role negative control on /bff/v1/commands for direct PauseEvolutionProgram and wrapped EvolutionProgramAction/pause_program: both return 403 Forbidden with 0 writes and 0 commands admitted, matching the owner route 403."
+  },
+  "recursive_baseline_inventory": {
+    "test_command_executor": {
+      "command": "$PANTHEON_DEPENDENCY_PYTHON /tmp/codex2_commandtype_review_runner.py -q services/control-plane/bff/test_command_executor.py",
+      "base_result": "9 failed, 15 passed in 8.30s (exit 1)",
+      "head_result": "7 failed, 15 passed in 8.48s (exit 1)",
+      "difference": "2 rollback failures on base were retired and removed on head; remaining 7 failures are identical pre-existing baseline due to unset PANTHEON_EVOLUTION_API_URL."
+    },
+    "test_final_command_execution_bridge": {
+      "command": "$PANTHEON_DEPENDENCY_PYTHON /tmp/codex2_commandtype_review_runner.py -q services/control-plane/bff/test_final_command_execution_bridge.py",
+      "base_result": "9 failed in 4.98s (exit 1)",
+      "head_result": "8 failed in 5.00s (exit 1)",
+      "difference": "1 audit route failure on base was retired on head; remaining 8 failures are identical pre-existing baseline TypeError: CommandAdapterService.__init__() got an unexpected keyword argument 'final_contract_idempotency'."
+    },
+    "test_persona_paper_owner_lifecycle_contract": {
+      "command": "$PANTHEON_DEPENDENCY_PYTHON /tmp/codex2_commandtype_review_runner.py services/control-plane/bff/tests/test_persona_paper_owner_lifecycle_contract.py",
+      "base_result": "1 collection error in 1.69s (exit 2)",
+      "head_result": "1 collection error in 1.61s (exit 2)",
+      "difference": "Identical baseline collection error: ModuleNotFoundError: No module named 'psycopg' (psycopg not installed in worker test environment)."
+    },
+    "test_tenant_fallback_audit": {
+      "command": "$PANTHEON_DEPENDENCY_PYTHON /tmp/codex2_commandtype_review_runner.py -q services/control-plane/bff/tests/test_tenant_fallback_audit.py",
+      "base_result": "1 failed in 1.70s (exit 1)",
+      "head_result": "1 failed, 124 passed, 1 skipped in 69.48s (exit 1)",
+      "failing_node": "test_tenant_fallback_audit.py::test_mounted_research_run_dispatch_scopes_to_the_jwt_tenant",
+      "error": "AttributeError: 'MemoryResearchPlanStore' object has no attribute '_runs'",
+      "notes": "Inherited Research tenant-control fixture references deleted MemoryResearchPlanStore._runs (removed in PR #6134 / #6140 when Research Orchestrator became single owner). Preserves denied 403 on tenantless JWT before attribute check, ensuring 0 owner mutations. Per Acceptance 9, preserved without restoring deleted BFF run copy or weakening security controls."
+    },
+    "recursive_subdirectories": {
+      "summary": "Full comparison across all BFF subpackages demonstrates identical results on Base vs Head with zero new regressions",
+      "assistant": {"base": "37 passed in 10.46s (exit 0)", "head": "37 passed in 11.03s (exit 0)"},
+      "auth": {"base": "3 failed, 30 passed in 25.46s (exit 1)", "head": "3 failed, 30 passed in 25.57s (exit 1)"},
+      "events": {"base": "12 passed in 9.25s (exit 0)", "head": "12 passed in 9.53s (exit 0)"},
+      "evolution": {"base": "1 failed, 7 passed in 5.58s (exit 1)", "head": "1 failed, 7 passed in 5.83s (exit 1)"},
+      "governance": {"base": "38 passed, 9 subtests passed in 28.86s (exit 0)", "head": "38 passed, 9 subtests passed in 30.77s (exit 0)"},
+      "management_read_models": {"base": "5 failed, 95 passed in 26.47s (exit 1)", "head": "5 failed, 95 passed in 26.20s (exit 1)"},
+      "migrations": {"base": "40 failed, 40 passed, 3 skipped in 30.52s (exit 1)", "head": "40 failed, 40 passed, 3 skipped in 32.41s (exit 1)"},
+      "personas": {"base": "1 passed in 4.33s (exit 0)", "head": "1 passed in 4.69s (exit 0)"},
+      "research": {"base": "1 failed, 7 passed in 5.95s (exit 1)", "head": "1 failed, 7 passed in 6.19s (exit 1)"},
+      "strategies": {"base": "2 passed in 3.32s (exit 0)", "head": "2 passed in 3.57s (exit 0)"}
+    }
+  },
+  "diff_budget": {
+    "command": "python3 scripts/git/diff_budget.py --base f0b7efc23a3085b266fb3b8fcb5a55d2496e9537 --head HEAD --change-class simplify --budget 0",
+    "production": {"added": 436, "deleted": 1278, "net": -842},
+    "test": {"added": 108, "deleted": 1256, "net": -1148},
+    "docs_evidence": {"added": 74, "deleted": 517, "net": -443},
+    "verdict": "passed (budget <= 0)"
+  }
+}

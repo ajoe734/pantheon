@@ -125,8 +125,6 @@ def stored_command_params(
         cmd.command,
         cmd.action or cmd.params.get("action_id") or cmd.params.get("actionId") or cmd.command.value,
     )
-    if cmd.command == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT:
-        canonical_action_id = "submit_recommendation"
     canonical_paper = cmd.command in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}
     if canonical_paper:
         canonical_action_id = cmd.command.value
@@ -436,7 +434,7 @@ class CommandAdapterService:
             )
 
     def get_action_catalog(self, identity: Optional[OperatorIdentity] = None) -> BffActionCatalogResponse:
-        return BffActionCatalogResponse(catalog=[e for e in get_action_catalog().catalog if e.action_id != "RequestApprovalRevision"])
+        return BffActionCatalogResponse(catalog=get_action_catalog().catalog)
 
     def get_command_status(self, command_id: str, identity: Optional[OperatorIdentity] = None) -> CommandStatusResponse:
         clean_id = str(command_id or "").strip()
@@ -496,7 +494,14 @@ class CommandAdapterService:
         return submitted_at + timedelta(seconds=ttl_seconds)
 
     def _guarded_command_confirm_token_id(self, record: Dict[str, Any]) -> Optional[str]:
-        entry = get_catalog_entry(str(record.get("type") or ""))
+        cmd_type = str(record.get("type") or "")
+        entry = get_catalog_entry(cmd_type)
+        if cmd_type == CommandType.EVOLUTION_PROGRAM_ACTION.value:
+            params = record.get("params") if isinstance(record.get("params"), dict) else {}
+            action = str(record.get("action") or params.get("action_id") or params.get("actionId") or "").strip()
+            norm = re.sub(r"[^a-z0-9]", "", action.lower())
+            if norm in {"promotecandidatelive", "promoteevolutioncandidatelive"}:
+                entry = get_catalog_entry("PromoteEvolutionCandidateLive")
         if entry is None or not getattr(entry, "requires_confirm_token", False):
             return None
         audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}

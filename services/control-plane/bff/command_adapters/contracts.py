@@ -65,11 +65,7 @@ _FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
 _FINAL_COMMAND_ROUTE = "POST /bff/v1/commands"
 
 _HUMAN_GATE_DECISIONS_BY_COMMAND: Dict[CommandType, str] = {
-    CommandType.HUMAN_GATE_APPROVE: "approve",
-    CommandType.HUMAN_GATE_REJECT: "reject",
-    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: "request_more_evidence",
     CommandType.HUMAN_GATE_REVOKE: "revoke",
-    CommandType.HUMAN_GATE_EXTEND_TTL: "extend_ttl",
 }
 
 
@@ -172,55 +168,6 @@ def normalize_human_gate_command(cmd: OperatorCommand) -> OperatorCommand:
     return cmd
 
 
-def normalize_quarterly_recommendation_command(cmd: OperatorCommand) -> OperatorCommand:
-    if cmd.command != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT:
-        return cmd
-
-    params = dict(cmd.params or {})
-    recommendation_id = str(
-        params.get("recommendation_id")
-        or params.get("recommendationId")
-        or cmd.target.id
-        or ""
-    ).strip()
-    target_recommendation_id = str(cmd.target.id or "").strip()
-    if (
-        recommendation_id
-        and target_recommendation_id
-        and recommendation_id != target_recommendation_id
-    ):
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "recommendation_id does not match the command target",
-            "Use target.id as the authoritative quarterly recommendation id.",
-            precondition_failed="recommendation_id",
-        )
-    if recommendation_id:
-        params["recommendation_id"] = recommendation_id
-        params["recommendationId"] = recommendation_id
-
-    recommendation_action_id = str(
-        params.get("recommendation_action_id")
-        or params.get("recommendationActionId")
-        or params.get("actionId")
-        or params.get("action_id")
-        or ""
-    ).strip()
-    if recommendation_action_id and recommendation_action_id != "submit_recommendation":
-        params["recommendation_action_id"] = recommendation_action_id
-        params["recommendationActionId"] = recommendation_action_id
-
-    params["action_id"] = "submit_recommendation"
-    params["actionId"] = "submit_recommendation"
-    params.setdefault("audit_event", "quarterly_ranking.recommendation_submitted")
-    params.setdefault("auditEvent", "quarterly_ranking.recommendation_submitted")
-    params.setdefault("entity_type", "quarterly_ranking_recommendation")
-    params.setdefault("entity_id", recommendation_id or cmd.target.id)
-    cmd.params = params
-    return cmd
-
-
 def normalize_b5_command_payload(cmd: OperatorCommand) -> OperatorCommand:
     if cmd.command == CommandType.ADVANCE_LIFECYCLE:
         params = dict(cmd.params)
@@ -243,9 +190,25 @@ def normalize_b5_command_payload(cmd: OperatorCommand) -> OperatorCommand:
         )
         cmd.action = "AdvanceLifecycle"
         cmd.params = params
-    return normalize_quarterly_recommendation_command(
-        normalize_human_gate_command(cmd)
-    )
+    if cmd.command == CommandType.EVOLUTION_PROGRAM_ACTION:
+        raw_act = cmd.action or cmd.params.get("action_id") or cmd.params.get("actionId")
+        if raw_act:
+            norm_act = re.sub(r"[^a-z0-9]", "", str(raw_act).lower())
+            canonical_act = _EVOLUTION_ACTION_ALIASES.get(norm_act)
+            if canonical_act is None:
+                raise _bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    f"Invalid evolution program action: {raw_act}",
+                    f"Unsupported evolution action {raw_act}",
+                )
+            cmd.action = canonical_act
+            params = dict(cmd.params)
+            params["action_id"] = canonical_act
+            if "actionId" in params:
+                params["actionId"] = canonical_act
+            cmd.params = params
+    return normalize_human_gate_command(cmd)
 
 
 def normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorCommand:
@@ -418,13 +381,53 @@ _WRAPPER_CANONICALS = {
         "HumanGateExtendTtl": (),
     },
     "RiskAlertAction": {"AlertAcknowledge": ("acknowledge", "ack")},
-    "RankingAction": {"QuarterlyRankingRecommendationSubmit": ()},
 }
 _WRAPPER_VERB_ALIASES = {
     (wrapper, re.sub(r"[^a-z0-9]", "", verb.lower())): canonical
     for wrapper, commands in _WRAPPER_CANONICALS.items()
     for canonical, verbs in commands.items()
     for verb in (canonical, *verbs)
+}
+
+_EVOLUTION_ACTION_ALIASES: Dict[str, str] = {
+    "submitevolutionreview": "submit_evolution_review",
+    "submit_evolution_review": "submit_evolution_review",
+    "approveprogram": "approve_program",
+    "approve_program": "approve_program",
+    "approveevolutionprogram": "approve_program",
+    "approve_evolution_program": "approve_program",
+    "pauseprogram": "pause_program",
+    "pause_program": "pause_program",
+    "pauseevolutionprogram": "pause_program",
+    "pause_evolution_program": "pause_program",
+    "resumeprogram": "resume_program",
+    "resume_program": "resume_program",
+    "resumeevolutionprogram": "resume_program",
+    "resume_evolution_program": "resume_program",
+    "completeprogram": "complete_program",
+    "complete_program": "complete_program",
+    "completeevolutionprogram": "complete_program",
+    "complete_evolution_program": "complete_program",
+    "retireprogram": "retire_program",
+    "retire_program": "retire_program",
+    "retireevolutionprogram": "retire_program",
+    "retire_evolution_program": "retire_program",
+    "stop": "stop",
+    "stopevolutionprogram": "stop",
+    "stop_program": "stop",
+    "stopprogram": "stop",
+    "freezegeneration": "freeze_generation",
+    "freeze_generation": "freeze_generation",
+    "freezeevolutiongeneration": "freeze_generation",
+    "freeze_evolution_generation": "freeze_generation",
+    "promotecandidatepaper": "promote_candidate_paper",
+    "promote_candidate_paper": "promote_candidate_paper",
+    "promoteevolutioncandidatepaper": "promote_candidate_paper",
+    "promote_evolution_candidate_paper": "promote_candidate_paper",
+    "promotecandidatelive": "promote_candidate_live",
+    "promote_candidate_live": "promote_candidate_live",
+    "promoteevolutioncandidatelive": "promote_candidate_live",
+    "promote_evolution_candidate_live": "promote_candidate_live",
 }
 
 
@@ -490,6 +493,17 @@ def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())
     if command == "Observe" or (command == "PersonaAction" and verb == "observe"):
         raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "Observe is retired", "Use Persona read routes")
+    if norm_c == "evolutionprogramaction" or (norm_c in _EVOLUTION_ACTION_ALIASES and norm_c != "evolutionprogramaction"):
+        target_verb = verb or (_EVOLUTION_ACTION_ALIASES.get(norm_c) if norm_c in _EVOLUTION_ACTION_ALIASES else None)
+        if target_verb:
+            canonical_act = _EVOLUTION_ACTION_ALIASES.get(target_verb)
+            if canonical_act is None:
+                raise _bff_error(422, ErrorCode.VALIDATION_FAILED, f"Unknown evolution program action: {target_verb}", f"Carrier contains unsupported or unknown action: {target_verb}")
+            cleaned = dict(params) if isinstance(params, dict) else {}
+            cleaned["action_id"] = canonical_act
+            if "actionId" in cleaned:
+                cleaned["actionId"] = canonical_act
+            return {**payload, "command": "EvolutionProgramAction", "action": canonical_act, "params": cleaned}
     canonical = "AdvanceLifecycle" if command in {"PromoteCandidate", "Demote"} else (command if norm_c in {"approvedecision", "rejectdecision"} else _WRAPPER_VERB_ALIASES.get((command, verb)))
     if canonical is not None:
         reject_retired_command(canonical)
