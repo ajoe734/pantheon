@@ -148,9 +148,12 @@ def _authenticate_memory_request(
     authorization: Optional[str],
     *,
     required_roles: Optional[Sequence[str]] = None,
+    require_jwt: bool = False,
 ) -> Optional[AuthContext]:
     env = _memory_auth_env()
     mode = env.get("PANTHEON_RUNTIME_AUTH_MODE", "permissive").strip().lower()
+    if require_jwt:
+        mode = "strict"
     if not authorization or not authorization.strip():
         if mode == "strict":
             raise HTTPException(status_code=401, detail="Unauthorized: missing Bearer token")
@@ -165,6 +168,8 @@ def _authenticate_memory_request(
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     _reject_malformed_identity_claims(ctx)
     _require_verified_identity(ctx)
+    if require_jwt and ctx.token_kind != "jwt":
+        raise HTTPException(status_code=401, detail="Unauthorized: a verified operator JWT is required")
     return ctx
 
 app = FastAPI(title="Pantheon Memory Service", version="0.1.0")
@@ -677,8 +682,29 @@ async def retrieve_memory(
     }
 
 
+def _lesson_identity(authorization: Optional[str], *, write: bool = False) -> tuple[AuthContext, str]:
+    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_WRITE_ROLES if write else _MEMORY_READ_ROLES, require_jwt=True)
+    assert ctx is not None
+    tenants = {str(ctx.claims.get(key) or "").strip() for key in _TENANT_CLAIM_NAMES if str(ctx.claims.get(key) or "").strip()}
+    if len(tenants) != 1:
+        raise HTTPException(status_code=403, detail="Verified identity must bind exactly one tenant")
+    return ctx, tenants.pop()
+
+
+def _owned_lesson(candidate_id: str, tenant_id: str) -> Dict[str, Any]:
+    candidate = _candidate_store().get(candidate_id)
+    if candidate is None or not candidate.get("tenant_id") or candidate["tenant_id"] != tenant_id:
+        raise HTTPException(status_code=404, detail={"error": "candidate_not_found", "candidate_id": candidate_id})
+    return candidate
+
+
 @app.post("/api/memory/trade-lessons", status_code=201)
-async def create_trade_lesson(payload: Dict[str, Any]):
+async def create_trade_lesson(payload: Dict[str, Any], authorization: Optional[str] = Header(None, alias="Authorization")):
+    _ctx, tenant_id = _lesson_identity(authorization, write=True)
+    payload = dict(payload)
+    if payload.get("tenant_id") not in (None, tenant_id):
+        raise HTTPException(status_code=403, detail="Candidate tenant does not match verified identity")
+    payload["tenant_id"] = tenant_id
     try:
         saved = _candidate_store().create(payload)
     except TradeLessonCandidateError as exc:
@@ -691,25 +717,28 @@ async def list_trade_lessons(
     persona_id: Optional[str] = Query(default=None),
     review_state: Optional[str] = Query(default=None),
     scope: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
 ):
+    _ctx, tenant_id = _lesson_identity(authorization)
     candidates = _candidate_store().list(
         persona_id=persona_id,
         review_state=review_state,
         scope=scope,
     )
+    candidates = [item for item in candidates if item.get("tenant_id") == tenant_id]
     return {"candidates": candidates, "count": len(candidates)}
 
 
 @app.get("/api/memory/trade-lessons/{candidate_id}")
-async def get_trade_lesson(candidate_id: str):
-    candidate = _candidate_store().get(candidate_id)
-    if candidate is None:
-        raise HTTPException(status_code=404, detail={"error": "candidate_not_found", "candidate_id": candidate_id})
-    return candidate
+async def get_trade_lesson(candidate_id: str, authorization: Optional[str] = Header(None, alias="Authorization")):
+    _ctx, tenant_id = _lesson_identity(authorization)
+    return _owned_lesson(candidate_id, tenant_id)
 
 
 @app.post("/api/memory/trade-lessons/{candidate_id}/submit-review")
-async def submit_trade_lesson_review(candidate_id: str):
+async def submit_trade_lesson_review(candidate_id: str, authorization: Optional[str] = Header(None, alias="Authorization")):
+    _ctx, tenant_id = _lesson_identity(authorization, write=True)
+    _owned_lesson(candidate_id, tenant_id)
     try:
         updated = _governance_service().submit_review(candidate_id)
     except TradeLessonCandidateError as exc:
@@ -734,26 +763,20 @@ async def decide_trade_lesson(
     payload: DecidePayload,
     x_actor_id: Optional[str] = Header(None, alias="X-Actor-ID"),
     x_actor_roles: Optional[str] = Header(None, alias="X-Actor-Roles"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
 ):
-    if not x_actor_id or not x_actor_id.strip():
-        raise HTTPException(
-            status_code=403,
-            detail={"error": "unauthorized", "message": "Missing authenticated actor ID Header (X-Actor-ID)."}
-        )
-    actor_id = x_actor_id
-
-    if not x_actor_roles or not x_actor_roles.strip():
-        raise HTTPException(
-            status_code=403,
-            detail={"error": "unauthorized", "message": "Missing authenticated roles Header (X-Actor-Roles)."}
-        )
-    actor_roles = [r.strip() for r in x_actor_roles.split(",") if r.strip()]
-
+    ctx, tenant_id = _lesson_identity(authorization, write=True)
+    if payload.operator_id != ctx.actor_id or (payload.actor_roles is not None and set(payload.actor_roles) != set(ctx.roles)):
+        raise HTTPException(status_code=403, detail="Decision actor does not match verified identity")
+    if x_actor_id is not None and x_actor_id != ctx.actor_id:
+        raise HTTPException(status_code=403, detail="X-Actor-ID does not match verified identity")
+    if x_actor_roles is not None and set(_split_csv_values([x_actor_roles])) != set(ctx.roles):
+        raise HTTPException(status_code=403, detail="X-Actor-Roles does not match verified identity")
+    actor_id = ctx.actor_id
+    actor_roles = sorted(ctx.roles)
     _authorize_lesson_action(actor_id, actor_roles, action="lesson.decide")
 
-    candidate = _candidate_store().get(candidate_id)
-    if candidate is None:
-        raise HTTPException(status_code=404, detail={"error": "candidate_not_found", "candidate_id": candidate_id})
+    candidate = _owned_lesson(candidate_id, tenant_id)
 
     req_env = payload.target_env or candidate.get("target_env", "paper")
     is_sensitive = is_sensitive_change(candidate)
@@ -846,26 +869,20 @@ async def merge_trade_lesson(
     actor_roles: Optional[List[str]] = Query(None),
     x_actor_id: Optional[str] = Header(None, alias="X-Actor-ID"),
     x_actor_roles: Optional[str] = Header(None, alias="X-Actor-Roles"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
 ):
-    if not x_actor_id or not x_actor_id.strip():
-        raise HTTPException(
-            status_code=403,
-            detail={"error": "unauthorized", "message": "Missing authenticated actor ID Header (X-Actor-ID)."}
-        )
-    effective_id = x_actor_id
-
-    if not x_actor_roles or not x_actor_roles.strip():
-        raise HTTPException(
-            status_code=403,
-            detail={"error": "unauthorized", "message": "Missing authenticated roles Header (X-Actor-Roles)."}
-        )
-    effective_roles = [r.strip() for r in x_actor_roles.split(",") if r.strip()]
-
+    ctx, tenant_id = _lesson_identity(authorization, write=True)
+    if (actor_id is not None and actor_id != ctx.actor_id) or (x_actor_id is not None and x_actor_id != ctx.actor_id):
+        raise HTTPException(status_code=403, detail="Actor does not match verified identity")
+    if actor_roles is not None and set(actor_roles) != set(ctx.roles):
+        raise HTTPException(status_code=403, detail="Actor roles do not match verified identity")
+    if x_actor_roles is not None and set(_split_csv_values([x_actor_roles])) != set(ctx.roles):
+        raise HTTPException(status_code=403, detail="Actor roles do not match verified identity")
+    effective_id = ctx.actor_id
+    effective_roles = sorted(ctx.roles)
     _authorize_lesson_action(effective_id, effective_roles, action="lesson.merge")
 
-    candidate = _candidate_store().get(candidate_id)
-    if candidate is None:
-        raise HTTPException(status_code=404, detail={"error": "candidate_not_found", "candidate_id": candidate_id})
+    candidate = _owned_lesson(candidate_id, tenant_id)
 
     # Revalidate approved receipt at merge for sensitive changes or canary/live target_env
     is_sensitive = is_sensitive_change(candidate)

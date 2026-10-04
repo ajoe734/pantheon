@@ -14,6 +14,9 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 main = importlib.import_module("services.memory.main")
 from services.persona.lesson_governance import utc_now
+from services.runtime_auth_inbound import encode_jwt_hs256
+
+JWT_SECRET = "memory-lesson-test-secret"
 
 
 @pytest.fixture
@@ -28,13 +31,16 @@ def client(tmp_path: Path, monkeypatch) -> TestClient:
     monkeypatch.setenv("PANTHEON_PERSONA_MEMORY_STORE", str(persona_store_path))
     monkeypatch.setenv("PANTHEON_MEMORY_STORE", str(institutional_store_path))
     monkeypatch.setenv("PANTHEON_MEMORY_AUTHZ_MODE", "local")
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
 
     # Reload store singletons for the test
     main._candidate_store.cache_clear() if hasattr(main._candidate_store, "cache_clear") else None
     main._persona_store.cache_clear() if hasattr(main._persona_store, "cache_clear") else None
     main._store.cache_clear() if hasattr(main._store, "cache_clear") else None
 
-    return TestClient(main.app)
+    token = encode_jwt_hs256({"sub": "op-alice", "roles": ["operator"], "tenant_id": "tenant-alpha", "exp": 4102444800}, secret=JWT_SECRET)
+    return TestClient(main.app, headers={"Authorization": f"Bearer {token}"})
 
 
 def make_valid_candidate_payload(overrides: dict | None = None) -> dict:
@@ -75,6 +81,21 @@ def test_api_create_and_get_lesson_candidate(client: TestClient) -> None:
     listed = resp.json()["candidates"]
     assert len(listed) == 1
     assert listed[0]["lesson_candidate_id"] == payload["lesson_candidate_id"]
+
+
+def test_trade_lesson_routes_require_verified_tenant_identity(client: TestClient) -> None:
+    payload = make_valid_candidate_payload()
+    created = client.post("/api/memory/trade-lessons", json=payload)
+    assert created.status_code == 201
+    assert created.json()["tenant_id"] == "tenant-alpha"
+
+    other = encode_jwt_hs256({"sub": "foreign", "roles": ["operator"], "tenant_id": "tenant-beta", "exp": 4102444800}, secret=JWT_SECRET)
+    headers = {"Authorization": f"Bearer {other}"}
+    assert client.get(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}", headers=headers).status_code == 404
+    assert client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/submit-review", headers=headers).status_code == 404
+    assert client.get(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}").json()["review_state"] == "proposed"
+
+    assert client.get("/api/memory/trade-lessons", headers={"Authorization": ""}).status_code == 401
 
 
 def test_api_submit_review(client: TestClient) -> None:
@@ -177,7 +198,7 @@ def test_api_rbac_authorization_failures(client: TestClient) -> None:
         headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "trainer_session"}
     )
     assert resp.status_code == 403
-    assert "not authorized" in resp.json()["detail"]["message"]
+    assert "does not match verified identity" in resp.json()["detail"]
 
     # 2. Decide without actor_roles Header (X-Actor-Roles) -> 403
     decide_payload_no_roles = {
@@ -189,9 +210,9 @@ def test_api_rbac_authorization_failures(client: TestClient) -> None:
     resp = client.post(
         f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
         json=decide_payload_no_roles,
-        headers={"X-Actor-ID": "op-alice"} # Missing X-Actor-Roles
+        headers={"Authorization": "", "X-Actor-ID": "op-alice"} # Missing verified identity
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 401
 
     # 3. Merge with unauthorized role in header -> 403
     resp = client.post(
@@ -199,11 +220,11 @@ def test_api_rbac_authorization_failures(client: TestClient) -> None:
         headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "trainer_session"}
     )
     assert resp.status_code == 403
-    assert "not authorized" in resp.json()["detail"]["message"]
+    assert "roles do not match verified identity" in resp.json()["detail"]
 
     # 4. Merge without role in header -> 403
-    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/merge")
-    assert resp.status_code == 403
+    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/merge", headers={"Authorization": ""})
+    assert resp.status_code == 401
 
 
 def test_api_decide_receipt_validation_sensitive(client: TestClient, monkeypatch) -> None:
