@@ -1,6 +1,6 @@
 {
   "task_id": "BFF-RESEARCH-RUN-COPY-REMOVAL-20261004",
-  "status": "implementation_in_progress",
+  "status": "implementation_complete",
   "hosted_read_only_check": {
     "checked_at": "2026-10-03T23:56:00Z",
     "backend_commit": "5743158b0",
@@ -12,15 +12,18 @@
     "owner": "research service",
     "bff_run_store_removed": true,
     "owner_run_projection": true,
-    "production_line_delta": -275
+    "production_line_delta": -290
   },
   "validation": {
     "passed": [
-      "RESEARCH_ORCHESTRATOR_DATA_DIR=$(mktemp -d) ~/pantheon-ci-deploy/runtime/research-test-python/20261003-f9fd19209/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_research_run_projection.py services/control-plane/bff/tests/test_research_receipt_provenance.py services/research/tests/test_research_single_owner_routes.py (79 passed)"
+      "RESEARCH_ORCHESTRATOR_DATA_DIR=$(mktemp -d) ~/pantheon-ci-deploy/runtime/research-test-python/20261003-f9fd19209/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_agora_research_run_projection.py services/control-plane/bff/tests/test_research_receipt_provenance.py scripts/test_verify_agora_product_journey.py services/research/tests/test_research_single_owner_routes.py services/control-plane/bff/tests/test_bff_test_architecture.py (148 passed, 1 skipped)"
     ],
-    "pending": [
-      "Candidate admission and candidate-governed BFF tests still contain fixtures that write BFF run rows; migrate retained provenance controls to owner-provided runs and receipts."
-    ]
+    "pending": []
   },
-  "removed_test_subjects": []
+  "removed_test_subjects": [
+    "test_bff_to_owner_continuation_legacy_stages_not_reexecuted: subject was the BFF legacy run fallback in plan projection, which is deleted",
+    "store.update_run/get_run assertions in test_durable_dispatcher_outbox_lease_and_provenance and test_drain_outbox_partial_failure_and_outbox_status_update: subject was the deleted BFF run record update; outbox assertions retained",
+    "BFF run-store seeding in drain-outbox tests and _runs.clear() cache resets: subject was the deleted BFF run copy"
+  ],
+  "fixture_migration": "Candidate admission provenance and receipt negative controls now read owner-provided runs and receipts via tests/agora_owner_run_fake.py"
 }

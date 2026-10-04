@@ -458,24 +458,6 @@ def test_durable_dispatcher_outbox_lease_and_provenance(monkeypatch: pytest.Monk
     scope = FakeScope()
     run_id = "run-disp-001"
 
-    # Create run
-    run = {
-        "spec_version": "1.0",
-        "run_id": run_id,
-        "plan_id": plan["plan_id"],
-        "stage_id": "stage-vectorbt-001",
-        "stage_type": "prototype_backtest",
-        "tenant_id": scope.tenant_id,
-        "user_id": scope.user_id,
-        "execution_status": "queued",
-        "outcome": "pending",
-        "progress": {"phase": "queued", "percent": 0, "message": "Queued", "updated_at": "2026-08-13T00:00:00Z"},
-        "no_order_route_proof": "research_only_not_direct_action",
-        "created_at": "2026-08-13T00:00:00Z",
-        "updated_at": "2026-08-13T00:00:00Z",
-    }
-    store.create_run(run)
-
     # 1. Create outbox record directly on store
     outbox = store.create_outbox_record({
         "outbox_id": f"rob:{plan['plan_id']}:{plan['stages'][0]['stage_id']}:{run_id}",
@@ -535,25 +517,6 @@ def test_durable_dispatcher_outbox_lease_and_provenance(monkeypatch: pytest.Monk
         tenant_id=scope.tenant_id,
         user_id=scope.user_id,
     )
-    store.update_run(
-        run_id,
-        {
-            "execution_status": "succeeded",
-            "outcome": "pass",
-            "backend": {"effective": "vectorbt"},
-            "progress": {"percent": 100.0},
-        },
-        tenant_id=scope.tenant_id,
-        user_id=scope.user_id,
-    )
-
-    # Verify updated run in store
-    updated_run = store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
-    assert updated_run is not None
-    assert updated_run["execution_status"] == "succeeded"
-    assert updated_run["outcome"] == "pass"
-    assert updated_run["backend"]["effective"] == "vectorbt"
-    assert updated_run["progress"]["percent"] == 100.0
 
 
 def test_idempotency_conflict_and_cas_checks(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -701,9 +664,7 @@ def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) ->
     items = art_payload.get("items") or (art_payload.get("data", {}).get("items") if isinstance(art_payload.get("data"), dict) else [])
     assert len(items) >= 1
 
-    # 8. Prove BFF restart reconstitution: clear local BFF cache and re-read from research owner
-    if research_store and hasattr(research_store, "_runs"):
-        research_store._runs.clear()
+    # 8. Prove the BFF holds no run copy: re-read from research owner
     res_restart = client.get(
         f"/bff/agora/research-runs/{run_id}",
         headers=_headers(),
@@ -732,15 +693,6 @@ def test_drain_outbox_lease_conflict_and_duplicate_idempotency() -> None:
 
     stage = plan["stages"][0]
     run_id = "run-idemp-1"
-    store.create_run({
-        "run_id": run_id,
-        "plan_id": "plan-idemp-1",
-        "stage_id": "stage-1",
-        "tenant_id": scope.tenant_id,
-        "user_id": scope.user_id,
-        "execution_status": "queued",
-    })
-
     outbox_id = f"rob:{plan['plan_id']}:{stage['stage_id']}:{run_id}"
     store.create_outbox_record({
         "outbox_id": outbox_id,
@@ -813,15 +765,6 @@ def test_drain_outbox_partial_failure_and_outbox_status_update() -> None:
     store.create_plan(plan)
     stage = plan["stages"][0]
     run_id = "run-fail-1"
-    store.create_run({
-        "run_id": run_id,
-        "plan_id": "plan-fail-1",
-        "stage_id": "stage-fail-1",
-        "tenant_id": scope.tenant_id,
-        "user_id": scope.user_id,
-        "execution_status": "queued",
-    })
-
     outbox_id = f"rob:{plan['plan_id']}:{stage['stage_id']}:{run_id}"
     store.create_outbox_record({
         "outbox_id": outbox_id,
@@ -847,19 +790,11 @@ def test_drain_outbox_partial_failure_and_outbox_status_update() -> None:
         tenant_id=scope.tenant_id,
         user_id=scope.user_id,
     )
-    store.update_run(
-        run_id,
-        {"execution_status": "failed", "blocking_reasons": [err_msg]},
-        tenant_id=scope.tenant_id,
-        user_id=scope.user_id,
-    )
 
     outbox = store.get_outbox_record(outbox_id)
     assert outbox["status"] == "failed"
     assert outbox["blocking_reasons"] == [err_msg]
 
-    run = store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
-    assert run["execution_status"] == "failed"
 
 
 def test_drain_outbox_restart_persistence_and_stale_stage_idempotency() -> None:
@@ -878,15 +813,6 @@ def test_drain_outbox_restart_persistence_and_stale_stage_idempotency() -> None:
     store.create_plan(plan)
     stage = plan["stages"][0]
     run_id = "run-restart-1"
-    store.create_run({
-        "run_id": run_id,
-        "plan_id": "plan-restart-1",
-        "stage_id": "stage-1",
-        "tenant_id": scope.tenant_id,
-        "user_id": scope.user_id,
-        "execution_status": "queued",
-    })
-
     outbox_id = f"rob:{plan['plan_id']}:{stage['stage_id']}:{run_id}"
     store.create_outbox_record({
         "outbox_id": outbox_id,
@@ -956,9 +882,6 @@ def test_bff_plan_projects_all_owner_roots_and_terminal_state(monkeypatch: pytes
     assert {run["stage_id"] for run in owner_runs} == {"root-a", "root-b"}
     assert all(run["status"] == "completed" for run in owner_runs)
 
-    bff_store = client.router.research_store
-    bff_store._runs.clear()
-    bff_store._save_to_storage()
     listed = client.get(f"/bff/agora/research-plans/{plan_id}/runs", headers=_headers())
     assert listed.status_code == 200, listed.text
     assert {run["stage_id"] for run in listed.json()["items"]} == {"root-a", "root-b"}
@@ -1094,87 +1017,6 @@ def test_governed_dataset_reference_dispatch_to_research_owner(monkeypatch: pyte
     assert run_info["execution_status"] == "succeeded"
     assert run_info["outcome"] == "pass"
     assert run_info["provenance"] in ("real", "unavailable", "simulation")
-
-
-def test_bff_to_owner_continuation_legacy_stages_not_reexecuted(monkeypatch: pytest.MonkeyPatch) -> None:
-    client = _client(monkeypatch)
-    owner_client = getattr(client, "test_backend_client")
-
-    res_create = client.post(
-        "/bff/agora/workshops/ws-mixed-continuation/research-plans",
-        headers=_headers(idempotency_key="mixed-create"),
-        json={
-            "spec_version": "1.0",
-            "strategy_id": "strat-mixed",
-            "strategy_spec_registry_id": "reg-mixed",
-            "dataset": {"dataset_id": "ds-mixed", "strategy_id": "strat-mixed", "source_dataset_refs": ["ds-mixed"], "records": _sample_ohlcv_records()},
-            "stages": [
-                {"stage_id": "s1", "stage_type": "prototype_backtest", "status": "ready", "dependencies": [], "routing": {"backend_mode": "fixture", "preferred_backend": "vectorbt"}},
-                {"stage_id": "s2", "stage_type": "prototype_backtest", "status": "pending", "dependencies": ["s1"], "routing": {"backend_mode": "fixture", "preferred_backend": "vectorbt"}},
-            ],
-        },
-    )
-    assert res_create.status_code == 201, res_create.text
-    plan_id = res_create.json()["data"]["plan_id"]
-    etag = res_create.json()["meta"]["etag"]
-
-    res_app = client.post(
-        f"/bff/agora/research-plans/{plan_id}/approve",
-        headers=_headers(idempotency_key="mixed-approve", if_match=etag),
-    )
-    assert res_app.status_code == 200, res_app.text
-
-    store = client.router.research_store
-    legacy_run_id = "legacy-s1-completed-run"
-    store.create_run({
-        "run_id": legacy_run_id,
-        "plan_id": plan_id,
-        "stage_id": "s1",
-        "stage_type": "prototype_backtest",
-        "tenant_id": _TENANT_A,
-        "user_id": "agora-user-a",
-        "execution_status": "succeeded",
-        "outcome": "pass",
-        "artifact_refs": [{"artifact_id": "legacy-s1-artifact"}],
-    })
-
-    mid_plan = client.get(f"/bff/agora/research-plans/{plan_id}", headers=_headers())
-    assert mid_plan.status_code == 200
-    assert mid_plan.json()["data"]["status"] == "running"
-    stages_by_id = {s["stage_id"]: s["status"] for s in mid_plan.json()["data"]["stages"]}
-    assert stages_by_id["s1"] == "succeeded"
-    assert stages_by_id["s2"] == "pending"
-
-    res_dispatch = client.post(
-        f"/bff/agora/research-plans/{plan_id}/runs",
-        headers=_headers(idempotency_key="mixed-s2-dispatch", if_match=mid_plan.json()["meta"]["etag"]),
-    )
-    assert res_dispatch.status_code == 202, res_dispatch.text
-    s2_run_id = res_dispatch.json()["data"]["run_id"]
-
-    owner_run = _wait_owner_terminal(owner_client, s2_run_id)
-    assert owner_run["status"] == "completed"
-
-    owner_runs_resp = owner_client.get("/api/research-orchestrator/runs")
-    assert owner_runs_resp.status_code == 200
-    plan_owner_runs = [
-        r for r in owner_runs_resp.json()
-        if any(ref.get("type") == "research_plan" and ref.get("id") == plan_id for ref in r.get("input_refs") or [] if isinstance(ref, dict))
-    ]
-    assert len(plan_owner_runs) == 1, f"Expected exactly 1 owner run for s2, got: {plan_owner_runs}"
-    assert plan_owner_runs[0]["stage_id"] == "s2"
-
-    final_plan = client.get(f"/bff/agora/research-plans/{plan_id}", headers=_headers())
-    assert final_plan.status_code == 200
-    assert final_plan.json()["data"]["status"] == "completed"
-    assert legacy_run_id in final_plan.json()["data"]["run_ids"]
-    assert s2_run_id in final_plan.json()["data"]["run_ids"]
-
-    runs_resp = client.get(f"/bff/agora/research-plans/{plan_id}/runs", headers=_headers())
-    assert runs_resp.status_code == 200
-    item_ids = {r["run_id"] for r in runs_resp.json()["items"]}
-    assert legacy_run_id in item_ids
-    assert s2_run_id in item_ids
 
 
 def test_mounted_cancel_running_plan_reaches_owner_and_fences(monkeypatch: pytest.MonkeyPatch) -> None:
