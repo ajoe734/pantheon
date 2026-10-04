@@ -10,14 +10,49 @@ SERVICE_DIR = Path(__file__).resolve().parent
 if str(SERVICE_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICE_DIR))
 
-from adapter import TrainingConfig, run_qlib_workflow
 from adapter.qlib_adapter import (
     ActivationReadyGate,
     QlibLightGBMBackend,
     QlibWorkflowError,
     StubLightGBMBackend,
+    TrainingConfig,
     persist_qlib_run_artifacts,
+    run_qlib_workflow,
 )
+
+
+def init_qlib_runtime() -> None:
+    try:
+        from qlib.workflow import R
+
+        _ = R.exp_manager
+    except Exception:
+        import mlflow
+        import qlib
+        import tempfile
+
+        provider_dir = os.environ.get("QLIB_PROVIDER_URI") or tempfile.mkdtemp(
+            prefix="qlib-provider-"
+        )
+        mlflow_dir = Path(tempfile.mkdtemp(prefix="qlib-mlflow-"))
+        tracking_uri = os.environ.get("QLIB_TRACKING_URI") or f"sqlite:///{mlflow_dir / 'mlflow.db'}"
+        experiment_name = os.environ.get("QLIB_EXPERIMENT_NAME", "Experiment")
+        try:
+            client = mlflow.tracking.MlflowClient(tracking_uri)
+            if client.get_experiment_by_name(experiment_name) is None:
+                artifact_loc = f"file://{tempfile.mkdtemp(prefix='qlib-artifacts-')}"
+                client.create_experiment(experiment_name, artifact_location=artifact_loc)
+        except Exception:
+            pass
+        exp_manager = {
+            "class": "MLflowExpManager",
+            "module_path": "qlib.workflow.expm",
+            "kwargs": {
+                "uri": tracking_uri,
+                "default_exp_name": experiment_name,
+            },
+        }
+        qlib.init(provider_uri=provider_dir, exp_manager=exp_manager)
 
 
 def main() -> int:
@@ -49,6 +84,7 @@ def main() -> int:
     backend = QlibLightGBMBackend() if backend_name == "real" else StubLightGBMBackend()
     if backend_name == "real":
         print("QLIB_BACKEND=real: using QlibLightGBMBackend", file=sys.stderr)
+        init_qlib_runtime()
 
     enforce_floors = os.environ.get("QLIB_ENFORCE_DATA_FLOORS", "true").lower() in {
         "1",

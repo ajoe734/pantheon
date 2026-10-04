@@ -84,15 +84,11 @@ def _period_returns(observations: Sequence[Mapping[str, Any]]) -> list[float]:
 def _strategy_spec_id(experiment_run: Mapping[str, Any]) -> str:
     metadata = _mapping(experiment_run.get("metadata"))
     lineage = _mapping(metadata.get("lineage"))
-    for value in (
-        lineage.get("strategy_spec_artifact_id"),
-        lineage.get("source_strategy_spec_id"),
-        metadata.get("strategy_spec_artifact_id"),
-        metadata.get("source_strategy_spec_id"),
-    ):
-        text = str(value or "").strip()
-        if text:
-            return text
+    for src in (lineage, metadata):
+        for key in ("strategy_spec_artifact_id", "source_strategy_spec_id"):
+            val = str(src.get(key) or "").strip()
+            if val:
+                return val
     return ""
 
 
@@ -111,37 +107,27 @@ def _mean(values: Sequence[float]) -> float:
 
 
 def _stdev(values: Sequence[float]) -> float:
-    if len(values) < 2:
-        return 0.0
     avg = _mean(values)
-    return (sum((value - avg) ** 2 for value in values) / len(values)) ** 0.5
+    return (sum((v - avg) ** 2 for v in values) / len(values)) ** 0.5 if len(values) >= 2 else 0.0
 
 
 def _sharpe(returns: Sequence[float]) -> float:
     std = _stdev(returns)
-    if std <= 1e-12:
-        return 0.0
-    return (_mean(returns) / std) * (252**0.5)
+    return (_mean(returns) / std) * (252**0.5) if std > 1e-12 else 0.0
 
 
 def _sortino(returns: Sequence[float]) -> float:
-    downside = [min(value, 0.0) for value in returns if value < 0.0]
-    if not downside:
-        return 0.0
-    downside_dev = (sum(value**2 for value in downside) / len(downside)) ** 0.5
-    if downside_dev <= 1e-12:
-        return 0.0
-    return (_mean(returns) / downside_dev) * (252**0.5)
+    downside = [v for v in returns if v < 0.0]
+    dev = (sum(v**2 for v in downside) / len(downside)) ** 0.5 if downside else 0.0
+    return (_mean(returns) / dev) * (252**0.5) if dev > 1e-12 else 0.0
 
 
 def _max_drawdown(returns: Sequence[float]) -> float:
-    equity = 1.0
-    peak = 1.0
+    equity = peak = 1.0
     max_dd = 0.0
     for value in returns:
-        equity *= max(0.0, 1.0 + value)
-        if equity > peak:
-            peak = equity
+        equity = max(0.0, equity * (1.0 + value))
+        peak = max(peak, equity)
         if peak > 0.0:
             max_dd = max(max_dd, (peak - equity) / peak)
     return max_dd
@@ -152,12 +138,9 @@ def _pearson(xs: Sequence[float], ys: Sequence[float]) -> float:
         raise OosEvaluationError("prediction and actual_return lengths differ")
     if len(xs) < 2:
         return 0.0
-    mean_x = _mean(xs)
-    mean_y = _mean(ys)
-    num = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
-    den_x = sum((x - mean_x) ** 2 for x in xs) ** 0.5
-    den_y = sum((y - mean_y) ** 2 for y in ys) ** 0.5
-    denom = den_x * den_y
+    mx, my = _mean(xs), _mean(ys)
+    num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    denom = (sum((x - mx) ** 2 for x in xs) * sum((y - my) ** 2 for y in ys)) ** 0.5
     return num / denom if denom > 1e-12 else 0.0
 
 
