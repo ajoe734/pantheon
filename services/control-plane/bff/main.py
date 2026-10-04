@@ -790,15 +790,12 @@ _APPROVE_DEPLOYMENT_REQUIRED = {"deployment_plan_id", "approval_decision"}
 _VALID_APPROVAL_DECISIONS = {"approve", "reject"}
 _APPROVE_DECISION_REQUIRED = {"decision_id"}
 _REJECT_DECISION_REQUIRED = {"decision_id", "rejection_reason"}
-_REQUEST_APPROVAL_REVISION_REQUIRED = {"decision_id", "revision_notes"}
 _ESCALATE_DIFF_REQUIRED = {"plan_id", "escalation_reason"}
 _PAUSE_RUNTIME_REQUIRED = {"runtime_binding_id", "pause_action"}
 _VALID_PAUSE_ACTIONS = {"pause", "resume"}
 _PAUSE_EXECUTION_REQUIRED = {"pause_new_entries", "cancel_open_orders"}
 _ROLLBACK_REQUIRED = {"rollback_target_type", "target_id", "rollback_to_version"}
 _VALID_ROLLBACK_TARGET_TYPES = {"deployment", "runtime"}
-_APPROVE_ROLLBACK_REQUIRED = {"rollback_id"}
-_REJECT_ROLLBACK_REQUIRED = {"rollback_id", "rejection_reason"}
 _RISK_OFF_REQUIRED = {"reduce_exposure_pct"}
 _SAFE_MODE_LEVELS = {"soft"}
 _DRAWER_RUNTIME_COMMANDS = {
@@ -846,11 +843,7 @@ _EXECUTE_MUTATION_REQUIRED = {"decision_id"}
 _RECORD_SPONSOR_DECISION_REQUIRED = {"committee_id", "sponsor_decision", "rationale_ref"}
 _VALID_SPONSOR_DECISIONS = {"approved", "rejected", "conditional"}
 _HUMAN_GATE_DECISIONS_BY_COMMAND: Dict[CommandType, str] = {
-    CommandType.HUMAN_GATE_APPROVE: "approve",
-    CommandType.HUMAN_GATE_REJECT: "reject",
-    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: "request_more_evidence",
     CommandType.HUMAN_GATE_REVOKE: "revoke",
-    CommandType.HUMAN_GATE_EXTEND_TTL: "extend_ttl",
 }
 _HUMAN_GATE_REQUIRED = {"human_gate_item_id", "decision"}
 _VALID_HUMAN_GATE_DECISIONS = set(_HUMAN_GATE_DECISIONS_BY_COMMAND.values())
@@ -1666,7 +1659,6 @@ from .command_adapters.preconditions import (
     _validate_approve_deployment,
     _validate_approve_decision,
     _validate_reject_decision,
-    _validate_request_approval_revision,
     _validate_pause_runtime,
     _validate_pause_execution,
     _validate_escalate_diff,
@@ -1675,8 +1667,6 @@ from .command_adapters.preconditions import (
     _validate_hard_rollback,
     _validate_issue_safe_mode,
     _validate_execute_rollback,
-    _validate_approve_rollback,
-    _validate_reject_rollback,
     _validate_activate_kill_switch,
     _validate_approve_evolution_decision,
     _validate_execute_evolution_action,
@@ -1687,10 +1677,8 @@ from .command_adapters.preconditions import (
     _validate_review_mutation,
     _validate_execute_mutation,
     _validate_human_gate_decision,
-    _validate_quarterly_ranking_recommendation_submit,
     _check_binding_tenant_ownership,
     _enforce_ops_console_preconditions,
-    _validate_request_review,
     _validate_pause_paper_runtime,
     _validate_resume_paper_runtime,
     _validate_rebalance_proposal,

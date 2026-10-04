@@ -65,11 +65,7 @@ _FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
 _FINAL_COMMAND_ROUTE = "POST /bff/v1/commands"
 
 _HUMAN_GATE_DECISIONS_BY_COMMAND: Dict[CommandType, str] = {
-    CommandType.HUMAN_GATE_APPROVE: "approve",
-    CommandType.HUMAN_GATE_REJECT: "reject",
-    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: "request_more_evidence",
     CommandType.HUMAN_GATE_REVOKE: "revoke",
-    CommandType.HUMAN_GATE_EXTEND_TTL: "extend_ttl",
 }
 
 
@@ -172,55 +168,6 @@ def normalize_human_gate_command(cmd: OperatorCommand) -> OperatorCommand:
     return cmd
 
 
-def normalize_quarterly_recommendation_command(cmd: OperatorCommand) -> OperatorCommand:
-    if cmd.command != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT:
-        return cmd
-
-    params = dict(cmd.params or {})
-    recommendation_id = str(
-        params.get("recommendation_id")
-        or params.get("recommendationId")
-        or cmd.target.id
-        or ""
-    ).strip()
-    target_recommendation_id = str(cmd.target.id or "").strip()
-    if (
-        recommendation_id
-        and target_recommendation_id
-        and recommendation_id != target_recommendation_id
-    ):
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "recommendation_id does not match the command target",
-            "Use target.id as the authoritative quarterly recommendation id.",
-            precondition_failed="recommendation_id",
-        )
-    if recommendation_id:
-        params["recommendation_id"] = recommendation_id
-        params["recommendationId"] = recommendation_id
-
-    recommendation_action_id = str(
-        params.get("recommendation_action_id")
-        or params.get("recommendationActionId")
-        or params.get("actionId")
-        or params.get("action_id")
-        or ""
-    ).strip()
-    if recommendation_action_id and recommendation_action_id != "submit_recommendation":
-        params["recommendation_action_id"] = recommendation_action_id
-        params["recommendationActionId"] = recommendation_action_id
-
-    params["action_id"] = "submit_recommendation"
-    params["actionId"] = "submit_recommendation"
-    params.setdefault("audit_event", "quarterly_ranking.recommendation_submitted")
-    params.setdefault("auditEvent", "quarterly_ranking.recommendation_submitted")
-    params.setdefault("entity_type", "quarterly_ranking_recommendation")
-    params.setdefault("entity_id", recommendation_id or cmd.target.id)
-    cmd.params = params
-    return cmd
-
-
 def normalize_b5_command_payload(cmd: OperatorCommand) -> OperatorCommand:
     if cmd.command == CommandType.ADVANCE_LIFECYCLE:
         params = dict(cmd.params)
@@ -243,9 +190,7 @@ def normalize_b5_command_payload(cmd: OperatorCommand) -> OperatorCommand:
         )
         cmd.action = "AdvanceLifecycle"
         cmd.params = params
-    return normalize_quarterly_recommendation_command(
-        normalize_human_gate_command(cmd)
-    )
+    return normalize_human_gate_command(cmd)
 
 
 def normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorCommand:
@@ -418,7 +363,6 @@ _WRAPPER_CANONICALS = {
         "HumanGateExtendTtl": (),
     },
     "RiskAlertAction": {"AlertAcknowledge": ("acknowledge", "ack")},
-    "RankingAction": {"QuarterlyRankingRecommendationSubmit": ()},
 }
 _WRAPPER_VERB_ALIASES = {
     (wrapper, re.sub(r"[^a-z0-9]", "", verb.lower())): canonical

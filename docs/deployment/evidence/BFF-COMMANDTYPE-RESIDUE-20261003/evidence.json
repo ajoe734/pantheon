@@ -1,0 +1,11 @@
+{
+  "task_id": "BFF-COMMANDTYPE-RESIDUE-20261003",
+  "scope": "source/local validation only",
+  "classification": "All 15 listed values are retired at every mounted entry point and deleted from CommandType with their executors, adapters (capabilities/audit adapters removed), preconditions and assistant allowlist entries. POST /bff/v1/commands (RETIRED_COMMANDS or RequestApprovalRevision raw-verb check), /bff/audit/export (incidents router), /bff/mcp/servers/{id}/actions/{action} (tools router; its prior submit callable could not admit), /bff/tools|skills/.../actions (deprecated 410), /bff/ranking*, /bff/management/promotion-reviews/{id}/decisions and /submit (personas) return 410 before any admission. Nothing in the list is still served, so no catalog entries were added.",
+  "promote_evolution_candidate_live": "Catalog entry is CRITICAL with confirm token, approval and two-man, endpoint /bff/evolution-programs/{program_id}/actions/promote_candidate_live. The mounted path submits EvolutionProgramAction; require_final_command_preconditions now resolves the PromoteEvolutionCandidateLive entry for that action so admission returns 409 TWO_MAN_SIGNATURE_REQUIRED (test_live_candidate_promotion_requires_two_man_evidence_at_mounted_path).",
+  "tests": "test_action_catalog.py and test_action_catalog_safety_invariants.py pass in full; test_receipt_only_retirement.py (26 passed, includes fixed mounted 410 route tests, McpServerAction 410, enum removal); test_receipt_owner_routes.py live promotion test. Tests of removed executors were deleted (all failed at base).",
+  "baseline": "Full recursive BFF suite run on base and head in chunks; no new failures on head. Baseline failures (identical on both sides, e.g. test_bff_promotion_review_governance.py 13, psycopg-missing collection errors in tests/) remain; one timing flake test_mgmt_load_005 passed alone.",
+  "net_production_lines": "+28 / -765",
+  "revalidation_20261004": "On head a8f160fa4: test_action_catalog, test_receipt_only_retirement, test_receipt_owner_routes pass; 15 failures in test_command_executor/test_final_command_execution_bridge are environment/baseline (PANTHEON_EVOLUTION_API_URL unset; CommandAdapterService final_contract_idempotency kwarg) in lines this task does not touch.",
+  "independent_review": "pending"
+}

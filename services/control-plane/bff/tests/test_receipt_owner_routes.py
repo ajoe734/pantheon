@@ -266,3 +266,15 @@ def test_resource_dry_run_never_enqueues_or_writes_owner(mounted, owner, method,
     assert response.json()["meta"]["dryRun"] is True
     assert store.get_command_by_idempotency_key("dry-run", operator_id="tenant-a") is None
     assert json.loads(owner.read_text())["writes"] == 0
+
+
+def test_live_candidate_promotion_requires_two_man_evidence_at_mounted_path(mounted, owner):
+    client, store, ports = mounted
+    url = "/bff/evolution-programs/program-a/actions/promote_candidate_live"
+    headers = {"Authorization": _tok("tenant-a"), "Idempotency-Key": "promote-live"}
+    evidence = {"candidate_id": "cand-a", "confirmToken": "ct-1", "approvalId": "appr-1"}
+    response = client.post(url, json=evidence, headers=headers)
+    assert response.status_code == 409, response.text
+    assert "TWO_MAN_SIGNATURE_REQUIRED" in response.text
+    assert store.get_command_by_idempotency_key("promote-live", operator_id="tenant-a") is None
+    assert json.loads(owner.read_text())["writes"] == 0

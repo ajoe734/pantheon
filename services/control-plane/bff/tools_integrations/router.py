@@ -12,6 +12,7 @@ import logging
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from services.control_plane.bff.command_adapters.retired import reject_retired_command
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 from starlette.responses import JSONResponse
 
@@ -802,21 +803,7 @@ def create_integrations_router(
     ) -> Dict[str, Any]:
         identity = _extract(authorization)
         _require_mcp_write(identity)
-        reject_body_idempotency_key(payload, bff_error_fn=_err)
-        resolved_key = resolve_final_idempotency_key(
-            idempotency_key, x_idempotency_key, bff_error_fn=_err
-        )
-        clean_id = resolved_service.validate_mcp_server_id(server_id)
-        return resolved_service.tools_mcp_skills_action_command(
-            entity_type=ObjectType.MCP_SERVER,
-            entity_id=clean_id,
-            action_id=action_id,
-            resolved_key=resolved_key,
-            identity=identity,
-            payload=payload,
-            command_type=CommandType.MCP_SERVER_ACTION,
-            idempotency_store=resolved_service.mcp_server_bff_idempotency,
-        )
+        reject_retired_command("McpServerAction")
 
     @router.get("/bff/mcp/servers/{server_id}/tools")
     async def bff_list_mcp_server_tools(

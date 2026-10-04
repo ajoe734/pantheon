@@ -91,9 +91,24 @@ def default_app(tmp_path):
 def test_default_composed_retired_resource_has_no_receipt(default_app, method, path):
     client, deps = default_app
     assert client.request(method, path, json={}).status_code == 401
-    headers = {"Authorization": "Bearer tenant-a", "Idempotency-Key": "retired-resource"}
+    headers = {"Authorization": "Bearer admin-1:admin", "Idempotency-Key": "retired-resource"}
     for _ in range(2):
         response = client.request(method, path, json={}, headers=headers)
         assert response.status_code == 410, response.text
         assert "/bff/" in response.text
-    assert deps.command_store.get_command_by_idempotency_key("retired-resource", operator_id="tenant-a") is None
+    assert deps.command_store.get_command_by_idempotency_key("retired-resource", operator_id="admin-1") is None
+
+
+def test_retired_values_are_not_command_types():
+    from services.control_plane.bff.models import CommandType
+    retired = set(RETIRED_COMMANDS) | {"RequestApprovalRevision"}
+    assert not retired & {c.value for c in CommandType}
+
+
+def test_default_composed_mcp_server_action_is_retired_without_receipt(default_app):
+    client, deps = default_app
+    headers = {"Authorization": "Bearer admin-1:admin", "Idempotency-Key": "retired-mcp"}
+    response = client.post("/bff/mcp/servers/server-a/actions/sync", json={}, headers=headers)
+    assert response.status_code == 410, response.text
+    assert "McpServerAction" in response.text
+    assert deps.command_store.get_command_by_idempotency_key("retired-mcp", operator_id="admin-1") is None

@@ -283,7 +283,7 @@ def test_command_entry_points_forward_the_original_jwt(owner):
     assert stale.value.code == 409
     from fastapi import HTTPException
     with pytest.raises(HTTPException) as revision:
-        execute_command("cmd-3", CommandType.REQUEST_APPROVAL_REVISION,
+        execute_command("cmd-3", "RequestApprovalRevision",
                         {"decision_id": "a1", "expected_version": 2, "revision_notes": "rework"}, auth_token=token)
     assert revision.value.status_code == 410 and "RejectDecision with notes" in str(revision.value.detail)
 
