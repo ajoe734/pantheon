@@ -308,9 +308,9 @@ def _extract_tenant_id(
         return env
     if claim_tenant and ("*" in allowed_tenants or claim_tenant in allowed_tenants):
         return claim_tenant
-    for t in allowed_tenants:
-        if t != "*":
-            return t
+    concrete = [t for t in allowed_tenants if t != "*"]
+    if len(concrete) == 1:
+        return concrete[0]
     if "*" in allowed_tenants:
         return env or "pantheon-dev"
     raise _default_bff_error(403, ErrorCode.FORBIDDEN, "Tenant access denied", "Caller has no verified tenant authority", precondition_failed="tenant_scope")

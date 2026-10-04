@@ -1944,3 +1944,64 @@ def test_mounted_management_ai_ask_write_scopes_to_the_jwt_tenant(monkeypatch, t
             json={"question": "what is system health"},
         )
         assert res.status_code == 202
+
+
+def test_tenantless_structured_caller_never_dispatches(mounted, monkeypatch):
+    """Regress AC1/AC5: non-JWT/structured callers without trusted tenant must fail closed before downstream HTTP calls."""
+    client, store, _ = mounted
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    seen = []
+    original = urllib.request.urlopen
+
+    def capture(request, *args, **kwargs):
+        seen.append((request.method, request.full_url, request.get_header("X-tenant-id")))
+        return original(request, *args, **kwargs)
+
+    monkeypatch.setattr(urllib.request, "urlopen", capture)
+    response = client.post(
+        "/bff/v1/commands",
+        headers={"Authorization": "Bearer reviewer:operator:mfa", "Idempotency-Key": "reviewer-missing-tenant"},
+        json={"command": "CreateDeployment", "target": {"type": "Deployment", "id": "plan-a"},
+              "params": {}, "audit_context": {"reason": "missing tenant reviewer regression"}},
+    )
+    assert seen == [], f"Missing trusted tenant must fail before downstream calls, got {seen}"
+
+
+@pytest.mark.parametrize("primary,allowed,configured,requested,expected", [
+    ("tenant-a", ["tenant-a"], "environment-only", None, "tenant-a"),
+    (None, ["tenant-a", "tenant-b"], None, None, None),
+    (None, ["tenant-b", "tenant-a"], None, None, None),
+    (None, ["tenant-a", "tenant-b"], "tenant-b", None, "tenant-b"),
+    ("tenant-a", ["tenant-a", "tenant-b"], "tenant-b", None, "tenant-b"),
+    ("tenant-a", ["tenant-a", "tenant-b"], "tenant-b", "tenant-a", "tenant-a"),
+])
+def test_journal_verified_selection(monkeypatch, tmp_path, primary, allowed, configured, requested, expected):
+    """Mounted signed Journal selection: do not select arbitrary first allowlisted tenant."""
+    headers = _jwt_headers(monkeypatch, "tenant-a")
+    if configured is not None:
+        monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", configured)
+    now = int(time.time())
+    claims = {
+        "sub": "isolated-scope-operator",
+        "roles": ["operator"],
+        "allowed_tenants": allowed,
+        "iss": _ISSUER,
+        "aud": _AUDIENCE,
+        "iat": now,
+        "exp": now + 3600,
+    }
+    if primary is not None:
+        claims["tenant_id"] = primary
+    headers["Authorization"] = "Bearer " + encode_jwt_hs256(claims, secret=_SECRET)
+    body = {"title": "disposable selection probe", "body": "no hosted operation"}
+    if requested is not None:
+        body["tenant_id"] = requested
+    owner = build_decision_journal_write_owner(data_dir=str(tmp_path))
+    with _journal_client(owner) as client:
+        response = client.post("/bff/agora/journal", headers=headers, json=body)
+    observed = _stored_journal_tenants(owner)
+    if expected is None:
+        assert response.status_code == 403 and observed == [], (response.status_code, response.text, observed)
+    else:
+        assert response.status_code == 201 and observed == [expected], (response.status_code, response.text, observed)
+

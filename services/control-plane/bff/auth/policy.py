@@ -756,6 +756,8 @@ def bff_me_tenant_payload(
     env_default = first_nonblank(os.getenv("PANTHEON_BFF_TENANT_ID"), os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"), os.getenv("PANTHEON_TENANT_ID"))
     allowed_tenants = list(claim_allowed) if is_strict else (claim_allowed or env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [env_default or "pantheon-dev"])
 
+    concrete = [t for t in allowed_tenants if t != "*"]
+    single = concrete[0] if len(concrete) == 1 else ""
     clean_req = str(requested_tenant or "").strip()
     if clean_req:
         if "*" not in allowed_tenants and clean_req not in allowed_tenants:
@@ -766,11 +768,9 @@ def bff_me_tenant_payload(
     elif claim_default and (claim_default in allowed_tenants or "*" in allowed_tenants):
         effective_tenant = claim_default
     elif not is_strict:
-        effective_tenant = next((t for t in allowed_tenants if t != "*"), "") or (env_default or "pantheon-dev")
-    elif allowed_tenants:
-        effective_tenant = next((t for t in allowed_tenants if t != "*"), "")
+        effective_tenant = single or (env_default or "pantheon-dev")
     else:
-        effective_tenant = None
+        effective_tenant = single or None
 
     return {
         "id": effective_tenant, "requested_id": clean_req or None, "default_id": effective_tenant,
