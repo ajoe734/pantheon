@@ -29,10 +29,14 @@
       "result": "rendered valid compose configuration"
     },
     {
-      "command": "git diff --numstat 6037745e6 -- docker-compose.yml services/control-plane/persona/main.py services/persona/write_owner.py services/source_ingestion/routers/ingest_operations.py",
-      "result": "passed; 189 added, 48 deleted, net 141 production lines (budget 160)"
+      "command": "python3 -m pytest -q services/control-plane/bff/tests/test_persona_create_owner_contract.py",
+      "result": "31 passed in 11.82s"
+    },
+    {
+      "command": "git diff --numstat origin/dev -- docker-compose.yml services/control-plane/persona/main.py services/persona/write_owner.py services/source_ingestion/routers/ingest_operations.py",
+      "result": "passed; 200 added, 48 deleted, net 152 production lines (budget 160)"
     }
   ],
-  "production_net_lines": 141,
+  "production_net_lines": 152,
   "hosted_or_deployment_proof": false
 }

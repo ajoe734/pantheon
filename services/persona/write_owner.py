@@ -445,6 +445,12 @@ def resolve_persona_tenant_scope(
 ) -> tuple[PersonaInboundAuthority, str]:
     """Authenticate and select only a tenant admitted by verified claims."""
     authority = _authenticate_persona_mutation(authorization)
+    if authority.token_kind == "service":
+        default = str(os.getenv("PERSONA_DEFAULT_TENANT_ID") or os.getenv("PANTHEON_TENANT_ID") or "").strip()
+        chosen = str(requested_tenant or "").strip() or default
+        if not chosen or chosen == "*":
+            raise PersonaAuthorityError("TENANT_SCOPE_DENIED", "An explicitly admitted tenant is required", 403)
+        return authority, chosen
     claims = dict(authority.claims or {})
     primary = ("tenant_id", "tenantId", "tenant.id", "tid", "org_id", "organization.id", "organization_id")
     paths = ("allowed_tenants", "allowedTenants", "tenant_ids", "tenantIds", "tenants", *primary)
@@ -1766,6 +1772,11 @@ def create_app(
             if has_private: raise HTTPException(status_code=401, detail="UNAUTHORIZED: Missing authorization")
             return persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value)
         try:
+            authority = _authenticate_persona_mutation(authorization)
+            if authority.token_kind == "service" and not tenant_id:
+                return persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value)
+            if not tenant_id and not has_private:
+                return persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value)
             _, admitted = resolve_persona_tenant_scope(authorization, tenant_id)
             return [r for r in persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value) if r.tenant_id == admitted or not (r.metadata or {}).get("trade_reflections")]
         except PersonaAuthorityError as exc:
