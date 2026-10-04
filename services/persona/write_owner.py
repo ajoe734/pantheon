@@ -747,6 +747,11 @@ class AdvancePersonaLifecycleRequest(BaseModel):
     governance_decision_id: str | None = Field(default=None, min_length=1)
 
 
+def _is_private_persona(record: Any) -> bool:
+    meta = (record.metadata if isinstance(record, PersonaBody) else (record.get("metadata") if isinstance(record, dict) else None)) or {}
+    return bool(meta.get("trade_reflections") or meta.get("trade_reflection_idempotency"))
+
+
 class PersistentPersonaOwner:
     """Persona registry application service over one persistent owner store."""
 
@@ -796,17 +801,14 @@ class PersistentPersonaOwner:
         return PersonaBody.model_validate(record)
 
     def list(
-        self,
-        *,
-        lifecycle_state: str | None = None,
-        status_value: str | None = None,
+        self, *, lifecycle_state: str | None = None, status_value: str | None = None, tenant_id: str | None = None,
     ) -> list[PersonaBody]:
-        records = [PersonaBody.model_validate(record) for record in self._records.list_all()]
-        if lifecycle_state is not None:
-            records = [item for item in records if item.lifecycle_state == lifecycle_state]
-        if status_value is not None:
-            records = [item for item in records if item.status == status_value]
+        raw = [r for r in self._records.list_all() if tenant_id is None or r.get("tenant_id") == tenant_id or not _is_private_persona(r)]
+        records = [PersonaBody.model_validate(r) for r in raw]
+        if lifecycle_state is not None: records = [i for i in records if i.lifecycle_state == lifecycle_state]
+        if status_value is not None: records = [i for i in records if i.status == status_value]
         return sorted(records, key=lambda item: item.persona_id)
+
 
     def patch(self, persona_id: str, request: PatchPersonaRequest) -> PersonaBody:
         for _attempt in range(4):
@@ -1767,7 +1769,7 @@ def create_app(
         lifecycle_state: str | None = Query(default=None), status_value: str | None = Query(default=None, alias="status"),
         authorization: str | None = Header(default=None), tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
     ) -> list[PersonaBody]:
-        has_private = any(bool((r.get("metadata") or {}).get("trade_reflections")) for r in persistent_owner._records.list_all())
+        has_private = any(_is_private_persona(r) for r in persistent_owner._records.list_all())
         if not authorization:
             if has_private: raise HTTPException(status_code=401, detail="UNAUTHORIZED: Missing authorization")
             return persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value)
@@ -1778,7 +1780,7 @@ def create_app(
             if not tenant_id and not has_private:
                 return persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value)
             _, admitted = resolve_persona_tenant_scope(authorization, tenant_id)
-            return [r for r in persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value) if r.tenant_id == admitted or not (r.metadata or {}).get("trade_reflections")]
+            return persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value, tenant_id=admitted)
         except PersonaAuthorityError as exc:
             raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
 
@@ -1786,7 +1788,7 @@ def create_app(
     def get_persona(persona_id: str, authorization: str | None = Header(default=None)) -> PersonaBody:
         raw = persistent_owner._records.get(persona_id)
         if raw is None: raise HTTPException(status_code=404, detail=f"Persona {persona_id!r} not found")
-        has_private = bool((raw.get("metadata") or {}).get("trade_reflections"))
+        has_private = _is_private_persona(raw)
         if not authorization:
             if has_private: raise HTTPException(status_code=401, detail="UNAUTHORIZED: Missing authorization")
             return persistent_owner.get(persona_id)
