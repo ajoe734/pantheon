@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 
 import pytest
 
@@ -10,6 +11,7 @@ from services.control_plane.governance.approval_decision import ApprovalDecision
 from services.control_plane.bff import test_bff_promotion_review_governance as gov_test
 from services.control_plane.bff.pm12 import evaluator_results
 from services.control_plane.bff.ports.ooda_management import ManagementReviewQueuePort
+from services.runtime_auth_inbound import encode_jwt_hs256
 
 HEADERS = gov_test.OPERATOR_HEADERS
 TENANT = gov_test._PM12_ELIGIBLE_TENANT_ID
@@ -227,3 +229,34 @@ def test_real_approval_decision_model_serialization_is_readable(saved_proposal):
         )
         store.get_approval_decision = lambda decision_id: model.to_dict()
         assert _both(client)[1]["status"] == "pending_human_gate"
+
+
+@pytest.mark.parametrize("claims,visible", [
+    ({"tenant_id": TENANT, "allowed_tenants": [TENANT]}, True),
+    ({"tenant_id": "foreign-tenant", "allowed_tenants": ["foreign-tenant"]}, False),
+    ({}, False),
+])
+def test_signed_caller_tenant_scope_ignores_environment_default(saved_proposal, monkeypatch, claims, visible):
+    with gov_test._isolated_client() as (client, store, _commands):
+        ref = saved_proposal(client, {"decision_id": "pev-1", "to_state": "frozen"})
+        reads = []
+        store.get_approval_decision = lambda decision_id: reads.append(decision_id) or _decision(ref)
+        secret, issuer, audience = "scope-secret", "scope-issuer", "pantheon-bff"
+        for name, value in (("PANTHEON_BFF_AUTH_STUB", ""), ("PANTHEON_BFF_AUTH_MODE", "strict"),
+                            ("PANTHEON_BFF_JWT_SECRET", secret), ("PANTHEON_BFF_JWT_ISSUER", issuer),
+                            ("PANTHEON_BFF_JWT_AUDIENCE", audience), ("PANTHEON_BFF_MFA_REQUIRED", "false"),
+                            ("PANTHEON_BFF_TENANT_ID", TENANT)):
+            monkeypatch.setenv(name, value)
+        now = int(time.time())
+        token = encode_jwt_hs256(
+            {"sub": "caller", "roles": ["operator"], **claims, "iss": issuer, "aud": audience, "iat": now, "exp": now + 3600},
+            secret=secret,
+        )
+        headers = {"Authorization": f"Bearer {token}"}
+        for path, params in ((URL, {"quarter": "2026-Q1", "page_size": 50}), (REVIEWS, {"quarter": "2026-Q1"})):
+            response = client.get(path, headers=headers, params=params)
+            if visible:
+                assert response.status_code == 200, response.text
+            else:
+                assert response.status_code in (200, 403) and not (response.json().get("data") or {}).get("items")
+        assert bool(reads) is visible

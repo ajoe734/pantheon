@@ -1,0 +1,11 @@
+{
+  "task_id": "PERSONA-PRIVATE-TENANT-SCOPE-20261003",
+  "scope": "source/local validation only; no hosted or VM acceptance claimed",
+  "change": "personas/service.py:_bff_me_tenant_payload no longer duplicates tenant fallback; it delegates to auth.policy.bff_me_tenant_payload and raises 403 tenant_scope when the verified selection has no tenant, before any private owner read.",
+  "tests": {
+    "added": "test_persona_governance_owner_readback.py::test_signed_caller_tenant_scope_ignores_environment_default (real signed JWT; same-tenant visible with owner reads; foreign-tenant and tenantless with active matching env default disclose nothing and make zero owner reads, on mounted ranking and promotion-review handlers)",
+    "red_without_fix": "tenantless case fails on base service.py (1 failed, 2 passed)",
+    "green_with_fix": "persona_governance_owner_readback + persona_evaluator_mounted_ranking + persona_provisioning_route_security + tenant_fallback_audit all pass; test_bff_promotion_review_governance.py has 13 failures identical on base (retired submit route, pre-existing, unrelated)"
+  },
+  "production_net_lines": "-48 (6 insertions, 54 deletions in service.py)"
+}
