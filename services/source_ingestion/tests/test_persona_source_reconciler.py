@@ -253,6 +253,62 @@ def test_explicit_finmind_preference_with_configured_key_obeys_policy(
     )
 
 
+@pytest.mark.parametrize("http_status", [200, 401, 403])
+def test_explicit_keyed_selection_does_not_claim_credentials_or_data_are_live(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, http_status: int,
+) -> None:
+    import json
+    from unittest.mock import MagicMock
+    from urllib.error import HTTPError
+    from services.source_ingestion.connectors import finmind_taiwan as finmind
+
+    token = "usable-test-token" if http_status == 200 else "expired-test-token"
+    monkeypatch.setenv("FINMIND_API_TOKEN", token)
+    reconciler, connector_store, _ = _reconciler(tmp_path)
+    result = reconciler.reconcile_persona(_persona())
+    config = connector_store.get_config(result.actions[0].connector_id)
+    assert config.connector.connector_id == "tw-finmind-datasets"
+    fetcher = finmind.FinMindLiveFetcher(secret_ref_id=config.connector.secret_ref_id)
+    response = MagicMock()
+    response.__enter__.return_value = response
+    response.status = http_status
+    response.headers = {}
+    response.read.return_value = json.dumps({"status": 200, "data": [
+        {"date": "2026-10-02", "stock_id": "2330", "close": 955.0},
+    ]}).encode()
+
+    def local_provider(request, **kwargs):
+        assert request.get_header("Authorization") == f"Bearer {token}"
+        if http_status != 200:
+            raise HTTPError(request.full_url, http_status, "Expired credential", {}, None)
+        return response
+
+    monkeypatch.setattr(finmind, "open_external_url", local_provider)
+    if http_status == 200:
+        payload, _ = fetcher.fetch_dataset(config.fetch["request"]["dataset"], symbol="2330")
+        records = finmind.FinMindTaiwanDatasetAdapter().records_from_data_payload(
+            config.fetch["request"]["dataset"], payload,
+        )
+        assert records[0].metadata["normalized_row"]["close"] == 955.0
+        assert records[0].metadata["provider"] == "FinMind"
+    else:
+        with pytest.raises(finmind.FinMindCredentialError, match=f"HTTP {http_status}"):
+            fetcher.fetch_dataset(config.fetch["request"]["dataset"], symbol="2330")
+    assert reconciler.snapshot_store.reload() == {}
+    assert token not in json.dumps(result.to_dict())
+
+
+def test_public_only_policy_rejects_a_sole_keyed_selection(tmp_path: Path) -> None:
+    reconciler, connector_store, schedule_store = _reconciler(tmp_path)
+    persona = _persona()
+    persona["required_data_sources"][0]["policy_gates"].append("public-source-only")
+    result = reconciler.reconcile_persona(persona)
+    assert result.actions[0].connector_action == "policy_gate_failed"
+    assert result.actions[0].details["failed_policy_gates"] == ["public-source-only"]
+    assert connector_store.list_configs() == []
+    assert schedule_store.list_schedules() == []
+
+
 def test_controller_owned_connector_drift_is_repaired(tmp_path: Path) -> None:
     reconciler, connector_store, _ = _reconciler(tmp_path)
     persona = _persona(connector_candidates=[])

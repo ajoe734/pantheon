@@ -467,8 +467,11 @@ class SourceProvisioningReconciler:
                 continue
             existing = self.connector_store.get_config(candidate)
             factory = self.provider_factories.get(candidate)
-            connector = existing.connector if existing else factory(candidate).connector() if factory else None
-            if connector is None:
+            if existing is not None:
+                connector = existing.connector
+            elif factory is not None:
+                connector = factory(candidate).connector()
+            else:
                 continue
             # Configuration availability is not proof of live provider health.
             if candidate == "tw-finmind-datasets" and not (
