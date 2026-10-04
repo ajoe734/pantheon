@@ -68,19 +68,6 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         required_roles=["approver"],
         description="Reject a pending governance decision.",
     ),
-    BffActionCatalogEntry(
-        action_id="RequestApprovalRevision",
-        entity_type="ApprovalDecision",
-        endpoint=_FINAL_COMMAND_ENDPOINT,
-        risk_level=RiskLevel.LOW,
-        requires_approval=False,
-        requires_confirm_token=False,
-        requires_two_man=False,
-        cooldown_seconds=0,
-        idempotency_required=True,
-        required_roles=["approver", "operator"],
-        description="Request a revision to a pending approval before it can be accepted.",
-    ),
     # ------------------------------------------------------------------ #
     # Runtime control
     # ------------------------------------------------------------------ #
@@ -601,11 +588,11 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
     BffActionCatalogEntry(
         action_id="PromoteEvolutionCandidateLive",
         entity_type="EvolutionProgram",
-        endpoint=_FINAL_COMMAND_ENDPOINT,
+        endpoint="/bff/evolution-programs/{program_id}/actions/promote_candidate_live",
         risk_level=RiskLevel.CRITICAL,
         requires_approval=True,
-        requires_confirm_token=False,
-        requires_two_man=False,
+        requires_confirm_token=True,
+        requires_two_man=True,
         cooldown_seconds=60,
         idempotency_required=True,
         required_roles=["approver", "admin"],

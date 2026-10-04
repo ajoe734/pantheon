@@ -660,8 +660,8 @@ def _human_inbox_submission_projection_from_record(
 def _human_inbox_decision_recommendation_id(command: Dict[str, Any]) -> str:
     command_type = str(command.get("type") or "")
     if command_type not in {
-        CommandType.HUMAN_GATE_APPROVE.value,
-        CommandType.HUMAN_GATE_REJECT.value,
+        "HumanGateApprove",
+        "HumanGateReject",
     }:
         return ""
     target = command.get("target") if isinstance(command.get("target"), dict) else {}
@@ -727,9 +727,9 @@ def _human_inbox_decision_projection_from_record(command: Dict[str, Any]) -> Opt
     if decision not in _PROMOTION_REVIEW_DECISIONS:
         return None
     command_type = str(command.get("type") or "")
-    if command_type == CommandType.HUMAN_GATE_REJECT.value and decision != "reject":
+    if command_type == "HumanGateReject" and decision != "reject":
         return None
-    if command_type == CommandType.HUMAN_GATE_APPROVE.value and decision not in {
+    if command_type == "HumanGateApprove" and decision not in {
         "approve",
         "approve_with_conditions",
     }:
@@ -882,7 +882,7 @@ def _submitted_promotion_review_records(
         all_cmds = []
 
     for command in all_cmds:
-        if command.get("type") == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+        if command.get("type") == "QuarterlyRankingRecommendationSubmit":
             recommendation = _human_inbox_sanitize_promotion_snapshot(command)
             if recommendation is not None:
                 review_id = _promotion_review_record_revision_id(command)

@@ -145,9 +145,7 @@ def test_command_adapter_validators_registry():
     assert isinstance(_VALIDATORS, dict)
     assert CommandType.PAUSE_PAPER_RUNTIME in _VALIDATORS
     assert CommandType.PAUSE_RUNTIME in _VALIDATORS
-    assert CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT in _VALIDATORS
-    assert CommandType.HUMAN_GATE_APPROVE in _VALIDATORS
-    assert CommandType.HUMAN_GATE_REJECT in _VALIDATORS
+    assert not {"QuarterlyRankingRecommendationSubmit", "HumanGateApprove", "HumanGateReject"} & {c.value for c in _VALIDATORS}
     assert CommandType.ACTIVATE_KILL_SWITCH in _VALIDATORS
 
 
@@ -271,7 +269,7 @@ def test_promotion_review_submission_and_decision_explicit_command_store():
 
     submit_cmd = {
         "command_id": "cmd-submit-001",
-        "type": CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value,
+        "type": "QuarterlyRankingRecommendationSubmit",
         "status": "completed",
         "submitted_at": "2026-09-23T10:00:00Z",
         "audit": {"operator_id": "admin-1"},
@@ -301,7 +299,7 @@ def test_promotion_review_submission_and_decision_explicit_command_store():
 
     approve_cmd = {
         "command_id": "cmd-approve-001",
-        "type": CommandType.HUMAN_GATE_APPROVE.value,
+        "type": "HumanGateApprove",
         "status": "completed",
         "submitted_at": "2026-09-23T11:00:00Z",
         "audit": {"operator_id": "reviewer-1"},

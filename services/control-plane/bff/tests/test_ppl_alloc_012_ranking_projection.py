@@ -2690,7 +2690,7 @@ def test_legacy_promotion_submit_remains_read_only_when_current_revision_is_subm
             }
             _active.command_store.submit_command(
                 command_id="cmd-ppl-alloc-012-legacy-submit",
-                command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+                command_type="QuarterlyRankingRecommendationSubmit",
                 target=TargetObject(
                     type=ObjectType.RANKING,
                     id=recommendation_id,

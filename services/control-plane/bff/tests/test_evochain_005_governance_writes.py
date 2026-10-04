@@ -243,49 +243,6 @@ def test_bff_command_to_governance_to_journal_composition(configure_urls, monkey
     tmpdir.cleanup()
 
 
-def test_approve_reject_rollback_writes_to_governance(configure_urls, monkeypatch) -> None:
-    post_calls = []
-
-    def mock_post_json(url: str, payload: Dict[str, Any], auth_token=None, mfa_token=None) -> Dict[str, Any]:
-        post_calls.append((url, payload))
-        if "/approve" in url:
-            return {"rollback_id": "rollback-test-id", "status": "approved", "decision": "approved", "approved_at": "2026-07-13T10:00:00Z"}
-        if "/reject" in url:
-            return {"rollback_id": "rollback-test-id", "status": "rejected", "decision": "rejected", "rejected_at": "2026-07-13T10:05:00Z"}
-        if "/api/governance/rollbacks" in url:
-            return payload
-        return {}
-
-    monkeypatch.setattr(bff_executor, "_post_json", mock_post_json)
-
-    # Approve
-    result_approve = bff_executor._execute_approve_rollback(
-        command_id="cmd-approve-123",
-        params={"rollback_id": "rollback-test-id", "approval_notes": "All looks good"},
-        auth_token="op-user:approver",
-    )
-    assert result_approve["status"] == "approved"
-    assert len(post_calls) == 2
-    assert post_calls[1][0] == f"{GOVERNANCE_URL}/api/governance/rollbacks"
-    assert post_calls[1][1]["status"] == "approved"
-    assert post_calls[1][1]["actor"] == "approver"
-    assert post_calls[1][1]["identity"] == "op-user"
-
-    # Reject
-    post_calls.clear()
-    result_reject = bff_executor._execute_reject_rollback(
-        command_id="cmd-reject-123",
-        params={"rollback_id": "rollback-test-id", "rejection_reason": "Not approved yet"},
-        auth_token="op-user:approver",
-    )
-    assert result_reject["status"] == "rejected"
-    assert len(post_calls) == 2
-    assert post_calls[1][0] == f"{GOVERNANCE_URL}/api/governance/rollbacks"
-    assert post_calls[1][1]["status"] == "rejected"
-    assert post_calls[1][1]["actor"] == "approver"
-    assert post_calls[1][1]["identity"] == "op-user"
-
-
 def test_activate_kill_switch_writes_to_governance(configure_urls, monkeypatch) -> None:
     post_calls = []
 

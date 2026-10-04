@@ -364,18 +364,12 @@ class StrategyCommandAdapter(DomainCommandAdapter):
 
     _HANDLED_COMMANDS = {
         "StrategyAction",
-        "RankingFormulaAction",
-        "RankingAction",
-        "QuarterlyRankingRecommendationSubmit",
     }
 
     _HANDLED_ENTITIES = {
         "strategy",
         "strategyspec",
         "strategy-spec",
-        "rankingformula",
-        "ranking-formula",
-        "ranking",
     }
 
     def can_handle(self, command_type: str, entity_type: str, action_id: str) -> bool:
@@ -397,10 +391,6 @@ class StrategyCommandAdapter(DomainCommandAdapter):
 
         if entity_type in {"strategy", "strategyspec", "strategy-spec"} or command_type == "StrategyAction":
             return self._execute_strategy_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif entity_type in {"rankingformula", "ranking-formula"} or command_type == "RankingFormulaAction":
-            return self._execute_formula_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif entity_type == "ranking" or command_type in {"RankingAction", "QuarterlyRankingRecommendationSubmit"}:
-            return self._execute_ranking_action(command_id, entity_id, action_id or command_type, params, auth_token=auth_token, mfa_token=mfa_token)
         else:
             raise ActionUnavailableError(
                 f"Strategy adapter cannot route action {action_id!r} on entity {entity_id!r}",
@@ -1024,26 +1014,3 @@ class StrategyCommandAdapter(DomainCommandAdapter):
             log.warning("Failed to readback command receipt for %s/%s: %s", registry_id, command_id, exc)
             return None, None
 
-    def _execute_formula_action(
-        self,
-        command_id: str,
-        formula_id: str,
-        action_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        from .retired import reject_retired_command
-        reject_retired_command("RankingFormulaAction")
-
-    def _execute_ranking_action(
-        self,
-        command_id: str,
-        ranking_id: str,
-        action_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        from .retired import reject_retired_command
-        reject_retired_command("RankingAction")
