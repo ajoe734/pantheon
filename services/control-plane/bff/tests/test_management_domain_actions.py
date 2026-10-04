@@ -32,8 +32,6 @@ from services.control_plane.bff.command_adapters import (
     PersonaCommandAdapter,
     RuntimeCommandAdapter,
     StrategyCommandAdapter,
-    CapabilitiesCommandAdapter,
-    AuditCommandAdapter,
     dispatch_domain_command,
     find_adapter,
 )
@@ -203,25 +201,9 @@ class TestActionToOwnerMatrix(unittest.TestCase):
         adapter = find_adapter("StrategyAction", "strategy", "submit_review")
         self.assertIsInstance(adapter, StrategyCommandAdapter)
 
-        adapter2 = find_adapter("RankingFormulaAction", "rankingformula", "publish")
-        self.assertIsInstance(adapter2, StrategyCommandAdapter)
-
-        adapter3 = find_adapter("RankingAction", "ranking", "promote")
-        self.assertIsInstance(adapter3, StrategyCommandAdapter)
-
-    def test_capabilities_adapter_mapping(self):
-        adapter = find_adapter("ToolAction", "tool", "health_check")
-        self.assertIsInstance(adapter, CapabilitiesCommandAdapter)
-
-        adapter2 = find_adapter("McpServerAction", "mcpserver", "test_connection")
-        self.assertIsInstance(adapter2, CapabilitiesCommandAdapter)
-
-        adapter3 = find_adapter("SkillAction", "skill", "health_check")
-        self.assertIsInstance(adapter3, CapabilitiesCommandAdapter)
-
-    def test_audit_adapter_mapping(self):
-        adapter2 = find_adapter("AuditExport", "auditexport", "export")
-        self.assertIsInstance(adapter2, AuditCommandAdapter)
+    def test_retired_commands_have_no_adapter(self):
+        for command in ("RankingFormulaAction", "RankingAction", "ToolAction", "McpServerAction", "SkillAction", "AuditExport"):
+            self.assertIsNone(find_adapter(command, "ranking", "publish"), command)
 
 
 class TestDomainExecutionAndReadback(unittest.TestCase):
@@ -503,80 +485,8 @@ class TestDomainExecutionAndReadback(unittest.TestCase):
         self.assertEqual(error["code"], "BINDING_MISMATCH")
 
 
-    @patch("services.control_plane.bff.command_adapters.governance_adapter.http_request_json")
-    def test_governance_human_gate_approve(self, mock_http):
-        mock_http.return_value = {
-            "status": "executed",
-            "state": "approved",
-        }
-
-        result = execute_command(
-            "cmd-gate-appr-01",
-            CommandType.HUMAN_GATE_APPROVE,
-            {
-                "entity_type": "HumanGateItem",
-                "gate_id": "gate-xyz",
-                "reason": "Risk reviewed and authorized",
-            },
-        )
-
-        self.assertEqual(result["status"], "executed")
-        self.assertEqual(result["authoritative_readback"]["state"], "approved")
-
-
 class TestUnavailableActionsAndSafetyPosture(unittest.TestCase):
     """Verifies that unsafe/unbacked capability actions fail closed with typed errors."""
-
-    def test_tool_execute_action_raises_typed_unavailable_error(self):
-        status, result, error = execute_command_with_status(
-            "cmd-tool-exec-01",
-            CommandType.TOOL_ACTION,
-            {
-                "entity_type": "tool",
-                "entity_id": "tool-bash",
-                "action_id": "execute",
-            },
-        )
-
-        self.assertEqual(status, CommandStatus.FAILED)
-        self.assertIsNone(result)
-        self.assertIsNotNone(error)
-        self.assertEqual(error["code"], "CAPABILITY_ACTION_UNAVAILABLE")
-        self.assertFalse(error["retryable"])
-        self.assertFalse(error["userActionable"])
-        self.assertIn("disabled in product runtime", error["message"])
-
-    def test_skill_publish_action_raises_typed_unavailable_error(self):
-        status, result, error = execute_command_with_status(
-            "cmd-skill-pub-01",
-            CommandType.SKILL_ACTION,
-            {
-                "entity_type": "skill",
-                "entity_id": "skill-auto-trade",
-                "action_id": "publish",
-            },
-        )
-
-        self.assertEqual(status, CommandStatus.FAILED)
-        self.assertIsNone(result)
-        self.assertEqual(error["code"], "CAPABILITY_ACTION_UNAVAILABLE")
-
-    def test_tool_health_check_safe_probe_succeeds(self):
-        status, result, error = execute_command_with_status(
-            "cmd-tool-probe-01",
-            CommandType.TOOL_ACTION,
-            {
-                "entity_type": "tool",
-                "entity_id": "tool-market-feed",
-                "action_id": "health_check",
-            },
-        )
-
-        self.assertEqual(status, CommandStatus.EXECUTED)
-        self.assertIsNone(error)
-        self.assertIsNotNone(result)
-        self.assertEqual(result["status"], "healthy")
-        self.assertEqual(result["authoritative_readback"]["status"], "healthy")
 
     def test_unregistered_unknown_domain_action_fails_closed(self):
         status, result, error = execute_command_with_status(

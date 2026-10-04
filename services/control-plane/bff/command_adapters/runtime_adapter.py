@@ -62,8 +62,6 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
         "ResumePaperRuntime",
         "ExecuteRollback",
         "HardRollback",
-        "ApproveRollback",
-        "RejectRollback",
         "IssueSafeMode",
         "ActivateKillSwitch",
         "IssueRiskOff",
@@ -112,10 +110,6 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
             return self._execute_safe_mode(command_id, params)
         elif command_type in {"ExecuteRollback", "HardRollback"}:
             return self._execute_rollback(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"ApproveRollback"}:
-            return self._execute_approve_rollback(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type in {"RejectRollback"}:
-            return self._execute_reject_rollback(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type in {"ActivateKillSwitch", "IssueRiskOff"}:
             return self._execute_kill_switch(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
         else:
@@ -512,26 +506,6 @@ class RuntimeCommandAdapter(DomainCommandAdapter):
                 "tracking_url": body.get("tracking_url"),
             },
         )
-
-    def _execute_approve_rollback(
-        self,
-        command_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        from .retired import reject_retired_command
-        reject_retired_command("ApproveRollback")
-
-    def _execute_reject_rollback(
-        self,
-        command_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        from .retired import reject_retired_command
-        reject_retired_command("RejectRollback")
 
     def _execute_kill_switch(
         self,

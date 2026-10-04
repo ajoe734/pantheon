@@ -26,19 +26,11 @@ from ..models import RiskLevel
 # ---------------------------------------------------------------------------
 ASSISTANT_TOOL_ALLOWLIST: frozenset[str] = frozenset({
     # Low-risk
-    "AuditExport",
     "EscalateDiff",
-    "HumanGateRequestMoreEvidence",
-    "HumanGateExtendTtl",
-    "RankingFormulaAction",
-    "RankingAction",
     # Medium-risk governed resource actions
     "PersonaAction",
     "StrategyAction",
     "CapitalPoolAction",
-    "ToolAction",
-    "McpServerAction",
-    "SkillAction",
     "ReviewAction",
     "ExperimentAction",
     "JobAction",

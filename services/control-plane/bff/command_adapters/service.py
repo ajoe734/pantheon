@@ -125,8 +125,6 @@ def stored_command_params(
         cmd.command,
         cmd.action or cmd.params.get("action_id") or cmd.params.get("actionId") or cmd.command.value,
     )
-    if cmd.command == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT:
-        canonical_action_id = "submit_recommendation"
     canonical_paper = cmd.command in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}
     if canonical_paper:
         canonical_action_id = cmd.command.value
@@ -436,7 +434,7 @@ class CommandAdapterService:
             )
 
     def get_action_catalog(self, identity: Optional[OperatorIdentity] = None) -> BffActionCatalogResponse:
-        return BffActionCatalogResponse(catalog=[e for e in get_action_catalog().catalog if e.action_id != "RequestApprovalRevision"])
+        return BffActionCatalogResponse(catalog=get_action_catalog().catalog)
 
     def get_command_status(self, command_id: str, identity: Optional[OperatorIdentity] = None) -> CommandStatusResponse:
         clean_id = str(command_id or "").strip()

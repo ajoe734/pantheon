@@ -585,8 +585,7 @@ def test_bff_audit_endpoints() -> None:
 
     # 5. POST /bff/audit/export
     resp5 = client.post("/bff/audit/export", json={"scope": "all"})
-    assert resp5.status_code == 202
-    assert resp5.json()["status"] == "accepted"
+    assert resp5.status_code == 410
 
 
 def test_fast_path_semantic_commands() -> None:

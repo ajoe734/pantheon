@@ -240,25 +240,6 @@ def _build_test_app() -> FastAPI:
             server_generated_target=not client_provided_id,
         )
 
-    @app.post("/bff/audit/export", status_code=202)
-    async def _audit_export(
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    ):
-        identity = _test_extract_identity(authorization)
-        return _test_sem_command_response(
-            command_type=CommandType.AUDIT_EXPORT,
-            target_type=ObjectType.AUDIT_EXPORT,
-            target_id=str(payload.get("target_type") or payload.get("targetType") or "audit-export"),
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            status_code=202,
-        )
-
     return app
 
 
@@ -496,31 +477,3 @@ def test_confirm_token_server_generated_id_replays_on_same_key_retry() -> None:
 
         # Only one command record created
         assert len(command_store._get_all_commands()) == 1
-
-
-def test_audit_and_v5_command_routes_write_domain_command_records() -> None:
-    with _isolated_command_bridge() as client:
-        routes = [
-            (
-                "POST",
-                "/bff/audit/export",
-                "sem-002-audit-export",
-                {"target_type": "Deployment"},
-                "AuditExport",
-            ),
-        ]
-
-        for method, path, key, body, command_type in routes:
-            response = client.request(
-                method,
-                path,
-                headers={**HEADERS, "Idempotency-Key": key},
-                json=body,
-            )
-            assert response.status_code == 202, response.text
-            assert response.json()["data"]["command"] == command_type
-            assert response.json()["meta"]["liveCapitalSideEffects"] is False
-
-        assert [record["type"] for record in command_store._get_all_commands()] == [
-            "AuditExport",
-        ]

@@ -147,7 +147,7 @@ def test_sem_command_response_mirrors_live_capital_mutation_into_audit(tmp_path:
     identity = OperatorIdentity(operator_id="op-defect-three", roles=["approver"])
 
     response = svc.sem_command_response(
-        command_type=CommandType.HUMAN_GATE_APPROVE,
+        command_type="HumanGateApprove",
         target_type=ObjectType.HUMAN_GATE_ITEM,
         target_id="promotion-review:defect-three",
         payload={"decision": "approve", "live_capital_mutation": False},
@@ -176,7 +176,7 @@ def test_command_store_cache_is_lazily_initialized_and_kept_in_sync(tmp_path: An
     target = TargetObject(type=ObjectType.RANKING, id="rec-defect-four")
     store.submit_command(
         command_id="cmd-defect-four",
-        command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+        command_type="QuarterlyRankingRecommendationSubmit",
         target=target,
         submitted_at=utc_now(),
         params={},
@@ -199,7 +199,7 @@ def test_command_store_missing_file_read_returns_empty_and_resets_cache(tmp_path
     target = TargetObject(type=ObjectType.RANKING, id="rec-missing-file")
     store.submit_command(
         command_id="cmd-missing-file",
-        command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+        command_type="QuarterlyRankingRecommendationSubmit",
         target=target,
         submitted_at=utc_now(),
         params={},
@@ -233,7 +233,7 @@ def test_command_store_multi_instance_completion_survives_peer_stale_cache(
     target = TargetObject(type=ObjectType.RANKING, id="rec-multi-instance")
     store_a.submit_command(
         command_id="cmd-multi-instance",
-        command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+        command_type="QuarterlyRankingRecommendationSubmit",
         target=target,
         submitted_at=utc_now(),
         params={},

@@ -104,7 +104,7 @@ def _isolated_bff(tmp_path) -> Iterator[Tuple[TestClient, ReadSurfacePorts]]:
 def _append_submitted_promotion_review(command_store: CommandStore, *, recommendation_id: str, persona_id: str) -> None:
     command_store.submit_command(
         command_id=f"cmd-{recommendation_id}",
-        command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+        command_type="QuarterlyRankingRecommendationSubmit",
         target=TargetObject(type=ObjectType.RANKING, id=recommendation_id),
         submitted_at="2026-07-13T00:00:00Z",
         params={

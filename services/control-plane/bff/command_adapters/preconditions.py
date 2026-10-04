@@ -239,12 +239,7 @@ _LIVE_BROKER_SIGNAL_VALUES = {
 
 _FINAL_COMMAND_TARGET_TYPES: Dict[CommandType, Tuple[ObjectType, ...]] = {
     CommandType.APPROVED_APPLY: (ObjectType.REBALANCE,),
-    CommandType.HUMAN_GATE_APPROVE: (ObjectType.HUMAN_GATE_ITEM,),
-    CommandType.HUMAN_GATE_REJECT: (ObjectType.HUMAN_GATE_ITEM,),
-    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: (ObjectType.HUMAN_GATE_ITEM,),
     CommandType.HUMAN_GATE_REVOKE: (ObjectType.HUMAN_GATE_ITEM,),
-    CommandType.HUMAN_GATE_EXTEND_TTL: (ObjectType.HUMAN_GATE_ITEM,),
-    CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: (ObjectType.RANKING,),
     CommandType.PAUSE_RUNTIME: (ObjectType.RUNTIME, ObjectType.RUNTIME_BINDING),
     CommandType.CAPITAL_POOL_ACTION: (ObjectType.CAPITAL_POOL,),
     CommandType.PAUSE_PAPER_RUNTIME: (ObjectType.RUNTIME,),
@@ -1242,7 +1237,10 @@ def require_final_command_preconditions(
     read_store: Optional[Any] = None,
     command_store: Optional[Any] = None,
 ) -> Dict[str, str]:
-    entry = get_catalog_entry(cmd.command.value)
+    live_promotion = cmd.command == CommandType.EVOLUTION_PROGRAM_ACTION and str(
+        cmd.action or cmd.params.get("action_id") or cmd.params.get("actionId") or ""
+    ).strip().lower() == "promote_candidate_live"
+    entry = get_catalog_entry("PromoteEvolutionCandidateLive" if live_promotion else cmd.command.value)
     if entry is None:
         return {}
 
@@ -1406,15 +1404,12 @@ _APPROVE_DEPLOYMENT_REQUIRED = {"deployment_plan_id", "approval_decision"}
 _VALID_APPROVAL_DECISIONS = {"approve", "reject"}
 _APPROVE_DECISION_REQUIRED = {"decision_id"}
 _REJECT_DECISION_REQUIRED = {"decision_id", "rejection_reason"}
-_REQUEST_APPROVAL_REVISION_REQUIRED = {"decision_id", "revision_notes"}
 _ESCALATE_DIFF_REQUIRED = {"plan_id", "escalation_reason"}
 _PAUSE_RUNTIME_REQUIRED = {"runtime_binding_id", "pause_action"}
 _VALID_PAUSE_ACTIONS = {"pause", "resume"}
 _PAUSE_EXECUTION_REQUIRED = {"pause_new_entries", "cancel_open_orders"}
 _ROLLBACK_REQUIRED = {"rollback_target_type", "target_id", "rollback_to_version"}
 _VALID_ROLLBACK_TARGET_TYPES = {"deployment", "runtime"}
-_APPROVE_ROLLBACK_REQUIRED = {"rollback_id"}
-_REJECT_ROLLBACK_REQUIRED = {"rollback_id", "rejection_reason"}
 _RISK_OFF_REQUIRED = {"reduce_exposure_pct"}
 _SAFE_MODE_LEVELS = {"soft"}
 _KILL_SWITCH_REQUIRED = {"scope", "activate"}
@@ -1896,16 +1891,6 @@ def _validate_reject_decision(params: Dict[str, Any], identity: OperatorIdentity
         )
 
 
-def _validate_request_approval_revision(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
-    _err = bff_error_fn or _resolve_bff_error()
-    raise _err(
-        410,
-        ErrorCode.VALIDATION_FAILED,
-        "RequestApprovalRevision is retired",
-        "Use RejectDecision with notes",
-    )
-
-
 def _validate_pause_runtime(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
     _err = bff_error_fn or _resolve_bff_error()
     missing = _PAUSE_RUNTIME_REQUIRED - params.keys()
@@ -1953,50 +1938,6 @@ def _validate_execute_rollback(params: Dict[str, Any], identity: OperatorIdentit
             "Operator does not hold the required role",
             precondition_failed="role_check",
             suggestion="Escalate to a user with admin or approver role",
-        )
-
-
-def _validate_approve_rollback(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
-    _err = bff_error_fn or _resolve_bff_error()
-    missing = _APPROVE_ROLLBACK_REQUIRED - params.keys()
-    if missing:
-        raise _err(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Missing required params for ApproveRollback",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _err(
-            403, ErrorCode.FORBIDDEN,
-            "ApproveRollback requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
-        )
-
-
-def _validate_reject_rollback(params: Dict[str, Any], identity: OperatorIdentity, *, bff_error_fn: Optional[Callable[..., Any]] = None) -> None:
-    _err = bff_error_fn or _resolve_bff_error()
-    missing = _REJECT_ROLLBACK_REQUIRED - params.keys()
-    if missing:
-        raise _err(
-            422, ErrorCode.VALIDATION_FAILED,
-            "Missing required params for RejectRollback",
-            f"Missing fields: {sorted(missing)}",
-        )
-    if not str(params.get("rejection_reason") or "").strip():
-        raise _err(
-            422, ErrorCode.VALIDATION_FAILED,
-            "RejectRollback requires a non-empty rejection_reason",
-            "rejection_reason must be a non-empty string",
-        )
-    if not {"approver", "admin"}.intersection(identity.roles):
-        raise _err(
-            403, ErrorCode.FORBIDDEN,
-            "RejectRollback requires 'approver' or 'admin' role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with approver or admin role",
         )
 
 
@@ -2479,105 +2420,6 @@ def _validate_human_gate_decision(
         params["ttlSeconds"] = ttl_seconds
 
 
-def _validate_quarterly_ranking_recommendation_submit(
-    params: Dict[str, Any],
-    identity: OperatorIdentity,
-    *,
-    read_surface: Optional[Any] = None,
-    bff_error_fn: Optional[Callable[..., Any]] = None,
-) -> None:
-    _err = bff_error_fn or _resolve_bff_error()
-    if not {"operator", "approver", "admin"}.intersection(identity.roles):
-        raise _err(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Quarterly ranking recommendation submission requires operator-level role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with operator, approver, or admin role",
-        )
-    try:
-        from ..governance.promotion_review import _raise_if_promotion_review_direct_mutation_requested
-        from ..pm12.service import _pm12_resolve_quarterly_recommendation_submit_params, _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
-    except (ImportError, ValueError):
-        from governance.promotion_review import _raise_if_promotion_review_direct_mutation_requested
-        from pm12.service import _pm12_resolve_quarterly_recommendation_submit_params, _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
-
-    _raise_if_promotion_review_direct_mutation_requested(params)
-    # ``read_surface`` is the same request-scoped read store every other
-    # command validator here uses (see build_default_validators below); it
-    # must be threaded into the ranking-snapshot re-admission check instead
-    # of letting it fall back to the ``main`` module singleton, otherwise a
-    # composed app that injects its own read surface (rather than mutating
-    # main.py's module globals) can never admit a real snapshot here.
-    resolved = _pm12_resolve_quarterly_recommendation_submit_params(
-        params, read_store=_resolve_read_surface(read_surface)
-    )
-    params.clear()
-    params.update(resolved)
-
-    required = {"quarter", "recommendation_id", "ranking_snapshot_id"}
-    missing = required - {key for key, value in params.items() if value not in (None, "")}
-    if missing:
-        raise _err(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for QuarterlyRankingRecommendationSubmit",
-            f"Missing fields: {sorted(missing)}",
-            precondition_failed="quarterly_ranking_recommendation",
-        )
-    action_id = str(
-        params.get("recommendation_action_id")
-        or params.get("recommendationActionId")
-        or ""
-    ).strip()
-    if action_id and action_id not in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER:
-        raise _err(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid quarterly ranking recommendation action",
-            f"recommendation_action_id must be one of {list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER)}",
-            precondition_failed="recommendation_action_id",
-        )
-
-
-def _validate_request_review(
-    params: Dict[str, Any],
-    identity: OperatorIdentity,
-    *,
-    read_surface: Optional[Any] = None,
-    ops_read_model_fn: Optional[Callable[[str], Any]] = None,
-    check_binding_tenant_ownership_fn: Optional[Callable[[Any, OperatorIdentity], str]] = None,
-    bff_error_fn: Optional[Callable[..., Any]] = None,
-) -> None:
-    _err = bff_error_fn or _resolve_bff_error()
-    if not {"operator", "admin"}.intersection(identity.roles):
-        raise _err(
-            403,
-            ErrorCode.FORBIDDEN,
-            "RequestReview action requires operator or admin role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-        )
-    persona_id = params.get("persona_id") or params.get("personaId")
-    if not persona_id:
-        raise _err(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing persona_id for RequestReview",
-            "persona_id must be provided to request a review",
-            precondition_failed="missing_persona",
-        )
-    _enforce_ops_console_preconditions(
-        params,
-        identity,
-        read_surface=read_surface,
-        ops_read_model_fn=ops_read_model_fn,
-        check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn,
-        bff_error_fn=_err,
-    )
-
-
 def _validate_pause_paper_runtime(
     params: Dict[str, Any],
     identity: OperatorIdentity,
@@ -2788,7 +2630,6 @@ def build_default_validators(
         CommandType.APPROVE_DEPLOYMENT: lambda p, i: _validate_approve_deployment(p, i, bff_error_fn=bff_error_fn),
         CommandType.APPROVE_DECISION: lambda p, i: _validate_approve_decision(p, i, bff_error_fn=bff_error_fn),
         CommandType.REJECT_DECISION: lambda p, i: _validate_reject_decision(p, i, bff_error_fn=bff_error_fn),
-        CommandType.REQUEST_APPROVAL_REVISION: lambda p, i: _validate_request_approval_revision(p, i, bff_error_fn=bff_error_fn),
         CommandType.PAUSE_RUNTIME: lambda p, i: _validate_pause_runtime(p, i, bff_error_fn=bff_error_fn),
         CommandType.PAUSE_EXECUTION: lambda p, i: _validate_pause_execution(p, i, bff_error_fn=bff_error_fn),
         CommandType.ESCALATE_DIFF: lambda p, i: _validate_escalate_diff(p, i, bff_error_fn=bff_error_fn),
@@ -2797,8 +2638,6 @@ def build_default_validators(
         CommandType.HARD_ROLLBACK: lambda p, i: _validate_hard_rollback(p, i, bff_error_fn=bff_error_fn),
         CommandType.ISSUE_SAFE_MODE: lambda p, i: _validate_issue_safe_mode(p, i, bff_error_fn=bff_error_fn),
         CommandType.EXECUTE_ROLLBACK: lambda p, i: _validate_execute_rollback(p, i, bff_error_fn=bff_error_fn),
-        CommandType.APPROVE_ROLLBACK: lambda p, i: _validate_approve_rollback(p, i, bff_error_fn=bff_error_fn),
-        CommandType.REJECT_ROLLBACK: lambda p, i: _validate_reject_rollback(p, i, bff_error_fn=bff_error_fn),
         CommandType.ACTIVATE_KILL_SWITCH: lambda p, i: _validate_activate_kill_switch(p, i, bff_error_fn=bff_error_fn),
         CommandType.APPROVE_EVOLUTION_DECISION: lambda p, i: _validate_approve_evolution_decision(p, i, bff_error_fn=bff_error_fn),
         CommandType.EXECUTE_EVOLUTION_ACTION: lambda p, i: _validate_execute_evolution_action(p, i, bff_error_fn=bff_error_fn),
@@ -2807,13 +2646,7 @@ def build_default_validators(
         CommandType.REVIEW_MUTATION: lambda p, i: _validate_review_mutation(p, i, bff_error_fn=bff_error_fn, read_surface=read_surface, utc_now_fn=utc_now_fn),
         CommandType.EXECUTE_MUTATION: lambda p, i: _validate_execute_mutation(p, i, bff_error_fn=bff_error_fn, read_surface=read_surface, utc_now_fn=utc_now_fn),
         CommandType.RECORD_SPONSOR_DECISION: lambda p, i: _validate_record_sponsor_decision(p, i, bff_error_fn=bff_error_fn, read_surface=read_surface, utc_now_fn=utc_now_fn),
-        CommandType.HUMAN_GATE_APPROVE: lambda p, i: _validate_human_gate_decision(p, i, bff_error_fn=bff_error_fn),
-        CommandType.HUMAN_GATE_REJECT: lambda p, i: _validate_human_gate_decision(p, i, bff_error_fn=bff_error_fn),
-        CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: lambda p, i: _validate_human_gate_decision(p, i, bff_error_fn=bff_error_fn),
         CommandType.HUMAN_GATE_REVOKE: lambda p, i: _validate_human_gate_decision(p, i, bff_error_fn=bff_error_fn),
-        CommandType.HUMAN_GATE_EXTEND_TTL: lambda p, i: _validate_human_gate_decision(p, i, bff_error_fn=bff_error_fn),
-        CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: lambda p, i: _validate_quarterly_ranking_recommendation_submit(p, i, read_surface=read_surface, bff_error_fn=bff_error_fn),
-        CommandType.REQUEST_REVIEW: lambda p, i: _validate_request_review(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
         CommandType.PAUSE_PAPER_RUNTIME: lambda p, i: _validate_pause_paper_runtime(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
         CommandType.RESUME_PAPER_RUNTIME: lambda p, i: _validate_resume_paper_runtime(p, i, read_surface=read_surface, ops_read_model_fn=ops_read_model_fn, check_binding_tenant_ownership_fn=check_binding_tenant_ownership_fn, bff_error_fn=bff_error_fn),
         CommandType.REBALANCE_PROPOSAL: lambda p, i: _validate_rebalance_proposal(p, i, bff_error_fn=bff_error_fn),

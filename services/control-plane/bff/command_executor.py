@@ -663,22 +663,6 @@ def _execute_rollback(
     }
 
 
-def _execute_approve_rollback(
-    command_id: str, params: Dict[str, Any],
-    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
-) -> Dict[str, Any]:
-    from .command_adapters.retired import reject_retired_command
-    reject_retired_command("ApproveRollback")
-
-
-def _execute_reject_rollback(
-    command_id: str, params: Dict[str, Any],
-    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
-) -> Dict[str, Any]:
-    from .command_adapters.retired import reject_retired_command
-    reject_retired_command("RejectRollback")
-
-
 def _execute_activate_kill_switch(
     command_id: str, params: Dict[str, Any],
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
@@ -1223,8 +1207,6 @@ _EXECUTORS = {
     CommandType.HARD_ROLLBACK: _execute_rollback,
     CommandType.ISSUE_SAFE_MODE: _execute_issue_safe_mode,
     CommandType.EXECUTE_ROLLBACK: _execute_rollback,
-    CommandType.APPROVE_ROLLBACK: _execute_approve_rollback,
-    CommandType.REJECT_ROLLBACK: _execute_reject_rollback,
     CommandType.ACTIVATE_KILL_SWITCH: _execute_activate_kill_switch,
     CommandType.APPROVE_EVOLUTION_DECISION: _execute_approve_evolution_decision,
     CommandType.EXECUTE_EVOLUTION_ACTION: _execute_evolution_action,
@@ -1233,14 +1215,9 @@ _EXECUTORS = {
     CommandType.REVIEW_MUTATION: _execute_review_mutation,
     CommandType.EXECUTE_MUTATION: _execute_execute_mutation,
     CommandType.CAPITAL_POOL_ACTION: _make_adapter_executor(CommandType.CAPITAL_POOL_ACTION),
-    CommandType.RANKING_FORMULA_ACTION: _make_adapter_executor(CommandType.RANKING_FORMULA_ACTION),
     CommandType.REBALANCE_ACTION: _make_adapter_executor(CommandType.REBALANCE_ACTION),
-    CommandType.RANKING_ACTION: _make_adapter_executor(CommandType.RANKING_ACTION),
     CommandType.STRATEGY_ACTION: _make_adapter_executor(CommandType.STRATEGY_ACTION),
     CommandType.PERSONA_ACTION: _make_adapter_executor(CommandType.PERSONA_ACTION),
-    CommandType.TOOL_ACTION: _make_adapter_executor(CommandType.TOOL_ACTION),
-    CommandType.MCP_SERVER_ACTION: _make_adapter_executor(CommandType.MCP_SERVER_ACTION),
-    CommandType.SKILL_ACTION: _make_adapter_executor(CommandType.SKILL_ACTION),
     CommandType.REVIEW_ACTION: _make_adapter_executor(CommandType.REVIEW_ACTION),
     CommandType.DEPLOYMENT_ACTION: _make_adapter_executor(CommandType.DEPLOYMENT_ACTION),
     CommandType.RUNTIME_ACTION: _make_adapter_executor(CommandType.RUNTIME_ACTION),
@@ -1249,15 +1226,8 @@ _EXECUTORS = {
     CommandType.EVOLUTION_PROGRAM_ACTION: _make_adapter_executor(CommandType.EVOLUTION_PROGRAM_ACTION),
     CommandType.EXPERIMENT_ACTION: _make_adapter_executor(CommandType.EXPERIMENT_ACTION),
     CommandType.JOB_ACTION: _make_adapter_executor(CommandType.JOB_ACTION),
-    CommandType.AUDIT_EXPORT: _make_adapter_executor(CommandType.AUDIT_EXPORT),
     CommandType.ALERT_ACKNOWLEDGE: _make_adapter_executor(CommandType.ALERT_ACKNOWLEDGE),
-    CommandType.HUMAN_GATE_APPROVE: _make_adapter_executor(CommandType.HUMAN_GATE_APPROVE),
-    CommandType.HUMAN_GATE_REJECT: _make_adapter_executor(CommandType.HUMAN_GATE_REJECT),
-    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: _make_adapter_executor(CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE),
     CommandType.HUMAN_GATE_REVOKE: _make_adapter_executor(CommandType.HUMAN_GATE_REVOKE),
-    CommandType.HUMAN_GATE_EXTEND_TTL: _make_adapter_executor(CommandType.HUMAN_GATE_EXTEND_TTL),
-    CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: _make_adapter_executor(CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT),
-    CommandType.REQUEST_REVIEW: _make_adapter_executor(CommandType.REQUEST_REVIEW),
     CommandType.PAUSE_PAPER_RUNTIME: _make_adapter_executor(CommandType.PAUSE_PAPER_RUNTIME),
     CommandType.RESUME_PAPER_RUNTIME: _make_adapter_executor(CommandType.RESUME_PAPER_RUNTIME),
     CommandType.REBALANCE_PROPOSAL: _make_adapter_executor(CommandType.REBALANCE_PROPOSAL),
