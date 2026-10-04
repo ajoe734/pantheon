@@ -43,6 +43,7 @@
       "reviewer": "Codex2",
       "reviewed_at": "2026-10-04T06:34:30Z",
       "sequence": 30169,
+      "event_id": "task-state-b4bec2d8f001ed23bdccb39fea6283c8e2a1f9120b5cc1acdded8faefaa2472e",
       "verdict": "review_approved",
       "verdict_summary": "Independent Codex2 review passed for PR #6134, frozen head a8491fd2a83fd27557d3ef05370dd76f7c33c682, base 8836cdc49d1598408199f28dbcee91fb8c9ef2e9 and manifest blob 74e57cfa504796fac99a587ae4772718700b8ff2. Verified owner-only run/detail/list/artifact/receipt reads, deletion of BFF run and receipt persistence and legacy plan fallback, no cache/write-back/new service; mounted cancel-before-dispatch, active cancellation, owner successor/fence and completed redispatch coverage; candidate provenance and receipt negative controls retained with owner fixtures. Removed legacy continuation and run-store assertions correspond to deleted subjects documented in evidence. Hosted zero-row check at 2026-10-03T23:56Z backend 5743158b0 is recorded as supplied task evidence; no hosted mutation or migration performed. Independently reran all seven manifest test files in five bounded batches: 149 passed, 1 skipped. git diff --check passed. diff_budget passed: production +98/-387 net -289, test +148/-465 net -317, docs-evidence +29/-0 net +29; BFF production net -274. No blocking findings."
     }
@@ -90,7 +91,20 @@
     "delivery_commit": "ed4d2cd191bdebf87c1d3961b6d2cf44210a3672"
   },
   "published_history_and_timeline_invariants": {
-    "history_deviation": "None: Git history, commit ancestry, timestamps, and commit messages are preserved without rewriting, rebasing, or force-pushing. The attribution discrepancy arose solely from the assumption in the automated done gate that reassignment occurs strictly after commit authoring.",
+    "parent_pr_timeline_event": {
+      "event": "HeadRefForcePushedEvent",
+      "timestamp": "2026-10-04T06:25:15Z",
+      "actor": "ajoe734",
+      "pr": 6134,
+      "rest_event_id": 32431136239,
+      "confirmation": "REST event 32431136239; independently confirmed GraphQL beforeCommit/afterCommit",
+      "before_commit": "211c4acc872701af6f8d2b152e952d5b3e2a6b0c",
+      "after_commit": "a8491fd2a83fd27557d3ef05370dd76f7c33c682",
+      "trailer_repair_chronology": "Reassignment sequence 30144 at 06:05:15Z (event task-state-c70b874ebb66626e6222256ed1087e9f358c09c12ced185d6958e35f8f55c60d) preceded Antigravity author/committer timestamp 06:23:59Z on 376ad416d73ccbe9bff90a0337c56b9489f833ed with LLM-Agent Claude. Published head on PR #6134 was replaced via HeadRefForcePushedEvent at 06:25:15Z by ajoe734 from 211c4acc872701af6f8d2b152e952d5b3e2a6b0c to a8491fd2a83fd27557d3ef05370dd76f7c33c682 for delivery-only trailer repair. Independent Codex2 review at 06:34:30Z (canonical sequence 30169, event task-state-b4bec2d8f001ed23bdccb39fea6283c8e2a1f9120b5cc1acdded8faefaa2472e) verified exact head a8491fd2, base 8836cdc49, and manifest 74e57cfa. Integrator receipt and GitHub merge ed4d2cd191bdebf87c1d3961b6d2cf44210a3672 followed at 06:35:24Z."
+    },
+    "history_deviation": "Historical PR #6134 timeline records HeadRefForcePushedEvent at 2026-10-04T06:25:15Z by ajoe734 from 211c4acc872701af6f8d2b152e952d5b3e2a6b0c to a8491fd2a83fd27557d3ef05370dd76f7c33c682 (REST event 32431136239; independently confirmed GraphQL beforeCommit/afterCommit). This historical published-head replacement occurred during delivery trailer repair to publish the compliant head commit 376ad416d. Full original refs and the trailer-repair chronology are preserved. Do not repair published history again.",
+    "child_task_no_new_history_rewrite_constraint": "On this child evidence task (RESEARCH-RUN-COPY-CLOSEOUT-EVIDENCE-20261004), no history rewriting or force pushing is permitted; strict linear git history is enforced.",
+    "parent_source_approval_integrity": "Parent source approval remains genuine: independently verified canonical sequence 30169/event task-state-b4bec2d8f001ed23bdccb39fea6283c8e2a1f9120b5cc1acdded8faefaa2472e, Codex2 review at 06:34:30Z bound to exact a8491fd2 head/base 8836cdc49/manifest 74e57cfa; reassignment sequence 30144 at 06:05:15Z precedes Antigravity author/committer timestamp 06:23:59Z on 376ad416d with LLM-Agent Claude; integrator receipt and GitHub merge ed4d2cd191bdebf87c1d3961b6d2cf44210a3672 plus required trailers/runtime/smoke checks verified. Parent functional track remains done; no parent state or hosted claim changed.",
     "scope_and_budget_invariants": "Parent zero-growth scope intact: net production lines decreased (-289 lines overall, -274 BFF). Functional source track is fully completed.",
     "hosted_boundary": "Read-only check at 2026-10-03T23:56Z confirmed zero research_aggregate and zero research_idempotency_key rows; no migration was needed. No hosted business acceptance or product deployment is claimed, and this evidence does not release Research hosted checkpoint or L12 final acceptance."
   },
