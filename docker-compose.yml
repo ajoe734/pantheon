@@ -2822,7 +2822,7 @@ services:
   # ===========================================================================
 
   openclaw-activation-ready-e2e:
-    profiles: ["openclaw-activation-ready-e2e", "management-ai"]
+    profiles: ["openclaw-activation-ready-e2e"]
     image: pantheon-openclaw-activation-ready-e2e-adapter:latest
     pull_policy: build
     build:
@@ -2885,7 +2885,7 @@ services:
   # ===========================================================================
 
   mlflow-dormant-smoke:
-    profiles: ["dormant-smoke", "research"]
+    profiles: ["dormant-smoke"]
     build:
       context: services/research/mlflow
       dockerfile: Dockerfile
@@ -2917,7 +2917,7 @@ services:
     restart: "no"
 
   finrl-dormant-smoke:
-    profiles: ["dormant-smoke", "research"]
+    profiles: ["dormant-smoke"]
     build:
       context: services/research/finrl
       dockerfile: Dockerfile
@@ -2936,7 +2936,7 @@ services:
     restart: "no"
 
   rllib-dormant-smoke:
-    profiles: ["dormant-smoke", "research"]
+    profiles: ["dormant-smoke"]
     build:
       context: .
       dockerfile: services/research/rllib/Dockerfile
@@ -2957,7 +2957,7 @@ services:
     restart: "no"
 
   ray-tune-dormant-smoke:
-    profiles: ["dormant-smoke", "research"]
+    profiles: ["dormant-smoke"]
     build:
       context: .
       dockerfile: services/research/rllib/Dockerfile
@@ -2978,7 +2978,7 @@ services:
     restart: "no"
 
   qlib-dormant-smoke:
-    profiles: ["dormant-smoke", "research"]
+    profiles: ["dormant-smoke"]
     build:
       context: .
       dockerfile: services/research/qlib/Dockerfile
@@ -2991,7 +2991,7 @@ services:
     restart: "no"
 
   trl-dormant-smoke:
-    profiles: ["dormant-smoke", "research"]
+    profiles: ["dormant-smoke"]
     build:
       context: .
       dockerfile: services/learning/trl/Dockerfile
@@ -3002,7 +3002,7 @@ services:
     restart: "no"
 
   experiments-dormant-smoke:
-    profiles: ["dormant-smoke", "research"]
+    profiles: ["dormant-smoke"]
     build:
       context: .
       dockerfile: services/registry/experiments/Dockerfile

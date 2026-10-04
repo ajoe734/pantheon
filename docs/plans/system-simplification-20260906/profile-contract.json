@@ -1,8 +1,8 @@
 {
-  "task_id": "OSS-INFRA-PROFILES-002",
+  "task_id": "OSS-PROFILES-RUNTIME-GROUPING-CORRECTION-20261004",
   "status": "implemented",
-  "generated_at": "2026-10-04T10:30:00Z",
-  "note": "Contract converged and implemented by OSS-INFRA-PROFILES-002. Core/workers/research/management-ai/execution profiles are converged across docker-compose.yml and docker-compose.exec.yml, preserving default root stack and dependency closure. OSS-OBJECT-STORE-CUTOVER-002 consumes the storage disposition below.",
+  "generated_at": "2026-10-04T16:40:00Z",
+  "note": "Contract corrected by OSS-PROFILES-RUNTIME-GROUPING-CORRECTION-20261004. Runtime grouping counterexamples resolved: dormant ML smoke harnesses and openclaw-activation-ready-e2e are opt-in under their own dedicated profiles (dormant-smoke and openclaw-activation-ready-e2e) and never started by ordinary research or management-ai profiles. Core/workers/research/management-ai/execution profiles preserve default root stack and dependency closure.",
   "source_of_truth_read": {
     "environment_identity_plan": "docs/04/pantheon_environment_closure_sa_sd_2026-09/SA.md",
     "profile_table_cited": "SA.md §5 Component Profiles & Resource Bounds",
@@ -85,12 +85,20 @@
       "activation": {"dev": "YES", "ephemeral_staging": "NO", "prod_control": "NO", "prod_execution": "NO"},
       "services": [
         "research-orchestrator-svc", "research-worker-gateway-svc",
-        "training-session-svc", "policy-learning-svc",
-        "finrl-dormant-smoke", "mlflow-dormant-smoke", "qlib-dormant-smoke",
-        "rllib-dormant-smoke", "ray-tune-dormant-smoke", "trl-dormant-smoke",
-        "experiments-dormant-smoke"
+        "training-session-svc", "policy-learning-svc"
       ],
-      "health_requirements": "Dormant-smoke placeholders stay opt-in/inactive by default per OSS-INFRA-PROFILES-001's acceptance criterion to make unused research services opt-in; only research-orchestrator-svc/research-worker-gateway-svc/training-session-svc/policy-learning-svc are always-on in dev.",
+      "opt_in_never_default": [
+        {
+          "profile": "dormant-smoke",
+          "services": [
+            "finrl-dormant-smoke", "mlflow-dormant-smoke", "qlib-dormant-smoke",
+            "rllib-dormant-smoke", "ray-tune-dormant-smoke", "trl-dormant-smoke",
+            "experiments-dormant-smoke"
+          ],
+          "reason": "docker-compose.yml:2887-3014 declares `profiles: [\"dormant-smoke\"]`. They are run-once smoke harnesses never started with the default stack or ordinary research profile."
+        }
+      ],
+      "health_requirements": "Dormant-smoke placeholders stay opt-in/inactive by default under the dedicated dormant-smoke profile; only research-orchestrator-svc/research-worker-gateway-svc/training-session-svc/policy-learning-svc are part of active research services in dev.",
       "dependency_requirements": "postgres required; nats optional per service. No minio dependency (research-orchestrator-svc currently declares PANTHEON_S3_* env only for posture, not I/O, per storage-consumer-matrix.json).",
       "volume_requirements": ["research-orchestrator-data", "research-worker-gateway-data", "training-session-data", "policy-learning-data"],
       "isolation_requirements": "Never activated outside dev; heavy ML dependency images stay isolated from core/workers/management-ai/execution images (separate per-framework containers, no shared requirements file, per AI_COLLABORATION_GUIDE.md OSS framework rule)."
@@ -99,8 +107,14 @@
       "sa_definition": "OpenClaw, diagnostic kernel (read-only)",
       "activation": {"dev": "YES", "ephemeral_staging": "Conditional", "prod_control": "YES (Read-Only)", "prod_execution": "NO"},
       "services": [
-        "openclaw-gateway", "openclaw-gateway-adapter", "openclaw-data-init",
-        "openclaw-activation-ready-e2e"
+        "openclaw-gateway", "openclaw-gateway-adapter", "openclaw-data-init"
+      ],
+      "opt_in_never_default": [
+        {
+          "profile": "openclaw-activation-ready-e2e",
+          "service": "openclaw-activation-ready-e2e",
+          "reason": "docker-compose.yml:2824-2839 declares `profiles: [\"openclaw-activation-ready-e2e\"]`. It is a dedicated end-to-end smoke verification harness never started with the default stack or ordinary management-ai profile."
+        }
       ],
       "health_requirements": "Read-only diagnostic posture on prod_control: no durable-write command routes active; existing /readyz probes unchanged.",
       "dependency_requirements": "No minio dependency. On docker-compose.yml (dev/ephemeral_staging), openclaw-gateway-adapter itself declares no depends_on edge on any core service (docker-compose.yml:861-871 lists only the optional, management-ai-internal openclaw-data-init/openclaw-gateway); the dependency runs the other direction from a prior draft of this contract: operator-bff (docker-compose.yml:1394-1395) and consultation-svc (docker-compose.yml:138-144, unclassified-default-core) each hard-depend on openclaw-gateway-adapter being healthy first. So management-ai's adapter gates part of core startup, not the reverse, and there is no circular wait in the actual Compose graph. On docker-compose.control.yml (prod_control) neither edge exists: operator-bff reaches the adapter only via the external, required-nonblank `PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL` env var, and no openclaw-gateway-adapter service is declared in that file at all. The BFF's management_ai_store.py attachment path remains the profile's only object-store touchpoint and stays env-gated to GCS/local-fallback per storage-topology-decision.md.",
