@@ -1,0 +1,83 @@
+{
+  "task_id": "OPS-WATCHDOG-ACTIVATION-EVIDENCE-20261004",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "status": "evidence prepared; independent exact-head review and merge pending",
+  "delivery_scope": "Evidence-only record of actual local development-tooling watchdog activation already performed by the coordinator. Not a product deployment, not hosted business acceptance, and says nothing about historical product rollback 37035071230.",
+  "source": {
+    "installed_runtime_source": "ba78a54be7339d4bef1d1521acc8e68d6698a478",
+    "source_clean": true,
+    "required_merged_commits_present": {
+      "be192efd0": "PR #6129 watchdog read-only runtime repair",
+      "5856d2709": "PR #6124 hosted finalization guard",
+      "9333e4093": "PR #6112 FIFO fence fix"
+    }
+  },
+  "activation": {
+    "promotion_epoch": "5743783468ee4d0f81f8d1970da2fc99",
+    "phase": "ready",
+    "started_at": "2026-10-04T05:40:20Z",
+    "finished_at": "2026-10-04T05:41:17Z",
+    "wrapper_exit": 0,
+    "incumbent": "13b44eadb65e2ec7452df453050857a4baca7fc3",
+    "candidate": "ba78a54be7339d4bef1d1521acc8e68d6698a478",
+    "wrapper_result": "supervisor_v2_replacement=launched; promotion=replaced",
+    "drain_receipts": [
+      {"run_id": "claude-20261004T053237Z-a4272f68", "task_id": "BFF-COMMANDTYPE-RESIDUE-20261003", "digest": "6d43aab701593fcaab2e7007ad95c33eb9a49f97c7e810268ae2cd4f37eb1165", "status": "consumed", "terminal_signal": 15, "exit_code": 143},
+      {"run_id": "codex-20261004T053727Z-d2b15bc9", "task_id": "PERSONA-PRIVATE-TENANT-SCOPE-20261003", "digest": "dec8985d08b7bd7829923a243ac341203e67e11081aab8ea990e976a7b6c9aea", "status": "consumed", "terminal_signal": 15, "exit_code": 143},
+      {"run_id": "claude-20261004T053742Z-7dd5a179", "task_id": "BFF-RESEARCH-RUN-COPY-REMOVAL-20261004", "digest": "ae560b34ab3b5b6d66f33ef73b82adad5f3a2b6ed7ad56f6e859d03a8b804a41", "status": "consumed", "terminal_signal": 15, "exit_code": 143}
+    ],
+    "receipt_note": "All three receipts are actual bound drain receipts produced by the existing promoter and consumed; none was manufactured by this task. Continuations of these drained workers are accounted for through the receipts' recovery_receipt_id values (promotion-drain-<digest>).",
+    "post_activation_health": {
+      "command_runtime_health": "healthy (checked 2026-10-04T05:44:43Z)",
+      "task_state_projection": "authoritative, ok, caught_up, projected sha == expected sha 39186ee984827d2fc75a4e16f7ce5be874a5871bbfd09c141c78b1db77248b51",
+      "supervisor_pid": 3435934
+    },
+    "canonical_and_fences": {
+      "canonical_paths": "coordination-root status/activity/current-work/dashboard/state/approval-queue paths unchanged and still canonical",
+      "retired_fences": "lstat-only: .orchestrator/state.json and .orchestrator/approval-queue.json under the retired main checkout are directories, mode 0700, body_opened=false"
+    }
+  },
+  "installed_units_and_cron": {
+    "systemd_units_match_reviewed_installed_renderer": true,
+    "timer": "pantheon-supervisor-watchdog.timer active/waiting",
+    "service_execution": "pantheon-supervisor-watchdog.service Result=success ExecMainStatus=0, triggered 2026-10-04T05:45:56Z, ExecStart under the ba78 runtime run-supervisor-watchdog.sh --restart",
+    "separate_canonical_watchdog_observation": "watchdog last_decision observe_only / supervisor_healthy at 2026-10-04T05:48:04Z, supervisor and worker runner roots both ba78, no split",
+    "permanent_watchdog_cron_count": 0,
+    "auto_integrator_count": 1,
+    "auto_integrator_unchanged_except_admitted_source_root": true,
+    "no_duplicate_daemon_or_changed_cadence_or_policy": true,
+    "rendered_cron_invocation": {
+      "exit": 0,
+      "log_under": "writable deploy/runtime (watchdog-acceptance-20261004-retry/supervisor-watchdog-cron.log)",
+      "log_sha256": "5ae50443f8cd2fade9912e0350986dcec5094de8f570df6b739aa54cd1d8a066",
+      "log_bytes": 71,
+      "result": "decision=skip reason=lock_contention, no new PID",
+      "label": "This manual rendered-cron invocation only proves a writable log and clean skip under lock contention. It is NOT the healthy observation; supervisor_healthy came separately from the canonical watchdog above. No permanent cron was installed and the supervisor was not restarted by the probe."
+    }
+  },
+  "verification": [
+    {"name": "installed-source watchdog installer pytest", "result": "9 passed", "exit": 0, "log_sha256": "ca9d17054c9f382b16c5f44a43934beba9e3053c74282a44364694555d2de34f"},
+    {"name": "isolated hosted-finalization unittest (retry, correct scripts PYTHONPATH, bytecode/cache writes disabled)", "result": "Ran 5 tests, OK", "exit": 0, "log_sha256": "13e40ffa509a837d892acf4619fdb2ec55303ef2bac59a3815eb736992491493"},
+    {"name": "fixtures", "note": "Fixtures never mutate real tasks or archives."}
+  ],
+  "failed_attempts_retained_honestly": [
+    {"what": "first hosted-finalization test attempt", "result": "FAILED (errors=1): ModuleNotFoundError supervisor_watchdog_install (missing scripts PYTHONPATH); a harness failure, not counted as passing", "exit": 1, "log_sha256": "197b8c32086bf2a3bca79c966b178319d42231a5afff0f351f9c50e0e2804899"},
+    {"what": "earlier report-parser error in the postflight harness", "result": "harness failure, retained as failed; postflight was re-run (retry exit 0)"},
+    {"what": "promotion with full-SHA SYNC_REF (be192efd0...)", "result": "invalid branch-materialization usage: 'couldn't find remote ref refs/heads/<sha>'; failed before any promotion", "exit": 1, "log_sha256": "c7f14b0c0f1abec9ec8d55b65ea8ed3e5d3dd06ce89798739c82169606b6234f"},
+    {"what": "normal ba78 promotion attempt 05:34:55-05:35:43Z", "result": "rolled back to 13b44: active worker antigravity-20261004T050553Z-7196e1a9 un-drainable (status running). No receipt fabricated, no forced termination. Fresh 13b44 supervisor/runtime/projection health verified before retry after that worker finished naturally. Local tooling rollback only.", "exit": 1, "log_sha256": "1111758726285723da722e2f2e41e7d8b598058f903eb3f4349d0c0ec0f8ef2f"}
+  ],
+  "no_deletion_or_prune": "prune_command_runtimes: deleted 0 command and 0 integration runtimes; retained 7 command and 14 integration roots. Worker test Python e009b127da2c8000 reused without reinstall.",
+  "source_artifact_sha256": {
+    "watchdog-activation-postflight.json": "92b2c893ad0db49f7ef04e325986f8c90c9f5d00810c1d50561bb6b44707e701",
+    "watchdog-runtime-promotion-after-worker-finish.log": "569fc126fe86ca66dedc3e6d166f1365e11b2e9c9fa8615cc68415983e6e9b09",
+    "watchdog-systemd-after-promotion.txt": "4337e4ff358ade60d3294d97a825eb33a803ae509a3d51bded437c10bfe94d08",
+    "watchdog-fresh-observation-after-promotion.json": "402fb3a51c9f81fe0e8928d242f11c3f9f4bdc954d52c50cb738897c92a421e9",
+    "source-parent-supersession-plan.json": "77925ec5200faa3d7e99947a25b9b08e46fdcd11079e390f421b52e3d2539085"
+  },
+  "limitations": [
+    "Worker namespace PID absence is not host-process death evidence.",
+    "This task did not perform, repeat, or re-run any promotion, VM/credential action, or source modification, and no further promotion is needed to install this evidence-only commit.",
+    "Not a product deployment or business acceptance."
+  ]
+}
