@@ -1,14 +1,16 @@
 """Request-scoped owner reads; no cache or BFF copy of domain records."""
+import os
 from contextvars import ContextVar
 from typing import Optional
 
 from ..command_adapters.base import (
-    capital_url, deployment_url, evolution_url, http_request_json, get_base_url,
+    _token_tenants, capital_url, deployment_url, evolution_url, http_request_json, get_base_url,
 )
 from ..governance import approval_owner
 
 
 authorization: ContextVar[Optional[str]] = ContextVar("owner_read_authorization", default=None)
+selected_tenant: ContextVar[Optional[str]] = ContextVar("owner_read_selected_tenant", default=None)
 
 
 class OwnerReadContextMiddleware:
@@ -18,9 +20,11 @@ class OwnerReadContextMiddleware:
     async def __call__(self, scope, receive, send):
         headers = dict(scope.get("headers", []))
         token = authorization.set(headers.get(b"authorization", b"").decode() or None)
+        tenant_token = selected_tenant.set(headers.get(b"x-tenant-id", b"").decode().strip() or None)
         try:
             await self.app(scope, receive, send)
         finally:
+            selected_tenant.reset(tenant_token)
             authorization.reset(token)
 
 
@@ -28,7 +32,14 @@ def read_records(url_builder, path, key=None):
     auth = authorization.get()
     if not auth:
         raise RuntimeError("Owner reads require the caller's authorization")
-    body = http_request_json(url_builder(path), auth_token=auth.removeprefix("Bearer "))
+    token = auth.removeprefix("Bearer ")
+    tenant = selected_tenant.get()
+    if not tenant:
+        # Configured default selects only a tenant the verified claims already authorize.
+        default = os.getenv("PANTHEON_BFF_TENANT_ID", "").strip()
+        primary, allowed = _token_tenants(token)
+        tenant = default if default and (default in allowed or "*" in allowed) else None
+    body = http_request_json(url_builder(path), auth_token=token, tenant_id=tenant)
     records = body.get(key) if key and isinstance(body, dict) else body
     if not isinstance(records, list) or any(not isinstance(r, dict) for r in records):
         raise RuntimeError(f"Invalid owner collection for {path}")

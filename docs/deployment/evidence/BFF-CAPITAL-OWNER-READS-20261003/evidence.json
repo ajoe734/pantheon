@@ -1,0 +1,8 @@
+{
+  "task_id": "BFF-CAPITAL-OWNER-READS-20261003",
+  "scope": "source/local validation only; hosted readback is done by the coordinator under CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001",
+  "change": "owner_reads.read_records now passes one explicit tenant to the existing outbound reader (X-Pantheon-Service plus X-Tenant-Id via bound_tenant): the caller's X-Tenant-Id selection, else PANTHEON_BFF_TENANT_ID only when verified claims already authorize it. A multi-tenant caller with no selection fails closed (TENANT_MISMATCH); no cache or BFF copy; Capital read authority untouched.",
+  "tests": "services/control-plane/bff/tests/test_owner_reads_capital_authority.py drives the real Capital inbound authority: single tenant success, multi-tenant without selection fails closed, selection success, authorized-default only, cross-tenant denied.",
+  "verified": "PANTHEON_DEPENDENCY_PYTHON -m pytest test_owner_reads_capital_authority.py (5 passed) and test_receipt_default_reads.py (passed)",
+  "independent_review": "pending"
+}
