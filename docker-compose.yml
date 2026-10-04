@@ -1237,6 +1237,8 @@ services:
         BUILD_TIME: ${BUILD_TIME:-unknown}
     restart: unless-stopped
     environment:
+      RANKING_STORE_DSN: ${RANKING_STORE_DSN:-${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}}
+      RANKING_STORE_TABLE: ${RANKING_STORE_TABLE:-rankings.rankings}
       PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID: ${PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID:-pantheon-dev-paper-provisioner}
       PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN: ${PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN:-}
       PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE: ${PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE:-}
@@ -3028,6 +3030,8 @@ services:
       dockerfile: services/persona-evaluator-agent/Dockerfile
     restart: unless-stopped
     environment:
+      RANKING_STORE_DSN: ${RANKING_STORE_DSN:-${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}}
+      RANKING_STORE_TABLE: ${RANKING_STORE_TABLE:-rankings.rankings}
       PERSONA_EVALUATOR_BFF_URL: http://operator-bff:8001
       PERSONA_EVALUATOR_BFF_TOKEN: ${PERSONA_EVALUATOR_BFF_TOKEN:-}
       PERSONA_EVALUATOR_BFF_TOKEN_FILE: ${PERSONA_EVALUATOR_BFF_TOKEN_FILE:-}
