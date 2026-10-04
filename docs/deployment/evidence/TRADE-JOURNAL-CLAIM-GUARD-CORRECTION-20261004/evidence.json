@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "task_id": "TRADE-JOURNAL-CLAIM-GUARD-CORRECTION-20261004",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "title": "Correct pre-read tenant denial and durable provider invocation claim",
+  "timestamp": "2026-10-04T12:47:00Z",
+  "change_class": "corrective",
+  "summary": "Resolved the two counterexamples identified in parent PR #6144: (1) Enforced signed JWT tenant presence validation strictly BEFORE invoking persistent_owner.get in retry_trade_reflection and list_trade_reflections, returning 403 on missing tenant claims with 0 owner reads and 0 telemetry/provider effects. (2) Atomically persisted full content and tenant-bound invocation claims in the existing Persona metadata CAS/idempotency store before invoking telemetry fetcher or OpenClaw reflection provider. Concurrent same-key requests perform exactly one provider call and no duplicate telemetry fetches, returning 409 in-flight conflict or stable completed receipts. On provider/telemetry failure, in-flight claims are safely cleaned up with zero inappropriate side-effects. All 5 coordinator direct-owner counterexamples in test_trade_journal_direct_owner_contract.py pass. Net production lines diff is +9 (budget 12).",
+  "acceptance_criteria_verification": {
+    "ac5_counterexamples_resolved": {
+      "satisfied": true,
+      "evidence": "Fixed direct-owner counterexample failures: missing-tenant returns 403 with reads=0 fetch=0 provider=0; concurrent same-key requests perform exactly 1 provider call and 1 telemetry fetch."
+    },
+    "ac6_preread_tenant_denial": {
+      "satisfied": true,
+      "evidence": "In write_owner.py retry_trade_reflection and list_trade_reflections, authority.tenant_id is verified immediately after JWT authentication and before persistent_owner.get(persona_id). Anonymous requests return 401 and signed tenantless requests return 403 with zero owner reads."
+    },
+    "ac7_durable_atomic_claim_guard": {
+      "satisfied": true,
+      "evidence": "Invocation claim atomically persisted into persona.metadata.trade_reflection_idempotency via try_metadata_cas before active_telemetry_fetcher and provider.reflect. Concurrent same-key requests detect the in-flight claim and return 409 IDEMPOTENCY_CONFLICT without duplicate provider calls or fetches. Completed responses update the claim with durable receipts. Failure after claim reverts in-flight metadata with zero residual effects."
+    },
+    "ac8_contract_counterexamples_and_regressions": {
+      "satisfied": true,
+      "evidence": "test_trade_journal_direct_owner_contract.py ran 5/5 passed. Existing regressions in services/persona/test_trade_reflection_owner.py (10/10 passed) and services/control-plane/bff/test_ptj_004_trade_journal.py (10/10 passed) all pass (25 total tests passing)."
+    },
+    "ac9_net_prod_line_budget": {
+      "satisfied": true,
+      "evidence": "Net production change in services/persona/write_owner.py is +55/-46 = +9 net lines, strictly satisfying the 12 line net production budget for corrective change_class."
+    }
+  },
+  "verification": {
+    "test_suites": [
+      {
+        "suite": "/tmp/pantheon-closeout-continuation-20261004-0925/test_trade_journal_direct_owner_contract.py",
+        "passed": 5,
+        "failed": 0
+      },
+      {
+        "suite": "services/persona/test_trade_reflection_owner.py",
+        "passed": 10,
+        "failed": 0
+      },
+      {
+        "suite": "services/control-plane/bff/test_ptj_004_trade_journal.py",
+        "passed": 10,
+        "failed": 0
+      }
+    ],
+    "diff_budget": {
+      "change_class": "corrective",
+      "net_prod_budget": 12,
+      "production": {
+        "added": 55,
+        "deleted": 46,
+        "net": 9
+      },
+      "passed": true
+    },
+    "product_ownership": {
+      "command": ".venv-pantheon/bin/python3 scripts/check_product_ownership.py",
+      "aggregates": 24,
+      "mutation_routes": 206,
+      "workers": 21,
+      "symbol_dispositions": 225,
+      "passed": true
+    }
+  }
+}

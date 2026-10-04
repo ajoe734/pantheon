@@ -1887,79 +1887,88 @@ def create_app(
         clean_key = idempotency_key.strip()
         try:
             authority = _authenticate_persona_mutation(authorization)
+            if not authority.tenant_id: raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Exact tenant match required"}})
             persona = persistent_owner.get(persona_id)
         except PersonaAuthorityError as exc:
             raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
         except PersonaNotFound as exc:
             raise HTTPException(status_code=404, detail={"error": {"code": "RESOURCE_NOT_FOUND", "message": str(exc)}}) from exc
-        if not authority.tenant_id or not persona.tenant_id or authority.tenant_id != persona.tenant_id:
+        if not persona.tenant_id or authority.tenant_id != persona.tenant_id:
             raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Exact tenant match required"}})
         reason = str(body.get("reason") or "").strip()
         if not reason:
             raise HTTPException(status_code=422, detail={"error": {"code": "VALIDATION_FAILED", "message": "reason is required"}})
         content = {"episode_id": episode_id, "reason": reason, "facts_snapshot_ref": body.get("facts_snapshot_ref")}
-        prior = dict((persona.metadata or {}).get("trade_reflection_idempotency") or {}).get(clean_key)
-        if prior is not None:
-            if prior.get("content") == content:
-                return {**prior["response"], "meta": {**prior["response"].get("meta", {}), "idempotent_replay": True}}
-            raise HTTPException(status_code=409, detail={"error": {"code": "IDEMPOTENCY_CONFLICT", "message": "different request", "retryable": False}})
-        try:
-            raw_facts = active_telemetry_fetcher(episode_id, persona.tenant_id, authorization)
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": f"Telemetry unavailable: {exc}", "retryable": True}}) from exc
-        if not raw_facts:
-            raise HTTPException(status_code=404, detail={"error": {"code": "RESOURCE_NOT_FOUND", "message": f"Trade episode {episode_id} not found"}})
-        if (raw_facts.get("persona_id") and raw_facts["persona_id"] != persona_id) or (raw_facts.get("tenant_id") and raw_facts["tenant_id"] != persona.tenant_id):
-            raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Access denied to episode"}})
-        canon_ref, _, _ = facts_snapshot(raw_facts)
-        claimed_ref = body.get("facts_snapshot_ref")
-        if claimed_ref and claimed_ref != canon_ref:
-            raise HTTPException(status_code=409, detail={"error": {"code": "IDEMPOTENCY_CONFLICT", "message": f"Claimed facts_snapshot_ref {claimed_ref} does not match canonical {canon_ref}", "retryable": False}})
-        try:
-            artifact = TradeReflectionPipeline(active_reflection_provider).process(ReflectionRequest(
-                request_id=f"reflection-{episode_id}-{uuid.uuid4().hex[:8]}", persona_id=persona_id,
-                trade_episode_ids=(episode_id,), trigger="manual_retry", facts=raw_facts, missing_refs=tuple(raw_facts.get("missing_refs") or ()),
-            ))
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": f"Reflection generation failed: {exc}", "retryable": True}}) from exc
-        resp = {
-            "data": {"receipt_id": f"owner-{uuid.uuid4().hex[:8]}", "action": "reflection.retry", "persona_id": persona_id, "resource_id": episode_id, "status": "accepted", "facts_snapshot_ref": canon_ref, "reflection_id": artifact["reflection_id"]},
-            "audit": {"durable": True, "record_ref": f"persona-metadata:{persona_id}:reflection:{artifact['reflection_id']}"},
-        }
+        claim = {"content": content, "tenant_id": authority.tenant_id, "response": None}
 
-        def _check_guard(cur: PersonaBody) -> bool:
+        def _claim_guard(cur: PersonaBody) -> bool:
             p = dict((cur.metadata or {}).get("trade_reflection_idempotency") or {}).get(clean_key)
             if p is None: return True
-            if p.get("content") == content: return False
-            raise HTTPException(status_code=409, detail={"error": {"code": "IDEMPOTENCY_CONFLICT", "message": "different request", "retryable": False}})
-
-        def _compute_updates(cur: PersonaBody) -> dict[str, Any]:
-            m = dict(cur.metadata or {})
-            return {
-                "trade_reflections": [r for r in m.get("trade_reflections", []) if r.get("trade_episode_id") != episode_id] + [artifact],
-                "trade_reflection_idempotency": {**dict(m.get("trade_reflection_idempotency") or {}), clean_key: {"content": content, "response": resp}},
-            }
+            if p.get("tenant_id") and p.get("tenant_id") != authority.tenant_id:
+                raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Exact tenant match required"}})
+            if p.get("content") != content or p.get("response") is None:
+                raise HTTPException(status_code=409, detail={"error": {"code": "IDEMPOTENCY_CONFLICT", "message": "conflict or in-flight", "retryable": False}})
+            return False
 
         for _ in range(5):
             try:
-                ok, committed = persistent_owner.try_metadata_cas(persona_id, guard=_check_guard, metadata_updates=_compute_updates, actor_id=authority.actor_id)
-                if ok: return resp
+                ok, committed = persistent_owner.try_metadata_cas(persona_id, guard=_claim_guard, metadata_updates=lambda cur: {"trade_reflection_idempotency": {**dict((cur.metadata or {}).get("trade_reflection_idempotency") or {}), clean_key: claim}}, actor_id=authority.actor_id)
+                if ok: break
                 p = dict((committed.metadata or {}).get("trade_reflection_idempotency") or {}).get(clean_key)
-                if p: return {**p["response"], "meta": {**p["response"].get("meta", {}), "idempotent_replay": True}}
-            except PersonaConcurrentUpdate:
-                continue
-        raise HTTPException(status_code=409, detail={"error": {"code": "CONCURRENT_UPDATE", "message": "Failed to persist reflection"}})
+                if p and p.get("response"): return {**p["response"], "meta": {**p["response"].get("meta", {}), "idempotent_replay": True}}
+            except PersonaConcurrentUpdate: continue
+        else: raise HTTPException(status_code=409, detail={"error": {"code": "CONCURRENT_UPDATE", "message": "Failed to claim invocation"}})
+
+        try:
+            try: raw_facts = active_telemetry_fetcher(episode_id, persona.tenant_id, authorization)
+            except Exception as exc: raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": f"Telemetry unavailable: {exc}", "retryable": True}}) from exc
+            if not raw_facts: raise HTTPException(status_code=404, detail={"error": {"code": "RESOURCE_NOT_FOUND", "message": f"Trade episode {episode_id} not found"}})
+            if (raw_facts.get("persona_id") and raw_facts["persona_id"] != persona_id) or (raw_facts.get("tenant_id") and raw_facts["tenant_id"] != persona.tenant_id):
+                raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Access denied to episode"}})
+            canon_ref, _, _ = facts_snapshot(raw_facts)
+            claimed_ref = body.get("facts_snapshot_ref")
+            if claimed_ref and claimed_ref != canon_ref:
+                raise HTTPException(status_code=409, detail={"error": {"code": "IDEMPOTENCY_CONFLICT", "message": f"Claimed facts_snapshot_ref {claimed_ref} does not match canonical {canon_ref}", "retryable": False}})
+            try:
+                artifact = TradeReflectionPipeline(active_reflection_provider).process(ReflectionRequest(
+                    request_id=f"reflection-{episode_id}-{uuid.uuid4().hex[:8]}", persona_id=persona_id,
+                    trade_episode_ids=(episode_id,), trigger="manual_retry", facts=raw_facts, missing_refs=tuple(raw_facts.get("missing_refs") or ()),
+                ))
+            except Exception as exc: raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": f"Reflection generation failed: {exc}", "retryable": True}}) from exc
+            resp = {
+                "data": {"receipt_id": f"owner-{uuid.uuid4().hex[:8]}", "action": "reflection.retry", "persona_id": persona_id, "resource_id": episode_id, "status": "accepted", "facts_snapshot_ref": canon_ref, "reflection_id": artifact["reflection_id"]},
+                "audit": {"durable": True, "record_ref": f"persona-metadata:{persona_id}:reflection:{artifact['reflection_id']}"},
+            }
+            for _ in range(5):
+                try:
+                    ok, _ = persistent_owner.try_metadata_cas(
+                        persona_id, guard=lambda cur: True,
+                        metadata_updates=lambda cur: {
+                            "trade_reflections": [r for r in (cur.metadata or {}).get("trade_reflections", []) if r.get("trade_episode_id") != episode_id] + [artifact],
+                            "trade_reflection_idempotency": {**dict((cur.metadata or {}).get("trade_reflection_idempotency") or {}), clean_key: {"content": content, "tenant_id": authority.tenant_id, "response": resp}},
+                        },
+                        actor_id=authority.actor_id,
+                    )
+                    if ok: return resp
+                except PersonaConcurrentUpdate: continue
+            raise HTTPException(status_code=409, detail={"error": {"code": "CONCURRENT_UPDATE", "message": "Failed to persist reflection"}})
+        except Exception:
+            try:
+                persistent_owner.try_metadata_cas(persona_id, guard=lambda cur: dict((cur.metadata or {}).get("trade_reflection_idempotency") or {}).get(clean_key, {}).get("response") is None, metadata_updates=lambda cur: {"trade_reflection_idempotency": {k: v for k, v in dict((cur.metadata or {}).get("trade_reflection_idempotency") or {}).items() if k != clean_key}}, actor_id=authority.actor_id)
+            except Exception: pass
+            raise
 
     @app.get("/api/personas/{persona_id}/trade-reflections")
     def list_trade_reflections(persona_id: str, environment: str | None = Query(default=None), review_state: str | None = Query(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
         try:
             authority = _authenticate_persona_mutation(authorization)
+            if not authority.tenant_id: raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Exact tenant match required"}})
             persona = persistent_owner.get(persona_id)
         except PersonaAuthorityError as exc:
             raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
         except PersonaNotFound as exc:
             raise HTTPException(status_code=404, detail={"error": {"code": "RESOURCE_NOT_FOUND", "message": str(exc)}}) from exc
-        if not authority.tenant_id or not persona.tenant_id or authority.tenant_id != persona.tenant_id:
+        if not persona.tenant_id or authority.tenant_id != persona.tenant_id:
             raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Exact tenant match required"}})
         rows = [r for r in list((persona.metadata or {}).get("trade_reflections") or []) if (not environment or r.get("environment") == environment) and (not review_state or r.get("review_state") == review_state)]
         return {"data": rows, "meta": {"source": "persona_reflection", "count": len(rows)}}

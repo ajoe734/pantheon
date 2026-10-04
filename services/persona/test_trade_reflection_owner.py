@@ -249,3 +249,65 @@ def test_concurrent_cas_no_lost_updates(monkeypatch: pytest.MonkeyPatch) -> None
         stored_idemp = (persona.metadata or {}).get("trade_reflection_idempotency", {})
         assert "k-1" in stored_idemp
         assert "k-2" in stored_idemp
+
+
+def test_signed_missing_tenant_denies_before_owner_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        counts = {"read": 0, "fetch": 0}
+        client, owner, _ = _setup_app(td, monkeypatch)
+        orig_get = owner.get
+        def counted_get(pid):
+            counts["read"] += 1
+            return orig_get(pid)
+        monkeypatch.setattr(owner, "get", counted_get)
+
+        no_tenant_tok = encode_jwt_hs256({"sub": "op", "roles": ["operator"], "exp": 4102444800}, secret=JWT_SECRET)
+        headers = {"Authorization": f"Bearer {no_tenant_tok}", "Idempotency-Key": "k-noten"}
+
+        # POST retry denial before any owner.get
+        resp_post = client.post("/api/personas/p-alpha/trade-journal/ep-1/reflection:retry", headers=headers, json={"reason": "test"})
+        assert resp_post.status_code == 403
+        assert counts["read"] == 0
+
+        # GET readback denial before any owner.get
+        resp_get = client.get("/api/personas/p-alpha/trade-reflections", headers={"Authorization": f"Bearer {no_tenant_tok}"})
+        assert resp_get.status_code == 403
+        assert counts["read"] == 0
+
+
+def test_concurrent_same_key_atomic_claim_single_provider_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    class BlockingProvider:
+        name = "blocking-provider"
+        model = "v1"
+        def __init__(self):
+            self.calls = 0
+            self.started = threading.Event()
+            self.release = threading.Event()
+            self.lock = threading.Lock()
+        def reflect(self, *, facts, trigger):
+            with self.lock:
+                self.calls += 1
+            self.started.set()
+            assert self.release.wait(5), "timed out"
+            return {"expected_vs_actual": {}, "attribution": "a", "counterfactuals": [], "lesson_candidates": []}
+
+    with tempfile.TemporaryDirectory() as td:
+        prov = BlockingProvider()
+        client, _, _ = _setup_app(td, monkeypatch, provider=prov)
+        headers = {**_auth_header("tenant-1"), "Idempotency-Key": "k-concurrent-atomic"}
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f1 = pool.submit(client.post, "/api/personas/p-alpha/trade-journal/ep-1/reflection:retry", headers=headers, json={"reason": "conc"})
+            assert prov.started.wait(5)
+            f2 = pool.submit(client.post, "/api/personas/p-alpha/trade-journal/ep-1/reflection:retry", headers=headers, json={"reason": "conc"})
+            prov.release.set()
+            r1, r2 = f1.result(10), f2.result(10)
+
+        assert prov.calls == 1
+        assert all(r.status_code in (202, 409) for r in (r1, r2))
+        receipts = [r.json()["data"]["receipt_id"] for r in (r1, r2) if r.status_code == 202]
+        assert len(set(receipts)) == 1
+
