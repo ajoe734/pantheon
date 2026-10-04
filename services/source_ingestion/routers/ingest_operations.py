@@ -6,9 +6,12 @@ market snapshots, and audit logging.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, Header, HTTPException
+
+from services.runtime_auth_inbound import AuthError, AuthContext, validate_request_auth
 
 from services.foundation import ActorRef, ActorType, DeadLetterStatus
 from services.knowledge.evidence.models import EvidenceValidationError
@@ -28,6 +31,53 @@ from ..requirement_state import MarketSnapshotStateError, RequirementStateError
 
 if TYPE_CHECKING:
     from ..runtime import SourceIngestionRuntime
+
+
+def _source_read_tenant(authorization: str | None, requested: str | None) -> str:
+    env = {
+        "PANTHEON_RUNTIME_AUTH_MODE": os.getenv("SOURCE_INGEST_AUTH_MODE", "strict"),
+        "PANTHEON_RUNTIME_JWT_SECRET": os.getenv("SOURCE_INGEST_JWT_SECRET") or os.getenv("PANTHEON_RUNTIME_JWT_SECRET", ""),
+        "PANTHEON_RUNTIME_JWT_ISSUER": os.getenv("SOURCE_INGEST_JWT_ISSUER") or os.getenv("PANTHEON_RUNTIME_JWT_ISSUER", ""),
+        "PANTHEON_RUNTIME_JWT_AUDIENCE": os.getenv("SOURCE_INGEST_JWT_AUDIENCE") or os.getenv("PANTHEON_RUNTIME_JWT_AUDIENCE", ""),
+        "PANTHEON_RUNTIME_JWKS_URI": os.getenv("SOURCE_INGEST_JWKS_URI") or os.getenv("PANTHEON_RUNTIME_JWKS_URI", ""),
+        "PANTHEON_RUNTIME_OIDC_DISCOVERY_URL": os.getenv("SOURCE_INGEST_OIDC_DISCOVERY_URL") or os.getenv("PANTHEON_RUNTIME_OIDC_DISCOVERY_URL", ""),
+        "PANTHEON_RUNTIME_ROLE_CLAIMS": os.getenv("SOURCE_INGEST_ROLE_CLAIMS") or os.getenv("PANTHEON_RUNTIME_ROLE_CLAIMS", "roles,role"),
+        "PANTHEON_RUNTIME_ROLE_MAP": os.getenv("SOURCE_INGEST_ROLE_MAP") or os.getenv("PANTHEON_RUNTIME_ROLE_MAP", ""),
+        "PANTHEON_RUNTIME_ROLE_MAP_MODE": os.getenv("SOURCE_INGEST_ROLE_MAP_MODE") or os.getenv("PANTHEON_RUNTIME_ROLE_MAP_MODE", ""),
+    }
+    try:
+        context: AuthContext = validate_request_auth(authorization=authorization, env=env)
+    except AuthError as exc:
+        raise HTTPException(status_code=503 if exc.status_code >= 500 else exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+    claims = context.claims
+    primary = ("tenant_id", "tenantId", "tenant.id", "tid", "org_id", "organization.id", "organization_id")
+    allowed_paths = ("allowed_tenants", "allowedTenants", "tenant_ids", "tenantIds", "tenants", *primary)
+
+    def collect(paths: tuple[str, ...]) -> list[str]:
+        found: list[str] = []
+        for path in paths:
+            value: Any = claims
+            for part in path.split("."):
+                value = value.get(part) if isinstance(value, dict) else None
+            for item in value if isinstance(value, (list, tuple, set)) else (value,):
+                text = str(item or "").strip()
+                if text and text not in found:
+                    found.append(text)
+        return found
+
+    scoped, allowed = collect(primary), collect(allowed_paths)
+    allowed = allowed or scoped
+    default = str(os.getenv("SOURCE_INGEST_DEFAULT_TENANT_ID") or os.getenv("PANTHEON_TENANT_ID") or "").strip()
+    tenant = str(requested or "").strip()
+    if not tenant and default in allowed:
+        tenant = default
+    if not tenant and len(scoped) == 1:
+        tenant = scoped[0]
+    if not tenant and len(allowed) == 1:
+        tenant = allowed[0]
+    if not tenant or tenant == "*" or ("*" not in allowed and tenant not in allowed):
+        raise HTTPException(status_code=403, detail={"code": "TENANT_SCOPE_DENIED", "message": "An explicitly admitted tenant is required"})
+    return tenant
 
 
 def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRouter:
@@ -220,45 +270,53 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.get("/api/source-ingest/source-records")
-    def list_source_records() -> dict[str, Any]:
-        return {"source_records": [record.to_dict() for record in runtime.evidence_repository.list_source_records()]}
+    def list_source_records(authorization: str | None = Header(default=None), tenant_id: str | None = Header(default=None, alias="X-Tenant-Id")) -> dict[str, Any]:
+        tenant = _source_read_tenant(authorization, tenant_id)
+        return {"source_records": [record.to_dict() for record in runtime.evidence_repository.list_source_records(tenant_id=tenant)]}
 
     @router.get("/api/source-ingest/source-records/{source_id}")
-    def get_source_record(source_id: str) -> dict[str, Any]:
-        source = runtime.evidence_repository.get_source_record(source_id)
+    def get_source_record(source_id: str, authorization: str | None = Header(default=None), tenant_id: str | None = Header(default=None, alias="X-Tenant-Id")) -> dict[str, Any]:
+        tenant = _source_read_tenant(authorization, tenant_id)
+        source = runtime.evidence_repository.get_source_record(source_id, tenant_id=tenant)
         if source is None:
             raise HTTPException(status_code=404, detail="source record not found")
         return {"source_record": source.to_dict()}
 
     @router.get("/api/source-ingest/evidence/items")
-    def list_evidence_items() -> dict[str, Any]:
-        return {"items": [item.to_dict() for item in runtime.evidence_repository.list_evidence_items()]}
+    def list_evidence_items(authorization: str | None = Header(default=None), tenant_id: str | None = Header(default=None, alias="X-Tenant-Id")) -> dict[str, Any]:
+        tenant = _source_read_tenant(authorization, tenant_id)
+        return {"items": [item.to_dict() for item in runtime.evidence_repository.list_evidence_items(tenant_id=tenant)]}
 
     @router.get("/api/source-ingest/evidence/items/{evidence_item_id}")
-    def get_evidence_item(evidence_item_id: str) -> dict[str, Any]:
-        item = runtime.evidence_repository.get_evidence_item(evidence_item_id)
+    def get_evidence_item(evidence_item_id: str, authorization: str | None = Header(default=None), tenant_id: str | None = Header(default=None, alias="X-Tenant-Id")) -> dict[str, Any]:
+        tenant = _source_read_tenant(authorization, tenant_id)
+        item = runtime.evidence_repository.get_evidence_item(evidence_item_id, tenant_id=tenant)
         if item is None:
             raise HTTPException(status_code=404, detail="evidence item not found")
         return {"item": item.to_dict()}
 
     @router.get("/api/source-ingest/evidence/bundles")
-    def list_evidence_bundles() -> dict[str, Any]:
-        return {"bundles": [bundle.to_dict() for bundle in runtime.evidence_repository.list_bundles()]}
+    def list_evidence_bundles(authorization: str | None = Header(default=None), tenant_id: str | None = Header(default=None, alias="X-Tenant-Id")) -> dict[str, Any]:
+        tenant = _source_read_tenant(authorization, tenant_id)
+        return {"bundles": [bundle.to_dict() for bundle in runtime.evidence_repository.list_bundles(tenant_id=tenant)]}
 
     @router.get("/api/source-ingest/evidence/bundles/{evidence_bundle_id}")
-    def get_evidence_bundle(evidence_bundle_id: str) -> dict[str, Any]:
-        bundle = runtime.evidence_repository.get_bundle(evidence_bundle_id)
+    def get_evidence_bundle(evidence_bundle_id: str, authorization: str | None = Header(default=None), tenant_id: str | None = Header(default=None, alias="X-Tenant-Id")) -> dict[str, Any]:
+        tenant = _source_read_tenant(authorization, tenant_id)
+        bundle = runtime.evidence_repository.get_bundle(evidence_bundle_id, tenant_id=tenant)
         if bundle is None:
             raise HTTPException(status_code=404, detail="evidence bundle not found")
         return {"bundle": bundle.to_dict()}
 
     @router.get("/api/source-ingest/evidence/knowledge-objects")
-    def list_knowledge_objects() -> dict[str, Any]:
-        return {"knowledge_objects": [item.to_dict() for item in runtime.evidence_repository.list_knowledge_objects()]}
+    def list_knowledge_objects(authorization: str | None = Header(default=None), tenant_id: str | None = Header(default=None, alias="X-Tenant-Id")) -> dict[str, Any]:
+        tenant = _source_read_tenant(authorization, tenant_id)
+        return {"knowledge_objects": [item.to_dict() for item in runtime.evidence_repository.list_knowledge_objects(tenant_id=tenant)]}
 
     @router.get("/api/source-ingest/evidence/knowledge-objects/{knowledge_object_id}")
-    def get_knowledge_object(knowledge_object_id: str) -> dict[str, Any]:
-        knowledge_object = runtime.evidence_repository.get_knowledge_object(knowledge_object_id)
+    def get_knowledge_object(knowledge_object_id: str, authorization: str | None = Header(default=None), tenant_id: str | None = Header(default=None, alias="X-Tenant-Id")) -> dict[str, Any]:
+        tenant = _source_read_tenant(authorization, tenant_id)
+        knowledge_object = runtime.evidence_repository.get_knowledge_object(knowledge_object_id, tenant_id=tenant)
         if knowledge_object is None:
             raise HTTPException(status_code=404, detail="knowledge object not found")
         return {"knowledge_object": knowledge_object.to_dict()}

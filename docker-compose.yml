@@ -200,6 +200,10 @@ services:
     environment:
       PORT: "8097"
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      SOURCE_INGEST_AUTH_MODE: strict
+      SOURCE_INGEST_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}
+      SOURCE_INGEST_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
+      SOURCE_INGEST_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
       SOURCE_INGEST_DATA_DIR: /data/source-ingest
       SOURCE_INGEST_CONNECTOR_STORE_PATH: /data/source-ingest/connector_config.jsonl
       SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl

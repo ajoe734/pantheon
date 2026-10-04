@@ -13,7 +13,7 @@ import os
 import uuid
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel
 
 from integrations.openclaw.adapter import (
@@ -37,7 +37,12 @@ from persona_registry import (
     SessionType,
     utc_now,
 )
-from services.persona.write_owner import create_app as create_persona_owner_app
+from services.persona.write_owner import (
+    PersonaAuthorityError,
+    PersonaNotFound,
+    create_app as create_persona_owner_app,
+    resolve_persona_tenant_scope,
+)
 
 app = FastAPI(title="Pantheon Persona Agent", version="0.2.0")
 
@@ -398,8 +403,67 @@ async def invoke(req: InvokeRequest):
     )
 
 
+def _session_for_tenant(session_id: str, tenant_id: str):
+    session = SESSION_STORE.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    try:
+        persona = PERSONA_OWNER_API.state.persona_owner.get(session.persona_id)
+    except PersonaNotFound as exc:
+        raise HTTPException(status_code=404, detail="session not found") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Persona ownership store unavailable") from exc
+    if not persona.tenant_id or persona.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="session not found")
+    return session
+
+
+@app.get("/api/sessions")
+def list_sessions(
+    persona_id: str | None = None,
+    status: str | None = None,
+    session_type: str | None = None,
+    tenant_id: str | None = Query(default=None, alias="tenant_id"),
+    authorization: str | None = Header(default=None),
+):
+    try:
+        _, admitted = resolve_persona_tenant_scope(authorization, tenant_id)
+    except PersonaAuthorityError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
+    try:
+        sessions = SESSION_STORE.list(persona_id=persona_id, status=status, session_type=session_type)
+        visible = []
+        for session in sessions:
+            try:
+                visible.append(_session_for_tenant(session.session_id, admitted).to_dict())
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+        return visible
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Persona session owner unavailable") from exc
+
+
+@app.get("/api/sessions/{session_id}")
+def get_session(
+    session_id: str,
+    tenant_id: str | None = Query(default=None, alias="tenant_id"),
+    authorization: str | None = Header(default=None),
+):
+    try:
+        _, admitted = resolve_persona_tenant_scope(authorization, tenant_id)
+    except PersonaAuthorityError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
+    try:
+        return _session_for_tenant(session_id, admitted).to_dict()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Persona session owner unavailable") from exc
+
+
 # The deployed control-plane Persona process owns the durable Registry and
-# capability APIs.  Including the owner router here keeps legacy classify and
-# invoke routes intact while ensuring BFF writes cross a real service boundary.
+# capability APIs.  The SESSION_STORE above remains process-local in-memory;
+# authenticated reads expose only existing live state, not fresh-process history.
 PERSONA_OWNER_API = create_persona_owner_app()
 app.include_router(PERSONA_OWNER_API.router)

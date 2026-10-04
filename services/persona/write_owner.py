@@ -205,12 +205,13 @@ class TrainingTargetApprovalUnavailable(PersonaAuthorityError):
 
 @dataclass(frozen=True)
 class PersonaInboundAuthority:
-    """Authenticated identity used for Persona mutation policy decisions."""
+    """Authenticated identity used for Persona owner policy decisions."""
 
     actor_id: str
     roles: frozenset[str]
     token_kind: str
     tenant_id: str | None = None
+    claims: Mapping[str, Any] | None = None
 
 
 class GovernanceDecisionVerifier(Protocol):
@@ -435,7 +436,45 @@ def _authenticate_persona_mutation(
         roles=context.roles,
         token_kind=context.token_kind,
         tenant_id=str(context.claims.get("tenant_id") or "").strip() or None,
+        claims=context.claims,
     )
+
+
+def resolve_persona_tenant_scope(
+    authorization: str | None, requested_tenant: str | None = None
+) -> tuple[PersonaInboundAuthority, str]:
+    """Authenticate and select only a tenant admitted by verified claims."""
+    authority = _authenticate_persona_mutation(authorization)
+    claims = dict(authority.claims or {})
+    paths = ("tenant_id", "tenantId", "tenant.id", "tid", "org_id", "organization.id", "organization_id")
+    admitted_paths = ("allowed_tenants", "allowedTenants", "tenant_ids", "tenantIds", "tenants", *paths)
+
+    def values(names: tuple[str, ...]) -> list[str]:
+        found: list[str] = []
+        for path in names:
+            value: Any = claims
+            for part in path.split("."):
+                value = value.get(part) if isinstance(value, Mapping) else None
+            items = value if isinstance(value, (list, tuple, set)) else [value]
+            for item in items:
+                text = str(item or "").strip()
+                if text and text not in found:
+                    found.append(text)
+        return found
+
+    scoped = values(paths)
+    admitted = values(admitted_paths) or scoped
+    default = str(os.getenv("PERSONA_DEFAULT_TENANT_ID") or os.getenv("PANTHEON_TENANT_ID") or "").strip()
+    chosen = str(requested_tenant or "").strip()
+    if not chosen and default and default in admitted:
+        chosen = default
+    if not chosen and len(scoped) == 1:
+        chosen = scoped[0]
+    if not chosen and len(admitted) == 1:
+        chosen = admitted[0]
+    if not chosen or chosen == "*" or ("*" not in admitted and chosen not in admitted):
+        raise PersonaAuthorityError("TENANT_SCOPE_DENIED", "An explicitly admitted tenant is required", 403)
+    return authority, chosen
 
 
 def _bind_authenticated_actor(
@@ -1685,6 +1724,7 @@ def create_app(
         version="1.0.0",
         description="Persistent Persona registry write-owner service",
     )
+    app.state.persona_owner = persistent_owner
 
     @app.post(
         "/api/personas",
