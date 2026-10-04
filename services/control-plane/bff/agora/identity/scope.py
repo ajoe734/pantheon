@@ -206,11 +206,10 @@ def resolve_agora_user_scope(
     clean_req = str(requested_tenant_id or "").strip()
     concrete = [t for t in allowed_tenants if t != "*"]
     single = concrete[0] if len(concrete) == 1 else ""
-    auth_env = env_default if (env_default and ("*" in allowed_tenants or env_default in allowed_tenants)) else ""
     auth_claim = _first_nonblank(*[t for t in claim_tenants if ("*" in allowed_tenants or t in allowed_tenants)])
-    tenant_id = clean_req or auth_env or auth_claim or single
+    tenant_id = clean_req or env_default or auth_claim or single
     if not tenant_id and "*" in allowed_tenants:
-        tenant_id = auth_env or "pantheon-dev"
+        tenant_id = env_default or "pantheon-dev"
 
     if "*" not in allowed_tenants and tenant_id not in allowed_tenants:
         raise AgoraScopeResolutionError("Tenant access denied for Agora scope", reason="AGORA_SCOPE_TENANT_DENIED", status_code=403, details={"tenantId": tenant_id, "allowedTenantIds": allowed_tenants})

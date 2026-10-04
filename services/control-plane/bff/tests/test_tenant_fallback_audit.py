@@ -2029,8 +2029,70 @@ def test_tenantless_structured_caller_never_dispatches(mounted, monkeypatch, par
     assert seen == [], f"Missing trusted tenant must fail before downstream calls, got {seen}"
 
 
+@pytest.mark.parametrize("token,params,expect_ok", [
+    ("Bearer reviewer:operator:mfa", {}, False),
+    ("Bearer reviewer:operator:mfa", {"tenant_id": "tenant-b"}, False),
+    ("Bearer reviewer:operator:mfa", {"tenant": "tenant-b"}, False),
+    ("Bearer reviewer:operator:mfa::tenant-a", {"tenant_id": "tenant-b"}, False),
+    ("Bearer reviewer:operator:mfa::tenant-a", {"tenant": "tenant-b"}, False),
+    ("Bearer reviewer:operator:mfa::tenant-a", {}, True),
+    ("Bearer reviewer:operator:mfa::tenant-a", {"tenant_id": "tenant-a"}, True),
+])
+def test_structured_identity_capital_patch_controls(mounted, owner, monkeypatch, token, params, expect_ok):
+    """Regress AC1/AC5: structured identity Capital PATCH absent/foreign/same controls asserting zero transport calls and zero owner writes on denial."""
+    client, store, _ = mounted
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "1")
+    monkeypatch.setenv("PANTHEON_CAPITAL_API_URL", "http://capital.invalid")
+    calls = []
+    writes_before = json.loads(owner.read_text())["writes"]
+
+    class Response:
+        status = 200
+
+        def read(self):
+            return json.dumps({"pool_id": "pool-b", "status": "suspended", "tenant_id": "tenant-a"}).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    def capture(req, *args, **kwargs):
+        calls.append((req.method, req.full_url, req.get_header("X-tenant-id") or req.get_header("X-Tenant-Id")))
+        return Response()
+
+    monkeypatch.setattr(urllib.request, "urlopen", capture)
+    key = f"review-capital-structured-{expect_ok}-{len(params)}-{token.replace(':', '_')}"
+    response = client.post(
+        "/bff/v1/commands",
+        headers={"Authorization": token, "Idempotency-Key": key},
+        json={
+            "command": "CapitalPoolAction",
+            "target": {"type": "CapitalPool", "id": "pool-b"},
+            "params": {"action_id": "pause", **params},
+            "audit_context": {"reason": "structured capital patch controls"},
+        },
+    )
+    writes_after = json.loads(owner.read_text())["writes"]
+    record = store.get_command_by_idempotency_key(key)
+
+    if not expect_ok:
+        assert calls == [], f"Tenantless/foreign authenticated caller must fail before PATCH, got {calls}"
+        assert writes_after == writes_before, f"Expected 0 owner writes on denial, got {writes_after - writes_before}"
+        assert (record or {}).get("status") in ("failed", None)
+    else:
+        assert response.status_code == 202
+        assert len(calls) == 2, f"Expected PATCH and GET calls, got {calls}"
+        assert calls[0][0] == "PATCH" and calls[0][2] == "tenant-a"
+        assert calls[1][0] == "GET" and calls[1][2] == "tenant-a"
+        assert (record or {}).get("status") == "executed"
+
+
 @pytest.mark.parametrize("primary,allowed,configured,requested,expected", [
-    ("tenant-a", ["tenant-a"], "environment-only", None, "tenant-a"),
+    ("tenant-a", ["tenant-a"], "environment-only", None, None),
+    ("tenant-a", ["tenant-a"], "tenant-a", None, "tenant-a"),
     (None, ["tenant-a", "tenant-b"], None, None, None),
     (None, ["tenant-b", "tenant-a"], None, None, None),
     (None, ["tenant-a", "tenant-b"], "tenant-b", None, "tenant-b"),
@@ -2120,5 +2182,3 @@ def test_operations_read_model_multi_tenant_lists_fail_closed_without_selector(m
     headers_single = {"Authorization": f"Bearer {tok_single}"}
     assert client.get("/bff/management/operations-read-model/p-a", headers=headers_single).status_code == 200
     assert client.get("/bff/management/operations-read-model/p-b", headers=headers_single).status_code == 404
-
-

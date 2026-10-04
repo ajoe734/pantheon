@@ -9,6 +9,7 @@ approval, risk policy and paper/live classification.
 """
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, Optional
 import urllib.error
 from urllib.parse import quote
@@ -53,11 +54,10 @@ class CapitalOwnerWriter:
     """Forward pool, binding, rebalance and containment writes to the Capital owner."""
 
     @staticmethod
-    def _tenant(tenant_id: Optional[str], auth_token: Optional[str]) -> Optional[str]:
-        raw = str(auth_token or "").removeprefix("Bearer ").strip()
-        if raw.count(".") == 2 or tenant_id:
-            return bound_tenant({}, tenant_id, auth_token)
-        return str(tenant_id or "").strip() or _token_tenant(auth_token)
+    def _tenant(tenant_id: Optional[str], auth_token: Optional[str]) -> str:
+        if os.getenv("CAPITAL_AUTH_DISABLED", "").strip().lower() in ("true", "1") and not tenant_id and not _token_tenant(auth_token):
+            return ""
+        return bound_tenant({}, tenant_id, auth_token)
 
     def create_pool(self, payload, *, actor_id, actor_role, auth_token=None, key="", tenant_id=None, **_) -> Dict[str, Any]:
         pool_id = str(payload.get("pool_id") or payload.get("id") or "").strip()
@@ -171,12 +171,11 @@ class CapitalCommandAdapter(DomainCommandAdapter):
 
     @staticmethod
     def _ctx(params: Dict[str, Any], auth_token: Optional[str]) -> Dict[str, Any]:
-        raw = str(auth_token or "").removeprefix("Bearer ").strip()
-        claimed = str(params.get("tenant_id") or params.get("tenant") or "").strip()
-        tid = bound_tenant(params, None, auth_token) if (raw.count(".") == 2 or claimed) else _token_tenant(auth_token)
+        tid = "" if (os.getenv("CAPITAL_AUTH_DISABLED", "").strip().lower() in ("true", "1") and not params.get("tenant_id") and not _token_tenant(auth_token)) else bound_tenant(params, None, auth_token)
         return {
             "actor_id": str(params.get("actor_id") or ""), "actor_role": str(params.get("actor_role") or ""),
-            "key": str(params.get("idempotency_key") or ""), "auth_token": auth_token, "tenant_id": tid,
+            "key": str(params.get("idempotency_key") or ""), "auth_token": auth_token,
+            "tenant_id": tid,
         }
 
     def _pool(self, command_id, pool_id, action_id, params, auth_token) -> Dict[str, Any]:

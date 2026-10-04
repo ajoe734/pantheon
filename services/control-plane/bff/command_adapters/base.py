@@ -180,16 +180,11 @@ def bound_tenant(payload: Any, tenant_id: Optional[str] = None, auth_token: Opti
 
 def _headers(payload: Any, auth_token: Optional[str], mfa_token: Optional[str], tenant_id: Optional[str]) -> Dict[str, str]:
     h = {"Accept": "application/json", "X-Pantheon-Service": "control-plane-bff"}
-    has_claimed = bool(isinstance(payload, dict) and (payload.get("tenant_id") or payload.get("tenant")))
-    raw = str(auth_token or "").removeprefix("Bearer ").strip()
-    if raw.count(".") == 2 or tenant_id or has_claimed or (payload is not None and not auth_token):
-        t = bound_tenant(payload, tenant_id, auth_token)
-        if t:
-            h["X-Tenant-Id"] = t
-    elif auth_token:
-        t = _token_tenant(auth_token)
-        if t:
-            h["X-Tenant-Id"] = t
+    if auth_token or tenant_id or payload is not None:
+        if not (os.getenv("CAPITAL_AUTH_DISABLED", "").strip().lower() in ("true", "1") and not tenant_id and not _token_tenant(auth_token)):
+            t = bound_tenant(payload, tenant_id, auth_token)
+            if t:
+                h["X-Tenant-Id"] = t
     if payload is not None:
         h["Content-Type"] = "application/json"
     if auth_token:
