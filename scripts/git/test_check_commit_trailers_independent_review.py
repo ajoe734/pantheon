@@ -88,6 +88,35 @@ def test_product_delivery_still_requires_reviewer() -> None:
     assert CHECK.required_trailers_for_delivery(REQUIRED, "product") == REQUIRED
 
 
+def test_auto_cli_imports_component_boundary_from_repository_root() -> None:
+    import subprocess
+
+    result = subprocess.run(
+        ["python3", str(CHECKER), "--range", "HEAD~1..HEAD", "--skip-merge", "--delivery-class", "auto"],
+        cwd=CHECKER.parents[2], capture_output=True, text=True, check=False,
+    )
+    assert "ModuleNotFoundError: No module named 'scripts'" not in result.stderr
+    assert "delivery_class=" in result.stdout or result.returncode in (0, 1)
+
+
+def test_check_targets_honors_expected_task_id_and_skips_merge_commits(monkeypatch) -> None:
+    import subprocess
+
+    message = _message("Claude", "Codex2")
+    monkeypatch.setattr(CHECK, "load_settings", lambda: (REQUIRED, True))
+    monkeypatch.setattr(
+        CHECK.subprocess, "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, stdout="merge a b\\n"),
+    )
+    assert CHECK.check_targets(
+        [("merge", message)], skip_merge=True, expected_task_id="OTHER"
+    ) == []
+    failures = CHECK.check_targets(
+        [("commit", message)], expected_task_id="OTHER"
+    )
+    assert any("does not match task id 'OTHER'" in item for item in failures[0][1])
+
+
 # OPS-COMMIT-IDENTITY-001: a subject prefix must actually name the same task
 # as the Task-ID trailer. Reproduces the dev46bbfe contradiction: a real
 # >72-char generated task_id cannot appear verbatim in a bounded subject, so

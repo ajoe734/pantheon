@@ -1,0 +1,12 @@
+{
+  "task_id": "OPS-HANDOFF-TRAILER-ADMISSION-002",
+  "status": "locally_validated",
+  "scope": "Pantheon PR handoff checks the frozen base..head commit range with the CI trailer checker before reviewer admission.",
+  "activation": "source-only; a later runtime promotion is required",
+  "production_line_budget": 60,
+  "verification": [
+    "PYTHONPATH=.orchestrator .venv-pantheon/bin/python -m pytest -q .orchestrator/rewrite/test_task_contract.py scripts/git/test_check_commit_trailers_independent_review.py — 35 passed",
+    "PYTHONPATH=.orchestrator .venv-pantheon/bin/python -m pytest -q scripts/test_ai_status.py -k 'handoff_admission or handoff_pr_delivery_binding' — 4 passed, 527 deselected",
+    "python3 scripts/git/check_commit_trailers.py --range HEAD~3..HEAD --skip-merge --delivery-class auto — passed"
+  ]
+}

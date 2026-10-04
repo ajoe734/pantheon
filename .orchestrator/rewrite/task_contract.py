@@ -103,6 +103,7 @@ from multi_repo_registry import (
     artifact_repository_id,
     repository_relative_artifact_path,
     repository_slug,
+    repository_local_path,
     validate_task_repository_scope,
 )
 from rewrite import task_machine
@@ -426,6 +427,25 @@ def validate_handoff_pr_delivery_binding(
     import diff_budget
 
     diff_budget.enforce_handoff(task, config, pr_files)
+    if repository_id == "pantheon":
+        import check_commit_trailers
+
+        repository_root = Path(repository_local_path(config, repository_id))
+        failures = check_commit_trailers.check_range(
+            f"{validated.base_sha}..{normalized['head_sha']}",
+            skip_merge=True,
+            delivery_class="auto",
+            expected_task_id=task_id,
+            repository_root=repository_root,
+        )
+        if failures:
+            details = "; ".join(
+                f"{sha}: {', '.join(problems)}" for sha, problems in failures
+            )
+            raise SystemExit(
+                f"{task_id} handoff rejected: commit trailers are invalid ({details}). "
+                "Repair commits through scripts/git/worker_commit.py."
+            )
 
     try:
         github_review_bridge.revalidate_pull_request_snapshot(
