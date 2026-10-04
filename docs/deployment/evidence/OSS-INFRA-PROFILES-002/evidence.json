@@ -1,0 +1,146 @@
+{
+  "schema_version": "pantheon.oss-infra-profiles-002.baseline.v1",
+  "task_id": "OSS-INFRA-PROFILES-002",
+  "kind": "source_only_dev_profile_baseline",
+  "observed_at": "2026-10-04T05:55:36.694770+00:00",
+  "target": {
+    "project": "pantheon-dev-20260902",
+    "vm": "pantheon-dev-deploy",
+    "zone": "asia-east1-b"
+  },
+  "inventory": {
+    "path": "/tmp/pantheon-inventory-closeout-20261004-0412/dev-profile-image-metadata.json",
+    "sha256": "f6d0ed66af8556e147fdabc431de160db04aa707e41c48728f984a14d5f366c9",
+    "scope": "read-only container/image/config-label/mount metadata",
+    "containers": 57,
+    "running": 54,
+    "exited": 3,
+    "profile_selector": "unknown",
+    "caveats": [
+      "Absent source labels and historical COMPOSE_PROFILES remain unknown.",
+      "FE deploymentProfile is not a Compose profile selector.",
+      "No env secrets, mounted data, image operations, or hosted mutations were collected."
+    ]
+  },
+  "served_pair": {
+    "evidence": [
+      {
+        "path": "/tmp/pantheon-inventory-closeout-20261004-0412/bff-version-current.json",
+        "sha256": "e69a39eda3ce62f7ca286ce1082b85cbf13ea92fe34850f3c39e28b2f1370a2c"
+      },
+      {
+        "path": "/tmp/pantheon-inventory-closeout-20261004-0412/fe-deployment-current.json",
+        "sha256": "f638dd939467aec58eab36d23c90ca892ba06d986b69a7ea7d6f7c3cf72c0d9b"
+      }
+    ],
+    "pantheon_backend": "5743158b02ad5e463d4cba19d79521071daf4778",
+    "execute_plans_frontend": "7d01b1ae125246b952120ffd718b1df3ec242769"
+  },
+  "accepted_controller": {
+    "path": "/tmp/pantheon-closeout-execution-20261003-1326/release-37123107209/release-controller-accepted.json",
+    "sha256": "9b4419670a8309447494954d9c73c3123708d6f86c455abab3ce626cfb97171b",
+    "run_id": "37123107209"
+  },
+  "source_changes": {
+    "compose_files_changed": true,
+    "profile_contract_rebased": true,
+    "runtime_profile_docs_added": true,
+    "pinned_images": [
+      "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+      "nats:2.11-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00",
+      "redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf",
+      "busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+      "minio/mc:RELEASE.2024-01-16T16-06-34Z"
+    ]
+  },
+  "upstream_provenance": [
+    {
+      "image": "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+      "upstream_registry": "docker.io/library/postgres",
+      "upstream_repo": "https://github.com/docker-library/postgres",
+      "tag": "16-alpine",
+      "base": "Alpine Linux 3.20",
+      "verification": "Official Docker Library automated build; pinned immutable digest matches published manifest list for linux/amd64."
+    },
+    {
+      "image": "nats:2.11-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00",
+      "upstream_registry": "docker.io/library/nats",
+      "upstream_repo": "https://github.com/nats-io/nats-docker",
+      "tag": "2.11-alpine",
+      "base": "Alpine Linux 3.20",
+      "verification": "Official Docker Library Synadia NATS server build; pinned immutable digest matches published manifest list for linux/amd64."
+    },
+    {
+      "image": "redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf",
+      "upstream_registry": "docker.io/library/redis",
+      "upstream_repo": "https://github.com/docker-library/redis",
+      "tag": "7-alpine",
+      "base": "Alpine Linux 3.20",
+      "verification": "Official Docker Library automated build; pinned immutable digest matches published manifest list for linux/amd64."
+    },
+    {
+      "image": "busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+      "upstream_registry": "docker.io/library/busybox",
+      "upstream_repo": "https://github.com/docker-library/busybox",
+      "tag": "1.36",
+      "base": "musl multiarch",
+      "verification": "Official Docker Library automated build; pinned immutable digest matches published manifest list for linux/amd64."
+    },
+    {
+      "image": "minio/mc:RELEASE.2024-01-16T16-06-34Z",
+      "upstream_registry": "quay.io/minio/mc, docker.io/minio/mc",
+      "upstream_repo": "https://github.com/minio/mc",
+      "tag": "RELEASE.2024-01-16T16-06-34Z",
+      "base": "MinIO client upstream release",
+      "verification": "Upstream MinIO Client release tag; verified locally with MinIO client command-line contract (alias set and bucket mb -p)."
+    }
+  ],
+  "inline_install_disposition": {
+    "total_inline_install_rows_in_plan": 51,
+    "assigned_to_oss_infra_profiles": 0,
+    "breakdown_by_family_baseline": {
+      "OSS-CORE-BASELINE-001": 32,
+      "OSS-RESEARCH-BASELINE-001": 15,
+      "OSS-EXECUTION-BASELINE-001": 2,
+      "SIMPLIFY-OPENCLAW-001": 2
+    },
+    "note": "Per docs/plans/system-simplification-20260906/oss-version-disposition.csv, all 51 inline_install rows were assigned to and resolved by predecessor family baselines. OSS-INFRA-PROFILES-001/002 owns zero inline-install rows."
+  },
+  "validation": {
+    "performed": [
+      "Verified source branch and clean task worktree before edits.",
+      "Read-only cross-check of inventory counts, served pair, and evidence SHA-256 values.",
+      "docker compose -f docker-compose.yml config --quiet (54 default services preserved)",
+      "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=local-compose-validation PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL=http://adapter.invalid PANTHEON_PERSONA_SERVICE_TOKEN=local-compose-validation docker compose -f docker-compose.control.yml config --quiet",
+      "PANTHEON_SOURCE_INGEST_URL=http://source-ingest.invalid docker compose -f docker-compose.exec.yml config --quiet",
+      "docker compose -f docker-compose.remote-dev.yml config --quiet",
+      "docker compose -f docker-compose.yml --profile core config --quiet",
+      "docker compose -f docker-compose.yml --profile workers config --quiet",
+      "docker compose -f docker-compose.yml --profile research config --quiet",
+      "docker compose -f docker-compose.yml --profile management-ai config --quiet",
+      "docker compose -f docker-compose.yml --profile execution config --quiet",
+      "docker compose -f docker-compose.yml --profile core --profile workers config --quiet",
+      "docker compose -f docker-compose.yml --profile core --profile workers --profile management-ai config --quiet",
+      "docker compose -f docker-compose.yml --profile core --profile workers --profile management-ai --profile execution config --quiet",
+      "docker compose -f docker-compose.yml --profile core --profile workers --profile research --profile management-ai --profile execution config --quiet",
+      "docker compose -f docker-compose.yml --profile dormant-smoke config --quiet",
+      "docker compose -f docker-compose.yml --profile openclaw config --quiet",
+      "docker compose -f docker-compose.yml --profile static-paper-runtime config --quiet",
+      "docker compose -f docker-compose.yml --profile smoke config --quiet",
+      "PANTHEON_SOURCE_INGEST_URL=http://source-ingest.invalid docker compose -f docker-compose.exec.yml --profile execution config --quiet",
+      "PANTHEON_SOURCE_INGEST_URL=http://source-ingest.invalid docker compose -f docker-compose.exec.yml --profile live config --quiet",
+      "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); $PANTHEON_PY -m pytest -q services/policy-learning/tests/test_policy_learning_compose_activation.py services/research-worker-gateway/tests/test_research_worker_gateway_compose_activation.py services/research/tests/test_research_orchestrator_compose_activation.py services/source_ingestion/test_compose_activation.py services/training-session/tests/test_compose_activation.py scripts/test_current_l12_compose_wiring.py (16 passed in 6.22s)",
+      "Disposable Compose runtime project ossip002-6e3925f497: started postgres, nats, signal-store with source-rendered service definitions and pinned image digests; no host ports, private internal network, fresh labelled project volumes, 2 CPU/2 GiB per container; labels com.pantheon.task=OSS-INFRA-PROFILES-002 and com.pantheon.isolation-project=ossip002-6e3925f497.",
+      "All three task-only services reached healthy; restart and --wait succeeded. PostgreSQL row task_runtime_receipt(postgres-persistence=durable) survived restart.",
+      "Redis Lua compare-and-set accepted fence 41->42, rejected stale 41 (0), and retained 42.",
+      "Redis client reconnect contract verified: Python redis client with retry_on_error remained active during signal-store restart, reconnected automatically without crash, verified fence key and wrote/read new status after restart.",
+      "NATS JetStream redelivery & ack-timeout contract verified: stream L12_TEL_TEST with ack_wait=2s; published event; consumer fetched (num_delivered=1) and exited without acking; after 3s ack_wait timeout, reconnected consumer fetched redelivered event (num_delivered=2), verified exact payload, and successfully acked; verified queue drained.",
+      "Runtime validation of pinned busybox: executed disposable container running openclaw-data-init command (mkdir -p /home/node/.openclaw && chown -R 1000:1000 /home/node/.openclaw) on isolated volume ossip002-openclaw-test; exit code 0; verified directory mode drwxr-xr-x uid 1000 gid 1000; cleaned up volume.",
+      "Runtime validation of minio/mc:RELEASE.2024-01-16T16-06-34Z: started disposable minio server in isolated network ossip002-test-minio-net; ran minio-init entrypoint script (mc alias set local http://minio:9000 minioadmin minioadmin && mc mb -p local/pantheon-artifacts); exited 0; verified idempotent restart; cleaned up network and volumes.",
+      "Before/after unrelated container snapshot: 57 containers; all container IDs, names, and state prefixes identical. Only elapsed Up durations changed. Task containers, both labelled volumes and labelled private network were removed after verifying exact task labels; post-cleanup label queries were empty."
+    ],
+    "not_performed": "MinIO server/init and minio-data volume retirement deferred to OSS-OBJECT-STORE-CUTOVER-002 per task acceptance 5; no hosted VM mutations or production data migrations performed (work strictly limited to task-isolated disposable containers and repo source).",
+    "isolation_overlay_semantic_diff": "Transient /tmp JSON generated from docker compose config for only postgres/nats/signal-store with pinned digests; removed all published host ports and container_name fields, replaced default network with an internal project-private network, rewrote named volume sources to fresh task/project-scoped names, added task/project labels and per-container CPU/RAM limits. Service image digests/IDs, commands, environment, healthchecks, dependencies and read-only init-db script bind were preserved. Overlay and created resources removed.",
+    "result": "authentic dev inventory baseline, image pins, profile contract, executable profile composition, upstream provenance receipts, and complete disposable runtime acceptance (PostgreSQL persistence, Redis fencing/reconnect, NATS JetStream redelivery, BusyBox data-init, MinIO mc init) validated and passed"
+  }
+}

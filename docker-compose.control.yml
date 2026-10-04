@@ -22,7 +22,7 @@ x-pantheon-compose-contract:
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -63,7 +63,7 @@ services:
       start_period: 15s
 
   nats:
-    image: nats:2.11-alpine
+    image: nats:2.11-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00
     restart: unless-stopped
     command: ["--jetstream", "--http_port", "8222", "--store_dir", "/data/jetstream"]
     volumes:
@@ -79,7 +79,7 @@ services:
       start_period: 10s
 
   minio-init:
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2024-01-16T16-06-34Z
     depends_on:
       minio:
         condition: service_healthy

@@ -94,7 +94,7 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
 
     projector = services["source-ingest-agora-projector"]
     projector_env = _env_map(projector)
-    assert projector["profiles"] == ["source-ingest-scheduler"]
+    assert set(projector["profiles"]) == {"source-ingest-scheduler", "workers"}
     assert projector["restart"] == "no"
     assert projector["command"] == ["python", "scripts/project_market_data_to_bff_agora_surfaces.py"]
     assert projector["depends_on"]["source-ingest-scheduler"]["condition"] == "service_completed_successfully"
