@@ -193,7 +193,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   pantheon-lean-live:
-    profiles: ["live", "execution"]
+    profiles: ["live"]
     build:
       context: .
       dockerfile: services/execution/lean_runtime/Dockerfile

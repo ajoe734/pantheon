@@ -343,7 +343,7 @@ services:
       source-ingest:
         condition: service_healthy
       source-ingest-scheduler:
-        condition: service_completed_successfully
+        condition: service_healthy
 
   strategy-distillation-worker:
     build:
@@ -1685,7 +1685,7 @@ services:
     #   docker compose -p pantheon -f docker-compose.yml \
     #     --profile lifecycle-capacity-benchmark run --rm \
     #     lifecycle-projector-capacity-benchmark
-    profiles: ["lifecycle-capacity-benchmark", "core"]
+    profiles: ["lifecycle-capacity-benchmark"]
     build:
       context: .
       dockerfile: services/telemetry/Dockerfile
@@ -2638,7 +2638,7 @@ services:
     # for each active paper RuntimeBinding. Starting this unbound fallback in
     # parallel leaves a permanently unhealthy rt-devloop-l0-001 container and
     # produces misleading RuntimeBinding-required errors.
-    profiles: ["static-paper-runtime", "execution"]
+    profiles: ["static-paper-runtime"]
     build:
       context: .
       dockerfile: services/execution/lean_runtime/Dockerfile

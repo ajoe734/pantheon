@@ -30,11 +30,11 @@ activation matrix while preserving root default owners, dependency closure, and 
 
 | Profile | Services & Composition | Activation Boundary & Supported Matrix |
 |---|---|---|
-| `core` | Postgres, NATS, public Caddy/Operator BFF edge, projectors, lifecycle benchmark harness (`lifecycle-projector-capacity-benchmark`) | Dev, ephemeral staging, and VM-1 control; never execution VM |
-| `workers` | Existing schedulers, consumers, reconcilers, and agora projection worker (`source-ingest-agora-projector`) | Dev; conditional staging; control singletons except research-owned workers |
+| `core` | Postgres, NATS, public Caddy/Operator BFF edge, projectors, lifecycle (benchmark harness `lifecycle-projector-capacity-benchmark` remains opt-in) | Dev, ephemeral staging, and VM-1 control; never execution VM |
+| `workers` | Existing schedulers, consumers, reconcilers, and agora projection worker (`source-ingest-agora-projector` gated by `source-ingest-scheduler` health) | Dev; conditional staging; control singletons except research-owned workers |
 | `research` | Core research APIs always active; dormant ML smoke units (`mlflow`, `finrl`, `qlib`, `rllib`, `ray-tune`, `trl`, `experiments`) opt-in | Dev APIs only; dormant framework units remain opt-in under `research` / `dormant-smoke` |
 | `management-ai` | OpenClaw gateway, data initializer (`openclaw-data-init`), adapter, and e2e smoke (`openclaw-activation-ready-e2e`) | Dev; conditional staging; read-only control posture; activates with `management-ai` or `openclaw` |
-| `execution` | Dev paper topology (`pantheon-paper-runtime`), VM-2 execution stack (`docker-compose.exec.yml` with `pantheon-lean-live`) | Dev paper topology has no live broker authority; isolated VM-2 stack never co-activates with control |
+| `execution` | Dev paper topology (runtime-manager, broker, signal-store, paper-signal-producer, paper-fleet-reconciler; `static-paper-runtime` remains opt-in), VM-2 execution stack (`docker-compose.exec.yml`; `pantheon-lean-live` remains opt-in) | Dev paper topology has no live broker authority; isolated VM-2 stack never co-activates with control |
 
 These profiles preserve existing `depends_on: condition: service_healthy` relationships across
 profile boundaries in the dev mono-stack. Default unprofiled root deployment continues to start all
