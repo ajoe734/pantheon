@@ -404,7 +404,12 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         http_get_fn: Optional[Callable[[str, str], Tuple[bool, Any]]] = None,
         http_post_fn: Optional[Callable[[str, str, Dict[str, Any]], Tuple[bool, Any]]] = None,
     ) -> None:
-        self._evidence_repo = evidence_repository
+        if evidence_repository is not None:
+            self._evidence_repo = evidence_repository
+        elif evidence_refs_store is not None:
+            self._evidence_repo = None
+        else:
+            self._evidence_repo = InMemoryEvidenceRepository() if InMemoryEvidenceRepository is not None else None
         self._institutional_memory_store = institutional_memory_store
         self._search_gateway = search_gateway
         self._search_index_store = search_index_store
@@ -492,8 +497,14 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
     def dataset_source(self, dataset: str) -> str:
         if dataset == "institutional_memory_entries":
             return "typed_store" if self._institutional_memory_store is not None else ("bff_composed" if self._notes else "missing")
-        if dataset == "evidence_refs":
-            return "typed_store" if (self._evidence_repo is not None or self._evidence_refs) else "missing"
+        if dataset in ("evidence_refs", "knowledge_evidence"):
+            if self._evidence_repo is not None:
+                try:
+                    self._evidence_repo.list_evidence_items()
+                    return "typed_store"
+                except Exception:
+                    return "unavailable"
+            return "typed_store" if self._evidence_refs else "missing"
         if dataset == "research_experiments":
             return "typed_store" if self._get_research_write_owner() is not None else "missing"
         if dataset in ("research_notes", "insight_cards", "strategy_specs", "research_tickets", "research_analyses", "research_artifacts"):
@@ -949,7 +960,11 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         if self._evidence_repo is not None:
             # Reconstruct from evidence repository if present
             refs: List[Dict[str, Any]] = []
-            for item in self._evidence_repo.list_evidence_items():
+            try:
+                items = self._evidence_repo.list_evidence_items()
+            except Exception:
+                return []
+            for item in items:
                 src = self._evidence_repo.get_source_record(item.source_id)
                 refs.append({
                     "ref_id": item.evidence_item_id,
