@@ -1,0 +1,10 @@
+{
+  "task_id": "OPS-HANDOFF-TRAILER-ADMISSION-20261004",
+  "status": "local_validation_passed",
+  "change": "PR handoff admission reuses the CI commit trailer range checker against frozen base_sha..head_sha, skips merges, and uses delivery class auto.",
+  "rejection": "Offending commit SHAs and checker problems are returned before canonical handoff mutation; repair guidance names scripts/git/worker_commit.py.",
+  "runtime_activation": "The live supervisor uses a pinned command runtime. Source merge alone does not activate this gate; governed runtime promotion is required.",
+  "validation": [
+    "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/rewrite/test_task_contract.py scripts/git/test_check_commit_trailers_independent_review.py — 36 passed"
+  ]
+}

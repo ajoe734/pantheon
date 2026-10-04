@@ -160,6 +160,15 @@ and the blob must be absent from or different on the exact base (or have an
 exact matching PR-files change row). PR discovery uses `state=all`; a closed or
 merged match is not an artifact-only delivery. `approve` consumes that frozen
 binding and cannot replace it.
+Before the canonical handoff binding is written, admission runs
+`scripts/git/check_commit_trailers.py`'s shared range checker over the frozen
+`base_sha..head_sha`, with merge commits skipped and delivery class `auto`.
+Every offending commit and problem is reported with repair guidance through
+`scripts/git/worker_commit.py`; rejection leaves canonical task state unchanged.
+The live supervisor uses its pinned command runtime, so merging this source does
+not activate the check until that runtime is promoted through the governed
+runtime-promotion process.
+
 It also revalidates the current base: if `dev` advanced to a commit the exact
 head does not already contain, the owner refreshes and re-hands off before a
 review can be approved. Approval/reviewer-reopen GitHub writes run from a

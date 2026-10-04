@@ -426,6 +426,23 @@ def validate_handoff_pr_delivery_binding(
     import diff_budget
 
     diff_budget.enforce_handoff(task, config, pr_files)
+    import sys
+    git_scripts = str(Path(__file__).resolve().parents[2] / "scripts" / "git")
+    if git_scripts not in sys.path:
+        sys.path.insert(0, git_scripts)
+    import check_commit_trailers
+    failures = check_commit_trailers.check_range(
+        f"{validated.base_sha}..{normalized['head_sha']}",
+        skip_merge=True, delivery_class="auto",
+    )
+    if failures:
+        details = "; ".join(
+            f"{sha}: {', '.join(problems)}" for sha, problems in failures
+        )
+        raise SystemExit(
+            f"{task_id} commit trailer admission failed: {details}. Repair each "
+            "commit with scripts/git/worker_commit.py before handoff."
+        )
 
     try:
         github_review_bridge.revalidate_pull_request_snapshot(
