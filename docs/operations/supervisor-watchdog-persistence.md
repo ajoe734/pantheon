@@ -132,6 +132,8 @@ canonical state under its singleton and runtime-state locks. This exception is
 exact. An empty file, invalid JSON, unreadable file, or invalid top-level schema
 still suppresses restart as `resource_pressure:state_read_failed`.
 
+The cron line logs under `${PANTHEON_DEPLOY_LOG_DIR:-$HOME/pantheon-ci-deploy/logs}` (command runtimes are read-only); installing systemd removes any stale cron entry, and falling back to cron prints that systemd was unavailable.
+
 `--method auto` prefers a user systemd timer and falls back to cron when user
 systemd is unavailable.
 
@@ -177,7 +179,7 @@ For a live shell check:
 
 ```bash
 ps -p "$(cat .orchestrator/supervisor.pid)" -o pid,ppid,stat,etime,cmd
-tail -n 40 .orchestrator/logs/supervisor-watchdog-cron.log 2>/dev/null || true
+tail -n 40 "${PANTHEON_DEPLOY_LOG_DIR:-$HOME/pantheon-ci-deploy/logs}/supervisor-watchdog-cron.log" 2>/dev/null || true
 jq '.last_decision' .orchestrator/watchdog-state.json
 ```
 
