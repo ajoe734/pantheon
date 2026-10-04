@@ -116,7 +116,7 @@ class HandoffDiffBudgetGateTests(unittest.TestCase):
             mock.patch.object(bridge, "validate_review_admission", return_value=validated),
             mock.patch.object(bridge, "list_pull_request_files", return_value=[]),
             mock.patch.object(bridge, "revalidate_pull_request_snapshot") as revalidate,
-            mock.patch.object(check_commit_trailers, "check_range", return_value=[("deadbeef", ["missing trailer: Reviewer"])]),
+            mock.patch.object(check_commit_trailers, "check_range", return_value=[("deadbeef", ["missing trailer: Reviewer"])]) as checked_range,
         ):
             with self.assertRaisesRegex(SystemExit, "worker_commit.py") as ctx:
                 task_contract.validate_handoff_pr_delivery_binding(
@@ -124,7 +124,42 @@ class HandoffDiffBudgetGateTests(unittest.TestCase):
                 )
         self.assertIn("deadbeef", str(ctx.exception))
         self.assertIn("missing trailer: Reviewer", str(ctx.exception))
+        checked_range.assert_called_once_with(
+            "b" * 40 + ".." + "a" * 40,
+            skip_merge=True,
+            delivery_class="auto",
+            expected_task_id="T-1",
+            repository_root=task_contract.Path.cwd(),
+        )
         revalidate.assert_not_called()
+
+    def test_missing_frozen_range_objects_reject_handoff_clearly(self) -> None:
+        from types import SimpleNamespace
+        from unittest import mock
+        from rewrite import task_contract
+        import subprocess
+        import sys
+
+        sys.path.insert(0, str(task_contract.Path(__file__).resolve().parents[2] / "scripts" / "git"))
+        import check_commit_trailers
+        bridge = task_contract._ai_status_module()._github_review_bridge_module()
+        binding = {"pr": 7, "head_sha": "a" * 40, "head_branch": "task/T-1", "base": "dev"}
+        validated = SimpleNamespace(as_dict=lambda: {**binding, "base_sha": "b" * 40}, base_sha="b" * 40)
+        with (
+            mock.patch.object(task_contract, "validate_task_repository_scope", return_value="pantheon"),
+            mock.patch.object(task_contract, "repository_slug", return_value="o/r"),
+            mock.patch.object(task_contract, "validate_review_manifest_contract_path", return_value="docs/e.json"),
+            mock.patch.object(task_contract, "validate_task_artifact_diff_scope"),
+            mock.patch.object(task_contract, "repository_local_path", return_value=task_contract.Path.cwd()),
+            mock.patch.object(bridge, "validate_review_admission", return_value=validated),
+            mock.patch.object(bridge, "list_pull_request_files", return_value=[]),
+            mock.patch.object(check_commit_trailers, "check_range", side_effect=subprocess.CalledProcessError(128, "git log")),
+        ):
+            with self.assertRaisesRegex(SystemExit, "cannot validate commit trailer range"):
+                task_contract.validate_handoff_pr_delivery_binding(
+                    {"id": "T-1"}, {"branch_workflow": {"diff_budget": {"enabled": False}}},
+                    binding, review_file="docs/e.json",
+                )
 
     def test_change_class_requires_pr_delivery(self) -> None:
         from rewrite.task_contract import requires_pr_delivery_binding

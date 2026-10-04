@@ -431,13 +431,20 @@ def validate_handoff_pr_delivery_binding(
         import check_commit_trailers
 
         repository_root = Path(repository_local_path(config, repository_id))
-        failures = check_commit_trailers.check_range(
-            f"{validated.base_sha}..{normalized['head_sha']}",
-            skip_merge=True,
-            delivery_class="auto",
-            expected_task_id=task_id,
-            repository_root=repository_root,
-        )
+        commit_range = f"{validated.base_sha}..{normalized['head_sha']}"
+        try:
+            failures = check_commit_trailers.check_range(
+                commit_range,
+                skip_merge=True,
+                delivery_class="auto",
+                expected_task_id=task_id,
+                repository_root=repository_root,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise SystemExit(
+                f"{task_id} handoff rejected: cannot validate commit trailer range "
+                f"{commit_range}; ensure the exact base and head commits are available."
+            ) from exc
         if failures:
             details = "; ".join(
                 f"{sha}: {', '.join(problems)}" for sha, problems in failures
