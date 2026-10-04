@@ -7,14 +7,6 @@ import pytest
 from services.control_plane.bff.agora.research.receipt import resolve_run_provenance
 
 
-class ReceiptStore:
-    def __init__(self, receipt: Dict[str, Any]):
-        self.receipt = receipt
-
-    def get_execution_receipt(self, run_id: str) -> Optional[Dict[str, Any]]:
-        return dict(self.receipt)
-
-
 def _receipt(**overrides: Any) -> Dict[str, Any]:
     return {
         "receipt_id": "receipt-1", "run_id": "run-1", "executor": "vectorbt",
@@ -34,7 +26,7 @@ def _run(**overrides: Any) -> Dict[str, Any]:
 
 def test_receipt_mode_must_match_backend_provenance() -> None:
     provenance, receipt = resolve_run_provenance(
-        ReceiptStore(_receipt()), _run(provenance="simulation")
+        None, _run(provenance="simulation", receipt=_receipt())
     )
     assert provenance == "unavailable"
     assert receipt is None
@@ -43,7 +35,7 @@ def test_receipt_mode_must_match_backend_provenance() -> None:
 @pytest.mark.parametrize("completed_at", [None, "not-a-timestamp"])
 def test_receipt_missing_or_invalid_completed_at_fails_closed(completed_at: Optional[str]) -> None:
     provenance, receipt = resolve_run_provenance(
-        ReceiptStore(_receipt(completed_at=completed_at)), _run()
+        None, _run(receipt=_receipt(completed_at=completed_at))
     )
     assert provenance == "unavailable"
     assert receipt is None
@@ -51,8 +43,8 @@ def test_receipt_missing_or_invalid_completed_at_fails_closed(completed_at: Opti
 
 def test_metric_provenance_must_match_receipt_mode() -> None:
     provenance, receipt = resolve_run_provenance(
-        ReceiptStore(_receipt()),
-        _run(metrics=[{"metric": "sharpe", "value": 1.2, "provenance": "simulation"}]),
+        None,
+        _run(receipt=_receipt(), metrics=[{"metric": "sharpe", "value": 1.2, "provenance": "simulation"}]),
     )
     assert provenance == "unavailable"
     assert receipt is None
@@ -65,5 +57,5 @@ def test_resolve_run_provenance_mismatched_mode_and_bad_time_fails_closed() -> N
         (_receipt(completed_at=None), _run()),
     )
     for receipt_data, run in cases:
-        provenance, receipt = resolve_run_provenance(ReceiptStore(receipt_data), run)
+        provenance, receipt = resolve_run_provenance(None, {**run, "receipt": receipt_data})
         assert (provenance, receipt) == ("unavailable", None)

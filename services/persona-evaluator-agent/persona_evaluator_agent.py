@@ -5,8 +5,7 @@ evidence refs are read-only inputs), asks one agent (via the openclaw gateway
 structured-extraction route, which pins a data-only tool and denies every native
 tool) which supported recommendation each persona warrants, and persists the
 result keyed by quarter + ranking snapshot. The BFF and Human Inbox only read
-that saved result. The agent can only return recommendations; the one write this
-process makes is a governance ``persona_lifecycle_transition`` proposal for a
+that saved result. The agent can only return recommendations; this process admits snapshots to Rankings and submits a governance ``persona_lifecycle_transition`` proposal for a
 supported lifecycle recommendation. It never decides, approves or applies one.
 """
 from __future__ import annotations
@@ -22,7 +21,10 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlencode
+
+from services.rankings.snapshots import snapshot_record, admit_snapshot
+from services.rankings.store import build_rankings_store
 
 MAX_PER_RUN = 5
 MAX_PER_HOUR = 20
@@ -131,21 +133,36 @@ class Store:
 
 def collect_evidence(
     bff_url: str, quarter: str, headers: dict[str, str], fetch: Callable[..., Any] = _http
-) -> tuple[list[dict[str, Any]], str]:
+) -> tuple[list[dict[str, Any]], Any]:
     """Read the deterministic ranking; scores and refs are evidence, never recomputed here."""
     try:
-        resp = fetch(f"{bff_url}/bff/management/quarterly-ranking?quarter={quarter}&page_size=200", headers=headers)
-        data = resp["data"]
-        snapshot_id = str(data["ranking_snapshot_id"])
-        raw_items = [i for i in data["items"] if isinstance(i, dict) and i.get("persona_id")]
-        surfaces = (resp.get("meta") or {}).get("surfaces") or {}
+        raw_items, seen = [], set()
+        snapshot_id, page_token = "", ""
+        while True:
+            query = urlencode({"quarter": quarter, "page_size": 200, "page_token": page_token})
+            resp = fetch(f"{bff_url}/bff/management/quarterly-ranking?{query}", headers=headers)
+            data = resp["data"]
+            current_id = str(data["ranking_snapshot_id"])
+            if snapshot_id and current_id != snapshot_id:
+                raise Degraded("ranking changed during pagination")
+            snapshot_id = current_id
+            raw_items.extend(data["items"])
+            surfaces = (resp.get("meta") or {}).get("surfaces") or {}
+            if any(v.get("status") == "unavailable" for v in surfaces.values() if isinstance(v, dict)):
+                raise Degraded("ranking evidence surface unavailable")
+            page_token = (resp.get("page_info") or {}).get("next_page_token")
+            if not page_token:
+                break
+            if page_token in seen or len(seen) >= 100:
+                raise Degraded("ranking pagination did not terminate")
+            seen.add(page_token)
+        snapshot = snapshot_record(raw_items, surface="quarterly", period=quarter)
+        if snapshot.ranking_snapshot_id != snapshot_id:
+            raise Degraded("ranking content incomplete, redacted or changed; snapshot not admitted")
     except Exception as exc:
         raise Degraded(f"ranking read API unavailable: {exc}") from exc
     if not raw_items or not snapshot_id:
         raise Degraded("ranking evidence is empty")
-    down = sorted(k for k, v in surfaces.items() if isinstance(v, dict) and v.get("status") == "unavailable")
-    if down:
-        raise Degraded(f"evidence surfaces unavailable: {down}")
     items = []
     for raw in raw_items[:MAX_PERSONAS]:
         refs = [str(r.get("refId") or r.get("ref_id") or r.get("id")) for r in raw.get("evidence_refs") or []
@@ -158,7 +175,7 @@ def collect_evidence(
             "eligible": raw.get("eligible"), "exclusion_codes": raw.get("exclusion_codes"),
             "components": raw.get("components"), "evidence_ref_ids": refs[:10],
         })
-    return items, snapshot_id
+    return items, snapshot
 
 
 def build_prompt(items: list[dict[str, Any]]) -> str:
@@ -241,7 +258,7 @@ def lifecycle_request(
 
 
 def propose_lifecycle(request: dict[str, Any], *, governance_url: str, token: str, fetch: Callable[..., Any] = _http) -> Any:
-    """The only write: a governance proposal, always sent from a persisted request identity."""
+    """Submit a governance proposal from its persisted request identity."""
     return fetch(
         f"{governance_url}{GOVERNANCE_APPROVALS_PATH}", data=request["body"],
         headers={"Authorization": f"Bearer {token}", "Idempotency-Key": request["key"]},
@@ -260,12 +277,18 @@ def run_once(
     *, store: Store, bff_url: str, bff_headers: dict[str, str], adapter_url: str, adapter_token: str,
     governance_url: str, governance_token: str, tenant: str, actor: str,
     fetch: Callable[..., Any] = _http, now: Callable[[], float] = time.time,
+    ranking_store: Any = None,
 ) -> dict[str, Any]:
-    """One run. A degraded run records itself and creates nothing."""
+    """Admit evidence before evaluation; failed admission creates no recommendation or proposal."""
     moment = datetime.fromtimestamp(now(), timezone.utc)
     quarter = quarter_of(moment)
     try:
-        items, snapshot_id = collect_evidence(bff_url, quarter, bff_headers, fetch)
+        items, snapshot = collect_evidence(bff_url, quarter, bff_headers, fetch)
+        try:
+            admitted = admit_snapshot(ranking_store if ranking_store is not None else build_rankings_store(), snapshot)
+        except Exception as exc:
+            raise Degraded(f"ranking snapshot admission unavailable: {exc}") from exc
+        snapshot_id = admitted.ranking_snapshot_id
         saved = store.load()["results"].get(f"{quarter}|{snapshot_id}")
         if saved:
             recs, reused = saved["items"], True  # refresh/retry/restart reads the same recommendation

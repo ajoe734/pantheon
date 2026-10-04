@@ -2,6 +2,14 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+import sys
+
+@pytest.fixture(autouse=True)
+def owner_sql(monkeypatch):
+    from services.rankings.test_store import _FakeConnection, _fake_psycopg
+    monkeypatch.setattr(_FakeConnection, "rows", {})
+    monkeypatch.setattr(_FakeConnection, "statements", [])
+    monkeypatch.setitem(sys.modules, "psycopg", _fake_psycopg())
 from services.control_plane.bff import test_bff_promotion_review_governance as g
 
 
