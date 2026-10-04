@@ -58,26 +58,41 @@ def _decode_command_owner_body(raw: bytes) -> dict[str, Any]:
     return dict(decoded)
 
 
-def _dispatch_command(payload: Mapping[str, Any]) -> tuple[int, dict[str, Any]]:
-    base_url = os.getenv("PANTHEON_TRADE_JOURNAL_COMMAND_OWNER_URL", "").strip().rstrip("/")
-    if not base_url:
-        raise RuntimeError("command owner is not configured")
-    req = urllib_request.Request(
-        f"{base_url}/v1/trade-journal/commands",
-        data=json.dumps(dict(payload)).encode("utf-8"),
-        headers={"Content-Type": "application/json", "Idempotency-Key": str(payload["idempotency_key"])},
-        method="POST",
-    )
+def _http_call(url: str, data: dict[str, Any] | None, headers: dict[str, str], method: str = "POST") -> tuple[int, dict[str, Any]]:
+    req = urllib_request.Request(url, data=json.dumps(data).encode("utf-8") if data is not None else None, headers=headers, method=method)
     try:
-        with urllib_request.urlopen(req, timeout=5) as response:
-            return response.status, _decode_command_owner_body(response.read())
-    except urllib_error.HTTPError as exc:
+        with urllib_request.urlopen(req, timeout=5) as r: return r.status, _decode_command_owner_body(r.read())
+    except urllib_error.HTTPError as e:
         try:
-            return exc.code, _decode_command_owner_body(exc.read())
+            return e.code, _decode_command_owner_body(e.read())
         except RuntimeError as decode_error:
             raise RuntimeError("command owner returned an invalid error response") from decode_error
     except (OSError, RuntimeError) as exc:
         raise RuntimeError("command owner is unavailable") from exc
+
+
+def _dispatch_command(payload: Mapping[str, Any]) -> tuple[int, dict[str, Any]]:
+    legacy = os.getenv("PANTHEON_TRADE_JOURNAL_COMMAND_OWNER_URL", "").strip().rstrip("/")
+    if legacy:
+        return _http_call(f"{legacy}/v1/trade-journal/commands", dict(payload), {"Content-Type": "application/json", "Idempotency-Key": str(payload["idempotency_key"])})
+    act, p_id, r_id = payload.get("action"), payload.get("persona_id"), payload.get("resource_id")
+    auth_hdr = {"Authorization": payload["authorization"]} if payload.get("authorization") else {}
+    idemp_hdr = {"Idempotency-Key": str(payload["idempotency_key"])}
+    if act == "reflection.retry":
+        url = (os.getenv("PERSONA_URL") or os.getenv("PANTHEON_PERSONA_SERVICE_URL") or "").strip().rstrip("/")
+        if not url: raise RuntimeError("persona owner is not configured")
+        return _http_call(f"{url}/api/personas/{p_id}/trade-journal/{r_id}/reflection:retry", {"reason": payload.get("reason"), "facts_snapshot_ref": payload.get("facts_snapshot_ref")}, {"Content-Type": "application/json", **idemp_hdr, **auth_hdr})
+    if act in {"lesson.submit_review", "lesson.decide"}:
+        url = (os.getenv("PANTHEON_MEMORY_API_URL") or os.getenv("PANTHEON_MEMORY_SERVICE_URL") or os.getenv("MEMORY_URL") or "").strip().rstrip("/")
+        if not url: raise RuntimeError("memory owner is not configured")
+        sub = act == "lesson.submit_review"
+        path = f"{url}/api/memory/trade-lessons/{r_id}/" + ("submit-review" if sub else "decide")
+        body = {"reason": payload.get("reason")} if sub else {"action": payload.get("decision") or "endorse", "operator_id": payload.get("actor") or "operator", "reason": payload.get("reason"), "audit_receipt_id": payload.get("facts_snapshot_ref") or "gov-approval-default", "episodes": payload.get("episodes"), "target_env": payload.get("target_env"), "promotion_stage": payload.get("promotion_stage")}
+        st, res = _http_call(path, body, {"Content-Type": "application/json", **idemp_hdr, **auth_hdr})
+        if st not in (200, 202): return st, res
+        rev = res.get("review_state", "accepted")
+        return 202, {"data": {"receipt_id": f"lesson-{r_id}", "action": act, "persona_id": res.get("persona_id", p_id), "resource_id": r_id, "status": "accepted", "review_state": rev}, "audit": {"durable": True, "record_ref": f"memory:trade-lesson:{r_id}:{rev}"}, "meta": res.get("meta", {})}
+    raise RuntimeError(f"unsupported action: {act}")
 
 
 def create_trade_journal_router(*, extract_identity: Callable[..., Any], require_read_role: Callable[[Any], None], require_operator_role: Callable[[Any], None], dispatch_command: Callable[[Mapping[str, Any]], tuple[int, dict[str, Any]]] = _dispatch_command) -> APIRouter:
@@ -118,7 +133,18 @@ def create_trade_journal_router(*, extract_identity: Callable[..., Any], require
     async def reflections(request: Request, persona_id: str, cursor: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100), environment: str | None = None, review_state: str | None = None):
         who, items = read_items(request, persona_id, "PANTHEON_BFF_TRADE_REFLECTIONS_STORE")
         if not _allowed(who, persona_id): return _err(403, "FORBIDDEN", "Cross-persona access denied")
-        if items is None: return _err(503, "DEPENDENCY_UNAVAILABLE", "Trade reflection store is unavailable", retryable=True)
+        if items is None:
+            p_url = (os.getenv("PERSONA_URL") or os.getenv("PANTHEON_PERSONA_SERVICE_URL") or "").rstrip("/")
+            if not p_url: return _err(503, "DEPENDENCY_UNAVAILABLE", "Trade reflection store is unavailable", retryable=True)
+            auth_hdr = {"Authorization": request.headers.get("Authorization", "")} if request.headers.get("Authorization") else {}
+            try:
+                st, res = _http_call(f"{p_url}/api/personas/{persona_id}/trade-reflections", None, auth_hdr, method="GET")
+                if st != 200:
+                    err_info = res.get("error") or (res.get("detail", {}).get("error") if isinstance(res.get("detail"), Mapping) else res.get("detail")) or {}
+                    return _err(st, err_info.get("code", "DEPENDENCY_ERROR") if isinstance(err_info, Mapping) else "DEPENDENCY_ERROR", err_info.get("message", str(err_info)) if isinstance(err_info, Mapping) else str(err_info))
+                items = res.get("data", [])
+            except Exception:
+                return _err(503, "DEPENDENCY_UNAVAILABLE", "Trade reflection store is unavailable", retryable=True)
         rows = [x for x in items if x.get("persona_id") == persona_id and (environment is None or x.get("environment") == environment) and (review_state is None or x.get("review_state") == review_state)]
         return {"data": _mask(rows[cursor:cursor + limit], who), "page_info": {"next_cursor": cursor + limit if cursor + limit < len(rows) else None}, "meta": {"source": "persona_reflection"}}
 
@@ -137,24 +163,25 @@ def create_trade_journal_router(*, extract_identity: Callable[..., Any], require
         body = await request.json()
         if not str(body.get("reason", "")).strip(): return _err(422, "VALIDATION_FAILED", "reason is required")
         payload = {
-            "action": action,
-            "persona_id": persona_id,
-            "resource_id": resource_id,
-            "reason": body["reason"],
-            "facts_snapshot_ref": body.get("facts_snapshot_ref"),
-            "decision": body.get("decision"),
-            "variance_attribution": body.get("variance_attribution"),
-            "actor": who.operator_id,
-            "idempotency_key": idempotency_key
+            "action": action, "persona_id": persona_id, "resource_id": resource_id,
+            "reason": body["reason"], "facts_snapshot_ref": body.get("facts_snapshot_ref"),
+            "decision": body.get("decision"), "variance_attribution": body.get("variance_attribution"),
+            "actor": who.operator_id, "idempotency_key": idempotency_key,
+            "authorization": request.headers.get("Authorization"),
+            "tenant_id": getattr(who, "tenant_id", None),
+            "episodes": body.get("episodes"), "target_env": body.get("target_env"),
+            "promotion_stage": body.get("promotion_stage"),
         }
         try:
             status, downstream = dispatch_command(payload)
         except RuntimeError:
             return _err(503, "DEPENDENCY_UNAVAILABLE", "Durable trade journal command owner is unavailable", retryable=True)
         if status not in (200, 202):
-            error = downstream.get("error") if isinstance(downstream, Mapping) else None
+            error = downstream.get("error") or (downstream.get("detail", {}).get("error") if isinstance(downstream.get("detail"), Mapping) else downstream.get("detail")) if isinstance(downstream, Mapping) else None
             if isinstance(error, Mapping):
                 return _err(status, str(error.get("code", "COMMAND_REJECTED")), str(error.get("message", "Command owner rejected the command")), retryable=bool(error.get("retryable")))
+            if isinstance(error, str):
+                return _err(status, "COMMAND_REJECTED", error)
             return _err(503, "DEPENDENCY_UNAVAILABLE", "Durable trade journal command owner returned an invalid response", retryable=True)
         receipt = downstream.get("data")
         audit = downstream.get("audit") or downstream.get("meta", {}).get("audit")
