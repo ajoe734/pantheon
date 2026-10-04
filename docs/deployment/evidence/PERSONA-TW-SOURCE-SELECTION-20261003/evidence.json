@@ -1,0 +1,33 @@
+{
+  "task_id": "PERSONA-TW-SOURCE-SELECTION-20261003",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "review_status": "pending_independent_review",
+  "base_commit": "61980f66457b9199f7c1a4e77b88228c9e6ca899",
+  "validated_code_commit": "ada8b6f03d3e8947215374a5847fe3ae53d0dc50",
+  "predecessors": "Persona PR6133 and Ranking PR6137 are ancestors; CommandType PR6138 remains open and touches disjoint Persona code.",
+  "reproduction": "Executing the original base projection and selector without FINMIND_API_TOKEN selects FinMind for the actual Persona daily requirement, but official TWSE/TPEx when candidates are empty.",
+  "change": "Generate official-first TW daily candidates; reject incompatible built-in market/dataset bindings even when registered; skip FinMind without a locally resolvable nonblank token and skip policy-ineligible alternatives. Preserve sole-choice policy conflicts and operator-owned config conflicts.",
+  "scope": "Actual Persona daily-price requirement only; broker live_push provisioning, Governance, provider fetch behavior, terminal health, and US simulation provenance are unchanged.",
+  "credential_boundary": "Token presence is configuration eligibility, not authentication proof. Local HTTP controls verify valid-key payload normalization and expired/rejected 401/403 errors without synthetic replacement; explicit selections retain their candidate boundary.",
+  "validation": {
+    "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_persona_source_reconciler.py services/control-plane/bff/tests/test_read_store_final_deletion.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_dev_paper_simulation.py services/source_ingestion/tests/test_requirement_state.py services/source_ingestion/tests/test_scheduled_connector.py --disable-warnings",
+    "result": "190 passed, 1 skipped, 3 warnings; exit 0",
+    "skip": "Opt-in official TWSE/TPEx live network smoke was not enabled.",
+    "log": "/tmp/PERSONA-TW-final-focused.log",
+    "sha256": "112df89fd125478679edd92d9d7f09a4749593ac20aeee738662b68af28fe4ce"
+  },
+  "broader_validation_not_passed": {
+    "command": "timeout 480 env REGISTRY_STORE_BACKEND=memory .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests --disable-warnings",
+    "result": "Interrupted, exit 2; partial report 827 passed and 6 failed is not a completed suite.",
+    "failures": "Five Registry distillation integration failures and one provider-management live-fetch HTTP403; all six reproduced on a clean base checkout, each baseline batch exit 1.",
+    "baseline_commands": "With REGISTRY_STORE_BACKEND=memory: pytest -q services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRealSourceToRegistryService services/source_ingestion/tests/test_l12_mfc_r4_distill_001.py::test_real_source_record_to_registry_draft_integration services/source_ingestion/tests/test_l12_mfc_r4_distill_001.py::test_same_source_retry_has_stable_identity; separately test_provider_management_coverage.py::test_provider_owned_adapters_execute_bounded_fetches_when_payload_omitted.",
+    "log_sha256": "e21e979780d5a30105c18423614a159bb57a3ac067eb43b8cea7158c9507a3ef",
+    "registry_baseline_log_sha256": "ef246bce615f021bf58214248d1db327f8c819ad25f93401303f3b83363d1ef4",
+    "provider_baseline_log_sha256": "e6eb58e29c5a00ee9a5b94377d4b86563fdc24bff152824c35362281b01788fd",
+    "earlier_attempt": "Missing REGISTRY_STORE_BACKEND caused startup failures; interrupted exit 2, not passed. Initial new-test setup errors were corrected before the validated code commit."
+  },
+  "validation_scope_incident": "The inherited provider-management test and its baseline reproduction made real TDCC/TAIFEX reads and received StockTwits HTTP403, contrary to the task's no-provider-network instruction. On discovery the broad run was stopped and the operator informed. Do not treat these reads as availability or acceptance evidence; do not rerun that test for this task. No hosted mutations or deployment were performed.",
+  "diff_budget": "Production +23/-6 = net +17, within corrective budget 60; git diff origin/dev --check passed.",
+  "remaining_delivery": "Independent exact-head review must assess both code and the disclosed validation-scope incident; required CI, supervisor MERGE, and owner closeout remain pending."
+}
