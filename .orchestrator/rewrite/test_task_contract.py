@@ -56,6 +56,14 @@ class TaskContractTests(unittest.TestCase):
 class HandoffDiffBudgetGateTests(unittest.TestCase):
     """The handoff admission runs the diff budget on the real PR file list."""
 
+    def _checker(self, task_contract):
+        import sys
+        path = str(task_contract.Path(__file__).resolve().parents[2] / "scripts" / "git")
+        if path not in sys.path:
+            sys.path.insert(0, path)
+        import check_commit_trailers
+        return check_commit_trailers
+
     def _admit(self, task, pr_files):
         from types import SimpleNamespace
         from unittest import mock
@@ -63,9 +71,10 @@ class HandoffDiffBudgetGateTests(unittest.TestCase):
         from rewrite import task_contract
 
         bridge = task_contract._ai_status_module()._github_review_bridge_module()
+        checker = self._checker(task_contract)
         config = {"branch_workflow": {"diff_budget": {"enabled": True}}}
         binding = {"pr": 7, "head_sha": "a" * 40, "head_branch": "task/T-1", "base": "dev"}
-        validated = SimpleNamespace(as_dict=lambda: dict(binding))
+        validated = SimpleNamespace(as_dict=lambda: dict(binding), base_sha="b" * 40)
         with (
             mock.patch.object(task_contract, "validate_task_repository_scope", return_value="pantheon"),
             mock.patch.object(task_contract, "repository_slug", return_value="o/r"),
@@ -73,6 +82,7 @@ class HandoffDiffBudgetGateTests(unittest.TestCase):
             mock.patch.object(task_contract, "validate_task_artifact_diff_scope"),
             mock.patch.object(bridge, "validate_review_admission", return_value=validated),
             mock.patch.object(bridge, "list_pull_request_files", return_value=pr_files),
+            mock.patch.object(checker, "check_range", return_value=[]),
             mock.patch.object(bridge, "revalidate_pull_request_snapshot"),
         ):
             return task_contract.validate_handoff_pr_delivery_binding(
@@ -89,6 +99,62 @@ class HandoffDiffBudgetGateTests(unittest.TestCase):
         files = [{"filename": "svc/a.py", "additions": 10, "deletions": 50}]
         result = self._admit({"id": "T-1", "change_class": "refactor"}, files)
         self.assertEqual(result["pr"], 7)
+
+    def test_handoff_admission_checks_exact_base_to_head_trailer_range(self) -> None:
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from rewrite import task_contract
+
+        bridge = task_contract._ai_status_module()._github_review_bridge_module()
+        checker = self._checker(task_contract)
+        config = {"branch_workflow": {"diff_budget": {"enabled": True}}}
+        binding = {"pr": 7, "head_sha": "a" * 40, "head_branch": "task/T-1", "base": "dev"}
+        validated = SimpleNamespace(as_dict=lambda: dict(binding), base_sha="b" * 40)
+        with (
+            mock.patch.object(task_contract, "validate_task_repository_scope", return_value="pantheon"),
+            mock.patch.object(task_contract, "repository_slug", return_value="o/r"),
+            mock.patch.object(task_contract, "validate_review_manifest_contract_path", return_value="docs/e.json"),
+            mock.patch.object(task_contract, "validate_task_artifact_diff_scope"),
+            mock.patch.object(bridge, "validate_review_admission", return_value=validated),
+            mock.patch.object(bridge, "list_pull_request_files", return_value=[]),
+            mock.patch.object(bridge, "revalidate_pull_request_snapshot"),
+            mock.patch.object(checker, "check_range", return_value=[]) as check,
+        ):
+            task_contract.validate_handoff_pr_delivery_binding(
+                {"id": "T-1"}, config, binding, review_file="docs/e.json"
+            )
+        check.assert_called_once_with("b" * 40 + ".." + "a" * 40,
+                                      skip_merge=True, delivery_class="auto")
+
+    def test_handoff_rejects_bad_trailers_with_repair_guidance(self) -> None:
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from rewrite import task_contract
+
+        bridge = task_contract._ai_status_module()._github_review_bridge_module()
+        checker = self._checker(task_contract)
+        config = {"branch_workflow": {"diff_budget": {"enabled": True}}}
+        binding = {"pr": 7, "head_sha": "a" * 40, "head_branch": "task/T-1", "base": "dev"}
+        validated = SimpleNamespace(as_dict=lambda: dict(binding), base_sha="b" * 40)
+        with (
+            mock.patch.object(task_contract, "validate_task_repository_scope", return_value="pantheon"),
+            mock.patch.object(task_contract, "repository_slug", return_value="o/r"),
+            mock.patch.object(task_contract, "validate_review_manifest_contract_path", return_value="docs/e.json"),
+            mock.patch.object(task_contract, "validate_task_artifact_diff_scope"),
+            mock.patch.object(bridge, "validate_review_admission", return_value=validated),
+            mock.patch.object(bridge, "list_pull_request_files", return_value=[]),
+            mock.patch.object(bridge, "revalidate_pull_request_snapshot") as revalidate,
+            mock.patch.object(checker, "check_range", return_value=[("deadbeef", ["missing trailer: Reviewer"])]),
+        ):
+            with self.assertRaisesRegex(SystemExit, "worker_commit.py") as ctx:
+                task_contract.validate_handoff_pr_delivery_binding(
+                    {"id": "T-1"}, config, binding, review_file="docs/e.json"
+                )
+        self.assertIn("deadbeef", str(ctx.exception))
+        self.assertIn("missing trailer: Reviewer", str(ctx.exception))
+        revalidate.assert_not_called()
 
     def test_change_class_requires_pr_delivery(self) -> None:
         from rewrite.task_contract import requires_pr_delivery_binding

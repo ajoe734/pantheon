@@ -358,6 +358,21 @@ def commit_delivery_class(sha: str, manifest: dict) -> str:
     return "tooling" if classify_paths(manifest, paths)["tooling_only"] else "product"
 
 
+def check_range(rev_range: str, *, skip_merge: bool = True, delivery_class: str = "auto") -> list[tuple[str, list[str]]]:
+    """Return range failures using the CLI's existing identity rules."""
+    required, prefix = load_settings()
+    manifest = None
+    if delivery_class == "auto":
+        from scripts.component_boundary import load_manifest
+        manifest = load_manifest(ROOT / "docs/02-architecture/component-boundary.yaml")
+    failures = []
+    for sha, message in collect_messages_from_range(rev_range):
+        if skip_merge and len(subprocess.run(["git", "rev-list", "--parents", "-n", "1", sha], check=True, capture_output=True, text=True, cwd=ROOT).stdout.split()) > 2: continue
+        problems = check_message(message, required, prefix, delivery_class=commit_delivery_class(sha, manifest) if manifest else delivery_class)
+        if problems: failures.append((sha, problems))
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     group = parser.add_mutually_exclusive_group(required=True)
@@ -399,6 +414,14 @@ def main() -> int:
         from scripts.component_boundary import load_manifest
 
         manifest = load_manifest(ROOT / "docs/02-architecture/component-boundary.yaml")
+
+    if args.rev_range:
+        failures = check_range(args.rev_range, skip_merge=args.skip_merge,
+                               delivery_class=args.delivery_class)
+        for sha, problems in failures:
+            print(f"\n[trailers] {sha}:\n" + "\n".join(f"  - {p}" for p in problems))
+        if failures: print("\nFix: amend the commit message; see docs/conventions/GIT_WORKFLOW.md §7.")
+        return int(bool(failures))
 
     targets: list[tuple[str, str]]
     if args.message_file:

@@ -88,6 +88,42 @@ def test_product_delivery_still_requires_reviewer() -> None:
     assert CHECK.required_trailers_for_delivery(REQUIRED, "product") == REQUIRED
 
 
+def test_range_api_uses_shared_rules_and_skips_merge_commits() -> None:
+    from unittest import mock
+
+    messages = [
+        ("good", "ABC-001: repair\n\nLLM-Agent: Claude\nTask-ID: ABC-001\nReviewer: Codex2\n"),
+        ("long", "ABC-001: " + "x" * 70 + "\n\nLLM-Agent: Claude\nTask-ID: ABC-001\nReviewer: Codex2\n"),
+        ("missing", "ABC-001: repair\n\nTask-ID: ABC-001\n"),
+        ("merge", "Merge ABC-001: merge\n"),
+    ]
+    parents = {"good": "good parent", "long": "long parent", "missing": "missing parent",
+               "merge": "merge p1 p2"}
+    def run(args, **kwargs):
+        return mock.Mock(stdout=parents[args[-1]], returncode=0)
+    with (
+        mock.patch.object(CHECK, "collect_messages_from_range", return_value=messages),
+        mock.patch.object(CHECK, "load_settings", return_value=(REQUIRED, True)),
+        mock.patch.object(CHECK, "commit_delivery_class", return_value="product"),
+        mock.patch.object(CHECK.subprocess, "run", side_effect=run),
+    ):
+        failures = CHECK.check_range("base..head", skip_merge=True, delivery_class="product")
+    assert [sha for sha, _ in failures] == ["long", "missing"]
+    assert any("subject exceeds 72 chars" in p for p in failures[0][1])
+    assert any("missing trailer: LLM-Agent" in p for p in failures[1][1])
+    assert any("missing trailer: Reviewer" in p for p in failures[1][1])
+
+
+def test_range_rules_reject_each_missing_identity_trailer_and_task_prefix() -> None:
+    for missing in REQUIRED:
+        lines = [f"{name}: {value}" for name, value in zip(REQUIRED, ("Claude", "ABC-001", "Codex2")) if name != missing]
+        message = "ABC-001: repair\n\n" + "\n".join(lines) + "\n"
+        assert any(f"missing trailer: {missing}" in p for p in
+                   CHECK.check_message(message, REQUIRED, True))
+    wrong_prefix = _message("Claude", "Codex2").replace("TASK-ID-20260901:", "OTHER-001:")
+    assert any("subject prefix" in p for p in CHECK.check_message(wrong_prefix, REQUIRED, True))
+
+
 # OPS-COMMIT-IDENTITY-001: a subject prefix must actually name the same task
 # as the Task-ID trailer. Reproduces the dev46bbfe contradiction: a real
 # >72-char generated task_id cannot appear verbatim in a bounded subject, so
