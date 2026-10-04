@@ -735,33 +735,26 @@ async def get_trade_lesson(candidate_id: str, authorization: Optional[str] = Hea
     return _owned_lesson(candidate_id, tenant_id)
 
 
-def _lesson_idemp(key: Optional[str], content: dict[str, Any], save: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
-    if not key or not key.strip(): return None
-    p = Path(os.getenv("PANTHEON_TRADE_LESSON_IDEMPOTENCY_STORE", os.getenv("PANTHEON_MEMORY_DATA_DIR", "/tmp/pantheon/memory") + "/trade_lesson_idempotency.json"))
-    store = json.loads(p.read_text("utf-8")) if p.exists() else {}
-    k = key.strip()
-    if save is not None:
-        p.parent.mkdir(parents=True, exist_ok=True); store[k] = {"content": content, "response": save}; p.write_text(json.dumps(store), encoding="utf-8"); return None
-    entry = store.get(k)
-    if entry:
-        if entry.get("content") == content: return {**entry["response"], "meta": {**entry["response"].get("meta", {}), "idempotent_replay": True}}
-        raise HTTPException(status_code=409, detail={"error": "IDEMPOTENCY_CONFLICT", "message": "different request", "retryable": False})
-    return None
+class SubmitReviewPayload(BaseModel):
+    reason: Optional[str] = None
 
 
 @app.post("/api/memory/trade-lessons/{candidate_id}/submit-review")
-async def submit_trade_lesson_review(candidate_id: str, idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"), authorization: Optional[str] = Header(None, alias="Authorization")):
-    _ctx, tenant_id = _lesson_identity(authorization, write=True)
+async def submit_trade_lesson_review(candidate_id: str, payload: Optional[SubmitReviewPayload] = None, idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"), authorization: Optional[str] = Header(None, alias="Authorization")):
+    ctx, tenant_id = _lesson_identity(authorization, write=True)
     _owned_lesson(candidate_id, tenant_id)
-    content = {"candidate_id": candidate_id, "action": "submit_review"}
-    prior = _lesson_idemp(idempotency_key, content)
-    if prior is not None: return prior
+    reason = str(getattr(payload, "reason", None) or "").strip()
+    content = {"candidate_id": candidate_id, "action": "submit_review", "tenant_id": tenant_id, "actor_id": ctx.actor_id, "reason": reason}
     try:
-        updated = _governance_service().submit_review(candidate_id)
-        _lesson_idemp(idempotency_key, content, save=updated)
+        updated, replayed = _governance_service().submit_review(candidate_id, idempotency_key=idempotency_key, content=content, return_replayed=True)
+        if replayed:
+            return {**updated, "meta": {**updated.get("meta", {}), "idempotent_replay": True}}
         return updated
     except TradeLessonCandidateError as exc:
-        raise HTTPException(status_code=422, detail={"error": "submit_review_failed", "message": str(exc)}) from exc
+        msg = str(exc)
+        if "IDEMPOTENCY_CONFLICT" in msg:
+            raise HTTPException(status_code=409, detail={"error": "IDEMPOTENCY_CONFLICT", "message": "different request", "retryable": False})
+        raise HTTPException(status_code=422, detail={"error": "submit_review_failed", "message": msg}) from exc
 
 
 class DecidePayload(BaseModel):
@@ -778,20 +771,17 @@ class DecidePayload(BaseModel):
 @app.post("/api/memory/trade-lessons/{candidate_id}/decide")
 async def decide_trade_lesson(candidate_id: str, payload: DecidePayload, x_actor_id: Optional[str] = Header(None, alias="X-Actor-ID"), x_actor_roles: Optional[str] = Header(None, alias="X-Actor-Roles"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"), authorization: Optional[str] = Header(None, alias="Authorization")):
     ctx, tenant_id = _lesson_identity(authorization, write=True)
-    if payload.operator_id != ctx.actor_id or (payload.actor_roles is not None and set(payload.actor_roles) != set(ctx.roles)):
+    if (payload.operator_id != ctx.actor_id) or (payload.actor_roles is not None and set(payload.actor_roles) != set(ctx.roles)) or (x_actor_id is not None and x_actor_id != ctx.actor_id) or (x_actor_roles is not None and set(_split_csv_values([x_actor_roles])) != set(ctx.roles)):
         raise HTTPException(status_code=403, detail="Decision actor does not match verified identity")
-    if x_actor_id is not None and x_actor_id != ctx.actor_id:
-        raise HTTPException(status_code=403, detail="X-Actor-ID does not match verified identity")
-    if x_actor_roles is not None and set(_split_csv_values([x_actor_roles])) != set(ctx.roles):
-        raise HTTPException(status_code=403, detail="X-Actor-Roles does not match verified identity")
-    actor_id = ctx.actor_id
-    actor_roles = sorted(ctx.roles)
+    actor_id, actor_roles = ctx.actor_id, sorted(ctx.roles)
     _authorize_lesson_action(actor_id, actor_roles, action="lesson.decide")
 
     candidate = _owned_lesson(candidate_id, tenant_id)
-    content = {"candidate_id": candidate_id, "action": "decide", "decision": payload.action, "reason": payload.reason, "audit_receipt_id": payload.audit_receipt_id}
-    prior = _lesson_idemp(idempotency_key, content)
-    if prior is not None: return prior
+    content = {
+        "candidate_id": candidate_id, "action": "decide", "tenant_id": tenant_id, "actor_id": actor_id,
+        "decision": payload.action, "reason": payload.reason, "audit_receipt_id": payload.audit_receipt_id,
+        "target_env": payload.target_env, "promotion_stage": payload.promotion_stage, "episodes": payload.episodes,
+    }
 
     req_env = payload.target_env or candidate.get("target_env", "paper")
     is_sensitive = is_sensitive_change(candidate)
@@ -862,20 +852,27 @@ async def decide_trade_lesson(candidate_id: str, payload: DecidePayload, x_actor
             )
 
     try:
-        updated = _governance_service().decide(
+        updated, replayed = _governance_service().decide(
             candidate_id,
             action=payload.action,
-            operator_id=actor_id,  # Bind authenticated principal to operator_id
+            operator_id=actor_id,
             reason=payload.reason,
             audit_receipt_id=payload.audit_receipt_id,
             episodes=payload.episodes,
             target_env=payload.target_env,
             promotion_stage=payload.promotion_stage,
+            idempotency_key=idempotency_key,
+            content=content,
+            return_replayed=True,
         )
-        _lesson_idemp(idempotency_key, content, save=updated)
+        if replayed:
+            return {**updated, "meta": {**updated.get("meta", {}), "idempotent_replay": True}}
+        return updated
     except TradeLessonCandidateError as exc:
-        raise HTTPException(status_code=422, detail={"error": "decision_failed", "message": str(exc)}) from exc
-    return updated
+        msg = str(exc)
+        if "IDEMPOTENCY_CONFLICT" in msg:
+            raise HTTPException(status_code=409, detail={"error": "IDEMPOTENCY_CONFLICT", "message": "different request", "retryable": False})
+        raise HTTPException(status_code=422, detail={"error": "decision_failed", "message": msg}) from exc
 
 
 @app.post("/api/memory/trade-lessons/{candidate_id}/merge")
@@ -890,12 +887,9 @@ async def merge_trade_lesson(
     ctx, tenant_id = _lesson_identity(authorization, write=True)
     if (actor_id is not None and actor_id != ctx.actor_id) or (x_actor_id is not None and x_actor_id != ctx.actor_id):
         raise HTTPException(status_code=403, detail="Actor does not match verified identity")
-    if actor_roles is not None and set(actor_roles) != set(ctx.roles):
+    if (actor_roles is not None and set(actor_roles) != set(ctx.roles)) or (x_actor_roles is not None and set(_split_csv_values([x_actor_roles])) != set(ctx.roles)):
         raise HTTPException(status_code=403, detail="Actor roles do not match verified identity")
-    if x_actor_roles is not None and set(_split_csv_values([x_actor_roles])) != set(ctx.roles):
-        raise HTTPException(status_code=403, detail="Actor roles do not match verified identity")
-    effective_id = ctx.actor_id
-    effective_roles = sorted(ctx.roles)
+    effective_id, effective_roles = ctx.actor_id, sorted(ctx.roles)
     _authorize_lesson_action(effective_id, effective_roles, action="lesson.merge")
 
     candidate = _owned_lesson(candidate_id, tenant_id)

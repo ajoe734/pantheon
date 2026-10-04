@@ -196,3 +196,56 @@ def test_provider_failure_zero_effects(monkeypatch: pytest.MonkeyPatch) -> None:
         persona = owner.get("p-alpha")
         assert not (persona.metadata or {}).get("trade_reflections")
         assert not (persona.metadata or {}).get("trade_reflection_idempotency")
+
+
+def test_exact_nonempty_tenant_and_unauthenticated_denials(monkeypatch: pytest.MonkeyPatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        mock_prov = MockReflectionProvider()
+        client, owner, _ = _setup_app(td, monkeypatch, provider=mock_prov)
+
+        # 1. Valid operator JWT without tenant returns 403 on POST retry before provider effect
+        no_tenant_tok = encode_jwt_hs256({"sub": "op", "roles": ["operator", "admin"], "exp": 4102444800}, secret=JWT_SECRET)
+        resp_post = client.post("/api/personas/p-alpha/trade-journal/ep-1/reflection:retry", headers={"Authorization": f"Bearer {no_tenant_tok}", "Idempotency-Key": "k-no-tenant"}, json={"reason": "test"})
+        assert resp_post.status_code == 403
+        assert mock_prov.calls == 0
+        assert not (owner.get("p-alpha").metadata or {}).get("trade_reflections")
+
+        # 2. Valid operator JWT without tenant returns 403 on GET readback
+        resp_get = client.get("/api/personas/p-alpha/trade-reflections", headers={"Authorization": f"Bearer {no_tenant_tok}"})
+        assert resp_get.status_code == 403
+
+        # 3. Unauthenticated GET returns 401
+        resp_unauth = client.get("/api/personas/p-alpha/trade-reflections")
+        assert resp_unauth.status_code == 401
+
+
+def test_concurrent_cas_no_lost_updates(monkeypatch: pytest.MonkeyPatch) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    with tempfile.TemporaryDirectory() as td:
+        telemetry = {
+            "ep-1": {"trade_episode_id": "ep-1", "persona_id": "p-alpha", "tenant_id": "tenant-1", "status": "closed"},
+            "ep-2": {"trade_episode_id": "ep-2", "persona_id": "p-alpha", "tenant_id": "tenant-1", "status": "closed"},
+        }
+        client, owner, _ = _setup_app(td, monkeypatch, telemetry_data=telemetry)
+
+        # Interleaved concurrent requests for distinct episodes
+        def _call(ep_and_key):
+            ep, key = ep_and_key
+            headers = {**_auth_header("tenant-1"), "Idempotency-Key": key}
+            return client.post(f"/api/personas/p-alpha/trade-journal/{ep}/reflection:retry", headers=headers, json={"reason": f"retry {ep}"})
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(_call, [("ep-1", "k-1"), ("ep-2", "k-2")]))
+
+        assert all(r.status_code == 202 for r in results)
+
+        # Both reflections must survive in metadata
+        persona = owner.get("p-alpha")
+        stored_refs = (persona.metadata or {}).get("trade_reflections", [])
+        stored_episodes = {r["trade_episode_id"] for r in stored_refs}
+        assert stored_episodes == {"ep-1", "ep-2"}
+
+        # Both idempotency entries must survive
+        stored_idemp = (persona.metadata or {}).get("trade_reflection_idempotency", {})
+        assert "k-1" in stored_idemp
+        assert "k-2" in stored_idemp

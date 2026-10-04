@@ -79,16 +79,16 @@ def _dispatch_command(payload: Mapping[str, Any]) -> tuple[int, dict[str, Any]]:
     auth_hdr = {"Authorization": payload["authorization"]} if payload.get("authorization") else {}
     idemp_hdr = {"Idempotency-Key": str(payload["idempotency_key"])}
     if act == "reflection.retry":
-        url = os.getenv("PANTHEON_PERSONA_SERVICE_URL", "").strip().rstrip("/")
+        url = (os.getenv("PERSONA_URL") or os.getenv("PANTHEON_PERSONA_SERVICE_URL") or "").strip().rstrip("/")
         if not url: raise RuntimeError("persona owner is not configured")
         return _http_call(f"{url}/api/personas/{p_id}/trade-journal/{r_id}/reflection:retry", {"reason": payload.get("reason"), "facts_snapshot_ref": payload.get("facts_snapshot_ref")}, {"Content-Type": "application/json", **idemp_hdr, **auth_hdr})
     if act in {"lesson.submit_review", "lesson.decide"}:
-        url = os.getenv("PANTHEON_MEMORY_SERVICE_URL", "").strip().rstrip("/")
+        url = (os.getenv("PANTHEON_MEMORY_API_URL") or os.getenv("PANTHEON_MEMORY_SERVICE_URL") or os.getenv("MEMORY_URL") or "").strip().rstrip("/")
         if not url: raise RuntimeError("memory owner is not configured")
         sub = act == "lesson.submit_review"
         path = f"{url}/api/memory/trade-lessons/{r_id}/" + ("submit-review" if sub else "decide")
         body = {"reason": payload.get("reason")} if sub else {"action": payload.get("decision") or "endorse", "operator_id": payload.get("actor") or "operator", "reason": payload.get("reason"), "audit_receipt_id": payload.get("facts_snapshot_ref") or "gov-approval-default", "episodes": payload.get("episodes"), "target_env": payload.get("target_env"), "promotion_stage": payload.get("promotion_stage")}
-        st, res = _http_call(path, body if not sub else None, {"Content-Type": "application/json", **idemp_hdr, **auth_hdr})
+        st, res = _http_call(path, body, {"Content-Type": "application/json", **idemp_hdr, **auth_hdr})
         if st not in (200, 202): return st, res
         rev = res.get("review_state", "accepted")
         return 202, {"data": {"receipt_id": f"lesson-{r_id}", "action": act, "persona_id": res.get("persona_id", p_id), "resource_id": r_id, "status": "accepted", "review_state": rev}, "audit": {"durable": True, "record_ref": f"memory:trade-lesson:{r_id}:{rev}"}, "meta": res.get("meta", {})}
@@ -134,7 +134,7 @@ def create_trade_journal_router(*, extract_identity: Callable[..., Any], require
         who, items = read_items(request, persona_id, "PANTHEON_BFF_TRADE_REFLECTIONS_STORE")
         if not _allowed(who, persona_id): return _err(403, "FORBIDDEN", "Cross-persona access denied")
         if items is None:
-            p_url = os.getenv("PANTHEON_PERSONA_SERVICE_URL", "").rstrip("/")
+            p_url = (os.getenv("PERSONA_URL") or os.getenv("PANTHEON_PERSONA_SERVICE_URL") or "").rstrip("/")
             if not p_url: return _err(503, "DEPENDENCY_UNAVAILABLE", "Trade reflection store is unavailable", retryable=True)
             auth_hdr = {"Authorization": request.headers.get("Authorization", "")} if request.headers.get("Authorization") else {}
             try:

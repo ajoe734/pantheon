@@ -209,12 +209,15 @@ def test_downstream_unavailable_is_explicit() -> None:
 
 
 def test_default_mounted_bff_path_with_real_isolated_owners_and_durable_stores(monkeypatch) -> None:
-    import io, jwt, time
+    import io, time, subprocess, sys
+    from concurrent.futures import ThreadPoolExecutor
+    from services.runtime_auth_inbound import encode_jwt_hs256
     from services.persona.write_owner import (
         create_app as create_persona_app,
         PersistentPersonaOwner,
         CreatePersonaRequest,
     )
+    import services.persona.write_owner as write_owner_mod
     from services.memory.main import app as memory_app
 
     with tempfile.TemporaryDirectory() as td:
@@ -234,7 +237,7 @@ def test_default_mounted_bff_path_with_real_isolated_owners_and_durable_stores(m
 
         mem_dir = td_path / "memory"
         mem_dir.mkdir(parents=True, exist_ok=True)
-        cand_store = mem_dir / "candidates.json"
+        cand_store = mem_dir / "trade_lesson_candidates.json"
         cand_id = "c1111111-1111-1111-1111-111111111111"
         cand_store.write_text(json.dumps([{
             "lesson_candidate_id": cand_id, "reflection_id": "r1111111-1111-1111-1111-111111111111",
@@ -252,39 +255,16 @@ def test_default_mounted_bff_path_with_real_isolated_owners_and_durable_stores(m
         monkeypatch.setenv("PANTHEON_RUNTIME_AUTH_MODE", "strict")
         monkeypatch.setenv("PANTHEON_MEMORY_DATA_DIR", str(mem_dir))
         monkeypatch.setenv("PANTHEON_TRADE_LESSON_CANDIDATE_STORE", str(cand_store))
-        monkeypatch.setenv("PANTHEON_TRADE_LESSON_IDEMPOTENCY_STORE", str(mem_dir / "idemp.json"))
-        monkeypatch.setenv("PANTHEON_PERSONA_SERVICE_URL", "http://persona-svc")
-        monkeypatch.setenv("PANTHEON_MEMORY_SERVICE_URL", "http://memory-svc")
+        monkeypatch.delenv("PANTHEON_TRADE_LESSON_IDEMPOTENCY_STORE", raising=False)
+        monkeypatch.setenv("PERSONA_URL", "http://persona:8002")
+        monkeypatch.setenv("PANTHEON_MEMORY_API_URL", "http://memory:8086")
+        monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", "http://telemetry:8083")
+        monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-gateway-adapter:8104")
         monkeypatch.setenv("PANTHEON_MEMORY_AUTHZ_MODE", "local")
         monkeypatch.delenv("PANTHEON_TRADE_JOURNAL_COMMAND_OWNER_URL", raising=False)
         monkeypatch.delenv("PANTHEON_BFF_TRADE_REFLECTIONS_STORE", raising=False)
 
-        class DummyReflectionProvider:
-            name = "dummy"
-            model = "dummy-v1"
-            def reflect(self, *, facts, trigger):
-                return {
-                    "expected_vs_actual": {"thesis": "supported", "entry_quality": "good"},
-                    "attribution": "process",
-                    "counterfactuals": [{"alternative_action": "wait", "estimated_impact": "higher", "assumptions": "same"}],
-                    "lesson_candidates": [{"scope": "strategy", "proposed_change": "fine tune", "confidence": 0.8}],
-                    "mistakes": [],
-                    "what_worked": ["timing"],
-                    "unknowns": [],
-                    "followups": [],
-                }
-
-        def dummy_telemetry(ep_id, tenant_id, auth):
-            if ep_id == "ep-100":
-                return {
-                    "trade_episode_id": "ep-100", "persona_id": "p1", "tenant_id": "tenant-alpha",
-                    "orders": [{"order_id": "o1", "symbol": "BTC-USD", "side": "buy", "qty": 1.0, "price": 50000.0, "status": "filled", "timestamp": "2026-10-01T12:00:00Z"}],
-                    "fills": [{"fill_id": "f1", "order_id": "o1", "qty": 1.0, "price": 50000.0, "fee": 1.0, "timestamp": "2026-10-01T12:00:00Z"}],
-                    "pnl": {"realized": 100.0, "unrealized": 0.0}, "missing_refs": [],
-                }
-            return None
-
-        persona_client = TestClient(create_persona_app(owner, reflection_provider=DummyReflectionProvider(), telemetry_fetcher=dummy_telemetry))
+        persona_client = TestClient(create_persona_app(owner))
         memory_client = TestClient(memory_app)
 
         class UrlopenDispatcher:
@@ -296,14 +276,36 @@ def test_default_mounted_bff_path_with_real_isolated_owners_and_durable_stores(m
                 method = req.get_method()
                 headers = dict(req.headers)
                 data = req.data
-                if url.startswith("http://persona-svc"):
-                    path = url[len("http://persona-svc"):]
+                if url.startswith("http://persona:8002"):
+                    path = url[len("http://persona:8002"):]
                     resp = self.p_client.request(method, path, content=data, headers=headers)
-                elif url.startswith("http://memory-svc"):
-                    path = url[len("http://memory-svc"):]
+                elif url.startswith("http://memory:8086"):
+                    path = url[len("http://memory:8086"):]
                     resp = self.m_client.request(method, path, content=data, headers=headers)
+                elif url.startswith("http://telemetry:8083"):
+                    path = url[len("http://telemetry:8083"):]
+                    if path == "/api/telemetry/trade-episodes/ep-100":
+                        body = json.dumps({
+                            "trade_episode_id": "ep-100", "persona_id": "p1", "tenant_id": "tenant-alpha",
+                            "orders": [{"order_id": "o1", "symbol": "BTC-USD", "side": "buy", "qty": 1.0, "price": 50000.0, "status": "filled", "timestamp": "2026-10-01T12:00:00Z"}],
+                            "fills": [{"fill_id": "f1", "order_id": "o1", "qty": 1.0, "price": 50000.0, "fee": 1.0, "timestamp": "2026-10-01T12:00:00Z"}],
+                            "pnl": {"realized": 100.0, "unrealized": 0.0}, "missing_refs": [],
+                        }).encode()
+                        return _TestUrlopenResp(200, body)
+                    raise urllib_error.HTTPError(url, 404, "Not Found", {}, io.BytesIO(b'{"detail":"Not found"}'))
+                elif url.startswith("http://openclaw-gateway-adapter:8104"):
+                    body = json.dumps({
+                        "data": {"output": {"structured_data": {
+                            "expected_vs_actual": {"thesis": "supported", "entry_quality": "good"},
+                            "attribution": "process",
+                            "counterfactuals": [{"alternative_action": "wait", "estimated_impact": "higher", "assumptions": "same"}],
+                            "lesson_candidates": [{"scope": "strategy", "proposed_change": "fine tune", "confidence": 0.8}],
+                            "mistakes": [], "what_worked": ["timing"], "unknowns": [], "followups": [],
+                        }}}
+                    }).encode()
+                    return _TestUrlopenResp(200, body)
                 else:
-                    raise urllib_error.URLError("unknown host")
+                    raise urllib_error.URLError(f"unknown host: {url}")
                 if resp.status_code >= 400:
                     raise urllib_error.HTTPError(url, resp.status_code, resp.reason_phrase, resp.headers, io.BytesIO(resp.content))
                 return _TestUrlopenResp(resp.status_code, resp.content)
@@ -321,30 +323,34 @@ def test_default_mounted_bff_path_with_real_isolated_owners_and_durable_stores(m
 
         dispatcher = UrlopenDispatcher(persona_client, memory_client)
         monkeypatch.setattr(trade_journal.urllib_request, "urlopen", dispatcher)
+        monkeypatch.setattr(write_owner_mod, "urlopen", dispatcher)
 
         now = int(time.time())
-        token_alpha = jwt.encode({"sub": "op1", "operator_id": "op1", "roles": ["operator", "reviewer"], "tenant_id": "tenant-alpha", "persona_ids": ["p1"], "exp": now + 3600}, secret, algorithm="HS256")
-        token_beta = jwt.encode({"sub": "op2", "operator_id": "op2", "roles": ["operator", "reviewer"], "tenant_id": "tenant-beta", "persona_ids": ["p1"], "exp": now + 3600}, secret, algorithm="HS256")
-        token_viewer = jwt.encode({"sub": "v1", "operator_id": "v1", "roles": ["viewer"], "tenant_id": "tenant-alpha", "persona_ids": ["p1"], "exp": now + 3600}, secret, algorithm="HS256")
+        token_alpha = encode_jwt_hs256({"sub": "op1", "operator_id": "op1", "roles": ["operator", "reviewer"], "tenant_id": "tenant-alpha", "persona_ids": ["p1"], "exp": now + 3600}, secret=secret)
+        token_beta = encode_jwt_hs256({"sub": "op2", "operator_id": "op2", "roles": ["operator", "reviewer"], "tenant_id": "tenant-beta", "persona_ids": ["p1"], "exp": now + 3600}, secret=secret)
+        token_viewer = encode_jwt_hs256({"sub": "v1", "operator_id": "v1", "roles": ["viewer"], "tenant_id": "tenant-alpha", "persona_ids": ["p1"], "exp": now + 3600}, secret=secret)
 
         client = _client(td)
         monkeypatch.delenv("PANTHEON_BFF_TRADE_REFLECTIONS_STORE", raising=False)
 
         # 1. Missing owner fails closed
+        monkeypatch.delenv("PERSONA_URL", raising=False)
         monkeypatch.delenv("PANTHEON_PERSONA_SERVICE_URL", raising=False)
         r_no_owner = client.post("/bff/personas/p1/trade-journal/ep-100/reflection:retry", headers={"Authorization": f"Bearer {token_alpha}", "Idempotency-Key": "k1"}, json={"reason": "retry"})
         assert (r_no_owner.status_code, r_no_owner.json()["error"]["code"]) == (503, "DEPENDENCY_UNAVAILABLE")
-        monkeypatch.setenv("PANTHEON_PERSONA_SERVICE_URL", "http://persona-svc")
+        monkeypatch.setenv("PERSONA_URL", "http://persona:8002")
 
-        # 2. Missing trusted identity fails closed
+        # 2. Missing trusted identity fails closed (zero store effect)
         r_no_auth = client.post("/bff/personas/p1/trade-journal/ep-100/reflection:retry", headers={"Idempotency-Key": "k1"}, json={"reason": "retry"})
         assert r_no_auth.status_code == 401
         r_bad_auth = client.post("/bff/personas/p1/trade-journal/ep-100/reflection:retry", headers={"Authorization": "Bearer bad.token.format", "Idempotency-Key": "k1"}, json={"reason": "retry"})
         assert r_bad_auth.status_code == 401
+        assert not (owner.get("p1").metadata or {}).get("trade_reflections")
 
-        # 3. Cross-tenant denial
+        # 3. Cross-tenant denial (zero store effect)
         r_cross = client.post("/bff/personas/p1/trade-journal/ep-100/reflection:retry", headers={"Authorization": f"Bearer {token_beta}", "Idempotency-Key": "k-cross"}, json={"reason": "retry"})
         assert r_cross.status_code == 403
+        assert not (owner.get("p1").metadata or {}).get("trade_reflections")
 
         # 4. Reflection retry accepted & durable receipt
         headers_alpha = {"Authorization": f"Bearer {token_alpha}", "Idempotency-Key": "ref-key-1"}
@@ -385,7 +391,7 @@ def test_default_mounted_bff_path_with_real_isolated_owners_and_durable_stores(m
         assert r_sub_rep.status_code == 202
         assert r_sub_rep.json()["meta"]["idempotent_replay"] is True
 
-        # 9. Lesson decide: unauthorized role -> 403
+        # 9. Lesson decide: unauthorized role -> 403 (zero state change)
         r_dec_unauth = client.post(f"/bff/personas/p1/trade-lessons/{cand_id}:decide", headers={"Authorization": f"Bearer {token_viewer}", "Idempotency-Key": "dec-key-1"}, json={"reason": "endorse", "decision": "reject"})
         assert r_dec_unauth.status_code == 403
 
@@ -396,19 +402,51 @@ def test_default_mounted_bff_path_with_real_isolated_owners_and_durable_stores(m
         assert r_dec.json()["data"]["review_state"] == "rejected"
         assert r_dec.json()["meta"]["audit"]["durable"] is True
 
-        # 10. Fresh process restart: re-instantiate from disk
-        fresh_owner = PersistentPersonaOwner.from_json_path(persona_store)
-        fresh_persona_client = TestClient(create_persona_app(fresh_owner, reflection_provider=DummyReflectionProvider(), telemetry_fetcher=dummy_telemetry))
-        fresh_memory_client = TestClient(memory_app)
-        dispatcher.p_client = fresh_persona_client
-        dispatcher.m_client = fresh_memory_client
+        # 10. Actual fresh process restart via subprocess:
+        # Load stores from disk in an independent python OS process and verify state and replay
+        subproc_code = f"""
+import sys
+from pathlib import Path
+from services.persona.write_owner import PersistentPersonaOwner
+from services.persona.lesson_governance import TradeLessonCandidateStore
 
-        # Fresh process readback
+persona_store = Path({repr(str(persona_store))})
+cand_store = Path({repr(str(cand_store))})
+
+owner = PersistentPersonaOwner.from_json_path(persona_store)
+persona = owner.get("p1")
+reflections = (persona.metadata or {{}}).get("trade_reflections") or []
+assert len(reflections) >= 1, "Persisted reflection not found in fresh process"
+assert reflections[0]["trade_episode_id"] == "ep-100"
+
+cand_s = TradeLessonCandidateStore(cand_store)
+c = cand_s.get({repr(cand_id)})
+assert c is not None, "Persisted lesson not found in fresh process"
+assert c["review_state"] == "rejected"
+
+# Verify idempotency persisted in same file (no standalone file)
+assert not (cand_store.parent / "trade_lesson_idempotency.json").exists()
+print("SUBPROCESS_RESTART_SUCCESS")
+"""
+        res = subprocess.run([sys.executable, "-c", subproc_code], capture_output=True, text=True, check=True)
+        assert "SUBPROCESS_RESTART_SUCCESS" in res.stdout
+
+        # Fresh process client readback and replay
+        fresh_owner = PersistentPersonaOwner.from_json_path(persona_store)
+        dispatcher.p_client = TestClient(create_persona_app(fresh_owner))
         r_fresh_read = client.get("/bff/personas/p1/trade-reflections", headers={"Authorization": f"Bearer {token_alpha}"})
         assert r_fresh_read.status_code == 200
         assert r_fresh_read.json()["data"][0]["trade_episode_id"] == "ep-100"
 
-        # Fresh process replay
         r_fresh_rep = client.post("/bff/personas/p1/trade-journal/ep-100/reflection:retry", headers=headers_alpha, json={"reason": "manual retry"})
         assert r_fresh_rep.status_code == 202
         assert r_fresh_rep.json()["meta"]["idempotent_replay"] is True
+
+        # 11. Concurrent requests coverage
+        def _call_replay(i):
+            return client.post("/bff/personas/p1/trade-journal/ep-100/reflection:retry", headers=headers_alpha, json={"reason": "manual retry"})
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(_call_replay, range(4)))
+        for r in results:
+            assert r.status_code == 202
+            assert r.json()["meta"]["idempotent_replay"] is True

@@ -736,3 +736,84 @@ def test_api_decide_and_merge_target_validation_negative(client: TestClient, mon
     )
     assert resp.status_code == 403
     assert "target_version mismatch" in resp.json()["detail"]["message"]
+
+
+def test_content_bound_lesson_replay_and_conflict(client: TestClient) -> None:
+    payload = make_valid_candidate_payload()
+    client.post("/api/memory/trade-lessons", json=payload)
+    cid = payload["lesson_candidate_id"]
+
+    # 1. Submit review with idempotency key
+    sub_headers = {"Idempotency-Key": "idemp-sub-bound"}
+    r1 = client.post(f"/api/memory/trade-lessons/{cid}/submit-review", headers=sub_headers, json={"reason": "reason-a"})
+    assert r1.status_code == 200
+    assert r1.json()["review_state"] == "pending_review"
+
+    # Replay same key + same reason -> 200 idempotent replay
+    r2 = client.post(f"/api/memory/trade-lessons/{cid}/submit-review", headers=sub_headers, json={"reason": "reason-a"})
+    assert r2.status_code == 200
+    assert r2.json().get("meta", {}).get("idempotent_replay") is True
+
+    # Replay same key + different reason -> 409 conflict
+    r3 = client.post(f"/api/memory/trade-lessons/{cid}/submit-review", headers=sub_headers, json={"reason": "reason-b"})
+    assert r3.status_code == 409
+
+    # 2. Decide with idempotency key
+    dec_headers = {"Idempotency-Key": "idemp-dec-bound"}
+    d_body = {
+        "action": "reject", "operator_id": "op-alice", "reason": "insufficient evidence",
+        "audit_receipt_id": "aud-123", "actor_roles": ["operator"], "target_env": "paper",
+    }
+    r4 = client.post(f"/api/memory/trade-lessons/{cid}/decide", headers=dec_headers, json=d_body)
+    assert r4.status_code == 200
+    assert r4.json()["review_state"] == "rejected"
+
+    # Replay same key + same payload -> 200 idempotent replay
+    r5 = client.post(f"/api/memory/trade-lessons/{cid}/decide", headers=dec_headers, json=d_body)
+    assert r5.status_code == 200
+    assert r5.json().get("meta", {}).get("idempotent_replay") is True
+
+    # Replay same key + changed target_env -> 409 conflict (reproduced Codex2 finding 3)
+    d_body_conflict = dict(d_body, target_env="live", promotion_stage="live_approved")
+    r6 = client.post(f"/api/memory/trade-lessons/{cid}/decide", headers=dec_headers, json=d_body_conflict)
+    assert r6.status_code == 409
+
+    # Replay same key + changed episodes -> 409 conflict
+    d_body_ep = dict(d_body, episodes=[{"trade_episode_id": "ep-diff"}])
+    r7 = client.post(f"/api/memory/trade-lessons/{cid}/decide", headers=dec_headers, json=d_body_ep)
+    assert r7.status_code == 409
+
+    # Verify no standalone idempotency file was created (Finding 4)
+    cand_path = main._candidate_store_path()
+    assert not (cand_path.parent / "trade_lesson_idempotency.json").exists()
+
+
+def test_lesson_competing_writers_and_crash_restart(client: TestClient) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    p1 = make_valid_candidate_payload()
+    p2 = make_valid_candidate_payload()
+    client.post("/api/memory/trade-lessons", json=p1)
+    client.post("/api/memory/trade-lessons", json=p2)
+
+    def _decide(payload_and_key):
+        p, key = payload_and_key
+        cid = p["lesson_candidate_id"]
+        return client.post(
+            f"/api/memory/trade-lessons/{cid}/decide",
+            headers={"Idempotency-Key": key},
+            json={"action": "reject", "operator_id": "op-alice", "reason": "reject", "audit_receipt_id": "aud", "actor_roles": ["operator"]},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(_decide, [(p1, "comp-key-1"), (p2, "comp-key-2")]))
+
+    assert all(r.status_code == 200 for r in results)
+
+    # Crash-restart: load fresh store from disk
+    from services.persona.lesson_governance import TradeLessonCandidateStore
+    fresh_store = TradeLessonCandidateStore(main._candidate_store_path())
+    assert fresh_store.get(p1["lesson_candidate_id"])["review_state"] == "rejected"
+    assert fresh_store.get(p2["lesson_candidate_id"])["review_state"] == "rejected"
+    # Replay check in fresh store
+    _, replayed = fresh_store.transition_with_idempotency(p1["lesson_candidate_id"], lambda c: c, idempotency_key="comp-key-1", content={"candidate_id": p1["lesson_candidate_id"], "action": "decide", "tenant_id": "tenant-alpha", "actor_id": "op-alice", "decision": "reject", "reason": "reject", "audit_receipt_id": "aud", "target_env": None, "promotion_stage": None, "episodes": None})
+    assert replayed is True
