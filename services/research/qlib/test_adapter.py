@@ -369,5 +369,38 @@ def _activation_ready_dataset() -> dict:
     }
 
 
+class TestWorkerQlibInit(unittest.TestCase):
+    def test_init_qlib_runtime_already_initialized(self) -> None:
+        from worker import init_qlib_runtime
+        from unittest.mock import MagicMock
+        fake_r = MagicMock()
+        fake_r.exp_manager = MagicMock()
+        with patch.dict("sys.modules", {"qlib.workflow": MagicMock(R=fake_r)}):
+            init_qlib_runtime()
+
+    def test_init_qlib_runtime_uninitialized_configures_disposable(self) -> None:
+        from worker import init_qlib_runtime
+        from unittest.mock import MagicMock
+        fake_qlib = MagicMock()
+        fake_mlflow = MagicMock()
+        with patch.dict(
+            "sys.modules",
+            {
+                "qlib.workflow": MagicMock(R=MagicMock(exp_manager=MagicMock(side_effect=AttributeError))),
+                "qlib": fake_qlib,
+                "mlflow": fake_mlflow,
+                "mlflow.tracking": fake_mlflow.tracking,
+            },
+        ):
+            # simulate missing exp_manager
+            del sys.modules["qlib.workflow"].R.exp_manager
+            init_qlib_runtime()
+            fake_qlib.init.assert_called_once()
+            _, kwargs = fake_qlib.init.call_args
+            self.assertIn("provider_uri", kwargs)
+            self.assertIn("exp_manager", kwargs)
+            self.assertEqual(kwargs["exp_manager"]["class"], "MLflowExpManager")
+
+
 if __name__ == "__main__":
     unittest.main()
