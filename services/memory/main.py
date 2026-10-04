@@ -735,15 +735,37 @@ async def get_trade_lesson(candidate_id: str, authorization: Optional[str] = Hea
     return _owned_lesson(candidate_id, tenant_id)
 
 
+def _lesson_idemp(key: Optional[str], content: dict[str, Any], save: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+    if not key or not key.strip(): return None
+    p = Path(os.getenv("PANTHEON_TRADE_LESSON_IDEMPOTENCY_STORE", os.getenv("PANTHEON_MEMORY_DATA_DIR", "/tmp/pantheon/memory") + "/trade_lesson_idempotency.json"))
+    store = json.loads(p.read_text("utf-8")) if p.exists() else {}
+    k = key.strip()
+    if save is not None:
+        p.parent.mkdir(parents=True, exist_ok=True); store[k] = {"content": content, "response": save}; p.write_text(json.dumps(store), encoding="utf-8"); return None
+    entry = store.get(k)
+    if entry:
+        if entry.get("content") == content: return {**entry["response"], "meta": {**entry["response"].get("meta", {}), "idempotent_replay": True}}
+        raise HTTPException(status_code=409, detail={"error": "IDEMPOTENCY_CONFLICT", "message": "different request", "retryable": False})
+    return None
+
+
 @app.post("/api/memory/trade-lessons/{candidate_id}/submit-review")
-async def submit_trade_lesson_review(candidate_id: str, authorization: Optional[str] = Header(None, alias="Authorization")):
+async def submit_trade_lesson_review(
+    candidate_id: str,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+):
     _ctx, tenant_id = _lesson_identity(authorization, write=True)
     _owned_lesson(candidate_id, tenant_id)
+    content = {"candidate_id": candidate_id, "action": "submit_review"}
+    prior = _lesson_idemp(idempotency_key, content)
+    if prior is not None: return prior
     try:
         updated = _governance_service().submit_review(candidate_id)
+        _lesson_idemp(idempotency_key, content, save=updated)
+        return updated
     except TradeLessonCandidateError as exc:
         raise HTTPException(status_code=422, detail={"error": "submit_review_failed", "message": str(exc)}) from exc
-    return updated
 
 
 class DecidePayload(BaseModel):
@@ -763,6 +785,7 @@ async def decide_trade_lesson(
     payload: DecidePayload,
     x_actor_id: Optional[str] = Header(None, alias="X-Actor-ID"),
     x_actor_roles: Optional[str] = Header(None, alias="X-Actor-Roles"),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     authorization: Optional[str] = Header(None, alias="Authorization"),
 ):
     ctx, tenant_id = _lesson_identity(authorization, write=True)
@@ -777,6 +800,9 @@ async def decide_trade_lesson(
     _authorize_lesson_action(actor_id, actor_roles, action="lesson.decide")
 
     candidate = _owned_lesson(candidate_id, tenant_id)
+    content = {"candidate_id": candidate_id, "action": "decide", "decision": payload.action, "reason": payload.reason, "audit_receipt_id": payload.audit_receipt_id}
+    prior = _lesson_idemp(idempotency_key, content)
+    if prior is not None: return prior
 
     req_env = payload.target_env or candidate.get("target_env", "paper")
     is_sensitive = is_sensitive_change(candidate)
@@ -857,6 +883,7 @@ async def decide_trade_lesson(
             target_env=payload.target_env,
             promotion_stage=payload.promotion_stage,
         )
+        _lesson_idemp(idempotency_key, content, save=updated)
     except TradeLessonCandidateError as exc:
         raise HTTPException(status_code=422, detail={"error": "decision_failed", "message": str(exc)}) from exc
     return updated
