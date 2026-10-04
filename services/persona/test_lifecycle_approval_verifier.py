@@ -4,7 +4,11 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from services.governance.approval_authority import ApprovalEvidence, ApprovalReader
+from services.governance.approval_authority import (
+    ApprovalEvidence,
+    ApprovalInvalid,
+    ApprovalReader,
+)
 from services.persona.write_owner import (
     HttpGovernanceApprovalVerifier,
     PersistentPersonaOwner,
@@ -174,3 +178,84 @@ def test_unconfigured_strict_verifier_is_503_and_compose_wires_it(monkeypatch):
     assert env["PERSONA_AUTH_MODE"].endswith(":-strict}")
     for key in ("PERSONA_JWT_SECRET", "PERSONA_JWT_ISSUER", "PERSONA_JWT_AUDIENCE"):
         assert "PANTHEON_BFF_JWT_" in env[key]
+
+
+def test_strict_owner_http_decision_cases_and_error_codes(tmp_path, monkeypatch):
+    from tests.persona_capital_write_owner.test_persistent_owners import (
+        _persona_create_payload,
+        _persona_jwt_headers,
+    )
+
+    monkeypatch.setenv("PERSONA_AUTH_MODE", "strict")
+    monkeypatch.setenv("PERSONA_JWT_SECRET", "persona-test-secret")
+    owner = PersistentPersonaOwner.from_json_path(tmp_path / "personas.json")
+    verifier = HttpGovernanceApprovalVerifier(base_url="http://gov", service_token="x")
+    client = TestClient(create_app(owner, governance_decision_verifier=verifier))
+    admin = _persona_jwt_headers("operator-persona", "t1", "persona.admin")
+    assert client.post(
+        "/api/personas", json=_persona_create_payload(persona_id="per1", tenant_id="t1"),
+        headers=admin,
+    ).status_code == 201
+    for state, actor, hdr in (
+        ("research_only", "operator-persona", admin),
+        ("consultable", "gov", _persona_jwt_headers("gov", "t1", "governance_reviewer")),
+    ):
+        assert client.patch("/api/personas/per1/lifecycle",
+                            json={"actor_id": actor, "target_state": state},
+                            headers=hdr).status_code == 200
+    operator = _persona_jwt_headers("operator", "t1", "operator")
+
+    def advance(decision_id=None, headers=operator):
+        body = {"actor_id": "operator", "target_state": "paper_owner"}
+        if decision_id:
+            body["governance_decision_id"] = decision_id
+        return client.patch("/api/personas/per1/lifecycle", json=body, headers=headers)
+
+    def not_found(self, _id):
+        raise ApprovalInvalid("Governance denied exact decision read")
+
+    monkeypatch.setattr(ApprovalReader, "get", not_found)
+    missing = advance()
+    assert missing.status_code == 403 and "LIFECYCLE_AUTHORITY_REQUIRED" in missing.json()["detail"]
+    nonexistent = advance("d1")
+    assert nonexistent.status_code == 403 and "GOVERNANCE_DECISION_INVALID" in nonexistent.json()["detail"]
+    monkeypatch.setattr(ApprovalReader, "get", lambda self, _id: _evidence(
+        metadata={"subject": {"persona_id": "per2", "from_state": "consultable",
+                              "to_state": "paper_owner"}, "approvals": []}))
+    assert "GOVERNANCE_DECISION_INVALID" in advance("d1").json()["detail"]
+    unsigned = {"Authorization": operator["Authorization"][:-4] + "AAAA"}
+    assert advance("d1", headers=unsigned).status_code == 401
+    monkeypatch.setattr(ApprovalReader, "get", lambda self, _id: _evidence())
+    assert advance("d1").status_code == 200
+    assert client.get("/api/personas/per1").json()["lifecycle_state"] == "paper_owner"
+
+    monkeypatch.delenv("PERSONA_JWT_SECRET")
+    monkeypatch.delenv("PANTHEON_RUNTIME_JWT_SECRET", raising=False)
+    misconfigured = advance("d1")
+    assert misconfigured.status_code == 503
+    assert "AUTH_JWT_SECRET_MISSING" in misconfigured.json()["detail"]
+
+
+def test_rendered_compose_gives_persona_the_bff_jwt_verifier_config():
+    import json
+    import os
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    if shutil.which("docker") is None:
+        pytest.skip("docker unavailable")
+    env = {**os.environ, "PANTHEON_BFF_JWT_SECRET": "s3", "PANTHEON_BFF_JWT_ISSUER": "iss",
+           "PANTHEON_BFF_JWT_AUDIENCE": "aud"}
+    for key in ("PERSONA_JWT_SECRET", "PERSONA_JWT_ISSUER", "PERSONA_JWT_AUDIENCE",
+                "PERSONA_AUTH_MODE"):
+        env.pop(key, None)
+    out = subprocess.run(
+        ["docker", "compose", "-f", str(Path(__file__).parents[2] / "docker-compose.yml"),
+         "config", "--format", "json"],
+        env=env, capture_output=True, text=True, check=True,
+    ).stdout
+    persona = json.loads(out)["services"]["persona"]["environment"]
+    assert (persona["PERSONA_JWT_SECRET"], persona["PERSONA_JWT_ISSUER"],
+            persona["PERSONA_JWT_AUDIENCE"], persona["PERSONA_AUTH_MODE"]) == (
+        "s3", "iss", "aud", "strict")

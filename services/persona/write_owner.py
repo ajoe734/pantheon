@@ -1652,7 +1652,7 @@ def create_app(
             body = _bind_authenticated_actor(body, authority)
             return persistent_owner.create(body)
         except PersonaAuthorityError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+            raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
         except PersonaAlreadyExists as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except PersonaOwnerError as exc:
@@ -1687,7 +1687,7 @@ def create_app(
             body = _bind_authenticated_actor(body, authority)
             return persistent_owner.patch(persona_id, body)
         except PersonaAuthorityError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+            raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
         except PersonaNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except PersonaConcurrentUpdate as exc:
@@ -1721,7 +1721,7 @@ def create_app(
                 persona_id, body, expected_from_state=current.lifecycle_state
             )
         except PersonaAuthorityError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+            raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
         except PersonaNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except PersonaConcurrentUpdate as exc:
@@ -1750,7 +1750,7 @@ def create_app(
             persistent_owner.get(persona_id)
             return persistent_capability_owner.upsert(body)
         except PersonaAuthorityError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+            raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
         except PersonaNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except CapabilitySnapshotConflict as exc:
@@ -1796,7 +1796,7 @@ def create_app(
                 persona_id=persona_id, tenant_id=tenant_id
             )
         except PersonaAuthorityError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+            raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
         except PersonaNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -1818,7 +1818,7 @@ def create_app(
                 idempotency_key=idempotency_key,
             )
         except PersonaAuthorityError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+            raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
         except PersonaNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except (

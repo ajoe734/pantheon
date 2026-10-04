@@ -4,8 +4,8 @@
   "reviewer": "Codex",
   "changes": [
     "docker-compose.yml persona: PERSONA_JWT_SECRET/ISSUER/AUDIENCE chained from PANTHEON_BFF_JWT_* (strict mode unchanged)",
-    "services/persona/write_owner.py: auth 5xx (misconfigured verifier) surfaces as 503 with stable code AUTH_JWT_SECRET_MISSING"
+    "services/persona/write_owner.py: auth 5xx surfaces as 503; owner HTTP error detail now carries the stable code as 'CODE: message' on all PersonaAuthorityError handlers"
   ],
-  "tests": "services/persona/test_lifecycle_approval_verifier.py (503 + rendered compose), tests/persona_capital_write_owner: 42 passed",
-  "hosted_verification": "pending coordinator after next root deploy"
+  "tests": "services/persona/test_lifecycle_approval_verifier.py (strict HTTP: no decision=LIFECYCLE_AUTHORITY_REQUIRED, nonexistent/mismatched=GOVERNANCE_DECISION_INVALID, bad signature=401, approved exact decision applies + readback, missing secret=503 AUTH_JWT_SECRET_MISSING; rendered docker compose config); with tests/persona_capital_write_owner, test_persona_owner_transport_contract.py, scripts/test_persona_provisioning_compose_contract.py: 60 passed",
+  "hosted_verification": "not performed by the worker (no deployed dev access); pending coordinator verification after next root deploy"
 }
