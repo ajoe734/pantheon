@@ -8,34 +8,26 @@
   },
   "validation": [
     {
-      "command": "PANTHEON_PY -m pytest -q services/control-plane/persona/test_main.py",
-      "result": "passed: 9 tests, 3 subtests"
+      "command": ".venv-pantheon/bin/python3 -B -m pytest -q services/control-plane/persona/test_main.py services/source_ingestion/test_service.py services/source_ingestion/test_src001_source_record_contract.py",
+      "result": "36 passed, 1 failed, 3 subtests passed; the failure is the freshness snapshot count (observed 2, expected 1)"
     },
     {
-      "command": "PANTHEON_PY -m pytest -q services/persona/test_trade_reflection_owner.py services/persona/test_training_target_owner.py",
-      "result": "passed: 24 tests"
+      "command": ".venv-pantheon/bin/python3 -B -m pytest -q services/source_ingestion/test_service.py -k 'not registry_reads_each_persistent_store_once_at_production_scale'",
+      "result": "24 passed, 1 deselected"
     },
     {
-      "command": "PANTHEON_PY -m pytest -q services/source_ingestion/test_service.py -k 'not registry_reads_each_persistent_store_once_at_production_scale'",
-      "result": "historical prior-worker report: 24 passed; not freshly reproduced in this dispatch; excludes the freshness test and is not a broad-suite pass"
+      "command": ".venv-pantheon/bin/python3 -B -m pytest -q services/persona/test_trade_reflection_owner.py services/persona/test_training_target_owner.py",
+      "result": "24 passed"
     },
     {
-      "command": "PANTHEON_PY -m pytest -q services/source_ingestion/test_service.py::test_registry_reads_each_persistent_store_once_at_production_scale",
-      "result": "historical prior-worker report: expected 1 freshness read, observed 2; exact failure, frozen-base reproduction, and head comparison remain unverified"
+      "command": "origin/dev archive at 6037745e6: provision checkout-scoped interpreter; run services/source_ingestion/test_service.py::test_registry_reads_each_persistent_store_once_at_production_scale",
+      "result": "same failure: observed 2 freshness reads, expected 1; head run above reproduces the identical assertion"
     },
     {
-      "command": "PANTHEON_PY -m pytest -q services/source_ingestion/test_src001_source_record_contract.py",
-      "result": "prior report: 2 passed, 1 failed because private GET was anonymous; regression test now uses a signed admitted tenant and retains anonymous/foreign denial assertions; fresh run pending"
-    },
-    {
-      "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
-      "result": "exit 1: checkout .venv-pantheon interpreter missing; configured PANTHEON_DEPENDENCY_PYTHON resolves to /usr/bin/python3 without pytest; no test run in this dispatch"
-    },
-    {
-      "command": "python3 -m py_compile services/source_ingestion/test_src001_source_record_contract.py && git diff --check",
-      "result": "passed; static syntax and whitespace only, not behavioral validation"
+      "command": "git diff --check origin/dev...HEAD; production diff line count (main.py, write_owner.py, ingest_operations.py, docker-compose.yml)",
+      "result": "passed; 161 added, 21 deleted, net 140 production lines"
     }
   ],
-  "production_net_lines": 157,
+  "production_net_lines": 140,
   "hosted_or_deployment_proof": false
 }
