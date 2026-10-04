@@ -37,6 +37,10 @@
       "type": "string",
       "minLength": 1
     },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1
+    },
     "scope": {
       "type": "string",
       "minLength": 1

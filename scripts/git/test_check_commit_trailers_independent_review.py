@@ -88,6 +88,124 @@ def test_product_delivery_still_requires_reviewer() -> None:
     assert CHECK.required_trailers_for_delivery(REQUIRED, "product") == REQUIRED
 
 
+def test_auto_cli_imports_component_boundary_from_repository_root() -> None:
+    import subprocess
+
+    result = subprocess.run(
+        ["python3", str(CHECKER), "--range", "HEAD~1..HEAD", "--skip-merge", "--delivery-class", "auto"],
+        cwd=CHECKER.parents[2], capture_output=True, text=True, check=False,
+    )
+    assert "ModuleNotFoundError: No module named 'scripts'" not in result.stderr
+    assert "delivery_class=" in result.stdout
+
+
+@pytest.mark.parametrize("classified", ["tooling", "product", "product"])
+def test_auto_delivery_class_diagnostics_are_emitted(monkeypatch, capsys, classified: str) -> None:
+    from unittest import mock
+
+    from scripts import component_boundary
+    monkeypatch.setattr(CHECK, "load_settings", lambda: (REQUIRED, True))
+    monkeypatch.setattr(CHECK, "commit_delivery_class", lambda *args, **kwargs: classified)
+    with mock.patch.object(component_boundary, "load_manifest", return_value={}):
+        assert CHECK.check_targets([("commit", _message("Claude", "Codex2"))], delivery_class="auto") == []
+    assert f"delivery_class={classified}" in capsys.readouterr().out
+
+
+def test_real_range_checker_admits_compliant_and_rejects_invalid_commit_messages(tmp_path) -> None:
+    import subprocess
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.name", "Test")
+    git("config", "user.email", "test@example.com")
+
+    def commit(message: str) -> str:
+        (tmp_path / "source.txt").write_text(message, encoding="utf-8")
+        git("add", "source.txt")
+        result = subprocess.run(
+            ["git", "commit", "-F", "-"], cwd=tmp_path, input=message,
+            check=True, capture_output=True, text=True,
+        )
+        return git("rev-parse", "HEAD")
+
+    base = commit("Initial content\n")
+    valid = commit(_message("Claude", "Codex2"))
+    assert CHECK.check_range(
+        f"{base}..{valid}", delivery_class="product", expected_task_id="TASK-ID-20260901",
+        repository_root=tmp_path,
+    ) == []
+
+    invalid_messages = [
+        _message("Claude", "Codex2").replace("do a thing", "x" * 80),
+        _message("Claude", "Codex2").replace("LLM-Agent: Claude\n", ""),
+        _message("Claude", "Codex2").replace("Task-ID: TASK-ID-20260901\n", ""),
+        _message("Claude", "Codex2").replace("Reviewer: Codex2\n", ""),
+    ]
+    expected = ["subject exceeds 72 chars", "missing trailer: LLM-Agent", "missing trailer: Task-ID", "missing trailer: Reviewer"]
+    for message, problem in zip(invalid_messages, expected):
+        prior = git("rev-parse", "HEAD")
+        head = commit(message)
+        failures = CHECK.check_range(
+            f"{prior}..{head}", delivery_class="product", expected_task_id="TASK-ID-20260901",
+            repository_root=tmp_path,
+        )
+        assert len(failures) == 1 and any(problem in item for item in failures[0][1]), failures
+
+
+def test_real_range_checker_skips_merge_commit(tmp_path) -> None:
+    import subprocess
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.name", "Test")
+    git("config", "user.email", "test@example.com")
+    (tmp_path / "base").write_text("base")
+    git("add", "base")
+    subprocess.run(["git", "commit", "-m", "base"], cwd=tmp_path, check=True, capture_output=True)
+    base = git("rev-parse", "HEAD")
+    git("checkout", "-qb", "side")
+    (tmp_path / "side").write_text("side")
+    git("add", "side")
+    merge_message = _message("Claude", "Codex2")
+    subprocess.run(["git", "commit", "-F", "-"], cwd=tmp_path, input=merge_message, check=True, capture_output=True, text=True)
+    git("checkout", "-q", "master")
+    (tmp_path / "main").write_text("main")
+    git("add", "main")
+    subprocess.run(["git", "commit", "-F", "-"], cwd=tmp_path, input=merge_message, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "merge", "--no-ff", "side", "-m", "Merge side"], cwd=tmp_path, check=True, capture_output=True, text=True)
+    head = git("rev-parse", "HEAD")
+    assert CHECK.check_range(
+        f"{base}..{head}", skip_merge=True, delivery_class="product",
+        expected_task_id="TASK-ID-20260901", repository_root=tmp_path,
+    ) == []
+
+
+def test_check_targets_honors_expected_task_id_and_skips_merge_commits(monkeypatch) -> None:
+    import subprocess
+
+    message = _message("Claude", "Codex2")
+    monkeypatch.setattr(CHECK, "load_settings", lambda: (REQUIRED, True))
+    monkeypatch.setattr(
+        CHECK.subprocess, "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, stdout="merge a b\\n"),
+    )
+    assert CHECK.check_targets(
+        [("merge", message)], skip_merge=True, expected_task_id="OTHER"
+    ) == []
+    failures = CHECK.check_targets(
+        [("commit", message)], expected_task_id="OTHER"
+    )
+    assert any("does not match task id 'OTHER'" in item for item in failures[0][1])
+
+
 # OPS-COMMIT-IDENTITY-001: a subject prefix must actually name the same task
 # as the Task-ID trailer. Reproduces the dev46bbfe contradiction: a real
 # >72-char generated task_id cannot appear verbatim in a bounded subject, so

@@ -1,0 +1,250 @@
+{
+  "task_id": "PERSONA-TW-SOURCE-SELECTION-20261003",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "review_status": "pending_independent_review",
+  "base_commit": "61980f66457b9199f7c1a4e77b88228c9e6ca899",
+  "validated_code_commit": "ada8b6f03d3e8947215374a5847fe3ae53d0dc50",
+  "predecessors": "Actual Persona PR6123 merge 2643a2d12 and Ranking PR6137 merge 61980f664 are ancestors; both canonical dependencies are done.",
+  "reproduction": "Executing the original base projection and selector without FINMIND_API_TOKEN selects FinMind for the actual Persona daily requirement, but official TWSE/TPEx when candidates are empty.",
+  "change": "Generate official-first TW daily candidates; reject incompatible built-in market/dataset bindings even when registered; skip FinMind without a locally resolvable nonblank token and skip policy-ineligible alternatives. Preserve sole-choice policy conflicts and operator-owned config conflicts.",
+  "scope": "Actual Persona daily-price requirement only; broker live_push provisioning, Governance, provider fetch behavior, terminal health, and US simulation provenance are unchanged.",
+  "credential_boundary": "Token presence is configuration eligibility, not authentication proof. Local HTTP controls verify valid-key payload normalization and expired/rejected 401/403 errors without synthetic replacement; explicit selections retain their candidate boundary.",
+  "validation": {
+    "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_persona_source_reconciler.py services/control-plane/bff/tests/test_read_store_final_deletion.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_dev_paper_simulation.py services/source_ingestion/tests/test_requirement_state.py services/source_ingestion/tests/test_scheduled_connector.py --disable-warnings",
+    "result": "190 passed, 1 skipped, 3 warnings; exit 0",
+    "skip": "Opt-in official TWSE/TPEx live network smoke was not enabled.",
+    "log": "/tmp/PERSONA-TW-final-focused.log",
+    "sha256": "112df89fd125478679edd92d9d7f09a4749593ac20aeee738662b68af28fe4ce"
+  },
+  "broader_validation_not_passed": {
+    "command": "timeout 480 env REGISTRY_STORE_BACKEND=memory .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests --disable-warnings",
+    "result": "Interrupted, exit 2; partial report 827 passed and 6 failed is not a completed suite.",
+    "failures": "Five Registry distillation integration failures and one provider-management live-fetch HTTP403; all six reproduced on a clean base checkout, each baseline batch exit 1.",
+    "baseline_commands": "With REGISTRY_STORE_BACKEND=memory: pytest -q services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRealSourceToRegistryService services/source_ingestion/tests/test_l12_mfc_r4_distill_001.py::test_real_source_record_to_registry_draft_integration services/source_ingestion/tests/test_l12_mfc_r4_distill_001.py::test_same_source_retry_has_stable_identity; separately test_provider_management_coverage.py::test_provider_owned_adapters_execute_bounded_fetches_when_payload_omitted.",
+    "log_sha256": "e21e979780d5a30105c18423614a159bb57a3ac067eb43b8cea7158c9507a3ef",
+    "registry_baseline_log_sha256": "ef246bce615f021bf58214248d1db327f8c819ad25f93401303f3b83363d1ef4",
+    "provider_baseline_log_sha256": "e6eb58e29c5a00ee9a5b94377d4b86563fdc24bff152824c35362281b01788fd",
+    "earlier_attempt": "Missing REGISTRY_STORE_BACKEND caused startup failures; interrupted exit 2, not passed. Initial new-test setup errors were corrected before the validated code commit."
+  },
+  "validation_scope_incident": "The inherited provider-management test and its baseline reproduction made real TDCC/TAIFEX reads and received StockTwits HTTP403, contrary to the task's no-provider-network instruction. On discovery the broad run was stopped and the operator informed. Do not treat these reads as availability or acceptance evidence; do not rerun that test for this task. No hosted mutations or deployment were performed.",
+  "diff_budget": "Production +23/-6 = net +17, within corrective budget 60; git diff origin/dev --check passed.",
+  "remaining_delivery": "Human/Ops disposition is recorded; publish this corrected manifest to PR6141 for fresh exact-head Codex2 review, required CI, supervisor MERGE, and owner closeout. No source approval, merge, hosted acceptance or done claimed.",
+  "incident_record": "The same test services/source_ingestion/tests/test_provider_management_coverage.py::test_provider_owned_adapters_execute_bounded_fetches_when_payload_omitted ran in the interrupted broad suite and base reproduction. Retained log final-write times are 2026-10-04T09:45:16.015484157Z (broad) and 2026-10-04T09:45:07.669875878Z (base); these are filesystem timestamps, not exact request timestamps, which the logs do not record. Both log hashes remain above. Historical provider access violated acceptance 4 and is never represented as compliant or hosted success.",
+  "independent_prior_review": "Codex2 rejected 131693f98ba0d5993447e860d70ef43cd14554cb at 2026-10-04T09:57:24Z for incident disposition and incomplete broad coverage, requesting evidence corrections without production changes. Its separate offline seven-file run was 190 passed, 1 explicit network skip, exit 0 in 185.35s; this is distinct from owner validation and does not replace the full offline inventory or new-head approval.",
+  "delivery_refresh": "Read /tmp/pantheon-closeout-execution-20261003/PLAN.md and /tmp/pantheon-closeout-continuation-20261004-0925/PLAN.md. Merged current dev f60a8aa3755f4f6543cd05faf3c04316e0dd3013, which adds only separate Research evidence. Verified every retained offline batch terminal count/exit/log hash, inventory union and baseline hash; source, tests and offline harness are byte-identical to validated 100e9fade46db9eec5b1a7ce9507279c37c66dc6. No test rerun or provider access during this evidence-only continuation.",
+  "offline_review_correction": {
+    "validated_head": "100e9fade46db9eec5b1a7ce9507279c37c66dc6",
+    "base": "61980f66457b9199f7c1a4e77b88228c9e6ca899",
+    "command": "For each batch root, source-1 through source-6, persona: .venv-pantheon/bin/python3 docs/deployment/evidence/PERSONA-TW-SOURCE-SELECTION-20261003/run_offline.py <batch>",
+    "guard": "Committed sitecustomize audit hook denies non-loopback DNS/connect/connect_ex/sendto, inherited by Python child processes. Loopback-only fixture HTTP servers remain usable. Four DNS/connect/connect_ex/create_connection denial controls passed without sending packets. No live-provider cases executed.",
+    "inventory": "offline-inventory.json enumerates every selected case and terminal outcome grouped by file; selected union + four exclusions equals all 1000 source-ingestion collected nodes. Additional seven Persona projection tests selected. Collection exit 0.",
+    "inventory_sha256": "db64da7f7b43b069f0d177342ece1fb6aae65ef20fd3608435540440d40c86a9",
+    "result": "All eight batches completed: source-ingestion 990 passed, 6 baseline failures, 4 explicit deselections; Persona projection 7 passed. No skipped cases or incomplete batches. Broad suite is NOT green.",
+    "excluded": {
+      "services/source_ingestion/tests/test_provider_management_coverage.py::test_provider_owned_adapters_execute_bounded_fetches_when_payload_omitted": "Unmocked real provider fetch; prior incident; do not rerun",
+      "services/source_ingestion/tests/test_taiwan_official_connectors.py::test_taiwan_official_live_read_only_smoke_for_one_twse_and_tpex_symbol": "Opt-in provider network smoke",
+      "services/source_ingestion/test_postgres_store.py::test_real_postgres_reload_uses_dependency_topology_after_stable_object_upsert": "Opt-in real PostgreSQL; no task-local database provisioned",
+      "services/source_ingestion/test_postgres_store.py::test_real_postgres_legacy_and_tenanted_record_coexistence": "Opt-in real PostgreSQL; no task-local database provisioned"
+    },
+    "batches": [
+      {
+        "batch": "root",
+        "exit": 1,
+        "counts": {
+          "passed": 37,
+          "failed": 1
+        },
+        "nonpasses": [
+          {
+            "node": "services/source_ingestion/test_service.py::test_registry_reads_each_persistent_store_once_at_production_scale",
+            "phase": "call",
+            "outcome": "failed"
+          }
+        ],
+        "log_sha256": "63ab67f270d914b3ebf17f87f261daecd217d33a5fec11ddac89b23113d6f5df",
+        "selected": 38,
+        "files": [
+          "services/source_ingestion/test_compose_activation.py",
+          "services/source_ingestion/test_postgres_store.py",
+          "services/source_ingestion/test_service.py",
+          "services/source_ingestion/test_src001_source_record_contract.py"
+        ]
+      },
+      {
+        "batch": "source-1",
+        "exit": 0,
+        "counts": {
+          "passed": 139
+        },
+        "nonpasses": [],
+        "log_sha256": "947322acbf8b1ca1dd1cb5f042ff31f43c1c26ee35bbad1ef59f16ae821024d6",
+        "selected": 139,
+        "files": [
+          "services/source_ingestion/tests/test_active_universe.py",
+          "services/source_ingestion/tests/test_agora_seed_bridge.py",
+          "services/source_ingestion/tests/test_bounded_ingestion.py",
+          "services/source_ingestion/tests/test_connector_framework.py",
+          "services/source_ingestion/tests/test_controller_readback.py",
+          "services/source_ingestion/tests/test_controller_worker.py",
+          "services/source_ingestion/tests/test_controller_worker_manual_once.py",
+          "services/source_ingestion/tests/test_crypto_coingecko.py",
+          "services/source_ingestion/tests/test_dev_paper_simulation.py"
+        ]
+      },
+      {
+        "batch": "source-2",
+        "exit": 0,
+        "counts": {
+          "passed": 146
+        },
+        "nonpasses": [],
+        "log_sha256": "9add6bfc381883700e4e0269e86579ad277ea1a9627eb64d001ea241868ee03d",
+        "selected": 146,
+        "files": [
+          "services/source_ingestion/tests/test_distillation_controller.py",
+          "services/source_ingestion/tests/test_distillation_worker.py",
+          "services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py",
+          "services/source_ingestion/tests/test_external_source_connectors.py",
+          "services/source_ingestion/tests/test_financial_source_catalog.py",
+          "services/source_ingestion/tests/test_finmind_taiwan_connectors.py",
+          "services/source_ingestion/tests/test_ids_002_redaction_guard.py",
+          "services/source_ingestion/tests/test_ids_008_audit_lineage_e2e.py",
+          "services/source_ingestion/tests/test_ingest_run.py"
+        ]
+      },
+      {
+        "batch": "source-3",
+        "exit": 1,
+        "counts": {
+          "passed": 104,
+          "failed": 5
+        },
+        "nonpasses": [
+          {
+            "node": "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRealSourceToRegistryService::test_normalized_source_reaches_the_real_registry_service",
+            "phase": "call",
+            "outcome": "failed"
+          },
+          {
+            "node": "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRealSourceToRegistryService::test_real_registry_approval_before_controller_post_is_not_overwritten",
+            "phase": "call",
+            "outcome": "failed"
+          },
+          {
+            "node": "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRealSourceToRegistryService::test_real_service_outage_then_recovery_replays_once",
+            "phase": "call",
+            "outcome": "failed"
+          },
+          {
+            "node": "services/source_ingestion/tests/test_l12_mfc_r4_distill_001.py::test_real_source_record_to_registry_draft_integration",
+            "phase": "call",
+            "outcome": "failed"
+          },
+          {
+            "node": "services/source_ingestion/tests/test_l12_mfc_r4_distill_001.py::test_same_source_retry_has_stable_identity",
+            "phase": "call",
+            "outcome": "failed"
+          }
+        ],
+        "log_sha256": "38170eee742a692f868a54b9a12e284dbe0687b42cc79e485aca111c07db197e",
+        "selected": 109,
+        "files": [
+          "services/source_ingestion/tests/test_interaction_intent_classifier.py",
+          "services/source_ingestion/tests/test_interaction_source_store.py",
+          "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py",
+          "services/source_ingestion/tests/test_l12_mfc_r4_distill_001.py",
+          "services/source_ingestion/tests/test_latest_market_snapshot.py",
+          "services/source_ingestion/tests/test_market_data_foundation.py",
+          "services/source_ingestion/tests/test_multi_process_source_reconciliation.py",
+          "services/source_ingestion/tests/test_negative_memory_matcher.py",
+          "services/source_ingestion/tests/test_ops_accept_coverage_alerts.py"
+        ]
+      },
+      {
+        "batch": "source-4",
+        "exit": 0,
+        "counts": {
+          "passed": 216
+        },
+        "nonpasses": [],
+        "log_sha256": "01f49814ba9371d97e4095b126fd2c83988560c89eb1d5be0c22d99c625f6166",
+        "selected": 216,
+        "files": [
+          "services/source_ingestion/tests/test_paper_ingest_adapter.py",
+          "services/source_ingestion/tests/test_persona_source_reconciler.py",
+          "services/source_ingestion/tests/test_product_v2_research_loop_closure_r2.py",
+          "services/source_ingestion/tests/test_product_v2_source_distillation_r3.py",
+          "services/source_ingestion/tests/test_proposal_governance.py",
+          "services/source_ingestion/tests/test_provider_management_coverage.py",
+          "services/source_ingestion/tests/test_registry_split.py",
+          "services/source_ingestion/tests/test_replication_bridge.py",
+          "services/source_ingestion/tests/test_repo_allowlist.py"
+        ]
+      },
+      {
+        "batch": "source-5",
+        "exit": 0,
+        "counts": {
+          "passed": 188
+        },
+        "nonpasses": [],
+        "log_sha256": "67e11666e0dab6039eb8080d1f6b2bca2c65266f9d8d37b4cadbdd190dfb9f74",
+        "selected": 188,
+        "files": [
+          "services/source_ingestion/tests/test_requirement_state.py",
+          "services/source_ingestion/tests/test_runtime_latest_source_record.py",
+          "services/source_ingestion/tests/test_scheduled_connector.py",
+          "services/source_ingestion/tests/test_semantic_extraction.py",
+          "services/source_ingestion/tests/test_semantic_extraction_admission.py",
+          "services/source_ingestion/tests/test_source_readiness_bounded.py",
+          "services/source_ingestion/tests/test_srcm_p1_contracts.py",
+          "services/source_ingestion/tests/test_srcm_p1_source_commands.py",
+          "services/source_ingestion/tests/test_strategy_seed_builder.py"
+        ]
+      },
+      {
+        "batch": "source-6",
+        "exit": 0,
+        "counts": {
+          "passed": 160
+        },
+        "nonpasses": [],
+        "log_sha256": "8d9adcd47d63d7861cd62ee2b5c594be86d290fd10468748aba13fb6ec6cc5b8",
+        "selected": 160,
+        "files": [
+          "services/source_ingestion/tests/test_strategy_seed_store.py",
+          "services/source_ingestion/tests/test_taiwan_market_connectors.py",
+          "services/source_ingestion/tests/test_taiwan_official_connectors.py",
+          "services/source_ingestion/tests/test_trainer_seed_bridge.py",
+          "services/source_ingestion/tests/test_us_paid_broker_connectors.py",
+          "services/source_ingestion/tests/test_us_public_connectors.py",
+          "services/source_ingestion/tests/test_usage_health.py",
+          "services/source_ingestion/tests/test_yahoo_taiwan_connectors.py"
+        ]
+      },
+      {
+        "batch": "persona",
+        "exit": 0,
+        "counts": {
+          "passed": 7
+        },
+        "nonpasses": [],
+        "log_sha256": "44dd9c427258bb4cd73e7a5e011b2b5cd47e6ef5821afffa39257374095545b4",
+        "selected": 7,
+        "files": [
+          "services/control-plane/bff/tests/test_read_store_final_deletion.py"
+        ]
+      }
+    ],
+    "baseline": {
+      "base": "61980f66457b9199f7c1a4e77b88228c9e6ca899",
+      "command": "In clean base clone: PYTHONPATH=<absolute evidence directory> REGISTRY_STORE_BACKEND=memory PANTHEON_TW_OFFICIAL_LIVE_SMOKE=0 TW_INVENTORY=/tmp/persona-tw-offline-20261004/baseline .venv-pantheon/bin/python3 -m pytest -p inventory_plugin -q <all six failed node IDs from offline-inventory.json> --disable-warnings --tb=short (240-second bound)",
+      "result": "6 failed, exit 1, 9.97s; same six failures reproduced. Five Registry distillation integration failures; freshness list called twice rather than once. No unrelated baseline repair.",
+      "log": "/tmp/persona-tw-offline-20261004/baseline.log",
+      "log_sha256": "2a506d55e4efa4b012639b8bec3d2aee20e5cc155febe32c9926f26d44af2456"
+    },
+    "logs": "/tmp/persona-tw-offline-20261004/<batch>.log; exact command plans, selected node IDs and per-case result JSON retained alongside logs.",
+    "incident_disposition": "Human/Ops recorded disposition in canonical state and https://github.com/ajoe734/pantheon/pull/6141#issuecomment-5978964301 (2026-10-04T10:19:17Z); canonical reopen at 10:25:12Z explicitly permits delivery of completed OFFLINE3243cb28 evidence and fresh independent review/CI. Prior TDCC/TAIFEX/StockTwits reads remain an acceptance-4 violation. Offline reruns neither erase nor authorize that incident. No further provider access, retroactive approval, source approval or hosted acceptance is granted; no additional incident authorization is pending."
+  }
+}

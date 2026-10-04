@@ -3881,8 +3881,8 @@ def _market_persona_required_data_sources(item: dict[str, Any]) -> list[dict[str
                 "cadence": "daily",
                 "source_class": "live_pull",
                 "connector_candidates": [
-                    "tw-finmind-datasets",
                     "tw-twse-tpex-official-market",
+                    "tw-finmind-datasets",
                 ],
                 "policy_gates": [
                     "require_connector_approved",
