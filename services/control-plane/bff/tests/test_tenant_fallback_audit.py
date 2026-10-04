@@ -1638,8 +1638,18 @@ def test_event_stream_requires_verified_tenant_authority(monkeypatch, tmp_path, 
         assert "PRIVATE_TENANT_EVENT" not in response.text, response.text
 
 
-@pytest.mark.parametrize("tenant", [None, "tenant-a", "tenant-b"])
-def test_mounted_capital_command_route_scopes_to_the_jwt_tenant(mounted, monkeypatch, tenant):
+@pytest.mark.parametrize(
+    "tenant,body_tenant,should_execute",
+    [
+        (None, None, False),
+        (None, "tenant-b", False),
+        ("tenant-a", "tenant-b", False),
+        ("tenant-b", "tenant-foreign", False),
+        ("tenant-b", "tenant-b", True),
+        ("tenant-b", None, True),
+    ],
+)
+def test_mounted_capital_command_route_scopes_to_the_jwt_tenant(mounted, monkeypatch, tenant, body_tenant, should_execute):
     client, store, _ = mounted
     calls = []
     from services.control_plane.bff.command_adapters import base
@@ -1657,29 +1667,33 @@ def test_mounted_capital_command_route_scopes_to_the_jwt_tenant(mounted, monkeyp
             pass
 
     def urlopen(req, *args, **kwargs):
-        calls.append((req.method, dict(req.header_items())))
+        calls.append((req.method, req.full_url, req.get_header("X-tenant-id") or req.get_header("X-Tenant-Id")))
         return Response()
 
     monkeypatch.setattr(base.urllib.request, "urlopen", urlopen)
     monkeypatch.setenv("PANTHEON_CAPITAL_API_URL", "http://capital.invalid")
-    key = f"capital-audit-{tenant}"
+    key = f"capital-audit-{tenant}-{body_tenant}"
+    params = {"action_id": "pause"}
+    if body_tenant:
+        params["tenant_id"] = body_tenant
     response = client.post(
         "/bff/v1/commands",
         headers={"Authorization": _tok(tenant), "Idempotency-Key": key},
         json={
             "command": "CapitalPoolAction",
             "target": {"type": "CapitalPool", "id": "pool-b"},
-            "params": {"action_id": "pause", "tenant_id": "tenant-b"},
+            "params": params,
             "audit_context": {"reason": "review tenant authority"},
         },
     )
-    if tenant != "tenant-b":
-        assert calls == []
+    if not should_execute:
+        assert calls == [], f"Denial must have zero downstream calls, got {calls}"
         rec = store.get_command_by_idempotency_key(key)
         assert (rec or {}).get("status") != "executed"
     else:
-        assert calls
-        assert any(method == "PATCH" for method, _ in calls)
+        assert calls, "Positive control must reach downstream"
+        assert any(method == "PATCH" and tid == "tenant-b" for method, _, tid in calls)
+        assert any(method == "GET" and tid == "tenant-b" for method, _, tid in calls)
         rec = store.get_command_by_idempotency_key(key)
         assert (rec or {}).get("status") == "executed"
 

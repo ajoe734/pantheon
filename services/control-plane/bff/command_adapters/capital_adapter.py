@@ -54,6 +54,9 @@ class CapitalOwnerWriter:
 
     @staticmethod
     def _tenant(tenant_id: Optional[str], auth_token: Optional[str]) -> Optional[str]:
+        raw = str(auth_token or "").removeprefix("Bearer ").strip()
+        if raw.count(".") == 2 or tenant_id:
+            return bound_tenant({}, tenant_id, auth_token)
         return str(tenant_id or "").strip() or _token_tenant(auth_token)
 
     def create_pool(self, payload, *, actor_id, actor_role, auth_token=None, key="", tenant_id=None, **_) -> Dict[str, Any]:
@@ -101,6 +104,7 @@ class CapitalOwnerWriter:
 
     @staticmethod
     def _set_status(path: str, fields: Dict[str, Any], actor_id: str, actor_role: str, auth_token: Optional[str], tenant_id: Optional[str] = None) -> Dict[str, Any]:
+        tenant_id = CapitalOwnerWriter._tenant(tenant_id, auth_token)
         body = {"actor_id": actor_id, "actor_role": actor_role, **fields}
         try:
             http_request_json(capital_url(f"{path}/status"), method="PATCH", payload=body, auth_token=auth_token, tenant_id=tenant_id)
@@ -167,12 +171,12 @@ class CapitalCommandAdapter(DomainCommandAdapter):
 
     @staticmethod
     def _ctx(params: Dict[str, Any], auth_token: Optional[str]) -> Dict[str, Any]:
+        raw = str(auth_token or "").removeprefix("Bearer ").strip()
+        claimed = str(params.get("tenant_id") or params.get("tenant") or "").strip()
+        tid = bound_tenant(params, None, auth_token) if (raw.count(".") == 2 or claimed) else _token_tenant(auth_token)
         return {
-            "actor_id": str(params.get("actor_id") or ""),
-            "actor_role": str(params.get("actor_role") or ""),
-            "key": str(params.get("idempotency_key") or ""),
-            "auth_token": auth_token,
-            "tenant_id": str(params.get("tenant_id") or params.get("tenant") or "").strip() or _token_tenant(auth_token),
+            "actor_id": str(params.get("actor_id") or ""), "actor_role": str(params.get("actor_role") or ""),
+            "key": str(params.get("idempotency_key") or ""), "auth_token": auth_token, "tenant_id": tid,
         }
 
     def _pool(self, command_id, pool_id, action_id, params, auth_token) -> Dict[str, Any]:
