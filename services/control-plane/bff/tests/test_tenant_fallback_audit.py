@@ -1016,6 +1016,7 @@ def test_mounted_operations_read_model_route_scopes_to_the_jwt_tenant(monkeypatc
 
     personas = {
         "p1": {"persona_id": "p1", "tenant_id": "tenant-b"},
+        "p-a": {"persona_id": "p-a", "tenant_id": "tenant-a"},
         "p-dev": {"persona_id": "p-dev", "tenant_id": "pantheon-dev"},
         "p-custom": {"persona_id": "p-custom", "tenant_id": "custom-default"},
         "p-unscoped": {"persona_id": "p-unscoped"},
@@ -1104,6 +1105,125 @@ def test_mounted_operations_read_model_route_scopes_to_the_jwt_tenant(monkeypatc
     assert client.get("/bff/management/operations-read-model/p1", headers=multi_headers).status_code == 404
     # Missing tenant authority fails closed with 403
     assert client.get("/bff/management/operations-read-model/p-dev", headers=_jwt_without_tenant()).status_code == 403
+
+    # 7. Primary tenant differing from authorized configured default (and tenant_ids ordering)
+    for shape_key, shape_tenants in [
+        ("allowed_tenants", ["tenant-a", "tenant-b"]),
+        ("tenant_ids", ["tenant-a", "tenant-b"]),
+        ("tenant_ids", ["tenant-b", "tenant-a"]),
+    ]:
+        claim_payload = {
+            "sub": "dual-operator",
+            "roles": ["operator"],
+            "tenant_id": "tenant-a",
+            shape_key: shape_tenants,
+            "iss": _ISSUER,
+            "aud": _AUDIENCE,
+            "iat": now,
+            "exp": now + 3600,
+        }
+        diff_tok = encode_jwt_hs256(claim_payload, secret=_SECRET)
+        diff_headers = {"Authorization": f"Bearer {diff_tok}"}
+        monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-b")
+
+        # Without tenant header: authorized configured default (tenant-b) takes precedence (p1=tenant-b -> 200, p-a=tenant-a -> 404)
+        assert client.get("/bff/management/operations-read-model/p1", headers=diff_headers).status_code == 200
+        assert client.get("/bff/management/operations-read-model/p-a", headers=diff_headers).status_code == 404
+
+        # Foreign configured default: when configured default is outside allowlist, falls back to primary tenant (tenant-a)
+        monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-foreign")
+        assert client.get("/bff/management/operations-read-model/p-a", headers=diff_headers).status_code == 200
+        assert client.get("/bff/management/operations-read-model/p1", headers=diff_headers).status_code == 404
+        monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-b")
+
+
+def test_mounted_operations_read_model_primary_tenant_differs_from_configured_default(monkeypatch):
+    """Regress primary tenant differing from authorized configured default.
+
+    When caller JWT has primary tenant_id="tenant-a" and allowed_tenants/tenant_ids
+    authorizes both "tenant-a" and "tenant-b", and PANTHEON_BFF_TENANT_ID="tenant-b":
+    - bff_me_tenant_payload and resolve_agora_user_scope both select tenant-b.
+    - Mounted GET /bff/management/operations-read-model/{persona_id} selects tenant-b:
+      persona pB (tenant-b) -> 200, persona pA (tenant-a) -> 404.
+    - Testing tenant_ids ordering: both ["tenant-a", "tenant-b"] and ["tenant-b", "tenant-a"]
+      preserve the authorized configured default (tenant-b).
+    - When configured default is outside allowlist (e.g. tenant-foreign), falls back to primary tenant-a (pA -> 200, pB -> 404).
+    - Missing tenant authority fails closed with 403.
+    """
+    from services.control_plane.bff.auth.policy import bff_me_tenant_payload, extract_identity_jwt
+    from services.control_plane.bff.agora.identity.scope import resolve_agora_user_scope
+    from services.control_plane.bff.core.errors import register_error_handlers
+    from services.control_plane.bff.management_read_models.router import create_management_router
+
+    personas = {
+        "pA": {"persona_id": "pA", "tenant_id": "tenant-a"},
+        "pB": {"persona_id": "pB", "tenant_id": "tenant-b"},
+    }
+
+    class _Store:
+        def get_persona(self, persona_id):
+            return personas.get(persona_id)
+
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(create_management_router(
+        read_surface=_Store(),
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        tenant_payload_fn=bff_me_tenant_payload,
+    ))
+    client = TestClient(app, raise_server_exceptions=False)
+    now = int(time.time())
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", _SECRET)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", _ISSUER)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", _AUDIENCE)
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-b")
+
+    for shape_key, shape_tenants in [
+        ("allowed_tenants", ["tenant-a", "tenant-b"]),
+        ("tenant_ids", ["tenant-a", "tenant-b"]),
+        ("tenant_ids", ["tenant-b", "tenant-a"]),
+        ("allowedTenants", ["tenant-a", "tenant-b"]),
+    ]:
+        claim_payload = {
+            "sub": "dual-operator",
+            "roles": ["operator"],
+            "tenant_id": "tenant-a",
+            shape_key: shape_tenants,
+            "iss": _ISSUER,
+            "aud": _AUDIENCE,
+            "iat": now,
+            "exp": now + 3600,
+        }
+        token = encode_jwt_hs256(claim_payload, secret=_SECRET)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        identity = extract_identity_jwt(headers["Authorization"])
+        payload = bff_me_tenant_payload(identity)
+        agora_scope = resolve_agora_user_scope(identity, utc_now=lambda: "2026-10-04T00:00:00Z")
+
+        # Both auth/management and Agora agree on authorized configured default (tenant-b)
+        assert payload["id"] == "tenant-b"
+        assert agora_scope.tenant_id == "tenant-b"
+
+        # Mounted endpoint reads tenant-b persona (pB) with 200 and isolates tenant-a persona (pA) with 404
+        assert client.get("/bff/management/operations-read-model/pB", headers=headers).status_code == 200
+        assert client.get("/bff/management/operations-read-model/pA", headers=headers).status_code == 404
+
+        # Foreign configured default: when configured default is unauthorized, falls back to primary tenant-a
+        monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-foreign")
+        fb_payload = bff_me_tenant_payload(identity)
+        assert fb_payload["id"] == "tenant-a"
+        assert client.get("/bff/management/operations-read-model/pA", headers=headers).status_code == 200
+        assert client.get("/bff/management/operations-read-model/pB", headers=headers).status_code == 404
+        monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-b")
+
+    # Missing tenant authority fails closed with 403
+    assert client.get("/bff/management/operations-read-model/pB", headers=_jwt_without_tenant()).status_code == 403
 
 
 def test_mounted_risk_radar_scopes_to_the_jwt_tenant(monkeypatch):
@@ -1660,6 +1780,40 @@ def test_bff_me_tenant_payload_supported_claims(shape):
     identity = OperatorIdentity(operator_id="test-user", roles=["operator"], claims=claims, token_kind="jwt")
     payload = bff_me_tenant_payload(identity)
     assert "pantheon-dev" in payload["allowed_ids"]
+
+
+def test_bff_me_tenant_payload_primary_tenant_differs_from_authorized_configured_default(monkeypatch):
+    from services.control_plane.bff.auth.policy import bff_me_tenant_payload
+    from services.control_plane.bff.models import OperatorIdentity
+
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-b")
+    for shape_key, shape_tenants in [
+        ("allowed_tenants", ["tenant-a", "tenant-b"]),
+        ("tenant_ids", ["tenant-a", "tenant-b"]),
+        ("tenant_ids", ["tenant-b", "tenant-a"]),
+        ("allowedTenants", ["tenant-a", "tenant-b"]),
+    ]:
+        claims = {
+            "sub": "test-user",
+            "roles": ["operator"],
+            "tenant_id": "tenant-a",
+            shape_key: shape_tenants,
+        }
+        identity = OperatorIdentity(operator_id="test-user", roles=["operator"], claims=claims, token_kind="jwt")
+        payload = bff_me_tenant_payload(identity)
+        assert payload["id"] == "tenant-b"
+        assert payload["default_id"] == "tenant-b"
+
+        # Explicit requested tenant overrides configured default
+        req_payload = bff_me_tenant_payload(identity, requested_tenant="tenant-a")
+        assert req_payload["id"] == "tenant-a"
+
+        # Foreign configured default falls back to primary tenant
+        monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-foreign")
+        fb_payload = bff_me_tenant_payload(identity)
+        assert fb_payload["id"] == "tenant-a"
+        monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-b")
+
 
 
 @pytest.mark.parametrize("tenant", [None, "tenant-foreign", "pantheon-dev"])

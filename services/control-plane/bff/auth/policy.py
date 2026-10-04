@@ -761,10 +761,10 @@ def bff_me_tenant_payload(
         if "*" not in allowed_tenants and clean_req not in allowed_tenants:
             raise bff_error(403, ErrorCode.FORBIDDEN, "Tenant access denied", "Requested tenant is outside the caller tenant scope", precondition_failed="tenant_scope", suggestion="Switch to an allowed tenant or request access from an administrator", details_extra={"tenantId": clean_req, "allowedTenantIds": allowed_tenants})
         effective_tenant = clean_req
-    elif claim_default and (claim_default in allowed_tenants or "*" in allowed_tenants):
-        effective_tenant = claim_default
     elif env_default and (env_default in allowed_tenants or "*" in allowed_tenants):
         effective_tenant = env_default
+    elif claim_default and (claim_default in allowed_tenants or "*" in allowed_tenants):
+        effective_tenant = claim_default
     elif not is_strict:
         effective_tenant = next((t for t in allowed_tenants if t != "*"), "") or (env_default or "pantheon-dev")
     elif allowed_tenants:

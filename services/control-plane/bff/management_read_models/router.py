@@ -303,11 +303,11 @@ def _extract_tenant_id(
             raise _default_bff_error(403, ErrorCode.FORBIDDEN, "Tenant access denied", "Requested tenant is outside the caller tenant scope", precondition_failed="tenant_scope", details_extra={"tenantId": req, "allowedTenantIds": sorted(list(allowed_tenants))})
         return req
 
-    if claim_tenant and ("*" in allowed_tenants or claim_tenant in allowed_tenants):
-        return claim_tenant
     env = (os.getenv("PANTHEON_BFF_TENANT_ID") or os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID") or os.getenv("PANTHEON_TENANT_ID") or "").strip()
     if env and ("*" in allowed_tenants or env in allowed_tenants):
         return env
+    if claim_tenant and ("*" in allowed_tenants or claim_tenant in allowed_tenants):
+        return claim_tenant
     for t in allowed_tenants:
         if t != "*":
             return t
