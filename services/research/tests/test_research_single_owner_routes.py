@@ -40,6 +40,7 @@ def mock_write_owner() -> ResearchWriteOwner:
 
 @pytest.fixture
 def client(mock_write_owner: ResearchWriteOwner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
+    monkeypatch.setenv("RESEARCH_ORCHESTRATOR_DATA_DIR", str(tmp_path / "isolated-research-owner"))
     monkeypatch.setattr(
         research_main,
         "store",

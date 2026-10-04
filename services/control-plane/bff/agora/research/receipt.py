@@ -87,10 +87,8 @@ def resolve_run_provenance(
     if status not in terminal_statuses:
         return "unavailable", None
 
-    # Resolve receipt from store
-    receipt_dict: Optional[Dict[str, Any]] = None
-    if hasattr(store, "get_execution_receipt"):
-        receipt_dict = store.get_execution_receipt(run_id)
+    # The research owner supplies the receipt alongside its run projection.
+    receipt_dict = run.get("receipt")
 
     if receipt_dict is None:
         # No authentic server-side receipt found.
