@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task_id": "OSS-RESEARCH-RESIDUAL-002",
   "status": "accepted",
-  "base": "50cb6f7bad176f9c7b918dd83735ec27466f5c3e",
+  "base": "0e520cb618dffb3fe5c164028b3d7ed2325359b6",
   "official_sources": {
     "vectorbt": "https://pypi.org/pypi/vectorbt/json",
     "statsmodels": "https://pypi.org/pypi/statsmodels/json"
