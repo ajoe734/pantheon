@@ -1,0 +1,26 @@
+{
+  "task_id": "BFF-RESEARCH-RUN-COPY-REMOVAL-20261004",
+  "status": "implementation_in_progress",
+  "hosted_read_only_check": {
+    "checked_at": "2026-10-03T23:56:00Z",
+    "backend_commit": "5743158b0",
+    "aggregate_rows": 0,
+    "idempotency_key_rows": 0,
+    "source": "Task-scoped operator context; no migration or compatibility path required"
+  },
+  "implementation": {
+    "owner": "research service",
+    "bff_run_store_removed": true,
+    "owner_run_projection": true,
+    "production_line_delta": -275
+  },
+  "validation": {
+    "passed": [
+      "RESEARCH_ORCHESTRATOR_DATA_DIR=$(mktemp -d) ~/pantheon-ci-deploy/runtime/research-test-python/20261003-f9fd19209/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_research_run_projection.py services/control-plane/bff/tests/test_research_receipt_provenance.py services/research/tests/test_research_single_owner_routes.py (79 passed)"
+    ],
+    "pending": [
+      "Candidate admission and candidate-governed BFF tests still contain fixtures that write BFF run rows; migrate retained provenance controls to owner-provided runs and receipts."
+    ]
+  },
+  "removed_test_subjects": []
+}

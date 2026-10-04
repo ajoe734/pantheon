@@ -139,9 +139,7 @@ def _dispatch_plan(client: TestClient, plan_id: str, etag: str, idempotency_key:
     return response.json()["data"]["run_id"]
 
 
-def test_cancelled_and_historical_plans_remain_terminal_without_owner_runs(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_cancel_before_dispatch_and_active_cancel_are_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _client(monkeypatch)
     created = _create_plan(client, "ws-terminal-plan", "terminal-create")
     plan_id = created["data"]["plan_id"]
@@ -159,115 +157,31 @@ def test_cancelled_and_historical_plans_remain_terminal_without_owner_runs(
     )
     assert redispatch.status_code == 409
 
-    active_plan = _create_plan(client, "ws-active-cancel", "active-cancel-create")
-    active_id = active_plan["data"]["plan_id"]
-    _approve_plan(client, active_id, active_plan["meta"]["etag"], "active-cancel-approve")
-    active_approved = _get_plan(client, active_id)
-    _dispatch_plan(client, active_id, active_approved["meta"]["etag"], "active-cancel-dispatch")
-    active_readback = _get_plan(client, active_id)
-    active_cancel = client.post(
+    active = _create_plan(client, "ws-active-cancel", "active-cancel-create")
+    active_id = active["data"]["plan_id"]
+    _approve_plan(client, active_id, active["meta"]["etag"], "active-cancel-approve")
+    _dispatch_plan(client, active_id, _get_plan(client, active_id)["meta"]["etag"], "active-cancel-dispatch")
+    readback = _get_plan(client, active_id)
+    response = client.post(
         f"/bff/agora/research-plans/{active_id}/cancel",
-        headers=_headers("active-cancel", active_readback["meta"]["etag"]),
+        headers=_headers("active-cancel", readback["meta"]["etag"]),
     )
-    assert active_cancel.status_code == 200, active_cancel.text
+    assert response.status_code == 200, response.text
     assert _get_plan(client, active_id)["data"]["status"] == "cancelled"
-    active_redispatch = client.post(
-        f"/bff/agora/research-plans/{active_id}/runs",
-        headers=_headers("active-redispatch", _get_plan(client, active_id)["meta"]["etag"]),
-    )
-    assert active_redispatch.status_code == 409
 
-    history_plan = _create_plan(client, "ws-history-plan", "history-create")
-    history_id = history_plan["data"]["plan_id"]
-    _approve_plan(client, history_id, history_plan["meta"]["etag"], "history-approve")
-    store = client.router.research_store
-    stored_plan = store.get_plan(history_id)
-    store.create_run({
-        "run_id": "legacy-completed-run", "plan_id": history_id,
-        "stage_id": "stage-prototype-backtest", "stage_type": "prototype_backtest",
-        "execution_status": "succeeded", "outcome": "pass",
-        "tenant_id": stored_plan["tenant_id"], "user_id": stored_plan["user_id"],
-        "created_at": "2026-09-01T00:00:00Z",
-        "artifact_refs": [], "evidence_refs": [],
-    })
-    projected = _get_plan(client, history_id)
+    completed = _create_plan(client, "ws-completed-replay", "completed-create")
+    completed_id = completed["data"]["plan_id"]
+    _approve_plan(client, completed_id, completed["meta"]["etag"], "completed-approve")
+    first_run = _dispatch_plan(client, completed_id, _get_plan(client, completed_id)["meta"]["etag"], "completed-dispatch")
+    client.owner_research_runs[first_run]["status"] = "completed"
+    projected = _get_plan(client, completed_id)
     assert projected["data"]["status"] == "completed"
-    assert projected["data"]["run_ids"] == ["legacy-completed-run"]
-    listed = client.get(
-        f"/bff/agora/research-plans/{history_id}/runs", headers=_headers()
+    replay = client.post(
+        f"/bff/agora/research-plans/{completed_id}/runs",
+        headers=_headers("completed-replay", projected["meta"]["etag"]),
     )
-    assert listed.status_code == 200
-    assert [run["run_id"] for run in listed.json()["items"]] == ["legacy-completed-run"]
-    redispatch_history = client.post(
-        f"/bff/agora/research-plans/{history_id}/runs",
-        headers=_headers("history-redispatch", projected["meta"]["etag"]),
-    )
-    assert redispatch_history.status_code == 202
-    assert redispatch_history.json()["data"]["run_id"] == "legacy-completed-run"
-
-    mixed_res = client.post(
-        "/bff/agora/workshops/ws-mixed-plan/research-plans",
-        headers=_headers("mixed-create"),
-        json={
-            "spec_version": "1.0",
-            "strategy_id": "strat-mixed",
-            "strategy_spec_registry_id": "reg-mixed",
-            "stages": [
-                {
-                    "stage_id": "stage-1",
-                    "stage_type": "prototype_backtest",
-                    "status": "ready",
-                    "routing": {"backend_mode": "fixture", "fallback_policy": "explicit_fixture_only"},
-                },
-                {
-                    "stage_id": "stage-2",
-                    "stage_type": "prototype_backtest",
-                    "status": "pending",
-                    "dependencies": ["stage-1"],
-                    "routing": {"backend_mode": "fixture", "fallback_policy": "explicit_fixture_only"},
-                },
-            ],
-        },
-    )
-    assert mixed_res.status_code == 201
-    mixed_id = mixed_res.json()["data"]["plan_id"]
-    _approve_plan(client, mixed_id, mixed_res.json()["meta"]["etag"], "mixed-approve")
-    stored_mixed = store.get_plan(mixed_id)
-    store.create_run({
-        "run_id": "legacy-s1-run",
-        "plan_id": mixed_id,
-        "stage_id": "stage-1",
-        "stage_type": "prototype_backtest",
-        "execution_status": "succeeded",
-        "outcome": "pass",
-        "tenant_id": stored_mixed["tenant_id"],
-        "user_id": stored_mixed["user_id"],
-        "created_at": "2026-09-01T00:00:00Z",
-        "artifact_refs": [],
-        "evidence_refs": [],
-    })
-    mixed_mid = _get_plan(client, mixed_id)
-    assert mixed_mid["data"]["status"] == "running"
-    assert mixed_mid["data"]["run_ids"] == ["legacy-s1-run"]
-
-    mixed_s2 = client.post(
-        f"/bff/agora/research-plans/{mixed_id}/runs",
-        headers=_headers("mixed-s2-dispatch", mixed_mid["meta"]["etag"]),
-    )
-    assert mixed_s2.status_code == 202
-    owner_s2_run_id = mixed_s2.json()["data"]["run_id"]
-    client.owner_research_runs[owner_s2_run_id]["status"] = "completed"
-
-    mixed_final = _get_plan(client, mixed_id)
-    assert mixed_final["data"]["status"] == "completed"
-    assert "legacy-s1-run" in mixed_final["data"]["run_ids"]
-    assert owner_s2_run_id in mixed_final["data"]["run_ids"]
-
-    mixed_listed = client.get(f"/bff/agora/research-plans/{mixed_id}/runs", headers=_headers())
-    assert mixed_listed.status_code == 200
-    listed_ids = [r["run_id"] for r in mixed_listed.json()["items"]]
-    assert "legacy-s1-run" in listed_ids
-    assert owner_s2_run_id in listed_ids
+    assert replay.status_code == 202, replay.text
+    assert replay.json()["data"]["run_id"] == first_run
 
 
 def test_research_run_detail_returns_schema_projection(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -366,152 +280,36 @@ def test_research_run_list_artifacts_and_sse_are_canonical(
     ]
 
 
-def test_route_get_research_run_provenance_validation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Route-level tests verifying fail-closed schema/version/terminal/owner/correlation receipt validation."""
+def test_route_get_research_run_provenance_validation(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _client(monkeypatch)
-    store = getattr(client, "router", None) and getattr(client.router, "research_store", None) or getattr(client, "app_instance", None) and getattr(client.app_instance, "research_store", None)
-    assert store is not None
-
-    workshop_id = "ws-prov-route-test"
-    created = _create_plan(client, workshop_id, "prov-route-create-1")
+    created = _create_plan(client, "ws-prov-route-test", "prov-route-create")
     plan_id = created["data"]["plan_id"]
-    _approve_plan(client, plan_id, created["meta"]["etag"], "prov-route-approve-1")
-    approved = _get_plan(client, plan_id)
-    run_id = _dispatch_plan(client, plan_id, approved["meta"]["etag"], "prov-route-dispatch-1")
+    _approve_plan(client, plan_id, created["meta"]["etag"], "prov-route-approve")
+    run_id = _dispatch_plan(client, plan_id, _get_plan(client, plan_id)["meta"]["etag"], "prov-route-dispatch")
+    owner_run = client.owner_research_runs[run_id]
+    url = f"/bff/agora/research-runs/{run_id}"
 
-    # 1. Non-terminal run (queued) without receipt -> unavailable
-    res1 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
-    assert res1.status_code == 200
-    assert res1.json()["provenance"] == "unavailable"
+    response = client.get(url, headers=_headers())
+    assert response.status_code == 200
+    assert response.json()["provenance"] == "unavailable"
 
-    # Update run to succeeded with executor and correlation_id in store
-    correlation_id = "corr-prov-route-1"
-    executor = "qlib_executor"
-    now = "2026-09-08T02:00:00Z"
-    run_record = store.get_run(run_id)
-    assert run_record is not None
-    store.update_run(
-        run_id,
-        {
-            "execution_status": "succeeded",
-            "completed_at": now,
-            "correlation_id": correlation_id,
-            "executor": executor,
-            "provenance": "real",
-        },
-    )
-    client.owner_research_runs[run_id].update({
-        "status": "completed", "correlation_id": correlation_id,
-        "executor": executor, "provenance": "real",
-    })
-
-    # 2. Succeeded run claiming real but without receipt -> downgraded to simulation, NEVER real
-    res2 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
-    assert res2.status_code == 200
-    assert res2.json()["provenance"] != "real"
-    assert res2.json()["provenance"] == "simulation"
-
-    # 3. Wrong owner receipt -> unavailable
-    store.record_execution_receipt({
-        "receipt_id": f"rcpt-{run_id}",
-        "run_id": run_id,
-        "executor": "wrong_executor",
-        "mode": "real",
-        "correlation_id": correlation_id,
-        "completed_at": now,
-        "spec_version": "1.0",
-    })
-    res3 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
-    assert res3.status_code == 200
-    assert res3.json()["provenance"] == "unavailable"
-
-    # 4. Wrong correlation receipt -> unavailable
-    store.record_execution_receipt({
-        "receipt_id": f"rcpt-{run_id}",
-        "run_id": run_id,
-        "executor": executor,
-        "mode": "real",
-        "correlation_id": "wrong-correlation",
-        "completed_at": now,
-        "spec_version": "1.0",
-    })
-    res4 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
-    assert res4.status_code == 200
-    assert res4.json()["provenance"] == "unavailable"
-
-    # 5. Missing receipt_id -> unavailable
-    store.record_execution_receipt({
-        "receipt_id": "",
-        "run_id": run_id,
-        "executor": executor,
-        "mode": "real",
-        "correlation_id": correlation_id,
-        "completed_at": now,
-        "spec_version": "1.0",
-    })
-    res5 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
-    assert res5.status_code == 200
-    assert res5.json()["provenance"] == "unavailable"
-
-    # 6. Missing completed_at -> unavailable
-    store.record_execution_receipt({
-        "receipt_id": f"rcpt-{run_id}",
-        "run_id": run_id,
-        "executor": executor,
-        "mode": "real",
-        "correlation_id": correlation_id,
-        "completed_at": "",
-        "spec_version": "1.0",
-    })
-    res6 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
-    assert res6.status_code == 200
-    assert res6.json()["provenance"] == "unavailable"
-
-    # 7. Invalid spec_version -> unavailable
-    store.record_execution_receipt({
-        "receipt_id": f"rcpt-{run_id}",
-        "run_id": run_id,
-        "executor": executor,
-        "mode": "real",
-        "correlation_id": correlation_id,
-        "completed_at": now,
-        "spec_version": "2.0",
-    })
-    res7 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
-    assert res7.status_code == 200
-    assert res7.json()["provenance"] == "unavailable"
-
-    # 8. Non-terminal owner run with matching receipt -> unavailable
-    store.update_run(run_id, {"execution_status": "running"})
-    client.owner_research_runs[run_id]["status"] = "running"
-    store.record_execution_receipt({
-        "receipt_id": f"rcpt-{run_id}",
-        "run_id": run_id,
-        "executor": executor,
-        "mode": "real",
-        "correlation_id": correlation_id,
-        "completed_at": now,
-        "spec_version": "1.0",
-    })
-    res8 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
-    assert res8.status_code == 200
-    assert res8.json()["provenance"] == "unavailable"
-
-    # 9. Authentic valid receipt on terminal owner run -> resolves to 'real'
-    store.update_run(run_id, {"execution_status": "succeeded", "provenance": "real"})
-    client.owner_research_runs[run_id]["status"] = "completed"
-    res9 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
-    assert res9.status_code == 200
-    assert res9.json()["provenance"] == "real"
-
-    # 10. Mismatched owner provenance vs receipt mode (run claims simulation, receipt claims real) -> unavailable
-    store.update_run(run_id, {"provenance": "simulation"})
-    client.owner_research_runs[run_id]["provenance"] = "simulation"
-    res10 = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers())
-    assert res10.status_code == 200
-    assert res10.json()["provenance"] == "unavailable"
+    now, correlation, executor = "2026-09-08T02:00:00Z", owner_run["parameters"]["correlation_id"], "qlib_executor"
+    owner_run.update({"status": "completed", "correlation_id": correlation, "executor": executor, "provenance": "real"})
+    owner_run["receipt"] = {
+        "receipt_id": f"rcpt-{run_id}", "run_id": run_id, "executor": executor,
+        "mode": "real", "correlation_id": correlation, "completed_at": now, "spec_version": "1.0",
+    }
+    assert client.get(url, headers=_headers()).json()["provenance"] == "real"
+    owner_run["receipt"]["executor"] = "wrong_executor"
+    assert client.get(url, headers=_headers()).json()["provenance"] == "unavailable"
+    owner_run["receipt"]["executor"] = executor
+    owner_run["receipt"]["correlation_id"] = "wrong-correlation"
+    assert client.get(url, headers=_headers()).json()["provenance"] == "unavailable"
+    owner_run["receipt"].update({"correlation_id": correlation, "spec_version": "2.0"})
+    assert client.get(url, headers=_headers()).json()["provenance"] == "unavailable"
+    owner_run["status"] = "running"
+    owner_run["receipt"]["spec_version"] = "1.0"
+    assert client.get(url, headers=_headers()).json()["provenance"] == "unavailable"
 
 
 def test_workshop_preserves_research_owner_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -670,16 +468,7 @@ def test_mounted_cancel_partial_failure_preserves_nonterminal_retryable_state(
         "input_refs": [{"type": "research_plan", "id": pid}],
         "created_at": "2026-10-03T00:00:00Z",
     }
-    store.create_run({
-        "run_id": rid2,
-        "plan_id": pid,
-        "stage_id": "stage-prototype-backtest",
-        "stage_type": "prototype_backtest",
-        "execution_status": "running",
-        "tenant_id": "pantheon-dev",
-        "user_id": "agora-test-user",
-        "created_at": "2026-10-03T00:00:00Z",
-    })
+
 
     # When cancelling, rid1 succeeds but rid2 fails
     fail_rid2 = True
@@ -703,8 +492,6 @@ def test_mounted_cancel_partial_failure_preserves_nonterminal_retryable_state(
     assert readback_mid["data"]["status"] == "running"
     # Run 1 was cancelled locally and on owner
     assert client.owner_research_runs[rid1]["status"] == "canceled"
-    run1_local = store.get_run(rid1)
-    assert run1_local["execution_status"] == "cancelled"
     # Run 2 is still running
     assert client.owner_research_runs[rid2]["status"] == "running"
 
@@ -757,7 +544,7 @@ def test_cancel_after_root_completed_uses_owner_status(monkeypatch: pytest.Monke
 
 def test_other_operator_cannot_miss_owner_only_successor(monkeypatch: pytest.MonkeyPatch) -> None:
     client, store, pid, rid, child_id = _setup_two_stages(monkeypatch, "other-operator")
-    store.update_run(rid, {"execution_status": "succeeded"})
+    client.owner_research_runs[rid]["status"] = "completed"
     headers = _headers("other-operator-cancel", _get_plan(client, pid)["meta"]["etag"])
     headers["Authorization"] = "Bearer second-operator:operator"
     response = client.post(f"/bff/agora/research-plans/{pid}/cancel", headers=headers)

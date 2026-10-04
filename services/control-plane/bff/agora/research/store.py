@@ -30,7 +30,6 @@ class MemoryResearchPlanStore:
     def __init__(self, storage_path: Optional[str] = None) -> None:
         self._storage_path = str(storage_path) if storage_path else None
         self._plans: Dict[str, Dict[str, Any]] = {}
-        self._runs: Dict[str, Dict[str, Any]] = {}
         self._candidate_pools: Dict[str, Dict[str, Any]] = {}
         self._candidate_scores: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._candidate_reviews: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
@@ -39,7 +38,6 @@ class MemoryResearchPlanStore:
         self._candidate_metrics: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._outbox: Dict[str, Dict[str, Any]] = {}
         self._audit_actions: List[Dict[str, Any]] = []
-        self._receipts: Dict[str, Dict[str, Any]] = {}
         self._idempotency: Dict[str, bool] = {}
         self._lock = threading.Lock()
         if self._storage_path:
@@ -50,7 +48,6 @@ class MemoryResearchPlanStore:
             return
         payload = {
             "plans": self._plans,
-            "runs": self._runs,
             "candidate_pools": self._candidate_pools,
             "candidate_scores": self._candidate_scores,
             "candidate_reviews": self._candidate_reviews,
@@ -59,7 +56,6 @@ class MemoryResearchPlanStore:
             "candidate_metrics": self._candidate_metrics,
             "outbox": self._outbox,
             "audit_actions": self._audit_actions,
-            "receipts": self._receipts,
             "idempotency": self._idempotency,
         }
         target = Path(self._storage_path)
@@ -79,7 +75,6 @@ class MemoryResearchPlanStore:
             with open(target, "r", encoding="utf-8") as f:
                 data = json.load(f)
             self._plans = data.get("plans", {})
-            self._runs = data.get("runs", {})
             self._candidate_pools = data.get("candidate_pools", {})
             self._candidate_scores = data.get("candidate_scores", {})
             self._candidate_reviews = data.get("candidate_reviews", {})
@@ -88,7 +83,6 @@ class MemoryResearchPlanStore:
             self._candidate_metrics = data.get("candidate_metrics", {})
             self._outbox = data.get("outbox", {})
             self._audit_actions = data.get("audit_actions", [])
-            self._receipts = data.get("receipts", {})
             self._idempotency = data.get("idempotency", {})
         except Exception:
             pass
@@ -172,88 +166,6 @@ class MemoryResearchPlanStore:
                     continue
                 plans.append(dict(p))
             return plans
-
-    # ------------------------------------------------------------------
-    # Runs
-    # ------------------------------------------------------------------
-
-    def create_run(self, run: Dict[str, Any]) -> Dict[str, Any]:
-        with self._lock:
-            self._runs[run["run_id"]] = dict(run)
-            self._save_to_storage()
-            return dict(self._runs[run["run_id"]])
-
-    def get_run(
-        self,
-        run_id: str,
-        *,
-        tenant_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        with self._lock:
-            entry = self._runs.get(run_id)
-            if entry is None:
-                return None
-            if tenant_id is not None and entry.get("tenant_id") and entry.get("tenant_id") != tenant_id:
-                return None
-            if user_id is not None and entry.get("user_id") and entry.get("user_id") != user_id:
-                return None
-            return dict(entry)
-
-    def update_run(
-        self,
-        run_id: str,
-        updates: Dict[str, Any],
-        *,
-        tenant_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        with self._lock:
-            if run_id not in self._runs:
-                return None
-            entry = self._runs[run_id]
-            if tenant_id is not None and entry.get("tenant_id") and entry.get("tenant_id") != tenant_id:
-                return None
-            if user_id is not None and entry.get("user_id") and entry.get("user_id") != user_id:
-                return None
-            entry.update(updates)
-            self._save_to_storage()
-            return dict(entry)
-
-    def list_runs_for_plan(
-        self,
-        plan_id: str,
-        *,
-        tenant_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        with self._lock:
-            runs = []
-            for r in self._runs.values():
-                if r.get("plan_id") != plan_id:
-                    continue
-                if tenant_id is not None and r.get("tenant_id") and r.get("tenant_id") != tenant_id:
-                    continue
-                if user_id is not None and r.get("user_id") and r.get("user_id") != user_id:
-                    continue
-                runs.append(dict(r))
-            return runs
-
-    # ------------------------------------------------------------------
-    # Receipts
-    # ------------------------------------------------------------------
-
-    def record_execution_receipt(self, receipt: Dict[str, Any]) -> Dict[str, Any]:
-        with self._lock:
-            data = dict(receipt)
-            self._receipts[str(data["run_id"])] = data
-            self._save_to_storage()
-            return dict(data)
-
-    def get_execution_receipt(self, run_id: str) -> Optional[Dict[str, Any]]:
-        with self._lock:
-            entry = self._receipts.get(run_id)
-            return dict(entry) if entry is not None else None
 
     # ------------------------------------------------------------------
     # Candidate pools
@@ -712,7 +624,6 @@ class PostgresResearchPlanStore:
 
     _KINDS = (
         "plan",
-        "run",
         "candidate_pool",
         "candidate_score",
         "candidate_review",
@@ -871,66 +782,6 @@ class PostgresResearchPlanStore:
             if (tenant_id is None or not p.get("tenant_id") or p.get("tenant_id") == tenant_id)
             and (user_id is None or not p.get("user_id") or p.get("user_id") == user_id)
         ]
-
-    # Runs
-    def create_run(self, run: Dict[str, Any]) -> Dict[str, Any]:
-        return self._put("run", run["run_id"], run, parent_id=run.get("plan_id"))
-
-    def get_run(
-        self,
-        run_id: str,
-        *,
-        tenant_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        doc = self._get("run", run_id)
-        if doc is None:
-            return None
-        if tenant_id is not None and doc.get("tenant_id") and doc.get("tenant_id") != tenant_id:
-            return None
-        if user_id is not None and doc.get("user_id") and doc.get("user_id") != user_id:
-            return None
-        return doc
-
-    def update_run(
-        self,
-        run_id: str,
-        updates: Dict[str, Any],
-        *,
-        tenant_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        doc = self.get_run(run_id, tenant_id=tenant_id, user_id=user_id)
-        if doc is None:
-            return None
-        return self._patch("run", run_id, updates)
-
-    def list_runs_for_plan(
-        self,
-        plan_id: str,
-        *,
-        tenant_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        runs = self._list("run", parent_id=plan_id)
-        return [
-            r for r in runs
-            if (tenant_id is None or not r.get("tenant_id") or r.get("tenant_id") == tenant_id)
-            and (user_id is None or not r.get("user_id") or r.get("user_id") == user_id)
-        ]
-
-    # Receipts
-    def record_execution_receipt(self, receipt: Dict[str, Any]) -> Dict[str, Any]:
-        return self._put(
-            "research_receipt",
-            str(receipt["run_id"]),
-            dict(receipt),
-            parent_id=receipt.get("plan_id"),
-            subject_id=receipt.get("receipt_id"),
-        )
-
-    def get_execution_receipt(self, run_id: str) -> Optional[Dict[str, Any]]:
-        return self._get("research_receipt", run_id)
 
     # Candidate Pools
     def create_candidate_pool(
