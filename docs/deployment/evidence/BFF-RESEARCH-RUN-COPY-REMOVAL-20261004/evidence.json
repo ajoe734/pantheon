@@ -16,7 +16,7 @@
   },
   "validation": {
     "passed": [
-      "RESEARCH_ORCHESTRATOR_DATA_DIR=$(mktemp -d) ~/pantheon-ci-deploy/runtime/research-test-python/20261003-f9fd19209/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_agora_research_run_projection.py services/control-plane/bff/tests/test_research_receipt_provenance.py scripts/test_verify_agora_product_journey.py services/research/tests/test_research_single_owner_routes.py services/control-plane/bff/tests/test_bff_test_architecture.py (148 passed, 1 skipped)"
+      "RESEARCH_ORCHESTRATOR_DATA_DIR=$(mktemp -d) ~/pantheon-ci-deploy/runtime/research-test-python/20261003-f9fd19209/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_chain_001_natural_owner_and_receipt.py services/control-plane/bff/tests/test_agora_research_candidate_governed.py services/control-plane/bff/tests/test_agora_research_run_projection.py services/control-plane/bff/tests/test_research_receipt_provenance.py scripts/test_verify_agora_product_journey.py services/research/tests/test_research_single_owner_routes.py services/control-plane/bff/tests/test_bff_test_architecture.py (149 passed, 1 skipped; run as five bounded batches, each exit 0, fresh RESEARCH_ORCHESTRATOR_DATA_DIR per batch)"
     ],
     "pending": []
   },

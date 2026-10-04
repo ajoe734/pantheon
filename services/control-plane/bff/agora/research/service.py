@@ -489,36 +489,37 @@ class AgoraResearchService:
         if plan is None:
             raise self.bff_error(404, self._error_code("RESOURCE_NOT_FOUND"), f"Research plan '{plan_id}' not found", plan_id)
         owner_runs = self._owner_run_records(plan, scope)
-        if owner_runs:
-            stages = {str(stage.get("stage_id")): stage for stage in plan.get("stages") or []}
-            projected = []
-            for owner in owner_runs:
-                stage = stages.get(str(owner.get("stage_id") or ""), {})
-                run = _build_run_projection(
-                    plan=plan,
-                    stage=stage or {
-                        "stage_id": owner.get("stage_id", "unknown"),
-                        "stage_type": owner.get("adapter", "unknown"),
-                    },
-                    run_id=str(owner.get("run_id") or owner.get("id")),
-                    now=str(owner.get("created_at") or self.utc_now()),
-                    scope=scope,
-                )
-                status = str(owner.get("status") or "queued").lower()
-                outcome = "pass" if status == "completed" else (
-                    "fail" if status in {"failed", "rejected"} else "pending"
-                )
-                run.update({
-                    "task_id": owner.get("task_id"),
-                    "attempt_number": owner.get("attempt_number", 1),
-                    "parent_run_id": owner.get("parent_run_id"),
-                    "execution_status": _OWNER_STATUS_TO_EXEC_STATUS.get(status, status),
-                    "outcome": outcome,
-                    "artifact_refs": owner.get("artifact_refs") or [],
-                    "evidence_refs": owner.get("evidence_refs") or [],
-                    "updated_at": owner.get("updated_at") or owner.get("created_at"),
-                })
-                projected.append(run)
+        if owner_runs is None:
+            raise self.bff_error(503, self._error_code("DEPENDENCY_UNAVAILABLE"), "Research execution owner is unavailable", plan_id)
+        stages = {str(stage.get("stage_id")): stage for stage in plan.get("stages") or []}
+        projected = []
+        for owner in owner_runs:
+            stage = stages.get(str(owner.get("stage_id") or ""), {})
+            run = _build_run_projection(
+                plan=plan,
+                stage=stage or {
+                    "stage_id": owner.get("stage_id", "unknown"),
+                    "stage_type": owner.get("adapter", "unknown"),
+                },
+                run_id=str(owner.get("run_id") or owner.get("id")),
+                now=str(owner.get("created_at") or self.utc_now()),
+                scope=scope,
+            )
+            status = str(owner.get("status") or "queued").lower()
+            outcome = "pass" if status == "completed" else (
+                "fail" if status in {"failed", "rejected"} else "pending"
+            )
+            run.update({
+                "task_id": owner.get("task_id"),
+                "attempt_number": owner.get("attempt_number", 1),
+                "parent_run_id": owner.get("parent_run_id"),
+                "execution_status": _OWNER_STATUS_TO_EXEC_STATUS.get(status, status),
+                "outcome": outcome,
+                "artifact_refs": owner.get("artifact_refs") or [],
+                "evidence_refs": owner.get("evidence_refs") or [],
+                "updated_at": owner.get("updated_at") or owner.get("created_at"),
+            })
+            projected.append(run)
         return projected
 
     def dispatch_plan(
