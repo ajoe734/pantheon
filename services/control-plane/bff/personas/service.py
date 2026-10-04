@@ -194,7 +194,10 @@ from services.control_plane.bff.persona_provisioning import (
     make_persona_provisioning_store,
 )
 from services.control_plane.bff.command_queue import CommandStore
-from services.control_plane.bff.ports.rankings import RankingSnapshotWriteOwnerPort
+from services.control_plane.bff.ports.rankings import RankingSnapshotReadPort
+from services.rankings.snapshots import (
+    snapshot_record, _pm12_ranking_snapshot_content, _pm12_ranking_snapshot_payload_items,
+)
 from services.control_plane.bff.ports.persona_write_owner import PersonaRegistryHttpWritePort
 from services.control_plane.bff.ports.persona_capital_runtime import PersonaMutationPort
 
@@ -309,7 +312,7 @@ def _get_active_ranking_write_owner(explicit: Optional[Any] = None) -> Any:
 def _get_ranking_write_owner() -> Any:
     owner = _get_active_ranking_write_owner()
     if owner is None:
-        raise RuntimeError("Rankings write-owner port is not configured at startup")
+        raise RuntimeError("Rankings snapshot reader is not configured at startup")
     return owner
 
 
@@ -12653,196 +12656,11 @@ def _pm12_evidence_ref_key(ref: Any) -> str:
     return str(ref or "").strip()
 
 
-# --- _pm12_ranking_snapshot_helpers ---
-_PM12_RANKING_SNAPSHOT_ITEM_FIELDS = (
-    "persona_id",
-    "name",
-    "owner",
-    "state",
-    "owner_lifecycle_state",
-    "archetype",
-    "risk",
-    "rank",
-    "score",
-    "overall_score",
-    "tier",
-    "tier_id",
-    "tier_label",
-    "formula_version",
-    "allocation_policy_input",
-    "components",
-    "metrics",
-    "stage",
-    "deployment_stage",
-    "capital_mode",
-    "capital_scope",
-    "capital_scope_id",
-    "capital_pool_id",
-    "capital_sleeve_id",
-    "paper_ledger_id",
-    "current_weight",
-    "target_weight",
-    "delta",
-    "current_weight_source",
-    "binding_state",
-    "binding_resolution",
-    "runtime_resolution",
-    "session_resolution",
-    "session_id",
-    "session_authority",
-    "telemetry_resolution",
-    "binding_ids",
-    "runtime_ids",
-    "strategy_ids",
-    "capital_pool_ids",
-    "sleeve_ids",
-    "artifact_ids",
-    "broker_ids",
-    "eligible",
-    "exclusion_codes",
-    "exclusion_reasons",
-    "exclusion_reason",
-    "evidence_coverage",
-    "evidence_ref_ids",
-    "source_confidence",
-)
-
-
-def _pm12_ranking_snapshot_payload_items(
-    items: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    set_like_fields = {
-        "binding_ids",
-        "runtime_ids",
-        "strategy_ids",
-        "capital_pool_ids",
-        "sleeve_ids",
-        "artifact_ids",
-        "broker_ids",
-        "exclusion_codes",
-        "exclusion_reasons",
-    }
-    payload_items: List[Dict[str, Any]] = []
-    for item in items:
-        payload_item: Dict[str, Any] = {}
-        for field in _PM12_RANKING_SNAPSHOT_ITEM_FIELDS:
-            if field not in item:
-                continue
-            if field == "evidence_ref_ids":
-                payload_item[field] = sorted(
-                    str(value).strip()
-                    for value in (
-                        item.get("_snapshot_evidence_ref_ids")
-                        or item.get(field)
-                        or []
-                    )
-                    if str(value).strip()
-                )
-            elif field in set_like_fields and isinstance(item.get(field), list):
-                payload_item[field] = sorted(
-                    item.get(field) or [],
-                    key=lambda value: json.dumps(
-                        value,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                        ensure_ascii=True,
-                    ),
-                )
-            elif field == "metrics" and isinstance(item.get(field), dict):
-                metrics = json.loads(json.dumps(item.get(field)))
-                for nested_field in ("runtime_ids", "telemetry_evidence_refs"):
-                    if isinstance(metrics.get(nested_field), list):
-                        metrics[nested_field] = sorted(
-                            metrics[nested_field],
-                            key=lambda value: json.dumps(
-                                value,
-                                sort_keys=True,
-                                separators=(",", ":"),
-                                ensure_ascii=True,
-                            ),
-                        )
-                payload_item[field] = metrics
-            else:
-                payload_item[field] = item.get(field)
-        payload_items.append(payload_item)
-    payload_items.sort(
-        key=lambda item: (
-            (
-                int(item.get("rank"))
-                if isinstance(item.get("rank"), int)
-                or str(item.get("rank") or "").isdigit()
-                else 10**9
-            ),
-            str(item.get("persona_id") or ""),
-        )
-    )
-    return payload_items
-
-
-# --- _pm12_ranking_snapshot_content ---
-def _pm12_ranking_snapshot_content(
-    items: List[Dict[str, Any]],
-    *,
-    surface: str,
-    period: str,
-) -> Dict[str, Any]:
-    return {
-        "surface": surface,
-        "period": period,
-        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
-        "items": _pm12_ranking_snapshot_payload_items(items),
-    }
-
-
-# --- _pm12_attach_ranking_snapshot ---
-def _pm12_attach_ranking_snapshot(
-    items: List[Dict[str, Any]],
-    *,
-    surface: str,
-    period: str,
-) -> tuple[List[Dict[str, Any]], str]:
-    content = _pm12_ranking_snapshot_content(items, surface=surface, period=period)
-    content_digest = _stable_json_hash(content)
-    clean_period = re.sub(
-        r"[^a-z0-9]+",
-        "-",
-        str(period or "current").strip().lower(),
-    ).strip("-")
-    snapshot_id = (
-        f"ranking-{surface}-{clean_period or 'current'}-{content_digest[:24]}"
-    )
-    evidence_assertion_digests: Dict[str, List[str]] = {}
-    for item in items:
-        persona_id = str(item.get("persona_id") or "").strip()
-        if not persona_id:
-            continue
-        evidence_assertion_digests.setdefault(persona_id, []).append(
-            _stable_json_hash(item.get("evidence_refs") or [])
-        )
-    _get_ranking_write_owner().put_ranking_snapshot({
-        "ranking_snapshot_id": snapshot_id,
-        "surface": surface,
-        "period": period,
-        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
-        "content_digest": content_digest,
-        "items": content["items"],
-        "evidence_assertion_digests": evidence_assertion_digests,
-        "created_at": utc_now(),
-    })
-    return (
-        [
-            {
-                **{
-                    key: value
-                    for key, value in item.items()
-                    if key != "_snapshot_evidence_ref_ids"
-                },
-                "ranking_snapshot_id": snapshot_id,
-            }
-            for item in items
-        ],
-        snapshot_id,
-    )
+def _pm12_attach_ranking_snapshot(items, *, surface, period):
+    """Attach a content identity only; scheduled evaluator admission owns persistence."""
+    snapshot_id = snapshot_record(items, surface=surface, period=period).ranking_snapshot_id
+    return ([{**{k: v for k, v in item.items() if k != "_snapshot_evidence_ref_ids"},
+              "ranking_snapshot_id": snapshot_id} for item in items], snapshot_id)
 
 
 # --- _pm12_quarterly_recommendation_item ---
@@ -14140,11 +13958,11 @@ class PersonaService:
         command_store: Optional[Union[CommandStore, Callable[[], CommandStore]]] = None,
         provisioning_store: Optional[Union[PersonaProvisioningStore, MemoryPersonaProvisioningStore, Callable[[], Any]]] = None,
         write_owner: Optional[Union[PersonaRegistryHttpWritePort, PersonaMutationPort, Callable[[], Any]]] = None,
-        ranking_write_owner: Optional[Union[RankingSnapshotWriteOwnerPort, Callable[[], RankingSnapshotWriteOwnerPort]]] = None,
+        ranking_write_owner: Optional[Union[RankingSnapshotReadPort, Callable[[], RankingSnapshotReadPort]]] = None,
         get_read_store: Optional[Callable[[], ReadSurfacePorts]] = None,
         get_command_store: Optional[Callable[[], CommandStore]] = None,
         get_provisioning_store: Optional[Callable[[], Any]] = None,
-        get_ranking_write_owner: Optional[Callable[[], RankingSnapshotWriteOwnerPort]] = None,
+        get_ranking_write_owner: Optional[Callable[[], RankingSnapshotReadPort]] = None,
         utc_now_fn: Optional[Callable[[], str]] = None,
         bff_error_fn: Optional[Callable[..., HTTPException]] = None,
         snapshot_meta_fn: Optional[Callable[..., Dict[str, Any]]] = None,

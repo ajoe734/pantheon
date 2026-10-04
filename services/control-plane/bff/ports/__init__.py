@@ -88,8 +88,8 @@ from services.control_plane.bff.ports.persona_write_owner import (
     create_persona_registry_write_owner,
 )
 from services.control_plane.bff.ports.rankings import (
-    RankingSnapshotWriteOwnerPort,
-    create_ranking_write_owner,
+    RankingSnapshotReadPort,
+    create_ranking_reader,
 )
 from services.control_plane.bff.ports.strategy_write_owner import (
     StrategyWriteOwnerPort,
@@ -164,8 +164,8 @@ __all__ = [
     "PersonaWriteOwnerUnavailable",
     "create_persona_registry_write_owner",
     # Ranking snapshot write owner (deliberately outside ReadSurfacePorts)
-    "RankingSnapshotWriteOwnerPort",
-    "create_ranking_write_owner",
+    "RankingSnapshotReadPort",
+    "create_ranking_reader",
     # Strategy write owner (deliberately outside ReadSurfacePorts)
     "StrategyWriteOwnerPort",
     "CanonicalStrategyWriteOwner",
