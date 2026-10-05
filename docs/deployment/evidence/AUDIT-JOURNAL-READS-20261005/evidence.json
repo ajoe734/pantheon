@@ -18,7 +18,8 @@
     "frontend_command": "NODE_ENV=test vitest run --maxWorkers=4",
     "frontend_result": "2321 passed, 213 files; unbounded initial run had a worker RPC timeout and was not accepted as a clean run",
     "frontend_final_delta": "Explicit readonly tuple annotation revalidated by 7 focused tests, tsc --noEmit -p tsconfig.app.json and configured live/strict/read-only production build",
-    "diff_check": "passed"
+    "diff_check": "passed",
+    "architecture_followup": "53 architecture and journal-owner tests passed after registering the genuine mounted-owner suite in the reviewed composition allowlist. Initial CI rejection was correct; no test or non-whitelisted importer ceiling was weakened."
   },
   "independent_source_review": {
     "identity": "PiAstra",

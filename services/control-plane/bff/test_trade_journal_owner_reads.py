@@ -1,6 +1,12 @@
 """Local integration: mounted BFF, signed JWTs, real owner routes/stores.
 
 Only HTTP transport is in-process; fixtures are synthetic, not hosted evidence.
+
+GENUINE BLOCKER: the audited defect was on the default mounted journal routes,
+including browser-session middleware. A router-only app cannot prove that the
+production composition forwards caller authority to the real tenant owners or
+ignores configured legacy file projections. This narrow owner/composition suite
+is explicitly allowlisted; the non-whitelisted-main-importer ceiling stays zero.
 """
 from __future__ import annotations
 
