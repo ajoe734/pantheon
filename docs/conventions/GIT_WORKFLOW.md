@@ -334,8 +334,9 @@ strategy.
      admitted for dev. The independent dev-pair job invokes the existing
      exact-pair deployment workflow only after both dev tips pass CI.
 3. If `dev` has not advanced, the snapshot job no-ops. The dev-pair job still
-   checks both repositories and hosted identities, so frontend-only updates and
-   failed deployment retries do not depend on another backend publish cut.
+   checks both repositories and hosted identities, so frontend-only updates do
+   not depend on another backend publish cut. A pair whose latest deployment
+   attempt failed is not dispatched again; the next merge on either tip is.
 4. Dev releases are serialized, preserve the accepted persistent frontend
    profile, and finish their admitted pair even if newer commits arrive. See
    `docs/deployment/nonprod-ci-cd.md` for outcome and rollback semantics.
