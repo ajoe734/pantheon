@@ -11822,4 +11822,7 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    # Modules such as rewrite.task_contract lazily `import ai_status`; give them
+    # this running module so worker lease state set here is visible there.
+    sys.modules.setdefault("ai_status", sys.modules[__name__])
     raise SystemExit(main(sys.argv))

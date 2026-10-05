@@ -19760,3 +19760,46 @@ ai_status._assert_no_active_execution("FIFO-TEST")
             self.assertEqual(
                 ai_status.resolve_approval_queue_file(root), orch / "approval-queue.json"
             )
+
+
+class EntrypointModuleIdentityTests(unittest.TestCase):
+    """Run as a script, ai_status must be the module that lazy importers get.
+
+    rewrite.task_contract calls back into ``ai_status`` during handoff. If that
+    import loads a second copy, the worker lease binding set by the running
+    script is invisible there and every worker handoff fails closed.
+    """
+
+    def test_lazy_import_returns_running_entrypoint(self) -> None:
+        driver = (
+            "import importlib.util, sys\n"
+            "path = sys.argv[1]\n"
+            "sys.argv = [path, 'show', 'NO-SUCH-TASK-ENTRYPOINT-IDENTITY']\n"
+            "spec = importlib.util.spec_from_file_location('__main__', path)\n"
+            "module = importlib.util.module_from_spec(spec)\n"
+            "sys.modules['__main__'] = module\n"
+            "try:\n"
+            "    spec.loader.exec_module(module)\n"
+            "except BaseException:\n"
+            "    pass\n"
+            "from rewrite import task_contract\n"
+            "imported = task_contract._ai_status_module()\n"
+            "assert imported is module, (imported, module)\n"
+            "assert imported._STATUS_COMMAND_LEASE_LOCAL is module._STATUS_COMMAND_LEASE_LOCAL\n"
+            "print('entrypoint-identity-ok')\n"
+        )
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith(("PANTHEON_", "ORCH_"))
+        }
+        with tempfile.TemporaryDirectory(prefix="ai-status-entrypoint-") as temp_dir:
+            result = subprocess.run(
+                [sys.executable, "-B", "-c", driver, str(Path(ai_status.__file__).resolve())],
+                cwd=temp_dir,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        self.assertIn("entrypoint-identity-ok", result.stdout, result.stderr[-2000:])

@@ -592,3 +592,8 @@ def test_main_passes_with_valid_aligned_false_review_bridge_policy(
     report = json.loads(capsys.readouterr().out)
     assert report["review_bridge_policy_errors"] == []
     assert report["drift"] == []
+
+
+def test_review_only_agents_is_a_tracked_critical_flag() -> None:
+    from check_config_drift import CRITICAL_FLAGS
+    assert "worker_reassignment.review_only_agents" in CRITICAL_FLAGS

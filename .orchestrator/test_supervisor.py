@@ -1086,6 +1086,60 @@ def planner_decision(
     )
 
 
+class ReviewOnlyAgentTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = config_fixture()
+        self.config["worker_reassignment"]["review_only_agents"] = ["Codex"]
+        self.state = with_healthy_delivery_health(
+            self.config, {"workers": {}, "queue": {"events": {}}}
+        )
+
+    def test_review_only_owner_reassigned_to_fallback_via_persist(self) -> None:
+        task = task_fixture(reviewer="Human/Ops")
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
+            mock.patch.object(
+                supervisor, "persist_task_reassignment", return_value=True
+            ) as persist,
+        ):
+            self.assertTrue(
+                supervisor.reconcile_unavailable_assignments(self.config, self.state)
+            )
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Codex2")
+        self.assertEqual(persist.call_args.kwargs["expected_owner"], "Codex")
+
+    def test_review_only_agent_skipped_among_owner_candidates(self) -> None:
+        task = task_fixture(reviewer="Human/Ops")
+        pair = supervisor.plan_task_assignment_pair(
+            self.config, task, state=self.state, owner_candidates=["Codex", "Codex2"]
+        )
+        self.assertEqual(pair[0], "Codex2")
+        self.assertIsNone(
+            supervisor.plan_task_assignment_pair(
+                self.config, task, state=self.state, owner_candidates=["Codex"]
+            )
+        )
+
+    def test_review_only_agent_still_dispatched_for_review_not_owner_work(self) -> None:
+        review_task = task_fixture(status="review", owner="Codex2", reviewer="Codex")
+        review_task["delivery_binding"] = review_admission_binding()
+        review = planner_decision(self.config, review_task, state=self.state)
+        self.assertTrue(review["eligible"])
+        block = supervisor.review_only_owner_block(self.config, task_fixture(), "Codex")
+        self.assertEqual(block["first_blocking_gate"], "review_only")
+        self.assertIsNone(supervisor.review_only_owner_block(self.config, review_task, "Codex"))
+
+    def test_invalid_review_only_config_fails_closed(self) -> None:
+        self.config["worker_reassignment"]["owner_fallbacks"]["Codex2"] = ["Codex"]
+        with self.assertRaisesRegex(ValueError, "review-only"):
+            supervisor.validate_provider_accounts(self.config)
+        self.config["worker_reassignment"]["owner_fallbacks"].pop("Codex2")
+        self.config["worker_reassignment"]["review_only_agents"] = ["Nobody"]
+        with self.assertRaisesRegex(ValueError, "unknown agent"):
+            supervisor.validate_provider_accounts(self.config)
+
+
 class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
     TASK_ID = "SUP-BRIEF-HYGIENE-TEST"
     BRIEF_PATH = ".orchestrator/task-briefs/sup_brief_hygiene_test.md"
