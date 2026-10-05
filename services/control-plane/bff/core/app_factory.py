@@ -1099,7 +1099,6 @@ def mount_bff_routers(
     events_router = create_events_router(
         read_surface=app_deps.read_surface,
         command_store=app_deps.command_store,
-        get_read_store=lambda: _dep("read_store", lambda: app_deps.read_surface),
         extract_identity=_dep("_extract_identity"),
         require_read_role=_dep("_require_read_role"),
         bff_error=_dep("_bff_error"),

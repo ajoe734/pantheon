@@ -3486,13 +3486,13 @@ def _build_management_cockpit_payload(*args: Any, **kwargs: Any) -> Dict[str, An
     ...)`) instead of a second cockpit implementation.
     """
     from .management_read_models.service import ManagementService
-    svc = ManagementService(get_read_store=lambda: read_store, utc_now=utc_now)
+    svc = ManagementService(read_store=app_deps.read_surface, utc_now=utc_now)
     return svc.get_management_cockpit(*args, **kwargs)
 
 
 def _build_management_evidence_payload(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     from .management_read_models.service import ManagementService
-    svc = ManagementService(read_store=lambda: read_store, utc_now=utc_now)
+    svc = ManagementService(read_store=app_deps.read_surface, utc_now=utc_now)
     return svc.get_evidence(*args, **kwargs)
 async def _read_management_source_connector_registry(
     store: Any,
@@ -3558,8 +3558,8 @@ def _command_response_dry_run_meta(idempotency_key: str) -> Dict[str, Any]:
 from .command_adapters.service import CommandAdapterService as _CommandAdapterService
 
 _command_adapter_service = _CommandAdapterService(
-    command_store=lambda: command_store,
-    read_surface=lambda: read_store,
+    command_store=app_deps.command_store,
+    read_surface=app_deps.read_surface,
     extract_identity=_extract_identity,
     require_operator_role=_require_operator_role,
     require_read_role=_require_read_role,
