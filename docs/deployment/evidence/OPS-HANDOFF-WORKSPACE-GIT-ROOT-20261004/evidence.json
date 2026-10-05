@@ -120,5 +120,15 @@
     "verified_merge_commit": "b6832909098349da5e2e90a5fbbba1280eaa2c97",
     "note": "The preceding evidence entry transcribed this hash incorrectly; its recorded test results are unchanged and passed against this exact merge tree."
   },
-  "verified_budget_restatement": "python3 scripts/git/diff_budget.py --base 829015b2016e528358cec30a3f5ac4bfb9112795 --head b6832909098349da5e2e90a5fbbba1280eaa2c97 --change-class corrective --budget 40: production +325/-301 net +24, within 40"
+  "verified_budget_restatement": "python3 scripts/git/diff_budget.py --base 829015b2016e528358cec30a3f5ac4bfb9112795 --head b6832909098349da5e2e90a5fbbba1280eaa2c97 --change-class corrective --budget 40: production +325/-301 net +24, within 40",
+  "second_base_refresh": {
+    "base": "a4abce7b2cded51b18187b784ca540dff331bbc2",
+    "merge_commit": "6f135111c253a767284ea5331d522ce91876ba80",
+    "validation": [
+      "python3 -m unittest scripts.test_ai_status: 538 passed",
+      "PYTHONPATH=.orchestrator python3 -m unittest rewrite.test_task_contract: 16 passed",
+      "diff_budget.py --base origin/dev --change-class corrective --budget 40: production +8/-0 net +8, within 40"
+    ],
+    "scope_note": "Source merge only; actual resumed PR6151 handoff is separate and not yet performed."
+  }
 }
