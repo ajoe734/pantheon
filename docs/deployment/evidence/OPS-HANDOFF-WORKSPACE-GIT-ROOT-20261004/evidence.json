@@ -130,5 +130,17 @@
       "diff_budget.py --base origin/dev --change-class corrective --budget 40: production +8/-0 net +8, within 40"
     ],
     "scope_note": "Source merge only; actual resumed PR6151 handoff is separate and not yet performed."
+  },
+  "third_base_refresh": {
+    "base": "62d2be9ef4c6eb2d6f76c5b9ce2f831b78299863",
+    "merge_commit": "5249c7fbd52a0a2df41498b3c9cb5421da64fbb6",
+    "validation": [
+      "python3 -m unittest scripts.test_ai_status: 539 passed",
+      "pytest scripts/test_ai_status.py -k 'handoff or DeliveryWorkspace or Entrypoint or done_delivery': 65 passed",
+      "PYTHONPATH=.orchestrator python3 -m unittest rewrite.test_task_contract: 16 passed",
+      "diff_budget.py --base origin/dev --change-class corrective --budget 40: production +8/-0 net +8, within 40"
+    ],
+    "known_residual": ".orchestrator/config.json stale b435 integration_path is preserved without mutation.",
+    "scope_note": "Merged origin/dev bringing in PR #6170 (5c4501458); exact head qualified for handoff to reviewer Antigravity2."
   }
 }
