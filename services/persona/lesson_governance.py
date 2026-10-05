@@ -9,11 +9,17 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import threading
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 
 import jsonschema
 
@@ -125,8 +131,9 @@ class TradeLessonCandidateStore:
     """Thread-safe trade lesson candidate store with optional JSON persistence."""
 
     def __init__(self, path: Optional[Path] = None) -> None:
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._candidates: Dict[str, Dict[str, Any]] = {}
+        self._idempotency: Dict[str, Dict[str, Any]] = {}
         self._path = path
         if path and path.exists():
             self._load(path)
@@ -210,6 +217,33 @@ class TradeLessonCandidateStore:
             self._save()
             return deepcopy(candidate)
 
+    def transition_with_idempotency(self, lc_id: str, mutate_fn: Any, *, idempotency_key: Optional[str] = None, content: Optional[Dict[str, Any]] = None) -> tuple[Dict[str, Any], bool]:
+        clean_key = idempotency_key.strip() if idempotency_key and idempotency_key.strip() else None
+        with self._lock:
+            fd = os.open(self._path.with_name(f".{self._path.name}.lock"), os.O_CREAT | os.O_RDWR, 0o600) if self._path else None
+            try:
+                if fd is not None and fcntl is not None: fcntl.flock(fd, fcntl.LOCK_EX)
+                if self._path and self._path.exists(): self._load(self._path)
+                if clean_key:
+                    prior = self._idempotency.get(clean_key)
+                    if prior is not None:
+                        if prior.get("content") == content: return deepcopy(prior["response"]), True
+                        raise TradeLessonCandidateError("IDEMPOTENCY_CONFLICT: different request")
+                cand = self._candidates.get(lc_id)
+                if not cand: raise TradeLessonCandidateError(f"Candidate not found: {lc_id}")
+                up = mutate_fn(deepcopy(cand))
+                up["updated_at"] = utc_now()
+                errs = validate_lesson_candidate_json(up)
+                if errs: raise TradeLessonCandidateError(f"Schema validation failed: {errs}")
+                self._candidates[lc_id] = up
+                if clean_key and content: self._idempotency[clean_key] = {"content": content, "response": deepcopy(up)}
+                self._save()
+                return deepcopy(up), False
+            finally:
+                if fd is not None:
+                    if fcntl is not None: fcntl.flock(fd, fcntl.LOCK_UN)
+                    os.close(fd)
+
     def list(
         self,
         *,
@@ -233,23 +267,41 @@ class TradeLessonCandidateStore:
     def _save(self) -> None:
         if not self._path:
             return
-        self._path.write_text(json.dumps(list(self._candidates.values()), indent=2), encoding="utf-8")
+        payload = {"candidates": list(self._candidates.values()), "idempotency": self._idempotency} if self._idempotency else list(self._candidates.values())
+        tmp = tempfile.NamedTemporaryFile("w", dir=self._path.parent, prefix=f".{self._path.name}.", suffix=".tmp", delete=False, encoding="utf-8")
+        try:
+            with tmp:
+                json.dump(payload, tmp, indent=2)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+            os.replace(tmp.name, self._path)
+        finally:
+            if os.path.exists(tmp.name):
+                os.unlink(tmp.name)
 
     def _load(self, path: Path) -> None:
         text = path.read_text(encoding="utf-8")
         if not text.strip():
             return
         data = json.loads(text)
-        if not isinstance(data, list):
-            raise TradeLessonCandidateError(f"Expected JSON array in {path}")
-        for record in data:
+        if isinstance(data, dict):
+            records = data.get("candidates", [])
+            self._idempotency = {str(k): dict(v) for k, v in data.get("idempotency", {}).items() if isinstance(v, dict)}
+        elif isinstance(data, list):
+            records = data
+            self._idempotency = {}
+        else:
+            raise TradeLessonCandidateError(f"Expected JSON array or object in {path}")
+        candidates = {}
+        for record in records:
             json_errors = validate_lesson_candidate_json(record)
             if json_errors:
                 lc_id = record.get("lesson_candidate_id", "<unknown>")
                 raise TradeLessonCandidateError(
                     f"Schema validation failed for persisted candidate {lc_id}: {json_errors}"
                 )
-            self._candidates[record["lesson_candidate_id"]] = record
+            candidates[record["lesson_candidate_id"]] = deepcopy(record)
+        self._candidates = candidates
 
 
 class LessonGovernanceService:
@@ -258,20 +310,31 @@ class LessonGovernanceService:
     def __init__(self, store: TradeLessonCandidateStore) -> None:
         self.store = store
 
-    def submit_review(self, lesson_candidate_id: str) -> Dict[str, Any]:
+    def submit_review(
+        self,
+        lesson_candidate_id: str,
+        *,
+        idempotency_key: Optional[str] = None,
+        content: Optional[Dict[str, Any]] = None,
+        return_replayed: bool = False,
+    ) -> Any:
         """Transition candidate state from proposed -> pending_review."""
-        candidate = self.store.get(lesson_candidate_id)
-        if not candidate:
-            raise TradeLessonCandidateError(f"Candidate not found: {lesson_candidate_id}")
+        def _mutate(candidate: Dict[str, Any]) -> Dict[str, Any]:
+            current_state = candidate.get("review_state")
+            if current_state != "proposed":
+                raise TradeLessonCandidateError(
+                    f"Cannot submit review for candidate in state '{current_state}'. Must be 'proposed'."
+                )
+            candidate["review_state"] = "pending_review"
+            return candidate
 
-        current_state = candidate.get("review_state")
-        if current_state != "proposed":
-            raise TradeLessonCandidateError(
-                f"Cannot submit review for candidate in state '{current_state}'. Must be 'proposed'."
-            )
-
-        candidate["review_state"] = "pending_review"
-        return self.store.update(candidate)
+        updated, replayed = self.store.transition_with_idempotency(
+            lesson_candidate_id,
+            _mutate,
+            idempotency_key=idempotency_key,
+            content=content,
+        )
+        return (updated, replayed) if return_replayed else updated
 
     def decide(
         self,
@@ -284,105 +347,51 @@ class LessonGovernanceService:
         episodes: List[Dict[str, Any]] = None,
         target_env: Optional[str] = None,
         promotion_stage: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Transition candidate state to endorsed, rejected, quarantined, or expired.
-
-        For endorsement, evaluation gates are evaluated and must pass.
-        """
+        idempotency_key: Optional[str] = None,
+        content: Optional[Dict[str, Any]] = None,
+        return_replayed: bool = False,
+    ) -> Any:
+        """Transition candidate state to endorsed, rejected, quarantined, or expired."""
         if action not in {"endorse", "reject", "quarantine", "expire"}:
             raise TradeLessonCandidateError(f"Invalid decision action: {action}")
 
-        candidate = self.store.get(lesson_candidate_id)
-        if not candidate:
-            raise TradeLessonCandidateError(f"Candidate not found: {lesson_candidate_id}")
+        def _mutate(candidate: Dict[str, Any]) -> Dict[str, Any]:
+            current_state = candidate.get("review_state")
+            if current_state not in {"proposed", "pending_review", "endorsed"}:
+                raise TradeLessonCandidateError(f"Cannot make decision for candidate in state '{current_state}'. Must be 'proposed', 'pending_review', or 'endorsed'.")
+            if current_state == "endorsed":
+                if action != "endorse": raise TradeLessonCandidateError(f"Cannot perform action '{action}' on an already endorsed candidate.")
+                if not target_env: raise TradeLessonCandidateError("Target environment must be specified when updating endorsement.")
+            candidate["receipt"] = {"operator_id": operator_id, "decided_at": utc_now(), "action": action, "reason": reason, "audit_receipt_id": audit_receipt_id}
+            if action == "endorse":
+                old_env, old_stage = candidate.get("target_env", "paper"), candidate.get("promotion_stage", "proposed")
+                new_env = target_env or old_env
+                env_to_stage = {"paper": "proposed", "canary": "canary_approved", "live": "live_approved"}
+                if new_env not in env_to_stage: raise TradeLessonCandidateError(f"Invalid target environment: {new_env}")
+                new_stage = env_to_stage[new_env]
+                if promotion_stage and promotion_stage != new_stage:
+                    raise TradeLessonCandidateError(f"Invalid promotion_stage '{promotion_stage}' for target_env '{new_env}'. Must be '{new_stage}'.")
+                if new_env == "live" and (old_env != "canary" or old_stage != "canary_approved"):
+                    raise TradeLessonCandidateError(f"Promotion to live is blocked: candidate must transition from canary (canary_approved), but current state is {old_env} ({old_stage}).")
+                if new_env == "canary" and (old_env != "paper" or old_stage != "proposed"):
+                    raise TradeLessonCandidateError(f"Promotion to canary is blocked: candidate must transition from paper (proposed), but current state is {old_env} ({old_stage}).")
+                candidate["target_env"], candidate["promotion_stage"] = new_env, new_stage
+                gate_errors = check_evaluation_gates(candidate, episodes or [])
+                if gate_errors:
+                    candidate["target_env"], candidate["promotion_stage"] = old_env, old_stage
+                    raise TradeLessonCandidateError(f"Endorsement blocked by evaluation gates: {gate_errors}")
+                candidate["review_state"] = "endorsed"
+            elif action in {"reject", "quarantine", "expire"}:
+                candidate["review_state"] = "rejected" if action == "reject" else ("quarantined" if action == "quarantine" else "expired")
+            return candidate
 
-        current_state = candidate.get("review_state")
-        if current_state not in {"proposed", "pending_review", "endorsed"}:
-            raise TradeLessonCandidateError(
-                f"Cannot make decision for candidate in state '{current_state}'. Must be 'proposed', 'pending_review', or 'endorsed'."
-            )
-
-        if current_state == "endorsed":
-            if action != "endorse":
-                raise TradeLessonCandidateError(
-                    f"Cannot perform action '{action}' on an already endorsed candidate."
-                )
-            if not target_env:
-                raise TradeLessonCandidateError(
-                    "Target environment must be specified when updating endorsement."
-                )
-
-        # Build receipt
-        receipt = {
-            "operator_id": operator_id,
-            "decided_at": utc_now(),
-            "action": action,
-            "reason": reason,
-            "audit_receipt_id": audit_receipt_id,
-        }
-        candidate["receipt"] = receipt
-
-        if action == "endorse":
-            old_env = candidate.get("target_env", "paper")
-            old_stage = candidate.get("promotion_stage", "proposed")
-
-            new_env = target_env or old_env
-
-            # Map promotion stages server-side
-            env_to_stage = {
-                "paper": "proposed",
-                "canary": "canary_approved",
-                "live": "live_approved"
-            }
-            if new_env not in env_to_stage:
-                raise TradeLessonCandidateError(f"Invalid target environment: {new_env}")
-
-            new_stage = env_to_stage[new_env]
-
-            # If caller explicitly provided a stage, it must match the server-side derived stage
-            if promotion_stage and promotion_stage != new_stage:
-                raise TradeLessonCandidateError(
-                    f"Invalid promotion_stage '{promotion_stage}' for target_env '{new_env}'. "
-                    f"Must be '{new_stage}'."
-                )
-
-            # Enforce sequential transition matrix:
-            # - To promote to live, current state must be canary & canary_approved
-            # - To promote to canary, current state must be paper & proposed
-            if new_env == "live" and old_env != "live":
-                if old_env != "canary" or old_stage != "canary_approved":
-                    raise TradeLessonCandidateError(
-                        f"Promotion to live is blocked: candidate must transition from canary (canary_approved), "
-                        f"but current state is {old_env} ({old_stage})."
-                    )
-            elif new_env == "canary" and old_env != "canary":
-                if old_env != "paper" or old_stage != "proposed":
-                    raise TradeLessonCandidateError(
-                        f"Promotion to canary is blocked: candidate must transition from paper (proposed), "
-                        f"but current state is {old_env} ({old_stage})."
-                    )
-
-            candidate["target_env"] = new_env
-            candidate["promotion_stage"] = new_stage
-
-            # Check gates before allowing endorsement
-            gate_errors = check_evaluation_gates(candidate, episodes or [])
-            if gate_errors:
-                # Revert on gate failure
-                candidate["target_env"] = old_env
-                candidate["promotion_stage"] = old_stage
-                raise TradeLessonCandidateError(
-                    f"Endorsement blocked by evaluation gates: {gate_errors}"
-                )
-            candidate["review_state"] = "endorsed"
-        elif action == "reject":
-            candidate["review_state"] = "rejected"
-        elif action == "quarantine":
-            candidate["review_state"] = "quarantined"
-        elif action == "expire":
-            candidate["review_state"] = "expired"
-
-        return self.store.update(candidate)
+        updated, replayed = self.store.transition_with_idempotency(
+            lesson_candidate_id,
+            _mutate,
+            idempotency_key=idempotency_key,
+            content=content,
+        )
+        return (updated, replayed) if return_replayed else updated
 
     def merge_to_memory(self, lesson_candidate_id: str, memory_store: PersonaMemoryStore) -> Dict[str, Any]:
         """Merge an endorsed candidate into the persona memory store.

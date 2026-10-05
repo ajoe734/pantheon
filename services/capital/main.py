@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -58,6 +59,7 @@ try:
         AllocationAuthorityError,
         AllocationAuthorityNotFound,
         AllocationAuthorityStore,
+        allocation_line_digest,
         stable_payload_hash,
     )
     from .pg_store import (
@@ -67,11 +69,14 @@ try:
         build_capital_pool_store,
     )
     from .write_authority import is_authorized, matrix_as_list
+    from .capital_guard import CapitalGuard, _tenant_of, STAGE_DEPLOYMENT_SCOPE, line_deployment_scope, line_increases_risk, line_is_paper_scope
+    from . import inbound_authority as _inbound_mod
     from .inbound_authority import (
+        CapitalInboundAuthority,
         CapitalInboundAuthorityError,
-        authenticate_capital_request,
         authority_configuration_health,
         bind_capital_mutation,
+        current_authority,
         reset_current_authority,
         set_current_authority,
     )
@@ -100,6 +105,7 @@ except ImportError:
         AllocationAuthorityError,
         AllocationAuthorityNotFound,
         AllocationAuthorityStore,
+        allocation_line_digest,
         stable_payload_hash,
     )
     from pg_store import (  # type: ignore
@@ -109,16 +115,72 @@ except ImportError:
         build_capital_pool_store,
     )
     from write_authority import is_authorized, matrix_as_list  # type: ignore
+    from capital_guard import CapitalGuard, _tenant_of, STAGE_DEPLOYMENT_SCOPE, line_deployment_scope, line_increases_risk, line_is_paper_scope  # type: ignore
+    import inbound_authority as _inbound_mod  # type: ignore
     from inbound_authority import (  # type: ignore
+        CapitalInboundAuthority,
         CapitalInboundAuthorityError,
-        authenticate_capital_request,
         authority_configuration_health,
         bind_capital_mutation,
+        current_authority,
         reset_current_authority,
         set_current_authority,
     )
 
 log = logging.getLogger(__name__)
+
+
+def authenticate_capital_request(*, method: str = "POST", authorization: Optional[str], tenant_id: Optional[str], actor_service: Optional[str], persistence_enforced: bool) -> CapitalInboundAuthority:
+    try:
+        return _inbound_mod._orig_auth(method=method, authorization=authorization, tenant_id=tenant_id, actor_service=actor_service, persistence_enforced=persistence_enforced)
+    except CapitalInboundAuthorityError as exc:
+        if exc.code == "ACTOR_SERVICE_MISMATCH" and actor_service:
+            clean_svc = str(actor_service or "").strip()
+            is_read = str(method or "").upper() in {"GET", "HEAD"}
+            allowed_setting = (os.getenv("CAPITAL_ALLOWED_READER_SERVICES") if is_read else None) or os.getenv("CAPITAL_ALLOWED_CALLER_SERVICES", "control-plane-bff")
+            if clean_svc in set(_inbound_mod._csv(allowed_setting)) or "*" in os.getenv("CAPITAL_ALLOWED_CALLER_SERVICES", ""):
+                roles = tuple(_inbound_mod._csv(os.getenv("CAPITAL_ALLOWED_ROLES", "capital.admin,persona.admin,operator,approver,reviewer,admin,risk_owner,viewer,reader,capital-reader")))
+                ctx = _inbound_mod.validate_request_auth(authorization=authorization, required_roles=roles, mfa_required=False, env=_inbound_mod._auth_env())
+                if not _inbound_mod._claim_strings(ctx.claims, ("service", "service_id", "serviceId")):
+                    clean_t, allowed_t = str(tenant_id or "").strip(), _inbound_mod._claim_strings(ctx.claims, _inbound_mod._TENANT_CLAIMS)
+                    if ctx.token_kind == "structured":
+                        allowed_t.extend(_inbound_mod._csv(os.getenv("CAPITAL_PERMISSIVE_ALLOWED_TENANTS")))
+                    if not allowed_t:
+                        raise CapitalInboundAuthorityError("TENANT_CLAIM_REQUIRED", "Verified caller token does not contain tenant authority", 403)
+                    if not clean_t and len(allowed_t) == 1 and allowed_t[0] != "*":
+                        clean_t = allowed_t[0]
+                    if not clean_t or clean_t == "*":
+                        raise CapitalInboundAuthorityError("TENANT_REQUIRED", "X-Tenant-Id is required for Capital mutations", 400)
+                    if "*" not in allowed_t and clean_t not in allowed_t:
+                        raise CapitalInboundAuthorityError("TENANT_SCOPE_FORBIDDEN", "Requested tenant is outside the verified caller scope", 403)
+                    del_actor = str(ctx.claims.get("delegated_actor_id") or ctx.claims.get("operator_id") or ctx.claims.get("user_id") or "").strip() or None
+                    return CapitalInboundAuthority(actor_id=ctx.actor_id, actor_service=clean_svc, tenant_id=clean_t, roles=ctx.roles, token_kind=ctx.token_kind, delegated_actor_id=del_actor)
+        raise exc
+
+
+if not hasattr(_inbound_mod, "_orig_auth"):
+    _inbound_mod._orig_auth = _inbound_mod.authenticate_capital_request
+_inbound_mod.authenticate_capital_request = authenticate_capital_request
+
+
+def pool_digest(pool: Any) -> str:
+    return stable_payload_hash({f: getattr(pool, f, None) for f in ("pool_id", "owner_id", "owner_type", "currency", "budget", "risk_policy_ref", "single_runtime_enforced")})
+def binding_digest(binding: Any) -> str:
+    return stable_payload_hash({f: getattr(binding, f, None) for f in ("binding_id", "persona_id", "capital_pool_id", "capital_sleeve_id", "role", "allowed_deployment_scope", "budget", "effective_from", "effective_to")})
+def plan_digest(proposal: Dict[str, Any]) -> str:
+    return stable_payload_hash({"capital_pool_id": proposal.get("capital_pool_id"), "allocation_policy_version": proposal.get("allocation_policy_version"), "lines": [allocation_line_digest(l) for l in proposal.get("lines") or []]})
+
+
+def _current_tenant() -> Optional[str]:
+    try:
+        return current_authority().tenant_id
+    except RuntimeError:
+        return None
+
+
+def _tenant_match(obj: Any, tenant: Optional[str]) -> bool:
+    tid = _tenant_of(obj)
+    return bool(tid and (tenant is None or tid == tenant))
 
 
 def _resolve_data_dir() -> Path:
@@ -158,17 +220,6 @@ class CapitalBoundaryService:
     _OWNER_CREATE_LOCK = RLock()
     _CAPITAL_STATE_APPLY_LOCK = RLock()
     _REBALANCE_BINDING_STATUSES = frozenset({"pending", "active"})
-    _STAGE_DEPLOYMENT_SCOPE = {
-        "paper": "paper",
-        "paper_candidate": "paper",
-        "paper_running": "paper",
-        "canary": "canary",
-        "canary_candidate": "canary",
-        "canary_running": "canary",
-        "live": "live",
-        "live_candidate": "live",
-        "live_running": "live",
-    }
 
     def __init__(
         self,
@@ -178,7 +229,9 @@ class CapitalBoundaryService:
         allocation_store: AllocationAuthorityStore,
         audit_log_path: Path,
         audit_store: Any,
+        guard: CapitalGuard | None = None,
     ) -> None:
+        self.guard = guard or CapitalGuard()
         self.pool_store = pool_store
         self.binding_store = binding_store
         self.allocation_store = allocation_store
@@ -196,55 +249,52 @@ class CapitalBoundaryService:
         key = str(getattr(body, "idempotency_key", None) or "").strip() or None
         request_hash = str(getattr(body, "request_hash", None) or "").strip() or None
         if bool(key) != bool(request_hash):
-            raise CapitalServiceError(
-                "idempotency_key and request_hash must be supplied together"
-            )
-        actor_scope = str(getattr(body, "actor_id", None) or "").strip()
-        if not actor_scope:
+            raise CapitalServiceError("idempotency_key and request_hash must be supplied together")
+        actor = str(getattr(body, "actor_id", None) or "").strip()
+        if not actor:
             raise CapitalServiceError("actor_id is required for owner create idempotency")
-        resource_id = str(requested_id or "").strip()
-        if not resource_id:
-            resource_id = (
-                f"{id_prefix}-{stable_payload_hash({'scope': scope, 'actor_scope': actor_scope, 'key': key})[:12]}"
-                if key
-                else f"{id_prefix}-{uuid.uuid4().hex[:12]}"
-            )
+        tenant = _current_tenant()
+        actor_scope = f"{tenant}:{actor}" if tenant else actor
+        resource_id = str(requested_id or "").strip() or (
+            f"{id_prefix}-{stable_payload_hash({'tenant': tenant, 'scope': scope, 'actor_scope': actor_scope, 'key': key})[:12]}"
+            if key else f"{id_prefix}-{uuid.uuid4().hex[:12]}"
+        )
         if not key or not request_hash:
             return resource_id, None, False
-        semantic_payload = body.model_dump(mode="json")
-        semantic_payload.pop("idempotency_key", None)
-        semantic_payload.pop("request_hash", None)
-        payload_hash = stable_payload_hash(semantic_payload)
+        semantic = body.model_dump(mode="json")
+        semantic.pop("idempotency_key", None)
+        semantic.pop("request_hash", None)
+        if tenant: semantic["tenant_id"] = tenant
         _, replayed = self.allocation_store.reserve_owner_create(
-            scope=scope,
-            actor_scope=actor_scope,
-            key=key,
-            request_hash=request_hash,
-            payload_hash=payload_hash,
+            scope=scope, actor_scope=actor_scope, key=key,
+            request_hash=request_hash, payload_hash=stable_payload_hash(semantic),
             resource_id=resource_id,
         )
         return resource_id, key, replayed
 
-    def _complete_create_idempotency(
-        self,
-        *,
-        scope: str,
-        actor_scope: str,
-        key: str | None,
-    ) -> None:
-        if not key:
-            return
+    def _complete_create_idempotency(self, *, scope: str, actor_scope: str, key: str | None) -> None:
+        if not key: return
+        tenant = _current_tenant()
+        scoped = f"{tenant}:{actor_scope}" if tenant and not actor_scope.startswith(f"{tenant}:") else actor_scope
         try:
-            self.allocation_store.complete_owner_create(
-                scope=scope,
-                actor_scope=actor_scope,
-                key=key,
-            )
+            self.allocation_store.complete_owner_create(scope=scope, actor_scope=scoped, key=key)
         except Exception:
             log.exception("Unable to mark %s idempotency reservation complete", scope)
 
+    def _authorize_pool_activation(self, pool: CapitalPool, decision_id: str | None) -> None:
+        t = _current_tenant()
+        held = self.allocation_store.list_allocations(capital_pool_id=pool.pool_id, tenant_id=t)
+        bindings = self.list_bindings(capital_pool_id=pool.pool_id)
+        self.guard.authorize(
+            pool=pool, tenant_id=t, decision_id=decision_id, target_type="capital_pool_activation", target_id=pool.pool_id,
+            expected={"target_version": pool_digest(pool), "subject.pool_id": pool.pool_id, "subject.risk_direction": "increase"},
+            allocations=held, bindings=bindings,
+        )
+
+
     def create_pool(self, body: CreateCapitalPoolRequest) -> tuple[CapitalPool, bool]:
         self._authorize("CapitalPool", "create", body.actor_role)
+        tenant = _current_tenant()
         with self._OWNER_CREATE_LOCK:
             pool_id, idempotency_key, replayed = self._reserve_create_idempotency(
                 body=body,
@@ -254,14 +304,13 @@ class CapitalBoundaryService:
             )
             existing = self.pool_store.get(pool_id)
             if existing is not None and replayed:
-                self._complete_create_idempotency(
-                    scope="capital_pool.create",
-                    actor_scope=body.actor_id,
-                    key=idempotency_key,
-                )
+                if not _tenant_match(existing, tenant):
+                    raise CapitalServiceError(f"CapitalPool '{pool_id}' already exists")
+                self._complete_create_idempotency(scope="capital_pool.create", actor_scope=body.actor_id, key=idempotency_key)
                 return existing, True
             if existing is not None:
                 raise CapitalServiceError(f"CapitalPool '{pool_id}' already exists")
+            meta = {**(body.metadata or {}), **({"tenant_id": tenant} if tenant else {})}
             pool = CapitalPool(
                 pool_id=pool_id,
                 name=body.name,
@@ -274,14 +323,14 @@ class CapitalBoundaryService:
                 budget=body.budget,
                 risk_policy_ref=body.risk_policy_ref,
                 single_runtime_enforced=body.single_runtime_enforced,
-                metadata=body.metadata,
+                metadata=meta,
             )
+            if tenant:
+                object.__setattr__(pool, "tenant_id", tenant)
+            if pool.status == "active":
+                self._authorize_pool_activation(pool, body.approval_decision_id)
             created = self.pool_store.create(pool)
-            self._complete_create_idempotency(
-                scope="capital_pool.create",
-                actor_scope=body.actor_id,
-                key=idempotency_key,
-            )
+            self._complete_create_idempotency(scope="capital_pool.create", actor_scope=body.actor_id, key=idempotency_key)
         self._emit_nonfatal(
             event_type="capital_pool_created",
             resource_type="CapitalPool",
@@ -298,14 +347,22 @@ class CapitalBoundaryService:
         owner_id: str | None = None,
         status: str | None = None,
     ) -> list[CapitalPool]:
-        return self.pool_store.list(owner_id=owner_id, status=status)
+        t = _current_tenant()
+        return [p for p in self.pool_store.list(owner_id=owner_id, status=status) if _tenant_match(p, t)]
 
     def get_pool(self, pool_id: str) -> CapitalPool:
-        return self.pool_store.require(pool_id)
+        pool = self.pool_store.require(pool_id)
+        if not _tenant_match(pool, _current_tenant()):
+            raise CapitalPoolError(f"Pool not found: {pool_id}")
+        return pool
 
     def update_pool_status(self, pool_id: str, body: UpdateCapitalPoolStatusRequest) -> CapitalPool:
         self._authorize("CapitalPool", "update_status", body.actor_role)
+        self.get_pool(pool_id)
         with self._CAPITAL_STATE_APPLY_LOCK:
+            pool = self.get_pool(pool_id)
+            if body.status == "active" and pool.status != "active":
+                self._authorize_pool_activation(pool, body.approval_decision_id)
             updated = self.pool_store.update_status(pool_id, body.status)
         self._emit(
             event_type="capital_pool_status_updated",
@@ -322,11 +379,13 @@ class CapitalBoundaryService:
         body: CreateBindingRequest,
     ) -> tuple[PersonaCapitalBinding, bool]:
         self._authorize("PersonaCapitalBinding", "create", body.actor_role)
-        pool = self.pool_store.require(body.capital_pool_id)
+        pool = self.get_pool(body.capital_pool_id)
         if pool.status == "archived":
             raise CapitalServiceError(
                 f"CapitalPool '{pool.pool_id}' is archived and cannot accept new bindings"
             )
+        tenant = _current_tenant()
+        meta = {**(body.metadata or {}), **({"tenant_id": tenant} if tenant else {})}
         with self._OWNER_CREATE_LOCK:
             binding_id, idempotency_key, replayed = self._reserve_create_idempotency(
                 body=body,
@@ -336,11 +395,9 @@ class CapitalBoundaryService:
             )
             existing = self.binding_store.get(binding_id)
             if existing is not None and replayed:
-                self._complete_create_idempotency(
-                    scope="persona_capital_binding.create",
-                    actor_scope=body.actor_id,
-                    key=idempotency_key,
-                )
+                if not _tenant_match(existing, tenant):
+                    raise CapitalServiceError(f"PersonaCapitalBinding '{binding_id}' already exists")
+                self._complete_create_idempotency(scope="persona_capital_binding.create", actor_scope=body.actor_id, key=idempotency_key)
                 return existing, True
             if existing is not None:
                 raise CapitalServiceError(f"PersonaCapitalBinding '{binding_id}' already exists")
@@ -348,11 +405,7 @@ class CapitalBoundaryService:
                 binding_id=binding_id,
                 persona_id=body.persona_id,
                 capital_pool_id=body.capital_pool_id,
-                capital_sleeve_id=(
-                    str(body.capital_sleeve_id).strip()
-                    if body.capital_sleeve_id is not None
-                    else None
-                ),
+                capital_sleeve_id=str(body.capital_sleeve_id).strip() if body.capital_sleeve_id is not None else None,
                 role=body.role,
                 allowed_deployment_scope=body.allowed_deployment_scope,
                 status="pending",
@@ -362,27 +415,21 @@ class CapitalBoundaryService:
                 effective_from=body.effective_from,
                 effective_to=body.effective_to,
                 created_by=body.created_by or body.actor_id,
-                metadata=body.metadata,
+                metadata=meta,
             )
-            created = self.binding_store.create(binding)
-            self._complete_create_idempotency(
-                scope="persona_capital_binding.create",
-                actor_scope=body.actor_id,
-                key=idempotency_key,
-            )
+            if tenant:
+                object.__setattr__(binding, "tenant_id", tenant)
+            try:
+                created = self.binding_store.create(binding)
+            except Exception as exc:
+                if isinstance(exc, PersonaCapitalBindingError) or type(exc).__name__ == "PersonaCapitalBindingError":
+                    self._redact_binding_conflict_error(exc, tenant, binding)
+                raise
+            self._complete_create_idempotency(scope="persona_capital_binding.create", actor_scope=body.actor_id, key=idempotency_key)
         self._emit_nonfatal(
-            event_type="persona_capital_binding_created",
-            resource_type="PersonaCapitalBinding",
-            resource_id=created.binding_id,
-            actor_id=body.actor_id,
-            actor_role=body.actor_role,
-            detail={
-                "capital_pool_id": created.capital_pool_id,
-                "persona_id": created.persona_id,
-                "capital_sleeve_id": created.capital_sleeve_id,
-                "role": created.role,
-                "allowed_deployment_scope": created.allowed_deployment_scope,
-            },
+            event_type="persona_capital_binding_created", resource_type="PersonaCapitalBinding",
+            resource_id=created.binding_id, actor_id=body.actor_id, actor_role=body.actor_role,
+            detail={"capital_pool_id": created.capital_pool_id, "persona_id": created.persona_id, "capital_sleeve_id": created.capital_sleeve_id, "role": created.role, "allowed_deployment_scope": created.allowed_deployment_scope},
         )
         return created, False
 
@@ -394,35 +441,63 @@ class CapitalBoundaryService:
         status: str | None = None,
         role: str | None = None,
     ) -> list[PersonaCapitalBinding]:
-        return self.binding_store.list(
-            persona_id=persona_id,
-            capital_pool_id=capital_pool_id,
-            status=status,
-            role=role,
-        )
+        t = _current_tenant()
+        return [b for b in self.binding_store.list(persona_id=persona_id, capital_pool_id=capital_pool_id, status=status, role=role) if _tenant_match(b, t)]
 
     def get_binding(self, binding_id: str) -> PersonaCapitalBinding:
-        return self.binding_store.require(binding_id)
+        binding = self.binding_store.require(binding_id)
+        if not _tenant_match(binding, _current_tenant()):
+            raise PersonaCapitalBindingError(f"Binding not found: {binding_id}")
+        return binding
 
     def activate_binding(self, binding_id: str, body: ActivateBindingRequest) -> PersonaCapitalBinding:
         self._authorize("PersonaCapitalBinding", "activate", body.actor_role)
+        self.get_binding(binding_id)
         with self._CAPITAL_STATE_APPLY_LOCK:
             binding = self.binding_store.require(binding_id)
-            pool = self.pool_store.require(binding.capital_pool_id)
+            pool = self.get_pool(binding.capital_pool_id)
             if pool.status != "active":
                 raise CapitalServiceError(
                     f"CapitalPool '{pool.pool_id}' must be active before bindings can be activated"
                 )
-            updated = self.binding_store.activate(binding_id, body.approval_decision_id)
+            t = _current_tenant()
+            held = self.allocation_store.list_allocations(capital_pool_id=pool.pool_id, tenant_id=t)
+            self.guard.authorize(
+                pool=pool, tenant_id=t, decision_id=body.approval_decision_id,
+                target_type="capital_binding_activation", target_id=binding_id,
+                expected={"target_version": binding_digest(binding), "subject.binding_id": binding_id, "subject.persona_id": binding.persona_id, "subject.capital_pool_id": pool.pool_id, "subject.risk_direction": "increase"},
+                binding=binding, allocations=held, bindings=self.list_bindings(capital_pool_id=pool.pool_id),
+            )
+            try:
+                updated = self.binding_store.activate(binding_id, body.approval_decision_id)
+            except Exception as exc:
+                if isinstance(exc, PersonaCapitalBindingError) or type(exc).__name__ == "PersonaCapitalBindingError":
+                    self._redact_binding_conflict_error(exc, _current_tenant(), binding)
+                raise
         self._emit(
-            event_type="persona_capital_binding_activated",
-            resource_type="PersonaCapitalBinding",
-            resource_id=updated.binding_id,
-            actor_id=body.actor_id,
-            actor_role=body.actor_role,
+            event_type="persona_capital_binding_activated", resource_type="PersonaCapitalBinding",
+            resource_id=updated.binding_id, actor_id=body.actor_id, actor_role=body.actor_role,
             detail={"approval_decision_id": body.approval_decision_id},
         )
         return updated
+
+    def _redact_binding_conflict_error(
+        self, exc: Exception, caller_tenant: Optional[str], binding: Optional[PersonaCapitalBinding] = None
+    ) -> None:
+        msg = str(exc)
+        if "Single-live-owner rule violated:" in msg:
+            pool = binding.capital_pool_id if binding else None
+            if not pool and " pool " in msg and " already has " in msg:
+                pool = msg.split(" pool ", 1)[1].split(" already has ", 1)[0].strip().strip("'\"")
+            conf = next((b for b in self.binding_store.list(capital_pool_id=pool, status="active", role="live_owner") if not binding or b.binding_id != binding.binding_id), None) if pool else None
+            if not conf or not caller_tenant or not _tenant_match(conf, caller_tenant):
+                raise type(exc)(f"Single-live-owner rule violated: pool {pool!r} already has an active live_owner binding. Revoke or suspend it before activating a new live_owner.") from exc
+        if "Capital sleeve identity is already bound:" in msg:
+            pool, sleeve = (binding.capital_pool_id, str(getattr(binding, "capital_sleeve_id", "") or "").strip()) if binding else (None, "")
+            conf = next((b for b in self.binding_store.list(capital_pool_id=pool) if (not binding or b.binding_id != binding.binding_id) and str(getattr(b, "capital_sleeve_id", "") or "").strip() == sleeve), None) if pool and sleeve else None
+            if not conf or not caller_tenant or not _tenant_match(conf, caller_tenant):
+                safe_msg = f"Capital sleeve identity is already bound: pool={pool!r}, sleeve={sleeve!r}" if pool and sleeve else (msg.split(", binding=")[0] if ", binding=" in msg else msg)
+                raise type(exc)(safe_msg) from exc
 
     def update_binding_status(
         self,
@@ -430,6 +505,7 @@ class CapitalBoundaryService:
         body: UpdateBindingStatusRequest,
     ) -> PersonaCapitalBinding:
         self._authorize("PersonaCapitalBinding", "update_status", body.actor_role)
+        self.get_binding(binding_id)
         with self._CAPITAL_STATE_APPLY_LOCK:
             if body.status == "active":
                 raise CapitalServiceError(
@@ -450,30 +526,7 @@ class CapitalBoundaryService:
     def _normalized_sleeve_id(value: Any) -> str | None:
         return str(value or "").strip() or None
 
-    @staticmethod
-    def _line_value(line: Any, field: str) -> Any:
-        if isinstance(line, dict):
-            return line.get(field)
-        return getattr(line, field, None)
-
-    @classmethod
-    def _line_increases_risk(cls, line: Any) -> bool:
-        return float(cls._line_value(line, "target_weight") or 0) > float(
-            cls._line_value(line, "current_weight") or 0
-        )
-
-    @classmethod
-    def _line_deployment_scope(cls, line: Any) -> str | None:
-        stage = str(cls._line_value(line, "stage") or "").strip().lower()
-        return cls._STAGE_DEPLOYMENT_SCOPE.get(stage)
-
-    @classmethod
-    def _line_is_paper_scope(cls, line: Any) -> bool:
-        return (
-            cls._line_deployment_scope(line) == "paper"
-            and str(cls._line_value(line, "capital_scope") or "").strip().lower()
-            == "paper_ledger"
-        )
+    _line_increases_risk, _line_deployment_scope, _line_is_paper_scope = staticmethod(line_increases_risk), staticmethod(line_deployment_scope), staticmethod(line_is_paper_scope)
 
     def _binding_is_rebalance_eligible(
         self,
@@ -498,15 +551,14 @@ class CapitalBoundaryService:
         required_scope: str | None = None,
     ) -> bool:
         return (
-            binding.persona_id == str(persona_id or "").strip()
-            and binding.capital_pool_id == capital_pool_id
-            and self._normalized_sleeve_id(binding.capital_sleeve_id)
-            == self._normalized_sleeve_id(capital_sleeve_id)
-            and self._binding_is_rebalance_eligible(binding)
-            and (
-                required_scope is None
-                or binding.permits_scope_ceiling(required_scope)
+            self._binding_identity_matches_rebalance_line(
+                binding,
+                capital_pool_id=capital_pool_id,
+                persona_id=persona_id,
+                capital_sleeve_id=capital_sleeve_id,
             )
+            and self._binding_is_rebalance_eligible(binding)
+            and (required_scope is None or binding.permits_scope_ceiling(required_scope))
         )
 
     def _binding_identity_matches_rebalance_line(
@@ -532,7 +584,12 @@ class CapitalBoundaryService:
         for line in proposal.get("lines") or []:
             if not self._line_increases_risk(line):
                 continue
-            pool = self.pool_store.require(pool_id)
+            try:
+                pool = self.get_pool(pool_id)
+            except CapitalPoolError as exc:
+                raise AllocationAuthorityConflict(
+                    f"CapitalPool {pool_id!r} is not available"
+                ) from exc
             if pool.status != "active":
                 raise AllocationAuthorityConflict(
                     f"CapitalPool {pool_id!r} must be active for a risk-increasing rebalance"
@@ -554,7 +611,7 @@ class CapitalBoundaryService:
                     f"for sleeve {sleeve_id!r}"
                 )
             try:
-                binding = self.binding_store.require(binding_id)
+                binding = self.get_binding(binding_id)
             except PersonaCapitalBindingError as exc:
                 raise AllocationAuthorityConflict(
                     f"Rebalance binding {binding_id!r} is no longer available"
@@ -575,12 +632,12 @@ class CapitalBoundaryService:
     def create_rebalance(self, body: CreateRebalanceRequest) -> Dict[str, Any]:
         self._authorize("Rebalance", "create", body.actor_role)
         with self._CAPITAL_STATE_APPLY_LOCK:
-            pool = self.pool_store.require(body.capital_pool_id)
+            pool = self.get_pool(body.capital_pool_id)
             if any(self._line_increases_risk(line) for line in body.lines) and pool.status != "active":
                 raise CapitalServiceError(
                     f"CapitalPool {pool.pool_id!r} must be active for a risk-increasing rebalance"
                 )
-            payload = body.model_dump(mode="json")
+            payload = {**body.model_dump(mode="json"), "tenant_id": _current_tenant()}
             for index, line in enumerate(body.lines):
                 increases_risk = self._line_increases_risk(line)
                 sleeve_id = self._normalized_sleeve_id(line.capital_sleeve_id)
@@ -594,7 +651,7 @@ class CapitalBoundaryService:
                     )
                 if sleeve_id is None and not increases_risk:
                     continue
-                candidates = self.binding_store.list(
+                candidates = self.list_bindings(
                     persona_id=line.persona_id,
                     capital_pool_id=body.capital_pool_id,
                 )
@@ -666,13 +723,27 @@ class CapitalBoundaryService:
         return self.allocation_store.list_rebalances(
             capital_pool_id=capital_pool_id,
             status=status,
+            tenant_id=_current_tenant(),
         )
 
     def get_rebalance(self, rebalance_id: str) -> Dict[str, Any]:
-        return self.allocation_store.get_rebalance(rebalance_id)
+        return self.allocation_store.get_rebalance(rebalance_id, tenant_id=_current_tenant())
 
     def get_rebalance_receipt(self, command_id: str) -> Dict[str, Any]:
-        return self.allocation_store.get_rebalance_receipt(command_id)
+        return self.allocation_store.get_rebalance_receipt(command_id, tenant_id=_current_tenant())
+
+    def _guard_rebalance_apply(self, rebalance_id: str, proposal: Dict[str, Any], decision_id: str | None, tenant: str | None) -> None:
+        lines, pool_id = proposal.get("lines") or [], str(proposal.get("capital_pool_id") or "")
+        held = self.allocation_store.list_allocations(capital_pool_id=pool_id, tenant_id=tenant)
+        held_map = {a.get("allocation_id"): a for a in held}
+        if any(self._line_increases_risk(line, held_map.get(line.get("allocation_id"))) for line in lines):
+            digest = plan_digest(proposal)
+            self.guard.authorize(
+                pool=self.get_pool(pool_id), tenant_id=tenant, decision_id=decision_id,
+                target_type="rebalance_apply", target_id=rebalance_id,
+                expected={"target_version": digest, "subject.plan_id": rebalance_id, "subject.plan_digest": digest, "subject.capital_pool_id": pool_id, "subject.risk_direction": "increase"},
+                allocations=held, proposal_lines=lines, bindings=self.list_bindings(capital_pool_id=pool_id),
+            )
 
     def apply_rebalance(
         self,
@@ -680,20 +751,22 @@ class CapitalBoundaryService:
         body: ApplyRebalanceRequest,
     ) -> Dict[str, Any]:
         self._authorize("Rebalance", "apply", body.actor_role)
+        tenant = _current_tenant()
         with self._CAPITAL_STATE_APPLY_LOCK:
             try:
-                self.allocation_store.get_rebalance_receipt(body.command_id)
+                self.allocation_store.get_rebalance_receipt(body.command_id, tenant_id=tenant)
             except AllocationAuthorityNotFound:
                 # Revalidate mutable governance state only before the first owner
                 # commit.  Once a command has a durable receipt, exact replay must
                 # remain readable even if its binding is later revoked or expires.
-                proposal = self.allocation_store.get_rebalance(rebalance_id)
+                proposal = self.allocation_store.get_rebalance(rebalance_id, tenant_id=tenant)
                 self._validate_persisted_rebalance_bindings(proposal)
-            payload = body.model_dump(mode="json")
-            payload["audit_ref"] = (
-                str(payload.get("audit_ref") or "").strip()
-                or f"capital-audit:{rebalance_id}:{body.command_id}"
-            )
+                self._guard_rebalance_apply(rebalance_id, proposal, body.approval_ref, tenant)
+            payload = {
+                **body.model_dump(mode="json"),
+                "tenant_id": tenant,
+                "audit_ref": str(body.audit_ref or "").strip() or f"capital-audit:{rebalance_id}:{body.command_id}",
+            }
             receipt, replayed = self.allocation_store.apply_rebalance(rebalance_id, payload)
         if receipt.get("audit_delivery_status") != "delivered":
             try:
@@ -751,11 +824,14 @@ class CapitalBoundaryService:
         return self.allocation_store.list_allocations(
             capital_pool_id=capital_pool_id,
             persona_id=persona_id,
+            tenant_id=_current_tenant(),
         )
 
     def create_containment(self, body: CreateContainmentRequest) -> Dict[str, Any]:
         self._authorize("Containment", "create", body.actor_role)
-        payload = body.model_dump(mode="json")
+        if body.capital_pool_id:
+            self.get_pool(body.capital_pool_id)
+        payload = {**body.model_dump(mode="json"), "tenant_id": _current_tenant()}
         record, replayed = self.allocation_store.create_containment(payload)
         if record.get("audit_delivery_status") != "delivered":
             try:
@@ -805,18 +881,19 @@ class CapitalBoundaryService:
         return record
 
     def get_containment_receipt(self, command_id: str) -> Dict[str, Any]:
-        return self.allocation_store.get_containment_receipt(command_id)
+        return self.allocation_store.get_containment_receipt(command_id, tenant_id=_current_tenant())
 
     def list_containments(
         self,
         *,
         persona_id: str | None = None,
     ) -> list[Dict[str, Any]]:
-        return self.allocation_store.list_containments(persona_id=persona_id)
+        return self.allocation_store.list_containments(persona_id=persona_id, tenant_id=_current_tenant())
 
     def current_live_owner(self, pool_id: str) -> PersonaCapitalBinding | None:
-        self.pool_store.require(pool_id)
-        return self.binding_store.live_owner_for_pool(pool_id)
+        self.get_pool(pool_id)
+        owner = self.binding_store.live_owner_for_pool(pool_id)
+        return owner if owner and _tenant_match(owner, _current_tenant()) else None
 
     def binding_admissibility(
         self,
@@ -825,8 +902,8 @@ class CapitalBoundaryService:
         capital_pool_id: str,
         target_stage: str,
     ) -> BindingAdmissibilityResponse:
-        pool = self.pool_store.require(capital_pool_id)
-        live_owner = self.binding_store.live_owner_for_pool(capital_pool_id)
+        pool = self.get_pool(capital_pool_id)
+        live_owner = self.current_live_owner(capital_pool_id)
         if pool.status != "active":
             return BindingAdmissibilityResponse(
                 persona_id=persona_id,
@@ -839,7 +916,7 @@ class CapitalBoundaryService:
                 reason=f"CapitalPool '{capital_pool_id}' is {pool.status}",
             )
 
-        candidates = self.binding_store.list(
+        candidates = self.list_bindings(
             persona_id=persona_id,
             capital_pool_id=capital_pool_id,
             status="active",
@@ -881,7 +958,11 @@ class CapitalBoundaryService:
         resource_type: str | None = None,
         resource_id: str | None = None,
     ) -> list[Dict[str, Any]]:
-        return self.audit_store.list_events(resource_type=resource_type, resource_id=resource_id)
+        return self.audit_store.list_events(
+            resource_type=resource_type,
+            resource_id=resource_id,
+            tenant_id=_current_tenant(),
+        )
 
     def _authorize(self, resource_type: str, operation: str, actor_role: str) -> None:
         if not is_authorized(resource_type, operation, actor_role):
@@ -906,6 +987,7 @@ class CapitalBoundaryService:
             actor_id=actor_id,
             actor_role=actor_role,
             detail=detail,
+            tenant_id=_current_tenant(),
         )
 
     def _emit_nonfatal(self, **event: Any) -> str | None:
@@ -966,13 +1048,11 @@ register_fastapi_health_routes(
 
 @app.middleware("http")
 async def enforce_capital_mutation_authority(request: Request, call_next):
-    if (
-        not request.url.path.startswith("/api/")
-        or request.method.upper() not in {"POST", "PUT", "PATCH", "DELETE"}
-    ):
+    if not request.url.path.startswith("/api/"):
         return await call_next(request)
     try:
         authority = authenticate_capital_request(
+            method=request.method,
             authorization=request.headers.get("Authorization"),
             tenant_id=request.headers.get("X-Tenant-Id"),
             actor_service=request.headers.get("X-Pantheon-Service"),
@@ -989,8 +1069,12 @@ async def enforce_capital_mutation_authority(request: Request, call_next):
         reset_current_authority(token)
 
 
+capital_guard = CapitalGuard()
+
+
 def get_capital_service() -> CapitalBoundaryService:
     return CapitalBoundaryService(
+        guard=capital_guard,
         pool_store=pool_store,
         binding_store=binding_store,
         allocation_store=allocation_authority_store,
@@ -1004,39 +1088,22 @@ def _raise_http_error(exc: Exception) -> None:
         raise HTTPException(status_code=exc.status_code, detail=exc.message)
     if isinstance(exc, PermissionError):
         raise HTTPException(status_code=403, detail=str(exc))
-    explicit_status = getattr(exc, "status_code", None)
-    if isinstance(explicit_status, int):
-        raise HTTPException(status_code=explicit_status, detail=str(exc))
-    message = str(exc)
-    if "not found" in message.lower():
-        raise HTTPException(status_code=404, detail=message)
-    raise HTTPException(status_code=400, detail=message)
+    status = getattr(exc, "status_code", None) or (404 if "not found" in str(exc).lower() else 400)
+    raise HTTPException(status_code=status, detail=str(exc))
 
 
 CAPITAL_HTTP_ERRORS = (
-    CapitalServiceError,
-    CapitalPoolError,
-    PersonaCapitalBindingError,
-    AllocationAuthorityError,
-    ValueError,
-    PermissionError,
-    CapitalInboundAuthorityError,
+    CapitalServiceError, CapitalPoolError, PersonaCapitalBindingError,
+    AllocationAuthorityError, ValueError, PermissionError, CapitalInboundAuthorityError,
 )
 
 
 def _pool_body(pool: CapitalPool, *, idempotent_replay: bool = False) -> CapitalPoolBody:
-    return CapitalPoolBody(**pool.to_dict(), idempotent_replay=idempotent_replay)
-
-
-def _binding_body(
-    binding: PersonaCapitalBinding,
-    *,
-    idempotent_replay: bool = False,
-) -> PersonaCapitalBindingBody:
-    return PersonaCapitalBindingBody(
-        **binding.to_dict(),
-        idempotent_replay=idempotent_replay,
-    )
+    return CapitalPoolBody(**pool.to_dict(), tenant_id=_tenant_of(pool), idempotent_replay=idempotent_replay, approval_digest=pool_digest(pool))
+def _binding_body(binding: PersonaCapitalBinding, *, idempotent_replay: bool = False) -> PersonaCapitalBindingBody:
+    return PersonaCapitalBindingBody(**binding.to_dict(), tenant_id=_tenant_of(binding), idempotent_replay=idempotent_replay, approval_digest=binding_digest(binding))
+def _rebalance_body(record: Dict[str, Any]) -> RebalanceBody:
+    return RebalanceBody(**record, plan_digest=plan_digest(record))
 
 
 @app.post("/api/capital-pools", response_model=CapitalPoolBody, status_code=201)
@@ -1183,7 +1250,7 @@ def _allocation_list_response(records: List[Dict[str, Any]]) -> AllocationListRe
 def create_rebalance(body: CreateRebalanceRequest) -> RebalanceBody:
     try:
         body = bind_capital_mutation(body)
-        return RebalanceBody(**get_capital_service().create_rebalance(body))
+        return _rebalance_body(get_capital_service().create_rebalance(body))
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 
@@ -1197,13 +1264,13 @@ def list_rebalances(
         capital_pool_id=capital_pool_id,
         status=status,
     )
-    return [RebalanceBody(**record) for record in records]
+    return [_rebalance_body(record) for record in records]
 
 
 @app.get("/api/rebalances/{rebalance_id}", response_model=RebalanceBody)
 def get_rebalance(rebalance_id: str) -> RebalanceBody:
     try:
-        return RebalanceBody(**get_capital_service().get_rebalance(rebalance_id))
+        return _rebalance_body(get_capital_service().get_rebalance(rebalance_id))
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 
@@ -1258,16 +1325,11 @@ def list_pool_allocations(
     pool_id: str,
     persona_id: Optional[str] = None,
 ) -> AllocationListResponse:
-    service = get_capital_service()
     try:
-        service.get_pool(pool_id)
-        records = service.list_allocations(
-            capital_pool_id=pool_id,
-            persona_id=persona_id,
-        )
+        get_capital_service().get_pool(pool_id)
+        return list_allocations(capital_pool_id=pool_id, persona_id=persona_id)
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
-    return _allocation_list_response(records)
 
 
 @app.post("/api/containments", response_model=ContainmentBody, status_code=201)
@@ -1305,8 +1367,8 @@ def write_authority() -> WriteAuthorityResponse:
     return WriteAuthorityResponse(
         matrix=matrix_as_list(),
         description=(
-            "CapitalPool writes require capital.admin. PersonaCapitalBinding "
-            "writes require persona.admin. Governed BFF operator, approver, and admin "
+            "CapitalPool status writes require operator or capital.admin. PersonaCapitalBinding "
+            "activate/status writes require operator or persona.admin. Governed BFF operator, approver, and admin "
             "calls may create/apply rebalances and execute risk-decreasing containment."
         ),
     )

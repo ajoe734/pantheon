@@ -33,13 +33,52 @@ It does **not** own deployment execution or `RuntimeBinding` writes.
 
 | Object | Operation | Authorized role |
 |---|---|---|
-| `CapitalPool` | create / update status | `capital.admin` |
-| `PersonaCapitalBinding` | create / activate / update status | `persona.admin` |
+| `CapitalPool` | create | `operator`, `approver`, `admin`, `capital.admin` |
+| `CapitalPool` | update status | `operator`, `capital.admin` |
+| `PersonaCapitalBinding` | create | `operator`, `approver`, `admin`, `persona.admin` |
+| `PersonaCapitalBinding` | activate / update status | `operator`, `persona.admin` |
 | `Rebalance` | create / apply | `operator`, `approver`, `admin`, `capital.operator`, `capital.admin` |
 | `Containment` | create | `operator`, `approver`, `reviewer`, `admin`, `capital.operator`, `capital.admin`, `risk.admin` |
 
+Roles are the caller's verified JWT roles; `actor_id`/`actor_role` in a body
+must equal the verified actor and one of its roles. Role authority is never a
+Governance vote: a Capital approval is decided only by the CapitalGuard.
+
+A genuine paper binding (`role=paper_owner`, `allowed_deployment_scope=paper`)
+may be active with a null `approval_decision_id`; every other binding needs the
+exact Governance decision. The CapitalGuard exempts an operation from the Capital approval only when the
+owner's own facts say it is paper: the `paper_owner` binding with paper
+deployment scope, `paper_ledger` allocations and no active canary/live binding.
+A pool metadata label is necessary but never sufficient, and no body flag or
+environment field can exempt canary/live work. Ownership is the formal `tenant_id`; a
+legacy row whose formal tenant is blank is never adopted from metadata and fails
+closed, including an explicit null or empty formal field. Only isolated legacy
+JSON entities without a formal field use this service's server-stamped metadata
+tenant; PG rows and PG record adapters never promote metadata to ownership.
+
+`RiskPolicy.from_mapping` validates and parses configured limits once, including
+legacy aliases, and rejects malformed/nonfinite values. For pool activation,
+binding activation and rebalance apply, the existing evaluator also requires
+every applicable configured observation before normalization. An empty pool
+defers allocation-specific limits until there is a stage; canary scale limits
+apply only to canary contexts. Owner projections supply weights, gross/net
+exposure, leverage, turnover and stage. There is currently no authenticated
+liquidity, drawdown or canary-scale observation source in these owner paths:
+configured limits on those dimensions remain unavailable and deny risk increase.
+Caller metadata, including purported timestamps, is never such a source.
+
 BFF and other callers remain façades or consumers. They must not mutate the
 underlying JSON stores directly.
+
+## Inbound Authority and Whitelists
+
+Every `/api/` request requires a verified bearer token and `X-Tenant-Id` header
+matching the token's tenant claim. Service authorization distinguishes read queries
+from mutations:
+
+- **Mutations (`POST`, `PUT`, `PATCH`, `DELETE`):** Restricted to caller services authorized in `CAPITAL_ALLOWED_CALLER_SERVICES` (default: `control-plane-bff`).
+- **Reads (`GET`, `HEAD`):** Authorized for reader services in `CAPITAL_ALLOWED_READER_SERVICES` (default: `control-plane-bff,runtime-manager`). Services authorized for read access (such as `runtime-manager`) obtain read-only access to pools, bindings, and admissibility proofs without gaining mutation authority.
+
 
 ## API Surface
 
@@ -156,8 +195,13 @@ underlying JSON stores directly.
 
 ## Downstream Read Paths
 
-- Runtime-manager checks `/api/bindings/admissibility` before creating a `RuntimeBinding`.
+- Runtime-manager checks `/api/bindings/admissibility` and reads capital pools before creating a `RuntimeBinding` using its scoped `runtime-manager` service identity (`capital-reader` role).
 - BFF creates and applies rebalance proposals through this service, then reads
   `/api/allocations` (or the pool-scoped route) for authoritative readback.
 - BFF and other read surfaces load the canonical snapshots emitted by this service.
 - Persona session/bootstrap flows treat this service as the source of truth for pool/binding governance, while `RuntimeBinding` remains owned by runtime-manager.
+
+## Risk-increase guard inputs
+
+- `approval_digest` (pool, binding) and `plan_digest` (rebalance) are owner-computed and must be the approval's `target_version`; rebalance also sets `subject.plan_digest` to it. `request_hash` is idempotency only.
+- Risk policy files are read from `CAPITAL_RISK_POLICY_DIR` (default `services/capital/risk_policies/<risk_policy_ref>.json`); a missing policy, or a configured limit the owner cannot observe, rejects the increase.

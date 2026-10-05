@@ -14,6 +14,9 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 main = importlib.import_module("services.memory.main")
 from services.persona.lesson_governance import utc_now
+from services.runtime_auth_inbound import encode_jwt_hs256
+
+JWT_SECRET = "memory-lesson-test-secret"
 
 
 @pytest.fixture
@@ -28,13 +31,16 @@ def client(tmp_path: Path, monkeypatch) -> TestClient:
     monkeypatch.setenv("PANTHEON_PERSONA_MEMORY_STORE", str(persona_store_path))
     monkeypatch.setenv("PANTHEON_MEMORY_STORE", str(institutional_store_path))
     monkeypatch.setenv("PANTHEON_MEMORY_AUTHZ_MODE", "local")
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", JWT_SECRET)
 
     # Reload store singletons for the test
     main._candidate_store.cache_clear() if hasattr(main._candidate_store, "cache_clear") else None
     main._persona_store.cache_clear() if hasattr(main._persona_store, "cache_clear") else None
     main._store.cache_clear() if hasattr(main._store, "cache_clear") else None
 
-    return TestClient(main.app)
+    token = encode_jwt_hs256({"sub": "op-alice", "roles": ["operator"], "tenant_id": "tenant-alpha", "exp": 4102444800}, secret=JWT_SECRET)
+    return TestClient(main.app, headers={"Authorization": f"Bearer {token}"})
 
 
 def make_valid_candidate_payload(overrides: dict | None = None) -> dict:
@@ -75,6 +81,21 @@ def test_api_create_and_get_lesson_candidate(client: TestClient) -> None:
     listed = resp.json()["candidates"]
     assert len(listed) == 1
     assert listed[0]["lesson_candidate_id"] == payload["lesson_candidate_id"]
+
+
+def test_trade_lesson_routes_require_verified_tenant_identity(client: TestClient) -> None:
+    payload = make_valid_candidate_payload()
+    created = client.post("/api/memory/trade-lessons", json=payload)
+    assert created.status_code == 201
+    assert created.json()["tenant_id"] == "tenant-alpha"
+
+    other = encode_jwt_hs256({"sub": "foreign", "roles": ["operator"], "tenant_id": "tenant-beta", "exp": 4102444800}, secret=JWT_SECRET)
+    headers = {"Authorization": f"Bearer {other}"}
+    assert client.get(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}", headers=headers).status_code == 404
+    assert client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/submit-review", headers=headers).status_code == 404
+    assert client.get(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}").json()["review_state"] == "proposed"
+
+    assert client.get("/api/memory/trade-lessons", headers={"Authorization": ""}).status_code == 401
 
 
 def test_api_submit_review(client: TestClient) -> None:
@@ -177,7 +198,7 @@ def test_api_rbac_authorization_failures(client: TestClient) -> None:
         headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "trainer_session"}
     )
     assert resp.status_code == 403
-    assert "not authorized" in resp.json()["detail"]["message"]
+    assert "does not match verified identity" in resp.json()["detail"]
 
     # 2. Decide without actor_roles Header (X-Actor-Roles) -> 403
     decide_payload_no_roles = {
@@ -189,9 +210,9 @@ def test_api_rbac_authorization_failures(client: TestClient) -> None:
     resp = client.post(
         f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/decide",
         json=decide_payload_no_roles,
-        headers={"X-Actor-ID": "op-alice"} # Missing X-Actor-Roles
+        headers={"Authorization": "", "X-Actor-ID": "op-alice"} # Missing verified identity
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 401
 
     # 3. Merge with unauthorized role in header -> 403
     resp = client.post(
@@ -199,11 +220,11 @@ def test_api_rbac_authorization_failures(client: TestClient) -> None:
         headers={"X-Actor-ID": "op-alice", "X-Actor-Roles": "trainer_session"}
     )
     assert resp.status_code == 403
-    assert "not authorized" in resp.json()["detail"]["message"]
+    assert "roles do not match verified identity" in resp.json()["detail"]
 
     # 4. Merge without role in header -> 403
-    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/merge")
-    assert resp.status_code == 403
+    resp = client.post(f"/api/memory/trade-lessons/{payload['lesson_candidate_id']}/merge", headers={"Authorization": ""})
+    assert resp.status_code == 401
 
 
 def test_api_decide_receipt_validation_sensitive(client: TestClient, monkeypatch) -> None:
@@ -715,3 +736,84 @@ def test_api_decide_and_merge_target_validation_negative(client: TestClient, mon
     )
     assert resp.status_code == 403
     assert "target_version mismatch" in resp.json()["detail"]["message"]
+
+
+def test_content_bound_lesson_replay_and_conflict(client: TestClient) -> None:
+    payload = make_valid_candidate_payload()
+    client.post("/api/memory/trade-lessons", json=payload)
+    cid = payload["lesson_candidate_id"]
+
+    # 1. Submit review with idempotency key
+    sub_headers = {"Idempotency-Key": "idemp-sub-bound"}
+    r1 = client.post(f"/api/memory/trade-lessons/{cid}/submit-review", headers=sub_headers, json={"reason": "reason-a"})
+    assert r1.status_code == 200
+    assert r1.json()["review_state"] == "pending_review"
+
+    # Replay same key + same reason -> 200 idempotent replay
+    r2 = client.post(f"/api/memory/trade-lessons/{cid}/submit-review", headers=sub_headers, json={"reason": "reason-a"})
+    assert r2.status_code == 200
+    assert r2.json().get("meta", {}).get("idempotent_replay") is True
+
+    # Replay same key + different reason -> 409 conflict
+    r3 = client.post(f"/api/memory/trade-lessons/{cid}/submit-review", headers=sub_headers, json={"reason": "reason-b"})
+    assert r3.status_code == 409
+
+    # 2. Decide with idempotency key
+    dec_headers = {"Idempotency-Key": "idemp-dec-bound"}
+    d_body = {
+        "action": "reject", "operator_id": "op-alice", "reason": "insufficient evidence",
+        "audit_receipt_id": "aud-123", "actor_roles": ["operator"], "target_env": "paper",
+    }
+    r4 = client.post(f"/api/memory/trade-lessons/{cid}/decide", headers=dec_headers, json=d_body)
+    assert r4.status_code == 200
+    assert r4.json()["review_state"] == "rejected"
+
+    # Replay same key + same payload -> 200 idempotent replay
+    r5 = client.post(f"/api/memory/trade-lessons/{cid}/decide", headers=dec_headers, json=d_body)
+    assert r5.status_code == 200
+    assert r5.json().get("meta", {}).get("idempotent_replay") is True
+
+    # Replay same key + changed target_env -> 409 conflict (reproduced Codex2 finding 3)
+    d_body_conflict = dict(d_body, target_env="live", promotion_stage="live_approved")
+    r6 = client.post(f"/api/memory/trade-lessons/{cid}/decide", headers=dec_headers, json=d_body_conflict)
+    assert r6.status_code == 409
+
+    # Replay same key + changed episodes -> 409 conflict
+    d_body_ep = dict(d_body, episodes=[{"trade_episode_id": "ep-diff"}])
+    r7 = client.post(f"/api/memory/trade-lessons/{cid}/decide", headers=dec_headers, json=d_body_ep)
+    assert r7.status_code == 409
+
+    # Verify no standalone idempotency file was created (Finding 4)
+    cand_path = main._candidate_store_path()
+    assert not (cand_path.parent / "trade_lesson_idempotency.json").exists()
+
+
+def test_lesson_competing_writers_and_crash_restart(client: TestClient) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    p1 = make_valid_candidate_payload()
+    p2 = make_valid_candidate_payload()
+    client.post("/api/memory/trade-lessons", json=p1)
+    client.post("/api/memory/trade-lessons", json=p2)
+
+    def _decide(payload_and_key):
+        p, key = payload_and_key
+        cid = p["lesson_candidate_id"]
+        return client.post(
+            f"/api/memory/trade-lessons/{cid}/decide",
+            headers={"Idempotency-Key": key},
+            json={"action": "reject", "operator_id": "op-alice", "reason": "reject", "audit_receipt_id": "aud", "actor_roles": ["operator"]},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(_decide, [(p1, "comp-key-1"), (p2, "comp-key-2")]))
+
+    assert all(r.status_code == 200 for r in results)
+
+    # Crash-restart: load fresh store from disk
+    from services.persona.lesson_governance import TradeLessonCandidateStore
+    fresh_store = TradeLessonCandidateStore(main._candidate_store_path())
+    assert fresh_store.get(p1["lesson_candidate_id"])["review_state"] == "rejected"
+    assert fresh_store.get(p2["lesson_candidate_id"])["review_state"] == "rejected"
+    # Replay check in fresh store
+    _, replayed = fresh_store.transition_with_idempotency(p1["lesson_candidate_id"], lambda c: c, idempotency_key="comp-key-1", content={"candidate_id": p1["lesson_candidate_id"], "action": "decide", "tenant_id": "tenant-alpha", "actor_id": "op-alice", "decision": "reject", "reason": "reject", "audit_receipt_id": "aud", "target_env": None, "promotion_stage": None, "episodes": None})
+    assert replayed is True

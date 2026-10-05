@@ -9,26 +9,13 @@ from typing import Iterator
 from fastapi.testclient import TestClient
 
 import pytest
-from services.control_plane.bff.command_adapters.contracts import (
-    build_foundation_command_context,
-    serialize_foundation_context,
-)
 from services.control_plane.bff.command_adapters.preconditions import (
     _TWO_MAN_SIGNER_FIELDS,
     _TWO_MAN_SIGNER_LIST_FIELDS,
     _two_man_signers,
 )
 from services.control_plane.bff.command_queue import CommandStore
-from services.control_plane.bff.models import (
-    AuditContext,
-    CommandStatus,
-    CommandType,
-    ObjectType,
-    OperatorCommand,
-    TargetObject,
-    utc_now,
-)
-from services.control_plane.bff.auth.policy import extract_identity_stub
+from services.control_plane.bff.models import CommandStatus
 from services.control_plane.bff.tests.conftest import (
     ApprovalDecisionReadSurface,
     build_command_security_app,
@@ -79,7 +66,7 @@ def _isolated_security_client() -> Iterator[TestClient]:
 def _seed_approval_decision(
     decision_id: str,
     *,
-    command: str = "RemediateSentinelIntervention",
+    command: str = "HardRollback",
     target_id: str = "int-sec-001",
     state: str = "approved",
 ) -> None:
@@ -89,7 +76,7 @@ def _seed_approval_decision(
         "outcome": "approved",
         "state": state,
         "command": command,
-        "target_type": "SentinelIntervention",
+        "target_type": "Runtime",
         "target_id": target_id,
         "reviewer": "governance",
         "risk_level": "critical",
@@ -112,8 +99,8 @@ def _create_bound_confirm_token(
         headers={**(headers or PRIMARY_HEADERS), "Idempotency-Key": f"create-{token_id}"},
         json={
             "tokenId": token_id,
-            "command": "RemediateSentinelIntervention",
-            "target": {"type": "SentinelIntervention", "id": target_id},
+            "command": "HardRollback",
+            "target": {"type": "Runtime", "id": target_id},
             "operator_id": "op-primary" if headers is None else "op-secondary",
             "reason": "bind confirmation token for security hardening test",
         },
@@ -139,8 +126,8 @@ def _create_bound_two_man_signature(
             },
             json={
                 "twoManSignatureId": signature_id,
-                "command": "RemediateSentinelIntervention",
-                "target": {"type": "SentinelIntervention", "id": target_id},
+                "command": "HardRollback",
+                "target": {"type": "Runtime", "id": target_id},
                 "signerOperatorIds": [signer],
                 "reason": "authenticated operator signed the guarded command",
             },
@@ -160,11 +147,10 @@ def _remediate_payload(
     signature_id: str = "tms-sec-001",
 ) -> dict:
     return {
-        "command": "RemediateSentinelIntervention",
-        "target": {"type": "SentinelIntervention", "id": target_id},
+        "command": "HardRollback",
+        "target": {"type": "Runtime", "id": target_id},
         "params": {
-            "intervention_id": target_id,
-            "remediation_action": "resolve",
+            "target_artifact_id": "artifact-sec-001",
         },
         "audit_context": {"reason": "security hardening acceptance path"},
         "approvalDecisionId": approval_id,
@@ -192,7 +178,7 @@ def test_final_command_validates_bound_preconditions_and_redacts_bearer() -> Non
         records = [
             record
             for record in _state.command_store._get_all_commands()
-            if record["type"] == "RemediateSentinelIntervention"
+            if record["type"] == "HardRollback"
         ]
         assert len(records) == 1
         audit = records[0]["audit"]
@@ -203,165 +189,6 @@ def test_final_command_validates_bound_preconditions_and_redacts_bearer() -> Non
         }
         assert "auth_token" not in audit
         assert "op-primary:operator,approver:mfa" not in json.dumps(audit)
-
-
-def test_specialized_remediation_consumes_token_and_preserves_same_key_replay() -> None:
-    with _isolated_security_client() as client:
-        _seed_approval_decision("approval-specialized-001")
-        _create_bound_confirm_token(client, "ct-specialized-001")
-        _create_bound_two_man_signature(client, "tms-specialized-001")
-        payload = {
-            "reason": "specialized remediation admission regression",
-            "remediation_action": "resolve",
-            "approvalDecisionId": "approval-specialized-001",
-            "twoManSignatureId": "tms-specialized-001",
-        }
-        request_headers = {
-            **PRIMARY_HEADERS,
-            "Idempotency-Key": "idem-specialized-001",
-            "X-Confirm-Token": "ct-specialized-001",
-        }
-
-        accepted = client.post(
-            "/bff/v5/interventions/int-sec-001/remediate",
-            headers=request_headers,
-            json=payload,
-        )
-        assert accepted.status_code == 202, accepted.text
-        command_id = accepted.json()["data"]["command_id"]
-        token_state = client.get(
-            "/bff/confirm-tokens/ct-specialized-001",
-            headers=PRIMARY_HEADERS,
-        )
-        assert token_state.status_code == 200, token_state.text
-        assert token_state.json()["data"]["status"] == "redeemed"
-
-        replay = client.post(
-            "/bff/v5/interventions/int-sec-001/remediate",
-            headers=request_headers,
-            json=payload,
-        )
-        assert replay.status_code == 202, replay.text
-        assert replay.json()["data"]["command_id"] == command_id
-
-        reused = client.post(
-            "/bff/v5/interventions/int-sec-001/remediate",
-            headers={
-                **PRIMARY_HEADERS,
-                "Idempotency-Key": "idem-specialized-reused-token",
-                "X-Confirm-Token": "ct-specialized-001",
-            },
-            json=payload,
-        )
-        assert reused.status_code == 428, reused.text
-        assert _error_reason(reused) == "CONFIRM_TOKEN_INVALID"
-        guarded_records = [
-            record
-            for record in _state.command_store._get_all_commands()
-            if record["type"] == "RemediateSentinelIntervention"
-        ]
-        redemption_records = [
-            record
-            for record in _state.command_store._get_all_commands()
-            if record["type"] == CommandType.CONFIRM_TOKEN_REDEEM.value
-            and record.get("target", {}).get("id") == "ct-specialized-001"
-        ]
-        assert len(guarded_records) == 1
-        assert len(redemption_records) == 1
-
-
-def test_specialized_remediation_replays_preupgrade_foundation_record() -> None:
-    with _isolated_security_client() as client:
-        _seed_approval_decision("approval-specialized-upgrade")
-        _create_bound_confirm_token(client, "ct-specialized-upgrade")
-        _create_bound_two_man_signature(client, "tms-specialized-upgrade")
-        target_id = "int-sec-001"
-        idempotency_key = "idem-specialized-preupgrade"
-        payload = {
-            "reason": "replay pre-upgrade specialized admission",
-            "remediation_action": "resolve",
-            "approvalDecisionId": "approval-specialized-upgrade",
-            "twoManSignatureId": "tms-specialized-upgrade",
-        }
-        merged_params = {**payload, "intervention_id": target_id}
-        identity = extract_identity_stub(PRIMARY_HEADERS["Authorization"])
-        cmd = OperatorCommand(
-            command=CommandType.REMEDIATE_SENTINEL_INTERVENTION,
-            target=TargetObject(
-                type=ObjectType.SENTINEL_INTERVENTION,
-                id=target_id,
-            ),
-            action="remediate_sentinel_intervention",
-            params=merged_params,
-            audit_context=AuditContext(reason=payload["reason"]),
-        )
-        # Build the seeded "pre-upgrade" record with the same real foundation
-        # context builder the live admission path uses
-        # (command_adapters.contracts.build_foundation_command_context), so
-        # this exercises genuine backward-compat replay behavior rather than
-        # a synthetic shape invented by the test.
-        foundation = build_foundation_command_context(
-            cmd=cmd,
-            identity=identity,
-            raw_payload={**payload, "intervention_id": target_id},
-            trace_id=PRIMARY_HEADERS["X-Trace-Id"],
-            correlation_id=PRIMARY_HEADERS["X-Correlation-Id"],
-            request_id=PRIMARY_HEADERS["X-Request-Id"],
-            idempotency_key=idempotency_key,
-        )
-        command_id = "cmd-specialized-preupgrade"
-        foundation["idempotency_record"] = foundation["idempotency_record"].with_status(
-            "succeeded",
-            result_ref=f"command:{command_id}",
-        )
-        submitted_at = utc_now()
-        stored_params = dict(cmd.params)
-        stored_params["idempotency_key"] = idempotency_key
-        stored_params["request_hash"] = foundation["idempotency_record"].request_hash
-        serialized_foundation = serialize_foundation_context(foundation)
-        _state.command_store.submit_command(
-            command_id=command_id,
-            command_type=cmd.command,
-            target=cmd.target,
-            submitted_at=submitted_at,
-            params=stored_params,
-            audit_context={
-                "operator_id": identity.operator_id,
-                "reason": payload["reason"],
-                "precondition_evidence": {
-                    "confirm_token_id": "ct-specialized-upgrade",
-                    "approval_decision_id": "approval-specialized-upgrade",
-                    "two_man_signature_id": "tms-specialized-upgrade",
-                },
-                "foundation": serialized_foundation,
-            },
-            foundation_context=serialized_foundation,
-        )
-        _state.command_store.update_status(command_id, CommandStatus.EXECUTED)
-
-        replay = client.post(
-            f"/bff/v5/interventions/{target_id}/remediate",
-            headers={
-                **PRIMARY_HEADERS,
-                "Idempotency-Key": idempotency_key,
-                "X-Confirm-Token": "ct-specialized-upgrade",
-            },
-            json=payload,
-        )
-        assert replay.status_code == 202, replay.text
-        assert replay.json()["data"]["command_id"] == command_id
-        token_state = client.get(
-            "/bff/confirm-tokens/ct-specialized-upgrade",
-            headers=PRIMARY_HEADERS,
-        )
-        assert token_state.status_code == 200, token_state.text
-        assert token_state.json()["data"]["status"] == "redeemed"
-        guarded_records = [
-            record
-            for record in _state.command_store._get_all_commands()
-            if record["type"] == "RemediateSentinelIntervention"
-        ]
-        assert len(guarded_records) == 1
 
 
 def test_confirm_token_must_be_issued_unredeemed_and_bound_to_caller() -> None:
@@ -481,8 +308,8 @@ def test_two_man_sign_uses_only_authenticated_actor_and_rejects_reviewer() -> No
             headers={**PRIMARY_HEADERS, "Idempotency-Key": "sign-forged-victim"},
             json={
                 "twoManSignatureId": "tms-forged-victim",
-                "command": "RemediateSentinelIntervention",
-                "target": {"type": "SentinelIntervention", "id": "int-sec-001"},
+                "command": "HardRollback",
+                "target": {"type": "Runtime", "id": "int-sec-001"},
                 "signerOperatorIds": ["op-primary", "op-victim"],
                 "secondOperatorId": "op-victim",
                 "reason": "attempt to count an unauthenticated victim as second signer",
@@ -516,8 +343,8 @@ def test_two_man_sign_uses_only_authenticated_actor_and_rejects_reviewer() -> No
             },
             json={
                 "twoManSignatureId": "tms-reviewer-denied",
-                "command": "RemediateSentinelIntervention",
-                "target": {"type": "SentinelIntervention", "id": "int-sec-001"},
+                "command": "HardRollback",
+                "target": {"type": "Runtime", "id": "int-sec-001"},
                 "reason": "reviewer must not produce trusted two-man evidence",
             },
         )
@@ -554,8 +381,8 @@ def test_every_two_man_signer_alias_is_server_sanitized(
             },
             json={
                 "twoManSignatureId": signature_id,
-                "command": "RemediateSentinelIntervention",
-                "target": {"type": "SentinelIntervention", "id": "int-sec-001"},
+                "command": "HardRollback",
+                "target": {"type": "Runtime", "id": "int-sec-001"},
                 signer_alias: forged_value,
                 "reason": "caller signer aliases must never mint another identity",
             },
@@ -583,7 +410,7 @@ def test_every_two_man_signer_alias_is_server_sanitized(
         assert _error_reason(final) == "TWO_MAN_SIGNATURE_SIGNER_MISMATCH"
 
 
-def test_generic_v5_and_claim_routes_cannot_forge_two_man_evidence() -> None:
+def test_generic_v5_route_cannot_forge_two_man_evidence() -> None:
     with _isolated_security_client() as client:
         _seed_approval_decision("approval-sec-001")
 
@@ -596,8 +423,8 @@ def test_generic_v5_and_claim_routes_cannot_forge_two_man_evidence() -> None:
                 "target": {"type": "SentinelIntervention", "id": generic_signature},
                 "params": {
                     "twoManSignatureId": generic_signature,
-                    "command": "RemediateSentinelIntervention",
-                    "target": {"type": "SentinelIntervention", "id": "int-sec-001"},
+                    "command": "HardRollback",
+                    "target": {"type": "Runtime", "id": "int-sec-001"},
                     "signerOperatorIds": ["op-primary", "op-victim"],
                 },
                 "audit_context": {"reason": "generic admission must not mint evidence"},
@@ -621,36 +448,6 @@ def test_generic_v5_and_claim_routes_cannot_forge_two_man_evidence() -> None:
         assert generic_final.status_code == 409, generic_final.text
         assert _error_reason(generic_final) == "TWO_MAN_SIGNATURE_NOT_FOUND"
 
-        claim_signature = "tms-claim-forged"
-        claim = client.post(
-            "/bff/v5/interventions/int-sec-001/claim",
-            headers={**PRIMARY_HEADERS, "Idempotency-Key": "claim-v5-forge"},
-            json={
-                "twoManSignatureId": claim_signature,
-                "command": "RemediateSentinelIntervention",
-                "target": {"type": "SentinelIntervention", "id": "int-sec-001"},
-                "signerOperatorIds": ["op-primary", "op-victim"],
-                "reason": "claim alias must not mint evidence",
-            },
-        )
-        assert claim.status_code == 202, claim.text
-        _state.command_store.update_status(
-            claim.json()["data"]["command_id"], CommandStatus.EXECUTED
-        )
-
-        _create_bound_confirm_token(client, "ct-claim-forge")
-        claim_final = client.post(
-            "/bff/v1/commands",
-            headers={
-                **PRIMARY_HEADERS,
-                "Idempotency-Key": "claim-v5-forge-final",
-                "X-Confirm-Token": "ct-claim-forge",
-            },
-            json=_remediate_payload(signature_id=claim_signature),
-        )
-        assert claim_final.status_code == 409, claim_final.text
-        assert _error_reason(claim_final) == "TWO_MAN_SIGNATURE_NOT_FOUND"
-
 
 def test_concurrent_two_man_signatures_are_operator_scoped_and_remain_usable() -> None:
     with _isolated_security_client() as client:
@@ -664,8 +461,8 @@ def test_concurrent_two_man_signatures_are_operator_scoped_and_remain_usable() -
                 headers={**headers, "Idempotency-Key": "shared-concurrent-tms-key"},
                 json={
                     "twoManSignatureId": signature_id,
-                    "command": "RemediateSentinelIntervention",
-                    "target": {"type": "SentinelIntervention", "id": "int-sec-001"},
+                    "command": "HardRollback",
+                    "target": {"type": "Runtime", "id": "int-sec-001"},
                     "signerOperatorIds": ["op-primary", "op-secondary"],
                     "reason": "concurrent two-man authorization for the same guarded target",
                 },

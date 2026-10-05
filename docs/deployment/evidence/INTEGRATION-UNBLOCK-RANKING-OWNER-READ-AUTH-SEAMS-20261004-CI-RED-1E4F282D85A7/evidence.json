@@ -1,0 +1,119 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-RANKING-OWNER-READ-AUTH-SEAMS-20261004-CI-RED-1E4F282D85A7",
+  "recorded_at": "2026-10-04T15:27:00Z",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "repository": "ajoe734/pantheon",
+  "base_sha": "dc95ca6f5ce57e228b24a75f1dad9c0063049a8d",
+  "changed_files": [
+    "docs/deployment/evidence/INTEGRATION-UNBLOCK-RANKING-OWNER-READ-AUTH-SEAMS-20261004-CI-RED-1E4F282D85A7/evidence.json"
+  ],
+  "source_task": "RANKING-OWNER-READ-AUTH-SEAMS-20261004",
+  "source_pr": "https://github.com/ajoe734/pantheon/pull/6147",
+  "original_head": "385ad0bac071478d826fa82194952d2f3846dae7",
+  "original_base": "dc95ca6f5ce57e228b24a75f1dad9c0063049a8d",
+  "root_cause": {
+    "dispatch_reason": "ci-red",
+    "workflow": "Persona Owner Contract",
+    "job": "Persona provisioning owner contracts",
+    "run_id": 37211366802,
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/37211366802",
+    "failing_tests": [
+      {
+        "test": "test_real_create_and_pending_reload_remain_controller_eligible",
+        "file": "services/control-plane/bff/tests/test_persona_create_owner_contract.py",
+        "assertion": "PersonaWriteOwnerUnavailable: TENANT_SCOPE_DENIED: An explicitly admitted tenant is required",
+        "detail": "In services/persona/write_owner.py, list_personas required an admitted tenant whenever authorization was supplied. The PersonaRegistryHttpWritePort client supplies a service token (without JWT claims) and calls list_personas without an X-Tenant-Id header, causing resolve_persona_tenant_scope to reject the request with HTTP 403 TENANT_SCOPE_DENIED."
+      },
+      {
+        "test": "test_actual_reconciler_keeps_draft_owner_pending_without_runtime_evidence",
+        "file": "services/control-plane/bff/tests/test_persona_create_owner_contract.py",
+        "assertion": "PersonaWriteOwnerUnavailable: TENANT_SCOPE_DENIED: An explicitly admitted tenant is required",
+        "detail": "Same root cause: _reconcile_persona_provisioning_once invoked _list_persona_records, which queried list_personas with the service token and was rejected with 403."
+      },
+      {
+        "test": "test_reload_uses_ledger_progress_not_stale_owner_metadata (5 parameterized variants)",
+        "file": "services/control-plane/bff/tests/test_persona_create_owner_contract.py",
+        "assertion": "PersonaWriteOwnerUnavailable: TENANT_SCOPE_DENIED: An explicitly admitted tenant is required",
+        "detail": "Same root cause: _list_persona_records invoked list_personas on the port without tenant claims."
+      },
+      {
+        "test": "test_ordinary_draft_without_ledger_is_not_reconciled",
+        "file": "services/control-plane/bff/tests/test_persona_create_owner_contract.py",
+        "assertion": "PersonaWriteOwnerUnavailable: TENANT_SCOPE_DENIED: An explicitly admitted tenant is required",
+        "detail": "Same root cause: _list_persona_records invoked list_personas on the port without tenant claims."
+      }
+    ],
+    "integrator_disposition": "scripts/git/auto_integrator.py operated correctly. Blocking on red CI (failed Persona provisioning owner contracts check) and publishing an unblock task protects dev mainline governance. No change to auto_integrator.py is required."
+  },
+  "pr_resolution": {
+    "action": "Updated PR #6147 with scoped fix commit on task/RANKING-OWNER-READ-AUTH-SEAMS-20261004",
+    "original_pr_number": 6147,
+    "original_pr_url": "https://github.com/ajoe734/pantheon/pull/6147",
+    "branch": "task/RANKING-OWNER-READ-AUTH-SEAMS-20261004",
+    "previous_head_sha": "385ad0bac071478d826fa82194952d2f3846dae7",
+    "updated_head_sha": "8186bdcc84eb720821c75cd9fcb45e1c8e5ca851",
+    "fix_commit": {
+      "sha": "8186bdcc84eb720821c75cd9fcb45e1c8e5ca851",
+      "subject": "RANKING-OWNER-READ-AUTH-SEAMS-20261004: fix service token read scope",
+      "changes": [
+        "services/persona/write_owner.py: resolve_persona_tenant_scope recognizes authority.token_kind == 'service' as an authorized service token, admitting requested_tenant or environment default tenant without requiring user token claims.",
+        "services/persona/write_owner.py: list_personas allows service tokens without an explicit tenant_id to query the registry without tenant restriction, and allows callers to view public personas when no private reflections exist.",
+        "docs/deployment/evidence/RANKING-OWNER-READ-AUTH-SEAMS-20261004/evidence.json: update validation entries and record net production lines (152 <= 160 budget)."
+      ]
+    },
+    "diff_budget_validation": {
+      "command": "git diff --numstat origin/dev -- docker-compose.yml services/control-plane/persona/main.py services/persona/write_owner.py services/source_ingestion/routers/ingest_operations.py",
+      "exit_code": 0,
+      "result": "200 added, 48 deleted, net 152 lines <= 160 budget"
+    },
+    "commit_trailers_validation": {
+      "command": "python3 scripts/git/check_commit_trailers.py --message-file /tmp/ranking-owner-fix-msg.txt --delivery-class product",
+      "exit_code": 0,
+      "result": "Valid subject and trailers (LLM-Agent, Task-ID, Reviewer, Verified)"
+    }
+  },
+  "integrator_code_assessment": {
+    "code_changed": false,
+    "reason_no_code_change": "scripts/git/auto_integrator.py is working as intended. The serialized integrator correctly rejected the red CI PR and filed the unblock request. Full test suite (162 tests) in scripts/git/test_auto_integrator.py passes cleanly."
+  },
+  "validation": [
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/tests/test_persona_create_owner_contract.py",
+      "exit_code": 0,
+      "result": "31 passed, 3 warnings in 11.82s (all 8 previously failing tests pass)"
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/persona/test_main.py services/persona/test_trade_reflection_owner.py services/persona/test_training_target_owner.py services/persona/test_lifecycle_approval_verifier.py",
+      "exit_code": 0,
+      "result": "49 passed, 1 warning, 3 subtests passed in 35.59s"
+    },
+    {
+      "command": "python3 -m unittest scripts/git/test_auto_integrator.py",
+      "exit_code": 0,
+      "result": "Ran 162 tests in 3.486s, OK"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "Clean diff with no whitespace errors"
+    }
+  ],
+  "source_review_followup": {
+    "source_task_id": "RANKING-OWNER-READ-AUTH-SEAMS-20261004",
+    "owner": "Antigravity",
+    "reviewer": "Antigravity2",
+    "required_actions": [
+      "Owner Antigravity reopens RANKING-OWNER-READ-AUTH-SEAMS-20261004 via ai-status.sh reopen to clear the previous head 385ad0b review binding.",
+      "Owner Antigravity runs ai-status.sh handoff binding PR #6147 updated head 8186bdcc84eb720821c75cd9fcb45e1c8e5ca851 with manifest docs/deployment/evidence/RANKING-OWNER-READ-AUTH-SEAMS-20261004/evidence.json.",
+      "Reviewer Antigravity2 independently reviews and approves the updated head via ai-status.sh approve.",
+      "Supervisor auto-integrator merges PR #6147 into dev, and owner Antigravity finalizes with ai-status.sh done."
+    ]
+  },
+  "resolution": {
+    "state": "original_pr_updated_and_no_longer_stranded",
+    "acceptance_1_satisfied": true,
+    "acceptance_2_satisfied": true,
+    "summary": "Root cause for RANKING-OWNER-READ-AUTH-SEAMS-20261004 integration blocker is fully documented. Original PR #6147 is updated to head 8186bdcc84eb720821c75cd9fcb45e1c8e5ca851 with verified tests passing, diff budget within 160 lines, and valid trailers, unblocking integration."
+  }
+}

@@ -88,10 +88,6 @@ from .models import (
     DecisionJournalEntryDTO,
     ErrorCode,
     ErrorDetail,
-    InterventionKind,
-    InterventionListResponse,
-    InterventionRecord,
-    InterventionStatus,
     JournalEntryMergePatch,
     McpImportedTool,
     McpRejectedTool,
@@ -116,6 +112,7 @@ from .models import (
     utc_now,
 )
 from .command_queue import CommandStore
+from .trade_journey_projection_store import ProjectionReadUnavailable
 
 try:
     from . import assistant_conversation_store as _acs_mod
@@ -301,7 +298,6 @@ from .core.lifespan import (
     replay_submitted_commands,
     retryable_terminal_capital_command,
 )
-_recoverable_capital_command = recoverable_capital_command
 _retryable_terminal_capital_command = retryable_terminal_capital_command
 from .auth.service import ProviderReadinessCache
 from .core.app_factory import build_bff_app
@@ -617,63 +613,6 @@ def _foundation_actor_ref(identity: OperatorIdentity) -> ActorRef:
         actor_id=identity.operator_id,
         roles=identity.roles,
     )
-def _command_runtime_auth_context(
-    *,
-    command_id: str,
-    authorization: Optional[str],
-    mfa_token: Optional[str],
-    identity: OperatorIdentity,
-) -> Dict[str, Any]:
-    raw_token = None
-    if authorization and authorization.startswith("Bearer "):
-        raw_token = authorization[len("Bearer "):]
-    effective_mfa_token = mfa_token or ("000000" if identity.mfa_verified else None)
-    if raw_token or effective_mfa_token:
-        _COMMAND_AUTH_CONTEXT[command_id] = {
-            "auth_token": raw_token,
-            "mfa_token": effective_mfa_token,
-        }
-    return {
-        "token_kind": identity.token_kind,
-        "bearer_token_present": bool(raw_token),
-        "mfa_token_present": bool(effective_mfa_token),
-    }
-def _foundation_request_payload(
-    cmd: OperatorCommand,
-    raw_payload: Dict[str, Any],
-    *,
-    route: str = _FINAL_COMMAND_ROUTE,
-    source_route: Optional[str] = None,
-) -> Dict[str, Any]:
-    payload = {
-        "route": route,
-        "command": cmd.command.value,
-        "target": cmd.target.model_dump(),
-        "params": dict(cmd.params),
-        "audit_context": cmd.audit_context.model_dump(),
-        "raw_payload": raw_payload,
-    }
-    if source_route:
-        payload["source_route"] = source_route
-    return payload
-def _foundation_idempotency_payload(request_payload: Dict[str, Any]) -> Dict[str, Any]:
-    payload = json.loads(json.dumps(request_payload))
-    payload.pop("route", None)
-    payload.pop("source_route", None)
-    audit_context = payload.get("audit_context")
-    if isinstance(audit_context, dict):
-        audit_context.pop("timestamp", None)
-    raw_payload = payload.get("raw_payload")
-    if isinstance(raw_payload, dict):
-        raw_audit_context = raw_payload.get("audit_context")
-        if isinstance(raw_audit_context, dict):
-            raw_audit_context.pop("timestamp", None)
-    return payload
-def _foundation_route_metadata(route: str, source_route: Optional[str] = None) -> Dict[str, Any]:
-    metadata: Dict[str, Any] = {"route": route}
-    if source_route:
-        metadata["source_route"] = source_route
-    return metadata
 def _build_foundation_trace(
     *,
     environment: EnvironmentScope,
@@ -702,89 +641,6 @@ def _build_foundation_trace(
         request_id=str(request_id or "").strip() or None,
         idempotency_key=str(idempotency_key or "").strip() or None,
     )
-def _build_foundation_command_context(
-    *,
-    cmd: OperatorCommand,
-    identity: OperatorIdentity,
-    raw_payload: Dict[str, Any],
-    trace_id: Optional[str],
-    correlation_id: Optional[str],
-    request_id: Optional[str],
-    idempotency_key: Optional[str],
-    route: str = _FINAL_COMMAND_ROUTE,
-    source_route: Optional[str] = None,
-) -> Dict[str, Any]:
-    environment = _foundation_environment_scope()
-    actor_ref = _foundation_actor_ref(identity)
-    route_metadata = _foundation_route_metadata(route, source_route)
-    authority_scope = AuthorityScope(
-        action=cmd.command.value,
-        target_type=cmd.target.type.value,
-        target_id=cmd.target.id,
-        environment=environment,
-        runtime_id=cmd.target.id if cmd.target.type == ObjectType.RUNTIME else None,
-        attributes=route_metadata,
-    )
-    request_payload = _foundation_request_payload(
-        cmd,
-        raw_payload,
-        route=route,
-        source_route=source_route,
-    )
-    trace = _build_foundation_trace(
-        environment=environment,
-        actor_ref=actor_ref,
-        trace_id=trace_id,
-        correlation_id=correlation_id,
-        request_id=request_id,
-        idempotency_key=idempotency_key,
-    )
-    command_envelope = CommandEnvelope.new(
-        command_type=cmd.command.value,
-        actor_ref=actor_ref,
-        authority_scope=authority_scope,
-        payload=request_payload,
-        trace=trace,
-        idempotency_key=str(idempotency_key or "").strip() or None,
-    )
-    idempotency_record = IdempotencyRecord.reserve(
-        idempotency_key=command_envelope.idempotency_key,
-        operation_type=f"bff.{cmd.command.value}",
-        target_ref=authority_scope.target_ref,
-        request_payload=_foundation_idempotency_payload(request_payload),
-        trace_id=command_envelope.trace.trace_id,
-    )
-    policy_decision = PolicyDecision.make(
-        policy_id="bff.command.admission",
-        policy_version=_BFF_FOUNDATION_POLICY_VERSION,
-        decision=PolicyDecisionValue.ALLOW,
-        actor_ref=actor_ref,
-        action=cmd.command.value,
-        target_ref=authority_scope.target_ref,
-        environment=environment,
-        trace_id=command_envelope.trace.trace_id,
-    )
-    audit_action = AuditAction.record(
-        actor_ref=actor_ref,
-        action_type="bff.command.accepted",
-        target_ref=authority_scope.target_ref,
-        environment=environment,
-        reason=cmd.audit_context.reason or "operator command admission",
-        trace=command_envelope.trace,
-        payload=request_payload,
-        policy_decision_ref=policy_decision.decision_id,
-        metadata=route_metadata,
-    )
-    return {
-        "admission_route": route,
-        "source_route": source_route,
-        "command_envelope": command_envelope,
-        "trace_context": command_envelope.trace,
-        "idempotency_record": idempotency_record,
-        "policy_decision": policy_decision,
-        "audit_action": audit_action,
-        "request_payload": request_payload,
-    }
 def _serialize_foundation_context(context: Dict[str, Any]) -> Dict[str, Any]:
     serialized = {
         "admission_route": context.get("admission_route"),
@@ -797,184 +653,6 @@ def _serialize_foundation_context(context: Dict[str, Any]) -> Dict[str, Any]:
     if context.get("source_route"):
         serialized["source_route"] = context.get("source_route")
     return serialized
-def _extract_error_fields(exc: HTTPException) -> Dict[str, Any]:
-    detail = exc.detail if isinstance(exc.detail, dict) else {}
-    error = detail.get("error") if isinstance(detail.get("error"), dict) else {}
-    details = error.get("details") if isinstance(error.get("details"), dict) else {}
-    details_extra = {
-        key: value
-        for key, value in details.items()
-        if key not in {"reason", "precondition_failed", "suggestion"} and value is not None
-    }
-    code_value = _canonical_error_code_value(
-        error.get("code") or ErrorCode.VALIDATION_FAILED.value,
-        status_code=exc.status_code,
-    )
-    try:
-        code = ErrorCode(code_value)
-    except ValueError:
-        code = ErrorCode.VALIDATION_FAILED
-    return {
-        "status_code": exc.status_code,
-        "code": code,
-        "message": error.get("message") or str(exc.detail),
-        "reason": details.get("reason") or str(exc.detail),
-        "precondition_failed": details.get("precondition_failed"),
-        "suggestion": details.get("suggestion"),
-        "details_extra": details_extra,
-        "correlation_id": detail.get("correlationId") or details_extra.get("correlationId"),
-    }
-def _foundation_bff_error(
-    exc: HTTPException,
-    *,
-    foundation_context: Dict[str, Any],
-) -> HTTPException:
-    fields = _extract_error_fields(exc)
-    command_envelope: CommandEnvelope = foundation_context["command_envelope"]
-    admission_route = str(foundation_context.get("admission_route") or _FINAL_COMMAND_ROUTE)
-    source_route = str(foundation_context.get("source_route") or "").strip() or None
-    route_metadata = _foundation_route_metadata(admission_route, source_route)
-    if fields["status_code"] == 403:
-        policy_decision = PolicyDecision.make(
-            policy_id="bff.command.admission",
-            policy_version=_BFF_FOUNDATION_POLICY_VERSION,
-            decision=PolicyDecisionValue.DENY,
-            actor_ref=command_envelope.actor_ref,
-            action=command_envelope.command_type,
-            target_ref=command_envelope.authority_scope.target_ref,
-            environment=command_envelope.authority_scope.environment,
-            trace_id=command_envelope.trace.trace_id,
-            reasons=[fields["reason"]],
-        )
-        foundation_error = ErrorEnvelope.policy_denial(
-            message=fields["message"],
-            trace=command_envelope.trace,
-            policy_decision_ref=policy_decision.decision_id,
-            details={
-                "reason": fields["reason"],
-                "precondition_failed": fields["precondition_failed"],
-                **fields["details_extra"],
-            },
-        )
-        audit_action = AuditAction.record(
-            actor_ref=command_envelope.actor_ref,
-            action_type="bff.command.policy_denied",
-            target_ref=command_envelope.authority_scope.target_ref,
-            environment=command_envelope.authority_scope.environment,
-            reason=fields["reason"],
-            trace=command_envelope.trace,
-            payload=foundation_context["request_payload"],
-            policy_decision_ref=policy_decision.decision_id,
-            metadata=route_metadata,
-        )
-        return _bff_error(
-            fields["status_code"],
-            fields["code"],
-            fields["message"],
-            fields["reason"],
-            precondition_failed=fields["precondition_failed"],
-            suggestion=fields["suggestion"],
-            details_extra=fields["details_extra"],
-            correlation_id=fields["correlation_id"],
-            foundation_error=foundation_error,
-            policy_decision=policy_decision,
-            audit_action=audit_action,
-        )
-
-    if fields["status_code"] in {400, 422}:
-        foundation_error = ErrorEnvelope.validation(
-            message=fields["message"],
-            trace=command_envelope.trace,
-            error_code=fields["code"].value,
-            details={
-                "reason": fields["reason"],
-                "precondition_failed": fields["precondition_failed"],
-                **fields["details_extra"],
-            },
-        )
-    else:
-        foundation_error = ErrorEnvelope(
-            error_id=foundation_id("err"),
-            error_code=fields["code"].value,
-            message=fields["message"],
-            error_kind=ErrorKind.INVARIANT_VIOLATION,
-            trace=command_envelope.trace,
-            status_code=fields["status_code"],
-            details={
-                "reason": fields["reason"],
-                "precondition_failed": fields["precondition_failed"],
-                **fields["details_extra"],
-            },
-        )
-    audit_action = AuditAction.record(
-        actor_ref=command_envelope.actor_ref,
-        action_type="bff.command.rejected",
-        target_ref=command_envelope.authority_scope.target_ref,
-        environment=command_envelope.authority_scope.environment,
-        reason=fields["reason"],
-        trace=command_envelope.trace,
-        payload=foundation_context["request_payload"],
-        metadata=route_metadata,
-    )
-    return _bff_error(
-        fields["status_code"],
-        fields["code"],
-        fields["message"],
-        fields["reason"],
-        precondition_failed=fields["precondition_failed"],
-        suggestion=fields["suggestion"],
-        details_extra=fields["details_extra"],
-        correlation_id=fields["correlation_id"],
-        foundation_error=foundation_error,
-        audit_action=audit_action,
-    )
-def _foundation_idempotency_conflict_error(
-    *,
-    foundation_context: Dict[str, Any],
-    existing_command_id: str,
-) -> HTTPException:
-    command_envelope: CommandEnvelope = foundation_context["command_envelope"]
-    idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
-    admission_route = str(foundation_context.get("admission_route") or _FINAL_COMMAND_ROUTE)
-    source_route = str(foundation_context.get("source_route") or "").strip() or None
-    message = "Idempotency key was already used with a different command payload"
-    reason = (
-        f"idempotency_key={idempotency_record.idempotency_key} is already bound "
-        f"to command {existing_command_id}"
-    )
-    foundation_error = ErrorEnvelope(
-        error_id=foundation_id("err"),
-        error_code=ErrorCode.IDEMPOTENCY_CONFLICT.value,
-        message=message,
-        error_kind=ErrorKind.IDEMPOTENCY_CONFLICT,
-        trace=command_envelope.trace,
-        status_code=409,
-        details={
-            "reason": reason,
-            "existing_command_id": existing_command_id,
-            "idempotency_key": idempotency_record.idempotency_key,
-        },
-    )
-    audit_action = AuditAction.record(
-        actor_ref=command_envelope.actor_ref,
-        action_type="bff.command.idempotency_conflict",
-        target_ref=command_envelope.authority_scope.target_ref,
-        environment=command_envelope.authority_scope.environment,
-        reason=reason,
-        trace=command_envelope.trace,
-        payload=foundation_context["request_payload"],
-        metadata=_foundation_route_metadata(admission_route, source_route),
-    )
-    return _bff_error(
-        409,
-        ErrorCode.IDEMPOTENCY_CONFLICT,
-        message,
-        reason,
-        precondition_failed="idempotency_conflict",
-        suggestion="Reuse the original payload for this key or submit with a new X-Idempotency-Key",
-        foundation_error=foundation_error,
-        audit_action=audit_action,
-    )
 def _foundation_audit_for_command_record(
     *,
     identity: OperatorIdentity,
@@ -1112,15 +790,12 @@ _APPROVE_DEPLOYMENT_REQUIRED = {"deployment_plan_id", "approval_decision"}
 _VALID_APPROVAL_DECISIONS = {"approve", "reject"}
 _APPROVE_DECISION_REQUIRED = {"decision_id"}
 _REJECT_DECISION_REQUIRED = {"decision_id", "rejection_reason"}
-_REQUEST_APPROVAL_REVISION_REQUIRED = {"decision_id", "revision_notes"}
 _ESCALATE_DIFF_REQUIRED = {"plan_id", "escalation_reason"}
 _PAUSE_RUNTIME_REQUIRED = {"runtime_binding_id", "pause_action"}
 _VALID_PAUSE_ACTIONS = {"pause", "resume"}
 _PAUSE_EXECUTION_REQUIRED = {"pause_new_entries", "cancel_open_orders"}
 _ROLLBACK_REQUIRED = {"rollback_target_type", "target_id", "rollback_to_version"}
 _VALID_ROLLBACK_TARGET_TYPES = {"deployment", "runtime"}
-_APPROVE_ROLLBACK_REQUIRED = {"rollback_id"}
-_REJECT_ROLLBACK_REQUIRED = {"rollback_id", "rejection_reason"}
 _RISK_OFF_REQUIRED = {"reduce_exposure_pct"}
 _SAFE_MODE_LEVELS = {"soft"}
 _DRAWER_RUNTIME_COMMANDS = {
@@ -1167,16 +842,8 @@ _REVIEW_MUTATION_REQUIRED = {"decision_id", "approval_decision_id"}
 _EXECUTE_MUTATION_REQUIRED = {"decision_id"}
 _RECORD_SPONSOR_DECISION_REQUIRED = {"committee_id", "sponsor_decision", "rationale_ref"}
 _VALID_SPONSOR_DECISIONS = {"approved", "rejected", "conditional"}
-_REMEDIATE_SENTINEL_REQUIRED = {"intervention_id", "remediation_action"}
-_VALID_REMEDIATION_ACTIONS = {"resolve", "dismiss", "escalate"}
-_DECIDE_V5_INTERVENTION_REQUIRED = {"intervention_id", "decision"}
-_VALID_V5_INTERVENTION_DECISIONS = {"approve", "reject", "defer", "dismiss"}
 _HUMAN_GATE_DECISIONS_BY_COMMAND: Dict[CommandType, str] = {
-    CommandType.HUMAN_GATE_APPROVE: "approve",
-    CommandType.HUMAN_GATE_REJECT: "reject",
-    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: "request_more_evidence",
     CommandType.HUMAN_GATE_REVOKE: "revoke",
-    CommandType.HUMAN_GATE_EXTEND_TTL: "extend_ttl",
 }
 _HUMAN_GATE_REQUIRED = {"human_gate_item_id", "decision"}
 _VALID_HUMAN_GATE_DECISIONS = set(_HUMAN_GATE_DECISIONS_BY_COMMAND.values())
@@ -1289,55 +956,12 @@ def _command_targets_live_runtime(cmd: OperatorCommand) -> bool:
         return False
     target_id = _env_token(cmd.target.id)
     return bool(re.search(r"(^|-)live($|-)", target_id))
-def _ensure_live_broker_scope_allowed(cmd: OperatorCommand, payload: Dict[str, Any]) -> None:
-    if auth_policy.bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False):
-        return
-    if not (_command_targets_live_runtime(cmd) or _payload_has_live_broker_signal(payload)):
-        return
-    env_name = os.getenv("PANTHEON_ENV", "dev").strip() or "dev"
-    raise _bff_error(
-        403,
-        ErrorCode.PRECONDITION_FAILED,
-        "Live broker scope is disabled for this BFF",
-        f"PANTHEON_ENV={env_name} has PANTHEON_LIVE_BROKER_ENABLED=false",
-        precondition_failed="live_broker_scope",
-        suggestion=(
-            "Use the staging-live BFF only after operator auth, governance, "
-            "runtime kill-switch, and broker rehearsal gates are verified"
-        ),
-    )
 _require_admin_mfa = auth_policy.require_admin_mfa
 def _deployment_review_href(plan_id: str) -> str:
     return f"{_OPERATOR_DEPLOYMENT_REVIEW_ROUTE}?plan={plan_id}"
 def _incident_detail_href(incident_id: str) -> str:
     return f"{_OPERATOR_INCIDENT_HOME_ROUTE}/{incident_id}"
 from .command_adapters.service import _runtime_command_context
-def _validate_drawer_runtime_target(cmd: OperatorCommand) -> None:
-    if cmd.command not in _DRAWER_RUNTIME_COMMANDS:
-        return
-    if cmd.target.type != ObjectType.RUNTIME:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            f"{cmd.command.value} requires target.type = Runtime",
-            "Drawer commands only accept Runtime targets",
-        )
-    if not str(cmd.target.id or "").strip():
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            f"{cmd.command.value} requires a runtime target id",
-            "target.id must be a non-empty runtime id",
-        )
-def _validate_audit_context(cmd: OperatorCommand) -> None:
-    if str(cmd.audit_context.reason or "").strip():
-        return
-    raise _bff_error(
-        400,
-        ErrorCode.VALIDATION_FAILED,
-        "audit_context.reason is required",
-        "audit_context.reason must be a non-empty string",
-    )
 from .assistant.management_service import _resolve_final_idempotency_key
 def _reject_body_idempotency_key(payload: Dict[str, Any]) -> None:
     """Reject final-contract payloads that carry idempotencyKey in the body."""
@@ -1367,18 +991,6 @@ def _require_journal_write_role(identity: OperatorIdentity) -> None:
         precondition_failed="role_check",
         suggestion="Escalate to an operator, reviewer, approver, or admin",
     )
-_CONFIRM_TOKEN_FIELDS = (
-    "confirmToken",
-    "confirm_token",
-    "confirmationToken",
-    "confirmation_token",
-)
-_APPROVAL_EVIDENCE_FIELDS = (
-    "approvalId",
-    "approval_id",
-    "approvalDecisionId",
-    "approval_decision_id",
-)
 _TWO_MAN_EVIDENCE_FIELDS = (
     "twoManSignatureId",
     "two_man_signature_id",
@@ -1575,10 +1187,6 @@ def _approval_decision_approved(decision: Dict[str, Any]) -> bool:
     return bool(values.intersection({"approve", "approved", "accepted"}))
 _REBALANCE_EVIDENCE_PRODUCER = "bff.rebalance-evidence.v1"
 _V5_TWO_MAN_EVIDENCE_PRODUCER = "bff.v5-two-man-evidence.v1"
-_SERVER_MANAGED_REBALANCE_EVIDENCE_TYPES = {
-    CommandType.REBALANCE_APPROVAL,
-    CommandType.REBALANCE_TWO_MAN_SIGN,
-}
 def _trusted_rebalance_evidence_record(
     record: Dict[str, Any],
     *,
@@ -1612,23 +1220,6 @@ def _trusted_v5_two_man_evidence_record(record: Dict[str, Any]) -> bool:
         == _V5_TWO_MAN_EVIDENCE_PRODUCER
         and audit.get("trusted_evidence_producer")
         == _V5_TWO_MAN_EVIDENCE_PRODUCER
-    )
-def _reject_server_managed_rebalance_evidence_command(cmd: OperatorCommand) -> None:
-    if cmd.command not in _SERVER_MANAGED_REBALANCE_EVIDENCE_TYPES:
-        return
-    raise _bff_error(
-        403,
-        ErrorCode.FORBIDDEN,
-        "Rebalance evidence commands are server-managed",
-        (
-            f"{cmd.command.value} can only be produced by the dedicated "
-            "authenticated rebalance evidence routes"
-        ),
-        precondition_failed="trusted_evidence_producer",
-        suggestion=(
-            "Use POST /bff/rebalances/{id}/approve or "
-            "POST /bff/rebalances/{id}/two-man-sign"
-        ),
     )
 def _rebalance_approval_decision_record(decision_id: str) -> Optional[Dict[str, Any]]:
     for record in reversed(command_store._get_all_commands()):
@@ -1856,352 +1447,9 @@ def _require_two_man_signature_evidence(
             details_extra={"twoManSignatureId": signature_id},
         )
     return signature_id
-def _require_final_command_confirm_token(
-    *,
-    cmd: OperatorCommand,
-    payload: Dict[str, Any],
-    confirm_token: Optional[str],
-    identity: OperatorIdentity,
-    correlation_id: Optional[str],
-) -> Optional[str]:
-    entry = get_catalog_entry(cmd.command.value)
-    if entry is None or not getattr(entry, "requires_confirm_token", False):
-        return None
-
-    params = dict(cmd.params)
-    token_id = _precondition_value(payload, params, _CONFIRM_TOKEN_FIELDS, confirm_token)
-    if not token_id:
-        raise _final_precondition_error(
-            cmd=cmd,
-            status_code=428,
-            code=ErrorCode.CONFIRMATION_REQUIRED,
-            message="Confirmation token is required before this action can be accepted",
-            reason="CONFIRM_TOKEN_MISSING",
-            kind="confirm_token",
-            correlation_id=correlation_id,
-            suggestion="Retry with X-Confirm-Token or confirmToken after the operator confirmation step",
-        )
-    token_records = _confirm_token_records(token_id)
-    create_record = next(
-        (
-            record
-            for record in reversed(token_records)
-            if record.get("type") == CommandType.CONFIRM_TOKEN_CREATE.value
-        ),
-        None,
-    )
-    token_state = _confirm_token_lifecycle_payload(token_id)
-    if create_record is None or token_state.get("status") != "created":
-        raise _final_precondition_error(
-            cmd=cmd,
-            status_code=428,
-            code=ErrorCode.CONFIRMATION_REQUIRED,
-            message="Confirmation token is not valid for this command",
-            reason="CONFIRM_TOKEN_INVALID",
-            kind="confirm_token",
-            correlation_id=correlation_id,
-            suggestion="Issue a fresh confirm token bound to this command, target, and operator",
-            details_extra={"confirmToken": token_id, "tokenStatus": token_state.get("status")},
-        )
-    if not _record_bound_to_command_and_target(create_record, cmd):
-        raise _final_precondition_error(
-            cmd=cmd,
-            status_code=428,
-            code=ErrorCode.CONFIRMATION_REQUIRED,
-            message="Confirmation token is not bound to this command target",
-            reason="CONFIRM_TOKEN_BINDING_MISMATCH",
-            kind="confirm_token",
-            correlation_id=correlation_id,
-            suggestion="Issue a confirm token for the exact command and target being submitted",
-            details_extra={"confirmToken": token_id},
-        )
-    if not _record_bound_to_caller(create_record, identity):
-        raise _final_precondition_error(
-            cmd=cmd,
-            status_code=428,
-            code=ErrorCode.CONFIRMATION_REQUIRED,
-            message="Confirmation token is not bound to this operator",
-            reason="CONFIRM_TOKEN_CALLER_MISMATCH",
-            kind="confirm_token",
-            correlation_id=correlation_id,
-            suggestion="Use a confirm token issued for the same authenticated operator",
-            details_extra={"confirmToken": token_id},
-        )
-    return token_id
-def _require_final_command_preconditions(
-    *,
-    cmd: OperatorCommand,
-    payload: Dict[str, Any],
-    confirm_token: Optional[str],
-    identity: OperatorIdentity,
-    correlation_id: Optional[str],
-) -> Dict[str, str]:
-    entry = get_catalog_entry(cmd.command.value)
-    if entry is None:
-        return {}
-
-    evidence: Dict[str, str] = {}
-    token_id = _require_final_command_confirm_token(
-        cmd=cmd,
-        payload=payload,
-        confirm_token=confirm_token,
-        identity=identity,
-        correlation_id=correlation_id,
-    )
-    if token_id:
-        evidence["confirm_token_id"] = token_id
-
-    params = dict(cmd.params)
-    paper_simulation_authority = _ppl_alloc_009_paper_rebalance_authority(cmd)
-    if paper_simulation_authority and not identity.mfa_verified:
-        raise _final_precondition_error(
-            cmd=cmd,
-            status_code=403,
-            code=ErrorCode.FORBIDDEN,
-            message="Paper allocation apply requires MFA",
-            reason="PAPER_SIMULATION_MFA_REQUIRED",
-            kind="mfa",
-            correlation_id=correlation_id,
-            suggestion="Retry with the strict dev operator identity and verified MFA",
-        )
-
-    approval_decision: Optional[Dict[str, Any]] = None
-    if getattr(entry, "requires_approval", False):
-        approval_decision_id = _precondition_value(payload, params, _APPROVAL_EVIDENCE_FIELDS)
-        if not approval_decision_id:
-            raise _final_precondition_error(
-                cmd=cmd,
-                status_code=409,
-                code=ErrorCode.HUMAN_GATE_PENDING,
-                message="Approval evidence is required before this action can be accepted",
-                reason="APPROVAL_EVIDENCE_MISSING",
-                kind="approval",
-                correlation_id=correlation_id,
-                suggestion="Attach approvalId from the governance approval flow before retrying",
-            )
-        approval_decision = read_store.get_approval_decision(approval_decision_id)
-        if approval_decision is None and cmd.command == CommandType.APPROVED_APPLY:
-            approval_decision = _rebalance_approval_decision_record(
-                approval_decision_id
-            )
-        if approval_decision is None:
-            raise _final_precondition_error(
-                cmd=cmd,
-                status_code=409,
-                code=ErrorCode.HUMAN_GATE_PENDING,
-                message="Approval decision does not exist",
-                reason="APPROVAL_DECISION_NOT_FOUND",
-                kind="approval",
-                correlation_id=correlation_id,
-                suggestion="Attach an approvalDecisionId that exists in the governance approval store",
-                details_extra={"approvalDecisionId": approval_decision_id},
-            )
-        if _approval_decision_consumed(approval_decision):
-            raise _final_precondition_error(
-                cmd=cmd,
-                status_code=409,
-                code=ErrorCode.HUMAN_GATE_PENDING,
-                message="Approval decision has already been consumed",
-                reason="APPROVAL_DECISION_CONSUMED",
-                kind="approval",
-                correlation_id=correlation_id,
-                suggestion="Request a fresh approval decision before retrying this command",
-                details_extra={"approvalDecisionId": approval_decision_id},
-            )
-        if not _approval_decision_approved(approval_decision):
-            raise _final_precondition_error(
-                cmd=cmd,
-                status_code=409,
-                code=ErrorCode.HUMAN_GATE_PENDING,
-                message="Approval decision is not approved",
-                reason="APPROVAL_DECISION_NOT_APPROVED",
-                kind="approval",
-                correlation_id=correlation_id,
-                suggestion="Obtain an approved decision for this exact command and target",
-                details_extra={"approvalDecisionId": approval_decision_id},
-            )
-        if not _approval_decision_applies_to_command(approval_decision, approval_decision_id, cmd):
-            raise _final_precondition_error(
-                cmd=cmd,
-                status_code=409,
-                code=ErrorCode.HUMAN_GATE_PENDING,
-                message="Approval decision is not bound to this command target",
-                reason="APPROVAL_DECISION_BINDING_MISMATCH",
-                kind="approval",
-                correlation_id=correlation_id,
-                suggestion="Attach approval evidence for the exact command and target being submitted",
-                details_extra={"approvalDecisionId": approval_decision_id},
-            )
-        evidence["approval_decision_id"] = approval_decision_id
-        if paper_simulation_authority:
-            approval_actor = str(
-                approval_decision.get("decided_by")
-                or approval_decision.get("actor_id")
-                or approval_decision.get("operator_id")
-                or ""
-            ).strip()
-            if not approval_actor or approval_actor == identity.operator_id:
-                raise _final_precondition_error(
-                    cmd=cmd,
-                    status_code=409,
-                    code=ErrorCode.HUMAN_GATE_PENDING,
-                    message="Paper allocation approval and apply must be distinct",
-                    reason="PAPER_SIMULATION_APPROVAL_APPLY_NOT_DISTINCT",
-                    kind="approval",
-                    correlation_id=correlation_id,
-                    suggestion=(
-                        "Use an approver identity distinct from the authenticated "
-                        "operator applying the paper allocation"
-                    ),
-                )
-            evidence["paper_simulation_authority"] = (
-                _PPL_ALLOC_009_PAPER_AUTHORITY_MODE
-            )
-
-    if cmd.command in _HUMAN_GATE_DECISIONS_BY_COMMAND:
-        evidence.update(
-            _require_human_gate_security_preconditions(
-                cmd=cmd,
-                payload=payload,
-                identity=identity,
-                correlation_id=correlation_id,
-            )
-        )
-        return evidence
-
-    if getattr(entry, "requires_two_man", False) and not paper_simulation_authority:
-        signature_id = _precondition_value(payload, params, _TWO_MAN_EVIDENCE_FIELDS)
-        evidence["two_man_signature_id"] = _require_two_man_signature_evidence(
-            cmd=cmd,
-            signature_id=signature_id,
-            correlation_id=correlation_id,
-        )
-
-    return evidence
-_FINAL_COMMAND_TARGET_TYPES: Dict[CommandType, ObjectType] = {
-    CommandType.APPROVED_APPLY: ObjectType.REBALANCE,
-    CommandType.HUMAN_GATE_APPROVE: ObjectType.HUMAN_GATE_ITEM,
-    CommandType.HUMAN_GATE_REJECT: ObjectType.HUMAN_GATE_ITEM,
-    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: ObjectType.HUMAN_GATE_ITEM,
-    CommandType.HUMAN_GATE_REVOKE: ObjectType.HUMAN_GATE_ITEM,
-    CommandType.HUMAN_GATE_EXTEND_TTL: ObjectType.HUMAN_GATE_ITEM,
-    CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: ObjectType.RANKING,
-    CommandType.PAUSE_PAPER_RUNTIME: ObjectType.RUNTIME,
-    CommandType.RESUME_PAPER_RUNTIME: ObjectType.RUNTIME,
-}
-def _validate_final_command_target_type(cmd: OperatorCommand) -> None:
-    expected = _FINAL_COMMAND_TARGET_TYPES.get(cmd.command)
-    if expected is None or cmd.target.type == expected:
-        return
-    raise _bff_error(
-        422,
-        ErrorCode.VALIDATION_FAILED,
-        "Invalid command target type",
-        f"{cmd.command.value} must target {expected.value}, not {cmd.target.type.value}",
-        precondition_failed="target.type",
-        suggestion=f"Use target.type={expected.value} for {cmd.command.value}",
-    )
-def _validate_capital_authority_target_binding(cmd: OperatorCommand) -> None:
-    if cmd.command == CommandType.APPROVED_APPLY:
-        aliases = ("rebalance_id", "rebalanceId")
-        label = "rebalance"
-    elif cmd.command == CommandType.EMERGENCY_CONTAINMENT:
-        if cmd.target.type != ObjectType.PERSONA:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "EmergencyContainment must target a Persona",
-                "Capital containment authority mutates the Persona identified by command target.id",
-                precondition_failed="capital_target_type",
-            )
-        aliases = ("persona_id", "personaId")
-        label = "persona"
-    else:
-        return
-    supplied = {
-        str(cmd.params.get(alias) or "").strip()
-        for alias in aliases
-        if str(cmd.params.get(alias) or "").strip()
-    }
-    if supplied and supplied != {cmd.target.id}:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            f"{label}_id must match command target.id",
-            (
-                f"Capital owner command targets {cmd.target.id!r}, but params supplied "
-                f"{sorted(supplied)!r}"
-            ),
-            precondition_failed="capital_target_id_mismatch",
-        )
-def _validate_paper_runtime_authority_target_binding(cmd: OperatorCommand) -> None:
-    if cmd.command not in {CommandType.PAUSE_PAPER_RUNTIME, CommandType.RESUME_PAPER_RUNTIME}:
-        return
-    if cmd.target.type != ObjectType.RUNTIME:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            f"{cmd.command.value} requires target.type = Runtime",
-            "Canonical paper commands only accept Runtime targets",
-            precondition_failed="target.type",
-        )
-    target_id = str(cmd.target.id or "").strip()
-    if not target_id:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            f"{cmd.command.value} requires a non-empty runtime target id",
-            "target.id must be a non-empty runtime id",
-            precondition_failed="target.id",
-        )
-    aliases = ("runtime_id", "runtimeId", "entity_id", "entityId")
-    supplied = {
-        str(cmd.params.get(alias) or "").strip()
-        for alias in aliases
-        if str(cmd.params.get(alias) or "").strip()
-    }
-    if supplied and supplied != {target_id}:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            f"runtime_id must match command target.id for {cmd.command.value}",
-            (
-                f"Canonical paper command targets {target_id!r}, but params supplied "
-                f"{sorted(supplied)!r}"
-            ),
-            precondition_failed="target_redirection_detected",
-        )
-    # Discard caller-supplied verified_binding/verified_binding_id
-    cmd.params.pop("verified_binding", None)
-    cmd.params.pop("verified_binding_id", None)
-    cmd.params.pop("verified_runtime_binding_id", None)
-    cmd.params["runtime_id"] = target_id
-    cmd.params["entity_id"] = target_id
-def _canonicalize_validated_precondition_evidence(
-    stored_params: Dict[str, Any],
-    evidence: Dict[str, str],
-) -> None:
-    confirm_token_id = evidence.get("confirm_token_id")
-    if confirm_token_id:
-        for alias in (*_CONFIRM_TOKEN_FIELDS, "confirm_token_id"):
-            stored_params.pop(alias, None)
-        stored_params["confirm_token_id"] = confirm_token_id
-
-    approval_decision_id = evidence.get("approval_decision_id")
-    if approval_decision_id:
-        for alias in (*_APPROVAL_EVIDENCE_FIELDS, "approval_ref"):
-            stored_params.pop(alias, None)
-        stored_params["approval_decision_id"] = approval_decision_id
-        stored_params["approval_ref"] = approval_decision_id
-
-    signature_id = evidence.get("two_man_signature_id")
-    if signature_id:
-        for alias in _TWO_MAN_EVIDENCE_FIELDS:
-            stored_params.pop(alias, None)
-        stored_params["two_man_signature_id"] = signature_id
 def _human_gate_source_type(item_id: str) -> Optional[str]:
     prefix = item_id.split(":", 1)[0].strip().lower() if ":" in item_id else ""
-    if prefix in {"approval", "intervention"}:
+    if prefix == "approval":
         return prefix
     return None
 def _human_gate_max_ttl_seconds() -> int:
@@ -2242,31 +1490,16 @@ def _human_gate_find_approval_record(source_id: Optional[str]) -> Optional[Dict[
         if candidate == source_id:
             return dict(item)
     return None
-def _human_gate_find_intervention_record(source_id: Optional[str]) -> Optional[Dict[str, Any]]:
-    if not source_id:
-        return None
-    getter = getattr(read_store, "get_v5_intervention", None)
-    if callable(getter):
-        record = getter(source_id)
-        if record is not None:
-            return dict(record)
-    for item in _v5_intervention_records():
-        candidate = _human_gate_clean_text(item.get("intervention_id") or item.get("id"))
-        if candidate == source_id:
-            return dict(item)
-    return None
 def _human_gate_source_record(params: Dict[str, Any]) -> tuple[Optional[str], Optional[str], Optional[Dict[str, Any]]]:
     item_id = _human_gate_clean_text(params.get("human_gate_item_id") or params.get("itemId") or params.get("item_id"))
     source_type = _human_gate_clean_text(params.get("source_type") or params.get("sourceType")).lower() or None
-    if source_type not in {"approval", "intervention", None}:
+    if source_type not in {"approval", None}:
         source_type = None
     if not source_type:
         source_type = _human_gate_source_type(item_id)
     source_id = _human_gate_source_id_from_params(params, item_id, source_type)
     if source_type == "approval":
         return source_type, source_id, _human_gate_find_approval_record(source_id)
-    if source_type == "intervention":
-        return source_type, source_id, _human_gate_find_intervention_record(source_id)
     return source_type, source_id, None
 def _human_gate_actor_id(value: Any) -> Optional[str]:
     if isinstance(value, dict):
@@ -2405,214 +1638,6 @@ def _require_human_gate_security_preconditions(
         params["twoManSignatureId"] = evidence["two_man_signature_id"]
 
     return evidence
-def _normalize_human_gate_command(cmd: OperatorCommand) -> OperatorCommand:
-    decision = _HUMAN_GATE_DECISIONS_BY_COMMAND.get(cmd.command)
-    if decision is None:
-        return cmd
-
-    params = dict(cmd.params or {})
-    item_id = str(cmd.target.id or "").strip()
-    provided_item_ids = [
-        _human_gate_clean_text(params.get(alias))
-        for alias in ("human_gate_item_id", "humanGateItemId", "item_id", "itemId")
-        if _human_gate_clean_text(params.get(alias))
-    ]
-    for provided_item_id in provided_item_ids:
-        if provided_item_id != item_id:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "HumanGate params target id does not match the command target",
-                "HUMAN_GATE_TARGET_MISMATCH",
-                precondition_failed="human_gate_item_id",
-                suggestion="Use target.id as the authoritative HumanGate item id",
-                details_extra={
-                    "targetId": item_id,
-                    "providedHumanGateItemId": provided_item_id,
-                },
-            )
-    params["human_gate_item_id"] = item_id
-    params["humanGateItemId"] = item_id
-    params["item_id"] = item_id
-    params["itemId"] = item_id
-    source_type = str(params.get("source_type") or params.get("sourceType") or "").strip()
-    if not source_type:
-        source_type = _human_gate_source_type(item_id) or ""
-    if source_type:
-        params["source_type"] = source_type
-        params["sourceType"] = source_type
-    params["decision"] = decision
-    params["action_id"] = decision
-    params["actionId"] = decision
-    params.setdefault("audit_event", f"human_gate.{decision}")
-    params.setdefault("auditEvent", f"human_gate.{decision}")
-    params.setdefault("entity_type", "human_gate_item")
-    params.setdefault("entity_id", item_id)
-    cmd.params = params
-    return cmd
-def _normalize_quarterly_recommendation_command(cmd: OperatorCommand) -> OperatorCommand:
-    if cmd.command != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT:
-        return cmd
-
-    params = dict(cmd.params or {})
-    recommendation_id = str(
-        params.get("recommendation_id")
-        or params.get("recommendationId")
-        or cmd.target.id
-        or ""
-    ).strip()
-    target_recommendation_id = str(cmd.target.id or "").strip()
-    if (
-        recommendation_id
-        and target_recommendation_id
-        and recommendation_id != target_recommendation_id
-    ):
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "recommendation_id does not match the command target",
-            "Use target.id as the authoritative quarterly recommendation id.",
-            precondition_failed="recommendation_id",
-        )
-    if recommendation_id:
-        params["recommendation_id"] = recommendation_id
-        params["recommendationId"] = recommendation_id
-
-    recommendation_action_id = str(
-        params.get("recommendation_action_id")
-        or params.get("recommendationActionId")
-        or params.get("actionId")
-        or params.get("action_id")
-        or ""
-    ).strip()
-    if recommendation_action_id and recommendation_action_id != "submit_recommendation":
-        params["recommendation_action_id"] = recommendation_action_id
-        params["recommendationActionId"] = recommendation_action_id
-
-    params["action_id"] = "submit_recommendation"
-    params["actionId"] = "submit_recommendation"
-    params.setdefault("audit_event", "quarterly_ranking.recommendation_submitted")
-    params.setdefault("auditEvent", "quarterly_ranking.recommendation_submitted")
-    params.setdefault("entity_type", "quarterly_ranking_recommendation")
-    params.setdefault("entity_id", recommendation_id or cmd.target.id)
-    cmd.params = params
-    return cmd
-def _normalize_b5_command_payload(cmd: OperatorCommand) -> OperatorCommand:
-    return _normalize_quarterly_recommendation_command(
-        _normalize_human_gate_command(cmd)
-    )
-def _normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorCommand:
-    command_type = payload.get("command_type")
-    if command_type:
-        try:
-            if command_type == CommandType.APPROVE_MUTATION.value:
-                mutation = ApproveMutationCommandPayload.model_validate(payload)
-                note = str(mutation.note or "").strip() or None
-                params: Dict[str, Any] = {"decision_id": mutation.decision_id}
-                if note:
-                    params["note"] = note
-                return OperatorCommand(
-                    command=CommandType.APPROVE_MUTATION,
-                    target=TargetObject(type=ObjectType.EVOLUTION_DECISION, id=mutation.decision_id),
-                    action="approve_mutation",
-                    params=params,
-                    audit_context=AuditContext(reason=note or mutation.command_type),
-                )
-            if command_type == CommandType.REJECT_MUTATION.value:
-                mutation = RejectMutationCommandPayload.model_validate(payload)
-                note = str(mutation.note or "").strip() or None
-                params = {"decision_id": mutation.decision_id}
-                if note:
-                    params["note"] = note
-                return OperatorCommand(
-                    command=CommandType.REJECT_MUTATION,
-                    target=TargetObject(type=ObjectType.EVOLUTION_DECISION, id=mutation.decision_id),
-                    action="reject_mutation",
-                    params=params,
-                    audit_context=AuditContext(reason=note or mutation.command_type),
-                )
-            if command_type == CommandType.REVIEW_MUTATION.value:
-                mutation = ReviewMutationCommandPayload.model_validate(payload)
-                note = str(mutation.note or "").strip() or None
-                params = {
-                    "decision_id": mutation.decision_id,
-                    "approval_decision_id": mutation.approval_decision_id,
-                }
-                if note:
-                    params["note"] = note
-                return OperatorCommand(
-                    command=CommandType.REVIEW_MUTATION,
-                    target=TargetObject(type=ObjectType.EVOLUTION_DECISION, id=mutation.decision_id),
-                    action="review_mutation",
-                    params=params,
-                    audit_context=AuditContext(reason=note or mutation.command_type),
-                )
-            if command_type == CommandType.EXECUTE_MUTATION.value:
-                mutation = ExecuteMutationCommandPayload.model_validate(payload)
-                note = str(mutation.note or "").strip() or None
-                params = {
-                    "decision_id": mutation.decision_id,
-                    "has_active_runtime": mutation.has_active_runtime,
-                    "freeze_mode": mutation.freeze_mode,
-                    "force_stage_freeze": mutation.force_stage_freeze,
-                }
-                if mutation.active_binding_id:
-                    params["active_binding_id"] = mutation.active_binding_id
-                if mutation.rollback_action_type:
-                    params["rollback_action_type"] = mutation.rollback_action_type
-                if mutation.fallback_artifact_id:
-                    params["fallback_artifact_id"] = mutation.fallback_artifact_id
-                if mutation.fallback_artifact_version:
-                    params["fallback_artifact_version"] = mutation.fallback_artifact_version
-                if note:
-                    params["note"] = note
-                return OperatorCommand(
-                    command=CommandType.EXECUTE_MUTATION,
-                    target=TargetObject(type=ObjectType.EVOLUTION_DECISION, id=mutation.decision_id),
-                    action="execute_mutation",
-                    params=params,
-                    audit_context=AuditContext(reason=note or mutation.command_type),
-                )
-            if command_type == CommandType.RECORD_SPONSOR_DECISION.value:
-                decision = RecordSponsorDecisionCommandPayload.model_validate(payload)
-                note = str(decision.note or "").strip() or None
-                params = {
-                    "committee_id": decision.committee_id,
-                    "sponsor_decision": decision.sponsor_decision,
-                    "rationale_ref": decision.rationale_ref,
-                }
-                if note:
-                    params["note"] = note
-                return OperatorCommand(
-                    command=CommandType.RECORD_SPONSOR_DECISION,
-                    target=TargetObject(type=ObjectType.COMMITTEE_BOARD, id=decision.committee_id),
-                    action="record_sponsor_decision",
-                    params=params,
-                    audit_context=AuditContext(reason=note or decision.command_type),
-                )
-        except ValidationError as exc:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                f"Invalid {command_type} payload",
-                str(exc),
-            ) from exc
-        raise _bff_error(
-            400,
-            ErrorCode.VALIDATION_FAILED,
-            "Unknown command_type",
-            f"Unsupported command_type: {command_type}",
-        )
-
-    try:
-        return _normalize_b5_command_payload(OperatorCommand.model_validate(payload))
-    except ValidationError as exc:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid operator command payload",
-            str(exc),
-        ) from exc
 from .command_adapters.preconditions import (
     _validate_pause_execution,
     _validate_issue_risk_off,
@@ -2626,88 +1651,6 @@ from .command_adapters.service import _derive_drawer_execution_params
 from .command_adapters.service import stored_command_params as _stored_command_params
 from .governance.service import human_inbox_surface_timeout_seconds as _human_inbox_surface_timeout_seconds
 
-def _assert_duplicate_confirm_token_matches(
-    *,
-    duplicate: Dict[str, Any],
-    cmd: OperatorCommand,
-    payload: Dict[str, Any],
-    confirm_token: Optional[str],
-    foundation_context: Dict[str, Any],
-) -> None:
-    audit = duplicate.get("audit") if isinstance(duplicate.get("audit"), dict) else {}
-    evidence = (
-        audit.get("precondition_evidence")
-        if isinstance(audit.get("precondition_evidence"), dict)
-        else {}
-    )
-    stored_params = (
-        duplicate.get("params") if isinstance(duplicate.get("params"), dict) else {}
-    )
-    stored_token_id = str(
-        evidence.get("confirm_token_id")
-        or stored_params.get("confirm_token_id")
-        or ""
-    ).strip()
-    if not stored_token_id:
-        return
-    supplied_token_id = _precondition_value(
-        payload,
-        dict(cmd.params),
-        _CONFIRM_TOKEN_FIELDS,
-        confirm_token,
-    )
-    if supplied_token_id == stored_token_id:
-        return
-    raise _foundation_idempotency_conflict_error(
-        foundation_context=foundation_context,
-        existing_command_id=str(duplicate.get("command_id") or ""),
-    )
-def _persist_admitted_command_with_confirm_token(
-    *,
-    command_id: str,
-    command_type: CommandType,
-    target: TargetObject,
-    submitted_at: str,
-    params: Dict[str, Any],
-    audit_context: Dict[str, Any],
-    foundation_context: Dict[str, Any],
-    precondition_evidence: Dict[str, str],
-    identity: OperatorIdentity,
-) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    token_id = str(precondition_evidence.get("confirm_token_id") or "").strip()
-    if not token_id:
-        return command_store.submit_command_if_no_active_target(
-            command_id=command_id,
-            command_type=command_type,
-            target=target,
-            submitted_at=submitted_at,
-            params=params,
-            audit_context=audit_context,
-            foundation_context=foundation_context,
-        )
-
-    confirmation_id = f"auto-confirm-{command_id}"
-    confirmation_request = {
-        "confirm_token": token_id,
-        "command_id": command_id,
-        "confirmation_id": confirmation_id,
-        "confirmed_by": identity.operator_id,
-    }
-    return command_store.submit_command_with_confirm_token_redeem_if_no_active_target(
-        command_id=command_id,
-        command_type=command_type,
-        target=target,
-        submitted_at=submitted_at,
-        params=params,
-        audit_context=audit_context,
-        foundation_context=foundation_context,
-        confirm_token_id=token_id,
-        confirmation_id=confirmation_id,
-        confirmation_command_id=f"cmd-{uuid.uuid4().hex[:16]}",
-        confirmation_idempotency_key=f"auto-confirm:{command_id}",
-        confirmation_request_hash=_stable_json_hash(confirmation_request),
-        operator_id=identity.operator_id,
-    )
 from .command_adapters.service import _resolve_execution_params_for_record
 from .pm12.service import (
     _pm12_resolve_quarterly_recommendation_submit_params,
@@ -2716,7 +1659,6 @@ from .command_adapters.preconditions import (
     _validate_approve_deployment,
     _validate_approve_decision,
     _validate_reject_decision,
-    _validate_request_approval_revision,
     _validate_pause_runtime,
     _validate_pause_execution,
     _validate_escalate_diff,
@@ -2725,8 +1667,6 @@ from .command_adapters.preconditions import (
     _validate_hard_rollback,
     _validate_issue_safe_mode,
     _validate_execute_rollback,
-    _validate_approve_rollback,
-    _validate_reject_rollback,
     _validate_activate_kill_switch,
     _validate_approve_evolution_decision,
     _validate_execute_evolution_action,
@@ -2736,18 +1676,11 @@ from .command_adapters.preconditions import (
     _validate_reject_mutation,
     _validate_review_mutation,
     _validate_execute_mutation,
-    _validate_remediate_sentinel_intervention,
-    _validate_decide_v5_intervention,
     _validate_human_gate_decision,
-    _validate_quarterly_ranking_recommendation_submit,
     _check_binding_tenant_ownership,
     _enforce_ops_console_preconditions,
-    _validate_observe,
-    _validate_request_review,
     _validate_pause_paper_runtime,
     _validate_resume_paper_runtime,
-    _validate_demote,
-    _validate_promote_candidate,
     _validate_rebalance_proposal,
     _validate_approved_apply,
     _validate_emergency_containment,
@@ -2787,11 +1720,7 @@ def _parse_rfc3339(value: Any) -> Optional[datetime]:
         return None
 _bff_me_tenant_payload = auth_policy.bff_me_tenant_payload
 _sem_session_id = auth_policy.get_session_id
-_sem_session_key = auth_policy.get_session_key
-_sem_legacy_operator_session_key = auth_policy.get_legacy_session_key
 
-def _sem_session_state(identity: OperatorIdentity) -> Dict[str, Any]:
-    return auth_policy.get_session_state(identity, session_lifecycle_store)
 
 def _raise_if_session_logged_out(identity: OperatorIdentity) -> None:
     return auth_policy.raise_if_session_logged_out(
@@ -2871,22 +1800,17 @@ def _dataset_surface_status(
 ) -> Dict[str, Any]:
     resolved_store = read_store if read_store is not None else globals().get("read_store")
     if source is None:
-        if resolved_store is not None and hasattr(resolved_store, "dataset_source"):
-            try:
-                source = str(resolved_store.dataset_source(dataset) or "missing")
-            except Exception:
-                source = "missing"
+        src = getattr(resolved_store, "dataset_source", lambda d: "missing")(dataset) if resolved_store else "missing"
+        if dataset == "incidents":
+            p = getattr(getattr(resolved_store, "lifecycle_telemetry_governance", None), "incidents", None) or getattr(resolved_store, "incident_port", None) or getattr(resolved_store, "incidents", None)
+            psrc = getattr(p, "dataset_source", lambda: "missing")() if p else "missing"
+            source = "unavailable" if (psrc == "unavailable" or getattr(p, "_last_error", False)) else (psrc if src in (None, "typed_store") else src)
         else:
-            source = "missing"
-    return _format_dataset_surface_status(
-        dataset,
-        snapshot_at=snapshot_at,
-        has_data=has_data,
-        missing_message=missing_message,
-        source=source,
-        utc_now=utc_now,
-        **kwargs,
-    )
+            source = str(src or "missing")
+    res = _format_dataset_surface_status(dataset, snapshot_at=snapshot_at, has_data=has_data, missing_message=missing_message, source=source, utc_now=utc_now, **kwargs)
+    if source in ("unavailable", "missing"):
+        res.update(status="unavailable", source=source)
+    return res
 def _loop_run_surface_status(
     available: bool,
     *,
@@ -3196,12 +2120,12 @@ def _alert_severity_for_risk_level(
         return "high"
     return severity
 def _build_incident_alerts(snapshot_at: str) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    incidents = read_store.list_incidents()
     incident_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
     if incident_surface.get("status") == "unavailable":
         return [], incident_surface
 
     alerts: List[Dict[str, Any]] = []
-    incidents = read_store.list_incidents()
     for incident in incidents:
         incident_status = str(incident.get("status") or "").lower()
         if incident_status not in {"open", "in_progress"}:
@@ -3496,10 +2420,7 @@ def _build_operator_alerts_payload(snapshot_at: str) -> Dict[str, Any]:
         key=_alert_sort_key,
         reverse=True,
     )
-    alerts = [
-        a for a in alerts
-        if str(a.get("alert_id") or a.get("id") or "") not in _ACKNOWLEDGED_ALERTS
-    ]
+
     if alerts_surface.get("status") == "unavailable":
         alerts = []
 
@@ -3566,25 +2487,24 @@ _MANAGEMENT_RISK_LEVEL_ORDER = {
 }
 def _build_management_anomalies_payload(snapshot_at: str) -> Dict[str, Any]:
     runtime_alerts, runtime_surfaces = _build_runtime_alerts(snapshot_at)
-    sentinel_available, sentinel_findings = read_store.list_sentinel_findings()
-    sentinel_anomalies: List[Dict[str, Any]] = []
-    for finding in sentinel_findings:
-        finding_id = str(finding.get("id") or finding.get("finding_id") or "").strip()
-        if not finding_id:
+    incident_anomalies: List[Dict[str, Any]] = []
+    for incident in read_store.list_incidents():
+        incident_id = str(incident.get("id") or incident.get("incident_id") or "").strip()
+        if not incident_id:
             continue
-        sentinel_anomalies.append(
+        incident_anomalies.append(
             {
-                "id": finding_id,
-                "kind": finding.get("kind") or "sentinel_finding",
-                "severity": finding.get("severity") or finding.get("risk_level") or "medium",
-                "status": finding.get("status"),
-                "summary": finding.get("title") or finding.get("summary") or finding_id,
-                "created_at": finding.get("created_at"),
-                "triggered_at": finding.get("triggered_at"),
+                "id": incident_id,
+                "kind": incident.get("kind") or "incident",
+                "severity": incident.get("severity") or incident.get("risk_level") or "medium",
+                "status": incident.get("status"),
+                "summary": incident.get("title") or incident.get("summary") or incident_id,
+                "created_at": incident.get("created_at"),
+                "triggered_at": incident.get("triggered_at"),
                 "target_ref": {
-                    "label": "Open sentinel finding",
-                    "href": f"/management/sentinel?finding={finding_id}",
-                    "target_id": finding_id,
+                    "label": "Open incident",
+                    "href": f"/management/incidents/{incident_id}",
+                    "target_id": incident_id,
                 },
             }
         )
@@ -3601,34 +2521,28 @@ def _build_management_anomalies_payload(snapshot_at: str) -> Dict[str, Any]:
         for alert in runtime_alerts
     ]
     anomalies = sorted(
-        runtime_anomalies + sentinel_anomalies,
+        runtime_anomalies + incident_anomalies,
         key=_management_record_time,
         reverse=True,
     )
-    incident_source = read_store.dataset_source("incidents")
-    sentinel_dataset = "incidents" if incident_source != "missing" else "sentinel_findings"
-    sentinel_surface = _dataset_surface_status(
-        sentinel_dataset,
-        snapshot_at=snapshot_at,
-        source=None if sentinel_available else "missing",
-    )
+    incident_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
     anomalies_surface = _aggregate_group_surface(
         "management_anomalies",
         [
             runtime_surfaces["runtime_roster"],
             runtime_surfaces["telemetry_summary"],
-            sentinel_surface,
+            incident_surface,
         ],
         snapshot_at=snapshot_at,
         unavailable_message="Anomaly aggregate unavailable.",
-        degraded_message="Anomaly aggregate is available, but runtime telemetry or sentinel coverage is degraded.",
+        degraded_message="Anomaly aggregate is available, but runtime telemetry or incident coverage is degraded.",
     )
     meta = _snapshot_meta(snapshot_at)
     meta["surfaces"] = {
         "management_anomalies": anomalies_surface,
         "runtime_roster": runtime_surfaces["runtime_roster"],
         "telemetry_summary": runtime_surfaces["telemetry_summary"],
-        "sentinel_findings": sentinel_surface,
+        "incidents": incident_surface,
     }
     return {
         "items": anomalies,
@@ -3663,36 +2577,12 @@ _READINESS_NO_REAL_CAPITAL_EVIDENCE = "support/evidence/MGMT-BROKER-003/no-real-
 _READINESS_BROKER_LIVE_DISABLED = (
     "docs/deployment/evidence/ep5-broker-tw-002/20260517T054748Z/sandbox-smoke/live-disabled.json"
 )
-def _repo_artifact_path(rel_path: str) -> str:
-    return os.path.join(_REPO_ROOT, rel_path)
-def _read_repo_json_artifact(rel_path: str) -> Optional[Dict[str, Any]]:
-    path = _repo_artifact_path(rel_path)
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-        return payload if isinstance(payload, dict) else None
-    except (OSError, json.JSONDecodeError):
-        return None
-def _read_repo_text_artifact(rel_path: str) -> str:
-    path = _repo_artifact_path(rel_path)
-    if not os.path.exists(path):
-        return ""
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            return handle.read()
-    except OSError:
-        return ""
-def _readiness_evidence_ref(rel_path: str, label: str) -> Dict[str, Any]:
-    exists = os.path.exists(_repo_artifact_path(rel_path))
-    return {
-        "id": re.sub(r"[^a-z0-9]+", "-", rel_path.lower()).strip("-"),
-        "label": label,
-        "path": rel_path,
-        "href": f"/{rel_path}",
-        "exists": exists,
-    }
+from .management_read_models.readiness_evidence import (
+    historical_reference as _readiness_evidence_ref,
+    historical_surface,
+    current_evidence_checks,
+)
+
 def _readiness_artifact_surface(
     surface_key: str,
     rel_path: str,
@@ -3700,18 +2590,7 @@ def _readiness_artifact_surface(
     snapshot_at: str,
     label: str,
 ) -> Dict[str, Any]:
-    exists = os.path.exists(_repo_artifact_path(rel_path))
-    surface = dict(_surface_status())
-    surface["source"] = "repo_artifact" if exists else "missing"
-    surface["artifact_path"] = rel_path
-    if not exists:
-        surface["status"] = "unavailable"
-        surface["message"] = f"{label} artifact is unavailable."
-        surface.setdefault(
-            "staleness",
-            {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        )
-    return surface
+    return historical_surface(rel_path, label)
 def _readiness_check(
     check_id: str,
     label: str,
@@ -3770,6 +2649,7 @@ def _readiness_response(
     details: Optional[Dict[str, Any]] = None,
     links: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
+    checks = current_evidence_checks(checks, evidence_refs, source_surfaces)
     summary = _readiness_summary(checks)
     surface_key = f"management_readiness_{readiness_id.replace('-', '_')}"
     aggregate_surface = _aggregate_group_surface(
@@ -3813,20 +2693,8 @@ def _readiness_response(
     }
 def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
     snapshot_at = utc_now()
-    audit = _read_repo_json_artifact(_READINESS_STRICT_PUBLISH_AUDIT) or {}
-    component_status = audit.get("component_status") if isinstance(audit.get("component_status"), dict) else {}
-    forbidden_scan = (
-        (audit.get("components") or {}).get("forbidden_path_scan")
-        if isinstance(audit.get("components"), dict)
-        else {}
-    )
-    forbidden_signals = (
-        forbidden_scan.get("forbidden_signals")
-        if isinstance(forbidden_scan, dict) and isinstance(forbidden_scan.get("forbidden_signals"), list)
-        else []
-    )
-    passed = bool(audit.get("passed"))
-    checked_at = audit.get("checked_at")
+    # No current deployment-bound audit owner is wired here. Never read an
+    # archived audit as the state of the hosted release.
     evidence_refs = [
         _readiness_evidence_ref(_READINESS_STRICT_PUBLISH_AUDIT, "Strict publish audit JSON"),
         _readiness_evidence_ref(_READINESS_STRICT_PUBLISH_REPORT, "Strict publish audit report"),
@@ -3841,7 +2709,7 @@ def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
         _readiness_check(
             "browser_probe",
             "Browser health and /bff/me probe",
-            "pass" if component_status.get("LSP-002-V2") is True else "fail",
+            "unknown",
             blocking=True,
             message="Hosted browser probe must pass before strict publish can proceed.",
             evidence_refs=[_READINESS_STRICT_PUBLISH_AUDIT],
@@ -3849,7 +2717,7 @@ def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
         _readiness_check(
             "bundle_hash_capture",
             "Hosted bundle hash capture",
-            "pass" if component_status.get("LSP-003-V2") is True else "fail",
+            "unknown",
             blocking=True,
             message="Hosted bundle hash capture must pass before strict publish can proceed.",
             evidence_refs=[_READINESS_STRICT_PUBLISH_AUDIT],
@@ -3857,11 +2725,11 @@ def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
         _readiness_check(
             "forbidden_path_scan",
             "Forbidden mock/seed runtime path scan",
-            "pass" if component_status.get("LSP-004-V2") is True else "fail",
+            "unknown",
             blocking=True,
             message="Strict publish remains blocked while deployed bundles contain forbidden mock/seed signals.",
             evidence_refs=[_READINESS_STRICT_PUBLISH_AUDIT],
-            details={"forbidden_signal_count": len(forbidden_signals)},
+            details={"forbidden_signal_count": None},
         ),
     ]
     return _readiness_response(
@@ -3872,11 +2740,12 @@ def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
         source_surfaces={"strict_publish_audit": audit_surface},
         snapshot_at=snapshot_at,
         details={
-            "passed": passed,
-            "checked_at": checked_at,
-            "deployment_url": audit.get("deployment_url"),
-            "browser_probe_base_url": audit.get("browser_probe_base_url"),
-            "errors": audit.get("errors") if isinstance(audit.get("errors"), list) else [],
+            "passed": None,
+            "checked_at": None,
+            "current_evidence_status": "unavailable",
+            "deployment_url": None,
+            "browser_probe_base_url": None,
+            "errors": [],
         },
         links={
             "self": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/strict-publish",
@@ -3885,10 +2754,6 @@ def _build_management_strict_publish_readiness_payload() -> Dict[str, Any]:
     )
 def _build_management_bff_ha_readiness_payload() -> Dict[str, Any]:
     snapshot_at = utc_now()
-    packet_text = _read_repo_text_artifact(_READINESS_BFF_HA_PACKET)
-    review_text = _read_repo_text_artifact(_READINESS_BFF_HA_REVIEW)
-    packet_exists = bool(packet_text)
-    review_approved = "Status: **approved**" in review_text or "Approved." in review_text
     evidence_refs = [
         _readiness_evidence_ref(_READINESS_BFF_HA_PACKET, "BFF HA failover demo packet"),
         _readiness_evidence_ref(_READINESS_BFF_HA_REVIEW, "BFF HA failover demo review"),
@@ -3903,7 +2768,7 @@ def _build_management_bff_ha_readiness_payload() -> Dict[str, Any]:
         _readiness_check(
             "dev_failover_demo_packet",
             "Dev failover demo packet recorded",
-            "pass" if packet_exists else "fail",
+            "unknown",
             blocking=True,
             message="The BFF HA readiness page requires the dev failover demo packet.",
             evidence_refs=[_READINESS_BFF_HA_PACKET],
@@ -3911,7 +2776,7 @@ def _build_management_bff_ha_readiness_payload() -> Dict[str, Any]:
         _readiness_check(
             "dev_failover_demo_review",
             "Dev failover demo review approved",
-            "pass" if review_approved else "fail",
+            "unknown",
             blocking=True,
             message="The dev failover demo must have reviewer approval.",
             evidence_refs=[_READINESS_BFF_HA_REVIEW],
@@ -3938,7 +2803,8 @@ def _build_management_bff_ha_readiness_payload() -> Dict[str, Any]:
         source_surfaces={"bff_ha_failover_demo": packet_surface},
         snapshot_at=snapshot_at,
         details={
-            "dev_demo_ready": packet_exists and review_approved,
+            "dev_demo_ready": None,
+            "current_evidence_status": "unavailable",
             "production_topology_ready": False,
         },
         links={
@@ -3952,7 +2818,7 @@ def _build_management_broker_live_readiness_payload() -> Dict[str, Any]:
     service_surface = (
         broker_surface.get("service_status")
         if isinstance(broker_surface.get("service_status"), dict)
-        else _composed_surface_status(snapshot_at=snapshot_at)
+        else {"status": "unavailable", "source": "broker_owner_unverified"}
     )
     live_gate_enabled = auth_policy.bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
     live_execution_enabled = bool(broker_surface.get("live_execution_enabled"))
@@ -3969,17 +2835,11 @@ def _build_management_broker_live_readiness_payload() -> Dict[str, Any]:
         ),
         _readiness_evidence_ref(_READINESS_BROKER_LIVE_DISABLED, "Broker live-disabled smoke"),
     ]
-    live_disabled_surface = _readiness_artifact_surface(
-        "broker_live_disabled_smoke",
-        _READINESS_BROKER_LIVE_DISABLED,
-        snapshot_at=snapshot_at,
-        label="Broker live-disabled smoke",
-    )
     checks = [
         _readiness_check(
             "openclaw_broker_readiness_surface",
             "OpenClaw broker readiness surface",
-            "pass" if broker_surface.get("overall_status") != "unavailable" else "fail",
+            "pass" if broker_surface.get("overall_status") in {"ok", "healthy", "ready"} else "unknown",
             blocking=True,
             message="Broker live readiness requires the OpenClaw broker readiness surface.",
             details={"overall_status": broker_surface.get("overall_status")},
@@ -3990,7 +2850,6 @@ def _build_management_broker_live_readiness_payload() -> Dict[str, Any]:
             "pass" if broker_live_ready else "blocked",
             blocking=True,
             message="Live broker execution is fail-closed until explicit live broker gates and adapter state are enabled.",
-            evidence_refs=[_READINESS_BROKER_LIVE_DISABLED],
             details={
                 "PANTHEON_LIVE_BROKER_ENABLED": live_gate_enabled,
                 "live_execution_enabled": live_execution_enabled,
@@ -4018,7 +2877,6 @@ def _build_management_broker_live_readiness_payload() -> Dict[str, Any]:
         evidence_refs=evidence_refs,
         source_surfaces={
             "openclaw_broker_adapter_readiness": service_surface,
-            "broker_live_disabled_smoke": live_disabled_surface,
         },
         snapshot_at=snapshot_at,
         details={
@@ -4056,12 +2914,6 @@ def _build_management_capital_binding_live_readiness_payload() -> Dict[str, Any]
     ]
     capital_surface = _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at)
     runtime_surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
-    no_real_capital_surface = _readiness_artifact_surface(
-        "no_real_capital_evidence",
-        _READINESS_NO_REAL_CAPITAL_EVIDENCE,
-        snapshot_at=snapshot_at,
-        label="No real capital evidence",
-    )
     checks = [
         _readiness_check(
             "capital_binding_live_gate",
@@ -4069,7 +2921,6 @@ def _build_management_capital_binding_live_readiness_payload() -> Dict[str, Any]
             "pass" if gate_enabled else "blocked",
             blocking=True,
             message="Live capital binding remains fail-closed until explicit capital-binding live gates are enabled.",
-            evidence_refs=[_READINESS_NO_REAL_CAPITAL_EVIDENCE],
             details={
                 "OPENCLAW_CAPITAL_BINDING_ENABLED": auth_policy.bool_from_env("OPENCLAW_CAPITAL_BINDING_ENABLED", default=False),
                 "PANTHEON_CAPITAL_BINDING_LIVE_ENABLED": auth_policy.bool_from_env(
@@ -4106,7 +2957,6 @@ def _build_management_capital_binding_live_readiness_payload() -> Dict[str, Any]
         source_surfaces={
             "persona_bindings": capital_surface,
             "runtime_bindings": runtime_surface,
-            "no_real_capital_evidence": no_real_capital_surface,
         },
         snapshot_at=snapshot_at,
         details={
@@ -4146,12 +2996,12 @@ def _build_management_ep5_readiness_payload() -> Dict[str, Any]:
         _readiness_check(
             "ep5_evidence_bundle",
             "EP5 prerequisite evidence bundle",
-            "pass" if all(ref.get("exists") for ref in evidence_refs) else "fail",
+            "unknown",
             blocking=True,
-            message="EP5 readiness requires the prerequisite evidence bundle to be present in repo.",
+            message="EP5 requires current owner evidence; repository bundles are historical references only.",
             evidence_refs=[ref["path"] for ref in evidence_refs],
             details={
-                "available_evidence_count": len([ref for ref in evidence_refs if ref.get("exists")]),
+                "available_evidence_count": None,
                 "required_evidence_count": len(evidence_refs),
             },
         )
@@ -4704,8 +3554,6 @@ def _command_response_dry_run_meta(idempotency_key: str) -> Dict[str, Any]:
             "replayed": False,
         },
     }
-_GOV_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-_FINAL_CONTRACT_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 
 from .command_adapters.service import CommandAdapterService as _CommandAdapterService
 
@@ -4720,8 +3568,6 @@ _command_adapter_service = _CommandAdapterService(
     validators=_VALIDATORS,
     process_command_task=lambda cmd_id: _process_command_stub(cmd_id),
     check_read_surface_state=_check_read_surface_state,
-    final_contract_idempotency=_FINAL_CONTRACT_IDEMPOTENCY,
-    gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
     publish_event=lambda event_type, data: _publish_event(
         _sse_buffers["audit"],
         _sse_subscribers["audit"],
@@ -4774,224 +3620,27 @@ def _submit_final_command_admission(
         response_deprecation=response_deprecation,
     )
 _AGORA_CORE_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-_AGORA_SIGNAL_WRITE_ROLES = {"analyst", "operator", "approver", "admin", "reviewer"}
-_AGORA_BULK_FEEDBACK_ROLES = {"analyst", "operator", "reviewer", "approver", "admin"}
 from .assistant.management_service import (
     _truthy_header,
     _request_dry_run_requested,
     _dry_run_success_response,
 )
-def _require_agora_signal_write_role(identity: OperatorIdentity) -> None:
-    if not _AGORA_SIGNAL_WRITE_ROLES.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Agora signal creation requires analyst-level role",
-            "Operator does not hold the required analyst, operator, reviewer, approver, or admin role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with analyst-level Agora write access",
-        )
-def _agora_required_text(payload: Dict[str, Any], *fields: str) -> str:
-    for field in fields:
-        clean = str(payload.get(field) or "").strip()
-        if clean:
-            return clean
-    label = fields[0] if fields else "value"
-    raise _bff_error(
-        422,
-        ErrorCode.VALIDATION_FAILED,
-        f"{label} is required",
-        f"Agora request requires a non-empty {label}",
-        precondition_failed=label,
-    )
-def _require_agora_bulk_feedback_role(identity: OperatorIdentity) -> None:
-    if not _AGORA_BULK_FEEDBACK_ROLES.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Agora feedback access requires analyst role",
-            "Operator does not hold the required Agora feedback role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with analyst, operator, reviewer, approver, or admin role",
-        )
 _MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {}
 _TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {}
 _SKILL_REGISTRY: Dict[str, Dict[str, Any]] = {}
-_CAPITAL_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-def _capital_bff_idempotency_identity(operator_id: str, resolved_key: str) -> str:
-    return f"{operator_id}\x00{resolved_key}"
-def _capital_bff_idempotency_check(
-    operator_id: str,
-    resolved_key: str,
-    request_hash: str,
-) -> Optional[Dict[str, Any]]:
-    """Return cached result on replay or raise 409 on conflict."""
-    existing = _CAPITAL_BFF_IDEMPOTENCY.get(
-        _capital_bff_idempotency_identity(operator_id, resolved_key)
-    )
-    if existing is None:
-        return None
-    if existing.get("request_hash") != request_hash:
-        raise _bff_error(
-            409,
-            ErrorCode.IDEMPOTENCY_CONFLICT,
-            "Idempotency key was already used with a different payload",
-            f"Key {resolved_key!r} is bound to a different request hash",
-            precondition_failed="idempotency_conflict",
-            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-        )
-    return existing.get("result")
-def _capital_bff_idempotency_store(
-    operator_id: str,
-    resolved_key: str,
-    request_hash: str,
-    result: Any,
-) -> None:
-    _CAPITAL_BFF_IDEMPOTENCY[
-        _capital_bff_idempotency_identity(operator_id, resolved_key)
-    ] = {"request_hash": request_hash, "result": result}
+
+
+
 def _capital_bff_action_command(
-    entity_type: ObjectType,
-    entity_id: str,
-    action_id: str,
-    resolved_key: str,
-    identity: Any,
-    payload: Dict[str, Any],
-    command_type: CommandType,
+    entity_type: ObjectType, entity_id: str, action_id: str, resolved_key: str,
+    identity: Any, payload: Dict[str, Any], command_type: CommandType,
     background_tasks: Optional[BackgroundTasks] = None,
-) -> Dict[str, Any]:
-    """Submit a resource action through the command store and return the receipt."""
-    request_hash = sha256_checksum({
-        "entity_type": entity_type.value,
-        "entity_id": entity_id,
-        "action_id": action_id,
-        "payload": payload,
-    })
-    durable = command_store.get_command_by_idempotency_key(
-        resolved_key,
-        operator_id=identity.operator_id,
+    authorization: Optional[str] = None,
+) -> JSONResponse:
+    return _command_adapter_service.submit_resource_action(
+        entity_type, entity_id, action_id, resolved_key, identity, payload, command_type,
+        authorization=authorization,
     )
-    if durable is not None:
-        durable_idempotency = (durable.get("foundation") or {}).get("idempotency_record") or {}
-        if durable_idempotency.get("request_hash") != request_hash:
-            raise _bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key was already used with a different payload",
-                f"Key {resolved_key!r} is bound to command {durable.get('command_id')}",
-                precondition_failed="idempotency_conflict",
-                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-            )
-        replay = _project_final_command_response(
-            command_id=str(durable["command_id"]),
-            command=CommandType(str(durable["type"])),
-            accepted_at=str(durable.get("submitted_at") or utc_now()),
-            status=CommandStatus(str(durable.get("status") or CommandStatus.SUBMITTED.value)),
-            staleness_warning=None,
-            meta=_command_response_durable_meta(resolved_key, replayed=True),
-        )
-        _capital_bff_idempotency_store(
-            identity.operator_id, resolved_key, request_hash, replay
-        )
-        return replay
-    cached = _capital_bff_idempotency_check(
-        identity.operator_id, resolved_key, request_hash
-    )
-    if cached is not None:
-        return cached
-    catalog_entry = get_catalog_entry(command_type.value)
-    staleness_warning = _check_read_surface_state()
-    command_id = str(uuid.uuid4())
-    submitted_at = utc_now()
-    target = TargetObject(type=entity_type, id=entity_id)
-    audit_action = _foundation_audit_for_command_record(
-        identity=identity,
-        command_type=command_type,
-        target_type=entity_type,
-        target_id=entity_id,
-        payload={**payload, "action_id": action_id},
-        reason=str(payload.get("reason") or action_id or command_type.value),
-        command_id=command_id,
-        idempotency_key=resolved_key,
-        route=f"POST /bff/{entity_type.value}/{entity_id}/actions/{action_id}",
-        metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
-    )
-    audit_record = {
-        "operator_id": identity.operator_id,
-        "roles_at_submission": identity.roles,
-        "action_id": action_id,
-        "preconditions_checked": ["authentication", "authorization", "idempotency"],
-        "timestamp": submitted_at,
-    }
-    idempotency_record = IdempotencyRecord.reserve(
-        idempotency_key=resolved_key,
-        operation_type=f"bff.{command_type.value}",
-        target_ref=f"{entity_type.value}:{entity_id}",
-        request_payload={
-            "entity_type": entity_type.value,
-            "entity_id": entity_id,
-            "action_id": action_id,
-            "payload": payload,
-        },
-        trace_id=command_id,
-    )
-    foundation_ctx = {
-        "idempotency_record": idempotency_record.to_dict(),
-        "audit_action": audit_action.to_dict(),
-    }
-    audit_record["foundation"] = foundation_ctx
-    command_store.submit_command(
-        command_id=command_id,
-        command_type=command_type,
-        target=target,
-        submitted_at=submitted_at,
-        params={
-            **{
-                key: value
-                for key, value in payload.items()
-                if key
-                not in {
-                    "entity_type",
-                    "entity_id",
-                    "action_id",
-                    "actor_id",
-                    "actor_role",
-                    "idempotency_key",
-                    "request_hash",
-                }
-            },
-            "entity_type": entity_type.value,
-            "entity_id": entity_id,
-            "action_id": action_id,
-            "actor_id": identity.operator_id,
-            "actor_role": next(
-                (
-                    role
-                    for role in ("admin", "approver", "reviewer", "operator")
-                    if role in identity.roles
-                ),
-                "operator",
-            ),
-            "idempotency_key": resolved_key,
-            "request_hash": request_hash,
-        },
-        audit_context=audit_record,
-        foundation_context=foundation_ctx,
-    )
-    if background_tasks is not None:
-        background_tasks.add_task(_process_command_stub, command_id)
-    result = _project_final_command_response(
-        command_id=command_id,
-        command=command_type,
-        accepted_at=submitted_at,
-        status=CommandStatus.SUBMITTED,
-        staleness_warning=staleness_warning,
-    )
-    _capital_bff_idempotency_store(
-        identity.operator_id, resolved_key, request_hash, result
-    )
-    return result
-_PPL_ALLOC_009_PAPER_POLICY_VERSION = "persona-paper-allocation-simulation-v1"
 _PPL_ALLOC_009_PAPER_AUTHORITY_MODE = "governed_paper_simulation"
 _PM12_RANKING_SNAPSHOT_DEFAULT_TTL_SECONDS = 24 * 60 * 60
 _PM12_RANKING_SNAPSHOT_MAX_TTL_SECONDS = 7 * 24 * 60 * 60
@@ -5023,121 +3672,6 @@ from .capital.service import (
     _pm12_allocation_line_assertion_hash,
 )
 
-def _ppl_alloc_009_paper_rebalance_authority(
-    cmd: OperatorCommand,
-) -> bool:
-    if cmd.command != CommandType.APPROVED_APPLY:
-        return False
-    rebalance = read_store.get_rebalance(cmd.target.id)
-    if not isinstance(rebalance, dict):
-        return False
-    policy_version = str(
-        rebalance.get("allocation_policy_version") or ""
-    ).strip()
-    if policy_version != _PPL_ALLOC_009_PAPER_POLICY_VERSION:
-        return False
-
-    _ppl_alloc_009_paper_environment_guard()
-    lines = [
-        line
-        for line in rebalance.get("lines") or []
-        if isinstance(line, dict)
-    ]
-    evaluation_id = str(
-        rebalance.get("allocation_evaluation_id") or ""
-    ).strip()
-    evaluation = _pm12_allocation_evaluation_record(evaluation_id)
-    expected_digests = {
-        str(line.get("allocation_line_digest") or "").strip()
-        for line in evaluation.get("lines") or []
-        if isinstance(line, dict)
-    }
-    actual_digests = {
-        str(line.get("allocation_line_digest") or "").strip()
-        for line in lines
-    }
-    if (
-        len(lines) != 1
-        or len(expected_digests) != 1
-        or actual_digests != expected_digests
-        or str(evaluation.get("allocation_policy_version") or "")
-        != _PPL_ALLOC_009_PAPER_POLICY_VERSION
-        or str(evaluation.get("authority_mode") or "")
-        != _PPL_ALLOC_009_PAPER_AUTHORITY_MODE
-        or not str(evaluation.get("promotion_review_id") or "").strip()
-    ):
-        raise _bff_error(
-            409,
-            ErrorCode.PRECONDITION_FAILED,
-            "Paper rebalance authority is invalid",
-            "The persisted rebalance no longer matches its admitted paper evaluation.",
-            precondition_failed="paper_simulation_lineage",
-        )
-    line = lines[0]
-    pool_id = str(rebalance.get("capital_pool_id") or "").strip()
-    binding_id = str(line.get("binding_id") or "").strip()
-    if (
-        str(line.get("stage") or "").strip().lower() != "paper_running"
-        or str(line.get("capital_scope") or "").strip().lower()
-        != "paper_ledger"
-        or str(line.get("capital_pool_id") or "").strip() != pool_id
-        or str(line.get("capital_sleeve_id") or "").strip()
-        or not str(line.get("paper_ledger_id") or "").strip()
-        or not binding_id
-        or line.get("paper_allocation_eligible") is not True
-        or line.get("live_capital_side_effects") is not False
-        or str(line.get("authority_mode") or "")
-        != _PPL_ALLOC_009_PAPER_AUTHORITY_MODE
-        or str(line.get("promotion_review_id") or "")
-        != str(evaluation.get("promotion_review_id") or "")
-    ):
-        raise _bff_error(
-            409,
-            ErrorCode.PRECONDITION_FAILED,
-            "Paper rebalance scope is invalid",
-            "The admitted paper rebalance contains a non-paper or unbound allocation line.",
-            precondition_failed="paper_simulation_scope",
-        )
-
-    pool = read_store.get_capital_pool(pool_id)
-    metadata = (
-        pool.get("metadata")
-        if isinstance(pool, dict) and isinstance(pool.get("metadata"), dict)
-        else {}
-    )
-    bindings = [
-        binding
-        for binding in read_store.list_bindings(
-            persona_id=str(line.get("persona_id") or "").strip(),
-            capital_pool_id=pool_id,
-            role="paper_owner",
-        )
-        if str(binding.get("binding_id") or binding.get("id") or "").strip()
-        == binding_id
-        and str(binding.get("status") or binding.get("validity") or "")
-        .strip()
-        .lower()
-        in {"active", "ready", "bound"}
-        and str(binding.get("allowed_deployment_scope") or "").strip().lower()
-        == "paper"
-        and not str(binding.get("capital_sleeve_id") or "").strip()
-    ]
-    if (
-        not isinstance(pool, dict)
-        or str(pool.get("status") or "").strip().lower() != "active"
-        or metadata.get("internal") is not True
-        or str(metadata.get("execution_context") or "").strip().lower()
-        != "paper"
-        or len(bindings) != 1
-    ):
-        raise _bff_error(
-            409,
-            ErrorCode.PRECONDITION_FAILED,
-            "Paper rebalance authority is no longer active",
-            "The internal paper pool or its unique paper_owner binding changed.",
-            precondition_failed="paper_simulation_binding",
-        )
-    return True
 _STRATEGY_BFF_LIFECYCLE_MAP = {
     "draft": "draft",
     "candidate": "review",
@@ -5350,109 +3884,6 @@ def _strategy_persona_idempotency_check(
             suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
         )
     return deepcopy(existing.get("result"))
-def _strategy_persona_action_command(
-    *,
-    entity_type: ObjectType,
-    entity_id: str,
-    action_id: str,
-    resolved_key: str,
-    identity: OperatorIdentity,
-    payload: Dict[str, Any],
-    command_type: CommandType,
-) -> Dict[str, Any]:
-    """Submit a strategy / persona resource action through the command store
-    and return the final command envelope.
-
-    The /bff/strategies/{id}/actions/{actionId} and /bff/personas/{id}/actions/{actionId}
-    endpoints accept action ids declared in the canonical action catalog
-    (see action_catalog.py). Idempotency is enforced through the
-    `_STRATEGY_PERSONA_BFF_IDEMPOTENCY` ledger so callers receive a stable
-    receipt on safe retries.
-    """
-    request_hash = _stable_json_hash(
-        {
-            "route": f"POST /bff/{entity_type.value.lower()}/{{id}}/actions",
-            "entity_type": entity_type.value,
-            "entity_id": entity_id,
-            "action_id": action_id,
-            "payload": payload,
-        }
-    )
-    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
-
-    catalog_entry = get_catalog_entry(command_type.value)
-    staleness_warning = _check_read_surface_state()
-    command_id = str(uuid.uuid4())
-    submitted_at = utc_now()
-    target = TargetObject(type=entity_type, id=entity_id)
-    audit_action = _foundation_audit_for_command_record(
-        identity=identity,
-        command_type=command_type,
-        target_type=entity_type,
-        target_id=entity_id,
-        payload={"action_id": action_id, **payload},
-        reason=str(payload.get("reason") or action_id or command_type.value),
-        command_id=command_id,
-        idempotency_key=resolved_key,
-        route=f"POST /bff/{entity_type.value}/{entity_id}/actions/{action_id}",
-        metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
-    )
-    audit_record = {
-        "operator_id": identity.operator_id,
-        "roles_at_submission": identity.roles,
-        "action_id": action_id,
-        "preconditions_checked": ["authentication", "authorization", "idempotency"],
-        "timestamp": submitted_at,
-        "idempotency_key": resolved_key,
-        "request_hash": request_hash,
-        "catalog_entry": catalog_entry.action_id if catalog_entry else None,
-    }
-    foundation_ctx = {
-        "idempotency_record": {
-            "idempotency_key": resolved_key,
-            "request_hash": request_hash,
-            "operation_type": f"bff.{command_type.value}",
-            "target_ref": f"{entity_type.value}:{entity_id}",
-            "trace_id": audit_action.trace_id,
-        },
-        "audit_action": audit_action.to_dict(),
-    }
-    audit_record["foundation"] = foundation_ctx
-    command_store.submit_command(
-        command_id=command_id,
-        command_type=command_type,
-        target=target,
-        submitted_at=submitted_at,
-        params={"action_id": action_id, **payload},
-        audit_context=audit_record,
-        foundation_context=foundation_ctx,
-    )
-    result = _project_final_command_response(
-        command_id=command_id,
-        command=command_type,
-        accepted_at=submitted_at,
-        status=CommandStatus.SUBMITTED,
-        staleness_warning=staleness_warning,
-    )
-    payload_dump: Dict[str, Any]
-    if hasattr(result, "model_dump"):
-        payload_dump = result.model_dump(mode="json")
-    elif isinstance(result, dict):
-        payload_dump = result
-    else:
-        payload_dump = {"data": result}
-    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {
-        "request_hash": request_hash,
-        "result": payload_dump,
-    }
-    return payload_dump
-def _deployment_url(path: str) -> str:
-    base = os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip().rstrip("/")
-    if not base:
-        base = "http://deployment:8095"
-    return f"{base}{path}"
 def _persist_persona_provisioning_terminal_transition(
     persona_id: str,
     *,
@@ -5770,9 +4201,8 @@ from .pm12.service import (
 from .governance.human_inbox import (
     _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES,
     _HUMAN_INBOX_OPEN_APPROVAL_STATES,
+    _HUMAN_INBOX_OPEN_INCIDENT_STATUSES,
     _HUMAN_INBOX_OPEN_GOVERNANCE_STATUSES,
-    _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES,
-    _HUMAN_INBOX_OPEN_SENTINEL_STATUSES,
     _HUMAN_INBOX_PRIORITY_RANK,
     _HUMAN_INBOX_PROMOTION_PRODUCER,
     _HUMAN_INBOX_PROMOTION_SNAPSHOT_SCALARS,
@@ -5789,8 +4219,8 @@ from .governance.human_inbox import (
     _human_inbox_filter_items,
     _human_inbox_governance_contributor,
     _human_inbox_governance_review_item,
-    _human_inbox_intervention_contributor,
-    _human_inbox_intervention_item,
+    _human_inbox_incident_contributor,
+    _human_inbox_incident_item,
     _human_inbox_loaded_surface,
     _human_inbox_payload,
     _human_inbox_payload_from_loaded,
@@ -5804,8 +4234,6 @@ from .governance.human_inbox import (
     _human_inbox_promotion_review_from_projection,
     _human_inbox_promotion_review_item,
     _human_inbox_sanitize_promotion_snapshot,
-    _human_inbox_sentinel_contributor,
-    _human_inbox_sentinel_item,
     _human_inbox_submission_projection_from_record,
     _human_inbox_summary,
     _human_inbox_surfaces,
@@ -5969,7 +4397,6 @@ from .assistant.management_service import (
     _mgmt_nl_raise_command_wait_timeout,
     _mgmt_nl_use_case_admission_error,
     _mgmt_nl_result_is_terminal,
-    get_mgmt_nl_command_recovery_seconds as _mgmt_nl_command_recovery_seconds,
     get_mgmt_nl_command_idempotency_store,
     reset_mgmt_nl_command_idempotency_store,
     _MGMT_NL_COMMAND_IDEMPOTENCY_STORE,
@@ -6127,12 +4554,10 @@ from .pm12.service import (
     _PM12_QUARTER_PATTERN,
     _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER,
     _PM12_QUARTERLY_RECOMMENDATION_ACTIONS,
-    _pm12_add_recommendation_action,
     _pm12_current_quarter_id,
     _pm12_iso_z,
     _pm12_quarter_window,
     _pm12_quarterly_recommendation_item,
-    _pm12_recommendation_action_ids,
 )
 from .governance.promotion_review import (
     _PROMOTION_REVIEW_DECISIONS,
@@ -6449,34 +4874,6 @@ async def bff_types_compat(
         },
         "meta": {"snapshot_at": utc_now()},
     }
-_V5_INTERVENTIONS_STORE: List[Dict[str, Any]] = []
-def _v5_intervention_records(
-    *,
-    status: Optional[str] = None,
-    kind: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    records_by_id: Dict[str, Dict[str, Any]] = {}
-    store_lister = getattr(read_store, "list_v5_interventions", None)
-    if callable(store_lister):
-        for record in store_lister(status=status, kind=kind):
-            if not isinstance(record, dict):
-                continue
-            record_id = str(record.get("intervention_id") or record.get("id") or "").strip()
-            if record_id:
-                records_by_id[record_id] = dict(record)
-
-    for record in _V5_INTERVENTIONS_STORE:
-        if not isinstance(record, dict):
-            continue
-        if status and str(record.get("status") or "") != status:
-            continue
-        if kind and str(record.get("kind") or "") != kind:
-            continue
-        record_id = str(record.get("intervention_id") or record.get("id") or "").strip()
-        if record_id:
-            records_by_id[record_id] = dict(record)
-
-    return list(records_by_id.values())
 from .command_adapters.service import (
     process_command as _process_command,
     _process_command_stub,
@@ -6500,19 +4897,15 @@ SSE_CHANNEL_CATALOG = (
     "journal",
     "postmortem",
     "loop",
-    "sentinel",
-    "intervention",
     "audit",
     "system",
 )
 SSE_CHANNELS = set(SSE_CHANNEL_CATALOG)
 _SSE_RESYNC_ROUTES: Dict[str, tuple[str, ...]] = {
-    "approval": ("/bff/approvals", "/bff/v5/interventions"),
+    "approval": ("/bff/approvals",),
     "ask": (
         "/bff/management/ai/conversations",
         "/bff/management/ai/conversations/{id}",
-        "/bff/agora/ask/sessions/{id}",
-        "/bff/agora/committee/sessions/{id}",
     ),
 }
 class SseReplayUnavailableError(Exception):
@@ -6754,101 +5147,17 @@ async def stream_ask_events(
 ):
     """Per-channel alias for the generic ask-channel SSE stream."""
     return await stream_generic_events("ask", last_event_id, authorization)
-_EVOL_EXP_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-def _evol_exp_bff_idempotency_check(
-    resolved_key: str,
-    request_hash: str,
-) -> Optional[Dict[str, Any]]:
-    existing = _EVOL_EXP_BFF_IDEMPOTENCY.get(resolved_key)
-    if existing is None:
-        return None
-    if existing.get("request_hash") != request_hash:
-        raise _bff_error(
-            409,
-            ErrorCode.IDEMPOTENCY_CONFLICT,
-            "Idempotency key was already used with a different payload",
-            f"Key {resolved_key!r} is bound to a different request hash",
-            precondition_failed="idempotency_conflict",
-            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-        )
-    return existing.get("result")
+
 def _evol_exp_bff_action_command(
-    entity_type: ObjectType,
-    entity_id: str,
-    action_id: str,
-    resolved_key: str,
-    identity: Any,
-    payload: Dict[str, Any],
-    command_type: CommandType,
-) -> Dict[str, Any]:
-    request_hash = _stable_json_hash({
-        "entity_type": entity_type.value,
-        "entity_id": entity_id,
-        "action_id": action_id,
-        "payload": payload,
-    })
-    cached = _evol_exp_bff_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
-    catalog_entry = get_catalog_entry(command_type.value)
-    staleness_warning = _check_read_surface_state()
-    command_id = str(uuid.uuid4())
-    submitted_at = utc_now()
-    target = TargetObject(type=entity_type, id=entity_id)
-    audit_action = _foundation_audit_for_command_record(
-        identity=identity,
-        command_type=command_type,
-        target_type=entity_type,
-        target_id=entity_id,
-        payload={"action_id": action_id, **payload},
-        reason=str(payload.get("reason") or action_id or command_type.value),
-        command_id=command_id,
-        idempotency_key=resolved_key,
-        route=f"POST /bff/{entity_type.value}/{entity_id}/actions/{action_id}",
-        metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
+    entity_type: ObjectType, entity_id: str, action_id: str, resolved_key: str,
+    identity: Any, payload: Dict[str, Any], command_type: CommandType,
+    background_tasks: Optional[BackgroundTasks] = None,
+    authorization: Optional[str] = None,
+) -> JSONResponse:
+    return _command_adapter_service.submit_resource_action(
+        entity_type, entity_id, action_id, resolved_key, identity, payload, command_type,
+        authorization=authorization,
     )
-    audit_record = {
-        "operator_id": identity.operator_id,
-        "roles_at_submission": identity.roles,
-        "action_id": action_id,
-        "preconditions_checked": ["authentication", "authorization", "idempotency"],
-        "timestamp": submitted_at,
-    }
-    idempotency_record = IdempotencyRecord.reserve(
-        idempotency_key=resolved_key,
-        operation_type=f"bff.{command_type.value}",
-        target_ref=f"{entity_type.value}:{entity_id}",
-        request_payload={
-            "entity_type": entity_type.value,
-            "entity_id": entity_id,
-            "action_id": action_id,
-            "payload": payload,
-        },
-        trace_id=command_id,
-    )
-    foundation_ctx = {
-        "idempotency_record": idempotency_record.to_dict(),
-        "audit_action": audit_action.to_dict(),
-    }
-    audit_record["foundation"] = foundation_ctx
-    command_store.submit_command(
-        command_id=command_id,
-        command_type=command_type,
-        target=target,
-        submitted_at=submitted_at,
-        params={"action_id": action_id, **payload},
-        audit_context=audit_record,
-        foundation_context=foundation_ctx,
-    )
-    result = _project_final_command_response(
-        command_id=command_id,
-        command=command_type,
-        accepted_at=submitted_at,
-        status=CommandStatus.SUBMITTED,
-        staleness_warning=staleness_warning,
-    )
-    _EVOL_EXP_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
 _MCP_SERVER_REGISTRY: Dict[str, Dict[str, Any]] = {}
 def _read_store_fixture_records(dataset: str) -> List[Dict[str, Any]]:
     data = getattr(read_store, "_data", {})
@@ -6880,135 +5189,18 @@ def _merged_mcp_tool_records() -> List[Dict[str, Any]]:
         [dict(record) for record in _MCP_TOOL_REGISTRY.values()],
         ("tool_id", "id"),
     )
-_GOV_BFF_EVOLUTION_PROGRAM_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _GOV_BFF_EXPERIMENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
-# _GOV_BFF_IDEMPOTENCY defined earlier
-_ACKNOWLEDGED_ALERTS: Dict[str, Dict[str, Any]] = {}
-from .incidents.service import IncidentService as _IncidentService
-def _current_read_store_for_legacy_incident_seam() -> Any:
-    return read_store
-def _bff_incident_service() -> _IncidentService:
-    """Composition-root binding: incidents/service.py's IncidentService is the
-    sole owner of Incident-case projection and filtering; inject the live
-    ``read_store``/``_ACKNOWLEDGED_ALERTS`` globals rather than duplicating
-    the projection logic here."""
-    return _IncidentService(
-        get_read_store=_current_read_store_for_legacy_incident_seam,
-        acknowledged_alerts=_ACKNOWLEDGED_ALERTS,
-    )
-def _list_bff_incidents(
-    *,
-    status: Optional[str] = None,
-    severity: Optional[str] = None,
-    affected_pool_id: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    return _bff_incident_service().list_bff_incidents(
-        status=status, severity=severity, affected_pool_id=affected_pool_id
-    )
-def _get_bff_incident(incident_id: str) -> Optional[Dict[str, Any]]:
-    return _bff_incident_service().get_bff_incident(incident_id)
+from .action_catalog import get_catalog_entry
 def _gov_bff_action_command(
-    entity_type: ObjectType,
-    entity_id: str,
-    action_id: str,
-    resolved_key: str,
-    identity: Any,
-    payload: Dict[str, Any],
-    command_type: CommandType,
-) -> Dict[str, Any]:
-    """Submit a governance/risk/incident resource action through the command store."""
-    _reject_body_idempotency_key(payload)
-    request_hash = _stable_json_hash(
-        {"entity_type": entity_type.value, "entity_id": entity_id, "action_id": action_id, "payload": payload}
+    entity_type: ObjectType, entity_id: str, action_id: str, resolved_key: str,
+    identity: Any, payload: Dict[str, Any], command_type: CommandType,
+    background_tasks: Optional[BackgroundTasks] = None,
+    authorization: Optional[str] = None,
+) -> JSONResponse:
+    return _command_adapter_service.submit_resource_action(
+        entity_type, entity_id, action_id, resolved_key, identity, payload, command_type,
+        authorization=authorization,
     )
-    if _request_dry_run_requested():
-        submitted_at = utc_now()
-        command_id = f"dryrun-cmd-{uuid.uuid4().hex[:12]}"
-        result = _project_final_command_response(
-            command_id=command_id,
-            command=command_type,
-            accepted_at=submitted_at,
-            status=CommandStatus.SUBMITTED,
-            staleness_warning=_check_read_surface_state(),
-            meta=_command_response_dry_run_meta(resolved_key),
-        )
-        return result.model_dump(mode="json")
-    existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
-    if existing is not None:
-        if existing.get("request_hash") != request_hash:
-            raise _bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key was already used with a different payload",
-                f"Key {resolved_key!r} is bound to a different request hash",
-                precondition_failed="idempotency_conflict",
-                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-            )
-        return existing["result"]
-
-    staleness_warning = _check_read_surface_state()
-    catalog_entry = get_catalog_entry(command_type.value)
-    command_id = str(uuid.uuid4())
-    submitted_at = utc_now()
-    target = TargetObject(type=entity_type, id=entity_id)
-    audit_action = _foundation_audit_for_command_record(
-        identity=identity,
-        command_type=command_type,
-        target_type=entity_type,
-        target_id=entity_id,
-        payload={"action_id": action_id, **payload},
-        reason=str(payload.get("reason") or action_id or command_type.value),
-        command_id=command_id,
-        idempotency_key=resolved_key,
-        route=f"POST /bff/{entity_type.value}/{entity_id}/actions/{action_id}",
-        metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
-    )
-    audit_record = {
-        "operator_id": identity.operator_id,
-        "roles_at_submission": identity.roles,
-        "action_id": action_id,
-        "preconditions_checked": ["authentication", "authorization", "idempotency"],
-        "timestamp": submitted_at,
-        "idempotency_key": resolved_key,
-        "request_hash": request_hash,
-        "catalog_entry": catalog_entry.action_id if catalog_entry else None,
-    }
-    idempotency_record = IdempotencyRecord.reserve(
-        idempotency_key=resolved_key,
-        operation_type=f"bff.{command_type.value}",
-        target_ref=f"{entity_type.value}:{entity_id}",
-        request_payload={
-            "entity_type": entity_type.value,
-            "entity_id": entity_id,
-            "action_id": action_id,
-            "payload": payload,
-        },
-        trace_id=command_id,
-    )
-    foundation_ctx = {
-        "idempotency_record": idempotency_record.to_dict(),
-        "audit_action": audit_action.to_dict(),
-    }
-    audit_record["foundation"] = foundation_ctx
-    command_store.submit_command(
-        command_id=command_id,
-        command_type=command_type,
-        target=target,
-        submitted_at=submitted_at,
-        params={"action_id": action_id, **payload},
-        audit_context=audit_record,
-        foundation_context=foundation_ctx,
-    )
-    result = _project_final_command_response(
-        command_id=command_id,
-        command=command_type,
-        accepted_at=submitted_at,
-        status=CommandStatus.SUBMITTED,
-        staleness_warning=staleness_warning,
-    )
-    res_dict = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
-    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": res_dict}
-    return res_dict
 
 def _research_experiments_surface_source(records: Sequence[Dict[str, Any]]) -> Optional[str]:
     if read_store.dataset_source("research_experiments") != "missing":
@@ -7037,92 +5229,6 @@ def _list_bff_jobs(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
         requested = {s.strip().lower() for s in status.split(",") if s.strip()}
         jobs = [j for j in jobs if str(j.get("status") or "").lower() in requested]
     return sorted(jobs, key=lambda j: str(j.get("created_at") or j.get("submitted_at") or ""), reverse=True)
-# _FINAL_CONTRACT_IDEMPOTENCY defined earlier
-def _sem_command_payload_from_record(
-    record: Dict[str, Any],
-    *,
-    idempotency_key: str,
-    replayed: bool,
-) -> Dict[str, Any]:
-    command_id = str(record.get("command_id") or "")
-    command_type = str(record.get("type") or "")
-    receipts = _command_dual_write_receipts(
-        command_id=command_id,
-        command=command_type,
-        status=ActionCommandStatus.ACCEPTED.value,
-        accepted_at=str(record.get("submitted_at") or ""),
-    )
-    receipt = dict(receipts["command_receipt"])
-    receipt["id"] = command_id
-    return {
-        "status": "accepted",
-        "data": {
-            "status": "accepted",
-            "command": command_type,
-            "commandId": command_id,
-            "command_id": command_id,
-            "receipt_id": command_id,
-            "receipt": receipt,
-            "receipt_dual_write": receipts,
-            "action_receipt": receipts["action_receipt"],
-            "actionReceipt": receipts["action_receipt"],
-            "command_receipt": receipts["command_receipt"],
-            "commandReceipt": receipts["command_receipt"],
-        },
-        "meta": {
-            "durable": True,
-            "liveCapitalSideEffects": False,
-            "idempotency": {
-                "key": idempotency_key,
-                "idempotencyKey": idempotency_key,
-                "replayed": replayed,
-            },
-        },
-    }
-def _sem_command_dry_run_payload(
-    *,
-    command_type: CommandType,
-    target_type: ObjectType,
-    target_id: str,
-    payload: Dict[str, Any],
-    identity: OperatorIdentity,
-    idempotency_key: str,
-) -> Dict[str, Any]:
-    submitted_at = utc_now()
-    command_id = f"dryrun-cmd-{uuid.uuid4().hex[:12]}"
-    receipts = _command_dual_write_receipts(
-        command_id=command_id,
-        command=command_type.value,
-        status=ActionCommandStatus.ACCEPTED.value,
-        accepted_at=submitted_at,
-    )
-    receipt = dict(receipts["command_receipt"])
-    receipt["id"] = command_id
-    return {
-        "status": "accepted",
-        "data": {
-            "status": "accepted",
-            "command": command_type.value,
-            "commandId": command_id,
-            "command_id": command_id,
-            "target": {"type": target_type.value, "id": target_id},
-            "params": json.loads(json.dumps(payload)),
-            "submitted_by": identity.operator_id,
-            "receipt_id": command_id,
-            "receipt": receipt,
-            "receipt_dual_write": receipts,
-            "action_receipt": receipts["action_receipt"],
-            "actionReceipt": receipts["action_receipt"],
-            "command_receipt": receipts["command_receipt"],
-            "commandReceipt": receipts["command_receipt"],
-        },
-        "meta": {
-            "snapshot_at": submitted_at,
-            **_command_response_dry_run_meta(idempotency_key),
-        },
-    }
-def _scoped_idempotency_cache_key(idempotency_key: str, operator_id: str) -> str:
-    return f"{operator_id}\x00{idempotency_key}"
 def _sem_command_response(
     *,
     command_type: CommandType,
@@ -7136,6 +5242,8 @@ def _sem_command_response(
     server_generated_target: bool = False,
     trusted_evidence_producer: Optional[str] = None,
     terminal_on_persist: bool = False,
+    authorization: Optional[str] = None,
+    dry_run: bool = False,
 ) -> JSONResponse:
     return _command_adapter_service.sem_command_response(
         command_type=command_type,
@@ -7149,33 +5257,9 @@ def _sem_command_response(
         server_generated_target=server_generated_target,
         trusted_evidence_producer=trusted_evidence_producer,
         terminal_on_persist=terminal_on_persist,
+        authorization=authorization,
+        dry_run=dry_run,
     )
-def _confirm_token_records(token_id: str) -> List[Dict[str, Any]]:
-    return [
-        record
-        for record in command_store._get_all_commands()
-        if isinstance(record.get("target"), dict)
-        and record["target"].get("type") == ObjectType.CONFIRM_TOKEN.value
-        and record["target"].get("id") == token_id
-    ]
-def _confirm_token_expiry_from_record(record: Dict[str, Any]) -> Optional[datetime]:
-    params = record.get("params") if isinstance(record.get("params"), dict) else {}
-    absolute = params.get("expiresAt") or params.get("expires_at")
-    parsed_absolute = _audit_datetime(absolute)
-    if parsed_absolute is not None:
-        return parsed_absolute
-
-    raw_ttl = params.get("ttlSeconds", params.get("ttl_seconds", params.get("ttl")))
-    if raw_ttl in (None, ""):
-        return None
-    try:
-        ttl_seconds = float(raw_ttl)
-    except (TypeError, ValueError):
-        return None
-    submitted_at = _audit_datetime(record.get("submitted_at"))
-    if submitted_at is None:
-        return None
-    return submitted_at + timedelta(seconds=ttl_seconds)
 def _guarded_command_confirm_token_id(record: Dict[str, Any]) -> Optional[str]:
     entry = get_catalog_entry(str(record.get("type") or ""))
     if entry is None or not getattr(entry, "requires_confirm_token", False):
@@ -7193,61 +5277,9 @@ def _guarded_command_confirm_token_id(record: Dict[str, Any]) -> Optional[str]:
         or ""
     ).strip()
     return token_id or None
-def _confirm_token_lifecycle_payload(token_id: str) -> Dict[str, Any]:
-    status = "available"
-    expires_at: Optional[datetime] = None
-    latest_record: Optional[Dict[str, Any]] = None
-    for record in command_store._get_all_commands():
-        target = record.get("target") if isinstance(record.get("target"), dict) else {}
-        if (
-            target.get("type") == ObjectType.CONFIRM_TOKEN.value
-            and target.get("id") == token_id
-        ):
-            record_type = record.get("type")
-            if record_type == CommandType.CONFIRM_TOKEN_CREATE.value:
-                status = "created"
-                expires_at = _confirm_token_expiry_from_record(record)
-            elif record_type == CommandType.CONFIRM_TOKEN_REDEEM.value:
-                status = "redeemed"
-            elif record_type == CommandType.CONFIRM_TOKEN_DELETE.value:
-                status = "deleted"
-            latest_record = record
-            continue
-
-        # Before automatic redemption existed, guarded admissions persisted the
-        # validated token id on the command/audit record but did not append a
-        # RedeemConfirmToken record.  Treat that durable admission as consumed
-        # so an upgrade cannot grant the same token one additional use.
-        if (
-            status == "created"
-            and _guarded_command_confirm_token_id(record) == token_id
-        ):
-            status = "redeemed"
-            latest_record = record
-
-    expired = False
-    if expires_at is not None and status == "created":
-        expired = expires_at <= datetime.now(timezone.utc)
-        if expired:
-            status = "expired"
-
-    payload: Dict[str, Any] = {
-        "id": token_id,
-        "tokenId": token_id,
-        "status": status,
-        "expired": expired,
-    }
-    if expires_at is not None:
-        payload["expiresAt"] = expires_at.isoformat().replace("+00:00", "Z")
-        payload["expires_at"] = payload["expiresAt"]
-    if latest_record is not None:
-        payload["commandId"] = latest_record.get("command_id")
-        payload["command_id"] = latest_record.get("command_id")
-    return payload
 _bff_source_commit = auth_policy.bff_source_commit
 from .core.app_factory import (
     create_version_handler as _create_version_handler,
-    sem_bff_version as _sem_bff_version_default,
 )
 sem_bff_version = _create_version_handler(
     source_commit_fn=_bff_source_commit,
@@ -7355,7 +5387,7 @@ def _sem_final_channel_records() -> List[Dict[str, Any]]:
 _OODA_STAGE_DEFS = [
     ("observe", "Observe", "telemetry/source/search health"),
     ("orient", "Orient", "active signal/persona proposal count"),
-    ("decide", "Decide", "pending approvals/interventions"),
+    ("decide", "Decide", "pending approvals"),
     ("act", "Act", "paper runtime / sandbox broker state"),
     ("learn", "Learn", "evolution/postmortem/retrain state"),
 ]
@@ -7530,33 +5562,21 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
             source=source,
             surface=surface,
         )
-    if path == "/bff/v5/sentinel/findings":
-        available, records = read_store.list_sentinel_findings()
-        src_dataset = "sentinel_findings" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
-        source = None if available else "missing"
-        return _sem_final_list_response(records, dataset=src_dataset, surface_key="sentinel_findings", source=source)
     if path == "/bff/v5/control-room":
         snapshot_at = utc_now()
         avail_lr, loop_runs = read_store.list_loop_runs()
-        avail_sf, sentinel_findings = read_store.list_sentinel_findings()
-        incidents_source = read_store.dataset_source("incidents")
+        incidents = read_store.list_incidents()
 
-        def _control_room_child_surface(dataset: str, available: bool) -> Dict[str, Any]:
+        def _control_room_child_surface(dataset: str) -> Dict[str, Any]:
             if dataset == "loop_runs":
-                return _loop_run_surface_status(available, snapshot_at=snapshot_at)[2]
-            if incidents_source != "missing":
-                return _dataset_surface_status("incidents", snapshot_at=snapshot_at)
-            return _dataset_surface_status(
-                dataset,
-                snapshot_at=snapshot_at,
-                source=None if available else "missing",
-            )
+                return _loop_run_surface_status(avail_lr, snapshot_at=snapshot_at)[2]
+            return _dataset_surface_status("incidents", snapshot_at=snapshot_at)
 
-        loop_surface = _control_room_child_surface("loop_runs", avail_lr)
-        sentinel_surface = _control_room_child_surface("sentinel_findings", avail_sf)
+        loop_surface = _control_room_child_surface("loop_runs")
+        incident_surface = _control_room_child_surface("incidents")
         child_statuses = {
             str(loop_surface.get("status") or "ok"),
-            str(sentinel_surface.get("status") or "ok"),
+            str(incident_surface.get("status") or "ok"),
         }
         if child_statuses == {"ok"}:
             control_surface = {"status": "ok", "source": "composed_read_models"}
@@ -7578,13 +5598,9 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
                 "items": loop_runs,
                 "meta": {"snapshot_at": snapshot_at, "surfaces": {"loop_runs": loop_surface}},
             },
-            "interventions": {
-                "items": _v5_intervention_records(),
-                "meta": {"snapshot_at": snapshot_at, "surfaces": {"interventions": {"status": "ok", "source": "bff_local_registry"}}},
-            },
-            "sentinel": {
-                "items": sentinel_findings,
-                "meta": {"snapshot_at": snapshot_at, "surfaces": {"sentinel_findings": sentinel_surface}},
+            "incidents": {
+                "items": incidents,
+                "meta": {"snapshot_at": snapshot_at, "surfaces": {"incidents": incident_surface}},
             },
             "ooda_status": ooda_card,
             "meta": {
@@ -7592,7 +5608,7 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
                 "surfaces": {
                     "control_room": control_surface,
                     "loop_runs": loop_surface,
-                    "sentinel_findings": sentinel_surface,
+                    "incidents": incident_surface,
                     "ooda_control_room_status": ooda_card["meta"],
                 },
             },
@@ -7740,12 +5756,10 @@ app = compose_bff_app(
 _events_router = app.state.events_router
 _deployment_router = app.state.deployment_router
 _agora_router = app.state.agora_router
-_runtime_router = app.state.runtime_router
 interaction_lifecycle = app.state.interaction_lifecycle
 workshop_store = app.state.workshop_store
 proposal_store = app.state.proposal_store
 research_store = getattr(app.state, "research_store", None)
-research_dispatcher = getattr(app.state, "research_dispatcher", None)
 dataset_store = getattr(app.state, "dataset_store", None)
 _ASSISTANT_SESSION_STORE = getattr(app.state, "assistant_session_store", None)
 _ASSISTANT_TRANSCRIPT_STORE = getattr(app.state, "assistant_transcript_store", None)
@@ -7801,8 +5815,6 @@ bff_sse_alerts_alias = _mounted_router_endpoint(_events_router, "/bff/sse/alerts
 bff_sse_incident_timeline_alias = _mounted_router_endpoint(_events_router, "/bff/sse/incidents/{incidentId}/timeline")
 bff_sse_review_updates_alias = _mounted_router_endpoint(_events_router, "/bff/sse/review/updates")
 bff_sse_deployment_events_alias = _mounted_router_endpoint(_deployment_router, "/bff/sse/deployment/events")
-bff_sse_agora_signals_alias = _mounted_router_endpoint(_agora_router, "/bff/sse/agora/signals")
-bff_sse_agora_session_alias = _mounted_router_endpoint(_agora_router, "/bff/sse/agora/sessions/{sessionId}")
 
 from .shared.module_retirement_guard import (
     GETATTR_ERROR_MESSAGE as _GETATTR_ERROR_MESSAGE,

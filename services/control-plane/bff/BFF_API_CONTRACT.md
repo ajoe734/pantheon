@@ -697,7 +697,7 @@ BFF maintains an in-memory buffer of the last 500 events per channel.
 
 | Channel | Resync Routes |
 |---|---|
-| `approval` | `GET /bff/approvals`, `GET /bff/v5/interventions` |
+| `approval` | `GET /bff/approvals` |
 | `ask` | `GET /bff/agora/ask/sessions/{id}`, `GET /bff/agora/committee/sessions/{id}` |
 | All others | No canonical resync route; reconnect with `last_event_id=` omitted |
 

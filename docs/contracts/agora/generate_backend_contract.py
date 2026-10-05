@@ -42,9 +42,12 @@ PARENT_BUNDLE_PATH = Path(
     "services/control-plane/specs/agora/bundle_index.v1_12.json"
 )
 CHAIN_ROOT_BUNDLE = Path(
-    "services/control-plane/specs/agora/bundle_index.v1_3.json"
+    "services/control-plane/specs/agora/bundle_index.json"
 )
 BUNDLE_CHAIN_REFRESH_VERSIONS = (
+    "1_1",
+    "1_2",
+    "1_3",
     "1_4",
     "1_5",
     "1_6",

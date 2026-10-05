@@ -25,12 +25,51 @@ from services.control_plane.bff.ports.operations_consultation import (
     create_in_memory_operations_consultation_port,
     create_operations_consultation_port,
 )
+
+
+def _ensure_consultation_port_preserves_tenant_id() -> None:
+    orig_proj_service = DomainConsultationPort._project_service_request_record
+    orig_proj_summary = DomainConsultationPort._project_consult_request_summary
+    orig_proj_detail = DomainConsultationPort._project_consult_request_detail
+
+    @classmethod
+    def _project_service_request_record(cls: Any, req: Mapping[str, Any]) -> Dict[str, Any]:
+        res = orig_proj_service(req)
+        metadata = req.get("metadata") if isinstance(req.get("metadata"), dict) else {}
+        tenant_id = req.get("tenant_id") or metadata.get("tenant_id")
+        if tenant_id and "tenant_id" not in res:
+            res["tenant_id"] = tenant_id
+        return res
+
+    def _project_consult_request_summary(self: Any, req: Mapping[str, Any]) -> Dict[str, Any]:
+        res = orig_proj_summary(self, req)
+        metadata = req.get("metadata") if isinstance(req.get("metadata"), dict) else {}
+        tenant_id = req.get("tenant_id") or metadata.get("tenant_id")
+        if tenant_id and "tenant_id" not in res:
+            res["tenant_id"] = tenant_id
+        return res
+
+    def _project_consult_request_detail(self: Any, req: Mapping[str, Any]) -> Dict[str, Any]:
+        res = orig_proj_detail(self, req)
+        metadata = req.get("metadata") if isinstance(req.get("metadata"), dict) else {}
+        tenant_id = req.get("tenant_id") or metadata.get("tenant_id")
+        if tenant_id and "tenant_id" not in res:
+            res["tenant_id"] = tenant_id
+        return res
+
+    DomainConsultationPort._project_service_request_record = _project_service_request_record
+    DomainConsultationPort._project_consult_request_summary = _project_consult_request_summary
+    DomainConsultationPort._project_consult_request_detail = _project_consult_request_detail
+
+
+_ensure_consultation_port_preserves_tenant_id()
+
 from services.control_plane.bff.ports.persona_capital_runtime import (
     CapitalPoolPort,
     CompositePersonaCapitalRuntimePort,
     DeploymentPlanPort,
     EvolutionProjectionPort,
-    InMemoryPersonaCapitalRuntimePort,
+    _is_unconfigured,
     PersonaCapitalRuntimeDomainPort,
     PersonaFleetPort,
     RankingProjectionPort,
@@ -39,7 +78,6 @@ from services.control_plane.bff.ports.persona_capital_runtime import (
     create_persona_capital_runtime_port,
 )
 from services.control_plane.bff.ports.ooda_management import (
-    InterventionsPort,
     ManagementReviewQueuePort,
     OodaManagementDomainPort,
     OodaPacketsPort,
@@ -186,11 +224,6 @@ class ReadSurfacePorts:
             "ooda": (
                 self.ooda_management.ooda.get_surface_status()
                 if hasattr(self.ooda_management, "ooda") and hasattr(self.ooda_management.ooda, "get_surface_status")
-                else {"status": "ok"}
-            ),
-            "interventions": (
-                self.ooda_management.interventions.get_surface_status()
-                if hasattr(self.ooda_management, "interventions") and hasattr(self.ooda_management.interventions, "get_surface_status")
                 else {"status": "ok"}
             ),
         }
@@ -400,12 +433,6 @@ class ReadSurfacePorts:
     def list_ooda_packets_for_evolution_program(self, program_id: str) -> List[Dict[str, Any]]:
         return self.ooda_management.list_ooda_packets_for_evolution_program(program_id)
 
-    def list_interventions(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self.ooda_management.list_interventions(**kwargs)
-
-    def get_intervention(self, intervention_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        return self.ooda_management.get_intervention(intervention_id)
-
     def list_synthesis_conflict_logs(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.ooda_management.list_synthesis_conflict_logs(**kwargs)
 
@@ -452,6 +479,51 @@ class ReadSurfacePorts:
             # consultation client/store or catalog backend surfaces as
             # unavailable rather than a false healthy default.
             return self.operations_consultation.dataset_source(dataset)
+        if dataset == "incidents":
+            # The incident owner can be down while list_incidents() swallows
+            # the outage and returns []; surface its real availability.
+            return self.lifecycle_telemetry_governance.dataset_source("incidents")
+        if dataset == "telemetry_summaries":
+            try:
+                self.lifecycle_telemetry_governance.list_telemetry_summaries()
+                return "typed_store"
+            except Exception:
+                return "unavailable"
+        if dataset in ("persona_sessions", "sessions"):
+            store = getattr(getattr(self, "persona_training", None), "persona", None)
+            if store is None or getattr(store, "_store", None) is None:
+                return "missing"
+            try:
+                self.list_persona_sessions("")
+                return "store"
+            except Exception as exc:
+                return "missing" if _is_unconfigured(exc) else "unavailable"
+        owner_ports = {
+            "personas": self.persona_capital_runtime.persona,
+            "capability_snapshots": self.persona_capital_runtime.persona,
+            "capital_pools": self.persona_capital_runtime.capital,
+            "bindings": self.persona_capital_runtime.capital,
+            "persona_bindings": self.persona_capital_runtime.capital,
+            "deployment_plans": self.persona_capital_runtime.deployment,
+            "runtime_bindings": self.persona_capital_runtime.runtime,
+        }
+        if dataset in owner_ports:
+            status = owner_ports[dataset].get_surface_status()
+            source = status.get("bindings_source") if dataset in {"bindings", "persona_bindings"} else status["source"]
+            return "missing" if source in {None, "missing"} else source
+        if dataset in {"rankings", "ranking_formulas", "rebalances", "capital_allocations", "containments", "evolution_programs", "evolution_decisions"}:
+            port = self.persona_capital_runtime.evolution if dataset.startswith("evolution_") else self.persona_capital_runtime.ranking
+            status = port.get_surface_status()["surfaces"][dataset]
+            return "missing" if status["status"] == "unavailable" else status["source"]
+        if dataset in {"approval_decisions", "approval_queue_items", "governance_review_queue_items"}:
+            reader = self.ooda_management.review_queue._approval_decisions_reader
+            try:
+                if reader is None:
+                    return "missing"
+                reader()
+                return "service"
+            except Exception:
+                return "missing"
         if dataset in (
             "deployment_plans",
             "personas",
@@ -470,7 +542,6 @@ class ReadSurfacePorts:
             "approval_decisions",
             "evolution_decisions",
             "ooda_packets",
-            "interventions",
             "synthesis_conflict_logs",
             "approval_queue_items",
             "governance_review_queue_items",
@@ -683,9 +754,6 @@ class ReadSurfacePorts:
     def list_loop_runs(self) -> Tuple[bool, List[Dict[str, Any]]]:
         return self.lifecycle_telemetry_governance.list_loop_runs()
 
-    def list_sentinel_findings(self, **kwargs: Any) -> Tuple[bool, List[Dict[str, Any]]]:
-        return self.lifecycle_telemetry_governance.list_sentinel_findings(**kwargs)
-
     def get_kill_switch_status(self) -> Dict[str, Any]:
         return self.lifecycle_telemetry_governance.get_kill_switch_status()
 
@@ -748,9 +816,6 @@ class ReadSurfacePorts:
 
     def get_rollbacks_by_incident(self, incident_id: str) -> List[Dict[str, Any]]:
         return self.lifecycle_telemetry_governance.get_rollbacks_by_incident(incident_id)
-
-    def get_sentinel_finding(self, finding_id: str) -> Tuple[bool, Optional[Dict[str, Any]]]:
-        return self.lifecycle_telemetry_governance.get_sentinel_finding(finding_id)
 
     def list_freeze_orders(self, status: Optional[str] = None, scope: Optional[str] = None) -> List[Dict[str, Any]]:
         return self.lifecycle_telemetry_governance.list_freeze_orders(status=status, scope=scope)
@@ -1262,75 +1327,13 @@ class ReadSurfacePorts:
                 return None
         return memo
 
-    def list_agora_insights(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        if hasattr(self.operations_consultation, "list_agora_insights"):
-            res = self.operations_consultation.list_agora_insights(**kwargs)
-            if res:
-                return res
-        return self.research_knowledge_source.list_insight_cards(**kwargs)
-
-    def list_agora_notes(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        if hasattr(self.operations_consultation, "list_agora_notes"):
-            res = self.operations_consultation.list_agora_notes(**kwargs)
-            if res:
-                return res
-        return self.research_knowledge_source.list_research_notes(**kwargs)
-
-    def list_agora_sessions(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        if hasattr(self.operations_consultation, "list_agora_sessions"):
-            res = self.operations_consultation.list_agora_sessions(**kwargs)
-            if res:
-                return res
-        return self.operations_consultation.list_consult_requests(**kwargs)
-
-    def list_agora_signals(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        if hasattr(self.operations_consultation, "list_agora_signals"):
-            res = self.operations_consultation.list_agora_signals(**kwargs)
-            if res:
-                return res
-        return self.research_knowledge_source.list_evidence_refs(**kwargs)
-
-    def list_agora_training_examples(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        if hasattr(self.operations_consultation, "list_agora_training_examples"):
-            res = self.operations_consultation.list_agora_training_examples(**kwargs)
-            if res:
-                return res
-        return self.persona_training.list_trainer_replays(**kwargs)
-
-    def list_agora_watchlist(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        if hasattr(self.operations_consultation, "list_agora_watchlist"):
-            res = self.operations_consultation.list_agora_watchlist(**kwargs)
-            if res:
-                return res
-        return self.persona_capital_runtime.list_personas(**kwargs)
-
-    def get_agora_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        if hasattr(self.operations_consultation, "get_agora_session"):
-            res = self.operations_consultation.get_agora_session(session_id or "")
-            if res is not None:
-                return res
-        return self.operations_consultation.get_consult_request(session_id or "")
-
-    def get_agora_signal(self, signal_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        if hasattr(self.operations_consultation, "get_agora_signal"):
-            res = self.operations_consultation.get_agora_signal(signal_id or "")
-            if res is not None:
-                return res
-        return self.research_knowledge_source.get_evidence_ref(signal_id or "")
-
-    def get_agora_committee_evidence_pack(self, session_id: Optional[str]) -> Any:
-        if hasattr(self.operations_consultation, "get_agora_committee_evidence_pack"):
-            res = self.operations_consultation.get_agora_committee_evidence_pack(session_id or "")
-            if res is not None:
-                return res
-        return self.operations_consultation.get_consultation_evidence(session_id or "")
-
 
 def create_read_surface_ports(
     *,
     operations_consultation: Optional[OperationsConsultationPort] = None,
     persona_capital_runtime: Optional[Union[CompositePersonaCapitalRuntimePort, PersonaCapitalRuntimeDomainPort]] = None,
     persona_registry_store: Optional[Any] = None,
+    ranking_store: Optional[Any] = None,
     ooda_management: Optional[OodaManagementDomainPort] = None,
     research_knowledge_source: Optional[ResearchKnowledgeSourcePort] = None,
     lifecycle_telemetry_governance: Optional[CompositeLifecycleTelemetryGovernancePort] = None,
@@ -1342,15 +1345,21 @@ def create_read_surface_ports(
     **kwargs: Any,
 ) -> ReadSurfacePorts:
     """Factory creating a production-grade composite ReadSurfacePorts instance."""
-    if persona_registry_store is not None:
-        if persona_capital_runtime is None:
-            persona_capital_runtime = PersonaCapitalRuntimeDomainPort(
-                persona_port=PersonaFleetPort(store=persona_registry_store),
-            )
-        if persona_training is None:
-            persona_training = PersonaTrainingDomainPort(
-                persona_port=PersonaRegistryReadsPort(store=persona_registry_store),
-            )
+    from ..core.owner_reads import approval_records, create_owner_domain_ports
+    if persona_capital_runtime is None:
+        persona_capital_runtime = create_owner_domain_ports(
+            persona_registry_store, ranking_store,
+        )
+    if ooda_management is None:
+        ooda_management = OodaManagementDomainPort(review_queue_port=ManagementReviewQueuePort(
+            deployment_plans_reader=persona_capital_runtime.list_deployment_plans,
+            evolution_decisions_reader=persona_capital_runtime.list_evolution_decisions,
+            approval_decisions_reader=approval_records,
+        ))
+    if persona_registry_store is not None and persona_training is None:
+        persona_training = PersonaTrainingDomainPort(
+            persona_port=PersonaRegistryReadsPort(store=persona_registry_store),
+        )
     return ReadSurfacePorts(
         operations_consultation=operations_consultation,
         persona_capital_runtime=persona_capital_runtime,
@@ -1384,7 +1393,6 @@ def create_in_memory_read_surface_ports(
     pcr_port = create_in_memory_persona_capital_runtime_port(**(persona_capital_runtime_kwargs or {}))
     ooda_kw = dict(ooda_management_kwargs or {})
     ooda_p = ooda_kw.get("ooda_port") or OodaPacketsPort(records_provider=lambda: list(ooda_kw.get("ooda_packets") or []))
-    int_p = ooda_kw.get("interventions_port") or InterventionsPort(records_provider=lambda: list(ooda_kw.get("interventions") or []))
     scl_p = ooda_kw.get("synthesis_conflict_logs_port") or SynthesisConflictLogsPort(records_provider=lambda: list(ooda_kw.get("synthesis_conflict_logs") or []))
     rq_p = ooda_kw.get("review_queue_port") or ManagementReviewQueuePort(
         deployment_plans_reader=lambda: list(ooda_kw.get("deployment_plans") or []),
@@ -1394,7 +1402,6 @@ def create_in_memory_read_surface_ports(
     )
     ooda_port = OodaManagementDomainPort(
         ooda_port=ooda_p,
-        interventions_port=int_p,
         synthesis_conflict_logs_port=scl_p,
         review_queue_port=rq_p,
     )

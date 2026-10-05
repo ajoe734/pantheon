@@ -1,0 +1,11 @@
+{
+  "task_id": "OPS-NONPROD-WORKFLOW-STATUS-FN-20261003",
+  "verified_head": "b053e5d3594b5baa312a6d6d003092ecbc32d1ee",
+  "base": "a8c3ee64a0384ff7fdf1018b484e7c85f197fe5b",
+  "command": "/tmp/clean-bff-venv/bin/python -m pytest -q -p no:cacheprovider scripts/test_nonprod_dev_artifact_workflow.py scripts/test_dev_environment_lease_deploy_contract.py",
+  "base_result": "45 failed, 331 passed",
+  "head_result": "45 failed, 332 passed",
+  "failed_set_diff": "identical (all 45 in test_dev_environment_lease_deploy_contract.py; baseline, not attributed)",
+  "new_test_on_base_workflow": "test_status_functions_appear_only_in_if_conditions FAILS on base nonprod-deploy.yml",
+  "not_claimed": "post-merge absence of workflow file issue run is for the release coordinator to observe"
+}

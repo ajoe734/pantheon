@@ -1758,27 +1758,20 @@ class PersonaProvisioningCoordinator:
         get_path = f"/api/bindings/{_path_id(ids.persona_capital_binding_id)}"
 
         def ready(receipt: Mapping[str, Any]) -> bool:
-            return (
-                receipt.get("status") == "active"
-                and receipt.get("approval_decision_id") == ids.approval_decision_id
-            )
+            return receipt.get("status") == "active"
 
         def validate(receipt: Mapping[str, Any]) -> None:
             self._validate_binding_identity(receipt, record, ids)
             if not ready(receipt):
                 raise PersonaProvisioningCoordinationError(
-                    "PersonaCapitalBinding activation readback is not active with approval"
+                    "PersonaCapitalBinding activation readback is not active"
                 )
 
         receipt = self._transition_then_get(
             owner="capital",
             get_path=get_path,
             post_path=f"{get_path}/activate",
-            payload={
-                "actor_id": self.actor_id,
-                "actor_role": "persona.admin",
-                "approval_decision_id": ids.approval_decision_id,
-            },
+            payload={"actor_id": self.actor_id, "actor_role": "persona.admin"},
             ready=ready,
             validate=validate,
         )

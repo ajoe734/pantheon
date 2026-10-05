@@ -14,7 +14,7 @@ from fastapi import APIRouter, Cookie, Header, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ...dashboard.router import (
+from ...widget_registry import (
     _FORBIDDEN_INTERACTIONS,
     _REGISTRY_VERSION,
     _WIDGET_REGISTRY,
@@ -200,6 +200,7 @@ class TradingDecisionEvent(BaseModel):
     suggested_action: Literal["enter", "add", "reduce", "exit", "review", "no_action"]
     suggested_size: Optional[SuggestedSize] = None
     position_snapshot: Optional[Dict[str, Any]] = None
+    intent_ref: Optional[str] = None
     decision_state: Optional[Literal[
         "pending", "approved_by_trader", "rejected_by_trader",
         "deferred", "expired", "handed_off", "superseded"
@@ -458,6 +459,10 @@ def _stable_hash(payload: Any) -> str:
     ).hexdigest()
 
 
+def _decision_event_etag(event: Dict[str, Any]) -> str:
+    return f'"tr-decision:{event["decision_event_id"]}:{_stable_hash(event)}"'
+
+
 def _proposal_etag(proposal: Dict[str, Any]) -> str:
     return f'"tr-proposal:{proposal["proposalId"]}:{_stable_hash(proposal)[:8]}"'
 
@@ -579,29 +584,13 @@ def _widget(
 
 
 def _workspace_scope(identity: Any) -> Dict[str, str]:
-    claims = getattr(identity, "claims", None)
-    if not isinstance(claims, dict):
-        claims = identity.get("claims", {}) if isinstance(identity, dict) else {}
-    if not isinstance(claims, dict):
-        claims = {}
-    tenant_id = str(
-        claims.get("tenant_id")
-        or claims.get("tenantId")
-        or (identity.get("tenant_id") if isinstance(identity, dict) else None)
-        or (identity.get("tenantId") if isinstance(identity, dict) else None)
-        or "pantheon-dev"
-    ).strip()
-    user_id = str(
-        claims.get("user_id")
-        or claims.get("userId")
-        or claims.get("sub")
-        or (identity.get("user_id") if isinstance(identity, dict) else None)
-        or (identity.get("userId") if isinstance(identity, dict) else None)
-        or (identity.get("operator_id") if isinstance(identity, dict) else None)
-        or getattr(identity, "operator_id", "")
-        or ""
-    ).strip()
-    return {"tenant_id": tenant_id, "user_id": user_id}
+    from ...identity.scope import resolve_canonical_agora_scope, AgoraScopeResolutionError
+    try:
+        tenant_id, user_id = resolve_canonical_agora_scope(identity)
+        return {"tenant_id": tenant_id, "user_id": user_id}
+    except AgoraScopeResolutionError as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
 
 
 def _record_visible_to_scope(record: Dict[str, Any], scope: Dict[str, str]) -> bool:
@@ -958,7 +947,9 @@ def _workspace_data_freshness(
     rather than trusting caller-supplied health.
     """
     resolved = copy.deepcopy(reported)
-    events = store.list_decision_events(page_size=10_000).get("items") or []
+    events = store.list_decision_events(
+        page_size=10_000, scope={"tenant_id": tenant_id, "user_id": user_id},
+    ).get("items") or []
     strategy_events = [
         event
         for event in events

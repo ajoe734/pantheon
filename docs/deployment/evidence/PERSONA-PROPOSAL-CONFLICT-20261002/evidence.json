@@ -1,0 +1,25 @@
+{
+  "task_id": "PERSONA-PROPOSAL-CONFLICT-20261002",
+  "change_class": "corrective",
+  "net_prod_line_budget": 100,
+  "production_delta": {
+    "files": {
+      "services/persona-evaluator-agent/persona_evaluator_agent.py": "+83/-23"
+    },
+    "net_lines": 60
+  },
+  "acceptance_criteria_verification": {
+    "ac1_reproduce_409_drop_and_dedupe": "Reproduced and verified via isolated real-owner regression tests: _http preserves 409 error detail, run_once treats conflicts as unresolved rather than deduped success",
+    "ac2_conflict_handling": "Content, version, CAS conflicts and malformed/incomplete replies (missing owner identity or content digest) treated as unresolved/visibly degraded without publishing governance_request as accepted, requiring explicit matching response fields or matching readback and retaining pending retry identity",
+    "ac3_idempotency_binding": "Proposal identity bound to persona, states, source snapshot, and content digest (proposal_digest); changed content never silently attaches to old state-pair request, and retried pending identity resolves/projects only to matching content",
+    "ac4_test_coverage": "29 passed in services/persona-evaluator-agent/test_persona_evaluator_agent.py covering HTTP 201, verified same-content replay, distinct conflict kinds (content, version, CAS, exists), malformed/incomplete 200 replay rejection, changed content retry non-attachment, transport ambiguity, restart, retention window expiry, incomplete 201 reservation retention, target_type and target_version verification, and readback-resolved 201 creation",
+    "ac5_clean_scope": "No BFF or Governance source edits, corrective net production delta 60 <= 100"
+  },
+  "verification": {
+    "command": "python3 -m pytest services/persona-evaluator-agent/test_persona_evaluator_agent.py",
+    "result": "29 passed"
+  },
+  "not_verified": [
+    "hosted live governance calls (forbidden by acceptance criteria 5)"
+  ]
+}

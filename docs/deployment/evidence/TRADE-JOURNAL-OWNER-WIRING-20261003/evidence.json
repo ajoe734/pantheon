@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "task_id": "TRADE-JOURNAL-OWNER-WIRING-20261003",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "title": "Connect retained trade journal actions to existing domain owners",
+  "timestamp": "2026-10-04T11:23:00Z",
+  "summary": "Resolved all 6 acceptance findings from Codex2 exact-head review on PR #6144: (1) Enforced verified nonempty exact tenant match on Persona POST retry and GET reflections before any provider or store effect, returning 403 on tenantless JWT and 401 on missing auth with zero side-effects. (2) Bound Persona CAS metadata updates and conflict checks to the exact committed snapshot in try_metadata_cas, preventing lost updates on concurrent same/different keys. (3) Bound all semantic content (target_env, promotion_stage, episodes, reason, actor, tenant) in Memory submit-review and decide, returning 409 conflict when content differs on replay. (4) Atomically integrated idempotency into TradeLessonCandidateStore and trade_lesson_candidates.json with file locking and atomic replacement, completely eliminating standalone trade_lesson_idempotency.json. (5) Aligned BFF and Persona configuration with docker-compose.yml (PERSONA_URL, PANTHEON_MEMORY_API_URL, PANTHEON_TELEMETRY_API_URL, PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL) and verified mounted default paths against real isolated telemetry and adapter boundaries. (6) Verified with 54 passing tests across 5 suites, including actual OS subprocess process restart, durable readback across restart, concurrent requests, and denial zero-effect coverage. Net production diff is +208 lines against dev, strictly satisfying the 220 budget.",
+  "acceptance_criteria_verification": {
+    "ac1_reuse_existing_domain_owners": {
+      "satisfied": true,
+      "evidence": "BFF routes reflection.retry to Persona service (/api/personas/{id}/trade-journal/{episode}/reflection:retry) and lesson actions (lesson.submit_review, lesson.decide) to Memory service (/api/memory/trade-lessons/{id}/submit-review, /decide). Telemetry and OpenClaw adapter boundaries wired to default compose endpoints. No new command service, queue, or approval store created."
+    },
+    "ac2_canonical_admission_and_idempotency": {
+      "satisfied": true,
+      "evidence": "Persona and Memory enforce trusted JWT authentication and verified nonempty exact tenant matching on both reads and writes before any provider/store effect. Content-bound idempotency with replay detection (202 idempotent_replay: true) and conflict detection (409 IDEMPOTENCY_CONFLICT) bound to exact committed snapshots. Lesson decisions enforce caller roles, CAS mutation, and target_env governance."
+    },
+    "ac3_default_bff_path_tested_against_isolated_owners": {
+      "satisfied": true,
+      "evidence": "test_default_mounted_bff_path_with_real_isolated_owners_and_durable_stores in test_ptj_004_trade_journal.py exercises default mounted BFF routes against real isolated Persona and Memory owners with default docker-compose URL contracts. Includes actual OS subprocess process restart, lesson durable readback/replay across fresh process, denial zero-effect coverage, and concurrent request coverage."
+    },
+    "ac4_governance_budget_and_boundaries": {
+      "satisfied": true,
+      "evidence": "Net production line change is +208 lines (budget 220). Product ownership verified across 24 aggregates and 206 mutation routes. Standalone idempotency store eliminated. Evidence file line count is well within the 400 line cap."
+    }
+  },
+  "verification": {
+    "test_suites": [
+      {
+        "suite": "services/memory/test_lesson_governance_api.py",
+        "passed": 16,
+        "failed": 0
+      },
+      {
+        "suite": "services/persona/test_trade_reflection_owner.py",
+        "passed": 8,
+        "failed": 0
+      },
+      {
+        "suite": "services/persona/test_trade_reflection_pipeline.py",
+        "passed": 7,
+        "failed": 0
+      },
+      {
+        "suite": "services/persona/test_lesson_governance.py",
+        "passed": 13,
+        "failed": 0
+      },
+      {
+        "suite": "services/control-plane/bff/test_ptj_004_trade_journal.py",
+        "passed": 10,
+        "failed": 0
+      }
+    ],
+    "diff_budget": {
+      "change_class": "corrective",
+      "net_prod_budget": 220,
+      "production": {
+        "added": 404,
+        "deleted": 196,
+        "net": 208
+      },
+      "test": {
+        "added": 604,
+        "deleted": 7,
+        "net": 597
+      },
+      "passed": true
+    },
+    "product_ownership": {
+      "command": "python3 scripts/check_product_ownership.py",
+      "aggregates": 24,
+      "mutation_routes": 206,
+      "workers": 21,
+      "symbol_dispositions": 225,
+      "passed": true
+    }
+  },
+  "review": {
+    "reviewer": "Codex2",
+    "decision": "pending independent exact-head review"
+  }
+}

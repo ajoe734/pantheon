@@ -84,6 +84,20 @@ class MockReadStore:
     def get_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
         return self.incidents.get(incident_id)
 
+    def create_incident(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        inc_id = payload.get("incident_id") or payload.get("id") or "inc-test"
+        self.incidents[inc_id] = payload
+        return payload
+
+    def update_incident_status(self, incident_id: str, status: str, resolved_at: Optional[str] = None) -> Dict[str, Any]:
+        clean_id = incident_id.strip()
+        if clean_id in self.incidents:
+            self.incidents[clean_id]["status"] = status
+            if resolved_at:
+                self.incidents[clean_id]["resolved_at"] = resolved_at
+            return self.incidents[clean_id]
+        return {"incident_id": clean_id, "status": status}
+
     def get_postmortem_by_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
         for pm in self.postmortems.values():
             if pm.get("incident_id") == incident_id:
@@ -175,9 +189,9 @@ class MockCommandStore:
     def __init__(self) -> None:
         self.commands: List[Dict[str, Any]] = []
 
-    def submit_command(self, **kwargs: Any) -> Dict[str, Any]:
+    def submit_terminal_command(self, **kwargs: Any) -> Dict[str, Any]:
         self.commands.append(kwargs)
-        return {"command_id": kwargs.get("command_id"), "status": "submitted"}
+        return {"command_id": kwargs.get("command_id"), "status": "executed"}
 
 
 def _build_test_client(
@@ -515,8 +529,10 @@ def test_bff_alert_acknowledge() -> None:
         json={"note": "Investigating now"},
         headers={"Idempotency-Key": "ack-1"},
     )
-    assert resp.status_code == 202
-    assert resp.json()["status"] == "submitted"
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "acknowledged"
+    assert resp.json()["data"]["incident_status"] == "investigating"
+    assert store.incidents["inc-1"]["status"] == "investigating"
     assert len(cmd_store.commands) == 1
     assert cmd_store.commands[0]["params"]["alert_id"] == "alert-incident-inc-1"
 
@@ -569,8 +585,7 @@ def test_bff_audit_endpoints() -> None:
 
     # 5. POST /bff/audit/export
     resp5 = client.post("/bff/audit/export", json={"scope": "all"})
-    assert resp5.status_code == 202
-    assert resp5.json()["status"] == "accepted"
+    assert resp5.status_code == 410
 
 
 def test_fast_path_semantic_commands() -> None:
@@ -579,22 +594,31 @@ def test_fast_path_semantic_commands() -> None:
 
     routes = [
         "/bff/alerts/a1/escalate-incident",
-        "/bff/incidents/inc-1/append-postmortem",
         "/bff/incidents/inc-1/resolve",
-        "/bff/incidents/inc-1/rollback-deployment",
         "/bff/incidents/inc-1/start-mitigation",
     ]
 
     for r in routes:
         # Standard execution
         resp = client.post(r, json={"reason": "test action"})
-        assert resp.status_code == 202, f"Failed for {r}: {resp.text}"
-        assert resp.json()["status"] == "accepted"
+        assert resp.status_code == 200, f"Failed for {r}: {resp.text}"
+        expected_status = "resolved" if "resolve" in r else "investigating"
+        assert resp.json()["status"] == expected_status
 
         # Dry run preview
         resp_dry = client.post(r, json={"reason": "test dry run"}, headers={"X-Dry-Run": "true"})
-        assert resp_dry.status_code == 202
-        assert resp_dry.json()["status"] == "accepted"
+        assert resp_dry.status_code == 200
+        assert resp_dry.json()["status"] == "preview"
+
+    # Non-status incident actions fail unavailable without mutating incident status
+    for r in [
+        "/bff/incidents/inc-1/append-postmortem",
+        "/bff/incidents/inc-1/rollback-deployment",
+    ]:
+        resp = client.post(r, json={"reason": "test action"})
+        assert resp.status_code == 503, f"Expected 503 for {r}: {resp.text}"
+        err = resp.json().get("error") or resp.json().get("detail", {}).get("error", {})
+        assert err.get("code") == "DEPENDENCY_UNAVAILABLE"
 
 
 def test_production_app_incident_routes_wiring() -> None:
@@ -638,9 +662,9 @@ def test_production_app_incident_routes_wiring() -> None:
         ("/bff/audit/export", ("GET",), "bff_audit_export"),
         ("/bff/audit/export", ("POST",), "sem_audit_export_command"),
         ("/bff/incidents/{id}/start-mitigation", ("POST",), "sem_final_generic_id_command_alias"),
-        ("/bff/incidents/{id}/rollback-deployment", ("POST",), "sem_final_generic_id_command_alias"),
+        ("/bff/incidents/{id}/rollback-deployment", ("POST",), "bff_incident_non_status_action"),
         ("/bff/incidents/{id}/resolve", ("POST",), "sem_final_generic_id_command_alias"),
-        ("/bff/incidents/{id}/append-postmortem", ("POST",), "sem_final_generic_id_command_alias"),
+        ("/bff/incidents/{id}/append-postmortem", ("POST",), "bff_incident_non_status_action"),
         ("/bff/alerts/{id}/escalate-incident", ("POST",), "sem_final_generic_id_command_alias"),
     ]
 
@@ -670,4 +694,3 @@ def test_production_app_incident_routes_wiring() -> None:
 
     resp_audit = client.get("/bff/audit", headers=prod_headers)
     assert resp_audit.status_code == 200
-

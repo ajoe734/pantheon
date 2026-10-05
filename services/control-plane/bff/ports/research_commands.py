@@ -85,29 +85,11 @@ def _default_http_post(
     payload: Dict[str, Any],
     headers: Optional[Dict[str, str]] = None,
 ) -> Tuple[int, Optional[Dict[str, Any]]]:
-    """POST JSON ``payload`` to ``url`` and return ``(status_code, parsed_json_or_none)``."""
-    req_headers = {"Content-Type": "application/json", "Accept": "application/json"}
-    if headers:
-        req_headers.update(headers)
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers=req_headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=_timeout_seconds()) as resp:
-            status_code = resp.status
-            raw = resp.read()
-            body = json.loads(raw.decode("utf-8")) if raw else None
-            return status_code, body
-    except urllib.error.HTTPError as exc:
-        raw = exc.read()
-        body = None
-        try:
-            body = json.loads(raw.decode("utf-8")) if raw else None
-        except Exception:
-            body = {"detail": raw.decode("utf-8", errors="replace")}
-        return exc.code, body
-    except Exception as exc:
-        log.warning("Research command POST %s failed transport: %s", url, exc)
-        return 503, {"detail": str(exc)}
+    """POST JSON using the shared ResearchServiceClient transport."""
+    from services.control_plane.bff.research.client import default_http_request
+
+    status, body = default_http_request("POST", url, payload, headers)
+    return status, body if isinstance(body, dict) else None
 
 
 @dataclass

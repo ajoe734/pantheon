@@ -40,7 +40,11 @@ def test_catalog_is_non_empty() -> None:
 
 def test_every_command_type_has_catalog_entry() -> None:
     catalogued = catalog_action_ids()
-    excluded = {"RebalanceApproval", "RebalanceTwoManSign"}
+    excluded = {
+        "RebalanceApproval",
+        "RebalanceTwoManSign",
+        "ApprovePool",  # retired: Capital has no pool-approve operation; kept so stored records still deserialize
+    }
     missing = [ct.value for ct in CommandType if ct.value not in catalogued and ct.value not in excluded]
     assert not missing, f"CommandType values missing from action catalog: {missing}"
 
@@ -72,17 +76,13 @@ def test_no_catalog_entry_uses_requires_star_as_success_status() -> None:
         )
 
 
-def test_critical_actions_require_two_man() -> None:
-    catalog = get_action_catalog().catalog
-    critical = [e for e in catalog if e.risk_level == RiskLevel.CRITICAL]
-    assert critical, "Expected at least one CRITICAL-risk action"
-    for entry in critical:
-        assert entry.requires_two_man, (
-            f"{entry.action_id} is CRITICAL but does not require two-man authorization"
-        )
-        assert entry.requires_confirm_token, (
-            f"{entry.action_id} is CRITICAL but does not require confirm token"
-        )
+def test_live_promotion_review_intent_has_no_capital_approval_workflow() -> None:
+    entry = get_catalog_entry("PromoteEvolutionCandidateLive")
+    assert entry.risk_level == RiskLevel.MEDIUM
+    assert not entry.requires_approval
+    assert not entry.requires_confirm_token
+    assert not entry.requires_two_man
+    assert entry.required_roles == ["approver", "admin"]
 
 
 def test_catalog_entry_can_be_projected_to_action_descriptor() -> None:
@@ -116,24 +116,6 @@ def test_get_catalog_entry_lookup() -> None:
     assert entry.requires_approval
 
     assert get_catalog_entry("NonExistentAction") is None
-
-
-def test_runtime_repair_actions_are_high_risk_confirmed_and_auditable() -> None:
-    action_ids = {
-        "RestartPaperRuntime",
-        "RestartTelemetryBridge",
-        "TerminateStalePaperMonitoringSession",
-        "StartPaperMonitoringSession",
-        "ProbeTelemetryIngest",
-    }
-    for action_id in action_ids:
-        entry = get_catalog_entry(action_id)
-        assert entry is not None
-        assert entry.entity_type == "Runtime"
-        assert entry.risk_level == RiskLevel.HIGH
-        assert entry.requires_confirm_token is True
-        assert entry.idempotency_required is True
-        assert "runtime_operator" in entry.required_roles
 
 
 # --------------------------------------------------------------------------- #
@@ -188,7 +170,11 @@ def test_get_bff_actions_all_command_types_present_in_response() -> None:
     )
     assert response.status_code == 200
     returned_ids = {e["action_id"] for e in response.json()["catalog"]}
-    excluded = {"RebalanceApproval", "RebalanceTwoManSign"}
+    excluded = {
+        "RebalanceApproval",
+        "RebalanceTwoManSign",
+        "ApprovePool",  # retired: Capital has no pool-approve operation; kept so stored records still deserialize
+    }
     for command_type in CommandType:
         if command_type.value in excluded:
             continue

@@ -45,6 +45,9 @@ def _run(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 GENERATED_BUNDLE_PATHS = (
+    "services/control-plane/specs/agora/bundle_index.v1_1.json",
+    "services/control-plane/specs/agora/bundle_index.v1_2.json",
+    "services/control-plane/specs/agora/bundle_index.v1_3.json",
     "services/control-plane/specs/agora/bundle_index.v1_4.json",
     "services/control-plane/specs/agora/bundle_index.v1_5.json",
     "services/control-plane/specs/agora/bundle_index.v1_6.json",

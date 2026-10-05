@@ -325,13 +325,13 @@ def check_independent_review(trailers: dict[str, str]) -> list[str]:
     return []
 
 
-def collect_messages_from_range(rev_range: str) -> list[tuple[str, str]]:
+def collect_messages_from_range(rev_range: str, *, repository_root: Path | None = None) -> list[tuple[str, str]]:
     out = subprocess.run(
         ["git", "log", "--format=%H%x00%B%x1e", rev_range],
         check=True,
         capture_output=True,
         text=True,
-        cwd=ROOT,
+        cwd=repository_root or ROOT,
     ).stdout
     items: list[tuple[str, str]] = []
     for chunk in out.split("\x1e"):
@@ -343,19 +343,60 @@ def collect_messages_from_range(rev_range: str) -> list[tuple[str, str]]:
     return items
 
 
-def commit_delivery_class(sha: str, manifest: dict) -> str:
+def commit_delivery_class(sha: str, manifest: dict, *, repository_root: Path | None = None) -> str:
     """Classify this commit, not its event label or the range's net diff."""
     from scripts.component_boundary import classify_paths
 
     result = subprocess.run(
         ["git", "diff-tree", "--root", "--no-commit-id", "--name-only",
          "--no-renames", "-r", "-z", sha],
-        check=True, capture_output=True, text=True, cwd=ROOT,
+        check=True, capture_output=True, text=True, cwd=repository_root or ROOT,
     )
     # NUL boundaries preserve unusual filenames; disabling rename detection
     # includes the deleted product path when a file moves into tooling.
     paths = [path for path in result.stdout.split("\0") if path]
     return "tooling" if classify_paths(manifest, paths)["tooling_only"] else "product"
+
+
+def check_targets(
+    targets: list[tuple[str, str]], *, skip_merge: bool = False,
+    delivery_class: str = "product", expected_task_id: str | None = None,
+    repository_root: Path | None = None,
+) -> list[tuple[str, list[str]]]:
+    required, prefix_required = load_settings()
+    manifest = None
+    if delivery_class == "auto":
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        from scripts.component_boundary import load_manifest
+        manifest = load_manifest(ROOT / "docs/02-architecture/component-boundary.yaml")
+    failures = []
+    for sha, message in targets:
+        cwd = repository_root or ROOT
+        if skip_merge and len(subprocess.run(
+            ["git", "rev-list", "--parents", "-n", "1", sha], check=True,
+            capture_output=True, text=True, cwd=cwd,
+        ).stdout.split()) > 2:
+            continue
+        kind = commit_delivery_class(sha, manifest, repository_root=cwd) if manifest is not None else delivery_class
+        if manifest is not None:
+            print(f"[trailers] {sha}: delivery_class={kind}")
+        problems = check_message(message, required, prefix_required,
+                                 expected_task_id=expected_task_id, delivery_class=kind)
+        if problems:
+            failures.append((sha, problems))
+    return failures
+
+
+def check_range(
+    rev_range: str, *, skip_merge: bool = True, delivery_class: str = "auto",
+    expected_task_id: str | None = None, repository_root: Path | None = None,
+) -> list[tuple[str, list[str]]]:
+    return check_targets(
+        collect_messages_from_range(rev_range, repository_root=repository_root),
+        skip_merge=skip_merge, delivery_class=delivery_class,
+        expected_task_id=expected_task_id, repository_root=repository_root,
+    )
 
 
 def main() -> int:
@@ -389,17 +430,6 @@ def main() -> int:
     if os.environ.get("PANTHEON_TRAILER_CHECK_DISABLED") == "1":
         return 0
 
-    required, prefix_required = load_settings()
-    manifest = None
-    if args.delivery_class == "auto":
-        # Explicit product/tooling callers (including commit-message validation)
-        # do not need the Git source classifier or its YAML dependency.
-        if str(ROOT) not in sys.path:
-            sys.path.insert(0, str(ROOT))
-        from scripts.component_boundary import load_manifest
-
-        manifest = load_manifest(ROOT / "docs/02-architecture/component-boundary.yaml")
-
     targets: list[tuple[str, str]]
     if args.message_file:
         text = Path(args.message_file).read_text()
@@ -418,34 +448,15 @@ def main() -> int:
     else:
         targets = collect_messages_from_range(args.rev_range)
 
-    exit_code = 0
-    for sha, msg in targets:
-        if args.skip_merge:
-            parents = subprocess.run(
-                ["git", "rev-list", "--parents", "-n", "1", sha],
-                check=True,
-                capture_output=True,
-                text=True,
-                cwd=ROOT,
-            ).stdout.split()
-            if len(parents) > 2:  # merge commit
-                continue
-        delivery_class = args.delivery_class
-        if manifest is not None:
-            delivery_class = commit_delivery_class(sha, manifest)
-            print(f"[trailers] {sha}: delivery_class={delivery_class}")
-        problems = check_message(
-            msg,
-            required=required,
-            prefix_required=prefix_required,
-            expected_task_id=args.task_id,
-            delivery_class=delivery_class,
-        )
-        if problems:
-            exit_code = 1
-            print(f"\n[trailers] {sha}:")
-            for p in problems:
-                print(f"  - {p}")
+    failures = check_targets(
+        targets, skip_merge=args.skip_merge, delivery_class=args.delivery_class,
+        expected_task_id=args.task_id,
+    )
+    exit_code = int(bool(failures))
+    for sha, problems in failures:
+        print(f"\n[trailers] {sha}:")
+        for p in problems:
+            print(f"  - {p}")
     if exit_code:
         print(
             "\nFix: amend the commit message to include the required trailers. "

@@ -551,6 +551,23 @@ def test_private_storage_unavailable_is_503_without_orphan_session(monkeypatch):
 
 
 def test_reconstruct_route_reads_private_initial_message(monkeypatch):
+    from services.control_plane.bff.agora.strategy_workshop.semantic_provider import OpenClawOpsClient
+    calls = []
+
+    def structured_response(self, method, path, **kwargs):
+        calls.append(kwargs["body"])
+        return {"status": "ok", "data": {"provider": "openclaw", "status": "completed", "output": {
+            "structured_data": {
+                "strategy_map": {"hypothesis": {"status": "confirmed", "summary": "Momentum alpha",
+                                                "details": {"message_numbers": [1]}}},
+                "explicit_facts": ["Momentum alpha"], "inferences": [], "assumptions": [],
+                "contradictions": [], "strategy_spec": None,
+                "next_best_question": {"question_id": "q1", "text": "Which signal?",
+                                       "resolves": ["signal_definition"], "why_now": "Signal is missing"},
+            },
+        }}}
+
+    monkeypatch.setattr(OpenClawOpsClient, "_request", structured_response)
     client = _workshop_client(monkeypatch)
     response = client.post("/bff/agora/workshops", headers={
         "Authorization": _OPERATOR_AUTH, "Idempotency-Key": "private-reconstruct-test",
@@ -561,6 +578,8 @@ def test_reconstruct_route_reads_private_initial_message(monkeypatch):
                          headers={"Authorization": _OPERATOR_AUTH})
     assert result.status_code == 200, result.text
     assert result.json()["data"]["strategy_map"]["hypothesis"]["status"] == "confirmed"
+    assert "Hypothesis: momentum alpha. Universe: SPY equities." in calls[0]["prompt"]
+    assert result.json()["data"]["draft_proposal"] is None
 
 
 def test_reconstruct_missing_body_returns_503_not_placeholder_result(monkeypatch):

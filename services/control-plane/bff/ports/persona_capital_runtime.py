@@ -40,12 +40,13 @@ def _utc_now_rfc3339() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _is_unconfigured(exc: Exception) -> bool:
+    return any(k in str(exc).lower() for k in ("unconfigured", "not configured"))
+
+
 def _parse_rfc3339(val: Any) -> Optional[datetime]:
-    if not val or not isinstance(val, str):
-        return None
     try:
-        clean = val.replace("Z", "+00:00")
-        return datetime.fromisoformat(clean)
+        return datetime.fromisoformat(val.replace("Z", "+00:00"))
     except Exception:
         return None
 
@@ -129,14 +130,14 @@ class PersonaFleetPort:
             try:
                 if hasattr(self._store, "list_personas") and callable(self._store.list_personas):
                     return "store", list(self._store.list_personas() or [])
-            except Exception:
-                return "unavailable", []
+            except Exception as exc:
+                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
         if self._records_provider is not None:
             try:
                 records = self._records_provider()
                 return "service", [dict(r) for r in (records or [])]
-            except Exception:
-                return "unavailable", []
+            except Exception as exc:
+                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
         return "missing", []
 
     def get_surface_status(self) -> Dict[str, Any]:
@@ -148,9 +149,9 @@ class PersonaFleetPort:
                 "message": "Persona registry store is unavailable or unconfigured.",
             }
         return {
-            "status": "ok" if records else "degraded",
+            "status": "ok",
             "source": source,
-            "message": None if records else "Persona registry store is empty.",
+            "message": None,
         }
 
     @staticmethod
@@ -230,13 +231,13 @@ class CapitalPoolPort:
             try:
                 if hasattr(self._store, "list_capital_pools") and callable(self._store.list_capital_pools):
                     return "store", list(self._store.list_capital_pools() or [])
-            except Exception:
-                return "unavailable", []
+            except Exception as exc:
+                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
         if self._pools_provider is not None:
             try:
                 return "service", [dict(r) for r in (self._pools_provider() or [])]
-            except Exception:
-                return "unavailable", []
+            except Exception as exc:
+                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
         return "missing", []
 
     def _get_raw_bindings(self) -> Tuple[str, List[Dict[str, Any]]]:
@@ -244,13 +245,13 @@ class CapitalPoolPort:
             try:
                 if hasattr(self._store, "list_bindings") and callable(self._store.list_bindings):
                     return "store", list(self._store.list_bindings() or [])
-            except Exception:
-                return "unavailable", []
+            except Exception as exc:
+                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
         if self._bindings_provider is not None:
             try:
                 return "service", [dict(r) for r in (self._bindings_provider() or [])]
-            except Exception:
-                return "unavailable", []
+            except Exception as exc:
+                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
         return "missing", []
 
     def get_surface_status(self) -> Dict[str, Any]:
@@ -262,14 +263,12 @@ class CapitalPoolPort:
                 "source": pool_source,
                 "message": "Capital pool store is unavailable or unconfigured.",
             }
-        status = "ok" if pools else "degraded"
-        if binding_source in ("missing", "unavailable"):
-            status = "degraded"
+        status = "unavailable" if binding_source == "unavailable" else ("degraded" if binding_source == "missing" else "ok")
         return {
             "status": status,
             "source": pool_source,
             "bindings_source": binding_source,
-            "message": None if pools else "Capital pool store is empty.",
+            "message": None,
         }
 
     @staticmethod
@@ -373,13 +372,13 @@ class DeploymentPlanPort:
             try:
                 if hasattr(self._store, "list_deployment_plans") and callable(self._store.list_deployment_plans):
                     return "store", list(self._store.list_deployment_plans() or [])
-            except Exception:
-                return "unavailable", []
+            except Exception as exc:
+                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
         if self._plans_provider is not None:
             try:
                 return "service", [dict(r) for r in (self._plans_provider() or [])]
-            except Exception:
-                return "unavailable", []
+            except Exception as exc:
+                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
         return "missing", []
 
     def get_surface_status(self) -> Dict[str, Any]:
@@ -391,9 +390,9 @@ class DeploymentPlanPort:
                 "message": "Deployment plan store is unavailable or unconfigured.",
             }
         return {
-            "status": "ok" if records else "degraded",
+            "status": "ok",
             "source": source,
-            "message": None if records else "Deployment plan store is empty.",
+            "message": None,
         }
 
     @staticmethod
@@ -449,13 +448,13 @@ class RuntimePort:
             try:
                 if hasattr(self._store, "list_runtime_bindings") and callable(self._store.list_runtime_bindings):
                     return "store", list(self._store.list_runtime_bindings() or [])
-            except Exception:
-                return "unavailable", []
+            except Exception as exc:
+                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
         if self._runtime_bindings_provider is not None:
             try:
                 return "service", [dict(r) for r in (self._runtime_bindings_provider() or [])]
-            except Exception:
-                return "unavailable", []
+            except Exception as exc:
+                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
         return "missing", []
 
     def get_surface_status(self) -> Dict[str, Any]:
@@ -467,9 +466,9 @@ class RuntimePort:
                 "message": "Runtime binding store is unavailable or unconfigured.",
             }
         return {
-            "status": "ok" if records else "degraded",
+            "status": "ok",
             "source": source,
-            "message": None if records else "Runtime binding store is empty.",
+            "message": None,
         }
 
     @staticmethod
@@ -565,8 +564,8 @@ class RankingProjectionPort:
         try:
             records = reader()
             return "service", [dict(r) for r in (records or [])]
-        except Exception:
-            return "unavailable", []
+        except Exception as exc:
+            return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
 
     def get_surface_status(self) -> Dict[str, Any]:
         surfaces = {}
@@ -582,7 +581,7 @@ class RankingProjectionPort:
             if source in ("missing", "unavailable"):
                 surfaces[name] = {"status": "unavailable", "source": source, "message": f"{name} reader is unavailable or unconfigured."}
             else:
-                surfaces[name] = {"status": "ok" if records else "degraded", "source": source, "message": None if records else f"{name} reader returned no records."}
+                surfaces[name] = {"status": "ok", "source": source, "message": None}
         overall = "ok" if all(s["status"] == "ok" for s in surfaces.values()) else (
             "unavailable" if all(s["status"] == "unavailable" for s in surfaces.values()) else "degraded"
         )
@@ -796,8 +795,8 @@ class EvolutionProjectionPort:
         try:
             records = reader()
             return "service", [dict(r) for r in (records or [])]
-        except Exception:
-            return "unavailable", []
+        except Exception as exc:
+            return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
 
     def get_surface_status(self) -> Dict[str, Any]:
         surfaces = {}
@@ -809,7 +808,7 @@ class EvolutionProjectionPort:
             if source in ("missing", "unavailable"):
                 surfaces[name] = {"status": "unavailable", "source": source, "message": f"{name} reader is unavailable or unconfigured."}
             else:
-                surfaces[name] = {"status": "ok" if records else "degraded", "source": source, "message": None if records else f"{name} reader returned no records."}
+                surfaces[name] = {"status": "ok", "source": source, "message": None}
         overall = "ok" if all(s["status"] == "ok" for s in surfaces.values()) else (
             "unavailable" if all(s["status"] == "unavailable" for s in surfaces.values()) else "degraded"
         )

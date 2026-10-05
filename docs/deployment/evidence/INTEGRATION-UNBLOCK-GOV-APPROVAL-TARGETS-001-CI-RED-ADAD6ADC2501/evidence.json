@@ -1,0 +1,88 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-GOV-APPROVAL-TARGETS-001-CI-RED-ADAD6ADC2501",
+  "recorded_at": "2026-09-30T19:36:00Z",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "repository": "ajoe734/pantheon",
+  "base_sha": "1a399dc8bec061bf24ad9dc8a9e6ddc4f2c7c43a",
+  "changed_files": [
+    "docs/deployment/evidence/INTEGRATION-UNBLOCK-GOV-APPROVAL-TARGETS-001-CI-RED-ADAD6ADC2501/evidence.json"
+  ],
+  "source_task": "GOV-APPROVAL-TARGETS-001",
+  "source_pr": "https://github.com/ajoe734/pantheon/pull/6041",
+  "original_head": "68bc6cab3e14bd277932d647fa704263bc69327f",
+  "original_base": "1a399dc8bec061bf24ad9dc8a9e6ddc4f2c7c43a",
+  "root_cause": {
+    "dispatch_reason": "ci-red",
+    "workflow": "Branch CI Gate",
+    "check": "Commit trailers",
+    "failing_commits": [
+      {
+        "oid": "4229e435af4030a4c2fcfe33b4b11c882e4579c4",
+        "subject": "GOV-APPROVAL-TARGETS-001: require two deciders and risk classification for risk-increasing rebalance_apply",
+        "subject_length": 106,
+        "problems": [
+          "subject exceeds 72 chars (106)",
+          "missing trailer: LLM-Agent",
+          "missing trailer: Task-ID",
+          "missing trailer: Reviewer"
+        ]
+      },
+      {
+        "oid": "21f53ccd7a342d4c2ce45a77e72ec816c10a40c5",
+        "subject": "GOV-APPROVAL-TARGETS-001: update evidence for rebalance two-decider fix",
+        "problems": [
+          "missing trailer: LLM-Agent",
+          "missing trailer: Task-ID",
+          "missing trailer: Reviewer"
+        ]
+      }
+    ],
+    "mechanism": "Intermediate fix commits added to satisfy review feedback were committed without the required git trailers and with an oversized subject line. GitHub Actions branch-ci.yml validates every commit across origin/dev..HEAD. Because git history cannot be amended on an existing pushed branch without force-pushing (which is forbidden), PR #6041 remained stranded in red CI.",
+    "integrator_disposition": "scripts/git/auto_integrator.py operated correctly. Blocking on red CI (failed Commit trailers check) and publishing an unblock task protects dev mainline governance. No change to auto_integrator.py is required."
+  },
+  "pr_resolution": {
+    "action": "Superseded PR #6041 with clean replacement PR #6042 on task/GOV-APPROVAL-TARGETS-001-v3",
+    "original_pr_number": 6041,
+    "original_pr_state": "CLOSED",
+    "original_pr_close_comment": "Superseded by #6042 (with valid commit trailers on clean -v3 branch).",
+    "superseding_pr_number": 6042,
+    "superseding_pr_url": "https://github.com/ajoe734/pantheon/pull/6042",
+    "superseding_branch": "task/GOV-APPROVAL-TARGETS-001-v3",
+    "superseding_head_sha": "b2212a40664dd6113c06e4165103b691dfeb3fde",
+    "tree_sha": "4cf7829ae9dd08d357f2de77081a82bf71e622d1",
+    "tree_parity": "Byte-for-byte identical to reviewed head 68bc6cab3e14bd277932d647fa704263bc69327f (git diff 68bc6cab3 b2212a406 is empty). All functional changes and tests approved by Codex are preserved without mutation.",
+    "commit_trailers_validation": {
+      "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..b2212a40664dd6113c06e4165103b691dfeb3fde --skip-merge --delivery-class auto",
+      "exit_code": 0,
+      "result": "Passed: single clean commit with validated subject <= 72 chars, LLM-Agent, Task-ID, Reviewer, and Verified trailers."
+    },
+    "ci_results_pr_6042": {
+      "commit_trailers": "SUCCESS",
+      "runtime_mirror_guard": "SUCCESS",
+      "python_packaging_provision": "SUCCESS",
+      "publish_canonical_review_status": "SUCCESS"
+    }
+  },
+  "integrator_code_assessment": {
+    "code_changed": false,
+    "reason_no_code_change": "scripts/git/auto_integrator.py is working as intended. The serialized integrator correctly rejected the red CI PR. In addition, auto_integrator.py already includes versioned branch discovery via _superseding_version_listing which automatically discovers -vN branches up to v20."
+  },
+  "source_review_followup": {
+    "source_task_id": "GOV-APPROVAL-TARGETS-001",
+    "owner": "Antigravity2",
+    "reviewer": "Codex",
+    "required_actions": [
+      "Owner Antigravity2 will be dispatched to GOV-APPROVAL-TARGETS-001 to run ai-status.sh reopen, clearing the stranded PR #6041 review binding.",
+      "Owner Antigravity2 will run ai-status.sh handoff binding PR #6042 head b2212a40664dd6113c06e4165103b691dfeb3fde with manifest docs/deployment/evidence/GOV-APPROVAL-TARGETS-001/evidence.json.",
+      "Reviewer Codex will perform independent approval of PR #6042 via ai-status.sh approve.",
+      "Supervisor auto-integrator will merge PR #6042 into dev and owner will finalize the task."
+    ]
+  },
+  "resolution": {
+    "state": "original_pr_superseded_and_no_longer_stranded",
+    "acceptance_1_satisfied": true,
+    "acceptance_2_satisfied": true,
+    "summary": "Root cause documented (missing trailers and oversized subject on PR #6041 fix commits). Original PR #6041 is closed and superseded by PR #6042 on task/GOV-APPROVAL-TARGETS-001-v3, which possesses validated trailers and passing Branch CI Gate Commit trailers check."
+  }
+}

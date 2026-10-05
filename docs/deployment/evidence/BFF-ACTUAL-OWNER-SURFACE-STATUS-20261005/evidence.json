@@ -1,0 +1,58 @@
+{
+  "task_id": "BFF-ACTUAL-OWNER-SURFACE-STATUS-20261005",
+  "title": "Report actual session and snapshot owner availability",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "change_class": "corrective",
+  "net_prod_line_budget": 9,
+  "net_prod_lines": 5,
+  "acceptance_criteria": {
+    "ac_1_actual_default_availability_two_fault_controls": {
+      "status": "satisfied",
+      "detail": "Verified that served Persona registry 200 does not stand in for session store availability. create_read_surface_ports().dataset_source('persona_sessions') truthfully probes the session owner. test_default_actual_session_availability.py passes both absent_session_endpoint (404) and unavailable_session_store (503) fault controls in 5.56s."
+    },
+    "ac_2_truthful_degradation_and_identity_preservation": {
+      "status": "satisfied",
+      "detail": "Completed seven owner truthful degradation using existing APIs without new store/cache/index/queue. Reuses existing request-scoped caller authorization and tenant transport. Absent/down session owner yields 'unavailable' while unconfigured yields 'missing' and reachable returns 'store'."
+    },
+    "ac_3_budget_compliance": {
+      "status": "satisfied",
+      "detail": "Net production line growth against base commit e6cd76c9a is exactly +5 lines (+14 added, -9 deleted across persona_write_owner.py and read_surface_ports.py), strictly adhering to the corrective change class net production limit of <= 9 lines."
+    },
+    "ac_4_regression_verification": {
+      "status": "satisfied",
+      "detail": "All test suites passed: test_default_actual_session_availability.py (2 passed in 5.56s), 8 controls suite (8 passed in 4.41s), full 47-test regression suite (47 passed in 68.36s), test_ranking_evidence_surfaces_default_composition.py (5 passed in 33.33s), and test_bff_test_architecture.py (39 passed in 48.57s)."
+    },
+    "ac_5_source_workers_local_only": {
+      "status": "satisfied",
+      "detail": "All modifications are local to the clean task worktree with no VM, deployment, provider network, or runtime promotion."
+    }
+  },
+  "validation": [
+    {
+      "command": "python3 -m pytest /tmp/pantheon-closeout-continuation-20261004-2327/test_default_actual_session_availability.py",
+      "result": "2 passed in 5.56s"
+    },
+    {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_ranking_evidence_surfaces_default_composition.py",
+      "result": "5 passed in 33.33s"
+    },
+    {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_ranking_default_owner_integrity.py services/control-plane/bff/tests/test_ranking_real_source_owner_admission.py services/control-plane/bff/tests/test_default_bff_actual_persona_sessions.py",
+      "result": "8 passed in 4.41s"
+    },
+    {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_ranking_default_owner_integrity.py services/control-plane/bff/tests/test_ranking_real_source_owner_admission.py services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py services/control-plane/bff/tests/test_ranking_evidence_surfaces_default_composition.py services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py",
+      "result": "47 passed in 68.36s"
+    },
+    {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "result": "39 passed in 48.57s"
+    }
+  ],
+  "diff_stat": {
+    "persona_write_owner.py": "+4 / -6 (net -2)",
+    "read_surface_ports.py": "+10 / -3 (net +7)",
+    "production_net": 5
+  }
+}

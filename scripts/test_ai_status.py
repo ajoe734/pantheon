@@ -4569,6 +4569,139 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 ["REG-002", "functional", "done", "Missing proof"],
             )
 
+    def test_hosted_finalization_rejects_pending_and_malformed_tracks(self) -> None:
+        invalid = [None, [], "done", {}, *(
+            {"status": status, "evidence": ["run-123"]}
+            for status in ("pending", "in_progress", "external_wait", "unknown", None)
+        ), *(
+            {"status": "done", "evidence": evidence}
+            for evidence in (None, [], "run-123", {}, [""], [" "], [123], ["run-123", None])
+        )]
+        original = deepcopy(self.state)
+        for command, actor in (("done", "Codex"), ("reconcile_merged_done", "Claude")):
+            for tracks in ([{"hosted": value} for value in invalid] + [None, [], "invalid"]):
+                with self.subTest(command=command, tracks=tracks):
+                    self.state = deepcopy(original)
+                    task = self.state["tasks"][0]
+                    task.update(status="review_approved", completion_tracks=tracks)
+                    before = deepcopy(self.state)
+                    with (
+                        mock.patch.dict(os.environ, {"AI_NAME": actor}),
+                        mock.patch.object(ai_status, "collect_done_delivery_metadata") as collect,
+                        mock.patch.object(ai_status, "validate_merged_done_evidence") as merged,
+                        ai_status.buffer_activity_events() as events,
+                        self.assertRaisesRegex(SystemExit, "declared hosted completion"),
+                    ):
+                        _execute_external_mutation_command(command, self.state, [task["id"], "Finalize"])
+                    self.assertEqual(self.state, before)
+                    self.assertEqual(events, [])
+                    collect.assert_not_called()
+                    merged.assert_not_called()
+                    self.assertFalse(list(task_archive.ARCHIVE_TASKS_DIR.iterdir()))
+
+    def test_hosted_finalization_preserves_research_hold_in_task_store(self) -> None:
+        # Minimal historical PR6103 shape; external delivery verification is mocked,
+        # not represented as newly issued review or hosted evidence.
+        task = self.state["tasks"][0]
+        task.update(
+            id="BFF-RESEARCH-SINGLE-OWNER-001", status="review_approved",
+            owner="Antigravity", reviewer="Codex2",
+            completion_tracks={
+                "functional": {"status": "done", "evidence": ["source-evidence.json"],
+                               "message": "Do NOT full-finalize/archive; leave hosted blocker."},
+                "hosted": {"status": "external_wait", "updated_by": "Human/Ops"},
+            },
+            review_binding={"pr": 6103, "head_sha": "85f74a90cf1fc9b543c31f4280273b1b0272828f"},
+            integration_receipt={"result": "landed", "pr": 6103,
+                                 "merge_commit_sha": "8af1ef2d0946d7eac7c87fba21af52233bc8a789"},
+        )
+        self._set_pr_delivery_binding(pr=6103, head_sha=task["review_binding"]["head_sha"])
+        self.state["handoffs"] = []
+        journal = self._test_root / "events.jsonl"
+        task_state_store.append_state_commit(journal, self.state, source="historical-fixture")
+        before = journal.read_bytes()
+        for command, actor in (("done", "Antigravity"), ("reconcile_merged_done", "Codex2")):
+            state = task_state_store.load_snapshot(journal)["state"]
+            with (
+                mock.patch.dict(os.environ, {"AI_NAME": actor}),
+                mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
+                mock.patch.object(ai_status, "validate_merged_done_evidence", return_value={}),
+                mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
+                ai_status.buffer_activity_events() as events,
+                self.assertRaisesRegex(SystemExit, "declared hosted completion"),
+            ):
+                _execute_external_mutation_command(command, state, [task["id"], "Finalize"])
+            self.assertEqual(state, self.state)
+            self.assertEqual(events, [])
+            self.assertEqual(journal.read_bytes(), before)
+            self.assertNotIn(ai_status.STATUS_ARCHIVE_OUTBOX_KEY, state)
+            self.assertFalse(list(task_archive.ARCHIVE_TASKS_DIR.iterdir()))
+
+    def test_hosted_finalization_allows_source_only_and_completed_tracks(self) -> None:
+        original = deepcopy(self.state)
+        for command, actor in (("done", "Codex"), ("reconcile_merged_done", "Claude")):
+            for tracks in (None, {}, {"functional": {"status": "done"}},
+                           {"hosted": {"status": "done", "evidence": ["run-123"]}}):
+                with self.subTest(command=command, tracks=tracks):
+                    self.state = deepcopy(original)
+                    task = self.state["tasks"][0]
+                    task["status"] = "review_approved"
+                    if tracks is not None:
+                        task["completion_tracks"] = tracks
+                    self._set_pr_delivery_binding(pr=4820, head_sha="a" * 40)
+                    with (
+                        mock.patch.dict(os.environ, {"AI_NAME": actor}),
+                        mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}) as collect,
+                        mock.patch.object(ai_status, "validate_merged_done_evidence", return_value={}) as merged,
+                        mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
+                        ai_status.buffer_activity_events() as events,
+                    ):
+                        _execute_external_mutation_command(command, self.state, [task["id"], "Finalize"])
+                    (collect if command == "done" else merged).assert_called_once()
+                    self.assertEqual(task["status"], "done")
+                    self.assertEqual([event["type"] for event in events], [command])
+                    archived = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
+                    self.assertEqual(archived["status"], "done")
+                    self.assertEqual(archived.get("completion_tracks"), tracks)
+
+    def test_hosted_hold_preserves_functional_dependency_and_blocker_commands(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "review_approved"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex", "TASK_MILESTONE_EVIDENCE": "run-123"}):
+            ai_status.command_milestone(self.state, ["REG-002", "functional", "done", "Source complete"])
+            ai_status.command_milestone(self.state, ["REG-002", "hosted", "external_wait", "Hosted held"])
+            ai_status.command_blocker(self.state, ["REG-002", "Hosted proof outstanding", "Human/Ops", "external"])
+        self.assertEqual(task["status"], "blocked")
+        self.assertEqual(self.state["blockers"][0]["status"], "open")
+        for track, expected in (("functional", True), ("hosted", False), ("terminal", False)):
+            consumer = {"depends_on": ["REG-002"], "dependency_tracks": {"REG-002": track}}
+            self.assertEqual(ai_status.dependency_is_satisfied(
+                ai_status.task_resolver(self.state), "REG-002", consumer), expected)
+
+    def test_hosted_finalization_rejects_held_immutable_archive_recovery(self) -> None:
+        task = self.state["tasks"][0]
+        task.update(status="blocked", generation=1)
+        delivery = {"commit": "a" * 40, "review_evidence": {"owner": "Codex", "reviewer": "Claude"}}
+        archived_task = deepcopy(task)
+        archived_task.update(status="done", terminal_outcome="completed", delivery=delivery,
+                             completion_tracks={"hosted": {"status": "external_wait"}})
+        snapshot = {"version": 1, "task_id": "REG-002", "archived_at": "2026-10-03T15:23:14Z",
+                    "terminal_status": "done", "terminal_outcome": "completed",
+                    "task": archived_task, "handoffs": [], "blockers": []}
+        path = task_archive.archive_task_path("REG-002")
+        path.write_text(json.dumps(snapshot), encoding="utf-8")
+        before, raw = deepcopy(self.state), path.read_bytes()
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}),
+            mock.patch.object(ai_status, "validate_merged_done_evidence", return_value=delivery),
+            ai_status.buffer_activity_events() as events,
+            self.assertRaisesRegex(SystemExit, "declared hosted completion"),
+        ):
+            _command_reconcile_merged_done(self.state, ["REG-002", "Recover archive"])
+        self.assertEqual(self.state, before)
+        self.assertEqual(path.read_bytes(), raw)
+        self.assertEqual(events, [])
+
     def test_review_evidence_file_committed_uses_exact_head_get_query(self) -> None:
         review_file = "docs/deployment/evidence/task/evidence.json"
         head_sha = "a" * 40
@@ -8911,8 +9044,12 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             "docs/evidence/MANIFEST-SCOPE/evidence.json",
         )
         mock_bridge.validate_review_admission.return_value = admitted
-        with mock.patch.object(
-            ai_status, "_github_review_bridge_module", return_value=mock_bridge
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "git"))
+        import check_commit_trailers
+        with (
+            mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge),
+            mock.patch.object(check_commit_trailers, "check_range", return_value=[]),
         ):
             accepted = ai_status.validate_handoff_pr_delivery_binding(
                 task,
@@ -9039,7 +9176,11 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 "status": "renamed",
             },
         ]
-        with mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge):
+        import check_commit_trailers
+        with (
+            mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge),
+            mock.patch.object(check_commit_trailers, "check_range", return_value=[]),
+        ):
             with self.assertRaisesRegex(SystemExit, "renamed file source 'secret/unauthorized_old.py' is outside"):
                 ai_status.validate_handoff_pr_delivery_binding(
                     task,
@@ -9088,7 +9229,11 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             {"filename": "services/telemetry/events.py", "sha": "c" * 40, "status": "modified"},
             {"filename": "scripts/ci/run_check.sh", "sha": "d" * 40, "status": "modified"},
         ]
-        with mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge):
+        import check_commit_trailers
+        with (
+            mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge),
+            mock.patch.object(check_commit_trailers, "check_range", return_value=[]),
+        ):
             accepted = ai_status.validate_handoff_pr_delivery_binding(
                 task,
                 {},
@@ -9174,7 +9319,11 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             {"filename": "docs/evidence/evidence.json", "sha": "a" * 40, "status": "added"}
         ]
         mock_bridge.revalidate_pull_request_snapshot.side_effect = github_review_bridge.ReviewBindingMismatch("head drifted concurrently")
-        with mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge):
+        import check_commit_trailers
+        with (
+            mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge),
+            mock.patch.object(check_commit_trailers, "check_range", return_value=[]),
+        ):
             with self.assertRaisesRegex(SystemExit, "GitHub rejected the proposed delivery binding"):
                 ai_status.validate_handoff_pr_delivery_binding(
                     task,
@@ -10102,7 +10251,7 @@ class SupervisorReassignmentEventIdCompatibilityTests(unittest.TestCase):
                 ),
                 ("show", "-s", "--format=%an", "HEAD"): "Antigravity",
                 ("show", "-s", "--format=%ae", "HEAD"): "agent@example.com",
-                ("show", "-s", "--format=%cI", "HEAD"): (
+                ("show", "-s", "--format=%aI", "HEAD"): (
                     "2026-08-20T13:33:53+00:00"
                 ),
                 ("status", "--porcelain"): "",
@@ -10490,6 +10639,264 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
         self.assertEqual(selected, source.resolve())
         self.assertEqual(metadata["repository_path_source"], "repository_registry")
 
+    def test_handoff_action_formats_error_messages(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config, status_root, _source, workspace, task = self._repository_fixture(
+                Path(directory)
+            )
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_WORKTREE_ROOT": str(workspace)},
+                    clear=True,
+                ),
+                self.assertRaisesRegex(
+                    SystemExit, "^Cannot handoff task: "
+                ),
+            ):
+                ai_status._done_delivery_repository_root(
+                    config, task, "execute_plans", action="handoff"
+                )
+
+    def test_operator_resolves_integration_path_without_workspace_env(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon-status"
+            integration_root = root / "pantheon-integration"
+            status_root.mkdir()
+            integration_root.mkdir()
+            self._git(integration_root, "init", "-b", "dev")
+            self._git(integration_root, "config", "user.name", "Test")
+            self._git(integration_root, "config", "user.email", "test@example.com")
+            (integration_root / "README.md").write_text("pantheon\n", encoding="utf-8")
+            self._git(integration_root, "add", "README.md")
+            self._git(integration_root, "commit", "-m", "initial")
+            self._git(
+                integration_root,
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/ajoe734/pantheon.git",
+            )
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "repo": "ajoe734/pantheon",
+                            "integration_path": str(integration_root),
+                        }
+                    }
+                },
+            }
+            task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(os.environ, {}, clear=True),
+            ):
+                selected, metadata = ai_status._done_delivery_repository_root(
+                    config, task, "pantheon", action="handoff"
+                )
+
+        self.assertEqual(selected, integration_root.resolve())
+        self.assertEqual(metadata["repository_path_source"], "repository_registry")
+
+    def test_operator_resolves_local_path_without_workspace_env(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon-status"
+            local_root = root / "pantheon-local"
+            status_root.mkdir()
+            local_root.mkdir()
+            self._git(local_root, "init", "-b", "dev")
+            self._git(local_root, "config", "user.name", "Test")
+            self._git(local_root, "config", "user.email", "test@example.com")
+            (local_root / "README.md").write_text("pantheon\n", encoding="utf-8")
+            self._git(local_root, "add", "README.md")
+            self._git(local_root, "commit", "-m", "initial")
+            self._git(
+                local_root,
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/ajoe734/pantheon.git",
+            )
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "repo": "ajoe734/pantheon",
+                            "local_path": str(local_root),
+                        }
+                    }
+                },
+            }
+            task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(os.environ, {}, clear=True),
+            ):
+                selected, metadata = ai_status._done_delivery_repository_root(
+                    config, task, "pantheon", action="handoff"
+                )
+
+        self.assertEqual(selected, local_root.resolve())
+        self.assertEqual(metadata["repository_path_source"], "repository_registry")
+
+    def test_operator_handoff_rejects_wrong_origin_remote(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon-status"
+            integration_root = root / "pantheon-integration"
+            status_root.mkdir()
+            integration_root.mkdir()
+            self._git(integration_root, "init", "-b", "dev")
+            self._git(
+                integration_root,
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/example/not-pantheon.git",
+            )
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "repo": "ajoe734/pantheon",
+                            "integration_path": str(integration_root),
+                        }
+                    }
+                },
+            }
+            task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(os.environ, {}, clear=True),
+                self.assertRaisesRegex(
+                    SystemExit, "(origin|repository|remote)"
+                ),
+            ):
+                ai_status._done_delivery_repository_root(
+                    config, task, "pantheon", action="handoff"
+                )
+
+    def test_operator_handoff_rejects_non_git_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon-status"
+            non_git_root = root / "pantheon-non-git"
+            status_root.mkdir()
+            non_git_root.mkdir()
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "repo": "ajoe734/pantheon",
+                            "integration_path": str(non_git_root),
+                        }
+                    }
+                },
+            }
+            task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(os.environ, {}, clear=True),
+                self.assertRaisesRegex(
+                    SystemExit, "must be a git repository root"
+                ),
+            ):
+                ai_status._done_delivery_repository_root(
+                    config, task, "pantheon", action="handoff"
+                )
+
+    def test_operator_handoff_rejects_missing_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon-status"
+            missing_root = root / "non-existent"
+            status_root.mkdir()
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "repo": "ajoe734/pantheon",
+                            "integration_path": str(missing_root),
+                        }
+                    }
+                },
+            }
+            task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(os.environ, {}, clear=True),
+                self.assertRaisesRegex(
+                    SystemExit, "registered delivery repository does not exist"
+                ),
+            ):
+                ai_status._done_delivery_repository_root(
+                    config, task, "pantheon", action="handoff"
+                )
+
+    def test_operator_rejects_relative_or_symlink_integration_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon-status"
+            status_root.mkdir()
+            task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
+            rel_config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "repo": "ajoe734/pantheon",
+                            "integration_path": "relative/path",
+                        }
+                    }
+                },
+            }
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(os.environ, {}, clear=True),
+                self.assertRaisesRegex(
+                    SystemExit, "integration_path must be absolute"
+                ),
+            ):
+                ai_status._done_delivery_repository_root(
+                    rel_config, task, "pantheon", action="handoff"
+                )
+
+            # Test symlink component
+            real_dir = root / "real_dir"
+            real_dir.mkdir()
+            symlink_dir = root / "symlink_dir"
+            symlink_dir.symlink_to(real_dir)
+            symlink_config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "repo": "ajoe734/pantheon",
+                            "integration_path": str(symlink_dir),
+                        }
+                    }
+                },
+            }
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(os.environ, {}, clear=True),
+                self.assertRaisesRegex(
+                    SystemExit, "cannot include a symlink component"
+                ),
+            ):
+                ai_status._done_delivery_repository_root(
+                    symlink_config, task, "pantheon", action="handoff"
+                )
+
 
 class DeliveryMetadataValidationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -10536,7 +10943,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 ),
                 ("show", "-s", "--format=%an", "HEAD"): "Codex2",
                 ("show", "-s", "--format=%ae", "HEAD"): "codex2@example.com",
-                ("show", "-s", "--format=%cI", "HEAD"): "2026-07-31T16:20:00+00:00",
+                ("show", "-s", "--format=%aI", "HEAD"): "2026-07-31T16:20:00+00:00",
                 ("status", "--porcelain"): "",
                 ("remote",): "",
             }
@@ -10778,7 +11185,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 ),
                 ("show", "-s", "--format=%an", "HEAD"): llm_agent,
                 ("show", "-s", "--format=%ae", "HEAD"): "worker@example.com",
-                ("show", "-s", "--format=%cI", "HEAD"): commit_timestamp,
+                ("show", "-s", "--format=%aI", "HEAD"): commit_timestamp,
                 ("status", "--porcelain"): "",
                 ("remote",): "",
             }
@@ -11876,6 +12283,68 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             succeeded_calls,
         )
 
+    def _closeout_with_approved_branch(self, approved_branch: str) -> dict:
+        approved_head = "a" * 40
+        binding = {
+            "pr": 152,
+            "head_sha": approved_head,
+            "head_branch": approved_branch,
+            "base": "dev",
+        }
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "artifacts": [],
+            ai_status.APPROVAL_BINDING_KEY: binding,
+            ai_status.GITHUB_REVIEW_BRIDGE_KEY: {
+                **binding,
+                "decision": "approve",
+                "mode": "pull_request_review",
+                "github_review_id": 99,
+                "review_proof_ref": f"refs/tags/pantheon-review/approve/{approved_head}",
+            },
+        }
+        responses = {
+            ("rev-parse", "--abbrev-ref", "HEAD"): "task/REG-002",
+            ("rev-parse", "HEAD"): "d" * 40,
+            ("rev-parse", approved_head): approved_head,
+            ("show", "-s", "--format=%s", approved_head): "REG-002: deliver reviewed fix",
+            ("show", "-s", "--format=%P", approved_head): approved_head,
+            ("show", "-s", "--format=%b", approved_head): (
+                "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n"
+            ),
+            ("show", "-s", "--format=%an", approved_head): "Codex",
+            ("show", "-s", "--format=%ae", approved_head): "codex@example.com",
+            ("status", "--porcelain"): "",
+            ("remote",): "origin",
+            ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): "",
+            ("fetch", "origin", "dev"): "",
+            ("rev-parse", "--verify", "origin/dev"): "d" * 40,
+        }
+        with (
+            mock.patch.object(
+                ai_status, "run_git_command", side_effect=lambda args, **_: responses[tuple(args)]
+            ),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+        ):
+            return ai_status.collect_done_delivery_metadata(task, "Codex")
+
+    def test_collect_done_accepts_approved_replacement_branch_of_the_task(self) -> None:
+        delivery = self._closeout_with_approved_branch("task/REG-002-v2")
+
+        self.assertEqual(delivery["commit"], "a" * 40)
+        self.assertEqual(delivery["commit_source"], "canonical_approved_head")
+
+    def test_collect_done_rejects_approved_branch_of_another_task(self) -> None:
+        for approved_branch in ("task/REG-0021", "task/OTHER-001-v2", "task/REG-002-vnext"):
+            with self.subTest(approved_branch=approved_branch):
+                with self.assertRaisesRegex(
+                    SystemExit, "delivery branch does not match canonical approved"
+                ):
+                    self._closeout_with_approved_branch(approved_branch)
+
     def test_collect_done_uses_authored_parent_for_exact_base_merge_tip(self) -> None:
         approved_head = "a" * 40
         authored_parent = "b" * 40
@@ -12209,9 +12678,9 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 ("show", "-s", "--format=%ae", "HEAD"): "worker@example.com",
                 # HEAD's own (post-squash) timestamp -- must NOT be what
                 # decides the ordering check, or this reproduces the bug.
-                ("show", "-s", "--format=%cI", "HEAD"): "2026-08-19T06:48:00+00:00",
+                ("show", "-s", "--format=%aI", "HEAD"): "2026-08-19T06:48:00+00:00",
                 # The exact reviewed head's true authoring timestamp.
-                ("show", "-s", "--format=%cI", reviewed_head): "2026-08-18T15:30:12+00:00",
+                ("show", "-s", "--format=%aI", reviewed_head): "2026-08-18T15:30:12+00:00",
                 ("status", "--porcelain"): "",
                 ("remote",): "",
             }
@@ -12258,7 +12727,7 @@ class DeliveredCommitTimestampTests(unittest.TestCase):
             result = ai_status._delivered_commit_timestamp(Path("/repo"), task)
         self.assertEqual(result, "2026-08-18T15:30:12+00:00")
         run_git.assert_called_once_with(
-            ["show", "-s", "--format=%cI", reviewed_head],
+            ["show", "-s", "--format=%aI", reviewed_head],
             cwd=Path("/repo"),
             failure_message=mock.ANY,
         )
@@ -12298,7 +12767,7 @@ class DeliveredCommitTimestampTests(unittest.TestCase):
             result = ai_status._delivered_commit_timestamp(Path("/repo"), task)
         self.assertEqual(result, "2026-08-19T06:48:00+00:00")
         run_git.assert_called_once_with(
-            ["show", "-s", "--format=%cI", "HEAD"],
+            ["show", "-s", "--format=%aI", "HEAD"],
             cwd=Path("/repo"),
             failure_message=mock.ANY,
         )
@@ -12316,7 +12785,7 @@ class DeliveredCommitTimestampTests(unittest.TestCase):
         self.assertEqual(result, "2026-08-19T06:48:00+00:00")
         succeeds.assert_not_called()
         run_git.assert_called_once_with(
-            ["show", "-s", "--format=%cI", "HEAD"],
+            ["show", "-s", "--format=%aI", "HEAD"],
             cwd=Path("/repo"),
             failure_message=mock.ANY,
         )
@@ -12334,6 +12803,34 @@ class DeliveredCommitTimestampTests(unittest.TestCase):
             result = ai_status._delivered_commit_timestamp(Path("/repo"), task)
         self.assertEqual(result, "2026-08-19T06:48:00+00:00")
         succeeds.assert_not_called()
+
+    def test_uses_author_date_that_survives_a_rebase(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            env = {
+                **os.environ,
+                "GIT_AUTHOR_NAME": "Test",
+                "GIT_AUTHOR_EMAIL": "test@example.invalid",
+                "GIT_COMMITTER_NAME": "Test",
+                "GIT_COMMITTER_EMAIL": "test@example.invalid",
+                "GIT_AUTHOR_DATE": "2026-09-30T14:33:05+00:00",
+                "GIT_COMMITTER_DATE": "2026-09-30T15:05:04+00:00",
+            }
+            subprocess.run(["git", "init", "-q", str(repo)], check=True, env=env)
+            subprocess.run(
+                ["git", "commit", "-q", "--allow-empty", "-m", "rebased"],
+                cwd=repo,
+                check=True,
+                env=env,
+            )
+            result = ai_status._delivered_commit_timestamp(
+                repo, {}, commit_ref="HEAD"
+            )
+        # git renders UTC as "Z" or "+00:00" depending on its version.
+        self.assertEqual(
+            ai_status._parse_utc_timestamp(result),
+            ai_status._parse_utc_timestamp("2026-09-30T14:33:05Z"),
+        )
 
 
 class ArchiveWorkflowTests(unittest.TestCase):
@@ -19339,3 +19836,117 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RuntimeSourceFenceResolutionTests(unittest.TestCase):
+    """Retired ``.orchestrator/{state,approval-queue}.json`` paths may carry a
+    promotion fence (directory, or FIFO from older promotions).  The resolvers
+    must never hand one back: opening a FIFO blocks forever."""
+
+    def test_configured_fifo_blocks_reconciliation_without_hanging(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-fence-") as temp_dir:
+            root = Path(temp_dir)
+            fifo = root / "state.json"
+            os.mkfifo(fifo, 0o600)
+            program = '''import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import ai_status
+ai_status.ORCHESTRATOR_STATE_FILE = Path(sys.argv[2])
+ai_status._assert_no_active_execution("FIFO-TEST")
+'''
+            env = {k: v for k, v in os.environ.items() if not k.startswith(("PANTHEON_", "ORCH_", "AI_"))}
+            env.update(AI_NAME="Codex", PANTHEON_STATUS_ROOT=str(root))
+            result = subprocess.run([sys.executable, "-c", program, str(Path(ai_status.__file__).parent), str(fifo)],
+                                    env=env, capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("must be a stable regular file", result.stderr)
+
+    def test_resolvers_skip_retired_path_fences(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-fence-") as temp_dir:
+            root = Path(temp_dir)
+            orch = root / ".orchestrator"
+            modern = orch / "worker-runtime"
+            modern.mkdir(parents=True)
+            (modern / "state.json").write_text("{}", encoding="utf-8")
+            (modern / "approval-queue.json").write_text("{}", encoding="utf-8")
+            (orch / "state.json").mkdir()
+            os.mkfifo(str(orch / "approval-queue.json"), 0o600)
+
+            self.assertEqual(ai_status.resolve_orchestrator_state_file(root), modern / "state.json")
+            self.assertEqual(
+                ai_status.resolve_approval_queue_file(root), modern / "approval-queue.json"
+            )
+
+    def test_resolvers_default_to_modern_layout_when_only_fences_remain(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-fence-") as temp_dir:
+            root = Path(temp_dir)
+            orch = root / ".orchestrator"
+            orch.mkdir()
+            os.mkfifo(str(orch / "state.json"), 0o600)
+            (orch / "approval-queue.json").mkdir()
+
+            self.assertEqual(
+                ai_status.resolve_orchestrator_state_file(root),
+                orch / "worker-runtime" / "state.json",
+            )
+            self.assertEqual(
+                ai_status.resolve_approval_queue_file(root),
+                orch / "worker-runtime" / "approval-queue.json",
+            )
+
+    def test_real_legacy_files_still_win_while_modern_layout_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-fence-") as temp_dir:
+            root = Path(temp_dir)
+            orch = root / ".orchestrator"
+            orch.mkdir()
+            (orch / "state.json").write_text("{}", encoding="utf-8")
+            (orch / "approval-queue.json").write_text("{}", encoding="utf-8")
+
+            self.assertEqual(ai_status.resolve_orchestrator_state_file(root), orch / "state.json")
+            self.assertEqual(
+                ai_status.resolve_approval_queue_file(root), orch / "approval-queue.json"
+            )
+
+
+class EntrypointModuleIdentityTests(unittest.TestCase):
+    """Run as a script, ai_status must be the module that lazy importers get.
+
+    rewrite.task_contract calls back into ``ai_status`` during handoff. If that
+    import loads a second copy, the worker lease binding set by the running
+    script is invisible there and every worker handoff fails closed.
+    """
+
+    def test_lazy_import_returns_running_entrypoint(self) -> None:
+        driver = (
+            "import importlib.util, sys\n"
+            "path = sys.argv[1]\n"
+            "sys.argv = [path, 'show', 'NO-SUCH-TASK-ENTRYPOINT-IDENTITY']\n"
+            "spec = importlib.util.spec_from_file_location('__main__', path)\n"
+            "module = importlib.util.module_from_spec(spec)\n"
+            "sys.modules['__main__'] = module\n"
+            "try:\n"
+            "    spec.loader.exec_module(module)\n"
+            "except BaseException:\n"
+            "    pass\n"
+            "from rewrite import task_contract\n"
+            "imported = task_contract._ai_status_module()\n"
+            "assert imported is module, (imported, module)\n"
+            "assert imported._STATUS_COMMAND_LEASE_LOCAL is module._STATUS_COMMAND_LEASE_LOCAL\n"
+            "print('entrypoint-identity-ok')\n"
+        )
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith(("PANTHEON_", "ORCH_"))
+        }
+        with tempfile.TemporaryDirectory(prefix="ai-status-entrypoint-") as temp_dir:
+            result = subprocess.run(
+                [sys.executable, "-B", "-c", driver, str(Path(ai_status.__file__).resolve())],
+                cwd=temp_dir,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        self.assertIn("entrypoint-identity-ok", result.stdout, result.stderr[-2000:])

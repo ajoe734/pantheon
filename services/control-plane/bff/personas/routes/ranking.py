@@ -52,19 +52,17 @@ from ..service import (
     _pm12_quarterly_ranking_items,
     _pm12_quarterly_recommendations,
     _promotion_review_clean_id,
-    _promotion_review_decision_payload,
-    _promotion_review_decision_response,
     _promotion_review_find,
     _promotion_review_items,
     _promotion_review_rationale,
     _promotion_review_revision_recommendation_id,
-    _promotion_review_scoped_idempotency_key,
     _promotion_review_surfaces,
     _promotion_review_target_id,
     _raise_if_promotion_review_direct_mutation_requested,
     _resolve_param,
     _sem_command_response,
 )
+from ...command_adapters.retired import reject_retired_command
 from .common import PersonaRouteContext, make_context_dependency
 
 log = logging.getLogger(__name__)
@@ -92,14 +90,9 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
     @router.post("/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit", status_code=202)
     async def bff_management_quarterly_ranking_recommendation_submit(
         recommendation_id: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
-        """BFF: submit a PM-12 recommendation into Human Gate review without live mutation."""
-        route_review_id = _promotion_review_clean_id(recommendation_id)
-        recommendation_id = _promotion_review_revision_recommendation_id(route_review_id)
+        """Retired: the evaluator's Governance proposal is the only approval record."""
         identity = _extract_identity(authorization)
         if not {"operator", "approver", "admin"}.intersection(identity.roles):
             raise _bff_error(
@@ -108,34 +101,8 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
                 "Quarterly ranking recommendation submission requires operator-level role",
                 "Operator does not hold the required role",
                 precondition_failed="role_check",
-                suggestion="Escalate to a user with operator, approver, or admin role",
             )
-        _reject_body_idempotency_key(payload)
-        _raise_if_promotion_review_direct_mutation_requested(payload)
-        for key in ("recommendation_id", "recommendationId"):
-            asserted_id = str(payload.get(key) or "").strip()
-            if asserted_id and asserted_id != recommendation_id:
-                raise _bff_error(
-                    422,
-                    ErrorCode.VALIDATION_FAILED,
-                    "recommendation id assertion mismatch",
-                    f"{key} must match the recommendation id in the route.",
-                    precondition_failed="recommendation_id",
-                )
-        snapshot_at = utc_now()
-        return _service.submit_quarterly_ranking_recommendation(
-            route_review_id=route_review_id,
-            recommendation_id=recommendation_id,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            snapshot_at=snapshot_at,
-            bff_error=_bff_error,
-            snapshot_meta=_snapshot_meta,
-            resolve_final_idempotency_key=_resolve_final_idempotency_key,
-        )
-
+        reject_retired_command("QuarterlyRankingRecommendationSubmit")
 
     @router.get("/bff/management/promotion-reviews")
     async def bff_management_promotion_reviews(

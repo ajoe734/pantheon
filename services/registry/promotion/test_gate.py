@@ -83,6 +83,15 @@ class TestPromotionGate(unittest.TestCase):
         with self.assertRaises(PromotionError):
             self.gate.promote(canary_entry, PromotionState.LIVE)
 
+    def test_build_execution_projection_omits_null_lineage_fields(self):
+        entry = build_candidate_entry()
+        entry["lifecycle_state"] = "paper"
+        entry["lineage"] = {"source_run_ids": ["r1"], "source_dataset_refs": None}
+
+        projection = self.gate.build_execution_projection(entry)
+
+        self.assertEqual(projection.metadata["lineage"], {"source_run_ids": ["r1"]})
+
     def test_build_execution_projection_returns_canonical_keys_and_metadata(self):
         live_entry = build_candidate_entry()
         live_entry["lifecycle_state"] = "live"

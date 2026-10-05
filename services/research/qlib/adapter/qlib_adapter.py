@@ -17,7 +17,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
-QLIB_VERSION_PIN = "0.9.6"
+QLIB_VERSION_PIN = "0.9.7"
 PRIMARY_BACKEND = "qlib_lgbm"
 STUB_BACKEND = "stub_lgbm"
 REQUIRED_OHLCV_FIELDS = ("open", "high", "low", "close", "volume")
@@ -387,7 +387,7 @@ class _QlibDatasetView:
 class QlibLightGBMBackend:
     """Optional upstream backend using pyqlib LGBModel.
 
-    Requires: pip install pyqlib==0.9.6 lightgbm
+    Requires: pip install pyqlib==0.9.7 lightgbm
     """
 
     def train(self, dataset: PreparedQlibDataset, config: TrainingConfig) -> BackendTrainingResult:
@@ -496,29 +496,30 @@ def run_qlib_workflow(
 
 def validate_activation_ready_dataset(dataset: PreparedQlibDataset) -> None:
     """Enforce Qlib production-data quality floors before model training."""
-    failures: list[str] = []
-    if dataset.num_instruments < ACTIVATION_READY_MIN_INSTRUMENTS:
-        failures.append(
-            f"instrument count {dataset.num_instruments} < {ACTIVATION_READY_MIN_INSTRUMENTS}"
-        )
-    if dataset.history_years < ACTIVATION_READY_MIN_HISTORY_YEARS:
-        failures.append(
-            f"history years {dataset.history_years:.2f} < {ACTIVATION_READY_MIN_HISTORY_YEARS:.1f}"
-        )
-    if dataset.min_instrument_history_years < ACTIVATION_READY_MIN_HISTORY_YEARS:
-        failures.append(
-            "minimum per-instrument history "
-            f"{dataset.min_instrument_history_years:.2f} < {ACTIVATION_READY_MIN_HISTORY_YEARS:.1f}"
-        )
-    if dataset.min_periods_per_instrument < ACTIVATION_READY_MIN_DAILY_PERIODS:
-        failures.append(
-            "minimum periods per instrument "
-            f"{dataset.min_periods_per_instrument} < {ACTIVATION_READY_MIN_DAILY_PERIODS}"
-        )
-    if dataset.data_frequency.lower() != "daily":
-        failures.append(f"data_frequency={dataset.data_frequency!r}, need 'daily' for v1 activation")
-    if not dataset.source_strategy_spec_id:
-        failures.append("source_strategy_spec_id missing")
+    checks = (
+        (
+            dataset.num_instruments >= ACTIVATION_READY_MIN_INSTRUMENTS,
+            f"instrument count {dataset.num_instruments} < {ACTIVATION_READY_MIN_INSTRUMENTS}",
+        ),
+        (
+            dataset.history_years >= ACTIVATION_READY_MIN_HISTORY_YEARS,
+            f"history years {dataset.history_years:.2f} < {ACTIVATION_READY_MIN_HISTORY_YEARS:.1f}",
+        ),
+        (
+            dataset.min_instrument_history_years >= ACTIVATION_READY_MIN_HISTORY_YEARS,
+            f"minimum per-instrument history {dataset.min_instrument_history_years:.2f} < {ACTIVATION_READY_MIN_HISTORY_YEARS:.1f}",
+        ),
+        (
+            dataset.min_periods_per_instrument >= ACTIVATION_READY_MIN_DAILY_PERIODS,
+            f"minimum periods per instrument {dataset.min_periods_per_instrument} < {ACTIVATION_READY_MIN_DAILY_PERIODS}",
+        ),
+        (
+            dataset.data_frequency.lower() == "daily",
+            f"data_frequency={dataset.data_frequency!r}, need 'daily' for v1 activation",
+        ),
+        (bool(dataset.source_strategy_spec_id), "source_strategy_spec_id missing"),
+    )
+    failures = [msg for ok, msg in checks if not ok]
     if failures:
         raise QlibWorkflowError("Activation-ready Qlib data gates failed: " + "; ".join(failures))
 
@@ -527,18 +528,13 @@ def persist_qlib_run_artifacts(result: QlibRunResult, output_dir: str | Path) ->
     """Persist activation-ready handoff artifacts without writing the registry."""
     base = Path(output_dir)
     base.mkdir(parents=True, exist_ok=True)
-    files = {
-        "artifact_bundle": base / "artifact_bundle.json",
-        "registry_entry": base / "registry_entry.json",
-        "candidate_packet": base / "candidate_packet.json",
-        "artifact_refs": base / "artifact_refs.json",
-    }
     payloads = {
         "artifact_bundle": result.artifact_bundle,
         "registry_entry": result.registry_entry,
         "candidate_packet": result.candidate_packet,
         "artifact_refs": result.artifact_refs,
     }
+    files = {key: base / f"{key}.json" for key in payloads}
     for key, path in files.items():
         path.write_text(json.dumps(payloads[key], indent=2, sort_keys=True) + "\n", encoding="utf-8")
     manifest = {
@@ -608,57 +604,41 @@ def _build_model_eval_artifact_refs(
         "evaluation_summary": evaluation_summary,
         "source_field": "artifact_bundle.evaluation_summary",
     }
-    bundle_ref = {
-        "artifact_name": "artifact_bundle",
-        "artifact_type": "qlib_artifact_bundle",
-        "artifact_ref": f"artifact://qlib/{registry_id}/{version}/artifact_bundle",
-        "registry_id": registry_id,
-        "strategy_id": registry_entry["strategy_id"],
-        "version": version,
-        "artifact_state": artifact_state,
-        "deployment_stage": deployment_stage,
-        "storage_ref": {
-            "backend": "inline",
-            "path": "$.artifact_bundle",
-        },
-        "checksum": f"sha256:{_sha256_json(artifact_bundle)}",
-        "source_run_id": result.run_id,
-        "source_field": "artifact_bundle",
-    }
-    registry_entry_ref = {
-        "artifact_name": "registry_entry",
-        "artifact_type": "registry_entry_projection",
-        "artifact_ref": f"artifact://qlib/{registry_id}/{version}/registry_entry",
-        "registry_id": registry_id,
-        "strategy_id": registry_entry["strategy_id"],
-        "version": version,
-        "artifact_state": artifact_state,
-        "deployment_stage": deployment_stage,
-        "storage_ref": {
-            "backend": "inline",
-            "path": "$.registry_entry",
-        },
-        "checksum": f"sha256:{_sha256_json(registry_entry)}",
-        "source_run_id": result.run_id,
-        "source_field": "registry_entry",
-    }
-    candidate_packet_ref = {
-        "artifact_name": "candidate_packet",
-        "artifact_type": "registry_candidate_handoff",
-        "artifact_ref": f"artifact://qlib/{registry_id}/{version}/candidate_packet",
-        "registry_id": registry_id,
-        "strategy_id": registry_entry["strategy_id"],
-        "version": version,
-        "artifact_state": candidate_packet["requested_artifact_state"],
-        "deployment_stage": candidate_packet["deployment_stage"],
-        "storage_ref": {
-            "backend": "inline",
-            "path": "$.candidate_packet",
-        },
-        "checksum": f"sha256:{_sha256_json(candidate_packet)}",
-        "source_run_id": result.run_id,
-        "source_field": "candidate_packet",
-    }
+    def _make_inline_ref(
+        name: str,
+        artifact_type: str,
+        payload: Mapping[str, Any],
+        state: str,
+        stage: str,
+    ) -> dict[str, Any]:
+        return {
+            "artifact_name": name,
+            "artifact_type": artifact_type,
+            "artifact_ref": f"artifact://qlib/{registry_id}/{version}/{name}",
+            "registry_id": registry_id,
+            "strategy_id": registry_entry["strategy_id"],
+            "version": version,
+            "artifact_state": state,
+            "deployment_stage": stage,
+            "storage_ref": {"backend": "inline", "path": f"$.{name}"},
+            "checksum": f"sha256:{_sha256_json(payload)}",
+            "source_run_id": result.run_id,
+            "source_field": name,
+        }
+
+    bundle_ref = _make_inline_ref(
+        "artifact_bundle", "qlib_artifact_bundle", artifact_bundle, artifact_state, deployment_stage
+    )
+    registry_entry_ref = _make_inline_ref(
+        "registry_entry", "registry_entry_projection", registry_entry, artifact_state, deployment_stage
+    )
+    candidate_packet_ref = _make_inline_ref(
+        "candidate_packet",
+        "registry_candidate_handoff",
+        candidate_packet,
+        str(candidate_packet["requested_artifact_state"]),
+        str(candidate_packet["deployment_stage"]),
+    )
 
     refs = [
         model_ref,
@@ -841,18 +821,13 @@ def _build_candidate_packet(
 
 
 def _parse_record_date(value: Any) -> date | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    raw = value.strip()
-    try:
-        return date.fromisoformat(raw[:10])
-    except ValueError:
-        return None
+    if isinstance(value, str) and value.strip():
+        try:
+            return date.fromisoformat(value.strip()[:10])
+        except ValueError:
+            pass
+    return None
 
 
 def _history_years(values: Sequence[date]) -> float:
-    if len(values) < 2:
-        return 0.0
-    start = min(values)
-    end = max(values)
-    return max((end - start).days / 365.25, 0.0)
+    return max((max(values) - min(values)).days / 365.25, 0.0) if len(values) >= 2 else 0.0

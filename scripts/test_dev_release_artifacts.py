@@ -206,6 +206,22 @@ def test_partial_capture_is_not_published(tmp_path):
     assert not list(tmp_path.iterdir())
 
 
+def test_capture_still_rejects_stopped_container(tmp_path):
+    tmp_path.chmod(0o700)
+    docker = FakeDocker()
+    docker.containers[artifacts.SERVICES[0]]["status"] = "exited"
+    with pytest.raises(artifacts.ArtifactError, match="not running"):
+        artifacts.capture_images(docker=docker, archive_root=tmp_path,
+                                 source_sha=SOURCE, check_lease=lambda: None)
+    assert not any(call[:2] == ("image", "save") for call in docker.calls)
+
+
+def test_restore_still_rejects_unhealthy_container(image_case):
+    image_case[1].containers["loop-run-projector-scheduler"]["health"] = "unhealthy"
+    with pytest.raises(artifacts.ArtifactError, match="not running and healthy"):
+        restore(image_case)
+
+
 def test_capture_requires_private_real_storage(tmp_path):
     tmp_path.chmod(0o755)
     with pytest.raises(artifacts.ArtifactError, match="private"):

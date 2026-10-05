@@ -115,6 +115,14 @@ renderer -> promotion -> watchdog path that already exists. There is no
 second dispatcher, no ambient dependency workaround, and no per-tick import
 shim.
 
+- **Command source**: bootstrap and refresh both call
+  `scripts/provision_live_supervisor_config.py --materialize-command-root`.
+  Its `materialize_command_root` function owns exact-SHA validation, standalone
+  clone creation, no-clobber publication, and final-path validation. Bootstrap
+  requires its HEAD to be contained in the fetched `origin/dev`; refresh uses
+  its explicitly selected accepted ref. Existing clean command runtimes,
+  including older bootstrap worktrees, are reused without conversion or repair.
+  This phase does not change live config or start/stop processes.
 - **Dependency contract**: `.orchestrator/requirements.txt` in the exact
   promoted command source. It is intentionally minimal -- only what the
   supervisor's bridge/task-store code actually imports (`pydantic`,

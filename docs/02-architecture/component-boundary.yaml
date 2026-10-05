@@ -73,6 +73,12 @@ components:
       - scripts/test_orchestrator_bundle.py
       - scripts/test_ai_status.py
       - scripts/dev/
+      - scripts/sync-dev-root.sh
+      - scripts/test_sync_dev_root.py
+      - scripts/bootstrap-orchestrator-runtime.sh
+      - scripts/test_bootstrap_orchestrator_runtime.py
+      - docs/operations/supervisor-python-runtime.md
+      - AI_COLLABORATION_GUIDE.md
       - scripts/test_supervisor_watchdog_install.py
       - scripts/test_supervisor_launch_ownership.py
       - docs-site/js/dashboard-*.js
@@ -123,6 +129,8 @@ components:
       - services/openclaw-gateway-adapter/
       - services/consultation/
       - services/evolution/
+      - services/monitor-agent/
+      - services/persona-evaluator-agent/
       - services/policy-learning/
       - services/research/
       - services/source_ingestion/
@@ -145,6 +153,13 @@ components:
     paths:
       - .github/workflows/
       - scripts/deploy_nonprod_vm.sh
+      - scripts/bootstrap.sh
+      - scripts/db_migrate.sh
+      - scripts/test_db_migrate.py
+      # Schema/bootstrap and Compose acceptance tests, not product handlers.
+      - services/telemetry/test_loop_prod_tel_002_substrate.py
+      - docs/deployment/single-vm-runbook.md
+      - scripts/test_deploy_nonprod_bootstrap_contract.py
       - scripts/auto_deploy_dev_pair.py
       - scripts/test_auto_deploy_dev_pair.py
       - scripts/cross_repo_release_controller.py

@@ -18,7 +18,7 @@ x-pantheon-compose-contract:
 
 services:
   signal-store:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
     ports:
       - "${SIGNAL_STORE_PORT:-26379}:6379"
     healthcheck:

@@ -47,6 +47,7 @@ CRITICAL_FLAGS: tuple[str, ...] = (
     # incident mitigation would otherwise drift silently forever.
     "worker_reassignment.enabled",
     "worker_reassignment.max_reassignments_per_cycle",
+    "worker_reassignment.review_only_agents",
     "worker_reassignment.owner_fallbacks",
     "worker_reassignment.reviewer_fallbacks",
     # load_balance is the saturated-but-healthy-lane reassignment policy

@@ -35,9 +35,11 @@ def client():
         "SOURCE_INGEST_DLQ_PATH": os.environ.get("SOURCE_INGEST_DLQ_PATH"),
         "SOURCE_INGEST_AUDIT_PATH": os.environ.get("SOURCE_INGEST_AUDIT_PATH"),
         "SOURCE_INGEST_MAX_RECORDS": os.environ.get("SOURCE_INGEST_MAX_RECORDS"),
+        "PANTHEON_RUNTIME_JWT_SECRET": os.environ.get("PANTHEON_RUNTIME_JWT_SECRET"),
     }
     os.environ["SOURCE_INGEST_DATA_DIR"] = tempdir
     os.environ["SOURCE_INGEST_MAX_RECORDS"] = "3"
+    os.environ["PANTHEON_RUNTIME_JWT_SECRET"] = "src001-read-secret"
 
     sys.modules.pop("services.source_ingestion.main", None)
     module = importlib.import_module("services.source_ingestion.main")
@@ -51,6 +53,16 @@ def client():
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+def _tenant_headers(tenant: str = "tenant-src001") -> dict[str, str]:
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    token = encode_jwt_hs256(
+        {"sub": "src001-reader", "roles": ["operator"], "tenant_id": tenant, "exp": int(__import__("time").time()) + 600},
+        secret=os.environ["PANTHEON_RUNTIME_JWT_SECRET"],
+    )
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _schema() -> dict[str, Any]:
@@ -77,6 +89,7 @@ def _record(**overrides: Any) -> dict[str, Any]:
         "content_ref": "https://doi.org/10.5555/src001.paper",
         "trace_id": "trace-src001-record",
         "metadata": {
+            "tenant_id": "tenant-src001",
             "body": "SRC-001 source evidence for schema and ingest API verification.",
             "access_scope": ["research"],
             "keywords": ["source-record", "ingest"],
@@ -137,7 +150,9 @@ def test_source_records_ingest_api_persists_schema_conformant_readback(client) -
     assert payload["evidence_refs"]["evidence_bundle_id"]
     assert (data_dir / "source_evidence.jsonl").exists()
 
-    readback = test_client.get("/api/source-ingest/source-records/src-src001-paper")
+    assert test_client.get("/api/source-ingest/source-records/src-src001-paper").status_code == 401
+    headers = _tenant_headers()
+    readback = test_client.get("/api/source-ingest/source-records/src-src001-paper", headers=headers)
     assert readback.status_code == 200
     source = readback.json()["source_record"]
     assert source["source_id"] == "src-src001-paper"
@@ -147,6 +162,12 @@ def test_source_records_ingest_api_persists_schema_conformant_readback(client) -
     assert source["metadata"]["access_scope"] == ["research"]
     assert source["metadata"]["source_dedupe_key"] == "doi:10.5555/src001.paper"
     assert source["metadata"]["content_hash"].startswith("sha256:")
+    assert source["metadata"]["tenant_id"] == "tenant-src001"
+    assert test_client.get("/api/source-ingest/source-records", headers=headers).json()["source_records"] == [source]
+    assert test_client.get(
+        "/api/source-ingest/source-records/src-src001-paper",
+        headers={**headers, "X-Tenant-Id": "tenant-foreign"},
+    ).status_code == 403
 
     if jsonschema is not None:
         jsonschema.validate(instance=source, schema=_schema())

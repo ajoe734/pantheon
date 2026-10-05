@@ -40,6 +40,7 @@ from common import (
     normalize_github_repo_slug,
     read_regular_file_bytes,
     read_regular_file_snapshot,
+    task_branch_matches,
     utc_now,
 )
 from dispatch_policy import (
@@ -60,6 +61,7 @@ from multi_repo_registry import (
 from rewrite.task_identity import task_generation
 from rewrite.worker_recovery import (
     _canonical_worker_recovery_receipt,
+    validate_lost_lease_receipt,
     worker_recovery_workspace_facts,
 )
 
@@ -338,7 +340,7 @@ def validate_worker_workspace_binding(
             "workspace_path is absent from the selected repository worktree registry"
         )
     branch = _worktree_record_branch(record)
-    if expected_branch and branch != expected_branch:
+    if expected_branch and not task_branch_matches(branch, expected_branch):
         raise RuntimeError(
             f"workspace branch mismatch: {branch or 'detached'} != {expected_branch}"
         )
@@ -785,7 +787,8 @@ def _lost_lease_replacement_may_recover_worktree(
     A receipt only reaches ``reassigned`` after `_persist_task_reassignment_locked`
     CAS'd it out of ``pending``, and it only reaches ``pending`` after
     `recover_lost_worker_lease` fenced the predecessor using the existing
-    poll-stage liveness check (missing process / expired lease). The receipt
+    poll-stage liveness check (missing process / expired lease), or after a
+    verified planned promotion drain. The receipt
     is therefore already durable proof the predecessor process and lease are
     no longer live; no separate liveness probe is needed here.
     """
@@ -809,11 +812,13 @@ def _lost_lease_replacement_may_recover_worktree(
         return False
     if (
         canonical_repository_id != repository_id
-        or branch != worker_task_branch(config, task_id)
+        or not task_branch_matches(branch, worker_task_branch(config, task_id))
     ):
         return False
     receipt = _canonical_worker_recovery_receipt(status, task)
     if receipt is None or str(receipt.get("task_id") or "") != task_id:
+        return False
+    if not validate_lost_lease_receipt(receipt):
         return False
     if str(receipt.get("status") or "") != "reassigned":
         return False
@@ -821,7 +826,7 @@ def _lost_lease_replacement_may_recover_worktree(
     if (
         not receipt_id
         or str(receipt.get("reason_kind") or "")
-        not in {"worker_process_missing", "worker_lease_expired"}
+        not in {"worker_process_missing", "worker_lease_expired", "promotion_drained"}
         or str(request.metadata.get("recovery_receipt_id") or "") != receipt_id
     ):
         return False
@@ -898,7 +903,9 @@ def _lost_lease_replacement_may_recover_worktree(
         str(lease.get("task_id") or "") != task_id
         or str(lease.get("workspace_task_id") or "") != task_id
         or str(lease.get("repository_id") or "") != repository_id
-        or str(lease.get("branch") or "") != branch
+        or not task_branch_matches(
+            str(lease.get("branch") or ""), worker_task_branch(config, task_id)
+        )
         or str(lease.get("base_ref") or "") != base_ref
         or lease_path != worktree_path.resolve()
         or lease_source_root != source_root.resolve()
@@ -1422,6 +1429,8 @@ def prepare_worker_workspace(
         settings,
         repository_id=repository_id,
     )
+    if request.metadata.get("workspace_path"):
+        worktree_path = workspace_path
     reused = False
     creation_origin: str | None = None
     recovery_workspace: dict[str, str] = {}
@@ -1430,7 +1439,23 @@ def prepare_worker_workspace(
         leases = {}
         state["worker_worktrees"]["leases"] = leases
 
-    existing = _existing_worktree_for_branch(repo_root, branch, exclude_root=True)
+    # Prefer the registered task workspace: a worker may have continued its
+    # published changes on -vN while the original branch still exists elsewhere.
+    existing = None
+    for record in _git_worktree_records(repo_root):
+        if not record.get("worktree") or Path(record["worktree"]).resolve() != worktree_path.resolve():
+            continue
+        try:
+            validate_worker_workspace_binding(
+                repo_root, worktree_path, expected_branch=branch,
+            )
+        except RuntimeError as exc:
+            return False, f"Cannot reuse task workspace {worktree_path}: {exc}"
+        branch = _worktree_record_branch(record)
+        existing = worktree_path
+        break
+    if existing is None:
+        existing = _existing_worktree_for_branch(repo_root, branch, exclude_root=True)
     if existing:
         worktree_path = existing
         reused = True

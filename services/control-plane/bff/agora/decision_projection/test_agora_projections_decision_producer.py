@@ -127,6 +127,11 @@ def test_candidate_review_produces_durable_decision_event(monkeypatch):
     assert event["event_kind"] == "entry"
     assert event["decision_state"] == "approved_by_trader"
     assert event["no_order_route_proof"] == "agora_decision_support_only"
+    from ..trading_room.test_trading_room import _client, _write_headers
+    owner = _client(global_tr_store, tenant_id=tenant_id, user_id=user_id)
+    url = f'/bff/agora/trading-room/decision-events/{event["decision_event_id"]}'
+    assert owner.get(url, headers=_write_headers()).status_code == 200
+    assert _client(global_tr_store).get(url, headers=_write_headers()).status_code == 404
 
 
 def test_decision_event_producer_projects_to_trading_room():
@@ -166,3 +171,12 @@ def test_decision_event_producer_projects_to_trading_room():
     loaded = tr_store.get_decision_event(record.decision_event_id)
     assert loaded is not None
     assert loaded["subject"]["symbol"] == "NVDA"
+    from ..trading_room.test_trading_room import _client, _write_headers
+    owner = _client(tr_store, tenant_id=record.tenant_id, user_id=record.user_id)
+    url = f"/bff/agora/trading-room/decision-events/{record.decision_event_id}"
+    response = owner.get(url, headers=_write_headers())
+    assert response.status_code == 200
+    decision = owner.post(url + "/decisions", headers={**_write_headers(), "If-Match": response.headers["etag"]}, json={"decision": "approve"})
+    assert decision.status_code == 201
+    assert owner.get(url, headers=_write_headers()).json()["intent_ref"] == decision.json()["data"]["intent_ref"]
+    assert _client(tr_store).get(url, headers=_write_headers()).status_code == 404

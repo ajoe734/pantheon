@@ -199,7 +199,7 @@ def _extract_identity(authorization: Optional[str] = None, **kwargs: Any) -> Ope
         parts = token.split(":")
         op_id = parts[0]
         roles = parts[1].split(",") if len(parts) > 1 else ["operator"]
-        return OperatorIdentity(operator_id=op_id, roles=roles, mfa_verified=True)
+        return OperatorIdentity(operator_id=op_id, roles=roles, mfa_verified=True, claims={"tenant_id": "tenant-a"})
     return OperatorIdentity(operator_id="op-gap-005", roles=["operator"], mfa_verified=True)
 
 
@@ -363,18 +363,6 @@ def test_bff_governance_review_routes_and_approval_evidence() -> None:
         audit = client.get("/bff/reviews/gov-review-001/audit", headers=HEADERS)
         assert audit.status_code == 200, audit.text
         assert audit.json()["events"][0]["entry_id"] == "audit-002"
-
-        store.get_approval_decision = lambda approval_id: {
-            "id": approval_id,
-            "correlation_id": "corr-approval-005",
-            "evidence_refs": [{"ref_id": "ev-005", "type": "IncidentReport", "url": None}],
-        } if approval_id == "approval-gap-005" else None
-        evidence = client.get("/bff/approvals/approval-gap-005/evidence", headers=HEADERS)
-        assert evidence.status_code == 200, evidence.text
-        body = evidence.json()
-        assert body["correlation_id"] == "corr-approval-005"
-        assert body["audit_ref"]["href"] == "/bff/audit/entities/ApprovalDecision/approval-gap-005"
-        assert body["evidence"][0]["ref_id"] == "ev-005"
 
 
 def test_bff_deployment_runtime_and_risk_action_routes_return_final_envelopes() -> None:

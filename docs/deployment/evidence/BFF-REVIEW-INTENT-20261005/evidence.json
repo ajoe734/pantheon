@@ -1,0 +1,29 @@
+{
+  "task_id": "BFF-REVIEW-INTENT-20261005",
+  "base_sha": "a4abce7b2cded51b18187b784ca540dff331bbc2",
+  "acceptance_correction": "acceptance.md",
+  "validation": {
+    "command": "python -m pytest -q --disable-warnings --tb=short services/control-plane/bff/test_action_catalog.py services/control-plane/bff/test_action_catalog_safety_invariants.py services/control-plane/bff/tests/test_receipt_owner_routes.py services/control-plane/bff/tests/test_receipt_only_retirement.py services/control-plane/bff/test_final_precondition_errors.py services/capital/test_capital_guard.py services/capital/test_capital_guard_routes.py services/evolution/test_program_owner.py services/evolution/test_dispatch_worker.py",
+    "passed": 238,
+    "failed": 1,
+    "skipped": 3,
+    "skips": "Existing PostgreSQL owner scenarios require TEST_DATABASE_URL. No test skipped by this change.",
+    "baseline_failure": {
+      "node": "services/control-plane/bff/test_final_precondition_errors.py::test_bff_v1_commands_missing_approval_returns_409_envelope",
+      "base_result": "1 failed: expected 409 but got 202; Governance owner rejects missing expected_version",
+      "head_result": "same failure",
+      "base_source": "/tmp/pantheon-audit-20261005-1228/source",
+      "compared_files_match_git_base": true
+    },
+    "mounted_review_intent": "7 resource/wrapper/direct entry variants; signed caller roles; unsigned and foreign tenant denied effects; no approval evidence; same-key retry; durable real ProgramService/JsonProgramStore readback; no capital/runtime authority",
+    "regression_log_sha256": "f313948552e42dd666af44950134c9ba723c8f8c1d5b915858bb7db71958ae12",
+    "baseline_log_sha256": "3971ebfe43a4f937c1d5ae5b668af5c1aa142411d4dcead4fb03b00b599130f2"
+  },
+  "production_delta": {
+    "added": 5,
+    "deleted": 12,
+    "net": -7
+  },
+  "delivery_scope": "source correction; no hosted deploy or real-capital operation performed",
+  "review_status": "Author validation only; no independent reviewer attestation claimed"
+}

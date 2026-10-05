@@ -5,8 +5,7 @@ wiring to ``core/app_factory.py``: canonical ``redact_evidence_refs`` from
 ``models.py`` plus ``capabilities_for_identity`` from ``auth/policy.py``)
 against the 9 previously-discarded-identity control-loops handlers that were
 repaired to apply fail-closed evidence-ref redaction: OODA packets
-(list/detail), v5 interventions (list/detail), the sentinel finding detail
-route, and the aggregate control-room read model. It also exercises the
+(list/detail) and the aggregate control-room read model. It also exercises the
 real ``create_governance_router`` composition against the committee detail
 route's previously-unredacted ``linked_evidence`` field.
 
@@ -224,28 +223,7 @@ _OODA_PACKET_2: Dict[str, Any] = {
     "evidence_refs": [],
 }
 
-_INTERVENTION_1: Dict[str, Any] = {
-    "intervention_id": "intv-clc-1",
-    "kind": "hiq_sentinel",
-    "status": "pending",
-    "target_type": "Runtime",
-    "target_id": "rt-clc-1",
-    "triggered_at": "2026-08-30T12:00:00Z",
-    "triggered_by": "sentinel",
-    "description": "HIQ Sentinel detected anomalous loop behavior",
-    "evidence_refs": copy.deepcopy(_MIXED_REFS),
-}
-_INTERVENTION_2: Dict[str, Any] = {
-    "intervention_id": "intv-clc-2",
-    "kind": "risk_breach",
-    "status": "remediated",
-    "target_type": "Runtime",
-    "target_id": "rt-clc-2",
-    "triggered_at": "2026-08-30T12:10:00Z",
-    "evidence_refs": [],
-}
-
-_SENTINEL_FINDING_1: Dict[str, Any] = {
+_INCIDENT_1: Dict[str, Any] = {
     "finding_id": "sf-clc-1",
     "id": "sf-clc-1",
     "kind": "risk_breach",
@@ -274,24 +252,9 @@ class _ControlLoopsSweepStore:
                 return copy.deepcopy(item)
         return None
 
-    # v5 interventions ------------------------------------------------------
-    def list_v5_interventions(self, **_: Any) -> List[Dict[str, Any]]:
-        return [copy.deepcopy(_INTERVENTION_1), copy.deepcopy(_INTERVENTION_2)]
-
-    def get_intervention(self, intervention_id: str) -> Optional[Dict[str, Any]]:
-        for item in (_INTERVENTION_1, _INTERVENTION_2):
-            if item["intervention_id"] == intervention_id:
-                return copy.deepcopy(item)
-        return None
-
-    # Sentinel findings -----------------------------------------------------
-    def list_sentinel_findings(self, **_: Any) -> Tuple[bool, List[Dict[str, Any]]]:
-        return True, [copy.deepcopy(_SENTINEL_FINDING_1)]
-
-    def get_sentinel_finding(self, finding_id: str) -> Tuple[bool, Optional[Dict[str, Any]]]:
-        if finding_id == _SENTINEL_FINDING_1["finding_id"]:
-            return True, copy.deepcopy(_SENTINEL_FINDING_1)
-        return True, None
+    # Incidents -------------------------------------------------------------
+    def list_incidents(self, **_: Any) -> List[Dict[str, Any]]:
+        return [copy.deepcopy(_INCIDENT_1)]
 
     # Loop runs (aggregated into control-room only; not a fixed surface) ----
     def list_loop_runs(self, **_: Any) -> Tuple[bool, List[Dict[str, Any]]]:
@@ -604,7 +567,12 @@ def test_ooda_real_producer_list_redacts_for_low_capability_identity() -> None:
         market_ref = packet["observe"]["market_refs"][0]
         assert isinstance(market_ref, dict) and market_ref.get("redacted") is True
         assert market_ref["required_capability"] == "audit.read"
-        assert payload["meta"]["redacted_evidence_count"] == 11
+        # BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001: was 11 under the fail-open
+        # base function, which passed act.command_receipt_refs through
+        # unredacted because its kind (audit, like its broker_evidence_refs
+        # sibling) never resolved. Now 12: the command receipt is correctly
+        # gated on audit.read like the rest of the ActBundle.
+        assert payload["meta"]["redacted_evidence_count"] == 12
 
 
 def test_ooda_real_producer_detail_redacts_for_low_capability_identity() -> None:
@@ -630,7 +598,9 @@ def test_ooda_real_producer_detail_redacts_for_low_capability_identity() -> None
         market_ref = packet["observe"]["market_refs"][0]
         assert isinstance(market_ref, dict) and market_ref.get("redacted") is True
         assert market_ref["required_capability"] == "audit.read"
-        assert payload["meta"]["redacted_evidence_count"] == 11
+        # BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001: see the list-route test
+        # above for why this moved from 11 to 12.
+        assert payload["meta"]["redacted_evidence_count"] == 12
 
 
 def test_ooda_real_producer_list_and_detail_pass_through_for_full_capability_identity() -> None:
@@ -766,7 +736,12 @@ def test_ooda_persona_producer_list_redacts_for_low_capability_identity() -> Non
         risk_ref = packet["orient"]["risk_adjudication_ref"]
         assert isinstance(risk_ref, dict) and risk_ref.get("redacted") is True
         assert risk_ref.get("required_capability") == "policy.read"
-        assert payload["meta"]["redacted_evidence_count"] == 15
+        # BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001: was 15 under the fail-open
+        # base function, which passed act.command_receipt_refs (x2),
+        # act.rollback_refs, and act.safe_mode_refs through unredacted
+        # because their kind never resolved. Now 19: all four are correctly
+        # gated on audit.read like their broker_evidence_refs sibling.
+        assert payload["meta"]["redacted_evidence_count"] == 19
 
 
 def test_ooda_persona_producer_detail_redacts_for_low_capability_identity() -> None:
@@ -790,7 +765,9 @@ def test_ooda_persona_producer_detail_redacts_for_low_capability_identity() -> N
         risk_ref = packet["orient"]["risk_adjudication_ref"]
         assert isinstance(risk_ref, dict) and risk_ref.get("redacted") is True
         assert risk_ref.get("required_capability") == "policy.read"
-        assert payload["meta"]["redacted_evidence_count"] == 15
+        # BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001: see the list-route test
+        # above for why this moved from 15 to 19.
+        assert payload["meta"]["redacted_evidence_count"] == 19
 
 
 def test_ooda_persona_producer_list_and_detail_pass_through_for_full_capability_identity() -> None:
@@ -894,101 +871,6 @@ def test_ooda_persona_producer_list_and_detail_fail_closed_when_capabilities_ret
         assert detail_resp.json()["meta"]["redacted_evidence_count"] == 33
 
 
-# --- v5 interventions (list + detail) ---------------------------------------
-
-
-def test_v5_interventions_list_baseline_response_model_strips_evidence_refs() -> None:
-    """``InterventionRecord`` declares no ``evidence_refs`` field and no
-    ``extra="allow"`` config, so FastAPI's response-model serialization
-    always drops any such field before it reaches the wire regardless of
-    identity -- there is nothing to redact on this list surface, only the
-    (structurally schema-enforced) baseline to document."""
-    with _stub_auth_env():
-        client = TestClient(_build_control_loops_app())
-        response = client.get(
-            "/bff/v5/interventions",
-            headers={"Authorization": LOW_CAPABILITY_TOKEN},
-        )
-        assert response.status_code == 200, response.text
-        payload = response.json()
-        by_id = {item["intervention_id"]: item for item in payload["items"]}
-        assert set(by_id) == {"intv-clc-1", "intv-clc-2"}
-        assert "evidence_refs" not in by_id["intv-clc-1"]
-
-
-def test_v5_intervention_detail_redacts_for_low_capability_identity() -> None:
-    with _stub_auth_env():
-        client = TestClient(_build_control_loops_app())
-        response = client.get(
-            "/bff/v5/interventions/intv-clc-1",
-            headers={"Authorization": LOW_CAPABILITY_TOKEN},
-        )
-        assert response.status_code == 200, response.text
-        payload = response.json()
-        _assert_mixed_refs_redacted_for_low_capability(payload["data"]["evidence_refs"])
-        assert payload["meta"]["redacted_evidence_count"] == 2
-
-
-def test_v5_intervention_detail_passes_through_for_full_capability_identity() -> None:
-    with _stub_auth_env():
-        client = TestClient(_build_control_loops_app())
-        response = client.get(
-            "/bff/v5/interventions/intv-clc-1",
-            headers={"Authorization": FULL_CAPABILITY_TOKEN},
-        )
-        assert response.status_code == 200, response.text
-        payload = response.json()
-        assert payload["data"]["evidence_refs"] == _MIXED_REFS
-        assert payload["meta"]["redacted_evidence_count"] == 0
-
-
-def test_v5_intervention_detail_fails_closed_when_capabilities_unresolvable() -> None:
-    def _boom(identity: Any) -> List[str]:
-        raise RuntimeError("capability lookup unavailable")
-
-    with _stub_auth_env():
-        client = TestClient(_build_control_loops_app(capabilities_for_identity=_boom))
-        response = client.get(
-            "/bff/v5/interventions/intv-clc-1",
-            headers={"Authorization": FULL_CAPABILITY_TOKEN},
-        )
-        assert response.status_code == 200, response.text
-        payload = response.json()
-        refs = payload["data"]["evidence_refs"]
-        assert len(refs) == 3
-        assert all(ref["redacted"] is True for ref in refs)
-        assert payload["meta"]["redacted_evidence_count"] == 3
-
-
-# --- Sentinel finding detail -------------------------------------------------
-
-
-def test_sentinel_finding_detail_redacts_for_low_capability_identity() -> None:
-    with _stub_auth_env():
-        client = TestClient(_build_control_loops_app())
-        response = client.get(
-            "/bff/v5/sentinel/findings/sf-clc-1",
-            headers={"Authorization": LOW_CAPABILITY_TOKEN},
-        )
-        assert response.status_code == 200, response.text
-        payload = response.json()
-        _assert_mixed_refs_redacted_for_low_capability(payload["data"]["evidence_refs"])
-        assert payload["meta"]["redacted_evidence_count"] == 2
-
-
-def test_sentinel_finding_detail_passes_through_for_full_capability_identity() -> None:
-    with _stub_auth_env():
-        client = TestClient(_build_control_loops_app())
-        response = client.get(
-            "/bff/v5/sentinel/findings/sf-clc-1",
-            headers={"Authorization": FULL_CAPABILITY_TOKEN},
-        )
-        assert response.status_code == 200, response.text
-        payload = response.json()
-        assert payload["data"]["evidence_refs"] == _MIXED_REFS
-        assert payload["meta"]["redacted_evidence_count"] == 0
-
-
 # --- Aggregate control-room --------------------------------------------------
 
 
@@ -1001,17 +883,11 @@ def test_control_room_redacts_embedded_items_for_low_capability_identity() -> No
         )
         assert response.status_code == 200, response.text
         payload = response.json()
-        interventions_by_id = {
-            item["intervention_id"]: item for item in payload["interventions"]["items"]
-        }
+        incidents_by_id = {item["id"]: item for item in payload["incidents"]["items"]}
         _assert_mixed_refs_redacted_for_low_capability(
-            interventions_by_id["intv-clc-1"]["evidence_refs"]
+            incidents_by_id["sf-clc-1"]["evidence_refs"]
         )
-        sentinel_by_id = {item["finding_id"]: item for item in payload["sentinel"]["items"]}
-        _assert_mixed_refs_redacted_for_low_capability(
-            sentinel_by_id["sf-clc-1"]["evidence_refs"]
-        )
-        assert payload["meta"]["redacted_evidence_count"] == 4
+        assert payload["meta"]["redacted_evidence_count"] == 2
 
 
 def test_control_room_passes_through_for_full_capability_identity() -> None:
@@ -1023,12 +899,8 @@ def test_control_room_passes_through_for_full_capability_identity() -> None:
         )
         assert response.status_code == 200, response.text
         payload = response.json()
-        interventions_by_id = {
-            item["intervention_id"]: item for item in payload["interventions"]["items"]
-        }
-        assert interventions_by_id["intv-clc-1"]["evidence_refs"] == _MIXED_REFS
-        sentinel_by_id = {item["finding_id"]: item for item in payload["sentinel"]["items"]}
-        assert sentinel_by_id["sf-clc-1"]["evidence_refs"] == _MIXED_REFS
+        incidents_by_id = {item["id"]: item for item in payload["incidents"]["items"]}
+        assert incidents_by_id["sf-clc-1"]["evidence_refs"] == _MIXED_REFS
         assert payload["meta"]["redacted_evidence_count"] == 0
 
 

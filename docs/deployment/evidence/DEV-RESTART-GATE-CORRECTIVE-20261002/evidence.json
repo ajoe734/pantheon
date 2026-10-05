@@ -1,0 +1,133 @@
+{
+  "task_id": "DEV-RESTART-GATE-CORRECTIVE-20261002",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "review_status": "pending independent exact-head review",
+  "repository": "ajoe734/pantheon",
+  "base_sha": "b6599f9fdcbbb147297ca751416b81f997faee5a",
+  "validated_code_commit": "4b4dee0bd47d5025bfec95c7c830d2d430862430",
+  "scope": "Source workflow admission and compensation only; no worker SSH/VM, deployment triggers, hosted writes or product runtime edits.",
+  "incident": {
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/37035071230",
+    "deploy_job": 110931130393,
+    "backend_sha": "6bf0f7195f6dc6a5e42f685b2b860302e47e9747",
+    "seed_ok_at": "2026-10-02T16:57:33.0419011Z",
+    "readiness_failure_at": "2026-10-02T17:01:40.5847501Z",
+    "failure": "BFF lifecycle recovery exceeded the bounded extension",
+    "deploy_conclusion": "failure",
+    "compensation": "skipped",
+    "coordinate_job": 110940608195,
+    "coordinate_started_at": "2026-10-02T17:01:48Z",
+    "historical_yaml_reproduction": {
+      "bff_fe_pair_verified": true,
+      "coordinate_admitted": true,
+      "compensation_selected": false
+    },
+    "qualification": "Job start is not frontend activation proof. Timeout alone does not establish runtime root cause."
+  },
+  "change": [
+    "Publish pair verification only after existing component-aware mandatory checks, artifact checks and successful identity-bound lease cleanup/release.",
+    "Use existing exact-artifact compensation on mandatory post-up failure or skip, artifact/posture errors and cancellation; retained predecessor plus acquired lease remain prerequisites.",
+    "Preserve bff paper-bootstrap skip, root/auto bootstrap requirement, bounded restart probe, sealed recovery identity and separate optional provider live acceptance."
+  ],
+  "validation": [
+    {
+      "command": "timeout 150 .venv-pantheon/bin/python3 -m pytest -q scripts/test_nonprod_dev_artifact_workflow.py scripts/test_cross_repo_release_controller.py scripts/test_deploy_nonprod_bootstrap_contract.py scripts/test_dev_environment_lease_deploy_contract.py::test_all_dev_mutations_and_public_proofs_use_pinned_wrapper scripts/test_dev_environment_lease_deploy_contract.py::test_provider_live_acceptance_is_not_a_dev_deployment_gate scripts/test_dev_environment_lease_deploy_contract.py::test_deployment_completion_retains_real_checks_without_provider_gate scripts/test_dev_environment_lease_deploy_contract.py::test_dev_release_admission_requires_complete_backend_and_lease_success scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_phase_failure_prevents_release_admission_and_switch scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_condition_truth_table scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_job_has_explicit_timeout_and_command_deadline",
+      "result": "330 passed in 50.08s",
+      "exit_status": 0,
+      "base": "b6599f9fdcbbb147297ca751416b81f997faee5a"
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q scripts/test_nonprod_dev_artifact_workflow.py scripts/test_dev_environment_lease_deploy_contract.py scripts/test_cross_repo_release_controller.py scripts/test_deploy_nonprod_bootstrap_contract.py",
+      "result": "475 passed, 45 failed in 77.36s",
+      "exit_status": 1,
+      "qualification": "All failures reproduce on original dev; this is not a passing full suite."
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_environment_lease_deploy_contract.py scripts/test_cross_repo_release_controller.py scripts/test_deploy_nonprod_bootstrap_contract.py",
+      "cwd": "/tmp/pantheon-dev-restart-baseline-20261002",
+      "base": "e32ab2785e09a47eee00ab5a48acc543863547e2",
+      "result": "321 passed, 54 failed in 53.33s",
+      "exit_status": 1
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD --change-class corrective --budget 30",
+      "result": "production +10/-10 = net 0; budget 30",
+      "exit_status": 0
+    }
+  ],
+  "new_failures": [],
+  "repaired_existing_cases": 9,
+  "remaining_existing_failures": [
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_active_predecessor_heartbeat_stopped_and_recovered_e2e",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_exports_full_governed_bff_environment",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_CANONICAL_CORS_ORIGIN]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_CORS_ORIGINS]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_DEFAULT_ROLE]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_ROLE_CLAIMS]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_ROLE_MAP]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_BFF_ROLE_MAP_MODE]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_MANAGEMENT_AI_ATTACH_BUCKET]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_MANAGEMENT_AI_ATTACH_LOCATION]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_MANAGEMENT_AI_DATABASE_URL]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_MANAGEMENT_AI_DB_PASSWORD]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_MANAGEMENT_AI_DB_USER]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_MANAGEMENT_AI_STORE_BACKEND]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_MANAGEMENT_AI_STORE_SCHEMA]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[PANTHEON_DEV_ROLLBACK_BACKEND_SHA]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[PANTHEON_ROLLBACK_BACKEND_SHA]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_fails_closed_when_credential_absent_negative[PANTHEON_ROLLBACK_FRONTEND_SHA]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_forces_post_up_failure_inside_compensation_and_proves_pair_remains_baseline",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_mutation_aware_executes_deploy_when_not_at_baseline_positive",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_mutation_aware_fails_closed_on_rollback_failure_negative",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_mutation_aware_skips_deploy_when_already_at_baseline_negative",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_predecessor_heartbeat_mismatched_identity_fails_closed_negative",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_quarantined_predecessor_heartbeat_restores_baseline_e2e",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_compensation_unstoppable_predecessor_fails_closed_negative",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_inner_rollback_skips_rollback_when_nested_compensation_matches_deploy_sha",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_ssh_command_terminates_process_group_on_deadline",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_validates_deadline_configuration_positive[args0-extra_env0-900]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_validates_deadline_configuration_positive[args1-extra_env1-750]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_validates_deadline_configuration_positive[args2-extra_env2-600]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_validates_deadline_configuration_positive[args3-extra_env3-450]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_validates_deadline_configuration_positive[args4-extra_env4-7200]",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_inner_rollback_preserves_full_governed_bff_environment",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_deploy_builds_candidate_before_mutating_active_runtime",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_deploy_stale_compose_replacement_cleanup_defined_and_invoked",
+    "scripts/test_dev_environment_lease_deploy_contract.py::test_staging_dry_run_does_not_require_dev_lease"
+  ],
+  "coverage": "Loaded YAML output/compensation/job conditions; actual cleanup tail with mocked lease transport; auto/root/bff success, each mandatory failure/skipped/cancelled/empty outcome, cancellation, artifact errors, absent lease/predecessor, failed heartbeat identity/verify/release; controller and bootstrap regressions.",
+  "limitations": [
+    "Lease transport and hosted operations are mocked in local tests; no live compensation or final-pair readiness claim.",
+    "Failed run selected backend 6bf0f7195 before #6095 readiness import repair; #6095 merged as e32ab2785e09a47eee00ab5a48acc543863547e2.",
+    "Existing release coordinator owns deployment and subsequent exact final FE/BFF pair restart/readiness verification.",
+    "Remaining old lease-suite failures concern historical staging fixtures, old source-equality compensation mocks, obsolete environment assertions and sealed-image rollout assertions; no runtime changes inferred from these failures."
+  ],
+  "log_digests": {
+    "incident": {
+      "path": "/tmp/pantheon-deploy-job-110931130393.log",
+      "sha256": "8dc50b928dfb42ea30100ba6b0146589029adf27dde1d18eaddc75913250dff3"
+    },
+    "baseline": {
+      "path": "/tmp/dev-restart-baseline-regressions.log",
+      "sha256": "6462ecd460905ea4786d5671ff749d8676181a3b596d4206512abf44072d46cb"
+    },
+    "full": {
+      "path": "/tmp/dev-restart-final-regressions.log",
+      "sha256": "66a4003080e9b9cdedbf09d6849688fcb1d84779a0ce3d5f330be8eada26965c"
+    },
+    "focused": {
+      "path": "/tmp/dev-restart-focused.log",
+      "sha256": "ae7273b0d01d37ecb5bb7895d992b902adb190f47274c740b2fa87435885415a"
+    }
+  }
+}

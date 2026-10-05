@@ -28,6 +28,7 @@ from services.trade_journey.incremental_materializer import IncrementalLifecycle
 from services.trade_journey.materializer import (
     IDENTIFIER_FIELDS,
     TERMINAL_STATUSES,
+    identity_summary,
     JourneyMaterializer,
 )
 from services.trade_journey.projection_store import (
@@ -533,7 +534,7 @@ class RelationalLifecycleProjector:
                         int(event.get("source_offset") or 0)
                         for event in agg.journey_events
                     ),
-                    current_identity_summary={"identifiers": snapshot.get("identifiers") or {}},
+                    current_identity_summary=identity_summary(agg.identity, snapshot.get("identifiers")),
                     evidence_summary={
                         "event_count": len(agg.journey_events),
                         "stage_event_ids": [

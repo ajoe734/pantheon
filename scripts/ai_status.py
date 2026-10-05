@@ -101,6 +101,7 @@ from multi_repo_registry import (
     task_target_repository_id,
     validate_task_repository_scope,
 )
+from common import runtime_source_regular_file
 from runtime_state import (
     _resolve_runtime_source_leaf,
     activity_audit_lock_file,
@@ -205,6 +206,7 @@ from common import (
     prepare_activity_audit_unlocked,
     read_activity_log_tail_bytes,
     read_regular_file_bytes,
+    recent_activity_event_digests_unlocked,
     strict_activity_json_loads,
     utc_now as iso_now,
     canonical_task_state_identity_from_environment,
@@ -318,11 +320,11 @@ def resolve_orchestrator_state_file(status_root: Path) -> Path:
     legacy_path = status_root / ".orchestrator" / "state.json"
     worker_runtime_queue = status_root / ".orchestrator" / "worker-runtime" / "approval-queue.json"
     legacy_queue = status_root / ".orchestrator" / "approval-queue.json"
-    if worker_runtime_path.exists():
+    if runtime_source_regular_file(worker_runtime_path):
         return worker_runtime_path
-    if legacy_path.exists():
+    if runtime_source_regular_file(legacy_path):
         return legacy_path
-    if legacy_queue.exists() and not worker_runtime_queue.exists():
+    if runtime_source_regular_file(legacy_queue) and not runtime_source_regular_file(worker_runtime_queue):
         return legacy_path
     return worker_runtime_path
 
@@ -332,11 +334,11 @@ def resolve_approval_queue_file(status_root: Path) -> Path:
     legacy_state = status_root / ".orchestrator" / "state.json"
     worker_runtime_queue = status_root / ".orchestrator" / "worker-runtime" / "approval-queue.json"
     legacy_queue = status_root / ".orchestrator" / "approval-queue.json"
-    if worker_runtime_queue.exists():
+    if runtime_source_regular_file(worker_runtime_queue):
         return worker_runtime_queue
-    if legacy_queue.exists():
+    if runtime_source_regular_file(legacy_queue):
         return legacy_queue
-    if legacy_state.exists() and not worker_runtime_state.exists():
+    if runtime_source_regular_file(legacy_state) and not runtime_source_regular_file(worker_runtime_state):
         return legacy_queue
     return worker_runtime_queue
 
@@ -2255,6 +2257,43 @@ def _activity_event_index_unlocked(event_ids: set[str]) -> dict[str, str]:
         ) from exc
 
 
+# Clock-step slack when bounding which archives an outbox event could have
+# been rotated into.
+OUTBOX_ARCHIVE_MTIME_SLACK_SECONDS = 3600
+
+
+def _outbox_event_index_unlocked(events: list[dict[str, Any]]) -> dict[str, str]:
+    """Look up outbox events without revalidating the whole activity history.
+
+    An outbox event exists before it can be appended, so only the active log
+    and archives rotated after its ts can hold it. An event without a
+    parseable ts falls back to the whole-history index.
+    """
+
+    event_ids = {str(event["event_id"]) for event in events}
+    created = [_parse_utc_timestamp(event.get("ts")) for event in events]
+    if any(value is None for value in created):
+        return _activity_event_index_unlocked(event_ids)
+    not_before = (
+        min(value.timestamp() for value in created if value is not None)
+        - OUTBOX_ARCHIVE_MTIME_SLACK_SECONDS
+    )
+    try:
+        return recent_activity_event_digests_unlocked(
+            LOG_FILE,
+            event_ids,
+            not_before=not_before,
+        )
+    except ActivityAuditInvariantError:
+        raise
+    except RuntimeError as exc:
+        raise activity_audit_invariant_error(
+            exc,
+            log_path=LOG_FILE,
+            operation="status_outbox_recovery",
+        ) from exc
+
+
 def _active_activity_event_digests_unlocked(
     event_ids: set[str],
 ) -> dict[str, str]:
@@ -2554,7 +2593,7 @@ def recover_status_activity_outbox(
         existing = (
             {}
             if known_unappended
-            else _activity_event_index_unlocked(pending_event_ids)
+            else _outbox_event_index_unlocked(pending["events"])
         )
         missing: list[dict[str, Any]] = []
         for event in pending["events"]:
@@ -2577,7 +2616,7 @@ def recover_status_activity_outbox(
             raise
         final = _active_activity_event_digests_unlocked(pending_event_ids)
         if set(final) != pending_event_ids:
-            final = _activity_event_index_unlocked(pending_event_ids)
+            final = _outbox_event_index_unlocked(pending["events"])
         if any(
             final.get(str(event["event_id"])) != _canonical_json_sha256(event)
             for event in pending["events"]
@@ -2956,7 +2995,9 @@ def approved_closeout_commit_ref(
         raise SystemExit(
             "Cannot finalize task: canonical approval has an invalid exact head SHA."
         )
-    if approved_branch != branch:
+    # A rewritten replacement PR branch `<branch>-v<N>`, which the
+    # auto-integrator delivers like the leased branch, is the same delivery.
+    if re.sub(r"-v[0-9]+$", "", approved_branch) != re.sub(r"-v[0-9]+$", "", branch):
         raise SystemExit(
             "Cannot finalize task: delivery branch does not match canonical approved "
             f"head branch ({branch} != {approved_branch or 'missing'})."
@@ -3149,43 +3190,44 @@ def _validate_delivery_workspace_repository(
     repository_id: str,
     repository_root: Path,
     registered_root: Path,
+    action: str = "finalize",
 ) -> None:
     if not repository_root.is_dir() or git_toplevel(repository_root) != repository_root:
         raise SystemExit(
-            f"Cannot finalize task: delivery workspace must be a git repository root: {repository_root}."
+            f"Cannot {action} task: delivery workspace must be a git repository root: {repository_root}."
         )
     if not registered_root.is_dir() or git_toplevel(registered_root) != registered_root:
         raise SystemExit(
-            "Cannot finalize task: registered repository local_path is not a git root: "
+            f"Cannot {action} task: registered repository local_path is not a git root: "
             f"{registered_root}."
         )
     if _resolved_git_common_dir(repository_root) != _resolved_git_common_dir(registered_root):
         raise SystemExit(
-            "Cannot finalize task: delivery workspace is not registered to the configured "
+            f"Cannot {action} task: delivery workspace is not registered to the configured "
             f"{repository_id} checkout."
         )
     if repository_root not in _registered_worktree_paths(registered_root):
         raise SystemExit(
-            "Cannot finalize task: delivery workspace is not present in the configured "
+            f"Cannot {action} task: delivery workspace is not present in the configured "
             "repository worktree registry."
         )
     expected_slug = normalize_github_repo_slug(repository_slug(config, repository_id))
     if not expected_slug:
         raise SystemExit(
-            f"Cannot finalize task: repository `{repository_id}` has no configured GitHub slug."
+            f"Cannot {action} task: repository `{repository_id}` has no configured GitHub slug."
         )
     actual_slug = normalize_github_repo_slug(
         run_git_command(
             ["remote", "get-url", "origin"],
             cwd=repository_root,
             failure_message=(
-                "Cannot finalize task: delivery workspace origin remote is unavailable."
+                f"Cannot {action} task: delivery workspace origin remote is unavailable."
             ),
         )
     )
     if actual_slug != expected_slug:
         raise SystemExit(
-            "Cannot finalize task: delivery workspace origin does not match task "
+            f"Cannot {action} task: delivery workspace origin does not match task "
             f"repository ({actual_slug or 'missing'} != {expected_slug})."
         )
 
@@ -3194,30 +3236,33 @@ def _done_delivery_repository_root(
     config: dict[str, Any],
     task: dict[str, Any],
     repository_id: str,
+    *,
+    action: str = "finalize",
 ) -> tuple[Path, dict[str, Any]]:
     try:
         workspace_root = _worker_workspace_root()
     except RuntimeError as exc:
-        raise SystemExit(f"Cannot finalize task: {exc}.") from exc
+        raise SystemExit(f"Cannot {action} task: {exc}.") from exc
     run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
     binding = getattr(_STATUS_COMMAND_LEASE_LOCAL, "binding", None)
     if run_id:
         if not isinstance(binding, Mapping):
             raise SystemExit(
-                "Cannot finalize task: active worker delivery workspace has no validated lease binding."
+                f"Cannot {action} task: active worker delivery workspace has no validated lease binding."
             )
         lease_repository_id = str(
             binding.get("workspace_repository_id") or ""
         ).strip()
         if lease_repository_id != repository_id:
             raise SystemExit(
-                "Cannot finalize task: worker lease repository does not match task artifacts "
+                f"Cannot {action} task: worker lease repository does not match task artifacts "
                 f"({lease_repository_id or 'missing'} != {repository_id})."
             )
         binding_task_id = str(binding.get("task_id") or "").strip()
         if binding_task_id != str(task.get("id") or "").strip():
+            task_label = "closeout" if action == "finalize" else action
             raise SystemExit(
-                "Cannot finalize task: worker lease task does not match closeout task."
+                f"Cannot {action} task: worker lease task does not match {task_label} task."
             )
         try:
             registered_root = _metadata_path(
@@ -3225,35 +3270,59 @@ def _done_delivery_repository_root(
                 label="worker lease workspace_source_root",
             )
         except RuntimeError as exc:
-            raise SystemExit(f"Cannot finalize task: {exc}.") from exc
+            raise SystemExit(f"Cannot {action} task: {exc}.") from exc
     else:
-        configured_root = repository_configured_local_path(config, repository_id)
-        if configured_root is None:
-            raise SystemExit(
-                f"Cannot finalize task: repository `{repository_id}` has no local_path configured."
-            )
-        configured_symlink = first_symlink_component(configured_root)
-        if configured_symlink is not None:
-            raise SystemExit(
-                "Cannot finalize task: registered repository local_path cannot include a "
-                f"symlink component: {configured_symlink}."
-            )
-        resolved_registered_root = repository_local_path(config, repository_id)
-        if resolved_registered_root is None:
-            raise SystemExit(
-                f"Cannot finalize task: repository `{repository_id}` has no local_path configured."
-            )
-        registered_root = resolved_registered_root.resolve(strict=False)
+        repo_dict = resolve_repository(config, repository_id)
+        integration_raw = str(repo_dict.get("integration_path") or "").strip()
+        if action == "handoff" and integration_raw:
+            configured_root = Path(integration_raw).expanduser()
+            if not configured_root.is_absolute():
+                raise SystemExit(
+                    f"Cannot {action} task: repository `{repository_id}` integration_path must be absolute."
+                )
+            configured_symlink = first_symlink_component(configured_root)
+            if configured_symlink is not None:
+                raise SystemExit(
+                    f"Cannot {action} task: registered repository integration_path cannot include a "
+                    f"symlink component: {configured_symlink}."
+                )
+            registered_root = configured_root.resolve(strict=False)
+        else:
+            configured_root = repository_configured_local_path(config, repository_id)
+            if configured_root is None:
+                raise SystemExit(
+                    f"Cannot {action} task: repository `{repository_id}` has no local_path configured."
+                )
+            configured_symlink = first_symlink_component(configured_root)
+            if configured_symlink is not None:
+                raise SystemExit(
+                    f"Cannot {action} task: registered repository local_path cannot include a "
+                    f"symlink component: {configured_symlink}."
+                )
+            resolved_registered_root = repository_local_path(config, repository_id)
+            if resolved_registered_root is None:
+                raise SystemExit(
+                    f"Cannot {action} task: repository `{repository_id}` has no local_path configured."
+                )
+            registered_root = resolved_registered_root.resolve(strict=False)
     if workspace_root is None:
         if run_id:
             raise SystemExit(
-                "Cannot finalize task: active worker delivery workspace requires both "
+                f"Cannot {action} task: active worker delivery workspace requires both "
                 "PANTHEON_WORKTREE_ROOT and ORCH_WORKSPACE_PATH."
             )
         if not registered_root.is_dir():
             raise SystemExit(
-                "Cannot finalize task: registered delivery repository does not exist: "
+                f"Cannot {action} task: registered delivery repository does not exist: "
                 f"{registered_root}."
+            )
+        if action == "handoff":
+            _validate_delivery_workspace_repository(
+                config,
+                repository_id=repository_id,
+                repository_root=registered_root,
+                registered_root=registered_root,
+                action=action,
             )
         return registered_root, {
             "repository_path_source": "repository_registry",
@@ -3265,13 +3334,14 @@ def _done_delivery_repository_root(
     canonical_status_root = STATUS_ROOT.resolve()
     if workspace_root == canonical_status_root:
         raise SystemExit(
-            "Cannot finalize task: delivery workspace must differ from the canonical status root."
+            f"Cannot {action} task: delivery workspace must differ from the canonical status root."
         )
     _validate_delivery_workspace_repository(
         config,
         repository_id=repository_id,
         repository_root=workspace_root,
         registered_root=registered_root,
+        action=action,
     )
 
     source = "explicit_workspace_env"
@@ -3296,6 +3366,10 @@ def _delivered_commit_timestamp(
 ) -> str:
     """Return the ISO timestamp the delivered content was actually authored at.
 
+    This is the author date: a rebase or `git commit --amend` rewrites the
+    committer date to the rewrite time, so a branch rebased onto dev after a
+    reassignment would otherwise look authored after that reassignment.
+
     A squash merge creates a brand-new commit object with a fresh
     author/committer date stamped at merge time, while copying the
     original commit's message -- including any LLM-Agent/Reviewer trailer
@@ -3318,7 +3392,7 @@ def _delivered_commit_timestamp(
     selected_ref = str(commit_ref or "").strip()
     if selected_ref:
         return run_git_command(
-            ["show", "-s", "--format=%cI", selected_ref],
+            ["show", "-s", "--format=%aI", selected_ref],
             cwd=repository_root,
             failure_message=(
                 "Cannot finalize task: delivered commit timestamp is "
@@ -3349,7 +3423,7 @@ def _delivered_commit_timestamp(
             )
         if reachable:
             return run_git_command(
-                ["show", "-s", "--format=%cI", reviewed_head],
+                ["show", "-s", "--format=%aI", reviewed_head],
                 cwd=repository_root,
                 failure_message=(
                     "Cannot finalize task: delivered commit timestamp is "
@@ -3357,7 +3431,7 @@ def _delivered_commit_timestamp(
                 ),
             )
     return run_git_command(
-        ["show", "-s", "--format=%cI", "HEAD"],
+        ["show", "-s", "--format=%aI", "HEAD"],
         cwd=repository_root,
         failure_message=(
             "Cannot finalize task: delivered commit timestamp is "
@@ -3647,6 +3721,8 @@ def task_metadata_from_env() -> dict[str, Any]:
         if parsed is not None:
             metadata[field_name] = parsed
 
+    if "change_class" in metadata or "net_prod_line_budget" in metadata:
+        _diff_budget_module().validate_task_metadata(metadata)
     return metadata
 
 
@@ -7185,7 +7261,7 @@ def _assert_no_active_execution(
     state_file = ORCHESTRATOR_STATE_FILE if ORCHESTRATOR_STATE_FILE.exists() else (STATUS_ROOT / ".orchestrator" / "state.json")
     if state_file.exists():
         try:
-            orc_state = json.loads(state_file.read_text(encoding="utf-8"))
+            orc_state = json.loads(read_regular_file_bytes(state_file, source="orchestrator runtime state"))
         except Exception as exc:
             raise RuntimeError(
                 f"orchestrator runtime state is unavailable or malformed: {exc}"
@@ -8618,6 +8694,13 @@ def _github_review_bridge_module():
     return github_review_bridge
 
 
+def _diff_budget_module():
+    _github_review_bridge_module()  # puts scripts/git on sys.path
+    import diff_budget
+
+    return diff_budget
+
+
 
 _PULL_REQUEST_URL_RE = re.compile(r"https?://[^\s]+/pull/\d+(?:\b|/)", re.IGNORECASE)
 _LEGACY_PULL_REQUEST_FIELDS = frozenset(
@@ -8885,6 +8968,26 @@ def _preflight_from_review_intent(
     return payload
 
 
+def validate_hosted_completion(task: Mapping[str, Any]) -> None:
+    tracks = task.get("completion_tracks", {})
+    if isinstance(tracks, Mapping) and "hosted" not in tracks:
+        return
+    hosted = tracks.get("hosted") if isinstance(tracks, Mapping) else None
+    evidence = hosted.get("evidence") if isinstance(hosted, Mapping) else None
+    if (
+        not isinstance(hosted, Mapping)
+        or hosted.get("status") != "done"
+        or not isinstance(evidence, list)
+        or not evidence
+        or any(not isinstance(ref, str) or not ref.strip() for ref in evidence)
+    ):
+        raise SystemExit(
+            f"Task {task.get('id') or '?'} cannot finalize: declared hosted completion "
+            "must be done with evidence. Preserve functional/review/merge evidence "
+            "and record the outstanding hosted proof with the existing blocker command."
+        )
+
+
 def validate_task_lifecycle_transition(task: Mapping[str, Any], action: str) -> None:
     try:
         task_machine.transition(task.get("status"), action)
@@ -8892,6 +8995,8 @@ def validate_task_lifecycle_transition(task: Mapping[str, Any], action: str) -> 
         raise SystemExit(
             f"Task {task.get('id') or '?'} cannot {action}: {exc}"
         ) from exc
+    if action in {"done", "reconcile_done"}:
+        validate_hosted_completion(task)
 
 
 def prepare_external_mutation_preflight(
@@ -9256,6 +9361,8 @@ def prepare_external_mutation_preflight(
                 if existing_archive is not None
                 else None
             )
+            if recovered_archive is not None:
+                validate_hosted_completion(recovered_archive["task"])
             verdict_ref = validate_protected_closeout_transition(
                 task,
                 transition="done",
@@ -10292,7 +10399,7 @@ def _assert_collision_fence_idle(task: Mapping[str, Any]) -> None:
     state_file = ORCHESTRATOR_STATE_FILE if ORCHESTRATOR_STATE_FILE.exists() else STATUS_ROOT / ".orchestrator/state.json"
     if not state_file.exists():
         raise SystemExit("Collision fence requires available runtime state")
-    runtime = json.loads(state_file.read_text(encoding="utf-8"))
+    runtime = json.loads(read_regular_file_bytes(state_file, source="orchestrator runtime state"))
     if not isinstance(runtime, dict) or runtime.get("version") != 2:
         raise SystemExit("Collision fence requires a valid V2 runtime inventory")
     _assert_no_active_execution(str(task["id"]), active_task=task)
@@ -11723,4 +11830,7 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    # Modules such as rewrite.task_contract lazily `import ai_status`; give them
+    # this running module so worker lease state set here is visible there.
+    sys.modules.setdefault("ai_status", sys.modules[__name__])
     raise SystemExit(main(sys.argv))

@@ -41,6 +41,8 @@ def case(tmp_path, monkeypatch):
                              "manifest_sha256": "6" * 64, "frontend_sha": "b" * 40, "backend_sha": "a" * 40},
                 "baseline_nonsecret_config": {"PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE": None,
                                               "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": "",
+                                              "PERSONA_EVALUATOR_BFF_TOKEN_FILE": None,
+                                              "PERSONA_EVALUATOR_GOVERNANCE_TOKEN_FILE": None,
                                               **dict.fromkeys(e.capture.artifacts.BASELINE_AUTH_FLAGS, "false")}}
     baseline_hash = e.capture.digest(e.capture.encoded(baseline))
     record = {"schema_version": "pantheon.dev-candidate-image-admission.v1", "environment": "dev",

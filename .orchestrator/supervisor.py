@@ -55,6 +55,7 @@ from common import (
     first_symlink_component,
     normalize_agent_id,
     normalize_github_repo_slug,
+    task_branch_matches,
     is_github_cli_auth_failure,
     resolved_coordinator_status_root,
     config_status_root,
@@ -1484,6 +1485,9 @@ def validate_provider_accounts(config: dict[str, Any]) -> None:
             for name in known_agent_display_names(config)
             if canonical_agent_name(config, name)
         }
+        review_only_keys = review_only_agent_keys(config)
+        if review_only_keys - known_reassignment_agents:
+            errors.append("worker_reassignment.review_only_agents has unknown agent")
         for mapping_name in ("owner_fallbacks", "reviewer_fallbacks"):
             mapping = reassignment.get(mapping_name, {})
             if not isinstance(mapping, dict):
@@ -1506,6 +1510,8 @@ def validate_provider_accounts(config: dict[str, Any]) -> None:
                         errors.append(
                             f"worker_reassignment.{mapping_name}.{raw_root} has unknown target {raw_target!r}"
                         )
+                    elif mapping_name == "owner_fallbacks" and target.casefold() in review_only_keys:
+                        errors.append(f"owner_fallbacks.{raw_root} targets review-only agent {raw_target!r}")
     if errors:
         raise ValueError("invalid provider account configuration: " + "; ".join(errors))
 
@@ -2185,6 +2191,9 @@ def _validate_auto_integrator_unblock_request(
     )
     if not isinstance(source, Mapping):
         raise ValueError("unblock request source task is not active")
+    # Enforce again under the canonical lock, including already queued requests
+    # from older producers. A caller cannot reset depth in the request body.
+    unblock_contract.require_root_repair_source(source_task_id, source)
     if str(source.get("status") or "") not in {"in_progress", "review", "review_approved"}:
         raise ValueError("unblock request source task is not integration-active")
     if task_generation(source) != request.get("source_task_generation"):
@@ -2536,6 +2545,30 @@ def record_delivery_health_failure(
         valid_for_seconds=settings["evidence_ttl_seconds"],
         retry_after_seconds=settings["retry_after_seconds"],
         detail=detail,
+    )
+    if after == before:
+        return False
+    state["delivery_health"] = after
+    return True
+
+
+def record_delivery_health_worker_progress(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: Mapping[str, Any],
+) -> bool:
+    """Let live model output from a worker clear a stale auth verdict on its endpoint."""
+
+    endpoint_id = normalize_agent_id(str(worker.get("agent_id") or ""))
+    progress_at = _parse_iso_utc(str(worker.get("last_work_progress_at") or ""))
+    if not endpoint_id or progress_at is None:
+        return False
+    before = runtime_delivery_health(state)
+    after = rewrite_provider_health.apply_worker_progress(
+        before,
+        endpoint_id=endpoint_id,
+        progress_at=progress_at,
+        valid_for_seconds=delivery_health_settings(config)["evidence_ttl_seconds"],
     )
     if after == before:
         return False
@@ -5749,6 +5782,12 @@ def worker_reassignment_settings(config: dict[str, Any]) -> dict[str, Any]:
     return settings
 
 
+def review_only_agent_keys(config: dict[str, Any]) -> set[str]:
+    """Casefolded agents that may review but never own execution work."""
+    names = worker_reassignment_settings(config).get("review_only_agents") or []
+    return {canonical_agent_name(config, str(name)).casefold() for name in names}
+
+
 def load_balance_settings(config: Mapping[str, Any]) -> dict[str, Any]:
     """Read-only policy for saturated- or transiently-blocked-lane reassignment.
 
@@ -5850,6 +5889,18 @@ def agent_is_known(config: dict[str, Any], agent_name: str | None) -> bool:
         return True
     agent_id = normalize_agent_id(name)
     return bool(agent_id and agent_id in (config.get("agents", {}) or {}))
+
+
+def review_only_owner_block(
+    config: dict[str, Any], task: dict[str, Any], agent: str
+) -> dict[str, Any] | None:
+    """Reject owner-lane dispatch to a review-only agent; reviews pass through."""
+    key = canonical_agent_name(config, agent).casefold()
+    owner = canonical_agent_name(config, str(task.get("owner") or "")).casefold()
+    if key == owner and key in review_only_agent_keys(config):
+        return {"eligible": False, "first_blocking_gate": "review_only",
+                "block_reason": "Review-only agents are never dispatched for owner work"}
+    return None
 
 
 def reassignment_candidate_order(
@@ -6052,6 +6103,9 @@ def plan_task_assignment_pair(
             exclude={owner} if owner else set(),
         )
         owner_order = ([owner] if owner else []) + owner_fallbacks
+    if fixed_owner is None:
+        owner_order = [n for n in owner_order
+                       if canonical_agent_name(config, n).casefold() not in review_only_agent_keys(config)]
 
     seen_owners: set[str] = set()
     for candidate_owner in owner_order:
@@ -9822,7 +9876,9 @@ def persist_worker_recovery_workspace(
             repository_id = validate_task_repository_scope(config, task)
         except (RuntimeError, ValueError):
             return False
-        if facts["repository_id"] != repository_id or facts["branch"] != worker_task_branch(config, task_id):
+        if facts["repository_id"] != repository_id or not task_branch_matches(
+            facts["branch"], worker_task_branch(config, task_id)
+        ):
             return False
         receipt = _canonical_worker_recovery_receipt(status, task)
         replacement = receipt.get("replacement") if receipt else None
@@ -11111,8 +11167,9 @@ def reconcile_unavailable_assignments(
                 role = "reviewer"
                 unavailable_actor = reviewer
         elif task_status in eligible_owner_statuses:
-            unavailable_reason = assignment_terminal_unavailability(
-                config, state, owner
+            unavailable_reason = (
+                "review_only" if owner.casefold() in review_only_agent_keys(config)
+                else assignment_terminal_unavailability(config, state, owner)
             )
             if unavailable_reason:
                 role = "owner"
@@ -11607,6 +11664,8 @@ def poll_worker_observation_stage(
     meaningful_progress_advanced = update_from_log(config, worker, now=now)
     commit_progress_advanced = False
     alive = pid_is_alive(worker.get("pid"))
+    if meaningful_progress_advanced and alive and record_delivery_health_worker_progress(config, state, worker):
+        changed = True
     if (
         alive
         and worker.get("status") in active_worker_statuses
@@ -13551,7 +13610,14 @@ def recover_lost_worker_lease(
             config, worker, task, state=status,
             activity_events=recent_governance_activity_events(config),
         )
-        if decision.get("action") != "terminate":
+        # "preserve" protects a process that may still be running. A finished
+        # runner whose process generation is gone has nothing left to preserve
+        # for a task already done at its generation; holding it would keep a
+        # dead "running" worker (and its slot) forever.
+        runner_gone = bool(worker.get("runner_finished_at")) and not (
+            worker_process_generation_is_current(worker)
+        )
+        if decision.get("action") != "terminate" and not runner_gone:
             return False
         if drain:
             drain["status"] = "consumed"
@@ -15665,6 +15731,8 @@ def build_dispatch_event(
     }
     for key in (
         "task_class",
+        "change_class",
+        "net_prod_line_budget",
         "delivery_binding",
         "target_repo",
         "target_repository",
@@ -15997,7 +16065,7 @@ def dispatch_ready_tasks(
             task_id = str(task.get(task_id_field) or "")
             if not task_id:
                 continue
-            decision = evaluate_dispatch_candidate(
+            decision = review_only_owner_block(config, task, target_agent) or evaluate_dispatch_candidate(
                 config,
                 state,
                 status,
@@ -16050,7 +16118,7 @@ def dispatch_ready_tasks(
             # the same admission predicate immediately before reservation so
             # each accepted event contributes its exact endpoint to the
             # remainder of this plan.
-            decision = evaluate_dispatch_candidate(
+            decision = review_only_owner_block(config, task, target_agent) or evaluate_dispatch_candidate(
                 config,
                 state,
                 status,
@@ -16456,7 +16524,7 @@ def explain_dispatch_for_task(
         target_agent = display_name_for(config, agent_id)
         if not target_agent:
             continue
-        decision = evaluate_dispatch_candidate(
+        decision = review_only_owner_block(config, task, target_agent) or evaluate_dispatch_candidate(
             config,
             state,
             status,
@@ -17511,6 +17579,21 @@ def publish_scheduler_cadence_completion(
     return True
 
 
+def export_worker_dependency_python(config: Mapping[str, Any]) -> None:
+    """Hand workers the shared test interpreter (scripts/dev/ensure_worker_test_python.py).
+
+    Adapters copy this process's environment into every worker, so one export
+    here reaches all of them. An explicit operator setting wins, and a missing
+    interpreter is skipped rather than handed out.
+    """
+    configured = str((config.get("worker_runtime") or {}).get("dependency_python") or "").strip()
+    if not configured or os.environ.get("PANTHEON_DEPENDENCY_PYTHON"):
+        return
+    interpreter = Path(configured).expanduser()
+    if interpreter.is_file():
+        os.environ["PANTHEON_DEPENDENCY_PYTHON"] = str(interpreter)
+
+
 def main() -> int:
     global SUPERVISOR_LOG_QUIET
     args = parse_args()
@@ -17520,6 +17603,7 @@ def main() -> int:
     validate_supervisor_launch_authority(config, supervisor_path=Path(__file__))
     validate_provider_accounts(config)
     check_status_root_consistency(config, allow_isolated=args.allow_isolated_status_root)
+    export_worker_dependency_python(config)
     if args.request_delivery_health_refresh:
         with runtime_state_update(config) as state:
             request_delivery_health_refresh(state)

@@ -3,7 +3,7 @@
 This package provides typed domain ports for all BFF read domains:
 - operations_consultation: Workflows, hooks, OpenClaw ops, and consultation
 - persona_capital_runtime: Persona fleet, capital pools, deployments, runtimes, rankings, evolution
-- ooda_management: OODA loop packets, interventions, conflict resolution logs, review queues
+- ooda_management: OODA loop packets, conflict resolution logs, review queues
 - research_knowledge_source: Research, knowledge workbench, institutional memory, search, data sources
 - lifecycle_telemetry_governance: Lifecycle, telemetry, incidents, governance, lineage
 - persona_training: Persona profiles, trainer sessions, replays, rapid evaluation
@@ -45,7 +45,6 @@ from services.control_plane.bff.ports.persona_capital_runtime import (
 )
 from services.control_plane.bff.ports.ooda_management import (
     OodaPacketsPort,
-    InterventionsPort,
     SynthesisConflictLogsPort,
     ManagementReviewQueuePort,
     OodaManagementDomainPort,
@@ -89,8 +88,8 @@ from services.control_plane.bff.ports.persona_write_owner import (
     create_persona_registry_write_owner,
 )
 from services.control_plane.bff.ports.rankings import (
-    RankingSnapshotWriteOwnerPort,
-    create_ranking_write_owner,
+    RankingSnapshotReadPort,
+    create_ranking_reader,
 )
 from services.control_plane.bff.ports.strategy_write_owner import (
     StrategyWriteOwnerPort,
@@ -128,7 +127,6 @@ __all__ = [
     "PERSONA_OPERATIONAL_LIFECYCLE_STATES",
     # OODA & Management
     "OodaPacketsPort",
-    "InterventionsPort",
     "SynthesisConflictLogsPort",
     "ManagementReviewQueuePort",
     "OodaManagementDomainPort",
@@ -166,8 +164,8 @@ __all__ = [
     "PersonaWriteOwnerUnavailable",
     "create_persona_registry_write_owner",
     # Ranking snapshot write owner (deliberately outside ReadSurfacePorts)
-    "RankingSnapshotWriteOwnerPort",
-    "create_ranking_write_owner",
+    "RankingSnapshotReadPort",
+    "create_ranking_reader",
     # Strategy write owner (deliberately outside ReadSurfacePorts)
     "StrategyWriteOwnerPort",
     "CanonicalStrategyWriteOwner",

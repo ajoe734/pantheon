@@ -17,11 +17,11 @@ from services.control_plane.bff.deployment.ports import (
 )
 from services.control_plane.bff.ports import (
     PersonaRegistryHttpWritePort,
-    RankingSnapshotWriteOwnerPort,
+    RankingSnapshotReadPort,
     ReadSurfacePorts,
     StrategyWriteOwnerPort,
     create_persona_registry_write_owner,
-    create_ranking_write_owner,
+    create_ranking_reader,
     create_read_surface_ports,
     create_strategy_write_owner,
 )
@@ -46,7 +46,7 @@ class AppDependencies:
     read_surface: ReadSurfacePorts
     command_store: CommandStore
     persona_write_owner: PersonaRegistryHttpWritePort
-    ranking_write_owner: RankingSnapshotWriteOwnerPort
+    ranking_write_owner: RankingSnapshotReadPort
     strategy_write_owner: StrategyWriteOwnerPort
     settings_store: SettingsStore
     decision_journal_write_owner: Optional[DecisionJournalWriteOwner] = None
@@ -60,7 +60,7 @@ class AppDependencies:
         read_surface: Optional[ReadSurfacePorts] = None,
         command_store: Optional[CommandStore] = None,
         persona_write_owner: Optional[PersonaRegistryHttpWritePort] = None,
-        ranking_write_owner: Optional[RankingSnapshotWriteOwnerPort] = None,
+        ranking_write_owner: Optional[RankingSnapshotReadPort] = None,
         strategy_write_owner: Optional[StrategyWriteOwnerPort] = None,
         settings_store: Optional[SettingsStore] = None,
         decision_journal_write_owner: Optional[DecisionJournalWriteOwner] = None,
@@ -72,13 +72,13 @@ class AppDependencies:
         """
         resolved_ranking_write_owner = ranking_write_owner
         if resolved_ranking_write_owner is None:
-            if create_ranking_write_owner is not None:
-                resolved_ranking_write_owner = create_ranking_write_owner()
+            if create_ranking_reader is not None:
+                resolved_ranking_write_owner = create_ranking_reader()
             if resolved_ranking_write_owner is None:
                 raise RuntimeError("Required ranking write owner is absent; failing startup closed.")
-        if not isinstance(resolved_ranking_write_owner, RankingSnapshotWriteOwnerPort):
+        if not isinstance(resolved_ranking_write_owner, RankingSnapshotReadPort):
             raise TypeError(
-                f"ranking_write_owner must implement RankingSnapshotWriteOwnerPort, got {type(resolved_ranking_write_owner)}"
+                f"ranking_write_owner must implement RankingSnapshotReadPort, got {type(resolved_ranking_write_owner)}"
             )
 
         resolved_persona_write_owner = persona_write_owner
@@ -94,6 +94,7 @@ class AppDependencies:
 
         resolved_read_surface = read_surface or create_read_surface_ports(
             persona_registry_store=resolved_persona_write_owner,
+            ranking_store=resolved_ranking_write_owner._store,
         )
         if not isinstance(resolved_read_surface, ReadSurfacePorts):
             raise TypeError(

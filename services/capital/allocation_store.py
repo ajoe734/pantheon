@@ -52,13 +52,7 @@ def utc_now() -> str:
 
 
 def stable_payload_hash(payload: Dict[str, Any]) -> str:
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=True,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 ALLOCATION_LINE_DIGEST_FIELDS = (
@@ -90,16 +84,25 @@ def allocation_line_digest(line: Dict[str, Any]) -> str:
 
 
 def _server_payload_hash(payload: Dict[str, Any]) -> str:
-    semantic = {
-        key: value
-        for key, value in payload.items()
-        if key not in {"idempotency_key", "request_hash"}
-    }
-    return stable_payload_hash(semantic)
+    return stable_payload_hash({k: v for k, v in payload.items() if k not in {"idempotency_key", "request_hash"}})
 
 
 def _deepcopy(value: Any) -> Any:
     return copy.deepcopy(value)
+
+
+def _require_replay_tenant(target: Optional[Dict[str, Any]], caller_tenant: Optional[str], exc: Exception) -> None:
+    rec_tenant = (target or {}).get("tenant_id")
+    if not caller_tenant or not rec_tenant or rec_tenant != caller_tenant:
+        raise exc
+
+
+def _update_audit_delivery_status(record: Dict[str, Any], event_id: Optional[str], error: Optional[str]) -> None:
+    record["audit_delivery_attempts"] = int(record.get("audit_delivery_attempts") or 0) + 1
+    if event_id:
+        record.update({"audit_delivery_status": "delivered", "audit_delivery_error": None, "audit_event_id": event_id, "audit_delivered_at": utc_now()})
+    else:
+        record.update({"audit_delivery_status": "pending", "audit_delivery_error": str(error or "audit append failed")})
 
 
 class AllocationAuthorityStore:
@@ -424,6 +427,11 @@ class AllocationAuthorityStore:
                 record = self._data["rebalances"].get(replay.get("resource_id"))
                 if record is None:
                     raise AllocationAuthorityError("Durable rebalance idempotency record is orphaned")
+                _require_replay_tenant(
+                    record,
+                    payload.get("tenant_id"),
+                    AllocationAuthorityNotFound(f"Rebalance not found: {replay.get('resource_id')}"),
+                )
                 return _deepcopy(record), True
 
             pool_id = self._require_text(payload, "capital_pool_id")
@@ -453,6 +461,7 @@ class AllocationAuthorityStore:
             record = {
                 "id": rebalance_id,
                 "rebalance_id": rebalance_id,
+                "tenant_id": payload.get("tenant_id"),
                 "capital_pool_id": pool_id,
                 "ranking_snapshot_id": ranking_snapshot_id,
                 "allocation_evaluation_id": allocation_evaluation_id,
@@ -492,25 +501,35 @@ class AllocationAuthorityStore:
         *,
         capital_pool_id: Optional[str] = None,
         status: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> list[Dict[str, Any]]:
         with self._lock:
             self._reload_locked()
-            records = list(self._data["rebalances"].values())
+            records = [
+                item for item in self._data["rebalances"].values()
+                if item.get("tenant_id") and (tenant_id is None or item.get("tenant_id") == tenant_id)
+            ]
             if capital_pool_id:
                 records = [item for item in records if item.get("capital_pool_id") == capital_pool_id]
             if status:
                 records = [item for item in records if item.get("status") == status]
             return _deepcopy(sorted(records, key=lambda item: str(item.get("created_at") or "")))
 
-    def get_rebalance(self, rebalance_id: str) -> Dict[str, Any]:
+    def get_rebalance(self, rebalance_id: str, *, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         with self._lock:
             self._reload_locked()
             record = self._data["rebalances"].get(rebalance_id)
-            if record is None:
+            if record is None or not record.get("tenant_id") or (tenant_id and record.get("tenant_id") != tenant_id):
                 raise AllocationAuthorityNotFound(f"Rebalance not found: {rebalance_id}")
             return _deepcopy(record)
 
-    def apply_rebalance(self, rebalance_id: str, payload: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
+    def apply_rebalance(
+        self,
+        rebalance_id: str,
+        payload: Dict[str, Any],
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> tuple[Dict[str, Any], bool]:
         with self._lock:
             self._reload_locked()
             idempotency_key = self._require_text(payload, "idempotency_key")
@@ -525,12 +544,19 @@ class AllocationAuthorityStore:
                 request_hash=request_hash,
                 payload_hash=payload_hash,
             )
+            caller_tenant = tenant_id or payload.get("tenant_id")
             if replay is not None:
                 if replay.get("outcome") == "failed":
                     raise AllocationAuthorityConflict(str(replay.get("error") or "Rebalance apply failed"))
                 receipt = self._data["command_receipts"].get(replay.get("command_id"))
                 if receipt is None:
                     raise AllocationAuthorityError("Durable apply idempotency record is orphaned")
+                cmd_id = str(replay.get("command_id") or command_id)
+                _require_replay_tenant(
+                    receipt,
+                    caller_tenant,
+                    AllocationAuthorityNotFound(f"Rebalance receipt not found for command: {cmd_id}"),
+                )
                 result = _deepcopy(receipt)
                 result["idempotent_replay"] = True
                 return result, True
@@ -545,6 +571,11 @@ class AllocationAuthorityStore:
                     raise AllocationAuthorityConflict(
                         f"Command {command_id!r} was already used for a different apply request"
                     )
+                _require_replay_tenant(
+                    command_replay,
+                    caller_tenant,
+                    AllocationAuthorityNotFound(f"Rebalance receipt not found for command: {command_id}"),
+                )
                 self._data["idempotency"][f"rebalance.apply:{rebalance_id}:{idempotency_key}"] = {
                     "operation": "rebalance.apply",
                     "request_hash": request_hash,
@@ -559,24 +590,14 @@ class AllocationAuthorityStore:
                 result["idempotent_replay"] = True
                 return result, True
 
+            target_tenant = tenant_id or payload.get("tenant_id")
             proposal = self._data["rebalances"].get(rebalance_id)
-            if proposal is None:
+            if not proposal or not proposal.get("tenant_id") or (target_tenant and proposal.get("tenant_id") != target_tenant):
                 raise AllocationAuthorityNotFound(f"Rebalance not found: {rebalance_id}")
             if proposal.get("status") == "failed":
                 raise AllocationAuthorityConflict(f"Rebalance {rebalance_id!r} is in failed terminal state")
             if proposal.get("applied"):
                 raise AllocationAuthorityConflict(f"Rebalance {rebalance_id!r} was already applied")
-            increases_live = any(
-                str(line.get("stage") or "").strip().lower()
-                in {"live", "live_candidate", "live_running"}
-                and float(line.get("target_weight") or 0) > float(line.get("current_weight") or 0)
-                for line in proposal.get("lines") or []
-            )
-            if increases_live and not approval_ref:
-                raise AllocationAuthorityConflict(
-                    "A human approval reference is required before applying a live capital increase"
-                )
-
             allocations = self._data["allocations"]
             stale: list[Dict[str, Any]] = []
             for line in proposal.get("lines") or []:
@@ -594,6 +615,7 @@ class AllocationAuthorityStore:
                     )
                     continue
                 expected_identity = {
+                    "tenant_id": str(proposal.get("tenant_id") or "").strip(),
                     "capital_pool_id": proposal["capital_pool_id"],
                     "capital_scope": str(line.get("capital_scope") or "pool"),
                     "capital_sleeve_id": str(line.get("capital_sleeve_id") or "").strip() or None,
@@ -601,6 +623,7 @@ class AllocationAuthorityStore:
                     "binding_id": str(line.get("binding_id") or "").strip() or None,
                 }
                 actual_identity = {
+                    "tenant_id": str(allocation.get("tenant_id") or "").strip(),
                     "capital_pool_id": allocation.get("capital_pool_id"),
                     "capital_scope": str(allocation.get("capital_scope") or "pool"),
                     "capital_sleeve_id": (
@@ -609,12 +632,15 @@ class AllocationAuthorityStore:
                     "persona_id": str(allocation.get("persona_id") or "").strip(),
                     "binding_id": str(allocation.get("binding_id") or "").strip() or None,
                 }
-                if actual_identity != expected_identity:
+                if (
+                    not actual_identity["tenant_id"]
+                    or not expected_identity["tenant_id"]
+                    or actual_identity != expected_identity
+                ):
                     stale.append(
                         {
                             "allocation_id": line.get("allocation_id"),
                             "expected_identity": expected_identity,
-                            "actual_identity": actual_identity,
                             "reason": "allocation_identity_mismatch",
                         }
                     )
@@ -676,6 +702,7 @@ class AllocationAuthorityStore:
                 if allocation is None:
                     allocation = {
                         "allocation_id": line["allocation_id"],
+                        "tenant_id": proposal.get("tenant_id"),
                         "capital_pool_id": proposal["capital_pool_id"],
                         "capital_scope": line["capital_scope"],
                         "capital_sleeve_id": line.get("capital_sleeve_id"),
@@ -693,6 +720,10 @@ class AllocationAuthorityStore:
                         "canonical_write_authority": "capital_service",
                     }
                     allocations[line["allocation_id"]] = allocation
+                else:
+                    atid, ptid = str(allocation.get("tenant_id") or "").strip(), str(proposal.get("tenant_id") or "").strip()
+                    if not atid or not ptid or atid != ptid:
+                        raise AllocationAuthorityConflict(f"Allocation {line['allocation_id']!r} belongs to a different tenant")
                 allocation.update(
                     {
                         "current_weight": line["target_weight"],
@@ -707,6 +738,7 @@ class AllocationAuthorityStore:
             receipt = {
                 "status": "applied",
                 "rebalance_id": rebalance_id,
+                "tenant_id": proposal.get("tenant_id"),
                 "capital_pool_id": proposal["capital_pool_id"],
                 "command_id": command_id,
                 "approval_ref": approval_ref,
@@ -754,14 +786,12 @@ class AllocationAuthorityStore:
             self._persist_locked()
             return _deepcopy(receipt), False
 
-    def get_rebalance_receipt(self, command_id: str) -> Dict[str, Any]:
+    def get_rebalance_receipt(self, command_id: str, *, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         with self._lock:
             self._reload_locked()
             receipt = self._data["command_receipts"].get(command_id)
-            if receipt is None:
-                raise AllocationAuthorityNotFound(
-                    f"Rebalance receipt not found for command: {command_id}"
-                )
+            if not receipt or not receipt.get("tenant_id") or (tenant_id and receipt.get("tenant_id") != tenant_id):
+                raise AllocationAuthorityNotFound(f"Rebalance receipt not found for command: {command_id}")
             return _deepcopy(receipt)
 
     def update_rebalance_audit_delivery(
@@ -780,25 +810,7 @@ class AllocationAuthorityStore:
                 )
             if receipt.get("audit_delivery_status") == "delivered":
                 return _deepcopy(receipt)
-            receipt["audit_delivery_attempts"] = int(
-                receipt.get("audit_delivery_attempts") or 0
-            ) + 1
-            if event_id:
-                receipt.update(
-                    {
-                        "audit_delivery_status": "delivered",
-                        "audit_delivery_error": None,
-                        "audit_event_id": event_id,
-                        "audit_delivered_at": utc_now(),
-                    }
-                )
-            else:
-                receipt.update(
-                    {
-                        "audit_delivery_status": "pending",
-                        "audit_delivery_error": str(error or "audit append failed"),
-                    }
-                )
+            _update_audit_delivery_status(receipt, event_id, error)
             rebalance_id = str(receipt.get("rebalance_id") or "")
             proposal = self._data["rebalances"].get(rebalance_id)
             if proposal is not None:
@@ -812,10 +824,14 @@ class AllocationAuthorityStore:
         *,
         capital_pool_id: Optional[str] = None,
         persona_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> list[Dict[str, Any]]:
         with self._lock:
             self._reload_locked()
-            records = list(self._data["allocations"].values())
+            records = [
+                item for item in self._data["allocations"].values()
+                if item.get("tenant_id") and (tenant_id is None or item.get("tenant_id") == tenant_id)
+            ]
             if capital_pool_id:
                 records = [item for item in records if item.get("capital_pool_id") == capital_pool_id]
             if persona_id:
@@ -851,6 +867,12 @@ class AllocationAuthorityStore:
                 record = self._data["containments"].get(replay.get("resource_id"))
                 if record is None:
                     raise AllocationAuthorityError("Durable containment idempotency record is orphaned")
+                cmd_id = str(record.get("command_id") or replay.get("command_id") or payload.get("command_id") or "")
+                _require_replay_tenant(
+                    record,
+                    payload.get("tenant_id"),
+                    AllocationAuthorityNotFound(f"Containment command {cmd_id!r} has no durable receipt"),
+                )
                 result = _deepcopy(record)
                 result["idempotent_replay"] = True
                 return result, True
@@ -867,16 +889,7 @@ class AllocationAuthorityStore:
                 raise AllocationAuthorityValidationError(
                     "Emergency containment cannot promote or increase allocation"
                 )
-            allowed = {
-                "freeze",
-                "reduce_capital",
-                "reduce_capital_access",
-                "suspend",
-                "risk_off",
-                "flatten",
-                "rollback_allocation",
-                "retire",
-            }
+            allowed = {"freeze", "reduce_capital", "reduce_capital_access", "suspend", "risk_off", "flatten", "rollback_allocation", "retire"}
             if action not in allowed:
                 raise AllocationAuthorityValidationError(f"Unsupported containment action: {action}")
             evidence_refs = list(payload.get("evidence_refs") or [])
@@ -884,11 +897,14 @@ class AllocationAuthorityStore:
                 raise AllocationAuthorityValidationError("evidence_refs is required")
 
             pool_id = str(payload.get("capital_pool_id") or "").strip() or None
+            tenant_id = payload.get("tenant_id")
             matches = [
                 allocation
                 for allocation in self._data["allocations"].values()
                 if allocation.get("persona_id") == persona_id
                 and (pool_id is None or allocation.get("capital_pool_id") == pool_id)
+                and bool(allocation.get("tenant_id"))
+                and (tenant_id is None or allocation.get("tenant_id") == tenant_id)
             ]
             baseline_weight = sum(float(item.get("current_weight") or 0) for item in matches)
             current_weight = (
@@ -950,6 +966,7 @@ class AllocationAuthorityStore:
 
             record = {
                 "containment_id": containment_id,
+                "tenant_id": tenant_id,
                 "persona_id": persona_id,
                 "capital_pool_id": pool_id,
                 "action": action,
@@ -962,8 +979,6 @@ class AllocationAuthorityStore:
                 "current_weight": current_weight,
                 "target_weight": target_weight,
                 "command_id": command_id,
-                "approval_ref": payload.get("approval_ref"),
-                "two_man_signature_id": payload.get("two_man_signature_id"),
                 "receipt_ref": receipt_ref,
                 "audit_ref": audit_ref,
                 "request_hash": request_hash,
@@ -984,6 +999,7 @@ class AllocationAuthorityStore:
             self._data["containments"][containment_id] = record
             self._data["containment_commands"][command_id] = {
                 "containment_id": containment_id,
+                "tenant_id": tenant_id,
                 "request_hash": request_hash,
                 "payload_hash": payload_hash,
             }
@@ -999,7 +1015,7 @@ class AllocationAuthorityStore:
             self._persist_locked()
             return _deepcopy(record), False
 
-    def get_containment_receipt(self, command_id: str) -> Dict[str, Any]:
+    def get_containment_receipt(self, command_id: str, *, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         with self._lock:
             self._reload_locked()
             command = self._data["containment_commands"].get(command_id)
@@ -1008,10 +1024,8 @@ class AllocationAuthorityStore:
                     f"Containment receipt not found for command: {command_id}"
                 )
             record = self._data["containments"].get(command.get("containment_id"))
-            if record is None:
-                raise AllocationAuthorityError(
-                    f"Containment command {command_id!r} has no durable receipt"
-                )
+            if not record or not record.get("tenant_id") or (tenant_id and record.get("tenant_id") != tenant_id):
+                raise AllocationAuthorityNotFound(f"Containment command {command_id!r} has no durable receipt")
             return _deepcopy(record)
 
     def update_containment_audit_delivery(
@@ -1035,25 +1049,7 @@ class AllocationAuthorityStore:
                 )
             if record.get("audit_delivery_status") == "delivered":
                 return _deepcopy(record)
-            record["audit_delivery_attempts"] = int(
-                record.get("audit_delivery_attempts") or 0
-            ) + 1
-            if event_id:
-                record.update(
-                    {
-                        "audit_delivery_status": "delivered",
-                        "audit_delivery_error": None,
-                        "audit_event_id": event_id,
-                        "audit_delivered_at": utc_now(),
-                    }
-                )
-            else:
-                record.update(
-                    {
-                        "audit_delivery_status": "pending",
-                        "audit_delivery_error": str(error or "audit append failed"),
-                    }
-                )
+            _update_audit_delivery_status(record, event_id, error)
             self._persist_locked()
             return _deepcopy(record)
 
@@ -1061,10 +1057,23 @@ class AllocationAuthorityStore:
         self,
         *,
         persona_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> list[Dict[str, Any]]:
         with self._lock:
             self._reload_locked()
-            records = list(self._data["containments"].values())
+            records = [
+                item for item in self._data["containments"].values()
+                if item.get("tenant_id") and (tenant_id is None or item.get("tenant_id") == tenant_id)
+            ]
             if persona_id:
                 records = [item for item in records if item.get("persona_id") == persona_id]
             return _deepcopy(sorted(records, key=lambda item: str(item.get("executed_at") or "")))
+
+    def backfill_tenant(self, default_tenant: str = "default") -> None:
+        with self._lock:
+            self._reload_locked()
+            if not self._data.get("tenant_id"): self._data["tenant_id"] = default_tenant
+            for key in ("rebalances", "allocations", "containments", "command_receipts", "containment_commands"):
+                for item in self._data.get(key, {}).values():
+                    if isinstance(item, dict) and not item.get("tenant_id"): item["tenant_id"] = default_tenant
+            self._persist_locked()

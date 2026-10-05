@@ -36,7 +36,7 @@ def test_compose_wires_training_session_service_and_bff_normal_path() -> None:
     assert "healthcheck" in training
 
     worker = services["training-session-preview-worker"]
-    assert "profiles" not in worker
+    assert set(worker.get("profiles", [])) == {"root", "workers"}
     assert worker["build"]["dockerfile"] == "services/training-session/Dockerfile"
     assert worker["command"] == ["python", "services/training-session/preview_eval_worker.py"]
     assert worker["restart"] == "unless-stopped"
@@ -61,12 +61,13 @@ def test_compose_wires_training_session_service_and_bff_normal_path() -> None:
     assert "training-session-data" in compose["volumes"]
 
 
-def test_training_session_image_installs_pinned_vectorbt_requirements() -> None:
+def test_training_session_image_installs_locked_vectorbt_runtime() -> None:
     dockerfile = (ROOT / "services" / "training-session" / "Dockerfile").read_text(encoding="utf-8")
-    vectorbt_requirements = (
-        ROOT / "services" / "research" / "vectorbt" / "requirements.txt"
+    requirements = (
+        ROOT / "services" / "training-session" / "requirements.txt"
     ).read_text(encoding="utf-8")
 
-    assert "COPY services/research/vectorbt/requirements.txt /tmp/vectorbt-requirements.txt" in dockerfile
-    assert "-r /tmp/vectorbt-requirements.txt" in dockerfile
-    assert "vectorbt==0.26.2" in vectorbt_requirements.splitlines()
+    assert "FROM python:3.12-slim" in dockerfile
+    assert "COPY dependencies/locks/services-training-session.txt ./requirements.lock" in dockerfile
+    assert "--require-hashes -r ./requirements.lock" in dockerfile
+    assert "vectorbt==1.1.1" in requirements.splitlines()

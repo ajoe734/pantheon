@@ -508,7 +508,7 @@ def _register_evolution_programs_routes(
         # One canonical signature — no TypeError-guessing retry with a
         # shorter argument list, which risked a double submission if the
         # first (failed) call had already had a side effect.
-        res = submit_program_action(ObjectType.EVOLUTION_PROGRAM.value, clean_id, action_id, resolved_key, identity, payload)
+        res = submit_program_action(ObjectType.EVOLUTION_PROGRAM.value, clean_id, action_id, resolved_key, identity, payload, authorization=authorization)
         return res.model_dump(mode="json") if hasattr(res, "model_dump") else res
 
 

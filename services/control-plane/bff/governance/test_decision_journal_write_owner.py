@@ -598,11 +598,17 @@ sys.exit(0)
             )
             reader = DomainDecisionJournalReaderPort(data_dir=tmp)
             service = AgoraService(get_read_store=lambda: reader)
-            result = service.get_daily_brief()
+            identity = OperatorIdentity(
+                operator_id="bob",
+                roles=["operator"],
+                mfa_verified=True,
+                claims={"tid": "tenant-b", "sub": "bob"},
+            )
+            result = service.list_journal_entries(identity=identity, tenant_id="tenant-b")
             self.assertEqual(
-                result["data"]["sections"]["journal"],
+                result["items"],
                 [],
-                "daily brief published tenant-a/alice private journal without any authenticated principal",
+                "journal published tenant-a/alice private journal to tenant-b principal",
             )
 
     def test_concurrent_create_retry_is_one_entry(self) -> None:
@@ -1743,13 +1749,9 @@ patch_entry(
             with TestClient(app) as client:
                 headers = {"X-Tenant-Id": "tenant-b"}
                 listed = client.get("/bff/agora/journal", headers=headers)
-                daily = client.get("/bff/agora/daily", headers=headers)
                 self.assertEqual(listed.status_code, 200)
-                self.assertEqual(daily.status_code, 200)
                 list_ids = [row["id"] for row in listed.json()["items"]]
-                daily_ids = [row["id"] for row in daily.json()["data"]["sections"]["journal"]]
                 self.assertEqual(list_ids, ["tenant-b"])
-                self.assertEqual(daily_ids, list_ids, "daily must use the same authorized tenant as journal list")
 
 
 if __name__ == "__main__":

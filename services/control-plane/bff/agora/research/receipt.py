@@ -87,10 +87,8 @@ def resolve_run_provenance(
     if status not in terminal_statuses:
         return "unavailable", None
 
-    # Resolve receipt from store
-    receipt_dict: Optional[Dict[str, Any]] = None
-    if hasattr(store, "get_execution_receipt"):
-        receipt_dict = store.get_execution_receipt(run_id)
+    # The research owner supplies the receipt alongside its run projection.
+    receipt_dict = run.get("receipt")
 
     if receipt_dict is None:
         # No authentic server-side receipt found.
@@ -134,6 +132,14 @@ def resolve_run_provenance(
 
     run_prov = str(run.get("provenance") or "").lower().strip()
     if run_prov and run_prov in VALID_PROVENANCE_VALUES and run_prov != receipt_mode:
+        return "unavailable", None
+    metrics = run.get("metrics") or []
+    if isinstance(metrics, list) and any(
+        isinstance(metric, dict)
+        and str(metric.get("provenance") or "").lower().strip() in VALID_PROVENANCE_VALUES
+        and str(metric.get("provenance") or "").lower().strip() != receipt_mode
+        for metric in metrics
+    ):
         return "unavailable", None
 
     if expected_correlation_id is not None:

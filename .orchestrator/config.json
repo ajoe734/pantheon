@@ -37,7 +37,8 @@
     "heartbeat_stale_seconds": 300,
     "heartbeat_grace_seconds": 60,
     "work_progress_stale_seconds": 7200,
-    "runner_heartbeat_interval_seconds": 15
+    "runner_heartbeat_interval_seconds": 15,
+    "dependency_python": "~/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3"
   },
   "watchdog": {
     "enabled": true,
@@ -153,34 +154,50 @@
   },
   "worker_reassignment": {
     "enabled": true,
+    "review_only_agents": [
+      "Codex",
+      "Codex2"
+    ],
     "owner_fallbacks": {
       "Claude": [
         "Claude2",
         "Antigravity",
-        "Antigravity2"
+        "Antigravity2",
+        "PiAstra"
       ],
       "Claude2": [
         "Claude",
         "Antigravity",
-        "Antigravity2"
+        "Antigravity2",
+        "PiAstra"
       ],
       "Antigravity": [
         "Antigravity2",
         "Claude",
-        "Claude2"
+        "Claude2",
+        "PiAstra"
       ],
       "Antigravity2": [
         "Antigravity",
         "Claude",
-        "Claude2"
+        "Claude2",
+        "PiAstra"
       ],
       "Codex": [
+        "PiAstra",
         "Claude",
         "Claude2",
         "Antigravity",
         "Antigravity2"
       ],
       "Codex2": [
+        "PiAstra",
+        "Claude",
+        "Claude2",
+        "Antigravity",
+        "Antigravity2"
+      ],
+      "PiAstra": [
         "Claude",
         "Claude2",
         "Antigravity",
@@ -213,14 +230,12 @@
         "Claude2"
       ],
       "Codex": [
-        "Codex2",
         "Claude",
         "Claude2",
         "Antigravity",
         "Antigravity2"
       ],
       "Codex2": [
-        "Codex",
         "Claude",
         "Claude2",
         "Antigravity",
@@ -536,7 +551,7 @@
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex",
-        "model": "gpt-6-astra",
+        "model": "gpt-6.1-sol",
         "model_reasoning_effort": "high",
         "api_key_env": "OPENAI_API_KEY",
         "ask_for_approval": "never",
@@ -552,11 +567,11 @@
     },
     "codex2": {
       "delivery_mode": "codex",
-      "account": "codex2",
+      "account": "codex1",
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
-        "model": "gpt-6-astra",
+        "model": "gpt-6.1-sol",
         "model_reasoning_effort": "high",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
@@ -575,7 +590,7 @@
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex",
-        "model": "gpt-6-astra",
+        "model": "gpt-6.1-sol",
         "model_reasoning_effort": "high",
         "api_key_env": "OPENAI_API_KEY",
         "ask_for_approval": "never",
@@ -595,7 +610,7 @@
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex",
-        "model": "gpt-6-astra",
+        "model": "gpt-6.1-sol",
         "model_reasoning_effort": "high",
         "api_key_env": "OPENAI_API_KEY",
         "ask_for_approval": "never",
@@ -615,7 +630,7 @@
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex",
-        "model": "gpt-6-astra",
+        "model": "gpt-6.1-sol",
         "model_reasoning_effort": "high",
         "api_key_env": "OPENAI_API_KEY",
         "ask_for_approval": "never",
@@ -635,7 +650,7 @@
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex",
-        "model": "gpt-6-astra",
+        "model": "gpt-6.1-sol",
         "model_reasoning_effort": "high",
         "api_key_env": "OPENAI_API_KEY",
         "ask_for_approval": "never",
@@ -651,11 +666,11 @@
     },
     "codex2-1": {
       "delivery_mode": "codex",
-      "account": "codex2",
+      "account": "lupinchen",
       "codex": {
         "cli": ".orchestrator/bin/codex",
-        "codex_home": "~/.codex2",
-        "model": "gpt-6-astra",
+        "codex_home": "~/.codex-lupin",
+        "model": "gpt-6.1-sol",
         "model_reasoning_effort": "high",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
@@ -670,11 +685,11 @@
     },
     "codex2-2": {
       "delivery_mode": "codex",
-      "account": "codex2",
+      "account": "codex1",
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
-        "model": "gpt-6-astra",
+        "model": "gpt-6.1-sol",
         "model_reasoning_effort": "high",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
@@ -689,11 +704,11 @@
     },
     "codex2-3": {
       "delivery_mode": "codex",
-      "account": "codex2",
+      "account": "codex1",
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
-        "model": "gpt-6-astra",
+        "model": "gpt-6.1-sol",
         "model_reasoning_effort": "high",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
@@ -708,11 +723,11 @@
     },
     "codex2-4": {
       "delivery_mode": "codex",
-      "account": "codex2",
+      "account": "codex1",
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
-        "model": "gpt-6-astra",
+        "model": "gpt-6.1-sol",
         "model_reasoning_effort": "high",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
@@ -759,12 +774,12 @@
     },
     "pi_astra": {
       "delivery_mode": "pi",
-      "account": "codex1",
+      "account": "lupinchen",
       "pi": {
         "cli": "~/.local/bin/pi",
-        "agent_dir": "~/.pi/pantheon-astra",
+        "agent_dir": "~/.pi/agent",
         "provider": "openai-codex",
-        "model": "gpt-6-astra",
+        "model": "gpt-6-luna",
         "thinking": "high"
       }
     }
@@ -805,8 +820,8 @@
       "claude2": 1,
       "antigravity": 4,
       "antigravity2": 4,
-      "codex1": 2,
-      "codex2": 2,
+      "codex1": 4,
+      "lupinchen": 1,
       "copilot": 0
     },
     "max_concurrent_workers": 13
@@ -857,6 +872,16 @@
       "enabled": false,
       "url_env": "PANTHEON_ORCHESTRATOR_SYNC_URL",
       "secret_env": "PANTHEON_ORCHESTRATOR_SYNC_SECRET"
+    },
+    "diff_budget": {
+      "enabled": true,
+      "change_classes": [
+        "refactor",
+        "simplify",
+        "corrective"
+      ],
+      "default_net_prod_line_budget": 0,
+      "evidence_max_added_lines": 400
     }
   }
 }

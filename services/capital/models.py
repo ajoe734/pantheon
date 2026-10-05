@@ -7,13 +7,15 @@ These models wrap the canonical governance objects:
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class CapitalPoolBody(BaseModel):
+    approval_digest: Optional[str] = None
     pool_id: str
+    tenant_id: Optional[str] = None
     name: str
     owner_id: str
     owner_type: str
@@ -29,84 +31,10 @@ class CapitalPoolBody(BaseModel):
     idempotent_replay: bool = False
 
 
-class RiskPolicyBody(BaseModel):
-    risk_policy_id: str
-    version: str = "v1"
-    name: Optional[str] = None
-    status: str = "active"
-    gross_limit: Optional[float] = None
-    net_limit: Optional[float] = None
-    max_single_name_weight: Optional[float] = None
-    max_sector_exposure: Optional[Dict[str, float]] = None
-    max_factor_exposure: Optional[Dict[str, float]] = None
-    max_leverage: Optional[float] = None
-    turnover_limit: Optional[float] = None
-    liquidity_constraints: Dict[str, Any] = Field(default_factory=dict)
-    drawdown_actions: Dict[str, float] = Field(default_factory=dict)
-    pause_rules: Dict[str, Any] = Field(default_factory=dict)
-    liquidation_rules: Dict[str, Any] = Field(default_factory=dict)
-    allowed_order_types: List[str] = Field(default_factory=list)
-    allowed_time_in_force: List[str] = Field(default_factory=list)
-    allowed_asset_classes: List[str] = Field(default_factory=list)
-    forbidden_asset_classes: List[str] = Field(default_factory=list)
-    allowed_strategy_families: List[str] = Field(default_factory=list)
-    forbidden_strategy_families: List[str] = Field(default_factory=list)
-    max_strategy_family_concentration: Optional[Union[Dict[str, float], float]] = None
-    max_target_overlap: Optional[float] = None
-    max_signal_correlation: Optional[float] = None
-    allowed_stages: List[str] = Field(default_factory=list)
-    max_canary_capital_scale_pct: Optional[float] = None
-    max_canary_gross_scale_pct: Optional[float] = None
-    kill_switch_triggers: List[str] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
-class RiskPolicyEvaluationContextBody(BaseModel):
-    target_type: str
-    target_id: str
-    capital_pool_id: str
-    stage: Optional[str] = None
-    risk_policy_ref: Optional[str] = None
-    target_weights: Dict[str, float] = Field(default_factory=dict)
-    gross_exposure: Optional[float] = None
-    net_exposure: Optional[float] = None
-    leverage: Optional[float] = None
-    turnover: Optional[float] = None
-    asset_classes: List[str] = Field(default_factory=list)
-    strategy_family: Optional[str] = None
-    strategy_family_concentration: Dict[str, float] = Field(default_factory=dict)
-    target_overlap: Optional[float] = None
-    signal_correlation: Optional[float] = None
-    sector_exposures: Dict[str, float] = Field(default_factory=dict)
-    factor_exposures: Dict[str, float] = Field(default_factory=dict)
-    liquidity: Dict[str, Any] = Field(default_factory=dict)
-    order_type: Optional[str] = None
-    time_in_force: Optional[str] = None
-    drawdown_pct: Optional[float] = None
-    capital_scale_pct: Optional[float] = None
-    gross_scale_pct: Optional[float] = None
-    runtime_action: Optional[str] = None
-    kill_switch_trigger: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    trace_id: Optional[str] = None
-
-
-class RiskPolicyEvaluationResponse(BaseModel):
-    risk_policy_id: str
-    risk_policy_version: str
-    capital_pool_id: str
-    target_type: str
-    target_id: str
-    decision: str
-    checks: List[Dict[str, Any]] = Field(default_factory=list)
-    blocking_reasons: List[str] = Field(default_factory=list)
-    warnings: List[str] = Field(default_factory=list)
-    evaluated_at: str
-    trace_id: str
-
-
 class PersonaCapitalBindingBody(BaseModel):
+    approval_digest: Optional[str] = None
     binding_id: str
+    tenant_id: Optional[str] = None
     persona_id: str
     capital_pool_id: str
     capital_sleeve_id: Optional[str] = None
@@ -128,6 +56,7 @@ class PersonaCapitalBindingBody(BaseModel):
 class CreateCapitalPoolRequest(BaseModel):
     actor_id: str
     actor_role: str
+    tenant_id: Optional[str] = None
     idempotency_key: Optional[str] = None
     request_hash: Optional[str] = None
     pool_id: Optional[str] = None
@@ -135,6 +64,7 @@ class CreateCapitalPoolRequest(BaseModel):
     owner_id: str
     owner_type: str
     status: str = "active"
+    approval_decision_id: Optional[str] = None
     description: Optional[str] = None
     currency: str = "USD"
     budget: Optional[float] = None
@@ -147,11 +77,13 @@ class UpdateCapitalPoolStatusRequest(BaseModel):
     actor_id: str
     actor_role: str
     status: str
+    approval_decision_id: Optional[str] = None
 
 
 class CreateBindingRequest(BaseModel):
     actor_id: str
     actor_role: str
+    tenant_id: Optional[str] = None
     idempotency_key: Optional[str] = None
     request_hash: Optional[str] = None
     binding_id: Optional[str] = None
@@ -171,7 +103,7 @@ class CreateBindingRequest(BaseModel):
 class ActivateBindingRequest(BaseModel):
     actor_id: str
     actor_role: str
-    approval_decision_id: str
+    approval_decision_id: Optional[str] = None
 
 
 class UpdateBindingStatusRequest(BaseModel):
@@ -228,6 +160,7 @@ class RebalanceAllocationLine(BaseModel):
 class CreateRebalanceRequest(BaseModel):
     actor_id: str
     actor_role: str
+    tenant_id: Optional[str] = None
     idempotency_key: str
     request_hash: str
     rebalance_id: Optional[str] = None
@@ -256,6 +189,7 @@ class ApplyRebalanceRequest(BaseModel):
 
 class AllocationBody(BaseModel):
     allocation_id: str
+    tenant_id: Optional[str] = None
     capital_pool_id: str
     persona_id: str
     capital_scope: str
@@ -282,8 +216,10 @@ class AllocationListResponse(BaseModel):
 
 
 class RebalanceBody(BaseModel):
+    plan_digest: Optional[str] = None
     id: str
     rebalance_id: str
+    tenant_id: Optional[str] = None
     capital_pool_id: str
     status: str
     applied: bool
@@ -314,6 +250,7 @@ class RebalanceBody(BaseModel):
 class RebalanceApplyReceipt(BaseModel):
     status: str
     rebalance_id: str
+    tenant_id: Optional[str] = None
     capital_pool_id: str
     command_id: str
     approval_ref: Optional[str] = None
@@ -338,6 +275,7 @@ class RebalanceApplyReceipt(BaseModel):
 class CreateContainmentRequest(BaseModel):
     actor_id: str
     actor_role: str
+    tenant_id: Optional[str] = None
     idempotency_key: str
     request_hash: str
     persona_id: str
@@ -351,14 +289,13 @@ class CreateContainmentRequest(BaseModel):
     target_stage: Optional[str] = None
     allocation_increase: bool = False
     command_id: Optional[str] = None
-    approval_ref: Optional[str] = None
-    two_man_signature_id: Optional[str] = None
     receipt_ref: Optional[str] = None
     audit_ref: Optional[str] = None
 
 
 class ContainmentBody(BaseModel):
     containment_id: str
+    tenant_id: Optional[str] = None
     persona_id: str
     action: str
     state: str
@@ -376,8 +313,6 @@ class ContainmentBody(BaseModel):
     payload_hash: str
     executed_at: str
     capital_pool_id: Optional[str] = None
-    approval_ref: Optional[str] = None
-    two_man_signature_id: Optional[str] = None
     authoritative_containment_readback: bool
     authoritative_capital_readback: bool
     authoritative_capital_state_applied: bool

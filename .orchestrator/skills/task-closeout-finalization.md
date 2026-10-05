@@ -12,6 +12,27 @@ Only the task owner may move a `review_approved` task to `done`. The
 owner is responsible for making the approved state durable, auditable,
 and publish-ready before running `scripts/ai-status.sh done`.
 
+### Declared Hosted Completion
+
+`done` and `reconcile_merged_done` reject terminal completion when a declared
+`completion_tracks.hosted` is pending, in progress, externally held, malformed,
+or lacks a `done` status with a nonempty list of evidence references. Source-only
+tasks without a hosted track retain their existing closeout rules. Source review
+and merge do not satisfy hosted proof, and archived delivery recovery cannot
+override an outstanding hosted track.
+
+Record verified source completion with the existing `milestone functional done`
+command and `TASK_MILESTONE_EVIDENCE`, then use `blocker` for outstanding hosted
+proof (`external` when dependencies are declared). Preserve review/merge evidence;
+functional-track descendants may proceed while hosted/terminal descendants wait.
+After genuine hosted evidence is recorded through `milestone hosted done`, use
+the existing authorized lifecycle to finish closeout; owner/reviewer and exact-head
+delivery checks still apply. Never manufacture evidence or hand-edit task JSON.
+
+This guard is source tooling. Enforcement by an already-running command root
+requires the existing governed runtime promotion process; local tests or a source
+merge alone do not prove live activation. Do not patch command runtimes in place.
+
 ## Review Evidence Manifest Rule
 
 Product-level and loop tasks fail closed at `done` unless the canonical task

@@ -72,22 +72,21 @@ BEARER_SHAPE_REQUIRED_SOURCES = (
     "approval_race:b",
 )
 MIN_BEARER_SHAPE_TOKEN_LENGTH = 12
-RBAC_READ_RESOURCES = ("bff-strategies", "bff-ranking-formulas", "bff-agora-signals")
-RBAC_WRITE_RESOURCES = ("strategy", "ranking-formula", "agora-note", "intervention-claim")
-RBAC_WRITE_READBACK_RESOURCES = {"strategy", "ranking-formula", "agora-note"}
+RBAC_READ_RESOURCES = ("bff-strategies", "bff-ranking-formulas", "bff-agora-journal")
+RBAC_WRITE_RESOURCES = ("strategy", "ranking-formula", "agora-journal")
+RBAC_WRITE_READBACK_RESOURCES = {"strategy", "ranking-formula", "agora-journal"}
 RBAC_READ_ALLOWED = {"viewer", "operator", "reviewer", "approver", "admin"}
 RBAC_WRITE_ALLOWED = {"operator", "reviewer", "approver", "admin"}
 RBAC_DENIED_ERROR_CODES = {"AUTH_REQUIRED", "FORBIDDEN", "INSUFFICIENT_ROLE", "PERMISSION_DENIED"}
 RBAC_READ_EXPECTATIONS = {
     "bff-strategies": {"method": "GET", "path": "/bff/strategies"},
     "bff-ranking-formulas": {"method": "GET", "path": "/bff/ranking-formulas"},
-    "bff-agora-signals": {"method": "GET", "path": "/bff/agora/signals"},
+    "bff-agora-journal": {"method": "GET", "path": "/bff/agora/journal"},
 }
 RBAC_WRITE_EXPECTATIONS = {
     "strategy": {"method": "POST", "path": "/bff/strategies"},
     "ranking-formula": {"method": "POST", "path": "/bff/ranking-formulas"},
-    "agora-note": {"method": "POST", "path": "/bff/agora/notes"},
-    "intervention-claim": {"method": "POST", "path": "/bff/v5/interventions/int-live-rbac-matrix/claim"},
+    "agora-journal": {"method": "POST", "path": "/bff/agora/journal"},
 }
 APPROVAL_RACE_ACCEPTED_STATUSES = {200, 201, 202}
 APPROVAL_RACE_SAFE_ERROR_CODES = {
@@ -120,14 +119,6 @@ DRY_RUN_META_EXPECTATIONS = {
         "status": 200,
         "readback_family": "dry-run-ranking-formula-create-readback-not-persisted",
         "readback_path_prefix": "/bff/ranking-formulas/",
-    },
-    "dry-run-v5-intervention-claim": {
-        "kind": "dry_run_command_meta",
-        "method": "POST",
-        "path": "/bff/v5/interventions/int-live-dry-run/claim",
-        "status": 200,
-        "readback_family": "",
-        "readback_path_prefix": "",
     },
 }
 DRY_RUN_READBACK_FAMILIES = {
@@ -877,7 +868,6 @@ def dry_run_detail_check(dry_run: list[Any]) -> tuple[bool, str]:
     expected_kind_counts = {
         "dry_run_preview_meta": 2,
         "readback_not_persisted": 2,
-        "dry_run_command_meta": 1,
         "validation_rejected_before_persistence": 2,
     }
     meta_kinds = {"dry_run_preview_meta", "dry_run_command_meta"}
@@ -1001,7 +991,7 @@ def dry_run_detail_check(dry_run: list[Any]) -> tuple[bool, str]:
             failures.append(f"missing-validation:{family}")
 
     kind_note = ",".join(f"{kind}:{kind_counts[kind]}/{expected}" for kind, expected in expected_kind_counts.items())
-    count_ok = len(dry_run) == 7
+    count_ok = len(dry_run) == 6
     kinds_ok = all(kind_counts[kind] == expected for kind, expected in expected_kind_counts.items())
     meta_ok = set(seen_meta) == set(DRY_RUN_META_EXPECTATIONS)
     readback_ok = set(seen_readbacks) == set(DRY_RUN_READBACK_FAMILIES.values())
@@ -1012,7 +1002,7 @@ def dry_run_detail_check(dry_run: list[Any]) -> tuple[bool, str]:
     failure_note = ";failures:" + ",".join(failures[:8]) if failures else ""
     return (
         detail_ok,
-        f"dryRunDetails:{len(dry_run)}/7 kinds:{kind_note} "
+        f"dryRunDetails:{len(dry_run)}/6 kinds:{kind_note} "
         f"metaLinks:{len(seen_meta)}/{len(DRY_RUN_META_EXPECTATIONS)} "
         f"readbackLinks:{len(seen_readbacks)}/{len(DRY_RUN_READBACK_FAMILIES)} "
         f"validationLinks:{len(seen_validations)}/{len(DRY_RUN_VALIDATION_EXPECTATIONS)} "
@@ -1177,7 +1167,7 @@ def rbac_detail_check(
                     if not isinstance(readback, dict):
                         readback = {}
                     readback_kind = str(readback.get("kind") or "")
-                    if resource == "agora-note":
+                    if resource == "agora-journal":
                         readback_ok = (
                             readback_kind == "list_readback_not_persisted"
                             and readback.get("ok") is True
@@ -1621,8 +1611,8 @@ def evaluate_auth_json(root: Path) -> tuple[Any, dict[str, tuple[bool, str]]]:
             f"strict:{strict} includes:{includes} {provenance_note} {auth_source_note} {rbac_detail_note}",
         ),
         "dry_run_no_side_effects": (
-            base and dry_run_count >= 7 and dry_run_detail_ok and summary.get("live_capital_side_effects") is False,
-            f"strict:{strict} includes:{includes} {provenance_note} {auth_source_note} dryRun:{dry_run_count}/7 {dry_run_detail_note} sideEffects:{summary.get('live_capital_side_effects')}",
+            base and dry_run_count >= 6 and dry_run_detail_ok and summary.get("live_capital_side_effects") is False,
+            f"strict:{strict} includes:{includes} {provenance_note} {auth_source_note} dryRun:{dry_run_count}/6 {dry_run_detail_note} sideEffects:{summary.get('live_capital_side_effects')}",
         ),
         "approval_race": (
             base and approval_count == 1 and summary.get("approval_race_bounded") is True and approval_detail_ok,

@@ -956,24 +956,6 @@ def test_dev_paper_baseline_persona_intent_does_not_leak_cross_tenant_persona(mo
         assert not items, "persona-intent must not resolve sessions for a Persona reserved under another tenant"
 
 
-def test_dev_paper_baseline_sentinel_findings_does_not_leak_cross_tenant_persona(monkeypatch):
-    """GET /bff/v5/sentinel/findings must not derive a persona_health finding from another tenant's Persona."""
-    _, store = _setup_mock_services(monkeypatch)
-    with tempfile.TemporaryDirectory() as td:
-        read_store = create_in_memory_read_surface_ports()
-        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-
-        client = _build_test_client(read_store, cmd_store)
-        canary_id = _reserve_cross_tenant_persona(store)
-
-        resp = client.get("/bff/v5/sentinel/findings", headers=OPERATOR_HEADERS)
-        assert resp.status_code == 200
-        items = resp.json().get("data") or resp.json().get("items") or []
-        derived_ids = [item.get("derived_from_persona_id") or item.get("persona_id") for item in items]
-        assert canary_id not in derived_ids, "sentinel findings must not derive from a Persona reserved under another tenant"
-
-
 def test_dev_paper_baseline_tenantless_overlay_is_never_admitted_to_tenant_readbacks(monkeypatch):
     """A tenantless, non-canonical Persona record is not a tenant wildcard."""
     _setup_mock_services(monkeypatch)
@@ -1137,7 +1119,7 @@ def test_dev_paper_baseline_agora_persona_intent_route_excludes_other_tenant_con
     canary_id = _reserve_cross_tenant_persona(store)
     monkeypatch.setattr(
         read_store,
-        "list_agora_sessions",
+        "list_consult_requests",
         lambda **_kwargs: [{
             "sessionId": "agora-cross-tenant-session",
             "status": "active",

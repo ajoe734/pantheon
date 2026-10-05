@@ -16,13 +16,6 @@ from threading import RLock
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 
-def run_management_read(*args: Any, **kwargs: Any) -> Any:
-    try:
-        from ..personas.routes.common import run_management_read as _rmr
-    except (ImportError, ValueError):
-        from personas.routes.common import run_management_read as _rmr
-    return _rmr(*args, **kwargs)
-
 
 
 def _pm12_semantic_json_value(value: Any) -> Any:
@@ -136,23 +129,19 @@ def pool_risk_limits(pool: Mapping[str, Any]) -> Dict[str, Any]:
 
 def normalize_pool(pool: Mapping[str, Any]) -> Dict[str, Any]:
     result = deepcopy(dict(pool))
-    identifier = capital_pool_id(result)
-    if identifier:
-        result.setdefault("id", identifier)
-        result.setdefault("pool_id", identifier)
-        result.setdefault("capital_pool_id", identifier)
+    if identifier := capital_pool_id(result):
+        for k in ("id", "pool_id", "capital_pool_id"):
+            result.setdefault(k, identifier)
     result["risk_limits"] = pool_risk_limits(result)
     return result
 
 
 def normalize_rebalance(rebalance: Mapping[str, Any]) -> Dict[str, Any]:
     result = deepcopy(dict(rebalance))
-    identifier = rebalance_id(result)
-    if identifier:
+    if identifier := rebalance_id(result):
         result.setdefault("id", identifier)
         result.setdefault("rebalance_id", identifier)
-    pool_id = str(first_present(result, "capital_pool_id", "pool_id", "target_pool_id") or "").strip()
-    if pool_id:
+    if pool_id := str(first_present(result, "capital_pool_id", "pool_id", "target_pool_id") or "").strip():
         result.setdefault("capital_pool_id", pool_id)
     return result
 
@@ -195,31 +184,6 @@ def _read_collection(store: Any, method_name: str, **kwargs: Any) -> List[Dict[s
     return [deepcopy(dict(item)) for item in (value or []) if isinstance(item, Mapping)]
 
 
-def _call_write(method: Callable[..., Any], payload: Dict[str, Any], context: Dict[str, Any]) -> Any:
-    """Call common Capital authority shapes without requiring a monolith adapter.
-
-    The authority is intentionally tried with named envelope forms before a
-    positional payload.  A TypeError caused by a signature mismatch is safe to
-    retry; other authority failures remain visible to the router.
-    """
-    attempts = (
-        lambda: method(payload=payload, **context),
-        lambda: method(body=payload, **context),
-        lambda: method(request=payload, **context),
-        lambda: method(payload, **context),
-        lambda: method(payload),
-        lambda: method(**payload),
-    )
-    signature_error: Optional[TypeError] = None
-    for attempt in attempts:
-        try:
-            return attempt()
-        except TypeError as exc:
-            signature_error = exc
-    assert signature_error is not None
-    raise signature_error
-
-
 @dataclass
 class CapitalService:
     """Store/authority facade shared by all 25 Capital routes."""
@@ -236,55 +200,56 @@ class CapitalService:
             raise CapitalAuthorityUnavailable("Capital read store is unavailable")
         return store
 
-    def _authority(self) -> Any:
-        authority = self.get_capital_authority() if self.get_capital_authority else None
-        return authority if authority is not None else self._store()
-
     def list_pools(
         self, *, status: Optional[str] = None, risk_policy_ref: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        pools = _read_collection(
-            self._store(), "list_capital_pools", status=status, risk_policy_ref=risk_policy_ref
+        pools = filter_records(
+            _read_collection(self._store(), "list_capital_pools", status=status, risk_policy_ref=risk_policy_ref),
+            status=status,
+            risk_policy_ref=risk_policy_ref,
         )
-        pools = filter_records(pools, status=status, risk_policy_ref=risk_policy_ref)
-        return sorted((normalize_pool(pool) for pool in pools), key=capital_pool_id)
+        return sorted((normalize_pool(p) for p in pools), key=capital_pool_id)
+
+    def _get_entity(
+        self,
+        entity_id: str,
+        method: str,
+        list_fn: Callable[[], List[Dict[str, Any]]],
+        id_fn: Callable[[Mapping[str, Any]], str],
+        normalize_fn: Callable[[Mapping[str, Any]], Dict[str, Any]],
+        label: str,
+    ) -> Dict[str, Any]:
+        clean_id = str(entity_id or "").strip()
+        if not clean_id:
+            raise CapitalNotFound(f"{label} id is required")
+        getter = getattr(self._store(), method, None)
+        item = getter(clean_id) if callable(getter) else None
+        if isinstance(item, Mapping):
+            return normalize_fn(item)
+        for candidate in list_fn():
+            if id_fn(candidate) == clean_id:
+                return candidate
+        raise CapitalNotFound(f"{label} {clean_id} does not exist")
 
     def get_pool(self, pool_id: str) -> Dict[str, Any]:
-        clean_id = str(pool_id or "").strip()
-        if not clean_id:
-            raise CapitalNotFound("Capital pool id is required")
-        store = self._store()
-        getter = getattr(store, "get_capital_pool", None)
-        pool = getter(clean_id) if callable(getter) else None
-        if isinstance(pool, Mapping):
-            return normalize_pool(pool)
-        for candidate in self.list_pools():
-            if capital_pool_id(candidate) == clean_id:
-                return candidate
-        raise CapitalNotFound(f"Capital pool {clean_id} does not exist")
+        return self._get_entity(
+            pool_id, "get_capital_pool", self.list_pools, capital_pool_id, normalize_pool, "Capital pool"
+        )
 
     def list_rebalances(
         self, *, status: Optional[str] = None, capital_pool_id_value: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        rows = _read_collection(
-            self._store(), "list_rebalances", status=status, capital_pool_id=capital_pool_id_value
+        rows = filter_records(
+            _read_collection(self._store(), "list_rebalances", status=status, capital_pool_id=capital_pool_id_value),
+            status=status,
+            capital_pool_id_value=capital_pool_id_value,
         )
-        rows = filter_records(rows, status=status, capital_pool_id_value=capital_pool_id_value)
-        return sorted((normalize_rebalance(row) for row in rows), key=rebalance_id)
+        return sorted((normalize_rebalance(r) for r in rows), key=rebalance_id)
 
     def get_rebalance(self, requested_id: str) -> Dict[str, Any]:
-        clean_id = str(requested_id or "").strip()
-        if not clean_id:
-            raise CapitalNotFound("Rebalance id is required")
-        store = self._store()
-        getter = getattr(store, "get_rebalance", None)
-        row = getter(clean_id) if callable(getter) else None
-        if isinstance(row, Mapping):
-            return normalize_rebalance(row)
-        for candidate in self.list_rebalances():
-            if rebalance_id(candidate) == clean_id:
-                return candidate
-        raise CapitalNotFound(f"Rebalance {clean_id} does not exist")
+        return self._get_entity(
+            requested_id, "get_rebalance", self.list_rebalances, rebalance_id, normalize_rebalance, "Rebalance"
+        )
 
     def allocations(self, *, capital_pool_id_value: Optional[str] = None) -> List[Dict[str, Any]]:
         rows = _read_collection(
@@ -292,56 +257,34 @@ class CapitalService:
         )
         return filter_records(rows, capital_pool_id_value=capital_pool_id_value)
 
-    def idempotent(self, *, actor_id: str, key: str, operation: str, payload: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    @staticmethod
+    def _cache_entry(tenant_id: Optional[str], actor_id: str, op: str, key: str, payload: Mapping[str, Any], target_id: Optional[str]) -> Tuple[str, str]:
+        return f"{tenant_id or ''}:{actor_id}:{op}:{key}", stable_digest({"payload": payload, "target_id": str(target_id or ""), "tenant_id": str(tenant_id or "")})
+
+    def idempotent(self, *, actor_id: str, key: str, operation: str, payload: Mapping[str, Any], target_id: Optional[str] = None, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         if not key:
             raise CapitalValidationError("Idempotency-Key is required")
-        cache_key = f"{actor_id}:{operation}:{key}"
-        request_hash = stable_digest(payload)
+        ck, r_hash = self._cache_entry(tenant_id, actor_id, operation, key, payload, target_id)
         with self._lock:
-            saved = self._idempotency.get(cache_key)
+            saved = self._idempotency.get(ck)
             if saved is None:
                 return None
-            if saved["request_hash"] != request_hash:
+            if saved["request_hash"] != r_hash:
                 raise CapitalValidationError("Idempotency key was already used with a different request")
             return deepcopy(saved["response"])
 
-    def remember(self, *, actor_id: str, key: str, operation: str, payload: Mapping[str, Any], response: Mapping[str, Any]) -> None:
-        cache_key = f"{actor_id}:{operation}:{key}"
+    def remember(self, *, actor_id: str, key: str, operation: str, payload: Mapping[str, Any], response: Mapping[str, Any], target_id: Optional[str] = None, tenant_id: Optional[str] = None) -> None:
+        ck, r_hash = self._cache_entry(tenant_id, actor_id, operation, key, payload, target_id)
         with self._lock:
-            self._idempotency[cache_key] = {
-                "request_hash": stable_digest(payload),
-                "response": deepcopy(dict(response)),
-            }
+            self._idempotency[ck] = {"request_hash": r_hash, "response": deepcopy(dict(response))}
 
-    def write(self, operation: str, payload: Dict[str, Any], *, actor_id: str, target_id: Optional[str] = None) -> Dict[str, Any]:
-        """Delegate mutation to the Capital owner and preserve its readback shape."""
-        authority = self._authority()
-        method_names = {
-            "create_pool": ("create_capital_pool", "create_pool"),
-            "patch_pool": ("patch_capital_pool", "update_capital_pool", "patch_pool"),
-            "pool_action": ("capital_pool_action", "apply_capital_pool_action", "pool_action"),
-            "create_rebalance": ("create_rebalance",),
-            "patch_rebalance": ("patch_rebalance", "update_rebalance"),
-            "apply_rebalance": ("apply_rebalance", "apply_rebalance_proposal"),
-            "approve_rebalance": ("approve_rebalance", "approve_rebalance_apply"),
-            "sign_rebalance": ("sign_rebalance", "sign_rebalance_apply"),
-            "rebalance_action": ("rebalance_action", "apply_rebalance_action"),
-        }.get(operation, ())
-        context = {"actor_id": actor_id, "requested_at": self.utc_now()}
-        if target_id:
-            context["target_id"] = target_id
-            if operation in {"patch_pool", "pool_action"}:
-                context["pool_id"] = target_id
-            else:
-                context["rebalance_id"] = target_id
-        for method_name in method_names:
-            method = getattr(authority, method_name, None)
-            if callable(method):
-                result = _call_write(method, payload, context)
-                return deepcopy(dict(result)) if isinstance(result, Mapping) else {"result": result}
-        raise CapitalAuthorityUnavailable(
-            f"Capital authority does not expose a supported {operation} mutation method"
-        )
+    def write(self, operation: str, payload: Dict[str, Any], **context: Any) -> Dict[str, Any]:
+        """Forward a mutation to the injected Capital owner writer and return its readback."""
+        authority = self.get_capital_authority() if self.get_capital_authority else None
+        method = getattr(authority, operation, None)
+        if not callable(method):
+            raise CapitalAuthorityUnavailable(f"Capital owner writer does not expose {operation}")
+        return deepcopy(dict(method(payload, **context)))
 
     def evaluate_allocation_policy(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
         policy_version = str(payload.get("allocation_policy_version") or payload.get("policy_version") or "").strip()

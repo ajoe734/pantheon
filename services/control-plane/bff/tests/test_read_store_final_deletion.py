@@ -17,7 +17,10 @@ from services.control_plane.bff.models import (
     OperatorIdentity,
     redact_evidence_refs,
 )
-from services.control_plane.bff.personas.service import _market_persona_required_data_sources
+from services.control_plane.bff.personas.service import (
+    _market_persona_required_data_sources,
+    _persona_create_required_data_sources,
+)
 
 
 TASK_REVIEW_EVIDENCE = {
@@ -98,6 +101,7 @@ def test_retained_persona_requirement_projection_is_narrow_and_fresh() -> None:
     first = _market_persona_required_data_sources({"market": "tw"})
     assert [item["dataset"] for item in first] == ["tw_price_daily", "tw_broker_top"]
     assert all(item["market"] == "TW" for item in first)
+    assert first[0]["connector_candidates"] == ["tw-twse-tpex-official-market", "tw-finmind-datasets"]
     assert _market_persona_required_data_sources({"market": "US"}) == []
     assert _market_persona_required_data_sources({}) == []
 
@@ -106,14 +110,39 @@ def test_retained_persona_requirement_projection_is_narrow_and_fresh() -> None:
     assert "mutated-by-test" not in second[0]["policy_gates"]
 
 
+def test_explicit_persona_source_selection_is_preserved() -> None:
+    requirement = _market_persona_required_data_sources({"market": "TW"})[:1]
+    requirement[0]["connector_candidates"] = ["tw-finmind-datasets"]
+    for field in ("required_data_sources", "requiredDataSources"):
+        actual = _persona_create_required_data_sources({"market": "TW", field: requirement})
+        assert actual == requirement
+        assert actual is not requirement
+
+
+def test_us_persona_simulation_remains_dev_only(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    requirements = _persona_create_required_data_sources({"market": "US"})
+    assert requirements[0]["connector_candidates"] == ["dev-paper-us-equity-simulation"]
+    for environment in ("staging", "production"):
+        monkeypatch.setenv("PANTHEON_ENV", environment)
+        assert _persona_create_required_data_sources({"market": "US"}) == []
+
+
 def test_retained_redaction_uses_model_policy_without_data_access() -> None:
     identity = OperatorIdentity(operator_id="op-read-store-delete", roles=["operator"])
+    # "raw_trace" is not a production evidence kind and has no known
+    # required_capability, so the fail-closed base policy must withhold it
+    # rather than pass it through, regardless of the caller's capabilities.
+    # (Cited update: BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001 reviewer-required
+    # correction -- the prior assertion encoded the old fail-open behaviour.)
     refs = [{"ref_id": "ev-1", "evidence_type": "raw_trace"}]
 
-    unchanged, unchanged_count = redact_evidence_refs(identity, refs)
-    assert unchanged == refs
-    assert unchanged is not refs
-    assert unchanged_count == 0
+    withheld, withheld_count = redact_evidence_refs(identity, refs)
+    assert withheld_count == 1
+    assert withheld[0]["ref_id"] == "ev-1"
+    assert withheld[0]["redacted"] is True
+    assert withheld[0]["required_capability"] == "unknown"
+    assert withheld[0]["reason"] == "unresolved_evidence_kind"
 
     required_capability = next(iter(EVIDENCE_CAPABILITY_MAP.values()))
     kind = next(

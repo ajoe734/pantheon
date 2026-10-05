@@ -132,7 +132,7 @@ def test_operational_readiness_fresh_ok(readiness_service: AgoraOperationalReadi
         "enqueued": 12,
         "reason": "healthy",
     })
-    readiness_service.set_surface_data("signals", {"status": "ok", "count": 12, "cursor": "sig-012"})
+    readiness_service.set_surface_data("journal", {"status": "ok", "count": 12, "cursor": "sig-012"})
     readiness_service.set_surface_data("decision_events", {"status": "ok", "count": 8, "cursor": "dec-008"})
 
     envelope = readiness_service.compose_readiness(now_iso=now_iso)
@@ -152,8 +152,8 @@ def test_operational_readiness_fresh_ok(readiness_service: AgoraOperationalReadi
     assert data.signal_producer.consumed_snapshot_id == "mss-test-001"
     assert data.signal_producer.enqueued == 12
 
-    assert data.surfaces["signals"].status == "ok"
-    assert data.surfaces["signals"].count == 12
+    assert data.surfaces["journal"].status == "ok"
+    assert data.surfaces["journal"].count == 12
     assert data.surfaces["decision_events"].status == "ok"
     assert data.surfaces["decision_events"].count == 8
 
@@ -192,8 +192,8 @@ def test_operational_readiness_stale_source(readiness_service: AgoraOperationalR
     assert data.signal_producer.reason == "source_snapshot_stale"
 
     # Surfaces marked unavailable with upstream_stale reason
-    assert data.surfaces["signals"].status == "unavailable"
-    assert data.surfaces["signals"].reason == "upstream_stale"
+    assert data.surfaces["journal"].status == "unavailable"
+    assert data.surfaces["journal"].reason == "upstream_stale"
     assert data.surfaces["decision_events"].status == "unavailable"
     assert data.surfaces["decision_events"].reason == "upstream_stale"
 
@@ -226,9 +226,9 @@ def test_operational_readiness_empty_fresh_distinction(readiness_service: AgoraO
     assert data.signal_producer.status == "empty_fresh"
     assert data.signal_producer.reason == "rule_evaluation_zero_signals"
 
-    assert data.surfaces["signals"].status == "empty_fresh"
-    assert data.surfaces["signals"].count == 0
-    assert data.surfaces["signals"].reason == "rule_evaluation_zero_signals"
+    assert data.surfaces["journal"].status == "empty_fresh"
+    assert data.surfaces["journal"].count == 0
+    assert data.surfaces["journal"].reason == "rule_evaluation_zero_signals"
 
 
 def test_operational_readiness_unavailable_source(readiness_service: AgoraOperationalReadinessService) -> None:
@@ -242,8 +242,8 @@ def test_operational_readiness_unavailable_source(readiness_service: AgoraOperat
     assert data.status == "unavailable"
     assert data.source.freshness == "unavailable"
     assert data.signal_producer.status == "unavailable"
-    assert data.surfaces["signals"].status == "unavailable"
-    assert data.surfaces["signals"].reason == "upstream_unavailable"
+    assert data.surfaces["journal"].status == "unavailable"
+    assert data.surfaces["journal"].reason == "upstream_unavailable"
 
 
 def test_operational_readiness_distinct_states_matrix(readiness_service: AgoraOperationalReadinessService) -> None:
@@ -312,8 +312,8 @@ def test_operational_readiness_http_endpoint(client: TestClient, readiness_servi
     assert data["source"]["freshness"] == "stale"
     assert data["signal_producer"]["status"] == "degraded"
     assert data["signal_producer"]["reason"] == "source_snapshot_stale"
-    assert data["surfaces"]["signals"]["status"] == "unavailable"
-    assert data["surfaces"]["signals"]["reason"] == "upstream_stale"
+    assert data["surfaces"]["journal"]["status"] == "unavailable"
+    assert data["surfaces"]["journal"]["reason"] == "upstream_stale"
 
     assert meta["requiredForAuthentication"] is False
     assert meta["no_order_route_proof"] == "agora_operational_readiness_read_only"
@@ -516,3 +516,33 @@ def test_operational_readiness_tw_any_future_timestamp_is_stale(
 
     assert envelope.data.source.freshness == "stale"
     assert envelope.data.status == "degraded"
+
+
+def test_operational_readiness_healthy_retained_surfaces_only(
+    readiness_service: AgoraOperationalReadinessService,
+) -> None:
+    """Retired signals/inbox surfaces are neither required nor synthesized."""
+    now_iso = _utc_now_iso(0)
+    readiness_service.set_source_snapshot({
+        "snapshot_id": "mss-test-001",
+        "source_instance_id": "src-demo-tw-stock",
+        "event_time": _utc_now_iso(-1800),
+        "sla_seconds": 86400,
+    })
+    readiness_service.set_signal_producer({
+        "status": "ok",
+        "active_binding": "rb-binding-001",
+        "consumed_snapshot_id": "mss-test-001",
+        "last_success_at": now_iso,
+        "enqueued": 3,
+        "reason": "healthy",
+    })
+    retained = ("decision_events", "journal", "candidates", "interactions", "performance")
+    for key in retained:
+        readiness_service.set_surface_data(key, {"status": "ok", "count": 2})
+
+    data = readiness_service.compose_readiness(now_iso=now_iso).data
+
+    assert set(data.surfaces) == set(retained)
+    assert all(s.status == "ok" for s in data.surfaces.values())
+    assert data.status == "ok"

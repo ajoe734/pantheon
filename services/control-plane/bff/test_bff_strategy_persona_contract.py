@@ -465,7 +465,6 @@ def _fresh_client(td: str) -> TestClient:
         normalize_lifecycle_state=personas_service._normalize_lifecycle_state,
         normalize_risk_level=personas_service._normalize_risk_level,
         strategy_persona_idempotency_check=personas_service._strategy_persona_idempotency_check,
-        strategy_persona_action_command=personas_service._strategy_persona_action_command,
         strategy_persona_idempotency_store=personas_service._STRATEGY_PERSONA_BFF_IDEMPOTENCY,
         bff_me_tenant_payload=lambda identity, requested_tenant=None: {"id": "tenant-dev", "tenant_id": "tenant-dev"},
         list_persona_records=personas_service._list_persona_records,

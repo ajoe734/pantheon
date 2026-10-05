@@ -1,16 +1,151 @@
 from __future__ import annotations
 
 import os
+import json
 import re
+import shlex
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+from services.trade_journey.test_projection_migration import fresh_bootstrap_database
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
 DEPLOY_SCRIPT = ROOT / "scripts" / "deploy_nonprod_vm.sh"
 DUMMY_SHA = "249cd9c03675e2566a3d5f1e6a4be06af405da45"
+
+
+@pytest.mark.parametrize("migration_failure", [False, True])
+def test_projection_bootstrap_precedes_runtime_and_fails_closed(
+    fresh_bootstrap_database, migration_failure, tmp_path
+):
+    """Execute the deployment function/CLI on PostgreSQL without contacting a VM."""
+    import psycopg
+    from psycopg.conninfo import conninfo_to_dict
+
+    migration, runtime = fresh_bootstrap_database
+    info = conninfo_to_dict(migration)
+    if migration_failure:
+        with psycopg.connect(migration) as conn:
+            conn.execute("CREATE SCHEMA trade_journey_projection")
+            conn.execute("CREATE VIEW trade_journey_projection.event_receipts AS SELECT 1 AS sentinel")
+    deploy = DEPLOY_SCRIPT.read_text()
+    function = deploy.split("bootstrap_dev_lifecycle_projection() {", 1)[1].split("\n}\n", 1)[0]
+    startup = "bootstrap_dev_lifecycle_projection || rollback_dev_bff_on_failure \"projection_bootstrap\""
+    assert deploy.count(startup) == 2
+    for branch in ("root)", "bff)"):
+        # Both deployment branches gate startup on the same migration function.
+        block = deploy[deploy.rindex("  " + branch):]
+        block = block[:block.index("    ;;\n")]
+        assert block.index("seal_dev_candidate_images ||") < block.index(startup)
+        assert block.index(startup) < block.index("# Phase 3:")
+        assert "wait_for_exact_bff_lifecycle_readiness" in block
+    config = tmp_path / "compose.json"
+    config.write_text(json.dumps({"services": {"postgres": {"environment": {
+        "POSTGRES_USER": info["user"], "POSTGRES_PASSWORD": info["password"],
+        "POSTGRES_DB": info["dbname"],
+    }}}}))
+    script = tmp_path / "bootstrap.sh"
+    script.write_text('''set -euo pipefail
+docker() {
+  case "$*" in
+    'compose -p pantheon -f docker-compose.yml up -d --wait postgres') return 0 ;;
+    'compose -p pantheon -f docker-compose.yml --profile core config --format json postgres') cat "$TEST_COMPOSE_CONFIG" ;;
+    *) return 89 ;;
+  esac
+}
+run_dev_candidate_compose() {
+  [[ "$1 $2 $3 $4" == 'run --rm --no-deps -T' ]] || return 90
+  shift 4
+  [[ "$1 $2 $3" == '--entrypoint python loop-run-projector-scheduler' ]] || return 91
+  shift 3
+  "$TEST_PYTHON" "$@"
+}
+rollback_dev_bff_on_failure() { echo "rollback:$1"; exit 42; }
+bootstrap_dev_lifecycle_projection() {''' + function + '\n}\n' + startup + '''
+"$TEST_PYTHON" -c 'from services.trade_journey.lifecycle_projector import _configured_relational_projector; assert _configured_relational_projector().checkpoint == 0; print("runtime-started")'
+''')
+    env = {**os.environ, "TEST_PYTHON": sys.executable, "TEST_COMPOSE_CONFIG": str(config),
+           "POSTGRES_USER": info["user"], "POSTGRES_PASSWORD": info["password"],
+           "POSTGRES_DB": info["dbname"], "PGHOSTADDR": info["host"], "PGPORT": info["port"],
+           "LIFECYCLE_PROJECTOR_PROJECTION_DSN": runtime,
+           "LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA": "trade_journey_projection",
+           "LIFECYCLE_PROJECTOR_WRITER_BACKEND": "relational"}
+    for _ in range(2):
+        result = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, timeout=45)
+        if migration_failure:
+            assert result.returncode == 42, result.stderr
+            assert "rollback:projection_bootstrap" in result.stdout
+            assert "runtime-started" not in result.stdout
+        else:
+            assert result.returncode == 0, result.stderr
+            assert "runtime-started" in result.stdout
+
+@pytest.mark.parametrize("profiles", [None, "", "workers"])
+def test_projection_bootstrap_renders_profiled_postgres_without_other_credentials(profiles):
+    """Run the exact config command against real Compose; no containers start."""
+    if not shutil.which("docker"):
+        pytest.skip("Docker Compose is required for the render contract")
+    version = subprocess.run(["docker", "compose", "version"], capture_output=True, timeout=15)
+    if version.returncode:
+        pytest.skip("Docker Compose plugin is unavailable")
+    function = DEPLOY_SCRIPT.read_text().split("bootstrap_dev_lifecycle_projection() {", 1)[1].split("\n}\n", 1)[0]
+    line = next(line for line in function.splitlines() if "config --format json" in line)
+    command = shlex.split(line.split("|", 1)[0])
+    command[2:2] = ["--env-file", "/dev/null"]
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "POSTGRES_PASSWORD": "isolated-render-test"}
+    if profiles is not None:
+        env["COMPOSE_PROFILES"] = profiles
+    result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    services = json.loads(result.stdout)["services"]
+    assert set(services) == {"postgres"}
+    assert services["postgres"]["environment"]["POSTGRES_PASSWORD"] == "isolated-render-test"
+
+
+@pytest.mark.parametrize("outer,expected", [(30, "30"), (90, "90"), (120, "120"), (1800, "120"), (3600, "120")])
+def test_bounded_source_rpc_budget_is_exported_and_capped(outer, expected):
+    result = _source_profile_budget(outer=outer)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.endswith(f"budget={expected}\n")
+
+
+def test_default_source_profile_keeps_ordinary_rpc_budget():
+    result = _source_profile_budget(bounded=False)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.endswith("budget=unset\n")
+
+
+@pytest.mark.parametrize("override,exit_code", [({"SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS": "29"}, 37), ({"PANTHEON_EXTERNAL_EGRESS": "deny"}, 37), ({"PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": "openapi.twse.com.tw"}, 1)])
+def test_source_rpc_budget_does_not_bypass_profile_gates(override, exit_code):
+    result = _source_profile_budget(override=override)
+    assert result.returncode == exit_code
+    assert "budget=" not in result.stdout
+
+
+def _source_profile_budget(*, outer=1800, bounded=True, override=None):
+    function = DEPLOY_SCRIPT.read_text().split("validate_source_refresh_profile() {", 1)[1].split("\n}\n", 1)[0]
+    env = _clean_env({
+        "PANTHEON_DEV_COMPOSE_PROFILES": "root,source-ingest-scheduler" if bounded else "root",
+        "PANTHEON_EXTERNAL_EGRESS": "allowlist" if bounded else "deny",
+        "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw" if bounded else "",
+        "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_and_pull" if bounded else "reconcile_only",
+        "SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL": "reconciled_live_proof" if bounded else "scheduled_tick",
+        "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "1" if bounded else "0",
+        "SOURCE_INGEST_CONTROLLER_RESTART_POLICY": "no" if bounded else "unless-stopped",
+        "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY": "1",
+        "SOURCE_INGEST_MAX_RECORDS": "100",
+        "SOURCE_INGEST_BOUNDED_CONNECTOR_ID": "tw-twse-tpex-official-market",
+        "SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS": str(outer),
+        **(override or {}),
+    })
+    command = "set -euo pipefail\nerror() { echo \"$*\" >&2; exit 37; }\nvalidate_source_refresh_profile() {" + function + "\n}\nvalidate_source_refresh_profile\nbash -c 'echo budget=${SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS-unset}'\n"
+    return subprocess.run(["bash", "-c", command], cwd=ROOT, env=env, capture_output=True, text=True, timeout=20)
+
 
 VALID_NEUTRAL_STAGING_ENV = {
     "PROJECT_ID": "neutral-staging-project",

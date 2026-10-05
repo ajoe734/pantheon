@@ -7,13 +7,11 @@ for the Management System domain:
 - Operator health status & secondary control path guidance
 - Cockpit aggregate & KPIs
 - Trading pulse & rankings
-- Sentinel pulse
 - Loop throughput metrics
 - Risk radar indicators
 - Incident timeline
 - Human inbox & item details
 - HIQ backlog
-- Intervention stream
 - Evidence explorer
 - Operations read model
 - Degraded control guidance
@@ -66,6 +64,7 @@ from services.control_plane.bff.models import (
     EvidenceKind,
     OperatorIdentity,
     RedactedEvidenceRef,
+    fail_closed_redacted_refs,
     redact_evidence_refs,
 )
 from services.control_plane.bff.management_read_models.models import ManagementObservation
@@ -247,12 +246,6 @@ _SECONDARY_CONTROL_PATH_RECOMMENDED_TARGETS: List[Dict[str, Any]] = [
     },
 ]
 
-_MANAGEMENT_SENTINEL_ACTIVE_STATUSES: Set[str] = {
-    "active", "open", "triggered", "elevated", "warning", "critical"
-}
-_MANAGEMENT_SENTINEL_PENDING_INTERVENTION_STATUSES: Set[str] = {
-    "pending_intervention", "action_required", "needs_review", "open", "pending"
-}
 _HUMAN_INBOX_PRIORITY_RANK: Dict[str, int] = {
     "critical": 4,
     "high": 3,
@@ -733,9 +726,8 @@ def _human_inbox_detail_match(item: Dict[str, Any], item_id: str) -> bool:
         str(item.get("item_id") or ""),
         str(item.get("approval_decision_id") or ""),
         str(item.get("decision_id") or ""),
-        str(item.get("intervention_id") or ""),
         str(item.get("review_item_id") or ""),
-        str(item.get("finding_id") or ""),
+        str(item.get("incident_id") or ""),
         str(item.get("persona_id") or ""),
     }
     return clean in candidates
@@ -983,260 +975,6 @@ def _management_incident_timeline_item(incident: Dict[str, Any]) -> Dict[str, An
         },
     }
     return item
-
-
-def _hiq_backlog_target(record: Dict[str, Any], *, fallback_type: str, fallback_id: str) -> Dict[str, Any]:
-    target_type = str(record.get("target_type") or record.get("targetType") or fallback_type).strip() or fallback_type
-    target_id = str(
-        record.get("target_id")
-        or record.get("targetId")
-        or record.get("runtime_id")
-        or record.get("runtimeId")
-        or record.get("persona_id")
-        or record.get("personaId")
-        or record.get("strategy_id")
-        or record.get("strategyId")
-        or fallback_id
-    ).strip()
-    return {"type": target_type, "id": target_id or None}
-
-
-def _intervention_stream_filter_values(value: Optional[str]) -> Optional[Set[str]]:
-    if not value:
-        return None
-    tokens = {token.strip().lower() for token in value.split(",") if token.strip()}
-    if not tokens or "all" in tokens:
-        return None
-    return tokens
-
-
-def _intervention_stream_time(record: Dict[str, Any]) -> Optional[str]:
-    value = _management_first_non_empty(
-        record.get("occurred_at"),
-        record.get("occurredAt"),
-        record.get("triggered_at"),
-        record.get("triggeredAt"),
-        record.get("created_at"),
-        record.get("createdAt"),
-        record.get("updated_at"),
-        record.get("updatedAt"),
-        record.get("timestamp"),
-    )
-    return str(value).strip() if value not in (None, "") else None
-
-
-def _intervention_stream_persona_id(record: Dict[str, Any]) -> Optional[str]:
-    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
-    audit_context = record.get("audit_context") if isinstance(record.get("audit_context"), dict) else {}
-    value = _management_first_non_empty(
-        record.get("persona_id"),
-        record.get("personaId"),
-        metadata.get("persona_id"),
-        metadata.get("personaId"),
-        audit_context.get("persona_id"),
-        audit_context.get("personaId"),
-    )
-    if value not in (None, ""):
-        return str(value).strip()
-    target_type = str(record.get("target_type") or record.get("targetType") or "").strip().lower()
-    target_id = str(record.get("target_id") or record.get("targetId") or "").strip()
-    if target_type == "persona" and target_id:
-        return target_id
-    return None
-
-
-def _intervention_stream_source_refs(
-    record: Dict[str, Any],
-    *,
-    intervention_id: str,
-    persona_id: Optional[str],
-    source_dataset: str,
-) -> Dict[str, Any]:
-    runtime_ids = [
-        str(value)
-        for value in (
-            record.get("runtime_id"),
-            record.get("runtimeId"),
-        )
-        if value
-    ]
-    persona_ids = [
-        str(value)
-        for value in (
-            record.get("persona_id"),
-            record.get("personaId"),
-            persona_id,
-        )
-        if value
-    ]
-    strategy_ids = [
-        str(value)
-        for value in (
-            record.get("strategy_id"),
-            record.get("strategyId"),
-        )
-        if value
-    ]
-    incident_ids = [
-        str(value)
-        for value in (
-            record.get("incident_id"),
-            record.get("incidentId"),
-        )
-        if value
-    ]
-    return {
-        "source_dataset": source_dataset,
-        "intervention_ids": [intervention_id],
-        "runtime_ids": sorted(set(runtime_ids)),
-        "persona_ids": sorted(set(persona_ids)),
-        "strategy_ids": sorted(set(strategy_ids)),
-        "incident_ids": sorted(set(incident_ids)),
-    }
-
-
-def _intervention_stream_target(record: Dict[str, Any], *, intervention_id: str) -> Dict[str, Any]:
-    return _hiq_backlog_target(record, fallback_type="Intervention", fallback_id=intervention_id)
-
-
-def _governance_ledger_audit_source_type(event: Dict[str, Any]) -> Optional[str]:
-    action_type = str(event.get("action_type") or event.get("event_type") or "").strip()
-    target_type = str(event.get("target_type") or "").strip()
-    metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
-    haystack = " ".join(
-        str(value or "")
-        for value in (
-            action_type,
-            target_type,
-            metadata.get("route"),
-            metadata.get("source_route"),
-        )
-    ).lower()
-    if "override" in haystack:
-        return "override"
-    if "intervention" in haystack:
-        return "intervention"
-    if "approval" in haystack or "approve" in haystack:
-        return "approval"
-    return None
-
-
-def _intervention_stream_record_event(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    intervention_id = _management_record_id(record, "intervention_id", "id")
-    if not intervention_id:
-        return None
-    status = _management_normalized_status(record)
-    kind = str(record.get("kind") or record.get("type") or "intervention").strip().lower() or "intervention"
-    occurred_at = _intervention_stream_time(record)
-    persona_id = _intervention_stream_persona_id(record)
-    priority = _human_inbox_priority(
-        record.get("priority") or record.get("severity") or record.get("risk_level"),
-        fallback="medium",
-    )
-    target = _intervention_stream_target(record, intervention_id=intervention_id)
-    source_refs = _intervention_stream_source_refs(
-        record,
-        intervention_id=intervention_id,
-        persona_id=persona_id,
-        source_dataset="v5_interventions",
-    )
-    event_id = f"intervention-stream-{intervention_id}-{status}"
-    return {
-        "id": event_id,
-        "event_id": event_id,
-        "event_type": f"intervention.{status}",
-        "event_source": "v5_interventions",
-        "source_type": "intervention",
-        "source_dataset": "v5_interventions",
-        "intervention_id": intervention_id,
-        "persona_id": persona_id,
-        "runtime_id": record.get("runtime_id") or record.get("runtimeId"),
-        "strategy_id": record.get("strategy_id") or record.get("strategyId"),
-        "kind": kind,
-        "status": status,
-        "priority": priority,
-        "risk_level": str(record.get("risk_level") or priority).strip().lower(),
-        "severity": record.get("severity") or priority,
-        "occurred_at": occurred_at,
-        "created_at": record.get("created_at") or record.get("createdAt") or occurred_at,
-        "updated_at": record.get("updated_at") or record.get("updatedAt") or occurred_at,
-        "actor": record.get("triggered_by") or record.get("actor") or record.get("owner"),
-        "title": record.get("title") or f"{kind.replace('_', ' ').title()} intervention",
-        "summary": record.get("description") or record.get("summary") or "Intervention event projected from v5 interventions.",
-        "target": target,
-        "source_refs": source_refs,
-        "links": {
-            "source": f"/bff/v5/interventions/{intervention_id}",
-            "human_inbox": f"/bff/management/human-inbox/intervention:{intervention_id}",
-        },
-    }
-
-
-def _intervention_stream_audit_event(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    if _governance_ledger_audit_source_type(event) != "intervention":
-        return None
-    audit_context = event.get("audit_context") if isinstance(event.get("audit_context"), dict) else {}
-    metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
-    target_type = str(event.get("target_type") or event.get("targetType") or "").strip()
-    intervention_id = str(
-        _management_first_non_empty(
-            audit_context.get("intervention_id"),
-            audit_context.get("interventionId"),
-            metadata.get("intervention_id"),
-            metadata.get("interventionId"),
-            event.get("intervention_id"),
-            event.get("interventionId"),
-            event.get("target_id") if target_type.lower() == "intervention" else None,
-            event.get("entity_id") if target_type.lower() == "intervention" else None,
-        )
-        or ""
-    ).strip()
-    event_id = _management_record_id(event, "entry_id", "auditId", "id")
-    if not event_id:
-        return None
-    if not intervention_id:
-        intervention_id = event_id
-    status = str(event.get("outcome") or event.get("status") or "recorded").strip().lower() or "recorded"
-    action_type = str(event.get("action_type") or event.get("event_type") or "intervention.audit").strip()
-    kind = str(audit_context.get("kind") or metadata.get("kind") or "intervention").strip().lower()
-    persona_id = _intervention_stream_persona_id(event)
-    occurred_at = _intervention_stream_time(event)
-    source_refs = _intervention_stream_source_refs(
-        event,
-        intervention_id=intervention_id,
-        persona_id=persona_id,
-        source_dataset="governance_audit_events",
-    )
-    projected_id = f"intervention-stream-audit-{event_id}"
-    return {
-        "id": projected_id,
-        "event_id": projected_id,
-        "event_type": action_type,
-        "event_source": "governance_audit_events",
-        "source_type": "intervention",
-        "source_dataset": "governance_audit_events",
-        "intervention_id": intervention_id,
-        "persona_id": persona_id,
-        "kind": kind,
-        "status": status,
-        "priority": _human_inbox_priority(event.get("priority") or event.get("risk_level"), fallback="medium"),
-        "risk_level": str(event.get("risk_level") or "medium").strip().lower(),
-        "occurred_at": occurred_at,
-        "created_at": occurred_at,
-        "updated_at": occurred_at,
-        "actor": event.get("actor"),
-        "title": f"Intervention audit: {action_type}",
-        "summary": audit_context.get("reason") or event.get("reason") or event.get("summary") or "Audit event for intervention.",
-        "target": {
-            "type": target_type or "Intervention",
-            "id": str(event.get("target_id") or event.get("entity_id") or intervention_id).strip(),
-        },
-        "source_refs": source_refs,
-        "links": {
-            "source": "/bff/audit",
-            "intervention": f"/bff/v5/interventions/{intervention_id}",
-        },
-    }
 
 
 def _runtime_state_row_health_check(
@@ -3503,118 +3241,6 @@ class ManagementService:
         }
 
 
-    # -----------------------------------------------------------------------
-    # 5. Sentinel Pulse
-    # -----------------------------------------------------------------------
-    def get_sentinel_pulse(
-        self,
-        kind: Optional[str] = None,
-        status: Optional[str] = None,
-        severity: Optional[str] = None,
-        q: str = "",
-        page_token: Optional[str] = None,
-        page_size: int = 20,
-    ) -> Dict[str, Any]:
-        snap = self._utc_now()
-        store = self._resolve_store()
-        raw_findings: List[Dict[str, Any]] = []
-        sentinel_avail = True
-
-        if store is not None and hasattr(store, "list_sentinel_findings"):
-            try:
-                # Production port returns Tuple[bool, List[Dict[str, Any]]] or List[Dict[str, Any]]
-                res = store.list_sentinel_findings()
-                if isinstance(res, tuple):
-                    sentinel_avail, raw_findings = res
-                elif isinstance(res, list):
-                    sentinel_avail, raw_findings = True, res
-                else:
-                    sentinel_avail, raw_findings = False, []
-            except Exception:
-                sentinel_avail, raw_findings = False, []
-
-        raw_interventions: List[Dict[str, Any]] = []
-        if store is not None:
-            try:
-                if hasattr(store, "list_v5_interventions"):
-                    intv_res = store.list_v5_interventions()
-                    raw_interventions = intv_res if isinstance(intv_res, list) else []
-                elif hasattr(store, "list_interventions"):
-                    intv_res = store.list_interventions()
-                    raw_interventions = intv_res if isinstance(intv_res, list) else []
-                elif hasattr(store, "list_intervention_records"):
-                    intv_res = store.list_intervention_records()
-                    raw_interventions = intv_res if isinstance(intv_res, list) else []
-            except Exception:
-                raw_interventions = []
-
-        filtered_findings = []
-        for item in raw_findings:
-            if not isinstance(item, dict):
-                continue
-            if kind and str(item.get("kind", "")).lower() != kind.lower():
-                continue
-            if status and str(item.get("status", "")).lower() != status.lower():
-                continue
-            if severity and str(item.get("severity", "")).lower() != severity.lower():
-                continue
-            if q and q.lower() not in json.dumps(item).lower():
-                continue
-            filtered_findings.append(item)
-
-        filtered_findings.sort(key=lambda x: _parse_time(x.get("created_at") or x.get("timestamp")), reverse=True)
-        page_findings, next_token = _page_slice(filtered_findings, page_token, page_size)
-
-        active_findings = [x for x in filtered_findings if str(x.get("status", "")).lower() in _MANAGEMENT_SENTINEL_ACTIVE_STATUSES]
-        critical_findings = [x for x in filtered_findings if str(x.get("severity", "")).lower() in ("critical", "sev1", "sev0", "high")]
-        pending_interventions = [x for x in raw_interventions if isinstance(x, dict) and str(x.get("status", "")).lower() in _MANAGEMENT_SENTINEL_PENDING_INTERVENTION_STATUSES]
-
-        summary = {
-            "finding_count": len(filtered_findings),
-            "returned_finding_count": len(page_findings),
-            "active_finding_count": len(active_findings),
-            "active_findings": len(active_findings),
-            "critical_finding_count": len(critical_findings),
-            "critical_findings": len(critical_findings),
-            "intervention_count": len(raw_interventions),
-            "pending_intervention_count": len(pending_interventions),
-            "highest_severity": "critical" if critical_findings else "normal",
-            "total_items": len(filtered_findings),
-            "returned_items": len(page_findings),
-            "policy": "read_only_sentinel_pulse",
-            "basis": "composed_from_v5_sentinel_findings_and_interventions",
-        }
-
-        cards = [
-            {"card_id": "active-findings", "label": "Active Findings", "value": summary["active_finding_count"]},
-            {"card_id": "critical-findings", "label": "Critical Findings", "value": summary["critical_finding_count"]},
-            {"card_id": "pending-interventions", "label": "Pending Interventions", "value": summary["pending_intervention_count"]},
-        ]
-
-        sentinel_surface = {"status": "ok" if sentinel_avail else "unavailable", "source": "store" if store else "missing"}
-        return {
-            "data": {
-                "id": "management-sentinel-pulse",
-                "items": page_findings,
-                "findings": page_findings,
-                "interventions": raw_interventions,
-                "summary": summary,
-                "cards": cards,
-            },
-            "page_info": {
-                "next_page_token": next_token,
-                "total": len(filtered_findings),
-                "page_size": page_size,
-            },
-            "meta": {
-                "snapshot_at": snap,
-                "surfaces": {
-                    "sentinel_pulse": sentinel_surface,
-                    "sentinel_findings": sentinel_surface,
-                },
-            },
-        }
-
     def _bounded_persona_readiness_rows(
         self, snapshot_at: str, store: Any
     ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
@@ -3798,105 +3424,54 @@ class ManagementService:
                     "message": "Governance review queue has no readable source records.",
                 }
 
-            # 3. Interventions
-            if hasattr(store, "list_v5_interventions") or hasattr(store, "list_interventions") or hasattr(store, "list_intervention_records"):
+            # 3. Incidents
+            if hasattr(store, "list_incidents"):
                 try:
-                    fn = getattr(store, "list_v5_interventions", None) or getattr(store, "list_interventions", None) or getattr(store, "list_intervention_records", None)
-                    records = fn() or []
-                    surfaces["v5_interventions"] = {
-                        "status": "ok" if records else "unavailable",
-                        "source": "read_store",
-                        "snapshot_at": snap,
-                        **({"message": "V5 interventions have no readable source records."} if not records else {}),
-                    }
-                    for r in records:
-                        if isinstance(r, dict):
-                            intv_id = str(r.get("intervention_id") or r.get("id") or "")
-                            if intv_id:
-                                st = str(r.get("status") or "open")
-                                all_items.append({
-                                    "id": f"intervention:{intv_id}",
-                                    "item_id": intv_id,
-                                    "inbox_id": f"intervention:{intv_id}",
-                                    "source_id": intv_id,
-                                    "intervention_id": intv_id,
-                                    "source_type": "intervention",
-                                    "inboxType": "intervention",
-                                    "status": st,
-                                    "action_state": "pending" if st in ("open", "pending", "claimed", "escalated") else "resolved",
-                                    "priority": str(r.get("priority") or "high"),
-                                    "title": str(r.get("title") or r.get("summary") or "Intervention Required"),
-                                    "summary": str(r.get("summary") or "Operator intervention needed"),
-                                    "created_at": str(r.get("created_at") or snap),
-                                    "updated_at": str(r.get("updated_at") or r.get("created_at") or snap),
-                                    "details": r,
-                                })
-                except Exception as exc:
-                    failures["v5_interventions"] = {
-                        "status": "degraded",
-                        "source": "read_store",
-                        "reason": "contributor_read_error",
-                        "message": f"v5_interventions contributor failed: {exc}",
-                        "snapshot_at": snap,
-                    }
-                    surfaces["v5_interventions"] = failures["v5_interventions"]
-            else:
-                surfaces["v5_interventions"] = {
-                    "status": "unavailable",
-                    "source": "missing",
-                    "snapshot_at": snap,
-                    "message": "V5 interventions have no readable source records.",
-                }
-
-            # 4. Sentinel Findings
-            if hasattr(store, "list_sentinel_findings"):
-                try:
-                    s_res = store.list_sentinel_findings()
-                    available = s_res[0] if isinstance(s_res, tuple) else True
-                    s_findings = s_res[1] if isinstance(s_res, tuple) else (s_res or [])
-                    surfaces["sentinel_findings"] = {
+                    s_findings = store.list_incidents() or []
+                    available = True
+                    surfaces["incidents"] = {
                         "status": "ok" if available and s_findings else "unavailable",
                         "source": "read_store" if available else "missing",
                         "snapshot_at": snap,
-                        **({"message": "Sentinel findings have no readable source records."} if not (available and s_findings) else {}),
+                        **({"message": "Incidents have no readable source records."} if not (available and s_findings) else {}),
                     }
                     for r in (s_findings or []):
                         if isinstance(r, dict):
-                            f_id = str(r.get("finding_id") or r.get("id") or "")
+                            f_id = str(r.get("incident_id") or r.get("id") or "")
                             if f_id:
                                 st = str(r.get("status") or "active")
                                 all_items.append({
-                                    "id": f"sentinel_finding:{f_id}",
+                                    "id": f"incident:{f_id}",
                                     "item_id": f_id,
-                                    "inbox_id": f"sentinel_finding:{f_id}",
+                                    "inbox_id": f"incident:{f_id}",
                                     "source_id": f_id,
-                                    "finding_id": f_id,
-                                    "source_type": "sentinel_finding",
-                                    "inboxType": "sentinel_finding",
+                                    "incident_id": f_id,
+                                    "source_type": "incident",
+                                    "inboxType": "incident",
                                     "status": st,
-                                    "action_state": "pending" if st in ("active", "open", "new", "escalated") else "resolved",
+                                    "action_state": "pending" if st in ("active", "open", "new", "escalated", "investigating") else "resolved",
                                     "priority": "critical" if str(r.get("severity") or "").lower() in ("critical", "sev1", "high") else "medium",
-                                    "title": str(r.get("title") or r.get("summary") or "Sentinel Anomaly"),
-                                    "summary": str(r.get("summary") or "Anomaly detected"),
+                                    "title": str(r.get("title") or r.get("summary") or "Incident"),
+                                    "summary": str(r.get("summary") or "Incident requires review"),
                                     "created_at": str(r.get("created_at") or snap),
                                     "updated_at": str(r.get("updated_at") or r.get("created_at") or snap),
                                     "details": r,
                                 })
                 except Exception as exc:
-                    failures["sentinel_findings"] = {
+                    failures["incidents"] = {
                         "status": "degraded",
                         "source": "read_store",
                         "reason": "contributor_read_error",
-                        "message": f"sentinel_findings contributor failed: {exc}",
+                        "message": f"incidents contributor failed: {exc}",
                         "snapshot_at": snap,
                     }
-                    surfaces["sentinel_findings"] = failures["sentinel_findings"]
+                    surfaces["incidents"] = failures["incidents"]
             else:
-                surfaces["sentinel_findings"] = {
+                surfaces["incidents"] = {
                     "status": "unavailable",
                     "source": "missing",
                     "snapshot_at": snap,
-                    "message": "Sentinel findings have no readable source records.",
+                    "message": "Incidents have no readable source records.",
                 }
 
             # 5. Persona Readiness
@@ -4116,8 +3691,7 @@ class ManagementService:
             "total_items": len(filtered),
             "governance_review_count": sum(1 for x in filtered if x.get("source_type") == "governance_review"),
             "approval_count": sum(1 for x in filtered if x.get("source_type") in ("approval", "governance_approval")),
-            "intervention_count": sum(1 for x in filtered if x.get("source_type") == "intervention"),
-            "sentinel_finding_count": sum(1 for x in filtered if x.get("source_type") == "sentinel_finding"),
+            "incident_count": sum(1 for x in filtered if x.get("source_type") == "incident"),
             "priority_counts": {
                 "critical": sum(1 for x in filtered if str(x.get("priority") or "").lower() == "critical"),
                 "high": sum(1 for x in filtered if str(x.get("priority") or "").lower() == "high"),
@@ -4199,7 +3773,7 @@ class ManagementService:
             st = item.get("source_type")
             if source_type and st != source_type:
                 continue
-            if not source_type and st not in ("intervention", "sentinel_finding", "governance_approval", "governance_review", "approval", "readiness_blocker"):
+            if not source_type and st not in ("incident", "governance_approval", "governance_review", "approval", "readiness_blocker"):
                 continue
             if kind and (item.get("details") or {}).get("kind") != kind:
                 continue
@@ -4270,7 +3844,7 @@ class ManagementService:
                 if not isinstance(inc, dict):
                     continue
                 st = str(inc.get("status") or "").lower()
-                if st in ("open", "active", "triggered", "elevated"):
+                if st in ("open", "active", "triggered", "elevated", "investigating"):
                     inc_id = str(inc.get("incident_id") or inc.get("id") or "")
                     incident_alerts.append({
                         "alert_id": inc_id or f"inc-{len(incident_alerts)}",
@@ -4430,30 +4004,39 @@ class ManagementService:
                 "meta": meta,
             }
 
-        # 1. Sentinel findings
+        # 1. Incidents
         try:
-            if hasattr(store, "list_sentinel_findings"):
-                res = store.list_sentinel_findings()
-                findings = res[1] if isinstance(res, tuple) else (res or [])
+            if hasattr(store, "list_incidents"):
+                findings = store.list_incidents() or []
                 for f in findings:
                     if not isinstance(f, dict):
                         continue
-                    f_id = str(f.get("id") or f.get("finding_id") or "")
+                    f_id = str(f.get("id") or f.get("incident_id") or "")
                     if not f_id:
                         continue
                     anomalies.append({
                         "id": f_id,
-                        "kind": f.get("kind") or "sentinel_finding",
+                        "kind": f.get("kind") or "incident",
                         "severity": str(f.get("severity") or f.get("risk_level") or "medium").lower(),
                         "status": f.get("status") or "active",
                         "summary": f.get("title") or f.get("summary") or f_id,
                         "created_at": f.get("created_at") or snap,
                     })
-                surfaces["sentinel_findings"] = {"status": "ok", "source": "store"}
+                incident_source = "store"
+                source_fn = getattr(store, "dataset_source", None)
+                if callable(source_fn):
+                    try:
+                        incident_source = str(source_fn("incidents"))
+                    except Exception:
+                        incident_source = "error"
+                if incident_source in ("missing", "unavailable", "error"):
+                    surfaces["incidents"] = {"status": "unavailable", "source": incident_source}
+                else:
+                    surfaces["incidents"] = {"status": "ok", "source": "store"}
             else:
-                surfaces["sentinel_findings"] = {"status": "unavailable", "source": "missing"}
+                surfaces["incidents"] = {"status": "unavailable", "source": "missing"}
         except Exception:
-            surfaces["sentinel_findings"] = {"status": "unavailable", "source": "error"}
+            surfaces["incidents"] = {"status": "unavailable", "source": "error"}
 
         # 2. Runtime anomalies
         try:
@@ -5330,169 +4913,6 @@ class ManagementService:
         }
 
     # -----------------------------------------------------------------------
-    # 11. Intervention Stream
-    # -----------------------------------------------------------------------
-    def get_intervention_stream(
-        self,
-        persona_id: Optional[str] = None,
-        status: Optional[str] = None,
-        kind: Optional[str] = None,
-        q: str = "",
-        window_hours: int = 24,
-        page_token: Optional[str] = None,
-        page_size: int = 50,
-    ) -> Dict[str, Any]:
-        snap = self._utc_now()
-        store = self._resolve_store()
-        snap_dt = _parse_time(snap)
-        window_start_dt = snap_dt - timedelta(hours=window_hours)
-        window_start_at = window_start_dt.isoformat().replace("+00:00", "Z")
-
-        persona_ids = _intervention_stream_filter_values(persona_id)
-        statuses = _intervention_stream_filter_values(status)
-        kinds = _intervention_stream_filter_values(kind)
-
-        raw_interventions: List[Dict[str, Any]] = []
-        raw_audits: List[Dict[str, Any]] = []
-
-        if store is not None:
-            try:
-                if hasattr(store, "list_v5_interventions"):
-                    raw_interventions = list(store.list_v5_interventions() or [])
-                elif hasattr(store, "list_interventions"):
-                    raw_interventions = list(store.list_interventions() or [])
-                elif hasattr(store, "list_intervention_records"):
-                    raw_interventions = list(store.list_intervention_records() or [])
-            except Exception:
-                raw_interventions = []
-
-            try:
-                if hasattr(store, "list_governance_audit_events"):
-                    raw_audits = list(store.list_governance_audit_events() or [])
-                elif hasattr(store, "list_audit_events"):
-                    raw_audits = list(store.list_audit_events() or [])
-            except Exception:
-                raw_audits = []
-
-        events_by_id: Dict[str, Dict[str, Any]] = {}
-
-        for rec in raw_interventions:
-            if not isinstance(rec, dict):
-                continue
-            item = _intervention_stream_record_event(rec)
-            if item:
-                events_by_id[item["id"]] = item
-
-        for evt in raw_audits:
-            if not isinstance(evt, dict):
-                continue
-            item = _intervention_stream_audit_event(evt)
-            if item:
-                events_by_id.setdefault(item["id"], item)
-
-        events: List[Dict[str, Any]] = []
-        needle = q.strip().lower()
-        for item in events_by_id.values():
-            raw_time = item.get("occurred_at") or item.get("occurredAt")
-            if raw_time:
-                item_time = _parse_time(raw_time)
-                if item_time != datetime.min.replace(tzinfo=timezone.utc) and item_time < window_start_dt:
-                    continue
-            if persona_ids and str(item.get("persona_id") or "").strip().lower() not in persona_ids:
-                continue
-            if statuses and str(item.get("status") or "").strip().lower() not in statuses:
-                continue
-            if kinds and str(item.get("kind") or "").strip().lower() not in kinds:
-                continue
-            if needle:
-                target_dict = item.get("target") if isinstance(item.get("target"), dict) else {}
-                haystack = " ".join(
-                    str(v or "")
-                    for v in (
-                        item.get("id"),
-                        item.get("event_type"),
-                        item.get("event_source"),
-                        item.get("intervention_id"),
-                        item.get("persona_id"),
-                        item.get("runtime_id"),
-                        item.get("strategy_id"),
-                        item.get("kind"),
-                        item.get("status"),
-                        item.get("title"),
-                        item.get("summary"),
-                        target_dict.get("type"),
-                        target_dict.get("id"),
-                    )
-                ).lower()
-                if needle not in haystack:
-                    continue
-            events.append(item)
-
-        events.sort(key=lambda x: (_parse_time(x.get("occurred_at")), str(x.get("id") or "")), reverse=True)
-        for seq, item in enumerate(events, start=1):
-            item["stream_sequence"] = seq
-
-        total = len(events)
-        page_items, next_token = _page_slice(events, page_token, page_size)
-        persona_counts = _management_count_by(events, "persona_id")
-        status_counts = _management_count_by(events, "status")
-        kind_counts = _management_count_by(events, "kind")
-        source_counts = _management_count_by(events, "event_source")
-        latest_at = events[0].get("occurred_at") if events else None
-
-        summary = {
-            "total_items": total,
-            "event_count": total,
-            "returned_event_count": len(page_items),
-            "intervention_count": len({str(x.get("intervention_id") or "") for x in events if str(x.get("intervention_id") or "").strip()}),
-            "persona_count": len([p for p in persona_counts if p and p != "unknown"]),
-            "window_hours": window_hours,
-            "window_start_at": window_start_at,
-            "window_end_at": snap,
-            "latest_at": latest_at,
-            "by_persona": persona_counts,
-            "by_status": status_counts,
-            "by_kind": kind_counts,
-            "by_event_source": source_counts,
-            "policy": "read_only_intervention_stream",
-            "basis": "composed_from_v5_interventions_and_governance_audit_events",
-        }
-
-        intervention_surface = {"status": "ok" if (raw_interventions or raw_audits) else "unavailable", "source": "store" if store else "missing"}
-        stream_surface = _aggregate_group_surface(
-            "intervention_stream",
-            [intervention_surface],
-            snapshot_at=snap,
-            unavailable_message="Intervention stream aggregate unavailable.",
-            degraded_message="Intervention stream is available, but supporting intervention sources are degraded.",
-        )
-
-        return {
-            "data": {
-                "id": "management-intervention-stream",
-                "items": page_items,
-                "summary": summary,
-            },
-            "page_info": {
-                "next_page_token": next_token,
-                "total": total,
-                "page_size": page_size,
-            },
-            "meta": {
-                **_snapshot_meta(snap),
-                "surfaces": {
-                    "intervention_stream": stream_surface,
-                    "v5_interventions": intervention_surface,
-                },
-                "composition_sources": [
-                    "GET /bff/v5/interventions",
-                    "GET /bff/audit/governance-events",
-                ],
-                "policy": "read_only_intervention_stream",
-            },
-        }
-
-    # -----------------------------------------------------------------------
     # 12. Evidence Explorer
     # -----------------------------------------------------------------------
     def get_evidence(
@@ -5644,18 +5064,29 @@ class ManagementService:
         else:
             page_items, next_page_token = _page_slice(evidence_refs, page_token, page_size)
 
-        capabilities = _capabilities_for_identity(identity)
+        try:
+            capabilities = _capabilities_for_identity(identity)
+        except Exception:
+            capabilities = None
         if redact_evidence_refs is not None:
             try:
                 processed_items, redacted_count = redact_evidence_refs(
                     identity,
                     list(page_items),
                     capabilities=capabilities,
+                    default_kind="artifact",
                 )
             except Exception:
-                processed_items, redacted_count = list(page_items), 0
+                # A raised redaction policy cannot verify any ref is safe to
+                # disclose, so it withholds all of them rather than falling
+                # back to the unredacted page.
+                processed_items, redacted_count = fail_closed_redacted_refs(
+                    list(page_items), default_kind="artifact"
+                )
         else:
-            processed_items, redacted_count = list(page_items), 0
+            processed_items, redacted_count = fail_closed_redacted_refs(
+                list(page_items), default_kind="artifact"
+            )
 
         public_items = [
             _management_evidence_public_item(item)
@@ -5754,7 +5185,7 @@ class ManagementService:
             return None
 
         # Tenant isolation check: if persona belongs to a specific tenant, ensure tenant_id matches
-        if tenant_id and persona.get("tenant_id") and persona.get("tenant_id") != tenant_id:
+        if persona.get("tenant_id") and persona.get("tenant_id") != tenant_id:
             return None
 
         league_entry: Dict[str, Any] = {}

@@ -103,6 +103,7 @@ from multi_repo_registry import (
     artifact_repository_id,
     repository_relative_artifact_path,
     repository_slug,
+    repository_local_path,
     validate_task_repository_scope,
 )
 from rewrite import task_machine
@@ -422,6 +423,38 @@ def validate_handoff_pr_delivery_binding(
         repository_id=repository_id,
         pr_files=pr_files,
     )
+    # scripts/git is on sys.path via _github_review_bridge_module above.
+    import diff_budget
+
+    diff_budget.enforce_handoff(task, config, pr_files)
+    if repository_id == "pantheon":
+        import check_commit_trailers
+
+        repository_root, _ = ai_status._done_delivery_repository_root(
+            config, dict(task), repository_id, action="handoff"
+        )
+        commit_range = f"{validated.base_sha}..{normalized['head_sha']}"
+        try:
+            failures = check_commit_trailers.check_range(
+                commit_range,
+                skip_merge=True,
+                delivery_class="auto",
+                expected_task_id=task_id,
+                repository_root=repository_root,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise SystemExit(
+                f"{task_id} handoff rejected: cannot validate commit trailer range "
+                f"{commit_range}; ensure the exact base and head commits are available."
+            ) from exc
+        if failures:
+            details = "; ".join(
+                f"{sha}: {', '.join(problems)}" for sha, problems in failures
+            )
+            raise SystemExit(
+                f"{task_id} handoff rejected: commit trailers are invalid ({details}). "
+                "Repair commits through scripts/git/worker_commit.py."
+            )
 
     try:
         github_review_bridge.revalidate_pull_request_snapshot(
@@ -767,9 +800,12 @@ def requires_pr_delivery_binding(task: Mapping[str, Any]) -> bool:
     """Whether the current task contract requires a pull-request delivery.
 
     Historical ``source_ref`` and ``github`` fields are provenance, never a
-    future delivery identity.
+    future delivery identity.  A task with a ``change_class`` needs a PR so its
+    diff budget can be measured.
     """
 
+    if str(task.get("change_class") or "").strip():
+        return True
     required_artifacts = task.get("required_artifacts")
     if not isinstance(required_artifacts, list):
         return False

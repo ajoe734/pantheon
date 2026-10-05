@@ -209,20 +209,6 @@ def dry_run_side_effect_entries() -> list[dict[str, object]]:
             "side_effect_check": meta("dry_run_preview_meta", "def456def456"),
         },
         readback("dry-run-ranking-formula-create", "def456def456"),
-        {
-            "family": "dry-run-v5-intervention-claim",
-            "method": "POST",
-            "request_headers": {
-                "Authorization": "present",
-                "X-Dry-Run": "1",
-                "Idempotency-Key": "present",
-            },
-            "path": "/bff/v5/interventions/int-live-dry-run/claim",
-            "status": 200,
-            "ok": True,
-            "error_envelope": False,
-            "side_effect_check": meta("dry_run_command_meta"),
-        },
         validation("dry-run-invalid-strategy"),
         validation("dry-run-invalid-ranking-formula"),
     ]
@@ -247,13 +233,12 @@ def strict_rbac_matrix_entries() -> list[dict[str, object]]:
     read_paths = {
         "bff-strategies": "/bff/strategies",
         "bff-ranking-formulas": "/bff/ranking-formulas",
-        "bff-agora-signals": "/bff/agora/signals",
+        "bff-agora-journal": "/bff/agora/journal",
     }
     write_paths = {
         "strategy": "/bff/strategies",
         "ranking-formula": "/bff/ranking-formulas",
-        "agora-note": "/bff/agora/notes",
-        "intervention-claim": "/bff/v5/interventions/int-live-rbac-matrix/claim",
+        "agora-journal": "/bff/agora/journal",
     }
     read_allowed = {"viewer", "operator", "reviewer", "approver", "admin"}
     write_allowed = {"operator", "reviewer", "approver", "admin"}
@@ -311,7 +296,7 @@ def strict_rbac_matrix_entries() -> list[dict[str, object]]:
                 }
             else:
                 readback = None
-                if resource == "agora-note":
+                if resource == "agora-journal":
                     readback = {
                         "kind": "list_readback_not_persisted",
                         "ok": True,
@@ -487,9 +472,9 @@ def write_strict_auth_json(artifact_dir: Path) -> None:
                 "include_approval_race": True,
                 "include_two_man_race": True,
                 "summary": {
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
                     "dry_run_probes": 7,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
@@ -892,7 +877,7 @@ def test_verifier_rejects_rbac_matrix_without_detail_links_even_when_summary_pas
     payload = json.loads(result.stdout)
     item = payload["criteria"]["rbac_matrix"]
     assert item["status"] == "fail"
-    assert "detailLinks:55/56" in item["note"]
+    assert "detailLinks:47/48" in item["note"]
 
 
 
@@ -930,7 +915,7 @@ def test_verifier_rejects_rbac_matrix_request_path_swap(tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     item = payload["criteria"]["rbac_matrix"]
     assert item["status"] == "fail"
-    assert "requestLinks:55/56" in item["note"]
+    assert "requestLinks:47/48" in item["note"]
     assert "rbac-request-link" in item["note"]
 
 
@@ -966,7 +951,7 @@ def test_verifier_rejects_rbac_denied_write_without_forbidden_status(tmp_path: P
     payload = json.loads(result.stdout)
     item = payload["criteria"]["rbac_matrix"]
     assert item["status"] == "fail"
-    assert "writeDenials:15/16" in item["note"]
+    assert "writeDenials:11/12" in item["note"]
     assert "write-denial-status" in item["note"]
 
 
@@ -975,8 +960,8 @@ def test_verifier_rejects_rbac_denied_write_without_forbidden_status(tmp_path: P
     ("mutation", "expected_fragments"),
     [
         ("read-denial", ["readDenials:8/9", "read-denial-envelope"]),
-        ("write-denial", ["writeDenials:15/16", "writeSideEffectProofs:31/32"]),
-        ("write-readback", ["writeReadbackProofs:11/12", "writeSideEffectProofs:31/32"]),
+        ("write-denial", ["writeDenials:11/12", "writeSideEffectProofs:23/24"]),
+        ("write-readback", ["writeReadbackProofs:11/12", "writeSideEffectProofs:23/24"]),
     ],
 )
 def test_verifier_rejects_rbac_matrix_with_noncanonical_error_shape(
@@ -1024,7 +1009,7 @@ def test_verifier_rejects_rbac_write_without_side_effect_proof(tmp_path: Path) -
     payload = json.loads(result.stdout)
     item = payload["criteria"]["rbac_matrix"]
     assert item["status"] == "fail"
-    assert "writeSideEffectProofs:31/32" in item["note"]
+    assert "writeSideEffectProofs:23/24" in item["note"]
 
 
 def test_verifier_rejects_rbac_write_without_readback_proof(tmp_path: Path) -> None:
@@ -1275,7 +1260,7 @@ def test_verifier_rejects_dry_run_without_x_dry_run_request_header(tmp_path: Pat
     payload = json.loads(result.stdout)
     item = payload["criteria"]["dry_run_no_side_effects"]
     assert item["status"] == "fail"
-    assert "dryRunRequests:4/5" in item["note"]
+    assert "dryRunRequests:3/4" in item["note"]
     assert "dry-run-request-header" in item["note"]
 
 
@@ -1531,7 +1516,7 @@ def test_verifier_rejects_rbac_probe_hashes_from_different_preflight_inventory(t
     payload = json.loads(result.stdout)
     item = payload["criteria"]["rbac_matrix"]
     assert item["status"] == "fail"
-    assert "preflightBearerLinks:42/49" in item["note"]
+    assert "preflightBearerLinks:36/42" in item["note"]
     assert "preflight-bearer-link" in item["note"]
 
 

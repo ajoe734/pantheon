@@ -132,7 +132,7 @@ class PersonaCapitalBinding:
     budget                  : capital budget allocated under this binding
     effective_from          : inclusive start of validity window
     effective_to            : exclusive end of validity window (None = open-ended)
-    approval_decision_id    : ApprovalDecision required before activation
+    approval_decision_id    : ApprovalDecision required before non-paper activation
     updated_at              : last update timestamp
     created_by              : actor who created this binding
     metadata                : arbitrary consumer metadata
@@ -245,8 +245,12 @@ def validate_binding(binding: PersonaCapitalBinding) -> List[str]:
             errors.append("capital_sleeve_id must not be empty when supplied")
         elif normalized_sleeve_id != binding.capital_sleeve_id:
             errors.append("capital_sleeve_id must not contain surrounding whitespace")
-    if binding.status == BindingStatus.ACTIVE.value and not binding.approval_decision_id:
-        errors.append("approval_decision_id is required before a binding can be active")
+    is_paper_binding = (
+        binding.role == BindingRole.PAPER_OWNER.value
+        and binding.allowed_deployment_scope == DeploymentScope.PAPER.value
+    )
+    if binding.status == BindingStatus.ACTIVE.value and not binding.approval_decision_id and not is_paper_binding:
+        errors.append("approval_decision_id is required before a non-paper binding can be active")
     role_ceiling = _ROLE_SCOPE_CEILING[binding.role]
     declared_scope = DeploymentScope(binding.allowed_deployment_scope)
     if not role_ceiling.permits(declared_scope):
@@ -372,11 +376,11 @@ class PersonaCapitalBindingStore:
                 bindings = [b for b in bindings if b.role == role]
             return bindings
 
-    def activate(self, binding_id: str, approval_decision_id: str) -> PersonaCapitalBinding:
+    def activate(self, binding_id: str, approval_decision_id: Optional[str] = None) -> PersonaCapitalBinding:
         """
         Transition binding to active status.
 
-        Requires an ApprovalDecision ID. For live_owner role, enforces that no
+        Requires an ApprovalDecision ID except for the paper_owner/paper binding. For live_owner role, enforces that no
         other active live_owner binding exists for the same pool.
         """
         with self._lock:
@@ -392,6 +396,8 @@ class PersonaCapitalBindingStore:
                     "updated_at": utc_now(),
                 }
             )
+            if hasattr(binding, "tenant_id"):  # keep authoritative formal owner through reconstruction
+                object.__setattr__(updated, "tenant_id", binding.tenant_id)
             errors = validate_binding(updated)
             if errors:
                 raise PersonaCapitalBindingError(f"Invalid binding: {errors}")
@@ -411,6 +417,8 @@ class PersonaCapitalBindingStore:
             updated = PersonaCapitalBinding(
                 **{**binding.to_dict(), "status": new_status, "updated_at": utc_now()}
             )
+            if hasattr(binding, "tenant_id"):  # keep authoritative formal owner through reconstruction
+                object.__setattr__(updated, "tenant_id", binding.tenant_id)
             snapshot = dict(self._bindings)
             self._bindings[binding_id] = updated
             try:

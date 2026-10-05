@@ -157,6 +157,8 @@ class DecisionEventProducer:
         event_dict: Dict[str, Any] = {
             "spec_version": "1.0",
             "decision_event_id": record.decision_event_id,
+            "tenant_id": record.tenant_id,
+            "user_id": record.user_id,
             "dedupe_key": record.idempotency_key,
             "event_kind": event_kind,
             "origin": (

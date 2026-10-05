@@ -69,6 +69,7 @@ def project_command_record_audit_event(record: Dict[str, Any]) -> Optional[Dict[
         or utc_now()
     )
     reason = str(audit.get("reason") or audit_action.get("reason") or action_type or "operator command")
+    tenant_id = _record_tenant_id(record)
     event = {
         "entry_id": str(audit_action.get("action_id") or f"audit-{command_id}"),
         "actor": str(
@@ -80,12 +81,14 @@ def project_command_record_audit_event(record: Dict[str, Any]) -> Optional[Dict[
         "action_type": action_type,
         "target_type": target_type,
         "target_id": target_id,
+        "tenant_id": tenant_id,
         "timestamp": timestamp,
         "outcome": "accepted" if record.get("status") == CommandStatus.SUBMITTED.value else record.get("status"),
         "audit_context": {
             "reason": reason,
             "command_id": command_id,
             "receipt_id": command_id,
+            "tenant_id": tenant_id,
             "idempotency_key": (
                 idempotency_record.get("idempotency_key")
                 or metadata.get("idempotency_key")
@@ -105,6 +108,7 @@ def project_command_record_audit_event(record: Dict[str, Any]) -> Optional[Dict[
         "audit_action": audit_action or None,
         "metadata": {
             "source": "command_store",
+            "tenant_id": tenant_id,
             "route": metadata.get("route"),
             "source_route": metadata.get("source_route"),
             "live_capital_side_effects": audit.get("live_capital_side_effects", False),
@@ -140,16 +144,16 @@ def audit_event_matches(
 
 def _record_tenant_id(record: Dict[str, Any]) -> Optional[str]:
     audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
-    for key in ("tenant_id", "tenant"):
-        value = str(audit.get(key) or "").strip()
-        if value:
-            return value
-
+    params = record.get("params") if isinstance(record.get("params"), dict) else {}
+    for d in (audit, params):
+        for key in ("tenant_id", "tenant"):
+            value = str(d.get(key) or "").strip()
+            if value:
+                return value
     foundation = record.get("foundation") if isinstance(record.get("foundation"), dict) else {}
     trace = foundation.get("trace_context") if isinstance(foundation.get("trace_context"), dict) else {}
     tenant_ref = trace.get("tenant_ref") if isinstance(trace.get("tenant_ref"), dict) else {}
-    value = str(tenant_ref.get("tenant_id") or trace.get("tenant_id") or "").strip()
-    return value or None
+    return str(tenant_ref.get("tenant_id") or trace.get("tenant_id") or "").strip() or None
 
 
 def list_projected_governance_audit_events(

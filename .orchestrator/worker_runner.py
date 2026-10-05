@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import signal
 import stat
@@ -34,6 +35,8 @@ from common import (  # noqa: E402 - worker_runner must bootstrap its sibling mo
     canonical_task_state_lock_file,
     durable_write_bytes,
     read_regular_file_bytes,
+    runtime_source_regular_file,
+    task_branch_matches,
     worker_process_generation_id,
     first_symlink_component as _first_symlink_component,
     git_toplevel as _git_toplevel,
@@ -382,13 +385,17 @@ def _append_leased_git_metadata_mounts(
         candidate = common_dir / relative
         if candidate.exists():
             protected.append(candidate)
+    # The task's rewritten replacement branches (`<branch>-v<N>`, which the
+    # auto-integrator delivers like the branch itself) stay writable so a later
+    # run can continue one; every other task's branch stays read-only.
+    canonical_ref = re.sub(r"-v[0-9]+$", "", branch_ref)
     heads_root = common_dir / "refs" / "heads"
     if heads_root.is_dir():
         for candidate in heads_root.rglob("*"):
             if not candidate.is_file():
                 continue
             relative_ref = candidate.relative_to(common_dir).as_posix()
-            if relative_ref != branch_ref:
+            if not task_branch_matches(relative_ref, canonical_ref):
                 protected.append(candidate)
 
     # Parent protections are installed before the selected nested gitdir is
@@ -1052,7 +1059,7 @@ def _runtime_worker_receipt(coordination_root: Path, run_id: str) -> dict[str, A
     # retired path only for isolated legacy fixtures that have no V2 file; a
     # worker must never fail entry binding merely because the canonical state
     # moved into its runtime directory.
-    if not runtime_state.exists():
+    if not runtime_state.exists() and runtime_source_regular_file(coordination_root / ".orchestrator" / "state.json"):
         runtime_state = coordination_root / ".orchestrator" / "state.json"
     # Atomic supervisor writes are not lease revocations. Retry only that
     # specific race; malformed files, symlinks and binding failures still fail.

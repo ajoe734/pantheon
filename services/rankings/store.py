@@ -406,26 +406,19 @@ def _decode_allocation_evaluation(payload: Mapping[str, Any]) -> AllocationEvalu
     return record
 
 
-class RankingWriteStore:
-    """The sole durable write owner for Rankings records.
-
-    Backed by one concrete implementation, ``PostgresJsonOwnerStore``. Every
-    method re-reads the backing table before answering, so this store never
-    returns a stale in-memory snapshot and a write is immediately visible to
-    any other store instance pointed at the same table.
-    """
+class RankingReadStore:
+    """Read-only access to the sole Rankings table; never bootstraps or writes."""
 
     def __init__(
         self,
         dsn: str,
         table: str = "rankings.rankings",
-        bootstrap: bool = True,
     ) -> None:
         self._records_table = PostgresJsonOwnerStore(
             dsn=dsn,
             table=table,
             owner_service="rankings-svc",
-            bootstrap=bootstrap,
+            bootstrap=False, read_only=True,
         )
         self._thread_lock = threading.RLock()
 
@@ -477,6 +470,28 @@ class RankingWriteStore:
     def list_rankings(self) -> List[RankingRecord]:
         with self._thread_lock:
             return [deepcopy(record) for record in self._refresh().values()]
+
+    def get_ranking_snapshot(self, ranking_snapshot_id: str) -> Optional[RankingSnapshotRecord]:
+        with self._thread_lock:
+            payload = self._records_table.get(_SNAPSHOT_ID_PREFIX + ranking_snapshot_id)
+            return _decode_ranking_snapshot(payload) if payload is not None else None
+
+    def get_allocation_evaluation(
+        self, allocation_evaluation_id: str
+    ) -> Optional[AllocationEvaluationRecord]:
+        with self._thread_lock:
+            payload = self._records_table.get(_EVALUATION_ID_PREFIX + allocation_evaluation_id)
+            return _decode_allocation_evaluation(payload) if payload is not None else None
+
+
+class RankingWriteStore(RankingReadStore):
+    """Sole Rankings writer, used by the scheduled evaluator for snapshots."""
+
+    def __init__(self, dsn: str, table: str = "rankings.rankings", bootstrap: bool = True):
+        self._records_table = PostgresJsonOwnerStore(
+            dsn=dsn, table=table, owner_service="rankings-svc", bootstrap=bootstrap,
+        )
+        self._thread_lock = threading.RLock()
 
     # ---- writes ----
 
@@ -535,11 +550,6 @@ class RankingWriteStore:
                 )
             return _decode_ranking_snapshot(canonical)
 
-    def get_ranking_snapshot(self, ranking_snapshot_id: str) -> Optional[RankingSnapshotRecord]:
-        with self._thread_lock:
-            payload = self._records_table.get(_SNAPSHOT_ID_PREFIX + ranking_snapshot_id)
-            return _decode_ranking_snapshot(payload) if payload is not None else None
-
     # ---- allocation evaluation (generation 3, immutable, no update/delete) ----
 
     def create_allocation_evaluation(
@@ -566,12 +576,6 @@ class RankingWriteStore:
                 )
             return _decode_allocation_evaluation(canonical)
 
-    def get_allocation_evaluation(
-        self, allocation_evaluation_id: str
-    ) -> Optional[AllocationEvaluationRecord]:
-        with self._thread_lock:
-            payload = self._records_table.get(_EVALUATION_ID_PREFIX + allocation_evaluation_id)
-            return _decode_allocation_evaluation(payload) if payload is not None else None
 
 
 def build_rankings_store(

@@ -11,7 +11,6 @@ import hashlib
 import inspect
 import json
 import os
-import uuid
 from datetime import datetime, timezone
 from typing import (
     Any,
@@ -184,15 +183,6 @@ class GovernanceService:
         "under_review",
         "reviewed",
     }
-    _DECISIONS = {
-        "approve",
-        "reject",
-        "request_revision",
-        "request_changes",
-        "escalate",
-        "freeze",
-    }
-
     # Mutation-review role policy. This is the single owner of the actor/
     # state/evidence policy used by both the direct POST action validators
     # (main.py ApproveMutation/RejectMutation/ReviewMutation/ExecuteMutation)
@@ -223,7 +213,6 @@ class GovernanceService:
         page_slice_fn: PageSlice = page_slice,
         submit_action: Optional[SubmitAction] = None,
         publish_event: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
-        get_interventions: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         dataset_surface_status: Optional[Callable[..., Dict[str, Any]]] = None,
         redact_evidence_refs: Optional[Callable[..., Tuple[List[Dict[str, Any]], int]]] = None,
         capabilities_for_identity: Optional[Callable[[Any], Any]] = None,
@@ -236,13 +225,10 @@ class GovernanceService:
         self.page_slice = page_slice_fn
         self.submit_action = submit_action
         self.publish_event = publish_event
-        self.get_interventions = get_interventions or (lambda: [])
         self.dataset_surface_status = dataset_surface_status or self._default_dataset_surface_status
         self.redact_evidence_refs = redact_evidence_refs or self._fail_closed_redact_evidence_refs
         self.capabilities_for_identity = capabilities_for_identity or (lambda identity: None)
         self.read_surface_state = read_surface_state or (lambda: "fresh")
-        self._created_approvals: Dict[str, Dict[str, Any]] = {}
-        self._idempotency: Dict[str, Dict[str, Any]] = {}
 
     def submitted_promotion_reviews(
         self,
@@ -339,136 +325,11 @@ class GovernanceService:
 
     # Approval decisions -------------------------------------------------
 
-    def list_approval_decisions(
+    def _all_approval_decisions(
         self, *, outcome: Optional[str] = None, state: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        try:
-            records = self._call(
-                "list_approval_decisions",
-                outcome=outcome,
-                state=state,
-                include_fixture_pack=False,
-                default=[],
-            )
-        except TypeError:
-            records = self._call("list_approval_decisions", default=[])
-        items = [copy.deepcopy(item) for item in (records or [])]
-        items.extend(copy.deepcopy(list(self._created_approvals.values())))
-        if outcome:
-            requested = {part.lower() for part in split_csv(outcome) or []}
-            items = [
-                item
-                for item in items
-                if str(item.get("outcome") or item.get("decision") or "").lower() in requested
-            ]
-        if state:
-            requested = {part.lower() for part in split_csv(state) or []}
-            items = [
-                item
-                for item in items
-                if str(item.get("decision_state") or item.get("state") or item.get("status") or "").lower()
-                in requested
-            ]
-        seen: set[str] = set()
-        result: List[Dict[str, Any]] = []
-        for item in items:
-            item_id = record_id(item, "decision_id", "id", "item_id")
-            if item_id and item_id in seen:
-                continue
-            if item_id:
-                seen.add(item_id)
-            result.append(item)
-        return result
-
-    def get_approval_detail(self, approval_id: str) -> Optional[Dict[str, Any]]:
-        """Typed replacement for the former generic ``/bff/approvals/{id}`` alias."""
-        clean_id = str(approval_id or "").strip()
-        if not clean_id:
-            return None
-        if clean_id in self._created_approvals:
-            return copy.deepcopy(self._created_approvals[clean_id])
-        decision = self._call("get_approval_decision", clean_id, default=None)
-        if decision is None:
-            decision = self._call("get_approval_decision_by_id", clean_id, default=None)
-        if decision is not None:
-            return copy.deepcopy(decision)
-        return next(
-            (
-                copy.deepcopy(item)
-                for item in self.list_approval_decisions()
-                if record_id(item, "decision_id", "id", "item_id") == clean_id
-            ),
-            None,
-        )
-
-    def create_approval_decision(
-        self,
-        payload: Mapping[str, Any],
-        *,
-        identity: Any,
-        idempotency_key: str,
-        dry_run: bool,
-        correlation_id: str,
-    ) -> Dict[str, Any]:
-        plan_id = str(payload.get("plan_id") or "").strip()
-        decision = str(payload.get("decision") or "").strip().lower()
-        memo = str(payload.get("memo") or "").strip()
-        if not plan_id:
-            raise ValueError("plan_id")
-        if decision not in {"approve", "reject"}:
-            raise ValueError("decision")
-        if len(memo) < 8:
-            raise ValueError("memo")
-
-        request_hash = stable_json_hash(
-            {"plan_id": plan_id, "decision": decision, "memo": memo}
-        )
-        existing = self._idempotency.get(idempotency_key)
-        if existing:
-            if existing["request_hash"] != request_hash:
-                raise RuntimeError("idempotency_conflict")
-            return copy.deepcopy(existing["result"])
-
-        decided_at = self.utc_now()
-        decision_id = str(payload.get("decision_id") or payload.get("id") or uuid.uuid4())
-        record = {
-            "id": decision_id,
-            "decision_id": decision_id,
-            "plan_id": plan_id,
-            "decision": decision,
-            "outcome": "approved" if decision == "approve" else "rejected",
-            "decision_state": "decided",
-            "memo": memo,
-            "approver_id": _identity_operator_id(identity),
-            "decided_at": decided_at,
-        }
-        data = {
-            "status": "accepted",
-            "commandId": decision_id,
-            "command_id": decision_id,
-            "plan_id": plan_id,
-            "decision": decision,
-            "approver_id": record["approver_id"],
-            "approverId": record["approver_id"],
-            "decided_at": decided_at,
-            "decidedAt": decided_at,
-        }
-        result = {
-            "data": data,
-            "meta": {
-                "snapshot_at": decided_at,
-                "dryRun": dry_run,
-                "correlationId": correlation_id,
-                "evidenceKind": "approval.decide",
-            },
-        }
-        if not dry_run:
-            self._created_approvals[decision_id] = record
-            self._idempotency[idempotency_key] = {
-                "request_hash": request_hash,
-                "result": copy.deepcopy(result),
-            }
-        return result
+        records = self._call("list_approval_decisions", default=[])
+        return [copy.deepcopy(item) for item in (records or [])]
 
     # Consultation requests, committees, and memos ---------------------
 
@@ -1435,21 +1296,6 @@ class GovernanceService:
 
     # Compatibility surfaces ------------------------------------------
 
-    def list_pending_approvals(self) -> List[Dict[str, Any]]:
-        return [
-            item
-            for item in self.list_approval_queue()
-            if str(item.get("decision_state") or item.get("state") or item.get("status") or "").lower()
-            in self._PENDING_APPROVAL_STATES
-        ]
-
-    def approval_evidence(self, approval_id: str) -> Optional[List[Dict[str, Any]]]:
-        decision = self.get_approval_detail(approval_id)
-        if decision is None:
-            return None
-        refs = decision.get("evidence_refs") or decision.get("evidence") or []
-        return copy.deepcopy(list(refs))
-
     def get_review(self, review_id: str) -> Optional[Dict[str, Any]]:
         return next(
             (
@@ -1469,6 +1315,7 @@ class GovernanceService:
         payload: Mapping[str, Any],
         identity: Any,
         idempotency_key: str,
+        authorization: Optional[str] = None,
     ) -> Any:
         if self.submit_action is None:
             from fastapi import HTTPException
@@ -1494,29 +1341,14 @@ class GovernanceService:
                 payload=dict(payload),
                 identity=identity,
                 idempotency_key=idempotency_key,
+                authorization=authorization,
             )
         )
-
-    def validate_decision(self, payload: Mapping[str, Any]) -> str:
-        decision = str(payload.get("decision") or "").strip().lower()
-        if not decision:
-            if str(payload.get("rejection_reason") or "").strip():
-                decision = "reject"
-            elif str(payload.get("revision_notes") or "").strip():
-                decision = "request_revision"
-            else:
-                decision = "approve"
-        if decision not in self._DECISIONS:
-            raise ValueError("decision")
-        if decision == "reject" and not str(payload.get("rejection_reason") or "").strip():
-            raise ValueError("rejection_reason")
-        if decision in {"request_revision", "request_changes"} and not str(payload.get("revision_notes") or "").strip():
-            raise ValueError("revision_notes")
-        return decision
 
     def governance_ledger(
         self,
         *,
+        approval_records: Optional[List[Dict[str, Any]]] = None,
         source_type: Optional[str],
         status: Optional[str],
         q: str,
@@ -1525,8 +1357,8 @@ class GovernanceService:
     ) -> Dict[str, Any]:
         entries_by_id: Dict[str, Dict[str, Any]] = {}
         for dataset, records in (
-            ("approval_queue_items", self.list_approval_queue()),
-            ("approval_decisions", self.list_approval_decisions()),
+            ("approval_queue_items", approval_records if approval_records is not None else self.list_approval_queue()),
+            ("approval_decisions", approval_records if approval_records is not None else self._all_approval_decisions()),
         ):
             for item in records:
                 decision_id = record_id(item, "decision_id", "item_id", "id")
@@ -1556,26 +1388,6 @@ class GovernanceService:
                     "evidence_refs": copy.deepcopy(item.get("evidence_refs") or []),
                 }
                 entries_by_id.setdefault(entry["id"], entry)
-        for item in self.get_interventions() or []:
-            intervention_id = record_id(item, "intervention_id", "id")
-            if not intervention_id:
-                continue
-            entries_by_id[f"ledger-intervention-{intervention_id}"] = {
-                "id": f"ledger-intervention-{intervention_id}",
-                "entry_id": f"ledger-intervention-{intervention_id}",
-                "source_type": "intervention",
-                "source_dataset": "v5_interventions",
-                "event_type": f"intervention.{str(item.get('status') or 'unknown').lower()}",
-                "status": item.get("status") or "unknown",
-                "actor": item.get("triggered_by") or item.get("actor") or item.get("owner"),
-                "target_type": item.get("target_type") or "Intervention",
-                "target_id": item.get("target_id") or intervention_id,
-                "occurred_at": record_time(item) or None,
-                "title": f"Intervention: {item.get('kind') or item.get('type') or 'intervention'}",
-                "summary": item.get("description") or item.get("summary") or item.get("reason"),
-                "href": f"/bff/v5/interventions/{intervention_id}",
-                "evidence_refs": copy.deepcopy(item.get("evidence_refs") or []),
-            }
         for event in self.list_audit_events():
             event_id = record_id(event, "entry_id", "id", "auditId")
             haystack = " ".join(

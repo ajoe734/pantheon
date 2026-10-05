@@ -1,0 +1,7 @@
+fastapi==0.142.2
+uvicorn==0.54.0
+pydantic==2.13.5
+psycopg[binary]==3.3.6
+jsonschema==4.26.0
+numpy==1.26.4
+quantlib==1.43

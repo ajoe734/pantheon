@@ -35,11 +35,11 @@ def _endpoint(router, path: str):
     return next(route.endpoint for route in router.routes if route.path == path)
 
 
-def test_events_router_owns_the_fourteen_event_decorators() -> None:
+def test_events_router_owns_the_twelve_event_decorators() -> None:
     router = create_events_router()
 
     paths = {route.path for route in router.routes}
-    assert len(router.routes) == 14
+    assert len(router.routes) == 12
     assert paths == {
         "/bff/events",
         "/bff/events/stream",
@@ -52,8 +52,6 @@ def test_events_router_owns_the_fourteen_event_decorators() -> None:
         "/bff/sse/incidents/{incidentId}/timeline",
         "/bff/sse/deployment/events",
         "/bff/sse/review/updates",
-        "/bff/sse/agora/signals",
-        "/bff/sse/agora/sessions/{sessionId}",
         "/api/v1/internal/sse/publish",
     }
 

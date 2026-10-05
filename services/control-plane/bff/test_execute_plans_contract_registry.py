@@ -141,8 +141,7 @@ def test_execute_plans_final_contract_routes_remain_registered() -> None:
         route_key("GET", "/health"),
         route_key("GET", "/bff/actions"),
         route_key("GET", "/bff/approvals"),
-        route_key("GET", "/bff/v5/interventions"),
-        route_key("POST", "/bff/v5/interventions/{id}/remediate"),
+        route_key("POST", "/bff/v5/interventions/{id}/two-man-sign"),
     }
     assert required <= live_routes
 

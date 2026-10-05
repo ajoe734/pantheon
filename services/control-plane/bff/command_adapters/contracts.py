@@ -65,11 +65,7 @@ _FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
 _FINAL_COMMAND_ROUTE = "POST /bff/v1/commands"
 
 _HUMAN_GATE_DECISIONS_BY_COMMAND: Dict[CommandType, str] = {
-    CommandType.HUMAN_GATE_APPROVE: "approve",
-    CommandType.HUMAN_GATE_REJECT: "reject",
-    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: "request_more_evidence",
     CommandType.HUMAN_GATE_REVOKE: "revoke",
-    CommandType.HUMAN_GATE_EXTEND_TTL: "extend_ttl",
 }
 
 
@@ -120,7 +116,7 @@ def _human_gate_clean_text(value: Any) -> str:
 
 def _human_gate_source_type(item_id: str) -> Optional[str]:
     prefix = item_id.split(":", 1)[0].strip().lower() if ":" in item_id else ""
-    if prefix in {"approval", "intervention"}:
+    if prefix == "approval":
         return prefix
     return None
 
@@ -172,62 +168,68 @@ def normalize_human_gate_command(cmd: OperatorCommand) -> OperatorCommand:
     return cmd
 
 
-def normalize_quarterly_recommendation_command(cmd: OperatorCommand) -> OperatorCommand:
-    if cmd.command != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT:
-        return cmd
-
-    params = dict(cmd.params or {})
-    recommendation_id = str(
-        params.get("recommendation_id")
-        or params.get("recommendationId")
-        or cmd.target.id
-        or ""
-    ).strip()
-    target_recommendation_id = str(cmd.target.id or "").strip()
-    if (
-        recommendation_id
-        and target_recommendation_id
-        and recommendation_id != target_recommendation_id
-    ):
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "recommendation_id does not match the command target",
-            "Use target.id as the authoritative quarterly recommendation id.",
-            precondition_failed="recommendation_id",
-        )
-    if recommendation_id:
-        params["recommendation_id"] = recommendation_id
-        params["recommendationId"] = recommendation_id
-
-    recommendation_action_id = str(
-        params.get("recommendation_action_id")
-        or params.get("recommendationActionId")
-        or params.get("actionId")
-        or params.get("action_id")
-        or ""
-    ).strip()
-    if recommendation_action_id and recommendation_action_id != "submit_recommendation":
-        params["recommendation_action_id"] = recommendation_action_id
-        params["recommendationActionId"] = recommendation_action_id
-
-    params["action_id"] = "submit_recommendation"
-    params["actionId"] = "submit_recommendation"
-    params.setdefault("audit_event", "quarterly_ranking.recommendation_submitted")
-    params.setdefault("auditEvent", "quarterly_ranking.recommendation_submitted")
-    params.setdefault("entity_type", "quarterly_ranking_recommendation")
-    params.setdefault("entity_id", recommendation_id or cmd.target.id)
-    cmd.params = params
-    return cmd
-
-
 def normalize_b5_command_payload(cmd: OperatorCommand) -> OperatorCommand:
-    return normalize_quarterly_recommendation_command(
-        normalize_human_gate_command(cmd)
-    )
+    if cmd.command == CommandType.ADVANCE_LIFECYCLE:
+        params = dict(cmd.params)
+        target_state = params.get("target_state")
+        target_aliases = ("persona_id", "personaId", "entity_id", "entityId")
+        if (
+            cmd.target.type != ObjectType.PERSONA
+            or not cmd.target.id.strip()
+            or not isinstance(target_state, str)
+            or not target_state.strip()
+            or any(str(params[key]) != cmd.target.id for key in target_aliases if key in params)
+        ):
+            raise _bff_error(
+                422, ErrorCode.VALIDATION_FAILED, "Invalid lifecycle target",
+                "Provide an explicit target_state and matching Persona target",
+            )
+        params.update(
+            persona_id=cmd.target.id, target_state=target_state.strip(),
+            entity_type="Persona", action_id="AdvanceLifecycle", actionId="AdvanceLifecycle",
+        )
+        cmd.action = "AdvanceLifecycle"
+        cmd.params = params
+    if cmd.command == CommandType.EVOLUTION_PROGRAM_ACTION:
+        raw_act = cmd.action or cmd.params.get("action_id") or cmd.params.get("actionId")
+        if raw_act:
+            norm_act = re.sub(r"[^a-z0-9]", "", str(raw_act).lower())
+            canonical_act = _EVOLUTION_ACTION_ALIASES.get(norm_act)
+            if canonical_act is None:
+                raise _bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    f"Invalid evolution program action: {raw_act}",
+                    f"Unsupported evolution action {raw_act}",
+                )
+            cmd.action = canonical_act
+            params = dict(cmd.params)
+            params["action_id"] = canonical_act
+            if "actionId" in params:
+                params["actionId"] = canonical_act
+            cmd.params = params
+    return normalize_human_gate_command(cmd)
 
 
 def normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorCommand:
+    if payload.get("command") == "AdvanceLifecycle" and isinstance(payload.get("params", {}), dict):
+        params = dict(payload.get("params", {}))
+        decision_fields = (
+            "governance_decision_id", "approval_id", "approvalId",
+            "approval_decision_id", "approvalDecisionId",
+        )
+        refs = [
+            source[key] for source in (payload, params) for key in decision_fields
+            if key in source and source[key] is not None
+        ]
+        if any(not isinstance(ref, str) or not ref.strip() for ref in refs) or len(set(refs)) > 1:
+            raise _bff_error(
+                422, ErrorCode.VALIDATION_FAILED, "Invalid governance decision reference",
+                "Provide one consistent decision id; Persona verifies its authority",
+            )
+        if refs:
+            params["governance_decision_id"] = refs[0]
+        payload = {**payload, "params": params}
     command_type = payload.get("command_type")
     if command_type:
         try:
@@ -339,6 +341,178 @@ def normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorComma
             "Invalid operator command payload",
             str(exc),
         ) from exc
+
+
+# wrapper -> {canonical command: extra short verbs}; the canonical name itself is always accepted.
+_WRAPPER_CANONICALS = {
+    "RuntimeAction": {
+        "PauseRuntime": ("pause",),
+        "PauseExecution": (),
+        "PausePaperRuntime": (),
+        "ResumePaperRuntime": ("resume", "unpause"),
+        "ExecuteRollback": ("rollback",),
+        "HardRollback": (),
+        "ActivateKillSwitch": ("killswitch",),
+        "IssueRiskOff": (),
+        "IssueSafeMode": (),
+        "ApproveRollback": (),
+        "RejectRollback": (),
+    },
+    "RebalanceAction": {"ApprovedApply": ("apply",), "RebalanceProposal": ("propose", "create"), "EmergencyContainment": ()},
+    "DeploymentAction": {
+        "ApproveDeployment": ("approve",),
+        "EscalateDiff": (),
+        "CreateDeployment": ("create",),
+        "PatchDeployment": ("patch", "update"),
+    },
+    "PersonaAction": {
+        "AdvanceLifecycle": ("promote", "PromoteCandidate", "demote"),
+        "EmergencyContainment": (),
+    },
+    "ReviewAction": {
+        "RequestReview": ("review",),
+        "ApproveDecision": ("approve", "approved", "approved_with_conditions", "approve_with_conditions"),
+        "RejectDecision": ("reject",),
+        "RecordSponsorDecision": ("sponsordecision",),
+        "HumanGateApprove": (),
+        "HumanGateReject": (),
+        "HumanGateRequestMoreEvidence": (),
+        "HumanGateRevoke": (),
+        "HumanGateExtendTtl": (),
+    },
+    "RiskAlertAction": {"AlertAcknowledge": ("acknowledge", "ack")},
+}
+_WRAPPER_VERB_ALIASES = {
+    (wrapper, re.sub(r"[^a-z0-9]", "", verb.lower())): canonical
+    for wrapper, commands in _WRAPPER_CANONICALS.items()
+    for canonical, verbs in commands.items()
+    for verb in (canonical, *verbs)
+}
+
+_EVOLUTION_ACTION_ALIASES: Dict[str, str] = {
+    "submitevolutionreview": "submit_evolution_review",
+    "submit_evolution_review": "submit_evolution_review",
+    "approveprogram": "approve_program",
+    "approve_program": "approve_program",
+    "approveevolutionprogram": "approve_program",
+    "approve_evolution_program": "approve_program",
+    "pauseprogram": "pause_program",
+    "pause_program": "pause_program",
+    "pauseevolutionprogram": "pause_program",
+    "pause_evolution_program": "pause_program",
+    "resumeprogram": "resume_program",
+    "resume_program": "resume_program",
+    "resumeevolutionprogram": "resume_program",
+    "resume_evolution_program": "resume_program",
+    "completeprogram": "complete_program",
+    "complete_program": "complete_program",
+    "completeevolutionprogram": "complete_program",
+    "complete_evolution_program": "complete_program",
+    "retireprogram": "retire_program",
+    "retire_program": "retire_program",
+    "retireevolutionprogram": "retire_program",
+    "retire_evolution_program": "retire_program",
+    "stop": "stop",
+    "stopevolutionprogram": "stop",
+    "stop_program": "stop",
+    "stopprogram": "stop",
+    "freezegeneration": "freeze_generation",
+    "freeze_generation": "freeze_generation",
+    "freezeevolutiongeneration": "freeze_generation",
+    "freeze_evolution_generation": "freeze_generation",
+    "promotecandidatepaper": "promote_candidate_paper",
+    "promote_candidate_paper": "promote_candidate_paper",
+    "promoteevolutioncandidatepaper": "promote_candidate_paper",
+    "promote_evolution_candidate_paper": "promote_candidate_paper",
+    "promotecandidatelive": "promote_candidate_live",
+    "promote_candidate_live": "promote_candidate_live",
+    "promoteevolutioncandidatelive": "promote_candidate_live",
+    "promote_evolution_candidate_live": "promote_candidate_live",
+}
+
+
+def canonicalize_wrapped_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Replace a wrapper command by the canonical command its verb maps to."""
+    from .retired import reject_retired_command
+    command = payload.get("command")
+    if isinstance(command, str):
+        reject_retired_command(command)
+    action = payload.get("action")
+    # Leave invalid action types intact for OperatorCommand's schema rejection.
+    if not isinstance(command, str) or (action is not None and not isinstance(action, str)):
+        return payload
+    params = payload.get("params", {})
+    action_params = params if isinstance(params, dict) else {}
+    for k in ("action_id", "actionId", "action", "verb", "decision", "outcome"):
+        for src in (action_params, payload if k != "action" else {}):
+            v = src.get(k)
+            if v is not None and not isinstance(v, str):
+                raise _bff_error(422, ErrorCode.VALIDATION_FAILED, f"Invalid {k} carrier type", f"Carrier {k} must be a string")
+    raw_candidates = [command, action] + [s.get(k) for s in (payload, action_params) for k in ("decision", "verb", "action_id", "actionId", "outcome")] + [action_params.get("action")]
+    if (
+        any(re.sub(r"[^a-z0-9]", "", str(v or "").lower()) in {"requestrevision", "requestapprovalrevision", "requestchanges", "requestchange"} for v in raw_candidates if isinstance(v, str))
+        or bool(action_params.get("revision_notes") or action_params.get("revisionNotes") or payload.get("revision_notes") or payload.get("revisionNotes"))
+    ):
+        raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "RequestApprovalRevision is retired", "Use RejectDecision with notes")
+    raw_verbs = [re.sub(r"[^a-z0-9]", "", str(v).lower()) for v in raw_candidates[1:] if isinstance(v, str) and v.strip()]
+    norm_c = re.sub(r"[^a-z0-9]", "", str(command or "").lower())
+    target = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+    target_type = re.sub(r"[^a-z0-9]", "", str(target.get("type") or action_params.get("entity_type") or "").lower())
+    is_appr_target = target_type in {"approvaldecision", "approval"}
+    is_appr_cmd = norm_c in {"approvedecision", "rejectdecision"}
+    has_appr_verb = any(v in {"approve", "approved", "approvedecision", "approvedwithconditions", "approvewithconditions", "conditional", "reject", "rejected", "rejectdecision"} for v in raw_verbs)
+    act_verbs = [re.sub(r"[^a-z0-9]", "", str(v).lower()) for v in (action, action_params.get("action_id"), action_params.get("actionId"), action_params.get("action"), action_params.get("verb")) if isinstance(v, str) and v.strip()]
+    has_hg_act = any(v.startswith("humangate") for v in act_verbs) and not any(v in {"approve", "approved", "approvedecision", "approvedwithconditions", "approvewithconditions", "conditional", "reject", "rejected", "rejectdecision"} for v in act_verbs)
+    is_hg = not is_appr_cmd and (norm_c.startswith("humangate") or (norm_c == "reviewaction" and has_hg_act))
+    is_gov = not is_hg and (is_appr_cmd or is_appr_target or (norm_c == "reviewaction" and (has_appr_verb or not any(v.startswith("humangate") or v in {"requestreview", "review", "recordsponsordecision", "sponsordecision"} for v in raw_verbs))))
+    if is_gov:
+        if any(v.startswith("humangate") or v in {"requestreview", "recordsponsordecision", "sponsordecision"} for v in raw_verbs):
+            raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Conflicting action and decision", f"{command} carriers contain conflicting domain operations")
+        if any(action_params.get(k) or payload.get(k) for k in ("stage_name", "stageName", "stage_id", "stageId", "stage")):
+            raise _bff_error(501, ErrorCode.NOT_IMPLEMENTED, "named stage approvals are unsupported", "Unsupported approval action")
+        for v in (v for v in raw_candidates[1:] if isinstance(v, str) and v.strip()):
+            nv = re.sub(r"[^a-z0-9]", "", v.lower())
+            if nv in {"stage", "freeze", "escalate"}:
+                raise _bff_error(501, ErrorCode.NOT_IMPLEMENTED, f"unsupported approval action: {v}", "Unsupported approval action")
+            if nv not in {"approve", "approved", "approvedecision", "approvedwithconditions", "approvewithconditions", "conditional", "reject", "rejected", "rejectdecision"}:
+                raise _bff_error(422, ErrorCode.VALIDATION_FAILED, f"Unknown approval action: {v}", f"Carrier contains unsupported or unknown action: {v}")
+        has_app = (norm_c == "approvedecision") or any(v in {"approve", "approved", "approvedecision"} for v in raw_verbs)
+        has_cond = any(v in {"approvedwithconditions", "approvewithconditions", "conditional"} for v in raw_verbs)
+        has_rej = (norm_c == "rejectdecision") or any(v in {"reject", "rejected", "rejectdecision"} for v in raw_verbs)
+        if (has_app or has_cond) and has_rej:
+            raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Conflicting action and decision", f"{command} carriers contain conflicting verbs")
+        if (is_appr_cmd or has_app or has_cond or has_rej) and (target_type in {"humangateitem", "humangate"} or (target_type and target_type not in {"approvaldecision", "approval", "review"})):
+            raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Incompatible target and command", f"{command} cannot target {target.get('type') or action_params.get('entity_type')}")
+        verb = "approved_with_conditions" if has_cond else ("approve" if has_app else ("reject" if has_rej else action))
+        verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())
+    else:
+        if (norm_c.startswith("humangate") or any(v.startswith("humangate") for v in raw_verbs)) and is_appr_target:
+            raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Incompatible target and command", f"{command} cannot target {target.get('type') or action_params.get('entity_type')}")
+        has_cond = False
+        verb = action or action_params.get("action_id") or action_params.get("actionId") or next((v for v in raw_verbs if v), None)
+        verb = re.sub(r"[^a-z0-9]", "", str(verb or "").lower())
+    if command == "Observe" or (command == "PersonaAction" and verb == "observe"):
+        raise _bff_error(410, ErrorCode.VALIDATION_FAILED, "Observe is retired", "Use Persona read routes")
+    if norm_c == "evolutionprogramaction" or (norm_c in _EVOLUTION_ACTION_ALIASES and norm_c != "evolutionprogramaction"):
+        target_verb = verb or (_EVOLUTION_ACTION_ALIASES.get(norm_c) if norm_c in _EVOLUTION_ACTION_ALIASES else None)
+        if target_verb:
+            canonical_act = _EVOLUTION_ACTION_ALIASES.get(target_verb)
+            if canonical_act is None:
+                raise _bff_error(422, ErrorCode.VALIDATION_FAILED, f"Unknown evolution program action: {target_verb}", f"Carrier contains unsupported or unknown action: {target_verb}")
+            cleaned = dict(params) if isinstance(params, dict) else {}
+            cleaned["action_id"] = canonical_act
+            if "actionId" in cleaned:
+                cleaned["actionId"] = canonical_act
+            return {**payload, "command": "EvolutionProgramAction", "action": canonical_act, "params": cleaned}
+    canonical = "AdvanceLifecycle" if command in {"PromoteCandidate", "Demote"} else (command if norm_c in {"approvedecision", "rejectdecision"} else _WRAPPER_VERB_ALIASES.get((command, verb)))
+    if canonical is not None:
+        reject_retired_command(canonical)
+    if canonical is None:
+        return payload
+    cleaned = {k: v for k, v in params.items() if k not in ("action_id", "actionId")} if isinstance(params, dict) else params
+    if has_cond and isinstance(cleaned, dict):
+        cleaned["outcome"] = "approved_with_conditions"
+    return {**{k: v for k, v in payload.items() if k not in ("action", "action_id", "actionId")}, "command": canonical, "params": cleaned}
 
 
 def foundation_environment_scope() -> EnvironmentScope:
@@ -463,12 +637,23 @@ def build_foundation_command_context(
         runtime_id=cmd.target.id if cmd.target.type == ObjectType.RUNTIME else None,
         attributes=route_metadata,
     )
+    claims = getattr(identity, "claims", None) or {}
+    tenant_id = str(claims.get("tenant_id") or claims.get("tenantId") or claims.get("tid") or "").strip()
+    if cmd.command == CommandType.ADVANCE_LIFECYCLE:
+        if not tenant_id:
+            raise _bff_error(
+                403, ErrorCode.FORBIDDEN, "Authenticated tenant required",
+                "Persona lifecycle requires the caller's tenant claim",
+            )
+        cmd.params["actor_id"] = identity.operator_id
     req_payload = foundation_request_payload(
         cmd,
         raw_payload,
         route=route,
         source_route=source_route,
     )
+    if tenant_id:
+        req_payload["tenant_id"] = tenant_id
     trace = build_foundation_trace(
         environment=environment,
         actor_ref=actor_ref,

@@ -17,7 +17,6 @@ from .base import (
     governance_url,
     http_request_json,
     internal_url,
-    runtime_repair_url,
     utc_now,
 )
 from .capital_adapter import CapitalCommandAdapter
@@ -28,9 +27,6 @@ from .governance_adapter import GovernanceCommandAdapter
 from .incident_adapter import IncidentCommandAdapter
 from .evolution_adapter import EvolutionCommandAdapter
 from .strategy_adapter import StrategyCommandAdapter
-from .capabilities_adapter import CapabilitiesCommandAdapter
-from .agora_adapter import AgoraCommandAdapter
-from .audit_adapter import AuditCommandAdapter
 from .registry import dispatch_domain_command, find_adapter
 from .service import CommandAdapterService
 from .router import create_action_command_router, create_command_adapters_router
@@ -49,9 +45,6 @@ __all__ = [
     "IncidentCommandAdapter",
     "EvolutionCommandAdapter",
     "StrategyCommandAdapter",
-    "CapabilitiesCommandAdapter",
-    "AgoraCommandAdapter",
-    "AuditCommandAdapter",
     "build_domain_receipt",
     "capital_url",
     "deployment_url",
@@ -63,6 +56,5 @@ __all__ = [
     "governance_url",
     "http_request_json",
     "internal_url",
-    "runtime_repair_url",
     "utc_now",
 ]

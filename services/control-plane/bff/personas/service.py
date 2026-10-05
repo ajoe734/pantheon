@@ -70,10 +70,6 @@ from ..models import (
     DecisionJournalEntryDTO,
     ErrorCode,
     ErrorDetail,
-    InterventionKind,
-    InterventionListResponse,
-    InterventionRecord,
-    InterventionStatus,
     JournalEntryMergePatch,
     McpImportedTool,
     McpRejectedTool,
@@ -98,6 +94,8 @@ from ..models import (
     TargetObject,
     utc_now,
 )
+
+from ..pm12 import evaluator_results
 
 try:
     from ..capital.service import _pm12_semantic_values_match
@@ -141,7 +139,7 @@ except ImportError:
     foundation_id = lambda: str(uuid.uuid4())
     sha256_checksum = lambda data: hashlib.sha256(data.encode() if isinstance(data, str) else data).hexdigest()
 
-from ..auth.policy import bool_from_env
+from ..auth.policy import bff_me_tenant_payload, bool_from_env
 from ..shared.cross_domain_utils import (
     _management_as_float,
     _management_first_float,
@@ -154,6 +152,7 @@ from ..shared.cross_domain_utils import (
     _surface_degradation_reason,
 )
 from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.command_adapters.retired import reject_retired_command
 from services.control_plane.bff.command_adapters.service import (
     CommandAdapterService,
     _stable_json_hash,
@@ -178,7 +177,6 @@ from services.control_plane.bff.governance.promotion_review import (
 from services.control_plane.bff.ports import (
     ReadSurfacePorts,
     create_persona_registry_write_owner,
-    create_ranking_write_owner,
     create_read_surface_ports,
 )
 from services.control_plane.bff.ports.persona_capital_runtime import (
@@ -196,7 +194,11 @@ from services.control_plane.bff.persona_provisioning import (
     make_persona_provisioning_store,
 )
 from services.control_plane.bff.command_queue import CommandStore
-from services.control_plane.bff.ports.rankings import RankingSnapshotWriteOwnerPort
+from services.control_plane.bff.ports.rankings import RankingSnapshotReadPort
+from services.rankings.snapshots import (
+    FORMULA_VERSION as _PM12_LEAGUE_FORMULA_VERSION,
+    snapshot_record, _pm12_ranking_snapshot_content, _pm12_ranking_snapshot_payload_items,
+)
 from services.control_plane.bff.ports.persona_write_owner import PersonaRegistryHttpWritePort
 from services.control_plane.bff.ports.persona_capital_runtime import PersonaMutationPort
 
@@ -311,7 +313,7 @@ def _get_active_ranking_write_owner(explicit: Optional[Any] = None) -> Any:
 def _get_ranking_write_owner() -> Any:
     owner = _get_active_ranking_write_owner()
     if owner is None:
-        raise RuntimeError("Rankings write-owner port is not configured at startup")
+        raise RuntimeError("Rankings snapshot reader is not configured at startup")
     return owner
 
 
@@ -2672,8 +2674,12 @@ def _persona_strategy_match_action_response(
             creator = getattr(rks, "create_research_ticket", None) if rks else None
         if creator is None:
             try:
-                from services.research.write_owner import build_research_write_owner
-                creator = getattr(build_research_write_owner(), "create_research_ticket", None)
+                try:
+                    from ..research.client import ResearchServiceClient, resolve_orchestrator_base_url
+                except (ImportError, ValueError):
+                    from services.control_plane.bff.research.client import ResearchServiceClient, resolve_orchestrator_base_url
+                url = resolve_orchestrator_base_url()
+                creator = getattr(ResearchServiceClient(base_url=url), "create_research_ticket", None) if url else None
             except Exception:
                 creator = None
         if creator is None:
@@ -3192,6 +3198,20 @@ def _persona_intent_agora_persona_ids(session: Dict[str, Any]) -> List[str]:
         ref_id = _persona_intent_text(ref.get("ref_id") or ref.get("id"))
         if ref_type == "persona" and ref_id:
             persona_ids.append(ref_id)
+    for key in ("persona_id", "personaId", "from_persona_id", "fromPersonaId"):
+        raw_val = _persona_intent_text(session.get(key))
+        if raw_val:
+            persona_ids.append(raw_val)
+    if session.get("target_type") == "persona":
+        target_ref = _persona_intent_text(session.get("target_ref") or session.get("targetRef"))
+        if target_ref:
+            persona_ids.append(target_ref)
+    raw_pids = session.get("persona_ids") or session.get("personaIds")
+    if isinstance(raw_pids, list):
+        for pid in raw_pids:
+            clean_pid = _persona_intent_text(pid)
+            if clean_pid:
+                persona_ids.append(clean_pid)
     seen: set[str] = set()
     ordered: List[str] = []
     for persona_id in persona_ids:
@@ -3203,11 +3223,11 @@ def _persona_intent_agora_persona_ids(session: Dict[str, Any]) -> List[str]:
 
 # --- _persona_intent_agora_item ---
 def _persona_intent_agora_item(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    session_id = _management_record_id(session, "sessionId", "session_id", "id")
+    session_id = _management_record_id(session, "sessionId", "session_id", "id", "requestId", "request_id")
     if not session_id:
         return None
     status = _persona_intent_text(session.get("status") or "unknown").lower() or "unknown"
-    mode = _persona_intent_text(session.get("mode") or session.get("sessionType") or "agora_session")
+    mode = _persona_intent_text(session.get("mode") or session.get("sessionType") or session.get("consultation_type") or "agora_session")
     messages = [message for message in (session.get("messages") or []) if isinstance(message, dict)]
     latest_message_at = max(
         [
@@ -3222,7 +3242,13 @@ def _persona_intent_agora_item(session: Dict[str, Any]) -> Optional[Dict[str, An
         if isinstance(ref, dict)
     ]
     persona_ids = _persona_intent_agora_persona_ids(session)
-    topic = _persona_intent_text(session.get("topic") or session.get("title"))
+    topic = _persona_intent_text(
+        session.get("topic")
+        or session.get("title")
+        or session.get("task")
+        or session.get("task_summary")
+        or session.get("taskSummary")
+    )
     occurred_at = _persona_intent_timestamp(session)
     item_id = f"agora_session:{session_id}"
     agora_summary = {
@@ -3248,17 +3274,23 @@ def _persona_intent_agora_item(session: Dict[str, Any]) -> Optional[Dict[str, An
         "persona_id": persona_ids[0] if persona_ids else None,
         "persona_ids": persona_ids,
         "intent": mode,
-        "title": session.get("title") or f"Agora session {session_id}",
+        "title": (
+            session.get("title")
+            or session.get("task")
+            or session.get("task_summary")
+            or session.get("taskSummary")
+            or f"Agora session {session_id}"
+        ),
         "summary": topic or "Agora session intent summary.",
         "status": status,
         "created_at": session.get("createdAt") or session.get("created_at"),
-        "updated_at": session.get("updatedAt") or session.get("updated_at") or latest_message_at,
+        "updated_at": session.get("updatedAt") or session.get("updated_at") or latest_message_at or session.get("createdAt") or session.get("created_at"),
         "occurred_at": occurred_at,
         "agora": agora_summary,
         "redacted": True,
         "redaction": _persona_intent_redaction(["messages", "message_content", "raw_transcript"]),
         "route": "/management/persona-intent?source_type=agora_session",
-        "bff_detail_path": f"/bff/agora/ask/sessions/{session_id}",
+        "bff_detail_path": None,
     }
 
 
@@ -3291,8 +3323,20 @@ def _persona_intent_all_items(tenant_id: Optional[str] = None) -> tuple[
         for persona in personas
         if _persona_intent_text(persona.get("persona_id") or persona.get("id"))
     }
-    agora_sessions = list(_get_active_read_store().list_agora_sessions() or [])
+    active_store = _get_active_read_store()
+    if hasattr(active_store, "list_consult_requests"):
+        consult_records = list(active_store.list_consult_requests() or [])
+    else:
+        consult_records = []
+    if not consult_records and hasattr(active_store, "list_agora_sessions"):
+        agora_sessions = list(active_store.list_agora_sessions() or [])
+    else:
+        agora_sessions = consult_records
+
     for session in agora_sessions:
+        session_tenant = _persona_intent_text(session.get("tenant_id") or session.get("tenantId"))
+        if tenant_id and session_tenant and session_tenant != tenant_id:
+            continue
         referenced_persona_ids = _persona_intent_agora_persona_ids(session)
         if referenced_persona_ids and not all(
             persona_id in visible_persona_ids for persona_id in referenced_persona_ids
@@ -3837,8 +3881,8 @@ def _market_persona_required_data_sources(item: dict[str, Any]) -> list[dict[str
                 "cadence": "daily",
                 "source_class": "live_pull",
                 "connector_candidates": [
-                    "tw-finmind-datasets",
                     "tw-twse-tpex-official-market",
+                    "tw-finmind-datasets",
                 ],
                 "policy_gates": [
                     "require_connector_approved",
@@ -4520,7 +4564,6 @@ _PM12_LEAGUE_MOVER_DIRECTIONS = {"all", "up", "down", "flat", "new"}
 
 
 # --- _PM12_LEAGUE_FORMULA_VERSION ---
-_PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
 
 
 # --- _PM12_QUARTERLY_FORMULA_DOC_REF ---
@@ -4747,8 +4790,15 @@ def _pm12_public_quarter_evidence_refs(
     identity: OperatorIdentity,
     quarter_window: Dict[str, Any],
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, bool]:
-    raw_evidence_refs = _get_active_read_store().list_evidence_refs()
-    evidence_dataset_available = _get_active_read_store().dataset_source("evidence_refs") != "missing"
+    store = _get_active_read_store()
+    try:
+        raw_evidence_refs = store.list_evidence_refs() if store is not None else []
+    except Exception:
+        raw_evidence_refs = []
+    evidence_dataset_available = (
+        store is not None
+        and store.dataset_source("evidence_refs") not in ("missing", "unavailable")
+    )
     quarter_evidence_refs = (
         _pm12_quarter_evidence_refs(raw_evidence_refs, quarter_window)
         if evidence_dataset_available
@@ -4762,6 +4812,7 @@ def _pm12_public_quarter_evidence_refs(
         identity,
         quarter_evidence_refs,
         capabilities=capabilities,
+        default_kind="artifact",
     )
     return (
         [
@@ -4795,7 +4846,7 @@ def _pm12_quarterly_ranking_governance_state(persona_id: str, quarter: str) -> s
         cmd_type = record.get("type")
         cmd_status = record.get("status")
 
-        if cmd_type == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+        if cmd_type == "QuarterlyRankingRecommendationSubmit":
             rec_id = str(params.get("recommendation_id") or params.get("recommendationId") or "").strip().lower()
             if rec_id.startswith(f"pm12-{clean_quarter}-{clean_persona}-"):
                 has_submission = True
@@ -5557,24 +5608,108 @@ def _enrich_persona_item_with_bindings(
     return enriched
 
 
+# --- _lifecycle_owner_review_state ---
+def _lifecycle_owner_review_state(saved: Dict[str, Any], *, tenant_id: str) -> Dict[str, Any]:
+    """Read the evaluator's persisted lifecycle proposal back from its Governance owner.
+
+    The ApprovalDecision is the only approval record: this never creates, votes
+    or translates one. Advisory entries have no proposal and stay non-executable.
+    """
+    request = saved.get("governance_request")
+    state: Dict[str, Any] = {"submitted": False, "submit_status": "not_applicable", "decision": None,
+                             "decided_at": None, "decided_by": None, "owner_decision": None}
+    if not isinstance(request, dict) or not request.get("decision_id"):
+        return {**state, "status": "advisory_report", "decision_status": "not_applicable"}
+    decision_id = str(request["decision_id"])
+    try:
+        row = _get_active_read_store().get_approval_decision(decision_id)
+    except Exception:
+        row = None
+    owned = (
+        isinstance(row, dict)
+        and str(row.get("decision_id") or "") == decision_id
+        and str(row.get("tenant_id") or "") == tenant_id
+        and str(row.get("target_id") or "") == str(saved.get("persona_id") or "")
+        and row.get("proposal_id") == saved.get("recommendation_id")
+        and row.get("target_type") == "persona_lifecycle_transition"
+        and isinstance(subject := (row.get("metadata") or {}).get("subject"), dict)
+        and subject.get("persona_id") == saved.get("persona_id")
+        and subject.get("from_state") == saved.get("from_state")
+        and subject.get("to_state") == request.get("to_state")
+        and row.get("proposal_content_digest") == hashlib.sha256(json.dumps({
+            "persona_id": str(saved.get("persona_id") or ""), "action_id": str(saved.get("action_id") or ""),
+            "from_state": str(saved.get("from_state") or ""), "rationale": str(saved.get("rationale") or "").strip(),
+            "evidence_ref_ids": sorted(saved.get("evidence_ref_ids") or []),
+        }, sort_keys=True).encode()).hexdigest()
+    )
+    if not owned:
+        return {**state, "submitted": True, "submit_status": "owner_unavailable", "status": "owner_unavailable",
+                "decision_status": "unavailable", "owner_decision": {"decision_id": decision_id, "available": False}}
+    votes = ((row.get("metadata") or {}).get("approvals")) or []
+    decision_state = str(row.get("decision_state") or "")
+    decided = decision_state == "decided"
+    pending = decision_state in ("", "proposed", "under_review")
+    return {
+        **state, "submitted": True, "submit_status": "owner_proposed",
+        "status": "pending_human_gate" if pending else "decision_accepted" if decided else f"decision_{decision_state}",
+        "decision_status": "pending" if pending else decision_state,
+        "decision": row.get("decision") if decided else None,
+        "decided_at": row.get("decided_at") if decided else None,
+        "decided_by": row.get("actor_id") if decided else None,
+        "owner_decision": {
+            "decision_id": decision_id, "available": True, "to_state": subject["to_state"],
+            "decision_state": row.get("decision_state"), "version": row.get("version"),
+            "vote_count": len(votes) if isinstance(votes, list) else 0,
+            "proposal_content_digest": row.get("proposal_content_digest"),
+        },
+    }
+
+
 # --- _pm12_quarterly_recommendations ---
 def _pm12_quarterly_recommendations(
     ranked_items: List[Dict[str, Any]],
     *,
     quarter_window: Dict[str, Any],
     evidence_refs: List[Dict[str, Any]],
+    tenant_id: str = "",
 ) -> List[Dict[str, Any]]:
+    result = evaluator_results.saved_evaluator_result(quarter_window["quarter"]) or {}
     recommendations: List[Dict[str, Any]] = []
-    for item in ranked_items:
-        for action_id in _pm12_recommendation_action_ids(item):
-            recommendations.append(
-                _pm12_quarterly_recommendation_item(
-                    item,
-                    action_id=action_id,
-                    quarter_window=quarter_window,
-                    evidence_refs=evidence_refs,
-                )
+    snapshots: Dict[str, Dict[str, Any]] = {}
+    # ranked_items is already tenant/persona-visibility filtered for the caller.
+    visible_persona_ids = {i.get("persona_id") for i in ranked_items if isinstance(i, dict)}
+    for saved in result.get("items") or []:
+        if saved.get("persona_id") not in visible_persona_ids:
+            continue  # fail closed: caller cannot see this persona
+        snapshot_id = str(saved.get("ranking_snapshot_id") or "")
+        if snapshot_id not in snapshots:
+            try:
+                record = _get_ranking_write_owner().get_ranking_snapshot(snapshot_id)
+                if not isinstance(record, dict):
+                    raise LookupError("saved evaluator snapshot is missing")
+            except Exception as exc:
+                raise _bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Saved ranking snapshot unavailable",
+                                 "The evaluator result cannot be resolved from Rankings.") from exc
+            snapshots[snapshot_id] = record
+        item = next(
+            (
+                i for i in snapshots[snapshot_id].get("items") or []
+                if isinstance(i, dict) and i.get("persona_id") == saved.get("persona_id")
+            ),
+            None,
+        )
+        if item is None:
+            continue  # fail closed: evaluated snapshot cannot be resolved
+        recommendations.append(
+            _pm12_quarterly_recommendation_item(
+                {**json.loads(json.dumps(item)), "ranking_snapshot_id": snapshot_id, "evidence_refs": []},
+                action_id=saved["action_id"],
+                quarter_window=quarter_window,
+                evidence_refs=[],
+                saved={**saved, "evaluator_run_id": result.get("run_id"), "evaluated_at": result.get("evaluated_at")},
+                tenant_id=tenant_id,
             )
+        )
     recommendations.sort(
         key=lambda entry: (
             _HUMAN_INBOX_PRIORITY_RANK.get(str(entry.get("priority") or "unknown"), 0),
@@ -5585,22 +5720,6 @@ def _pm12_quarterly_recommendations(
         reverse=True,
     )
     return recommendations
-
-
-# --- _promotion_review_scoped_idempotency_key ---
-def _promotion_review_scoped_idempotency_key(
-    idempotency_key: Optional[str],
-    x_idempotency_key: Optional[str],
-    review_revision_id: str,
-) -> str:
-    client_key = _resolve_final_idempotency_key(
-        idempotency_key,
-        x_idempotency_key,
-    )
-    revision_digest = hashlib.sha256(
-        _promotion_review_clean_id(review_revision_id).encode("utf-8")
-    ).hexdigest()[:32]
-    return f"{client_key}:promotion-review:{revision_digest}"
 
 
 # --- _promotion_review_item_from_recommendation ---
@@ -5616,34 +5735,16 @@ def _promotion_review_item_from_recommendation(
         recommendation_id,
         recommendation.get("ranking_snapshot_id"),
     )
-    private_submission = _promotion_review_submission_projection(
-        review_id,
-        include_source_recommendation=True,
-    )
-    stored_source = (
-        private_submission.get("source_recommendation")
-        if isinstance(private_submission, dict)
-        else None
-    )
-    if isinstance(stored_source, dict):
-        recommendation = json.loads(json.dumps(stored_source))
-        recommendation["evidence_refs"] = []
-        recommendation["evidence_ref_ids"] = []
-    submission = (
-        {
-            key: value
-            for key, value in private_submission.items()
-            if key != "source_recommendation"
-        }
-        if isinstance(private_submission, dict)
-        else None
-    )
+    owner_state = recommendation.get("human_review_state") or {}
     action_id = str(recommendation.get("action_id") or "")
-    decision = _promotion_review_decision_projection(review_id)
     stage_path = _promotion_review_stage_path(recommendation)
     target_stage = str(stage_path.get("target_stage") or "governance_review")
-    status = "decision_accepted" if decision else "pending_human_gate" if submission else "recommended_not_submitted"
-    decision_status = str((decision or {}).get("decision_status") or "pending")
+    status = str(owner_state.get("status") or "advisory_report")
+    decision_status = str(owner_state.get("decision_status") or "not_applicable")
+    owner = owner_state.get("owner_decision") or {}
+    # Terminal decisions leave the approval queue; their authoritative readback is the Governance owner.
+    inbox_id = f"approval:{owner['decision_id']}" if owner.get("available") and decision_status == "pending" else None
+    owner_href = f"/api/v1/approval-decisions/{quote(str(owner['decision_id']), safe='')}" if owner.get("available") else None
     governance = {
         "requires_human_gate_decision": True,
         "decision_status": decision_status,
@@ -5687,15 +5788,16 @@ def _promotion_review_item_from_recommendation(
         "risk_level": recommendation.get("risk_level"),
         "status": status,
         "decision_status": decision_status,
-        "submitted": bool(submission),
-        "submit_status": (submission or {}).get("submit_status") if submission else "not_submitted",
-        "human_inbox_id": f"{_PROMOTION_REVIEW_TARGET_PREFIX}{review_id}",
+        "submitted": bool(owner_state.get("submitted")),
+        "submit_status": owner_state.get("submit_status"),
+        "human_inbox_id": inbox_id,
         "allowed_decisions": sorted(_PROMOTION_REVIEW_DECISIONS),
+        "owner_decision": owner_state.get("owner_decision"),
         "allowedActions": {
-            "canSubmit": not bool(submission),
-            "canApprove": bool(submission),
-            "canApproveWithConditions": bool(submission),
-            "canReject": bool(submission),
+            "canSubmit": False,
+            "canApprove": False,
+            "canApproveWithConditions": False,
+            "canReject": False,
         },
         "promotion_path": stage_path,
         "review_kind": stage_path.get("review_kind"),
@@ -5714,16 +5816,12 @@ def _promotion_review_item_from_recommendation(
         "links": {
             "persona": f"/bff/personas/{recommendation.get('persona_id')}",
             "recommendation": "/bff/management/quarterly-ranking/recommendations",
-            "submit": f"/bff/management/quarterly-ranking/recommendations/{quote(recommendation_id, safe='')}/submit",
             "detail": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}",
             "decisions": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}/decisions",
-            "human_inbox": f"/bff/management/human-inbox/{quote(_promotion_review_target_id(review_id), safe='')}",
+            "human_inbox": f"/bff/management/human-inbox/{quote(inbox_id, safe=':')}" if inbox_id else None,
+            "owner_decision": owner_href,
         },
     }
-    if submission:
-        item["submission"] = submission
-    if decision:
-        item["decision"] = decision
     return item
 
 
@@ -5770,6 +5868,7 @@ def _promotion_review_items(
         ranked_items,
         quarter_window=quarter_window,
         evidence_refs=public_evidence_refs,
+        tenant_id=caller_tenant_id,
     )
     reviews = [
         _promotion_review_item_from_recommendation(item)
@@ -5878,165 +5977,6 @@ def _promotion_review_rationale(payload: Dict[str, Any]) -> str:
     ).strip()
 
 
-# --- _promotion_review_decision_payload ---
-def _promotion_review_decision_payload(
-    *,
-    payload: Dict[str, Any],
-    review: Dict[str, Any],
-    decision: str,
-    rationale: str,
-    identity: OperatorIdentity,
-) -> Dict[str, Any]:
-    command_payload = {
-        **payload,
-        "decision": decision,
-        "review_id": review["review_id"],
-        "promotion_review_id": review["promotion_review_id"],
-        "recommendation_id": review["recommendation_id"],
-        "ranking_snapshot_id": review.get("ranking_snapshot_id"),
-        "persona_id": review.get("persona_id"),
-        "action_id": review.get("action_id"),
-        "promotion_stage_from": "paper",
-        "promotion_stage_to": (review.get("promotion_path") or {}).get("target_stage"),
-        "eventual_live_stage": "live",
-        "live_promotion_requires_separate_human_gate": True,
-        "requires_human_gate_decision": True,
-        "live_capital_mutation": False,
-        "liveCapitalMutation": False,
-        "liveCapitalSideEffects": False,
-        "direct_live_capital_mutation": False,
-        "runtime_mutation": False,
-        "audit_event": f"promotion_review.{decision}",
-        "actor_id": identity.operator_id,
-        "policy": "promotion_governance_human_gate_no_direct_live_capital",
-    }
-    if rationale:
-        command_payload["rationale"] = rationale
-    if decision == "reject":
-        command_payload["rejection_reason"] = rationale
-    if "conditions" in payload:
-        command_payload["conditions"] = json.loads(json.dumps(payload.get("conditions")))
-    return command_payload
-
-
-# --- _promotion_review_decision_response ---
-def _promotion_review_decision_response(
-    command_response: JSONResponse,
-    *,
-    review: Dict[str, Any],
-    decision: str,
-    command_payload: Dict[str, Any],
-    client_idempotency_key: Optional[str] = None,
-) -> JSONResponse:
-    content = json.loads(command_response.body.decode("utf-8") if command_response.body else "{}")
-    data = content.setdefault("data", {})
-    data.update(
-        {
-            "review_id": review["review_id"],
-            "promotion_review_id": review["promotion_review_id"],
-            "recommendation_id": review["recommendation_id"],
-            "persona_id": review.get("persona_id"),
-            "action_id": review.get("action_id"),
-            "ranking_snapshot_id": review.get("ranking_snapshot_id"),
-            "decision": decision,
-            "decision_status": "accepted",
-            "requires_human_gate_decision": True,
-            "live_capital_mutation": False,
-            "liveCapitalMutation": False,
-            "liveCapitalSideEffects": False,
-            "direct_live_capital_mutation": False,
-            "runtime_mutation": False,
-            "promotion_stage_from": "paper",
-            "promotion_stage_to": command_payload.get("promotion_stage_to"),
-            "eventual_live_stage": "live",
-        }
-    )
-    if command_payload.get("rationale"):
-        data["rationale"] = command_payload.get("rationale")
-    if "conditions" in command_payload:
-        data["conditions"] = json.loads(json.dumps(command_payload.get("conditions")))
-    meta = content.setdefault("meta", {})
-    if client_idempotency_key:
-        meta["idempotency"] = {
-            **(
-                meta.get("idempotency")
-                if isinstance(meta.get("idempotency"), dict)
-                else {}
-            ),
-            "key": client_idempotency_key,
-            "idempotencyKey": client_idempotency_key,
-        }
-    meta.update(
-        {
-            "live_capital_mutation": False,
-            "liveCapitalMutation": False,
-            "liveCapitalSideEffects": False,
-            "direct_live_capital_mutation": False,
-            "runtime_mutation": False,
-            "requires_human_gate_decision": True,
-            "decision_status": "accepted",
-            "decision": decision,
-            "governance_policy": "promotion_governance_human_gate_no_direct_live_capital",
-        }
-    )
-    return JSONResponse(status_code=command_response.status_code, content=jsonable_encoder(content))
-
-
-# --- _promotion_review_submit_response ---
-def _promotion_review_submit_response(
-    command_response: JSONResponse,
-    *,
-    review: Dict[str, Any],
-    client_idempotency_key: Optional[str] = None,
-) -> JSONResponse:
-    content = json.loads(command_response.body.decode("utf-8") if command_response.body else "{}")
-    refreshed = _promotion_review_item_from_recommendation(review["source_recommendation"])
-    data = content.setdefault("data", {})
-    data.update(
-        {
-            "review_id": refreshed["review_id"],
-            "promotion_review_id": refreshed["promotion_review_id"],
-            "recommendation_id": refreshed["recommendation_id"],
-            "persona_id": refreshed.get("persona_id"),
-            "action_id": refreshed.get("action_id"),
-            "ranking_snapshot_id": refreshed.get("ranking_snapshot_id"),
-            "status": refreshed.get("status"),
-            "submitted": True,
-            "human_inbox_id": refreshed.get("human_inbox_id"),
-            "requires_human_gate_decision": True,
-            "live_capital_mutation": False,
-            "liveCapitalMutation": False,
-            "direct_live_capital_mutation": False,
-            "runtime_mutation": False,
-            "review": refreshed,
-            "links": refreshed.get("links") or {},
-        }
-    )
-    meta = content.setdefault("meta", {})
-    if client_idempotency_key:
-        meta["idempotency"] = {
-            **(
-                meta.get("idempotency")
-                if isinstance(meta.get("idempotency"), dict)
-                else {}
-            ),
-            "key": client_idempotency_key,
-            "idempotencyKey": client_idempotency_key,
-        }
-    meta.update(
-        {
-            "ranking_snapshot_id": refreshed.get("ranking_snapshot_id"),
-            "live_capital_mutation": False,
-            "liveCapitalMutation": False,
-            "direct_live_capital_mutation": False,
-            "runtime_mutation": False,
-            "requires_human_gate_decision": True,
-            "governance_policy": "promotion_governance_human_gate_no_direct_live_capital",
-        }
-    )
-    return JSONResponse(status_code=command_response.status_code, content=jsonable_encoder(content))
-
-
 # --- _project_persona_league_row ---
 def _project_persona_league_row(
     raw: Dict[str, Any],
@@ -6075,6 +6015,7 @@ def _project_persona_league_row(
         "owner": metadata.get("owner") or raw.get("owner") or "pantheon-bff",
         "updated_at": raw.get("updated_at") or raw.get("created_at") or utc_now(),
         "state": _normalize_lifecycle_state(raw.get("lifecycle_state") or raw.get("state")),
+        "owner_lifecycle_state": str(raw.get("lifecycle_state") or "").strip().lower() or None,
         "risk": _normalize_risk_level(metadata.get("risk_level") or raw.get("risk")),
         "archetype": archetype,
         "routed_strategy_count": int(routed or 0),
@@ -6260,16 +6201,16 @@ def _pm12_persona_league_rows(
 
 
 # --- _pm12_persona_league_source_surfaces ---
-def _pm12_persona_league_source_surfaces(snapshot_at: str) -> Dict[str, Dict[str, Any]]:
+def _pm12_persona_league_source_surfaces(snapshot_at: str, read_store: Optional[Any] = None) -> Dict[str, Dict[str, Any]]:
     return {
-        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
+        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at, read_store=read_store),
         "route_policies": _composed_surface_status(snapshot_at=snapshot_at),
-        "capability_snapshots": _dataset_surface_status("capability_snapshots", snapshot_at=snapshot_at),
-        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
-        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
-        "telemetry_summaries": _dataset_surface_status("telemetry_summaries", snapshot_at=snapshot_at),
-        "persona_sessions": _dataset_surface_status("sessions", snapshot_at=snapshot_at),
-        "teaching_sessions": _dataset_surface_status("teaching_sessions", snapshot_at=snapshot_at),
+        "capability_snapshots": _dataset_surface_status("capability_snapshots", snapshot_at=snapshot_at, read_store=read_store),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at, read_store=read_store),
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at, read_store=read_store),
+        "telemetry_summaries": _dataset_surface_status("telemetry_summaries", snapshot_at=snapshot_at, read_store=read_store),
+        "persona_sessions": _dataset_surface_status("persona_sessions", snapshot_at=snapshot_at, read_store=read_store),
+        "teaching_sessions": _dataset_surface_status("teaching_sessions", snapshot_at=snapshot_at, read_store=read_store),
         "persona_memory": _composed_surface_status(snapshot_at=snapshot_at),
     }
 
@@ -6387,6 +6328,7 @@ def _pm12_persona_league_ranking_item(
         "name": row.get("name"),
         "owner": row.get("owner"),
         "state": state,
+        "owner_lifecycle_state": row.get("owner_lifecycle_state"),
         "stage": stage,
         "deployment_stage": row.get("deployment_stage"),
         "capital_mode": row.get("capital_mode"),
@@ -9133,23 +9075,14 @@ def _list_governance_audit_events(
 
 # --- _pm12_recommendation_snapshot_record ---
 def _pm12_recommendation_snapshot_record(snapshot_id: str) -> Dict[str, Any]:
-    """Read back a previously admitted PM12 ranking snapshot.
-
-    ``_pm12_attach_ranking_snapshot`` durably persists quarterly ranking
-    snapshots through the canonical Rankings write-owner port
-    (``_get_ranking_write_owner()``, see ``ports/rankings.py``). Recommendation
-    submission must re-admit a caller-asserted ``ranking_snapshot_id`` against
-    that same canonical store -- not the retired ``ReadSurfacePorts`` local
-    overlay, which is a distinct store that never observes snapshots written
-    here.
-    """
+    """Read the evaluator-admitted snapshot from the sole Rankings table."""
     record = _get_ranking_write_owner().get_ranking_snapshot(snapshot_id)
     if not isinstance(record, dict):
         raise _bff_error(
             422,
             ErrorCode.VALIDATION_FAILED,
             "unknown ranking snapshot",
-            "The submitted ranking_snapshot_id does not match a BFF-admitted quarterly ranking snapshot.",
+            "The submitted ranking_snapshot_id does not match an evaluator-admitted quarterly ranking snapshot.",
             precondition_failed="ranking_snapshot_id",
         )
     return record
@@ -9177,28 +9110,23 @@ def _pm12_resolve_quarterly_recommendation_submit_params(
             precondition_failed="quarter",
         )
 
-    matched_item: Optional[Dict[str, Any]] = None
-    matched_action_id = ""
-    for item in snapshot.get("items") or []:
-        if not isinstance(item, dict):
-            continue
-        persona_id = str(item.get("persona_id") or "").strip()
-        for action_id in _pm12_recommendation_action_ids(item):
-            expected_id = f"pm12-{quarter.lower()}-{persona_id}-{action_id}"
-            if expected_id == recommendation_id:
-                matched_item = item
-                matched_action_id = action_id
-                break
-        if matched_item is not None:
-            break
-    if matched_item is None:
+    saved = evaluator_results.saved_recommendation(quarter, snapshot_id, recommendation_id)
+    matched_item = next(
+        (
+            i for i in snapshot.get("items") or []
+            if isinstance(i, dict) and str(i.get("persona_id") or "").strip() == (saved or {}).get("persona_id")
+        ),
+        None,
+    )
+    if saved is None or saved.get("ranking_snapshot_id") != snapshot_id or matched_item is None:
         raise _bff_error(
             422,
             ErrorCode.VALIDATION_FAILED,
             "recommendation is not in the admitted ranking snapshot",
-            "The recommendation id/action/persona tuple was not materialized by the snapshot.",
+            "The recommendation was not saved by the persona evaluator for this snapshot.",
             precondition_failed="recommendation_id",
         )
+    matched_action_id = saved["action_id"]
     review_revision_id = _promotion_review_revision_id(
         recommendation_id,
         snapshot_id,
@@ -9243,6 +9171,7 @@ def _pm12_resolve_quarterly_recommendation_submit_params(
         action_id=matched_action_id,
         quarter_window=quarter_window,
         evidence_refs=[],
+        saved=saved,
     )
     source_recommendation["human_review_state"] = {
         "status": "recommended_not_submitted",
@@ -9845,65 +9774,17 @@ def _bff_me_tenant_payload(
     *,
     requested_tenant: Optional[str],
 ) -> Dict[str, Any]:
-    claim_default = _first_nonblank(
-        *_identity_claim_strings(
-            identity,
-            [
-                "tenant_id",
-                "tenantId",
-                "tenant.id",
-                "tid",
-                "org_id",
-                "organization.id",
-                "tenant_ids",
-                "tenantIds",
-            ],
-        )
-    )
-    default_tenant = _first_nonblank(
-        os.getenv("PANTHEON_BFF_TENANT_ID"),
-        os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
-        os.getenv("PANTHEON_TENANT_ID"),
-        claim_default,
-        "pantheon-dev",
-    )
-    claim_allowed = _identity_claim_strings(
-        identity,
-        [
-            "allowed_tenants",
-            "allowedTenants",
-            "tenant_ids",
-            "tenantIds",
-            "tenants",
-            "tenant_id",
-            "tenantId",
-            "tenant.id",
-            "tid",
-            "org_id",
-        ],
-    )
-    allowed_tenants = claim_allowed or _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [default_tenant]
-    effective_tenant = _first_nonblank(requested_tenant, default_tenant) or "pantheon-dev"
-    if "*" not in allowed_tenants and effective_tenant not in allowed_tenants:
+    payload = bff_me_tenant_payload(identity, requested_tenant=requested_tenant)
+    if not payload["id"]:
         raise _bff_error(
             403,
             ErrorCode.FORBIDDEN,
             "Tenant access denied",
-            "Requested tenant is outside the caller tenant scope",
+            "Caller has no tenant scope for this private read",
             precondition_failed="tenant_scope",
-            suggestion="Switch to an allowed tenant or request access from an administrator",
-            details_extra={
-                "tenantId": effective_tenant,
-                "allowedTenantIds": allowed_tenants,
-            },
+            suggestion="Re-authenticate with a tenant-scoped token",
         )
-    return {
-        "id": effective_tenant,
-        "requested_id": str(requested_tenant or "").strip() or None,
-        "default_id": default_tenant,
-        "allowed_ids": allowed_tenants,
-        "scope": "global" if "*" in allowed_tenants else "tenant",
-    }
+    return payload
 
 
 # --- _read_surface_and_page_helpers ---
@@ -10019,11 +9900,11 @@ def _dataset_surface_status(
             "served_from": _LEGACY_LOOP_RUN_SOURCE,
             "last_known_at": snapshot_at or utc_now(),
         }
-    elif source == "missing":
+    elif source in ("missing", "unavailable"):
         surface["status"] = "unavailable"
         surface.setdefault(
             "staleness",
-            {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
+            {"served_from": "unverifiable" if source == "missing" else source, "last_known_at": snapshot_at or utc_now()},
         )
 
     if has_data is False:
@@ -11020,7 +10901,6 @@ def _persona_fleet_runtime_matches(
 
 
 # --- _human_inbox_priority_helpers ---
-_HUMAN_INBOX_OPEN_SENTINEL_STATUSES = {"pending", "open", "active", "escalated"}
 _HUMAN_INBOX_PRIORITY_RANK = {
     "critical": 4,
     "high": 3,
@@ -11154,8 +11034,8 @@ def _human_inbox_sanitize_promotion_snapshot(
 def _human_inbox_decision_recommendation_id(command: Dict[str, Any]) -> str:
     command_type = str(command.get("type") or "")
     if command_type not in {
-        CommandType.HUMAN_GATE_APPROVE.value,
-        CommandType.HUMAN_GATE_REJECT.value,
+        "HumanGateApprove",
+        "HumanGateReject",
     }:
         return ""
     target = command.get("target") if isinstance(command.get("target"), dict) else {}
@@ -11223,9 +11103,9 @@ def _human_inbox_decision_projection_from_record(command: Dict[str, Any]) -> Opt
     if decision not in _PROMOTION_REVIEW_DECISIONS:
         return None
     command_type = str(command.get("type") or "")
-    if command_type == CommandType.HUMAN_GATE_REJECT.value and decision != "reject":
+    if command_type == "HumanGateReject" and decision != "reject":
         return None
-    if command_type == CommandType.HUMAN_GATE_APPROVE.value and decision not in {
+    if command_type == "HumanGateApprove" and decision not in {
         "approve",
         "approve_with_conditions",
     }:
@@ -11292,7 +11172,7 @@ def _submitted_promotion_review_records(
     decisions: Dict[str, Dict[str, Any]] = {}
     # One command-log read per aggregate, regardless of submitted row count.
     for command in _get_active_command_store()._get_all_commands():
-        if command.get("type") == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+        if command.get("type") == "QuarterlyRankingRecommendationSubmit":
             recommendation = _human_inbox_sanitize_promotion_snapshot(command)
             if recommendation is not None:
                 review_id = _promotion_review_record_revision_id(command)
@@ -11512,7 +11392,6 @@ _PM12_LEAGUE_RANKING_CRITERIA = {
     "activity": ("activity_score", "Activity"),
 }
 _PM12_LEAGUE_MOVER_DIRECTIONS = {"all", "up", "down", "flat", "new"}
-_PM12_LEAGUE_FORMULA_VERSION = "pm12-default-v1"
 _PM12_QUARTERLY_FORMULA_DOC_REF = (
     "docs/04/pantheon_bff_api_gap_2026-05-23/"
     "BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources"
@@ -11553,56 +11432,48 @@ _PM12_QUARTERLY_RECOMMENDATION_ACTIONS = {
         "priority": "high",
         "riskLevel": "medium",
         "risk_level": "medium",
-        "rationale": "Quarterly score and risk posture support canary-review consideration.",
     },
     "increase_research_budget": {
         "label": "Increase research budget",
         "priority": "medium",
         "riskLevel": "low",
         "risk_level": "low",
-        "rationale": "Quarterly score supports additional research-only budget.",
     },
     "grant_tool_access": {
         "label": "Grant tool access",
         "priority": "medium",
         "riskLevel": "low",
         "risk_level": "low",
-        "rationale": "Quarterly score and execution posture support expanded tool access review.",
     },
     "reduce_capital_access": {
         "label": "Reduce capital access",
         "priority": "high",
         "riskLevel": "high",
         "risk_level": "high",
-        "rationale": "Risk or overall score calls for capital-access reduction review.",
     },
     "require_retraining": {
         "label": "Require retraining",
         "priority": "medium",
         "riskLevel": "medium",
         "risk_level": "medium",
-        "rationale": "Quarterly component scores indicate retraining should be reviewed.",
     },
     "freeze_persona": {
         "label": "Freeze persona",
         "priority": "critical",
         "riskLevel": "critical",
         "risk_level": "critical",
-        "rationale": "Quarterly score is below the freeze-review threshold.",
     },
     "suspend_persona": {
         "label": "Suspend persona",
         "priority": "critical",
         "riskLevel": "critical",
         "risk_level": "critical",
-        "rationale": "Quarterly score is below the suspension-review threshold.",
     },
     "retire_persona": {
         "label": "Retire persona",
         "priority": "critical",
         "riskLevel": "critical",
         "risk_level": "critical",
-        "rationale": "Quarterly score is below the retirement-review threshold.",
     },
 }
 _PM12_LEAGUE_TIER_DEFINITIONS = [
@@ -12366,56 +12237,6 @@ def _pm12_quarter_window(quarter: Optional[str], snapshot_at: str) -> Dict[str, 
     }
 
 
-# --- _pm12_add_recommendation_action ---
-def _pm12_add_recommendation_action(action_ids: List[str], action_id: str) -> None:
-    if action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTIONS and action_id not in action_ids:
-        action_ids.append(action_id)
-
-
-# --- _pm12_recommendation_action_ids ---
-def _pm12_recommendation_action_ids(item: Dict[str, Any]) -> List[str]:
-    components = item.get("components") if isinstance(item.get("components"), dict) else {}
-    overall = _management_number(item.get("score")) or _management_number(item.get("overall_score")) or 0.0
-    risk_score = _management_number(components.get("risk_score"))
-    execution_score = _management_number(components.get("execution_score"))
-    activity_score = _management_number(components.get("activity_score"))
-    action_ids: List[str] = []
-
-    if overall >= 85.0 and (risk_score is None or risk_score >= 70.0) and (
-        execution_score is None or execution_score >= 65.0
-    ):
-        _pm12_add_recommendation_action(action_ids, "promote_to_canary_candidate")
-        _pm12_add_recommendation_action(action_ids, "increase_research_budget")
-        _pm12_add_recommendation_action(action_ids, "grant_tool_access")
-    elif overall >= 70.0 and (risk_score is None or risk_score >= 60.0):
-        _pm12_add_recommendation_action(action_ids, "increase_research_budget")
-        _pm12_add_recommendation_action(action_ids, "grant_tool_access")
-
-    if risk_score is not None and risk_score < 55.0:
-        _pm12_add_recommendation_action(action_ids, "reduce_capital_access")
-    if (execution_score is not None and execution_score < 55.0) or (
-        activity_score is not None and activity_score < 45.0
-    ):
-        _pm12_add_recommendation_action(action_ids, "require_retraining")
-    if overall < 55.0:
-        _pm12_add_recommendation_action(action_ids, "require_retraining")
-        _pm12_add_recommendation_action(action_ids, "reduce_capital_access")
-    if overall < 45.0:
-        _pm12_add_recommendation_action(action_ids, "freeze_persona")
-    if overall < 35.0:
-        _pm12_add_recommendation_action(action_ids, "suspend_persona")
-    if overall < 25.0:
-        _pm12_add_recommendation_action(action_ids, "retire_persona")
-
-    if not action_ids:
-        _pm12_add_recommendation_action(action_ids, "require_retraining")
-    return [
-        action_id
-        for action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
-        if action_id in action_ids
-    ]
-
-
 # --- _pm12_record_lifecycle_is_active ---
 def _pm12_record_lifecycle_is_active(
     record: Dict[str, Any],
@@ -12718,188 +12539,11 @@ def _pm12_evidence_ref_key(ref: Any) -> str:
     return str(ref or "").strip()
 
 
-# --- _pm12_ranking_snapshot_helpers ---
-_PM12_RANKING_SNAPSHOT_ITEM_FIELDS = (
-    "persona_id",
-    "rank",
-    "score",
-    "overall_score",
-    "tier",
-    "tier_id",
-    "formula_version",
-    "allocation_policy_input",
-    "components",
-    "metrics",
-    "stage",
-    "deployment_stage",
-    "capital_mode",
-    "capital_scope",
-    "capital_scope_id",
-    "capital_pool_id",
-    "capital_sleeve_id",
-    "paper_ledger_id",
-    "current_weight",
-    "target_weight",
-    "delta",
-    "current_weight_source",
-    "binding_state",
-    "binding_resolution",
-    "runtime_resolution",
-    "session_resolution",
-    "session_id",
-    "session_authority",
-    "telemetry_resolution",
-    "binding_ids",
-    "runtime_ids",
-    "strategy_ids",
-    "capital_pool_ids",
-    "sleeve_ids",
-    "artifact_ids",
-    "broker_ids",
-    "eligible",
-    "exclusion_codes",
-    "exclusion_reasons",
-    "evidence_coverage",
-    "evidence_ref_ids",
-    "source_confidence",
-)
-
-
-def _pm12_ranking_snapshot_payload_items(
-    items: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    set_like_fields = {
-        "binding_ids",
-        "runtime_ids",
-        "strategy_ids",
-        "capital_pool_ids",
-        "sleeve_ids",
-        "artifact_ids",
-        "broker_ids",
-        "exclusion_codes",
-        "exclusion_reasons",
-    }
-    payload_items: List[Dict[str, Any]] = []
-    for item in items:
-        payload_item: Dict[str, Any] = {}
-        for field in _PM12_RANKING_SNAPSHOT_ITEM_FIELDS:
-            if field not in item:
-                continue
-            if field == "evidence_ref_ids":
-                payload_item[field] = sorted(
-                    str(value).strip()
-                    for value in (
-                        item.get("_snapshot_evidence_ref_ids")
-                        or item.get(field)
-                        or []
-                    )
-                    if str(value).strip()
-                )
-            elif field in set_like_fields and isinstance(item.get(field), list):
-                payload_item[field] = sorted(
-                    item.get(field) or [],
-                    key=lambda value: json.dumps(
-                        value,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                        ensure_ascii=True,
-                    ),
-                )
-            elif field == "metrics" and isinstance(item.get(field), dict):
-                metrics = json.loads(json.dumps(item.get(field)))
-                for nested_field in ("runtime_ids", "telemetry_evidence_refs"):
-                    if isinstance(metrics.get(nested_field), list):
-                        metrics[nested_field] = sorted(
-                            metrics[nested_field],
-                            key=lambda value: json.dumps(
-                                value,
-                                sort_keys=True,
-                                separators=(",", ":"),
-                                ensure_ascii=True,
-                            ),
-                        )
-                payload_item[field] = metrics
-            else:
-                payload_item[field] = item.get(field)
-        payload_items.append(payload_item)
-    payload_items.sort(
-        key=lambda item: (
-            (
-                int(item.get("rank"))
-                if isinstance(item.get("rank"), int)
-                or str(item.get("rank") or "").isdigit()
-                else 10**9
-            ),
-            str(item.get("persona_id") or ""),
-        )
-    )
-    return payload_items
-
-
-# --- _pm12_ranking_snapshot_content ---
-def _pm12_ranking_snapshot_content(
-    items: List[Dict[str, Any]],
-    *,
-    surface: str,
-    period: str,
-) -> Dict[str, Any]:
-    return {
-        "surface": surface,
-        "period": period,
-        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
-        "items": _pm12_ranking_snapshot_payload_items(items),
-    }
-
-
-# --- _pm12_attach_ranking_snapshot ---
-def _pm12_attach_ranking_snapshot(
-    items: List[Dict[str, Any]],
-    *,
-    surface: str,
-    period: str,
-) -> tuple[List[Dict[str, Any]], str]:
-    content = _pm12_ranking_snapshot_content(items, surface=surface, period=period)
-    content_digest = _stable_json_hash(content)
-    clean_period = re.sub(
-        r"[^a-z0-9]+",
-        "-",
-        str(period or "current").strip().lower(),
-    ).strip("-")
-    snapshot_id = (
-        f"ranking-{surface}-{clean_period or 'current'}-{content_digest[:24]}"
-    )
-    evidence_assertion_digests: Dict[str, List[str]] = {}
-    for item in items:
-        persona_id = str(item.get("persona_id") or "").strip()
-        if not persona_id:
-            continue
-        evidence_assertion_digests.setdefault(persona_id, []).append(
-            _stable_json_hash(item.get("evidence_refs") or [])
-        )
-    _get_ranking_write_owner().put_ranking_snapshot({
-        "ranking_snapshot_id": snapshot_id,
-        "surface": surface,
-        "period": period,
-        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
-        "content_digest": content_digest,
-        "items": content["items"],
-        "evidence_assertion_digests": evidence_assertion_digests,
-        "created_at": utc_now(),
-    })
-    return (
-        [
-            {
-                **{
-                    key: value
-                    for key, value in item.items()
-                    if key != "_snapshot_evidence_ref_ids"
-                },
-                "ranking_snapshot_id": snapshot_id,
-            }
-            for item in items
-        ],
-        snapshot_id,
-    )
+def _pm12_attach_ranking_snapshot(items, *, surface, period):
+    """Attach a content identity only; scheduled evaluator admission owns persistence."""
+    snapshot_id = snapshot_record(items, surface=surface, period=period).ranking_snapshot_id
+    return ([{**{k: v for k, v in item.items() if k != "_snapshot_evidence_ref_ids"},
+              "ranking_snapshot_id": snapshot_id} for item in items], snapshot_id)
 
 
 # --- _pm12_quarterly_recommendation_item ---
@@ -12909,50 +12553,27 @@ def _pm12_quarterly_recommendation_item(
     action_id: str,
     quarter_window: Dict[str, Any],
     evidence_refs: List[Dict[str, Any]],
+    saved: Dict[str, Any],
+    tenant_id: str = "",
 ) -> Dict[str, Any]:
     action = _PM12_QUARTERLY_RECOMMENDATION_ACTIONS[action_id]
     persona_id = str(item.get("persona_id") or item.get("personaId") or item.get("id") or "")
     score = _management_number(item.get("score")) or _management_number(item.get("overall_score")) or 0.0
     evidence_sample = list(item.get("evidence_refs") or [])[:5]
-    evidence_ref_ids = [
-        str(ref.get("refId") or ref.get("ref_id") or ref.get("id"))
-        for ref in evidence_sample
-        if ref.get("refId") or ref.get("ref_id") or ref.get("id")
-    ]
+    evidence_ref_ids = list(saved.get("evidence_ref_ids") or [])
     recommendation_id = f"pm12-{quarter_window['quarter'].lower()}-{persona_id}-{action_id}"
     review_id = _promotion_review_revision_id(
         recommendation_id,
         item.get("ranking_snapshot_id"),
     )
-    submission = _promotion_review_submission_projection(review_id)
-    decision = _promotion_review_decision_projection(review_id)
-
-    if decision:
-        review_status = "decision_accepted"
-        decision_status = str((decision or {}).get("decision_status") or "accepted")
-    elif submission:
-        review_status = "pending_human_gate"
-        decision_status = "pending"
-    else:
-        review_status = "recommended_not_submitted"
-        decision_status = "pending"
-
-    human_review_state = {
-        "status": review_status,
-        "decision_status": decision_status,
-        "submitted": bool(submission),
-        "submit_status": (submission or {}).get("submit_status") if submission else "not_submitted",
-        "decision": (decision or {}).get("decision") if decision else None,
-        "decided_at": (decision or {}).get("decided_at") if decision else None,
-        "decided_by": (decision or {}).get("decided_by") if decision else None,
-    }
+    human_review_state = _lifecycle_owner_review_state(saved, tenant_id=tenant_id)
 
     governance = {
         "requires_human_gate_decision": True,
-        "destinations": ["human_inbox", "governance_queue", "human_gate_decision"],
+        "destinations": ["human_inbox", "governance_queue"],
         "human_inbox_route": "/bff/management/human-inbox",
         "governance_queue_route": "/api/v1/operator/governance/approval-queue",
-        "decision_type": "HumanGateDecision",
+        "decision_type": "ApprovalDecision",
         "live_capital_mutation": False,
     }
     return {
@@ -12974,6 +12595,7 @@ def _pm12_quarterly_recommendation_item(
         "owner": item.get("owner"),
         "archetype": item.get("archetype"),
         "state": item.get("state"),
+        "owner_lifecycle_state": item.get("owner_lifecycle_state"),
         "stage": item.get("stage"),
         "deployment_stage": item.get("deployment_stage"),
         "capital_mode": item.get("capital_mode"),
@@ -13021,7 +12643,11 @@ def _pm12_quarterly_recommendation_item(
         "priority": action["priority"],
         "risk_level": action["risk_level"],
         "target": {"type": "persona", "id": persona_id},
-        "rationale": f"{action['rationale']} Score={score:.2f}; tier={item.get('tier') or 'unknown'}.",
+        "rationale": saved["rationale"],
+        "recommendation_source": "persona_evaluator_agent",
+        "evaluator_run_id": saved.get("evaluator_run_id"),
+        "evaluated_at": saved.get("evaluated_at"),
+        "governance_request": saved.get("governance_request"),
         "rationale_codes": [
             f"tier:{item.get('tier') or 'unknown'}",
             f"action:{action_id}",
@@ -13037,7 +12663,18 @@ def _pm12_quarterly_recommendation_item(
         "policy": "read_only_governance_advisory",
         "links": {
             "persona": f"/bff/personas/{persona_id}",
-            "human_inbox": "/bff/management/human-inbox",
+            "human_inbox": (
+                f"/bff/management/human-inbox/approval:{quote(str(request['decision_id']), safe='')}"
+                if human_review_state["status"] == "pending_human_gate"
+                and isinstance(request := saved.get("governance_request"), dict)
+                else None
+            ),
+            "owner_decision": (
+                f"/api/v1/approval-decisions/{quote(str(request['decision_id']), safe='')}"
+                if human_review_state["submit_status"] == "owner_proposed"
+                and isinstance(request := saved.get("governance_request"), dict)
+                else None
+            ),
             "governance_queue": "/api/v1/operator/governance/approval-queue",
         },
     }
@@ -13206,7 +12843,7 @@ def _human_inbox_promotion_recommendation_id(command: Dict[str, Any]) -> str:
 
 
 def _human_inbox_trusted_promotion_submission(command: Dict[str, Any]) -> bool:
-    if command.get("type") != CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
+    if command.get("type") != "QuarterlyRankingRecommendationSubmit":
         return False
     if str(command.get("status") or "").strip().lower() in _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES:
         return False
@@ -14204,11 +13841,11 @@ class PersonaService:
         command_store: Optional[Union[CommandStore, Callable[[], CommandStore]]] = None,
         provisioning_store: Optional[Union[PersonaProvisioningStore, MemoryPersonaProvisioningStore, Callable[[], Any]]] = None,
         write_owner: Optional[Union[PersonaRegistryHttpWritePort, PersonaMutationPort, Callable[[], Any]]] = None,
-        ranking_write_owner: Optional[Union[RankingSnapshotWriteOwnerPort, Callable[[], RankingSnapshotWriteOwnerPort]]] = None,
+        ranking_write_owner: Optional[Union[RankingSnapshotReadPort, Callable[[], RankingSnapshotReadPort]]] = None,
         get_read_store: Optional[Callable[[], ReadSurfacePorts]] = None,
         get_command_store: Optional[Callable[[], CommandStore]] = None,
         get_provisioning_store: Optional[Callable[[], Any]] = None,
-        get_ranking_write_owner: Optional[Callable[[], RankingSnapshotWriteOwnerPort]] = None,
+        get_ranking_write_owner: Optional[Callable[[], RankingSnapshotReadPort]] = None,
         utc_now_fn: Optional[Callable[[], str]] = None,
         bff_error_fn: Optional[Callable[..., HTTPException]] = None,
         snapshot_meta_fn: Optional[Callable[..., Dict[str, Any]]] = None,
@@ -14588,270 +14225,6 @@ class PersonaService:
         read_store = self.get_read_store()
         return read_store.list_teaching_sessions_for_persona(persona_id, status=status) or []
 
-    def submit_quarterly_ranking_recommendation(
-        self,
-        *,
-        route_review_id: str,
-        recommendation_id: str,
-        payload: Dict[str, Any],
-        identity: Any,
-        idempotency_key: Optional[str],
-        x_idempotency_key: Optional[str],
-        snapshot_at: str,
-        bff_error: Any,
-        snapshot_meta: Any,
-        resolve_final_idempotency_key: Any,
-    ) -> Any:
-        """Domain use case: snapshot selection, revision admission, replay branching,
-        and command orchestration for quarterly ranking recommendation submission.
-
-        The HTTP handler parses inputs and authorizes the request; this method
-        owns all business branching and command dispatch, returning a JSONResponse.
-        Operates under the _current_persona_service context so module-level
-        functions (_sem_command_response, etc.) read from this instance's stores.
-        """
-        token = _current_persona_service.set(self)
-        try:
-            return self._submit_quarterly_ranking_recommendation_impl(
-                route_review_id=route_review_id,
-                recommendation_id=recommendation_id,
-                payload=payload,
-                identity=identity,
-                idempotency_key=idempotency_key,
-                x_idempotency_key=x_idempotency_key,
-                snapshot_at=snapshot_at,
-                bff_error=bff_error,
-                snapshot_meta=snapshot_meta,
-                resolve_final_idempotency_key=resolve_final_idempotency_key,
-            )
-        finally:
-            _current_persona_service.reset(token)
-
-    def _submit_quarterly_ranking_recommendation_impl(
-        self,
-        *,
-        route_review_id: str,
-        recommendation_id: str,
-        payload: Dict[str, Any],
-        identity: Any,
-        idempotency_key: Optional[str],
-        x_idempotency_key: Optional[str],
-        snapshot_at: str,
-        bff_error: Any,
-        snapshot_meta: Any,
-        resolve_final_idempotency_key: Any,
-    ) -> Any:
-        """Implementation of submit_quarterly_ranking_recommendation under active context."""
-        # Snapshot selection: resolve the ranking snapshot to bind this submission
-        requested_ranking_snapshot_id = str(
-            payload.get("ranking_snapshot_id") or ""
-        ).strip()
-        command_payload: Optional[Dict[str, Any]] = None
-        current_review: Optional[Dict[str, Any]] = None
-
-        if requested_ranking_snapshot_id:
-            command_payload = {
-                **payload,
-                "quarter": (
-                    payload.get("quarter")
-                    or _promotion_review_quarter_from_id(recommendation_id)
-                ),
-                "recommendation_id": recommendation_id,
-                "ranking_snapshot_id": requested_ranking_snapshot_id,
-            }
-            # Validate caller assertions against the durable snapshot before
-            # resolving the dynamic current alias. Forged IDs and snapshots remain
-            # validation failures rather than being masked as a missing current row.
-            _validate_quarterly_ranking_recommendation_submit(command_payload, identity)
-        else:
-            # A snapshotless request deliberately follows the mutable stable alias.
-            # A caller that supplied an admitted snapshot has already been resolved
-            # from the durable snapshot store and must not be rebound to this
-            # current-only projection after a lifecycle/session rotation.
-            current_review, _, _, _ = _promotion_review_find(
-                identity,
-                recommendation_id,
-                snapshot_at=snapshot_at,
-                quarter=str(payload.get("quarter") or "").strip() or None,
-                include_historical=False,
-            )
-            if current_review is None:
-                if route_review_id == recommendation_id:
-                    raise bff_error(
-                        404,
-                        ErrorCode.RESOURCE_NOT_FOUND,
-                        "Quarterly ranking recommendation not found",
-                        f"Recommendation {recommendation_id} does not exist",
-                        precondition_failed="recommendation_id",
-                    )
-                raise bff_error(
-                    409,
-                    ErrorCode.RESOURCE_CONFLICT,
-                    "historical promotion review requires its immutable snapshot",
-                    "Refresh the historical review and replay it with ranking_snapshot_id.",
-                    precondition_failed="ranking_snapshot_id",
-                )
-            requested_ranking_snapshot_id = str(
-                current_review.get("ranking_snapshot_id") or ""
-            ).strip()
-            command_payload = {
-                **payload,
-                "quarter": (
-                    payload.get("quarter")
-                    or _promotion_review_quarter_from_id(recommendation_id)
-                ),
-                "recommendation_id": recommendation_id,
-                "ranking_snapshot_id": requested_ranking_snapshot_id,
-            }
-            _validate_quarterly_ranking_recommendation_submit(command_payload, identity)
-
-        # Revision admission: bind to the immutable promotion review revision
-        review_revision_id = str(
-            command_payload.get("promotion_review_id")
-            or command_payload.get("review_id")
-            or ""
-        ).strip()
-        if not review_revision_id:
-            raise bff_error(
-                409,
-                ErrorCode.PRECONDITION_FAILED,
-                "admitted ranking snapshot has no promotion review revision",
-                "The server could not bind the recommendation to its immutable snapshot.",
-                precondition_failed="promotion_review_id",
-            )
-        if route_review_id != recommendation_id and route_review_id != review_revision_id:
-            raise bff_error(
-                409,
-                ErrorCode.RESOURCE_CONFLICT,
-                "promotion review revision is stale",
-                "The route revision does not identify the admitted ranking snapshot.",
-                precondition_failed="promotion_review_id",
-                suggestion="Refresh the current recommendation before submitting.",
-            )
-
-        # Historical replay branching: return idempotent response for existing submission
-        existing_submission = _promotion_review_submission_projection(
-            review_revision_id,
-            include_source_recommendation=True,
-        )
-        if existing_submission:
-            stored_source = existing_submission.get("source_recommendation")
-            if not isinstance(stored_source, dict):
-                raise bff_error(
-                    409,
-                    ErrorCode.PRECONDITION_FAILED,
-                    "submitted recommendation has no immutable source snapshot",
-                    "The legacy submission is audit-readable but cannot be replayed as a snapshot-bound revision.",
-                    precondition_failed="source_recommendation",
-                    suggestion="Submit the current governed recommendation revision.",
-                )
-            stored_source = json.loads(json.dumps(stored_source))
-            # Evidence visibility is request-scoped. Never replay stored evidence
-            # bodies across identities or roles.
-            stored_source["evidence_refs"] = []
-            stored_source["evidence_ref_ids"] = []
-            already = _promotion_review_item_from_recommendation(stored_source)
-            replay_snapshot_id = str(
-                existing_submission.get("ranking_snapshot_id")
-                or already.get("ranking_snapshot_id")
-                or ""
-            ).strip()
-            return JSONResponse(
-                status_code=200,
-                content=jsonable_encoder(
-                    {
-                        "data": {
-                            "command_id": existing_submission.get("command_id"),
-                            "review_id": already["review_id"],
-                            "promotion_review_id": already["promotion_review_id"],
-                            "recommendation_id": already["recommendation_id"],
-                            "persona_id": already.get("persona_id"),
-                            "action_id": already.get("action_id"),
-                            "ranking_snapshot_id": replay_snapshot_id,
-                            "status": already.get("status"),
-                            "submitted": True,
-                            "human_inbox_id": already.get("human_inbox_id"),
-                            "requires_human_gate_decision": True,
-                            "live_capital_mutation": False,
-                            "review": already,
-                            "links": already.get("links") or {},
-                        },
-                        "meta": {
-                            **snapshot_meta(snapshot_at),
-                            "ranking_snapshot_id": replay_snapshot_id,
-                            "idempotency": {
-                                "replayed": True,
-                                "source": "existing_submission",
-                            },
-                            "live_capital_mutation": False,
-                            "direct_live_capital_mutation": False,
-                            "requires_human_gate_decision": True,
-                            "governance_policy": "promotion_governance_human_gate_no_direct_live_capital",
-                        },
-                    }
-                ),
-            )
-
-        # Current-revision guard: only the current admitted revision may create a new submission
-        if route_review_id != recommendation_id:
-            if current_review is None:
-                current_review, _, _, _ = _promotion_review_find(
-                    identity,
-                    recommendation_id,
-                    snapshot_at=snapshot_at,
-                    quarter=str(payload.get("quarter") or "").strip() or None,
-                    include_historical=False,
-                )
-            current_revision_id = str(
-                (current_review or {}).get("promotion_review_id")
-                or (current_review or {}).get("review_id")
-                or ""
-            ).strip()
-            if route_review_id != current_revision_id:
-                raise bff_error(
-                    409,
-                    ErrorCode.RESOURCE_CONFLICT,
-                    "historical promotion review cannot create a new submission",
-                    "Only the current admitted recommendation revision may create a Human Gate submission.",
-                    precondition_failed="promotion_review_id",
-                    suggestion="Refresh the current recommendation before submitting.",
-                )
-
-        # Command orchestration: dispatch the promotion review submission command
-        source_recommendation = command_payload.get("source_recommendation")
-        if not isinstance(source_recommendation, dict):
-            raise bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "admitted ranking snapshot has no recommendation",
-                "The durable snapshot could not materialize the requested recommendation.",
-                precondition_failed="recommendation_id",
-            )
-        review = _promotion_review_item_from_recommendation(source_recommendation)
-        client_idempotency_key = resolve_final_idempotency_key(
-            idempotency_key,
-            x_idempotency_key,
-        )
-        scoped_idempotency_key = _promotion_review_scoped_idempotency_key(
-            client_idempotency_key,
-            None,
-            review["review_id"],
-        )
-        command_response = _sem_command_response(
-            command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
-            target_type=ObjectType.RANKING,
-            target_id=review["review_id"],
-            payload=command_payload,
-            identity=identity,
-            idempotency_key=scoped_idempotency_key,
-            trusted_evidence_producer=_HUMAN_INBOX_PROMOTION_PRODUCER,
-        )
-        return _promotion_review_submit_response(
-            command_response,
-            review=review,
-            client_idempotency_key=client_idempotency_key,
-        )
-
     def get_persona_league_entry(self, persona_id: str) -> Optional[Dict[str, Any]]:
         read_store = self.get_read_store()
         return read_store.get_persona_league_entry(persona_id)
@@ -15089,42 +14462,7 @@ class PersonaService:
                 },
             )
 
-        command_type = (
-            CommandType.HUMAN_GATE_REJECT
-            if raw_decision == "reject"
-            else CommandType.HUMAN_GATE_APPROVE
-        )
-        command_payload = _promotion_review_decision_payload(
-            payload=payload,
-            review=review,
-            decision=raw_decision,
-            rationale=rationale,
-            identity=identity,
-        )
-        client_idempotency_key = _resolve_final_idempotency_key(
-            idempotency_key,
-            x_idempotency_key,
-        )
-        scoped_idempotency_key = _promotion_review_scoped_idempotency_key(
-            client_idempotency_key,
-            None,
-            review["review_id"],
-        )
-        command_response = _sem_command_response(
-            command_type=command_type,
-            target_type=ObjectType.HUMAN_GATE_ITEM,
-            target_id=_promotion_review_target_id(review["review_id"]),
-            payload=command_payload,
-            identity=identity,
-            idempotency_key=scoped_idempotency_key,
-        )
-        return _promotion_review_decision_response(
-            command_response,
-            review=review,
-            decision=raw_decision,
-            command_payload=command_payload,
-            client_idempotency_key=client_idempotency_key,
-        )
+        reject_retired_command("HumanGateReject" if raw_decision == "reject" else "HumanGateApprove")
 
     def _compose_quarterly_ranking_context(
         self,
@@ -15538,174 +14876,188 @@ class PersonaService:
         snapshot_at: Optional[str] = None,
         page_slice_fn: Optional[Callable[..., Any]] = None,
     ) -> Dict[str, Any]:
-        slice_fn = page_slice_fn or _page_slice
-        ctx = self._compose_quarterly_ranking_context(
-            quarter=quarter,
-            identity=identity,
-            caller_tenant_id=caller_tenant_id,
-            snapshot_at=snapshot_at,
-        )
-        snap = ctx["snap"]
-        ranked_items = ctx["ranked_items"]
-        rows = ctx["rows"]
-        public_evidence_refs = ctx["public_evidence_refs"]
-        quarter_window = ctx["quarter_window"]
-        redacted_count = ctx["redacted_count"]
-        evidence_dataset_available = ctx["evidence_dataset_available"]
-        ranking_snapshot_id = ctx["ranking_snapshot_id"]
+        token = _current_persona_service.set(self)
+        try:
+            slice_fn = page_slice_fn or _page_slice
+            ctx = self._compose_quarterly_ranking_context(
+                quarter=quarter,
+                identity=identity,
+                caller_tenant_id=caller_tenant_id,
+                snapshot_at=snapshot_at,
+            )
+            snap = ctx["snap"]
+            ranked_items = ctx["ranked_items"]
+            rows = ctx["rows"]
+            public_evidence_refs = ctx["public_evidence_refs"]
+            quarter_window = ctx["quarter_window"]
+            redacted_count = ctx["redacted_count"]
+            evidence_dataset_available = ctx["evidence_dataset_available"]
+            ranking_snapshot_id = ctx["ranking_snapshot_id"]
 
-        recommendations = _pm12_quarterly_recommendations(
-            ranked_items,
-            quarter_window=quarter_window,
-            evidence_refs=public_evidence_refs,
-        )
+            recommendations = _pm12_quarterly_recommendations(
+                ranked_items,
+                quarter_window=quarter_window,
+                evidence_refs=public_evidence_refs,
+                tenant_id=caller_tenant_id,
+            )
 
-        enriched_recs = _pm12_filter_persona_items(
-            recommendations,
-            state=state,
-            archetype=archetype,
-            q=q,
-        )
-        filtered_recs = _filter_by_common_identifiers(
-            enriched_recs,
-            persona_id=persona_id, persona=persona,
-            runtime_id=runtime_id, runtime=runtime,
-            strategy_id=strategy_id, strategy=strategy,
-            capital_pool_id=capital_pool_id, pool=pool,
-            sleeve_id=sleeve_id, sleeve=sleeve,
-            artifact_id=artifact_id, artifact=artifact,
-            broker_id=broker_id, broker=broker,
-            stage=stage, period=period, as_of=as_of,
-        )
-        total = len(filtered_recs)
-        page_items, next_page_token = slice_fn(filtered_recs, page_token, page_size)
+            enriched_recs = _pm12_filter_persona_items(
+                recommendations,
+                state=state,
+                archetype=archetype,
+                q=q,
+            )
+            filtered_recs = _filter_by_common_identifiers(
+                enriched_recs,
+                persona_id=persona_id, persona=persona,
+                runtime_id=runtime_id, runtime=runtime,
+                strategy_id=strategy_id, strategy=strategy,
+                capital_pool_id=capital_pool_id, pool=pool,
+                sleeve_id=sleeve_id, sleeve=sleeve,
+                artifact_id=artifact_id, artifact=artifact,
+                broker_id=broker_id, broker=broker,
+                stage=stage, period=period, as_of=as_of,
+            )
+            total = len(filtered_recs)
+            page_items, next_page_token = slice_fn(filtered_recs, page_token, page_size)
 
-        formula = _pm12_quarter_formula_payload()
-        action_counts = {
-            action_id: len([item for item in filtered_recs if item.get("action_id") == action_id])
-            for action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
-        }
-        filtered_persona_ids = {
-            str(item.get("persona_id") or "")
-            for item in filtered_recs
-            if str(item.get("persona_id") or "")
-        }
-        top_item = next(
-            (
-                item
-                for item in ranked_items
-                if str(item.get("persona_id") or "") in filtered_persona_ids
-            ),
-            None,
-        )
-        summary = {
-            "quarter": quarter_window["quarter"],
-            "formula_version": formula["formula_version"],
-            "persona_count": len(rows),
-            "ranked_count": len(ranked_items),
-            "recommendation_count": total,
-            "returned_count": len(page_items),
-            "top_persona_id": (top_item or {}).get("persona_id") if isinstance(top_item, dict) else None,
-            "human_gate_decision_count": total,
-            "live_capital_mutation_count": 0,
-            "evidence_ref_count": len(public_evidence_refs),
-            "redacted_evidence_count": redacted_count,
-            "by_action": action_counts,
-            "allowed_actions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
-            "basis": formula["basis"],
-            "policy": "read_only_governance_advisory",
-            "ranking_snapshot_id": ranking_snapshot_id,
-        }
-
-        source_surfaces = _pm12_persona_league_source_surfaces(snap)
-        formula_surface = _composed_surface_status(snapshot_at=snap, available=True)
-        evidence_surface = _dataset_surface_status(
-            "evidence_refs",
-            snapshot_at=snap,
-            has_data=evidence_dataset_available,
-            missing_message="Evidence reference read surface is unavailable.",
-        )
-        approval_queue_surface = _dataset_surface_status("approval_queue_items", snapshot_at=snap)
-        human_gate_surface = _dataset_surface_status("approval_decisions", snapshot_at=snap)
-        human_inbox_surface = _composed_surface_status(
-            snapshot_at=snap,
-            available=(
-                approval_queue_surface.get("status") != "unavailable"
-                or human_gate_surface.get("status") != "unavailable"
-            ),
-            missing_message="Human Inbox and HumanGateDecision read surfaces are unavailable.",
-        )
-        quarterly_surface = _aggregate_group_surface(
-            "quarterly_ranking",
-            [*source_surfaces.values(), formula_surface, evidence_surface],
-            snapshot_at=snap,
-            unavailable_message="Quarterly ranking aggregate unavailable.",
-            degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
-        )
-        recommendations_surface = _aggregate_group_surface(
-            "quarterly_ranking_recommendations",
-            [
-                quarterly_surface,
-                formula_surface,
-                evidence_surface,
-                approval_queue_surface,
-                human_gate_surface,
-                human_inbox_surface,
-            ],
-            snapshot_at=snap,
-            unavailable_message="Quarterly ranking recommendations aggregate unavailable.",
-            degraded_message="Quarterly ranking recommendations are degraded because one or more governance source surfaces are degraded.",
-        )
-        governance_destinations = ["human_inbox", "governance_queue", "human_gate_decision"]
-        data = {
-            "id": f"pm12-quarterly-ranking-recommendations-{quarter_window['quarter'].lower()}",
-            "ranking_snapshot_id": ranking_snapshot_id,
-            "quarter": quarter_window["quarter"],
-            "quarter_window": quarter_window,
-            "formula": formula,
-            "items": page_items,
-            "evidence_refs": public_evidence_refs,
-            "summary": summary,
-            "policy": "read_only_governance_advisory",
-            "governance_destinations": governance_destinations,
-            "allowed_actions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
-        }
-        return {
-            "data": data,
-            "page_info": {
-                "next_page_token": next_page_token,
-                "total": total,
-                "page_size": page_size,
-            },
-            "meta": {
-                **self._snapshot_meta(snap),
+            formula = _pm12_quarter_formula_payload()
+            action_counts = {
+                action_id: len([item for item in filtered_recs if item.get("action_id") == action_id])
+                for action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
+            }
+            filtered_persona_ids = {
+                str(item.get("persona_id") or "")
+                for item in filtered_recs
+                if str(item.get("persona_id") or "")
+            }
+            top_item = next(
+                (
+                    item
+                    for item in ranked_items
+                    if str(item.get("persona_id") or "") in filtered_persona_ids
+                ),
+                None,
+            )
+            summary = {
+                "quarter": quarter_window["quarter"],
+                "formula_version": formula["formula_version"],
+                "persona_count": len(rows),
+                "ranked_count": len(ranked_items),
+                "recommendation_count": total,
+                "returned_count": len(page_items),
+                "top_persona_id": (top_item or {}).get("persona_id") if isinstance(top_item, dict) else None,
+                "human_gate_decision_count": total,
+                "live_capital_mutation_count": 0,
+                "evidence_ref_count": len(public_evidence_refs),
+                "redacted_evidence_count": redacted_count,
+                "by_action": action_counts,
+                "allowed_actions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
+                "basis": formula["basis"],
+                "policy": "read_only_governance_advisory",
                 "ranking_snapshot_id": ranking_snapshot_id,
-                "surfaces": {
-                    "quarterly_ranking_recommendations": recommendations_surface,
-                    "quarterly_ranking": quarterly_surface,
-                    "formula": formula_surface,
-                    "evidence_refs": evidence_surface,
-                    "knowledge_evidence": evidence_surface,
-                    "human_inbox": human_inbox_surface,
-                    "governance_queue": approval_queue_surface,
-                    "human_gate_decision": human_gate_surface,
-                    **source_surfaces,
-                },
-                "composition_sources": [
-                    "GET /bff/management/quarterly-ranking",
-                    "GET /bff/management/persona-league",
-                    "GET /bff/management/persona-league/rankings",
-                    "GET /bff/management/persona-league/tiers",
-                    "GET /api/v1/knowledge/evidence",
-                    "GET /bff/management/human-inbox",
-                    "GET /api/v1/operator/governance/approval-queue",
+            }
+
+            source_surfaces = _pm12_persona_league_source_surfaces(snap, read_store=self._read_store)
+            formula_surface = _composed_surface_status(snapshot_at=snap, available=True)
+            evidence_surface = _dataset_surface_status(
+                "evidence_refs",
+                read_store=self._read_store,
+                snapshot_at=snap,
+                has_data=evidence_dataset_available,
+                missing_message="Evidence reference read surface is unavailable.",
+            )
+            knowledge_surface = _dataset_surface_status(
+                "knowledge_evidence",
+                read_store=self._read_store,
+                snapshot_at=snap,
+                has_data=evidence_dataset_available,
+                missing_message="Knowledge evidence read surface is unavailable.",
+            )
+            approval_queue_surface = _dataset_surface_status("approval_queue_items", read_store=self._read_store, snapshot_at=snap)
+            human_gate_surface = _dataset_surface_status("approval_decisions", read_store=self._read_store, snapshot_at=snap)
+            human_inbox_surface = _composed_surface_status(
+                snapshot_at=snap,
+                available=(
+                    approval_queue_surface.get("status") != "unavailable"
+                    or human_gate_surface.get("status") != "unavailable"
+                ),
+                missing_message="Human Inbox and HumanGateDecision read surfaces are unavailable.",
+            )
+            quarterly_surface = _aggregate_group_surface(
+                "quarterly_ranking",
+                [*source_surfaces.values(), formula_surface, evidence_surface, knowledge_surface],
+                snapshot_at=snap,
+                unavailable_message="Quarterly ranking aggregate unavailable.",
+                degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
+            )
+            recommendations_surface = _aggregate_group_surface(
+                "quarterly_ranking_recommendations",
+                [
+                    quarterly_surface,
+                    formula_surface,
+                    evidence_surface,
+                    knowledge_surface,
+                    approval_queue_surface,
+                    human_gate_surface,
+                    human_inbox_surface,
                 ],
+                snapshot_at=snap,
+                unavailable_message="Quarterly ranking recommendations aggregate unavailable.",
+                degraded_message="Quarterly ranking recommendations are degraded because one or more governance source surfaces are degraded.",
+            )
+            governance_destinations = ["human_inbox", "governance_queue", "human_gate_decision"]
+            data = {
+                "id": f"pm12-quarterly-ranking-recommendations-{quarter_window['quarter'].lower()}",
+                "ranking_snapshot_id": ranking_snapshot_id,
+                "quarter": quarter_window["quarter"],
+                "quarter_window": quarter_window,
+                "formula": formula,
+                "items": page_items,
+                "evidence_refs": public_evidence_refs,
+                "summary": summary,
                 "policy": "read_only_governance_advisory",
                 "governance_destinations": governance_destinations,
-                "redacted_evidence_count": redacted_count,
-                "live_capital_mutation": False,
-            },
-        }
+                "allowed_actions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
+            }
+            return {
+                "data": data,
+                "page_info": {
+                    "next_page_token": next_page_token,
+                    "total": total,
+                    "page_size": page_size,
+                },
+                "meta": {
+                    **self._snapshot_meta(snap),
+                    "ranking_snapshot_id": ranking_snapshot_id,
+                    "surfaces": {
+                        "quarterly_ranking_recommendations": recommendations_surface,
+                        "quarterly_ranking": quarterly_surface,
+                        "formula": formula_surface,
+                        "evidence_refs": evidence_surface,
+                        "knowledge_evidence": knowledge_surface,
+                        "human_inbox": human_inbox_surface,
+                        "governance_queue": approval_queue_surface,
+                        "human_gate_decision": human_gate_surface,
+                        **source_surfaces,
+                    },
+                    "composition_sources": [
+                        "GET /bff/management/quarterly-ranking",
+                        "GET /bff/management/persona-league",
+                        "GET /bff/management/persona-league/rankings",
+                        "GET /bff/management/persona-league/tiers",
+                        "GET /api/v1/knowledge/evidence",
+                        "GET /bff/management/human-inbox",
+                        "GET /api/v1/operator/governance/approval-queue",
+                    ],
+                    "policy": "read_only_governance_advisory",
+                    "governance_destinations": governance_destinations,
+                    "redacted_evidence_count": redacted_count,
+                    "live_capital_mutation": False,
+                },
+            }
+        finally:
+            _current_persona_service.reset(token)
 
     def get_quarterly_ranking(
         self,
@@ -15738,114 +15090,126 @@ class PersonaService:
         snapshot_at: Optional[str] = None,
         page_slice_fn: Optional[Callable[..., Any]] = None,
     ) -> Dict[str, Any]:
-        slice_fn = page_slice_fn or _page_slice
-        ctx = self._compose_quarterly_ranking_context(
-            quarter=quarter,
-            identity=identity,
-            caller_tenant_id=caller_tenant_id,
-            snapshot_at=snapshot_at,
-        )
-        snapshot_at = ctx["snap"]
-        ranked_items = ctx["ranked_items"]
-        quarter_window = ctx["quarter_window"]
-        rows = ctx["rows"]
-        ranking_snapshot_id = ctx["ranking_snapshot_id"]
-        public_evidence_refs = ctx["public_evidence_refs"]
-        redacted_count = ctx["redacted_count"]
-        evidence_dataset_available = ctx["evidence_dataset_available"]
+        token = _current_persona_service.set(self)
+        try:
+            slice_fn = page_slice_fn or _page_slice
+            ctx = self._compose_quarterly_ranking_context(
+                quarter=quarter,
+                identity=identity,
+                caller_tenant_id=caller_tenant_id,
+                snapshot_at=snapshot_at,
+            )
+            snapshot_at = ctx["snap"]
+            ranked_items = ctx["ranked_items"]
+            quarter_window = ctx["quarter_window"]
+            rows = ctx["rows"]
+            ranking_snapshot_id = ctx["ranking_snapshot_id"]
+            public_evidence_refs = ctx["public_evidence_refs"]
+            redacted_count = ctx["redacted_count"]
+            evidence_dataset_available = ctx["evidence_dataset_available"]
 
-        # Apply common filters after the immutable full-universe snapshot is built.
-        enriched_items = _pm12_filter_persona_items(
-            ranked_items,
-            state=state,
-            archetype=archetype,
-            q=q,
-        )
-        filtered_items = _filter_by_common_identifiers(
-            enriched_items,
-            persona_id=persona_id, persona=persona,
-            runtime_id=runtime_id, runtime=runtime,
-            strategy_id=strategy_id, strategy=strategy,
-            capital_pool_id=capital_pool_id, pool=pool,
-            sleeve_id=sleeve_id, sleeve=sleeve,
-            artifact_id=artifact_id, artifact=artifact,
-            broker_id=broker_id, broker=broker,
-            stage=stage, period=period, as_of=as_of,
-        )
-        total = len(filtered_items)
-        page_items, next_page_token = slice_fn(filtered_items, page_token, page_size)
+            # Apply common filters after the immutable full-universe snapshot is built.
+            enriched_items = _pm12_filter_persona_items(
+                ranked_items,
+                state=state,
+                archetype=archetype,
+                q=q,
+            )
+            filtered_items = _filter_by_common_identifiers(
+                enriched_items,
+                persona_id=persona_id, persona=persona,
+                runtime_id=runtime_id, runtime=runtime,
+                strategy_id=strategy_id, strategy=strategy,
+                capital_pool_id=capital_pool_id, pool=pool,
+                sleeve_id=sleeve_id, sleeve=sleeve,
+                artifact_id=artifact_id, artifact=artifact,
+                broker_id=broker_id, broker=broker,
+                stage=stage, period=period, as_of=as_of,
+            )
+            total = len(filtered_items)
+            page_items, next_page_token = slice_fn(filtered_items, page_token, page_size)
 
-        formula = _pm12_quarter_formula_payload()
-        source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
-        formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
-        evidence_surface = self._dataset_surface_status(
-            "evidence_refs",
-            snapshot_at=snapshot_at,
-            has_data=evidence_dataset_available,
-            missing_message="Evidence reference read surface is unavailable.",
-        )
-        quarterly_surface = _aggregate_group_surface(
-            "quarterly_ranking",
-            [*source_surfaces.values(), formula_surface, evidence_surface],
-            snapshot_at=snapshot_at,
-            unavailable_message="Quarterly ranking aggregate unavailable.",
-            degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
-        )
-        quarterly_surfaces = {
-            name: _performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
-            for name, surface in {
-                "quarterly_ranking": quarterly_surface,
-                "formula": formula_surface,
-                "evidence_refs": evidence_surface,
-                "knowledge_evidence": evidence_surface,
-                **source_surfaces,
-            }.items()
-        }
-        top_item = filtered_items[0] if filtered_items else None
-        summary = {
-            "quarter": quarter_window["quarter"],
-            "formula_version": formula["formula_version"],
-            "persona_count": total,
-            "ranking_universe_count": len(rows),
-            "ranked_count": total,
-            "returned_count": len(page_items),
-            "top_persona_id": (top_item or {}).get("persona_id") if isinstance(top_item, dict) else None,
-            "evidence_ref_count": len(public_evidence_refs),
-            "redacted_evidence_count": redacted_count,
-            "basis": formula["basis"],
-            "ranking_snapshot_id": ranking_snapshot_id,
-        }
-        data = {
-            "id": f"pm12-quarterly-ranking-{quarter_window['quarter'].lower()}",
-            "ranking_snapshot_id": ranking_snapshot_id,
-            "quarter": quarter_window["quarter"],
-            "quarter_window": quarter_window,
-            "formula": formula,
-            "items": page_items,
-            "evidence_refs": public_evidence_refs,
-            "summary": summary,
-        }
-        return {
-            "data": data,
-            "page_info": {
-                "next_page_token": next_page_token,
-                "total": total,
-                "page_size": page_size,
-            },
-            "meta": {
-                **self._snapshot_meta(snapshot_at),
-                "ranking_snapshot_id": ranking_snapshot_id,
-                "surfaces": quarterly_surfaces,
-                "composition_sources": [
-                    "GET /bff/management/persona-league",
-                    "GET /bff/management/persona-league/rankings",
-                    "GET /bff/management/persona-league/tiers",
-                    "GET /api/v1/knowledge/evidence",
-                ],
-                "policy": "read_only_governance_advisory",
+            formula = _pm12_quarter_formula_payload()
+            source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at, read_store=self._read_store)
+            formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+            evidence_surface = self._dataset_surface_status(
+                "evidence_refs",
+                read_store=self._read_store,
+                snapshot_at=snapshot_at,
+                has_data=evidence_dataset_available,
+                missing_message="Evidence reference read surface is unavailable.",
+            )
+            knowledge_surface = self._dataset_surface_status(
+                "knowledge_evidence",
+                read_store=self._read_store,
+                snapshot_at=snapshot_at,
+                has_data=evidence_dataset_available,
+                missing_message="Knowledge evidence read surface is unavailable.",
+            )
+            quarterly_surface = _aggregate_group_surface(
+                "quarterly_ranking",
+                [*source_surfaces.values(), formula_surface, evidence_surface, knowledge_surface],
+                snapshot_at=snapshot_at,
+                unavailable_message="Quarterly ranking aggregate unavailable.",
+                degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
+            )
+            quarterly_surfaces = {
+                name: _performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
+                for name, surface in {
+                    "quarterly_ranking": quarterly_surface,
+                    "formula": formula_surface,
+                    "evidence_refs": evidence_surface,
+                    "knowledge_evidence": knowledge_surface,
+                    **source_surfaces,
+                }.items()
+            }
+            top_item = filtered_items[0] if filtered_items else None
+            summary = {
+                "quarter": quarter_window["quarter"],
+                "formula_version": formula["formula_version"],
+                "persona_count": total,
+                "ranking_universe_count": len(rows),
+                "ranked_count": total,
+                "returned_count": len(page_items),
+                "top_persona_id": (top_item or {}).get("persona_id") if isinstance(top_item, dict) else None,
+                "evidence_ref_count": len(public_evidence_refs),
                 "redacted_evidence_count": redacted_count,
-            },
-        }
+                "basis": formula["basis"],
+                "ranking_snapshot_id": ranking_snapshot_id,
+            }
+            data = {
+                "id": f"pm12-quarterly-ranking-{quarter_window['quarter'].lower()}",
+                "ranking_snapshot_id": ranking_snapshot_id,
+                "quarter": quarter_window["quarter"],
+                "quarter_window": quarter_window,
+                "formula": formula,
+                "items": page_items,
+                "evidence_refs": public_evidence_refs,
+                "summary": summary,
+            }
+            return {
+                "data": data,
+                "page_info": {
+                    "next_page_token": next_page_token,
+                    "total": total,
+                    "page_size": page_size,
+                },
+                "meta": {
+                    **self._snapshot_meta(snapshot_at),
+                    "ranking_snapshot_id": ranking_snapshot_id,
+                    "surfaces": quarterly_surfaces,
+                    "composition_sources": [
+                        "GET /bff/management/persona-league",
+                        "GET /bff/management/persona-league/rankings",
+                        "GET /bff/management/persona-league/tiers",
+                        "GET /api/v1/knowledge/evidence",
+                    ],
+                    "policy": "read_only_governance_advisory",
+                    "redacted_evidence_count": redacted_count,
+                },
+            }
+        finally:
+            _current_persona_service.reset(token)
 
     def get_quarterly_ranking_drilldown(
         self,
@@ -15876,125 +15240,137 @@ class PersonaService:
         as_of: Optional[str] = None,
         snapshot_at: Optional[str] = None,
     ) -> Dict[str, Any]:
-        ctx = self._compose_quarterly_ranking_context(
-            quarter=quarter,
-            identity=identity,
-            caller_tenant_id=caller_tenant_id,
-            snapshot_at=snapshot_at,
-        )
-        snapshot_at = ctx["snap"]
-        quarter_window = ctx["quarter_window"]
-        rows = ctx["rows"]
-        ranked_items = ctx["ranked_items"]
-        ranking_snapshot_id = ctx["ranking_snapshot_id"]
-        redacted_count = ctx["redacted_count"]
-        evidence_dataset_available = ctx["evidence_dataset_available"]
+        token = _current_persona_service.set(self)
+        try:
+            ctx = self._compose_quarterly_ranking_context(
+                quarter=quarter,
+                identity=identity,
+                caller_tenant_id=caller_tenant_id,
+                snapshot_at=snapshot_at,
+            )
+            snapshot_at = ctx["snap"]
+            quarter_window = ctx["quarter_window"]
+            rows = ctx["rows"]
+            ranked_items = ctx["ranked_items"]
+            ranking_snapshot_id = ctx["ranking_snapshot_id"]
+            redacted_count = ctx["redacted_count"]
+            evidence_dataset_available = ctx["evidence_dataset_available"]
 
-        ranking_item = _pm12_quarterly_find_persona_item(ranked_items, resolved_persona_id)
-        if ranking_item is None:
-            raise self._bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Quarterly ranking persona not found",
-                f"Persona {resolved_persona_id} is not present in the requested quarterly ranking.",
-                precondition_failed="personaId",
-                correlation_id=correlation_id,
+            ranking_item = _pm12_quarterly_find_persona_item(ranked_items, resolved_persona_id)
+            if ranking_item is None:
+                raise self._bff_error(
+                    404,
+                    ErrorCode.RESOURCE_NOT_FOUND,
+                    "Quarterly ranking persona not found",
+                    f"Persona {resolved_persona_id} is not present in the requested quarterly ranking.",
+                    precondition_failed="personaId",
+                    correlation_id=correlation_id,
+                )
+
+            legacy_filtered_results = _pm12_filter_persona_items(
+                [ranking_item],
+                state=state,
+                archetype=archetype,
+                q=q,
+            )
+            filtered_results = _filter_by_common_identifiers(
+                legacy_filtered_results,
+                persona_id=resolved_persona_id, persona=persona,
+                runtime_id=runtime_id, runtime=runtime,
+                strategy_id=strategy_id, strategy=strategy,
+                capital_pool_id=capital_pool_id, pool=pool,
+                sleeve_id=sleeve_id, sleeve=sleeve,
+                artifact_id=artifact_id, artifact=artifact,
+                broker_id=broker_id, broker=broker,
+                stage=stage, period=period, as_of=as_of,
+            )
+            if not filtered_results:
+                raise self._bff_error(
+                    404,
+                    ErrorCode.RESOURCE_NOT_FOUND,
+                    "Quarterly ranking persona not found matching filter criteria",
+                    f"Persona {resolved_persona_id} does not match the requested filter criteria.",
+                    precondition_failed="personaId",
+                    correlation_id=correlation_id,
+                )
+
+            ranking_item = filtered_results[0]
+            row = _pm12_quarterly_find_persona_row(rows, resolved_persona_id)
+            item_evidence_refs = list(ranking_item.get("evidence_refs") or [])
+            drilldown = _pm12_quarterly_drilldown_payload(
+                item=ranking_item,
+                row=row,
+                quarter_window=quarter_window,
+                ranked_count=len(ranked_items),
+                evidence_refs=item_evidence_refs,
             )
 
-        legacy_filtered_results = _pm12_filter_persona_items(
-            [ranking_item],
-            state=state,
-            archetype=archetype,
-            q=q,
-        )
-        filtered_results = _filter_by_common_identifiers(
-            legacy_filtered_results,
-            persona_id=resolved_persona_id, persona=persona,
-            runtime_id=runtime_id, runtime=runtime,
-            strategy_id=strategy_id, strategy=strategy,
-            capital_pool_id=capital_pool_id, pool=pool,
-            sleeve_id=sleeve_id, sleeve=sleeve,
-            artifact_id=artifact_id, artifact=artifact,
-            broker_id=broker_id, broker=broker,
-            stage=stage, period=period, as_of=as_of,
-        )
-        if not filtered_results:
-            raise self._bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Quarterly ranking persona not found matching filter criteria",
-                f"Persona {resolved_persona_id} does not match the requested filter criteria.",
-                precondition_failed="personaId",
-                correlation_id=correlation_id,
+            source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at, read_store=self._read_store)
+            formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
+            evidence_surface = self._dataset_surface_status(
+                "evidence_refs",
+                read_store=self._read_store,
+                snapshot_at=snapshot_at,
+                has_data=evidence_dataset_available,
+                missing_message="Evidence reference read surface is unavailable.",
             )
+            knowledge_surface = self._dataset_surface_status(
+                "knowledge_evidence",
+                read_store=self._read_store,
+                snapshot_at=snapshot_at,
+                has_data=evidence_dataset_available,
+                missing_message="Knowledge evidence read surface is unavailable.",
+            )
+            quarterly_surface = _aggregate_group_surface(
+                "quarterly_ranking",
+                [*source_surfaces.values(), formula_surface, evidence_surface, knowledge_surface],
+                snapshot_at=snapshot_at,
+                unavailable_message="Quarterly ranking aggregate unavailable.",
+                degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
+            )
+            drilldown_surface = _aggregate_group_surface(
+                "quarterly_ranking_drilldown",
+                [quarterly_surface, formula_surface, evidence_surface, knowledge_surface, *source_surfaces.values()],
+                snapshot_at=snapshot_at,
+                unavailable_message="Quarterly ranking drilldown aggregate unavailable.",
+                degraded_message="Quarterly ranking drilldown is degraded because one or more source surfaces are degraded.",
+            )
+            summary = dict(drilldown["summary"])
+            summary["redacted_evidence_count"] = redacted_count
 
-        ranking_item = filtered_results[0]
-        row = _pm12_quarterly_find_persona_row(rows, resolved_persona_id)
-        item_evidence_refs = list(ranking_item.get("evidence_refs") or [])
-        drilldown = _pm12_quarterly_drilldown_payload(
-            item=ranking_item,
-            row=row,
-            quarter_window=quarter_window,
-            ranked_count=len(ranked_items),
-            evidence_refs=item_evidence_refs,
-        )
-
-        source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
-        formula_surface = _composed_surface_status(snapshot_at=snapshot_at, available=True)
-        evidence_surface = self._dataset_surface_status(
-            "evidence_refs",
-            snapshot_at=snapshot_at,
-            has_data=evidence_dataset_available,
-            missing_message="Evidence reference read surface is unavailable.",
-        )
-        quarterly_surface = _aggregate_group_surface(
-            "quarterly_ranking",
-            [*source_surfaces.values(), formula_surface, evidence_surface],
-            snapshot_at=snapshot_at,
-            unavailable_message="Quarterly ranking aggregate unavailable.",
-            degraded_message="Quarterly ranking is degraded because one or more source surfaces are degraded.",
-        )
-        drilldown_surface = _aggregate_group_surface(
-            "quarterly_ranking_drilldown",
-            [quarterly_surface, formula_surface, evidence_surface, *source_surfaces.values()],
-            snapshot_at=snapshot_at,
-            unavailable_message="Quarterly ranking drilldown aggregate unavailable.",
-            degraded_message="Quarterly ranking drilldown is degraded because one or more source surfaces are degraded.",
-        )
-        summary = dict(drilldown["summary"])
-        summary["redacted_evidence_count"] = redacted_count
-
-        return {
-            "data": drilldown,
-            "item": ranking_item,
-            "ranking_item": ranking_item,
-            "contributions": drilldown["contributions"],
-            "contribution_breakdown": drilldown["contribution_breakdown"],
-            "source_breakdown": drilldown["source_breakdown"],
-            "formula": drilldown["formula"],
-            "quarter_window": quarter_window,
-            "evidence_refs": item_evidence_refs,
-            "summary": summary,
-            "meta": {
-                **self._snapshot_meta(snapshot_at),
-                "ranking_snapshot_id": ranking_snapshot_id,
-                "correlation_id": correlation_id,
-                "surfaces": {
-                    "quarterly_ranking_drilldown": drilldown_surface,
-                    "quarterly_ranking": quarterly_surface,
-                    "formula": formula_surface,
-                    "evidence_refs": evidence_surface,
-                    "knowledge_evidence": evidence_surface,
-                    **source_surfaces,
+            return {
+                "data": drilldown,
+                "item": ranking_item,
+                "ranking_item": ranking_item,
+                "contributions": drilldown["contributions"],
+                "contribution_breakdown": drilldown["contribution_breakdown"],
+                "source_breakdown": drilldown["source_breakdown"],
+                "formula": drilldown["formula"],
+                "quarter_window": quarter_window,
+                "evidence_refs": item_evidence_refs,
+                "summary": summary,
+                "meta": {
+                    **self._snapshot_meta(snapshot_at),
+                    "ranking_snapshot_id": ranking_snapshot_id,
+                    "correlation_id": correlation_id,
+                    "surfaces": {
+                        "quarterly_ranking_drilldown": drilldown_surface,
+                        "quarterly_ranking": quarterly_surface,
+                        "formula": formula_surface,
+                        "evidence_refs": evidence_surface,
+                        "knowledge_evidence": knowledge_surface,
+                        **source_surfaces,
+                    },
+                    "composition_sources": [
+                        "GET /bff/management/quarterly-ranking",
+                        "GET /bff/management/quarterly-ranking/drilldown",
+                        "GET /api/v1/knowledge/evidence",
+                    ],
+                    "policy": "read_only_governance_advisory",
                 },
-                "composition_sources": [
-                    "GET /bff/management/quarterly-ranking",
-                    "GET /bff/management/quarterly-ranking/drilldown",
-                    "GET /api/v1/knowledge/evidence",
-                ],
-                "policy": "read_only_governance_advisory",
-            },
-        }
+            }
+        finally:
+            _current_persona_service.reset(token)
 
     def get_persona_league(
         self,

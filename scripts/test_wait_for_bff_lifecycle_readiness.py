@@ -736,8 +736,10 @@ def _component_block(script: str, component: str, next_component: str) -> str:
 def test_root_initial_readiness_uses_exact_waiter_before_residual_smoke() -> None:
     script = Path("scripts/deploy_nonprod_vm.sh").read_text()
     root = _component_block(script, "root", "bff")
-    compose_up = (
-        "docker compose -p pantheon -f docker-compose.yml up -d"
+    compose_up = "run_dev_candidate_compose up -d \\\n"
+    projector_recreate = (
+        "run_dev_candidate_compose up -d --force-recreate --no-deps "
+        "loop-run-projector-scheduler"
     )
     helper_call = (
         "wait_for_exact_bff_lifecycle_readiness \\\n"
@@ -745,7 +747,14 @@ def test_root_initial_readiness_uses_exact_waiter_before_residual_smoke() -> Non
     )
     assert helper_call in root
     assert "curl_with_retry http://127.0.0.1:18001/readyz" not in root
-    assert root.index(compose_up) < root.index(helper_call)
+    assert (
+        root.index("docker compose -p pantheon -f docker-compose.yml build")
+        < root.index("seal_dev_candidate_images")
+        < root.index("bootstrap_dev_lifecycle_projection")
+        < root.index(compose_up)
+        < root.index(projector_recreate)
+        < root.index(helper_call)
+    )
     assert root.index(helper_call) < root.index(
         "bash scripts/verify_trade_journey_residual_dev.sh"
     )
@@ -788,9 +797,10 @@ def test_bff_only_readiness_also_uses_exact_waiter() -> None:
     script = Path("scripts/deploy_nonprod_vm.sh").read_text()
     bff = _component_block(script, "bff", "exec")
     compose_up = (
-        "docker compose -p pantheon -f docker-compose.yml "
-        "up -d --force-recreate --no-deps "
-        "operator-bff loop-run-projector-scheduler"
+        'with_dev_bff_runtime_env "${PANTHEON_DEPLOY_SHA}" '
+        '"${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \\\n'
+        "      run_dev_candidate_compose up -d --force-recreate --no-deps "
+        "operator-bff agora-interaction-worker loop-run-projector-scheduler"
     )
     helper_call = (
         "wait_for_exact_bff_lifecycle_readiness \\\n"
@@ -798,7 +808,13 @@ def test_bff_only_readiness_also_uses_exact_waiter() -> None:
     )
     assert helper_call in bff
     assert "curl_with_retry http://127.0.0.1:18001/readyz" not in bff
-    assert bff.index(compose_up) < bff.index(helper_call)
+    assert (
+        bff.index("docker compose -p pantheon -f docker-compose.yml build")
+        < bff.index("seal_dev_candidate_images")
+        < bff.index("bootstrap_dev_lifecycle_projection")
+        < bff.index(compose_up)
+        < bff.index(helper_call)
+    )
     assert bff.index(helper_call) < bff.index("assert_bff_source_sha")
     assert bff.index(helper_call) < bff.index("assert_bff_auth_gate")
     assert bff.index(helper_call) < bff.index(
