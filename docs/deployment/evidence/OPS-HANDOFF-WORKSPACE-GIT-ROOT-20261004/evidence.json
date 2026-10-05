@@ -114,5 +114,11 @@
       "checkout-provisioned Python pytest /tmp/pantheon-closeout-continuation-20261004-2327/test_handoff_operator_registered_repository.py: 1 passed"
     ],
     "updated_budget": "diff_budget.py --base 829015b2016e528358cec30a3f5ac4bfb9112795 --head b68329090160d4d77d86ac740504b5c9a9c11933 --change-class corrective --budget 40: production +325/-301 net +24, within 40"
-  }
+  },
+  "post_base_refresh_identity_correction": {
+    "supersedes": "post_base_refresh_verification.base_refresh_merge and its budget --head reference",
+    "verified_merge_commit": "b6832909098349da5e2e90a5fbbba1280eaa2c97",
+    "note": "The preceding evidence entry transcribed this hash incorrectly; its recorded test results are unchanged and passed against this exact merge tree."
+  },
+  "verified_budget_restatement": "python3 scripts/git/diff_budget.py --base 829015b2016e528358cec30a3f5ac4bfb9112795 --head b6832909098349da5e2e90a5fbbba1280eaa2c97 --change-class corrective --budget 40: production +325/-301 net +24, within 40"
 }
