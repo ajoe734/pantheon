@@ -7,17 +7,24 @@
 #   TELEMETRY_DB_DSN=postgresql://pantheon_app:pantheon_app@localhost:15432/pantheon \
 #     bash scripts/db_migrate.sh
 #
-# Usage (inside the control-plane compose stack):
-#   docker compose -f docker-compose.control.yml exec postgres \
-#     psql -U pantheon_app -d pantheon -f /migrations/schema.sql
+# Usage with psql (also used by bootstrap.sh, no asyncpg required):
+#   bash scripts/db_migrate.sh --print-sql | \
+#     docker compose -f docker-compose.control.yml exec -T postgres \
+#       psql -U pantheon_app -d pantheon -v ON_ERROR_STOP=1
 set -euo pipefail
 
-: "${TELEMETRY_DB_DSN:=${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@localhost:15432/pantheon}}"
+case "$#:${1:-}" in
+  0:|1:--print-sql) ;;
+  *) echo "Usage: $0 [--print-sql]" >&2; exit 2 ;;
+esac
 
-echo "==> Running Pantheon DB migrations"
-echo "    DSN: ${TELEMETRY_DB_DSN//:*@/:***@}"
+export TELEMETRY_DB_DSN="${TELEMETRY_DB_DSN:-${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@localhost:15432/pantheon}}"
 
-python3 - <<'PYEOF'
+if [[ "${1:-}" != "--print-sql" ]]; then
+  echo "==> Running Pantheon DB migrations"
+fi
+
+python3 - "$@" <<'PYEOF'
 import asyncio
 import os
 import sys
@@ -240,6 +247,12 @@ MIGRATIONS = [
 
 ]
 
+# One ordered schema definition, regardless of database client. Rendering is
+# offline and emits SQL only, so bootstrap can use its existing psql transport.
+if sys.argv[1:] == ["--print-sql"]:
+    print("\n".join(sql.strip() for sql in MIGRATIONS))
+    sys.exit(0)
+
 async def run():
     try:
         import asyncpg  # type: ignore
@@ -262,4 +275,6 @@ async def run():
 asyncio.run(run())
 PYEOF
 
-echo "==> DB migrations complete."
+if [[ "${1:-}" != "--print-sql" ]]; then
+  echo "==> DB migrations complete."
+fi

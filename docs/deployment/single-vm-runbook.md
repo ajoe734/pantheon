@@ -146,15 +146,17 @@ done
 
 ## DB Migrations
 
-`scripts/db_migrate.sh` applies all schema migrations idempotently (safe to re-run).
+`scripts/db_migrate.sh` owns the ordered, idempotent migration definitions for
+telemetry (including ingestion cursors/indexes), loop controller records, and
+source-ingestion management tables. Run it directly with `TELEMETRY_DB_DSN`
+(or `DATABASE_URL`) to apply those definitions through asyncpg.
 
-Current migrations:
-
-| # | Table | DDL |
-|---|---|---|
-| 1 | `telemetry_events` | Primary telemetry ingest table (asyncpg write path) |
-| 2 | `idx_telemetry_events_created_at` | Time-range index |
-| 3 | `idx_telemetry_events_event_type` | Type-filter index |
+`scripts/bootstrap.sh` provisions the role/database, then consumes
+`bash scripts/db_migrate.sh --print-sql` with its host or container psql client.
+The render mode is offline, needs no asyncpg, and emits SQL only. It is the
+same migration list, not a second schema implementation. Both rendering and
+SQL execution must succeed before bootstrap starts application services.
+`--skip-migration` remains an explicit opt-out.
 
 ## Service Port Map
 
