@@ -1,0 +1,57 @@
+{
+  "task_id": "BFF-STRICT-SOURCE-OWNER-CONSUMER-CORRECTION-20261005",
+  "title": "Bind strict actual Source owner caller and truthful records",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "change_class": "corrective",
+  "net_prod_line_budget": 2,
+  "net_prod_lines": 2,
+  "acceptance_criteria": {
+    "ac_1_resolve_exact_source_owner_control_failures": {
+      "status": "satisfied",
+      "detail": "Resolved the 3 exact source owner control failures in test_ranking_real_source_owner_admission.py: 1. Default BFF HTTP transport now forwards request-scoped verified caller Authorization and X-Tenant-Id headers to actual served Source owner endpoints, preventing 401 unauthenticated drops. 2. Malformed reachable Source payloads (None or wrong envelope missing items list) now report unavailable instead of healthy service_client. 3. Immutable 7-case batch passes 7/7 (was 4 pass, 3 fail)."
+    },
+    "ac_2_reuse_existing_default_transport_and_verified_identity": {
+      "status": "satisfied",
+      "detail": "Reuses urllib.request transport with request-scoped authorization and tenant ContextVars from owner_reads, forwarding unchanged identity without global allowlists or credential swaps."
+    },
+    "ac_3_strict_source_owner_admission_proof": {
+      "status": "satisfied",
+      "detail": "Verified real served Source app/store integration with real router in test_ranking_real_source_owner_admission.py; transport only replaced for local verification."
+    },
+    "ac_4_envelope_validation": {
+      "status": "satisfied",
+      "detail": "Reachable empty with valid items list reports service_client/ok; absent unconfigured reports missing; malformed or wrong envelope reports unavailable without fabricating empty lists."
+    },
+    "ac_5_budget_compliance": {
+      "status": "satisfied",
+      "detail": "Net production line growth against origin/dev is exactly +2 lines (+8 added, -6 deleted in research_knowledge_source.py), strictly meeting the net production line budget of <= 2 lines (cumulative 78 + 2 = 80)."
+    },
+    "ac_6_regression_inventories": {
+      "status": "satisfied",
+      "detail": "Ran full 47-test suite: test_ranking_default_owner_integrity.py (4 passed), test_ranking_real_source_owner_admission.py (3 passed), test_persona_evaluator_mounted_ranking.py (3 passed), test_ranking_evidence_surfaces_default_composition.py (5 passed), test_evidence_redaction_fail_closed.py (32 passed). Total: 47 passed, 0 failures."
+    },
+    "ac_7_source_workers_local_only": {
+      "status": "satisfied",
+      "detail": "All changes are local to the task worktree with no VM, deployment, or runtime promotion."
+    }
+  },
+  "validation": [
+    {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_ranking_real_source_owner_admission.py",
+      "result": "3 passed in 2.08s"
+    },
+    {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_ranking_default_owner_integrity.py services/control-plane/bff/tests/test_ranking_real_source_owner_admission.py",
+      "result": "7 passed in 3.80s"
+    },
+    {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_ranking_default_owner_integrity.py services/control-plane/bff/tests/test_ranking_real_source_owner_admission.py services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py services/control-plane/bff/tests/test_ranking_evidence_surfaces_default_composition.py services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py",
+      "result": "47 passed in 70.19s"
+    }
+  ],
+  "diff_stat": {
+    "research_knowledge_source.py": "+8 / -6 (net +2)",
+    "production_net": 2
+  }
+}
