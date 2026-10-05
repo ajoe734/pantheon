@@ -131,3 +131,14 @@ def test_busy_shared_lease_returns_before_compose_work(
 
     monkeypatch.setattr(harness, "_DevEnvironmentLeaseSession", BusySession)
     assert harness.main(["--provision-services"]) == 75
+
+
+def test_stimulus_gate_stack_covers_every_domain_suite_url() -> None:
+    assert harness.STIMULUS_GATE_SUITE.endswith("test_stimulus_cross_loop_deployed_e2e.py")
+    assert set(harness.STIMULUS_SERVICES).isdisjoint(harness.SERVICES)
+    assert {"research", "training", "policy_learning", "consultation"} == set(
+        harness.STIMULUS_SERVICES
+    )
+    assert set(harness.STIMULUS_COMPOSE_SERVICES).isdisjoint(
+        harness.REQUIRED_COMPOSE_SERVICES
+    )

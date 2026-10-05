@@ -74,6 +74,32 @@ REQUIRED_COMPOSE_SERVICES = [
     "evolution",
     "operator-bff",
 ]
+STIMULUS_GATE_SUITE = "tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py"
+# The stimulus gate itself launches the research, human-learning and runtime
+# domain suites, so their extra owners must be part of the same isolated stack.
+STIMULUS_COMPOSE_SERVICES = [
+    "consultation-svc",
+    "source-ingest-scheduler",
+    "source-ingest-agora-projector",
+    "strategy-distillation-worker",
+    "alpha-replication-worker",
+    "search-svc",
+    "training-session-svc",
+    "training-session-preview-worker",
+    "policy-learning-svc",
+    "policy-learning-shadow-eval-scheduler",
+    "research-orchestrator-svc",
+    "research-worker-gateway-svc",
+    "agora-interaction-worker",
+    "loop-run-projector-scheduler",
+    "persona",
+]
+STIMULUS_SERVICES: dict[str, dict[str, Any]] = {
+    "consultation": {"port_var": "CONSULTATION_PORT", "default_port": 18096, "health": "/readyz"},
+    "policy_learning": {"port_var": "POLICY_LEARNING_PORT", "default_port": 18100, "health": "/readyz"},
+    "research": {"port_var": "RESEARCH_ORCHESTRATOR_PORT", "default_port": 18101, "health": "/readyz"},
+    "training": {"port_var": "TRAINING_SESSION_PORT", "default_port": 18099, "health": "/readyz"},
+}
 DB_MIGRATION_SERVICE = "source-ingest-controller-migrate"
 ISOLATED_SAFE_CONTROLS = {
     "BROKER_PAPER_ENABLED": "true",
@@ -599,6 +625,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Automatically provision and start required isolated Compose services before test execution",
     )
     parser.add_argument(
+        "--stimulus-gate",
+        action="store_true",
+        help=(
+            "Run the stimulus-driven twelve-loop closure gate, which starts the "
+            "research, human-learning and runtime suites from one fresh stimulus "
+            "against this single stack"
+        ),
+    )
+    parser.add_argument(
         "--down",
         action="store_true",
         help="Stop and tear down the isolated Compose stack",
@@ -716,8 +751,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if teardown["zero_project_containers"] else 1
 
     # Build URLs mapping
+    services = {**SERVICES, **(STIMULUS_SERVICES if args.stimulus_gate else {})}
+    required_services = REQUIRED_COMPOSE_SERVICES + (
+        STIMULUS_COMPOSE_SERVICES if args.stimulus_gate else []
+    )
     urls: dict[str, str] = {}
-    for name, spec in SERVICES.items():
+    for name, spec in services.items():
         env_var = f"PANTHEON_L12_{name.upper()}_URL"
         if name == "source_ingest":
             env_val = os.getenv("PANTHEON_L12_SOURCE_INGEST_URL") or os.getenv("PANTHEON_L12_SOURCE_URL")
@@ -751,12 +790,20 @@ def main(argv: list[str] | None = None) -> int:
         f"[*] Running deployed integration suite against {args.compose_project} "
         f"using {python_bin}..."
     )
+    if args.stimulus_gate:
+        test_env["PANTHEON_L12_STIMULUS_CROSS_LOOP_E2E"] = "1"
+        test_env["PANTHEON_L12_STIMULUS_EXPECTED_SHA"] = expected_sha
+        test_env["PANTHEON_L12_STIMULUS_EVIDENCE_OUTPUT"] = str(
+            args.evidence_output.resolve()
+        )
     pytest_cmd = [
         python_bin,
         "-m",
         "pytest",
         "-q",
-        "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py",
+        STIMULUS_GATE_SUITE
+        if args.stimulus_gate
+        else "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py",
         "-vv",
     ]
     result_code = 0
@@ -826,7 +873,7 @@ def main(argv: list[str] | None = None) -> int:
                 "--wait",
                 "--wait-timeout",
                 str(max(1, int(args.ready_timeout))),
-                *REQUIRED_COMPOSE_SERVICES,
+                *required_services,
             )
             print(
                 "[*] Provisioning isolated Compose services "
@@ -843,7 +890,7 @@ def main(argv: list[str] | None = None) -> int:
         while time.time() < deadline:
             unready.clear()
             for name, url in urls.items():
-                spec = SERVICES[name]
+                spec = services[name]
                 ready_url = f"{url}{spec['health']}"
                 health = _get_json(ready_url)
                 if not isinstance(health, Mapping) or "error" in health:
