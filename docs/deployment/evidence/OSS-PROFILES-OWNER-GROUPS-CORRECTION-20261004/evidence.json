@@ -2,7 +2,7 @@
   "schema_version": "pantheon.oss-profiles-owner-groups-correction-20261004.evidence.v1",
   "task_id": "OSS-PROFILES-OWNER-GROUPS-CORRECTION-20261004",
   "kind": "runtime_profile_owner_groups_correction_evidence",
-  "generated_at": "2026-10-05T00:10:00Z",
+  "generated_at": "2026-10-05T00:40:00Z",
   "owner": "Antigravity2",
   "reviewer": "Antigravity",
   "target": {
@@ -22,6 +22,11 @@
         "issue": "Nonprod deployment workflow and deploy script lacked canonical root selector.",
         "correction": "Updated deploy_nonprod_vm.sh line 3774 to default PANTHEON_DEV_COMPOSE_PROFILES to root (with backward compatibility for openclaw) and updated nonprod-deploy.yml line 1272 to select root.",
         "effect": "Canonical root deployment is preserved with complete twelve-loop closure and required loop worker validation."
+      },
+      {
+        "issue": "Default unprofiled docker compose config in Persona Owner Contract CI failed with KeyError on runtime-manager and operator-bff.",
+        "correction": "Added empty profile (\"\") to all 56 root persistent service profile lists so unprofiled compose invocations resolve the default root stack, while business profile activations (core: 29, workers: 16, research: 4, management-ai: 3, execution: 5) and opt-in exclusions remain strictly bounded.",
+        "effect": "CI suites (test_dev_deployment_tenant.py, test_bootstrap_dev_paper_baseline.py) and scoped activation/wiring tests pass completely (64 passed)."
       }
     ],
     "preserved_invariants": {
@@ -33,17 +38,90 @@
     }
   },
   "profile_activation_matrix": {
-    "core": {"count": 29, "dormant_smoke": false, "openclaw_e2e": false, "benchmark": false, "static_paper": false},
-    "workers": {"count": 16, "dormant_smoke": false, "openclaw_e2e": false, "benchmark": false, "static_paper": false},
-    "research": {"count": 4, "dormant_smoke": false, "openclaw_e2e": false, "benchmark": false, "static_paper": false},
-    "management-ai": {"count": 3, "dormant_smoke": false, "openclaw_e2e": false, "benchmark": false, "static_paper": false},
-    "openclaw": {"count": 3, "dormant_smoke": false, "openclaw_e2e": false, "benchmark": false, "static_paper": false},
-    "execution": {"count": 5, "dormant_smoke": false, "openclaw_e2e": false, "benchmark": false, "static_paper": false},
-    "root": {"count": 56, "dormant_smoke": false, "openclaw_e2e": false, "benchmark": false, "static_paper": false},
-    "dormant-smoke": {"count": 7, "dormant_smoke": true, "openclaw_e2e": false, "benchmark": false, "static_paper": false},
-    "openclaw-activation-ready-e2e": {"count": 1, "dormant_smoke": false, "openclaw_e2e": true, "benchmark": false, "static_paper": false},
-    "lifecycle-capacity-benchmark": {"count": 1, "dormant_smoke": false, "openclaw_e2e": false, "benchmark": true, "static_paper": false},
-    "static-paper-runtime": {"count": 1, "dormant_smoke": false, "openclaw_e2e": false, "benchmark": false, "static_paper": true}
+    "core": {
+      "count": 29,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": false
+    },
+    "workers": {
+      "count": 16,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": false
+    },
+    "research": {
+      "count": 4,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": false
+    },
+    "management-ai": {
+      "count": 3,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": false
+    },
+    "openclaw": {
+      "count": 3,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": false
+    },
+    "execution": {
+      "count": 5,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": false
+    },
+    "root": {
+      "count": 56,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": false
+    },
+    "dormant-smoke": {
+      "count": 7,
+      "dormant_smoke": true,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": false
+    },
+    "openclaw-activation-ready-e2e": {
+      "count": 1,
+      "dormant_smoke": false,
+      "openclaw_e2e": true,
+      "benchmark": false,
+      "static_paper": false
+    },
+    "lifecycle-capacity-benchmark": {
+      "count": 1,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": true,
+      "static_paper": false
+    },
+    "static-paper-runtime": {
+      "count": 1,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": true
+    },
+    "default_unprofiled": {
+      "count": 56,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": false
+    }
   },
   "disposable_runtime_receipts": {
     "project": "ossgroupcorr20261004",
@@ -85,15 +163,15 @@
   },
   "diff_budget": {
     "change_class": "corrective",
-    "net_production_diff": -4,
-    "net_test_diff": 12,
-    "budget_status": "satisfied (net production line additions <= 0; actual net -4 lines)"
+    "net_production_diff": -3,
+    "net_test_diff": 15,
+    "budget_status": "satisfied (net production line additions <= 0; actual net -3 lines)"
   },
   "validation_summary": {
     "compose_activation_tests": "passed (policy-learning, research-gateway, research-orchestrator, source-ingestion, training-session)",
     "compose_wiring_tests": "passed (scripts/test_current_l12_compose_wiring.py)",
-    "deploy_nonprod_tests": "47 passed, 2 skipped (scripts/test_deploy_nonprod_vm.py)",
-    "full_scoped_suite": "62 passed, 2 skipped",
+    "deploy_nonprod_tests": "44 passed, 2 skipped",
+    "full_scoped_suite": "64 passed (compose activation/wiring, tenant interpolation, bootstrap paper baseline)",
     "runtime_receipts_isolated_test": "passed (real application startup, /readyz health 200 OK, restart, and persistence verified)"
   }
 }
