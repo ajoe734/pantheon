@@ -1,6 +1,6 @@
 {
   "task_id": "OPS-REVIEW-ONLY-AGENTS-20261005",
-  "commit": "94b2ad43d",
+  "commit": "see PR head",
   "validation": [
     "python3 -m unittest .orchestrator/test_supervisor.py: 398 tests OK",
     ".orchestrator/test_explain_dispatch.py: 8 tests OK",

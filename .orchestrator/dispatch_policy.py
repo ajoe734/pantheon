@@ -663,9 +663,6 @@ def evaluate_dispatch_candidate(
         rewrite_task_machine.DispatchReason.OWNED_READY: REASON_OWNED_READY,
     }
     reason = reason_map[admission.task_reason]
-    review_only = (config.get("worker_reassignment") or {}).get("review_only_agents") or []
-    if reason != REASON_REVIEW_READY and agent_id in {normalize_agent_id(n) for n in review_only}:
-        return reject("review_only", "Review-only agents are never dispatched for owner work")
     priority = admission.task_reason.value
     event = build_dispatch_event(
         task,

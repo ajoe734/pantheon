@@ -1126,9 +1126,9 @@ class ReviewOnlyAgentTests(unittest.TestCase):
         review_task["delivery_binding"] = review_admission_binding()
         review = planner_decision(self.config, review_task, state=self.state)
         self.assertTrue(review["eligible"])
-        owned = planner_decision(self.config, task_fixture(), state=self.state)
-        self.assertFalse(owned["eligible"])
-        self.assertEqual(owned["first_blocking_gate"], "review_only")
+        block = supervisor.review_only_owner_block(self.config, task_fixture(), "Codex")
+        self.assertEqual(block["first_blocking_gate"], "review_only")
+        self.assertIsNone(supervisor.review_only_owner_block(self.config, review_task, "Codex"))
 
     def test_invalid_review_only_config_fails_closed(self) -> None:
         self.config["worker_reassignment"]["owner_fallbacks"]["Codex2"] = ["Codex"]

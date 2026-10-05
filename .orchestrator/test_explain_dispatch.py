@@ -91,13 +91,6 @@ class ExplainDispatchV2Tests(unittest.TestCase):
         self.assertFalse(result["agents"]["Codex"]["blocked"])
         self.assertEqual(result["agents"]["Codex"]["candidate_reason"], "owned_ready_dispatch")
 
-    def test_review_only_agent_on_owner_lane_reports_review_only(self) -> None:
-        self.config["worker_reassignment"] = {"review_only_agents": ["Codex"]}
-        task = {"id": "T1", "status": "todo", "owner": "Codex", "reviewer": "Claude2"}
-        trace = self.decide(task)["agents"]["Codex"]
-        self.assertTrue(trace["blocked"])
-        self.assertEqual(trace["first_blocking_gate"], "review_only")
-
     def test_dependency_and_zero_capacity_rejections_are_structured(self) -> None:
         task = {
             "id": "T2",
