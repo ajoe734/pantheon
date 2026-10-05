@@ -24,24 +24,25 @@ profile selector.
 ## Profile composition and activation matrix
 
 The five canonical Compose profiles (`core`, `workers`, `research`, `management-ai`, `execution`)
-are converged across `docker-compose.yml` and `docker-compose.exec.yml`. All five profiles are
-executable and discoverable via `docker compose config --profiles`, providing a unified
-activation matrix while preserving root default owners, dependency closure, and execution isolation.
+plus the canonical deployment profile (`root`) are converged across `docker-compose.yml` and
+`docker-compose.exec.yml`. All profiles are executable and discoverable via `docker compose config --profiles`,
+providing a decoupled activation matrix while preserving root deployment, dependency closure, and execution isolation.
 
-| Profile | Services & Composition | Activation Boundary & Supported Matrix |
-|---|---|---|
-| `core` | Postgres, NATS, public Caddy/Operator BFF edge, projectors, lifecycle (benchmark harness `lifecycle-projector-capacity-benchmark` remains opt-in) | Dev, ephemeral staging, and VM-1 control; never execution VM |
-| `workers` | Existing schedulers, consumers, reconcilers, and agora projection worker (`source-ingest-agora-projector` gated by `source-ingest-scheduler` health) | Dev; conditional staging; control singletons except research-owned workers |
-| `research` | Core research APIs always active (`research-orchestrator-svc`, `research-worker-gateway-svc`, `training-session-svc`, `policy-learning-svc`); dormant ML smoke units (`mlflow`, `finrl`, `qlib`, `rllib`, `ray-tune`, `trl`, `experiments`) remain opt-in under dedicated `dormant-smoke` profile | Dev APIs only; dormant framework smoke units are isolated under `dormant-smoke` |
-| `management-ai` | OpenClaw gateway, data initializer (`openclaw-data-init`), adapter; e2e smoke (`openclaw-activation-ready-e2e`) remains opt-in under dedicated `openclaw-activation-ready-e2e` profile | Dev; conditional staging; read-only control posture; activates with `management-ai` or `openclaw` |
-| `execution` | Dev paper topology (runtime-manager, broker, signal-store, paper-signal-producer, paper-fleet-reconciler; `static-paper-runtime` remains opt-in), VM-2 execution stack (`docker-compose.exec.yml`; `pantheon-lean-live` remains opt-in) | Dev paper topology has no live broker authority; isolated VM-2 stack never co-activates with control |
+| Profile | Count | Services & Composition | Activation Boundary & Supported Matrix |
+|---|---|---|---|
+| `core` | 29 | Postgres, NATS, public Caddy/Operator BFF edge, telemetry, core stores/APIs (benchmark harness `lifecycle-projector-capacity-benchmark` remains opt-in) | Dev, ephemeral staging, and VM-1 control; never execution VM |
+| `workers` | 16 | Background schedulers, consumers, reconcilers, and agora projection worker (`source-ingest-agora-projector` gated by `source-ingest-scheduler` health) | Dev; conditional staging; control singletons except research-owned workers |
+| `research` | 4 | Core research APIs (`research-orchestrator-svc`, `research-worker-gateway-svc`, `training-session-svc`, `policy-learning-svc`); dormant ML smoke units remain opt-in under dedicated `dormant-smoke` profile | Dev APIs only; dormant framework smoke units are isolated under `dormant-smoke` |
+| `management-ai` | 3 | OpenClaw gateway, data initializer (`openclaw-data-init`), adapter; e2e smoke remains opt-in under dedicated `openclaw-activation-ready-e2e` profile | Dev; conditional staging; read-only control posture; activates with `management-ai` or `openclaw` |
+| `execution` | 5 | Dev paper topology (runtime-manager, broker, capital, paper-signal-producer, paper-fleet-reconciler; `static-paper-runtime` remains opt-in), VM-2 execution stack (`docker-compose.exec.yml`; `pantheon-lean-live` remains opt-in) | Dev paper topology has no live broker authority; isolated VM-2 stack never co-activates with control |
+| `root` | 56 | Full canonical nonprod deployment profile containing all persistent services and loop workers across core, workers, research, management-ai, and execution | Canonical nonprod VM deploy selector (`scripts/deploy_nonprod_vm.sh`), preserving complete twelve-loop closure |
 
-These profiles preserve existing `depends_on: condition: service_healthy` relationships across
-profile boundaries in the dev mono-stack. Default unprofiled root deployment continues to start all
-required loop services without regression. Durable volumes, owner URLs, identity/token references,
-and safe write defaults are strictly preserved. In particular, core startup does not depend on MinIO,
-and MinIO server/init and minio-data are intentionally preserved; object-store retirement remains
-owned by `OSS-OBJECT-STORE-CUTOVER-002`.
+Cross-profile `depends_on` conditions declare `required: false` so that individual business profiles
+resolve and start cleanly without activating unrequested services, while full dependency satisfaction
+and `condition: service_healthy` checks remain enforced when dependencies are present (e.g. under `root`).
+Durable volumes, owner URLs, identity/token references, and safe write defaults are strictly preserved.
+In particular, core startup does not depend on MinIO, and MinIO server/init and minio-data are intentionally preserved;
+object-store retirement remains owned by `OSS-OBJECT-STORE-CUTOVER-002`.
 
 ## Image identity and limits
 
