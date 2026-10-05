@@ -3767,11 +3767,10 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # and optional integrations are kept out of the default persistent root deploy to prevent
     # deployment timeouts and host memory exhaustion.
     #
-    # Required loop workers are default-on in docker-compose.yml, and validate_required_loop_workers
-    # enforces that the persistent stack contains all required twelve-loop workers.
-    #
+    # Required loop workers are deployed via the root profile (backward-compatible with openclaw).
     # Operators can supply explicit profiles via PANTHEON_DEV_COMPOSE_PROFILES when running bounded verifications.
-    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-openclaw}"
+    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-root}"
+    [[ "${PANTHEON_DEV_COMPOSE_PROFILES}" == openclaw* ]] && PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES/openclaw/root}"
     if [[ "${DEV_PAPER_PRINCIPALS_SUPPORTED}" == true ]]; then
       PANTHEON_DEV_COMPOSE_PROFILES+=",dev-paper-principals"
     fi

@@ -20,7 +20,7 @@ class DevDeploymentTenantTest(unittest.TestCase):
         # Execute the source assignment and real Compose interpolation. A stale
         # caller value must not split the consumer and producer tenants.
         rendered = subprocess.run(
-            ["bash", "-euc", assignment + "\nexec docker compose --env-file /dev/null -f docker-compose.yml config --format json"],
+            ["bash", "-euc", assignment + "\nexec docker compose --profile root --env-file /dev/null -f docker-compose.yml config --format json"],
             cwd=ROOT,
             env={"PATH": os.environ["PATH"], "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
                  "PANTHEON_DEPLOYMENT_TENANT_ID": "default"},

@@ -1445,7 +1445,7 @@ def test_compose_resolves_owner_issuer_audience_for_nondefault_dev_values() -> N
     env["PANTHEON_DEV_BFF_JWT_AUDIENCE"] = "review-test-audience"
 
     result = subprocess.run(
-        ["docker", "compose", "--env-file", "/dev/null", "config", "--format", "json"],
+        ["docker", "compose", "--profile", "root", "--env-file", "/dev/null", "config", "--format", "json"],
         cwd=str(repo_root),
         env=env,
         capture_output=True,
@@ -1535,7 +1535,7 @@ def test_compose_resolves_deployment_tenant_id_for_dev_paper_tenant() -> None:
     env["PANTHEON_DEV_BFF_TENANT_ID"] = "tenant-dev"
 
     result = subprocess.run(
-        ["docker", "compose", "--env-file", "/dev/null", "config", "--format", "json"],
+        ["docker", "compose", "--profile", "root", "--env-file", "/dev/null", "config", "--format", "json"],
         cwd=str(repo_root),
         env=env,
         capture_output=True,
