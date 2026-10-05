@@ -129,8 +129,6 @@ def resolve_agora_interaction_context_ref(
     extract_identity: Optional[Callable[[Optional[str]], Any]] = None,
     require_read_role: Optional[Callable[[Any], None]] = None,
     bff_error: Optional[Callable[..., Exception]] = None,
-    trade_journal_store_name: str = "PANTHEON_BFF_TRADE_EPISODES_STORE",
-    trade_journal_loader: Optional[Callable[[str], List[Dict[str, Any]]]] = None,
     trade_episode_schema_path: Optional[Path] = None,
     persona_directory_snapshot_fn: Optional[Callable[[str], Any]] = None,
     persona_record_tenant_id_fn: Optional[Callable[[Mapping[str, Any]], str]] = None,
@@ -209,19 +207,30 @@ def resolve_agora_interaction_context_ref(
 
     # 3. Journal Entry (Trade Journal Episode or Governance Decision Journal)
     if kind == "journal_entry":
-        # Resolve trade journal loader
-        if callable(trade_journal_loader):
-            episodes = trade_journal_loader(trade_journal_store_name)
-        else:
-            from services.control_plane.bff.trade_journal import _load as _load_trade_journal
-            episodes = _load_trade_journal(trade_journal_store_name)
+        from services.control_plane.bff.agora.identity.scope import resolve_canonical_agora_scope
+        from services.control_plane.bff.command_adapters.base import ActionUnavailableError
+        from services.control_plane.bff.trade_journal import read_context_episode
 
-        matches = [
-            row for row in (episodes or [])
-            if str(row.get("trade_episode_id") or "") == ref_id
-        ]
-        if len(matches) == 1:
-            episode = matches[0]
+        scoped_tenant, scoped_user = resolve_canonical_agora_scope(
+            identity,
+            tenant_id=getattr(resolved, "tenant_id", None),
+            user_id=getattr(resolved, "user_id", None),
+            utc_now=utc_now,
+        )
+        source = urlsplit(str(source_route or ""))
+        focused_trade = unquote(source.path).startswith("/management/personas/") and "tradeJournal" in parse_qs(source.query).get("tab", [])
+        try:
+            episode = read_context_episode(ref_id, authorization, scoped_tenant, required=focused_trade)
+        except (ActionUnavailableError, RuntimeError) as exc:
+            status = getattr(exc, "downstream_status", 503)
+            status = status if status in (401, 403) else 503
+            if callable(bff_error):
+                raise bff_error(status, "FORBIDDEN" if status == 403 else "DEPENDENCY_UNAVAILABLE",
+                                "Canonical trade journal context is unavailable", "trade_journal_owner_unavailable",
+                                precondition_failed="trade_journal_owner_unavailable") from exc
+            raise RuntimeError("Canonical trade journal context is unavailable") from exc
+
+        if episode is not None:
 
             # Resolve projection schema path: parents[4] from context_resolver.py
             # points to repo root / services, reaching services/telemetry/trade_episode_projection.schema.json
@@ -297,6 +306,7 @@ def resolve_agora_interaction_context_ref(
             # All 10 audience conditions preserved from main.py
             audience_verified = bool(
                 projection_valid
+                and episode.get("tenant_id") == scoped_tenant
                 and persona_id
                 and episode_strategy
                 and artifact_id
@@ -312,14 +322,6 @@ def resolve_agora_interaction_context_ref(
             return {"row": episode, "audience_verified": audience_verified}
 
         # Fallback to Decision Journal in Governance domain
-        from services.control_plane.bff.agora.identity.scope import resolve_canonical_agora_scope
-
-        scoped_tenant, scoped_user = resolve_canonical_agora_scope(
-            identity,
-            tenant_id=getattr(resolved, "tenant_id", None),
-            user_id=getattr(resolved, "user_id", None),
-            utc_now=utc_now,
-        )
         if read_store is None:
             return {"row": None, "audience_verified": False}
 

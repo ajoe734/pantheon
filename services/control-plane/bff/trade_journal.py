@@ -104,6 +104,32 @@ def _http_call(url: str, data: dict[str, Any] | None, headers: dict[str, str], m
         raise RuntimeError("command owner is unavailable") from exc
 
 
+def read_context_episode(episode_id: str, authorization: str | None, tenant_id: str, *, required: bool = False) -> dict[str, Any] | None:
+    """Read one canonical context artifact, never a BFF projection file.
+
+    Absence of this optional owner preserves Governance journal resolution;
+    a focused Persona journal source instead requires Telemetry availability.
+    A configured owner's rejection/outage must never become a fallback read.
+    """
+    base = os.getenv("PANTHEON_TELEMETRY_API_URL", "").strip().rstrip("/")
+    if not base:
+        if required:
+            raise RuntimeError("Telemetry context owner is not configured")
+        return None
+    tenant = bound_tenant({}, tenant_id, authorization)
+    status, row = _http_call(
+        f"{base}/api/telemetry/trade-episodes/{quote(episode_id, safe='')}", None,
+        {"Authorization": authorization or "", "X-Tenant-Id": tenant}, method="GET",
+    )
+    if status == 404:
+        return None
+    if status != 200:
+        raise ActionUnavailableError("Telemetry context read rejected", error_code="DEPENDENCY_UNAVAILABLE", downstream_status=status)
+    if not isinstance(row, Mapping) or row.get("tenant_id") != tenant or row.get("trade_episode_id") != episode_id:
+        raise RuntimeError("Telemetry context owner returned an invalid scope")
+    return dict(row)
+
+
 def _dispatch_command(payload: Mapping[str, Any]) -> tuple[int, dict[str, Any]]:
     legacy = os.getenv("PANTHEON_TRADE_JOURNAL_COMMAND_OWNER_URL", "").strip().rstrip("/")
     if legacy:
