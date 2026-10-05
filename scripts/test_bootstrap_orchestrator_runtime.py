@@ -13,8 +13,7 @@ SCRIPT = ROOT / "scripts" / "bootstrap-orchestrator-runtime.sh"
 
 
 def _make_status_root(tmp_path: Path) -> Path:
-    """A minimal fake checkout materialized as the bootstrap script's command
-    root worktree.
+    """A minimal fake checkout materialized as a standalone command runtime.
 
     Real bootstrap installs the exact candidate's own ``.orchestrator/
     requirements.txt`` into the deploy-root-owned supervisor venv before ever
@@ -65,6 +64,9 @@ def _make_status_root(tmp_path: Path) -> Path:
         ["git", "remote", "add", "origin", "https://example.invalid/fake/pantheon.git"],
         cwd=status_root,
         check=True,
+    )
+    subprocess.run(
+        ["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=status_root, check=True
     )
     return status_root
 
@@ -181,6 +183,7 @@ def test_dry_run_has_no_writes(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr
     assert "would run" in proc.stdout
     assert not deploy_root.exists(), "dry-run must not create the deployment layout"
+    assert "--materialize-command-root" in proc.stdout
     assert not any(status_root.glob(".git/worktrees/*")), "dry-run must not add a worktree"
 
 
@@ -245,6 +248,12 @@ def test_real_run_mints_keypair_then_second_run_is_idempotent(tmp_path: Path) ->
     first = run_stop_after_keypair()
     assert first.returncode == 0, first.stdout + first.stderr
     assert "generating Ed25519 keypair" in first.stdout
+    command_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=status_root, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    command_root = deploy_root / "command-runtimes" / command_sha
+    assert (command_root / ".git").is_dir(), "bootstrap and refresh must both create standalone clones"
+    assert not any(status_root.glob(".git/worktrees/*"))
     assert authority_file.is_file()
     assert signer_file.is_file()
     first_authority_bytes = authority_file.read_bytes()

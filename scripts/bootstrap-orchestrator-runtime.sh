@@ -19,7 +19,7 @@
 #   PANTHEON_STATUS_ROOT   control-plane state owner (default: this checkout)
 #   BOOTSTRAP_ORCHESTRATOR_STOP_AFTER_KEYPAIR   test-only seam: exit 0 right
 #     after the dev-bridge keypair phase (which itself runs after the command
-#     root worktree and supervisor venv are materialized, since keypair
+#     root and supervisor venv are materialized, since keypair
 #     generation needs that venv's cryptography), before the supervisor
 #     promote/watchdog/health chain. Never set this on a real host.
 set -euo pipefail
@@ -102,19 +102,17 @@ run chmod 700 "$DEPLOY_ROOT" "$RUNTIME_DIR" "$COMMAND_RUNTIME_PARENT"
 # ---------------------------------------------------------------------------
 # 2. Immutable command root
 #
-# The promoted supervisor must launch from an exact, clean tree. A detached
-# worktree at the current commit gives that without duplicating Git objects.
-# This must exist before the supervisor Python environment below, which
-# installs from this exact command root's own .orchestrator/requirements.txt.
+# Use the same materialization/reuse policy as sync-dev-root.sh. The shared
+# provisioner validates the accepted SHA and publishes a standalone clone;
+# it never mutates an existing runtime. This precedes Python provisioning.
 # ---------------------------------------------------------------------------
 COMMAND_SHA="$(git -C "$STATUS_ROOT" rev-parse HEAD)"
 COMMAND_ROOT="$COMMAND_RUNTIME_PARENT/$COMMAND_SHA"
-if [[ -d "$COMMAND_ROOT" ]]; then
-  log "command root already materialized: $COMMAND_ROOT"
-else
-  log "materializing command root at $COMMAND_SHA"
-  run git -C "$STATUS_ROOT" worktree add --detach "$COMMAND_ROOT" "$COMMAND_SHA"
-fi
+log "ensuring command root at $COMMAND_SHA"
+run python3 -B "$STATUS_ROOT/scripts/provision_live_supervisor_config.py" \
+  --materialize-command-root \
+  --source-root "$STATUS_ROOT" \
+  --command-root "$COMMAND_ROOT"
 
 # ---------------------------------------------------------------------------
 # 3. Supervisor Python environment

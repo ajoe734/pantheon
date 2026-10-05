@@ -345,76 +345,13 @@ if [[ "$active_root" == "$candidate_root" && "$config_drift" -eq 0 ]]; then
   exit 0
 fi
 
-materialize_candidate_runtime() {
-  local source_root="$1" destination="$2" sha="$3"
-  local temporary_parent runtime origin_url accepted_dev
-  python3 - "$COMMAND_RUNTIME_PARENT" <<'PY'
-import os
-import stat
-import sys
-from pathlib import Path
-
-parent = Path(sys.argv[1])
-if not parent.is_absolute() or any(part in {".", ".."} for part in parent.parts):
-    raise SystemExit(f"command runtime parent must be canonical absolute path: {parent}")
-for component in (parent, *parent.parents):
-    if component.is_symlink():
-        raise SystemExit(f"command runtime parent contains symlink component: {component}")
-parent.mkdir(parents=True, exist_ok=True)
-if not parent.is_dir() or stat.S_ISLNK(parent.lstat().st_mode):
-    raise SystemExit(f"command runtime parent is not a direct directory: {parent}")
-PY
-  if [[ -L "$destination" ]]; then
-    log "ERROR: immutable candidate destination is a symlink: $destination"
-    return 1
-  fi
-  if [[ ! -e "$destination" ]]; then
-    temporary_parent="$(mktemp -d "${COMMAND_RUNTIME_PARENT}/.runtime-materialize-${sha}.XXXXXX")"
-    runtime="${temporary_parent}/runtime"
-    if ! git clone --quiet --no-local --no-checkout "$source_root" "$runtime"; then
-      rm -rf -- "$temporary_parent"
-      return 1
-    fi
-    origin_url="$(git -C "$source_root" config --get remote.origin.url)"
-    accepted_dev="$(git -C "$source_root" rev-parse "$REF")"
-    git -C "$runtime" remote set-url origin "$origin_url" \
-      && git -C "$runtime" fetch --quiet --no-tags "$source_root" "$sha" \
-      && git -C "$runtime" update-ref refs/remotes/origin/dev "$accepted_dev" \
-      && git -C "$runtime" checkout --quiet --detach "$sha" \
-      || { rm -rf -- "$temporary_parent"; return 1; }
-    if ! python3 - "$runtime" "$destination" "$COMMAND_RUNTIME_PARENT" <<'PY'
-import ctypes
-import errno
-import os
-import sys
-from pathlib import Path
-
-source, destination, parent = map(Path, sys.argv[1:])
-libc = ctypes.CDLL(None, use_errno=True)
-renameat2 = libc.renameat2
-renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
-renameat2.restype = ctypes.c_int
-if renameat2(-100, os.fsencode(source), -100, os.fsencode(destination), 1) != 0:
-    error = ctypes.get_errno()
-    if error != errno.EEXIST:
-        raise OSError(error, os.strerror(error), destination)
-fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-try:
-    os.fsync(fd)
-finally:
-    os.close(fd)
-PY
-    then
-      rm -rf -- "$temporary_parent"
-      return 1
-    fi
-    rm -rf -- "$temporary_parent"
-  fi
-  python3 -B "$destination/scripts/provision_live_supervisor_config.py" \
-    --command-root "$destination" --validate-command-root-only >/dev/null
-}
-
-if ! materialize_candidate_runtime "$DEV_ROOT" "$candidate_root" "$target_sha"; then
+# Bootstrap and refresh share the exact same runtime materializer. Keep only
+# refresh-specific source selection and promotion orchestration in this script.
+if ! python3 -B "$DEV_ROOT/scripts/provision_live_supervisor_config.py" \
+  --materialize-command-root \
+  --source-root "$DEV_ROOT" \
+  --command-root "$candidate_root" \
+  --accepted-ref "$REF"; then
   log "FATAL: immutable candidate materialization/validation failed for $candidate_root"
   exit 1
 fi
