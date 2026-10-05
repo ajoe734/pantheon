@@ -1,6 +1,7 @@
 """Isolated HTTP-port/real-owner contracts, not hosted acceptance evidence."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 import io
 import json
 from pathlib import Path
@@ -27,6 +28,23 @@ from services.control_plane.bff.persona_provisioning import (
     ProvisioningConflict,
 )
 from services.control_plane.bff.personas import service
+from services.control_plane.bff.core import owner_reads
+from services.runtime_auth_inbound import encode_jwt_hs256
+
+
+@contextmanager
+def caller_context(*, tenant="tenant-contract", roles=("operator",), actor="operator-contract"):
+    bearer = "Bearer " + encode_jwt_hs256({
+        "sub": actor, "tenant_id": tenant, "roles": list(roles),
+        "iss": "isolated", "aud": "isolated", "exp": 4102444800,
+    }, secret="isolated-create-secret")
+    auth_token = owner_reads.authorization.set(bearer)
+    tenant_token = owner_reads.selected_tenant.set(tenant)
+    try:
+        yield bearer
+    finally:
+        owner_reads.selected_tenant.reset(tenant_token)
+        owner_reads.authorization.reset(auth_token)
 
 
 @pytest.fixture
@@ -35,6 +53,9 @@ def owner_boundary(monkeypatch, tmp_path):
     monkeypatch.setenv("PANTHEON_PERSONA_SERVICE_TOKEN", token)
     monkeypatch.setenv("PANTHEON_PERSONA_SERVICE_ACTOR_ID", "operator-bff")
     monkeypatch.setenv("PERSONA_AUTH_MODE", "strict")
+    monkeypatch.setenv("PERSONA_JWT_SECRET", "isolated-create-secret")
+    monkeypatch.setenv("PERSONA_JWT_ISSUER", "isolated")
+    monkeypatch.setenv("PERSONA_JWT_AUDIENCE", "isolated")
     path = tmp_path / "personas.json"
     app = create_app(
         owner=PersistentPersonaOwner.from_json_path(path),
@@ -155,6 +176,78 @@ def test_create_preserves_service_authentication_and_actor_binding(owner_boundar
     with pytest.raises(PersonaWriteOwnerUnavailable):
         create(port, state="draft")
     assert PersistentPersonaOwner.from_json_path(path).list() == []
+
+
+def test_provisioning_writes_keep_service_identity_inside_operator_request(owner_boundary):
+    port, _client, path, calls = owner_boundary
+    with caller_context():
+        assert create(port)["created_by"] == "operator-bff"
+        assert port.update_persona("persona-contract", lifecycle_state="paper_running")["lifecycle_state"] == "research_only"
+        assert create(port)["lifecycle_state"] == "research_only"  # 409 + caller-scoped readback
+        snapshot = port.upsert_persona_capability_snapshot(
+            snapshot_id="snapshot-contract", persona_id="persona-contract",
+            capabilities=["paper"], generated_at="2026-10-05T00:00:00Z",
+        )
+        assert snapshot["snapshot_id"] == "snapshot-contract"
+    assert [row[3] for row in calls if row[0] == "POST"] == [201, 409]
+    fresh = PersistentPersonaOwner.from_json_path(path).get("persona-contract")
+    assert fresh.updated_by == "operator-bff"
+    assert fresh.tenant_id == "tenant-contract"
+
+
+@pytest.mark.parametrize("credential", ["", "wrong-service-token"])
+def test_provisioning_never_borrows_even_privileged_ambient_caller(owner_boundary, credential):
+    port, _client, path, _calls = owner_boundary
+    port._service_token = credential
+    with caller_context(roles=("persona.admin",), actor="operator-bff"):
+        with pytest.raises(PersonaWriteOwnerUnavailable):
+            create(port)
+    assert PersistentPersonaOwner.from_json_path(path).list() == []
+
+
+def test_private_reads_keep_caller_tenant_when_service_token_is_configured(owner_boundary):
+    port, _client, _path, _calls = owner_boundary
+    port.create_persona(
+        persona_id="private-contract", name="Private fixture", actor_id="operator-contract",
+        metadata={"tenant_id": "tenant-contract", "trade_reflections": {"fixture": True}},
+    )
+    with caller_context():
+        assert port.get_persona("private-contract")["tenant_id"] == "tenant-contract"
+    with caller_context(tenant="foreign-tenant"):
+        with pytest.raises(PersonaWriteOwnerUnavailable):
+            port.get_persona("private-contract")
+        assert port.list_personas() == []
+
+
+def test_background_private_reads_authenticate_with_configured_service(owner_boundary):
+    port, _client, _path, _calls = owner_boundary
+    assert owner_reads.authorization.get() is None
+    port.create_persona(
+        persona_id="background-contract", name="Background fixture", actor_id="operator-contract",
+        metadata={"tenant_id": "tenant-contract", "trade_reflections": {"fixture": True}},
+    )
+    assert port.get_persona("background-contract")["created_by"] == "operator-bff"
+    assert len(port.list_personas()) == 1
+    # This is authenticated machine-to-machine reconciliation, not anonymous
+    # authority: removing its service credential makes the real owner deny it.
+    port._service_token = ""
+    with pytest.raises(PersonaWriteOwnerUnavailable):
+        port.get_persona("background-contract")
+    with pytest.raises(PersonaWriteOwnerUnavailable):
+        port.list_personas()
+
+
+def test_invalid_read_caller_does_not_fall_back_to_service(owner_boundary):
+    port, _client, _path, _calls = owner_boundary
+    create(port)
+    token = owner_reads.authorization.set("Bearer invalid-user-token")
+    try:
+        with pytest.raises(PersonaWriteOwnerUnavailable):
+            port.get_persona("persona-contract")
+        with pytest.raises(PersonaWriteOwnerUnavailable):
+            port.list_personas()
+    finally:
+        owner_reads.authorization.reset(token)
 
 
 @pytest.fixture

@@ -13,8 +13,6 @@ Canonical interface per
 """
 from __future__ import annotations
 
-import json
-import os
 from typing import Any, Dict, List, Optional
 from unittest.mock import patch
 
@@ -223,6 +221,19 @@ def test_journal_entry_legacy_lookup_excludes_other_tenant_rows():
     assert result["audience_verified"] is False
 
 
+@pytest.mark.parametrize("query", ["tab=tradeJournal", "tab=tradeJournal&tab=overview", "tab=tradeJournal&tab=tradeJournal"])
+def test_focused_persona_journal_requires_owner_even_for_duplicate_tabs(monkeypatch, query):
+    monkeypatch.delenv("PANTHEON_TELEMETRY_API_URL", raising=False)
+    store = _FakeReadStore(journal_entries=[{"id": "ep-1", "tenant_id": "tenant-a", "owner_user_id": "alice"}])
+    with pytest.raises(HTTPException) as failure:
+        _resolve(read_store=store, kind="journal_entry", ref_id="ep-1", resolved=_Resolved(),
+                 session={}, context_refs=[], authorization="Bearer t",
+                 source_route=f"/management/personas/ready?{query}",
+                 focused_object={"kind": "journal_entry", "id": "ep-1"})
+    assert failure.value.status_code == 503
+    assert store.list_calls == []
+
+
 def test_journal_entry_missing_read_store_is_none_row_not_a_crash():
     result = _resolve(
         read_store=None,
@@ -236,6 +247,7 @@ def test_journal_entry_missing_read_store_is_none_row_not_a_crash():
 def _trade_episode(**overrides):
     return {
         "trade_episode_id": "ep-1",
+        "tenant_id": "tenant-a",
         "environment": "paper",
         "persona_id": "ready",
         "strategy_id": "strategy-1",
@@ -256,10 +268,8 @@ def _trade_episode(**overrides):
     }
 
 
-def test_journal_entry_trade_episode_canonical_route_verifies_audience(tmp_path):
-    episode_path = tmp_path / "trade-episodes.json"
-    episode_path.write_text(json.dumps([_trade_episode()]))
-    with patch.dict(os.environ, {"PANTHEON_BFF_TRADE_EPISODES_STORE": str(episode_path)}):
+def test_journal_entry_trade_episode_canonical_route_verifies_audience():
+    with patch("services.control_plane.bff.trade_journal.read_context_episode", return_value=_trade_episode()):
         directory_lookup_calls = []
 
         class _Snapshot:
@@ -285,10 +295,8 @@ def test_journal_entry_trade_episode_canonical_route_verifies_audience(tmp_path)
         assert directory_lookup_calls == ["tenant-a"]
 
 
-def test_journal_entry_trade_episode_wrong_route_is_not_audience_verified(tmp_path):
-    episode_path = tmp_path / "trade-episodes.json"
-    episode_path.write_text(json.dumps([_trade_episode()]))
-    with patch.dict(os.environ, {"PANTHEON_BFF_TRADE_EPISODES_STORE": str(episode_path)}):
+def test_journal_entry_trade_episode_wrong_route_is_not_audience_verified():
+    with patch("services.control_plane.bff.trade_journal.read_context_episode", return_value=_trade_episode()):
         class _Snapshot:
             records_by_id = {"ready": {"tenant_id": "tenant-a"}}
 
@@ -307,12 +315,10 @@ def test_journal_entry_trade_episode_wrong_route_is_not_audience_verified(tmp_pa
         assert result["audience_verified"] is False
 
 
-def test_journal_entry_trade_episode_missing_persona_snapshot_dependency_stays_unverified(tmp_path):
+def test_journal_entry_trade_episode_missing_persona_snapshot_dependency_stays_unverified():
     """Without an injected persona directory dependency the trade-episode
     branch cannot prove audience and must not silently default to verified."""
-    episode_path = tmp_path / "trade-episodes.json"
-    episode_path.write_text(json.dumps([_trade_episode()]))
-    with patch.dict(os.environ, {"PANTHEON_BFF_TRADE_EPISODES_STORE": str(episode_path)}):
+    with patch("services.control_plane.bff.trade_journal.read_context_episode", return_value=_trade_episode()):
         result = _resolve(
             kind="journal_entry", ref_id="ep-1", ref_version=None,
             resolved=_Resolved(tenant_id="tenant-a"),
@@ -326,11 +332,9 @@ def test_journal_entry_trade_episode_missing_persona_snapshot_dependency_stays_u
         assert result["audience_verified"] is False
 
 
-def test_journal_entry_trade_episode_schema_invalid_is_not_audience_verified(tmp_path):
+def test_journal_entry_trade_episode_schema_invalid_is_not_audience_verified():
     episode = _trade_episode(coverage=None)
-    episode_path = tmp_path / "trade-episodes.json"
-    episode_path.write_text(json.dumps([episode]))
-    with patch.dict(os.environ, {"PANTHEON_BFF_TRADE_EPISODES_STORE": str(episode_path)}):
+    with patch("services.control_plane.bff.trade_journal.read_context_episode", return_value=episode):
         class _Snapshot:
             records_by_id = {"ready": {"tenant_id": "tenant-a"}}
 

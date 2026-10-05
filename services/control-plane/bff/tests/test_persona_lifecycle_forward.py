@@ -117,7 +117,12 @@ def advance(boundary, **overrides):
 
 
 def test_http_port_preserves_original_caller_and_durable_owner_result(boundary):
-    result = advance(boundary)
+    from services.control_plane.bff.core import owner_reads
+    token = owner_reads.authorization.set("Bearer unrelated-ambient-caller")
+    try:
+        result = advance(boundary)
+    finally:
+        owner_reads.authorization.reset(token)
     assert boundary.calls[0]["headers"]["Authorization"] == bearer()
     assert boundary.calls[0]["method"] == "PATCH"
     assert boundary.calls[0]["body"] == {

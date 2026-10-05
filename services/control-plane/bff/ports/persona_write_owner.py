@@ -4,6 +4,10 @@ The BFF never imports Persona application stores or opens Persona-owned tables.
 Writes and read projections cross the Persona service boundary with a bounded
 timeout. Provisioning uses its service credential; human lifecycle operations
 forward the original authenticated caller without borrowing provisioning roles.
+Request-bound reads preserve caller authority. With no inbound caller context,
+background provisioning reconciliation authenticates reads as the configured
+service principal. This internal port is not an inbound authentication gate:
+Persona HTTP routers must authenticate and authorize callers before invoking it.
 """
 from __future__ import annotations
 
@@ -164,11 +168,19 @@ class PersonaRegistryHttpWritePort:
             encoded = json.dumps(dict(body), separators=(",", ":")).encode("utf-8")
             headers["Content-Type"] = "application/json"
         from ..core.owner_reads import authorization as _auth_var, selected_tenant as _tenant_var
-        auth = authorization or _auth_var.get()
+        # Explicit caller authority (human lifecycle) must never borrow service
+        # privileges. Provisioning writes use the configured service identity,
+        # matching their service actor body, not the ambient request's JWT.
+        if authorization is not None:
+            auth = authorization
+        elif write:
+            auth = f"Bearer {self._service_token}"
+        else:
+            auth = _auth_var.get() or (
+                f"Bearer {self._service_token}" if self._service_token else None
+            )
         if auth:
             headers["Authorization"] = auth
-        elif self._service_token:
-            headers["Authorization"] = f"Bearer {self._service_token}"
         tenant = _tenant_var.get()
         if tenant:
             headers["X-Tenant-Id"] = tenant
@@ -563,15 +575,15 @@ class PersonaRegistryHttpWritePort:
 
     def list_sessions_for_persona(
         self,
-        persona_id: str,
+        persona_id: str | None = None,
         *,
         status: str | None = None,
         **kwargs: Any,
     ) -> list[Dict[str, Any]]:
         clean_id = str(persona_id or "").strip()
-        if not clean_id:
-            return []
-        params = {"persona_id": clean_id, **{k: v for k, v in kwargs.items() if v is not None}}
+        params = {k: v for k, v in kwargs.items() if v is not None}
+        if clean_id:
+            params["persona_id"] = clean_id
         if status:
             params["status"] = status
         try:
@@ -582,8 +594,6 @@ class PersonaRegistryHttpWritePort:
                 params=params,
             )
         except _PersonaHttpResponseError as exc:
-            if exc.status_code == 404:
-                return []
             raise PersonaWriteOwnerUnavailable("persona_session_owner", exc.reason) from exc
         if not isinstance(value, list):
             raise PersonaWriteOwnerUnavailable(
