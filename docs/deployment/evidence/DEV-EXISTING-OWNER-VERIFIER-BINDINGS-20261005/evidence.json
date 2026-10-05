@@ -1,0 +1,63 @@
+{
+  "task_id": "DEV-EXISTING-OWNER-VERIFIER-BINDINGS-20261005",
+  "title": "Bind existing private owner verifiers in canonical dev root",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "change_class": "corrective",
+  "net_prod_line_budget": 4,
+  "net_prod_lines": 4,
+  "acceptance_criteria": {
+    "ac_1_unconfigured_verifier_rejection_and_alias_recognition": {
+      "status": "satisfied",
+      "detail": "Verified baseline reproduction where deployment service with unconfigured verifier rejected valid operator JWT with 401 AUTH_JWT_UNVERIFIED and caused BFF domain port get_surface_status to return unavailable. Identified that source-ingest root service previously referenced only PANTHEON_BFF_JWT_* variables while dev environment exports PANTHEON_DEV_BFF_JWT_* aliases."
+    },
+    "ac_2_minimal_canonical_root_repair_and_trust_reuse": {
+      "status": "satisfied",
+      "detail": "Updated docker-compose.yml in place without new credentials, issuers, secret stores, or platform modifications. source-ingest chains PANTHEON_RUNTIME_JWT_* through PANTHEON_BFF_JWT_* to PANTHEON_DEV_BFF_JWT_* in place (+3/-3 = net 0 lines). deployment service binds PANTHEON_DEPLOYMENT_JWT_SECRET, JWT_ISSUER, JWT_AUDIENCE, and JWKS_URI with fallback chaining to BFF and DEV_BFF aliases (+4 net lines). No real secrets committed."
+    },
+    "ac_3_strict_tenant_boundary_and_admitted_tenant_selection": {
+      "status": "satisfied",
+      "detail": "Deployment and source-ingest authentication preserves strict tenant isolation, verifying token claims against explicit X-Tenant-Id headers. Mismatched tenant access denies with 403 TENANT_BOUNDARY_DENIED (deployment) and 403 TENANT_SCOPE_DENIED (source-ingest). Inbound guards remain unweakened."
+    },
+    "ac_4_actual_app_verification_and_consumer_integrity": {
+      "status": "satisfied",
+      "detail": "Verified real deployment FastAPI service and source-ingest auth routines against real default BFF consumer (create_owner_domain_ports and read_records). Confirmed positive 200 read of populated plan plan-persona-paper-32b8fd84b82f35138206 under tenant-dev. Tested negatives (missing token, invalid signature, expired token, forbidden role, mismatched tenant) with zero store side effects."
+    },
+    "ac_5_strict_production_budget_compliance": {
+      "status": "satisfied",
+      "detail": "Net production line change is exactly +4 lines (docker-compose.yml: 7 additions, 3 deletions = net +4), strictly satisfying net_prod_line_budget: 4. No modifications to runtime logic, control compose files, or deploy scripts."
+    },
+    "ac_6_focused_verification_and_governed_workflow": {
+      "status": "satisfied",
+      "detail": "Executed focused test suites: test_bootstrap_dev_paper_baseline.py (49 passed), test_dev_deployment_tenant.py (1 passed), test_deploy_nonprod_vm.py (45 passed, 2 skipped), test_issue_dev_paper_principals.py (31 passed). Formatted commit and handoff under strict worker protocol."
+    }
+  },
+  "validation": [
+    {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --change-class corrective --budget 4",
+      "result": "production: +7/-3 (net +4 lines), within budget of 4"
+    },
+    {
+      "command": ".venv-pantheon/bin/pytest scripts/test_bootstrap_dev_paper_baseline.py",
+      "result": "49 passed, 1 warning in 13.47s"
+    },
+    {
+      "command": ".venv-pantheon/bin/pytest scripts/test_dev_deployment_tenant.py",
+      "result": "1 passed in 0.36s"
+    },
+    {
+      "command": "PYTHONPATH=scripts .venv-pantheon/bin/pytest scripts/test_deploy_nonprod_vm.py",
+      "result": "45 passed, 2 skipped in 17.79s"
+    },
+    {
+      "command": ".venv-pantheon/bin/pytest scripts/test_issue_dev_paper_principals.py",
+      "result": "31 passed in 5.18s"
+    }
+  ],
+  "diff_stat": {
+    "docker-compose.yml": "+7 / -3 (net +4)",
+    "scripts/test_bootstrap_dev_paper_baseline.py": "+453 / -0 (test class, exempt from prod budget)",
+    "docs/deployment/evidence/DEV-EXISTING-OWNER-VERIFIER-BINDINGS-20261005/evidence.json": "+70 / -0 (docs/evidence class, cap <= 400)",
+    "production_net": 4
+  }
+}

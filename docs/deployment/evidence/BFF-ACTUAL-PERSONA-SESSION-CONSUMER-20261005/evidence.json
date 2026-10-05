@@ -1,0 +1,61 @@
+{
+  "task_id": "BFF-ACTUAL-PERSONA-SESSION-CONSUMER-20261005",
+  "title": "Read actual served Persona sessions in default BFF owner",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "change_class": "corrective",
+  "net_prod_line_budget": 0,
+  "net_prod_lines": -9,
+  "acceptance_criteria": {
+    "ac_1_preserve_reviews_and_pass_served_persona_session_control": {
+      "status": "satisfied",
+      "detail": "Preserved genuine PR 6150, 6153, 6155 reviews and source archives. Original 4 timestamp/status fixes and 3 actual Source auth/malformed fixes continue to pass 7 independent controls. Completed PersonaRegistryHttpWritePort.list_sessions_for_persona to consume GET /api/sessions on the actual served parent SESSION_STORE with signed tenant-1. test_default_bff_actual_persona_sessions passes (1 passed in 1.24s)."
+    },
+    "ac_2_reuse_existing_transport_and_verified_identity": {
+      "status": "satisfied",
+      "detail": "Reuses existing PersonaRegistryHttpWritePort and supported parent SESSION_STORE API. Forwards request-scoped verified caller Authorization and X-Tenant-Id headers from owner_reads ContextVars. No new store/cache/issuer/queue/index or session engine, and no copying metadata as records. Preserves actual owner auth/tenant-before-materialization guards."
+    },
+    "ac_3_default_dependencies_and_diagnostic_correspondence": {
+      "status": "satisfied",
+      "detail": "Uses actual compose_bff_app default dependencies and real strict served parent with actual retained SESSION_STORE. Authoritative populated session ID is delivered, reachable empty returns empty list, and unconfigured/down/malformed/badcredential raises PersonaWriteOwnerUnavailable appropriately."
+    },
+    "ac_4_budget_compliance": {
+      "status": "satisfied",
+      "detail": "Net production line growth against origin/dev is exactly -9 lines (+58 added, -67 deleted in persona_write_owner.py by refactoring overlapping capability snapshot projection helpers), strictly complying with the net production line budget of <= 0 lines."
+    },
+    "ac_5_regression_inventories": {
+      "status": "satisfied",
+      "detail": "Ran full verification suite: test_default_bff_actual_persona_sessions.py (1 passed), 7 independent Source controls (7 passed in 3.97s), full 47-test regression suite (47 passed in 71.63s), and test_bff_test_architecture.py (39 passed in 52.90s)."
+    },
+    "ac_6_source_workers_local_only": {
+      "status": "satisfied",
+      "detail": "All changes are local to the task worktree with no VM, deployment, or runtime promotion. Clean task branch task/BFF-ACTUAL-PERSONA-SESSION-CONSUMER-20261005."
+    }
+  },
+  "validation": [
+    {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_default_bff_actual_persona_sessions.py",
+      "result": "1 passed in 1.24s"
+    },
+    {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_ranking_default_owner_integrity.py services/control-plane/bff/tests/test_ranking_real_source_owner_admission.py",
+      "result": "7 passed in 3.97s"
+    },
+    {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_default_bff_actual_persona_sessions.py services/control-plane/bff/tests/test_ranking_default_owner_integrity.py services/control-plane/bff/tests/test_ranking_real_source_owner_admission.py",
+      "result": "8 passed in 4.87s"
+    },
+    {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_ranking_default_owner_integrity.py services/control-plane/bff/tests/test_ranking_real_source_owner_admission.py services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py services/control-plane/bff/tests/test_ranking_evidence_surfaces_default_composition.py services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py",
+      "result": "47 passed in 71.63s"
+    },
+    {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "result": "39 passed in 52.90s"
+    }
+  ],
+  "diff_stat": {
+    "persona_write_owner.py": "+58 / -67 (net -9)",
+    "production_net": -9
+  }
+}

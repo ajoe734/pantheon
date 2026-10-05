@@ -40,7 +40,7 @@ def _env(service: str) -> dict[str, str]:
 def test_source_controller_is_the_single_default_durable_owner() -> None:
     owner = SERVICES["source-ingest-scheduler"]
 
-    assert "profiles" not in owner
+    assert set(owner.get("profiles", [])) == {"root", "workers"}
     assert (
         owner["restart"]
         == "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-unless-stopped}"
@@ -247,7 +247,16 @@ def test_default_owner_services_are_not_hidden_behind_profiles() -> None:
 
     assert canonical_default_owners <= SERVICES.keys()
     assert {
-        name for name in canonical_default_owners if "profiles" in SERVICES[name]
+        name for name in canonical_default_owners if "root" not in SERVICES[name].get("profiles", [])
+    } == set()
+    assert {
+        name for name in canonical_default_owners
+        if set(SERVICES[name].get("profiles", [])) & {
+            "dormant-smoke",
+            "openclaw-activation-ready-e2e",
+            "lifecycle-capacity-benchmark",
+            "static-paper-runtime",
+        }
     } == set()
 
 

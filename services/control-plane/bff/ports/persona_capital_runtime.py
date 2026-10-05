@@ -40,17 +40,13 @@ def _utc_now_rfc3339() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _parse_rfc3339(val: Any) -> Optional[datetime]:
-    if not val or not isinstance(val, str):
-        return None
-
-
 def _is_unconfigured(exc: Exception) -> bool:
-    msg = str(exc).lower()
-    return any(k in msg for k in ("unconfigured", "not configured", "authorization", "unauthorized"))
+    return any(k in str(exc).lower() for k in ("unconfigured", "not configured"))
+
+
+def _parse_rfc3339(val: Any) -> Optional[datetime]:
     try:
-        clean = val.replace("Z", "+00:00")
-        return datetime.fromisoformat(clean)
+        return datetime.fromisoformat(val.replace("Z", "+00:00"))
     except Exception:
         return None
 
@@ -569,9 +565,7 @@ class RankingProjectionPort:
             records = reader()
             return "service", [dict(r) for r in (records or [])]
         except Exception as exc:
-            if "authorization" in str(exc).lower() or "unconfigured" in str(exc).lower():
-                return "missing", []
-            return "unavailable", []
+            return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
 
     def get_surface_status(self) -> Dict[str, Any]:
         surfaces = {}
@@ -802,9 +796,7 @@ class EvolutionProjectionPort:
             records = reader()
             return "service", [dict(r) for r in (records or [])]
         except Exception as exc:
-            if "authorization" in str(exc).lower() or "unconfigured" in str(exc).lower():
-                return "missing", []
-            return "unavailable", []
+            return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
 
     def get_surface_status(self) -> Dict[str, Any]:
         surfaces = {}

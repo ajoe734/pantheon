@@ -18,6 +18,8 @@ from services.control_plane.bff.deployment.adapters import DeploymentReadSurface
 from services.control_plane.bff.evolution.router import create_evolution_programs_router
 from services.control_plane.bff.models import CommandType, ObjectType, OperatorIdentity, utc_now
 from services.control_plane.bff.ports import create_read_surface_ports
+from services.evolution.program_service import ProgramService
+from services.evolution.program_store import JsonProgramStore
 
 
 _JWT_ENV = {"PANTHEON_BFF_JWT_SECRET": "receipt-owner-signing-secret-0123456789",
@@ -56,6 +58,13 @@ def owner(tmp_path, monkeypatch):
     state.write_text(json.dumps({"plans": {}, "programs": {
         "program-a": {"program_id": "program-a", "status": "active", "tenant_id": "tenant-a"},
     }, "proposals": {"proposal-a": {"decision_id": "proposal-a", "decision_state": "approved", "tenant_id": "tenant-a"}}, "gates": {}, "writes": 0}))
+    program_store = JsonProgramStore(tmp_path / "programs.json")
+    program_store.create_with_receipt(
+        tenant_id="tenant-a", actor_id="tenant-a", idempotency_key=None,
+        request_fingerprint={},
+        program_factory=lambda: {**json.loads(state.read_text())["programs"]["program-a"], "revision": 1},
+    )
+    program_service = ProgramService(program_store)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -101,6 +110,18 @@ def owner(tmp_path, monkeypatch):
                 state.write_text(json.dumps(data))
                 return self.send_json(200, {"receipt_id": "owner-receipt", "program_id": "program-a",
                     "action_id": "pause_program", "status": "paused", "program_status": "paused", "program": row})
+            elif path == "/api/evolution/programs/program-a/actions/promote_candidate_live":
+                if tenant != "tenant-a":
+                    return self.send_json(404, {})
+                result, _ = program_service.execute_action(
+                    tenant_id=tenant, actor_id=body["actor_id"], actor_role=body["actor_role"],
+                    program_id="program-a", action_id="promote_candidate_live",
+                    idempotency_key=self.headers.get("Idempotency-Key"), payload=body,
+                )
+                data["programs"]["program-a"] = result["program"]
+                data["writes"] += 1
+                state.write_text(json.dumps(data))
+                return self.send_json(200, result)
             else:
                 return self.send_json(404, {})
             data["writes"] += 1
@@ -272,17 +293,67 @@ def test_resource_dry_run_never_enqueues_or_writes_owner(mounted, owner, method,
     assert json.loads(owner.read_text())["writes"] == 0
 
 
-@pytest.mark.parametrize("action", ["promote_candidate_live", "PromoteEvolutionCandidateLive"])
-def test_live_candidate_promotion_requires_two_man_evidence_at_mounted_path(mounted, owner, action):
+@pytest.mark.parametrize("entry,action", [
+    ("route", "promote_candidate_live"),
+    ("route", "PromoteEvolutionCandidateLive"),
+    ("wrapper", "promote_candidate_live"),
+    ("wrapper", "PromoteEvolutionCandidateLive"),
+    ("wrapper", "promoteCandidateLive"),
+    ("wrapper", "promote_evolution_candidate_live"),
+    ("direct", "PromoteEvolutionCandidateLive"),
+])
+def test_live_review_intent_needs_no_approval_workflow(mounted, owner, entry, action):
     client, store, ports = mounted
-    url = f"/bff/evolution-programs/program-a/actions/{action}"
-    headers = {"Authorization": _tok("tenant-a"), "Idempotency-Key": f"promote-live-{action}"}
-    evidence = {"candidate_id": "cand-a", "confirmToken": "ct-1", "approvalId": "appr-1"}
-    response = client.post(url, json=evidence, headers=headers)
-    assert response.status_code == 409, response.text
-    assert "TWO_MAN_SIGNATURE_REQUIRED" in response.text
-    assert store.get_command_by_idempotency_key(f"promote-live-{action}", operator_id="tenant-a") is None
+    url = "/bff/v1/commands"
+    payload = {"candidate_id": "cand-a"}
+    if entry == "route":
+        url = f"/bff/evolution-programs/program-a/actions/{action}"
+    else:
+        payload = {"command": action if entry == "direct" else "EvolutionProgramAction",
+                   "target": {"type": "EvolutionProgram", "id": "program-a"},
+                   "params": payload, "audit_context": {"reason": "record review intent"}}
+        if entry == "wrapper":
+            payload["action"] = action
+
+    for role in ("viewer", "operator"):
+        key = f"denied-{entry}-{action}-{role}"
+        denied = client.post(url, json=payload, headers={
+            "Authorization": _tok("tenant-a", roles=[role]), "Idempotency-Key": key,
+        })
+        assert denied.status_code == 403, denied.text
+        assert store.get_command_by_idempotency_key(key, operator_id="tenant-a") is None
+        assert json.loads(owner.read_text())["writes"] == 0
+
+    unsigned = client.post(url, json=payload, headers={"Idempotency-Key": "unsigned"})
+    assert unsigned.status_code == 401, unsigned.text
+    foreign = client.post(url, json=payload, headers={
+        "Authorization": _tok("tenant-b"), "Idempotency-Key": "foreign",
+    })
+    if foreign.status_code == 202:
+        assert store.get_command_by_idempotency_key("foreign", operator_id="tenant-b")["status"] == "failed"
+    else:
+        assert foreign.status_code == 404, foreign.text
     assert json.loads(owner.read_text())["writes"] == 0
+
+    key = f"review-{entry}-{action}"
+    headers = {"Authorization": _tok("tenant-a"), "Idempotency-Key": key}
+    response = client.post(url, json=payload, headers=headers)
+    assert response.status_code == 202, response.text
+    record = store.get_command_by_idempotency_key(key, operator_id="tenant-a")
+    assert record["status"] == "executed", record
+    replay = client.post(url, json=payload, headers=headers)
+    assert replay.status_code == 202, replay.text
+    assert json.loads(owner.read_text())["writes"] == 1
+    # Read the real owner store again, not the BFF command receipt.
+    program = ProgramService(JsonProgramStore(owner.parent / "programs.json")).get_program(
+        tenant_id="tenant-a", program_id="program-a",
+    )
+    assert program["status"] == "active"
+    assert len(program["promotions"]) == 1
+    intent = program["promotions"][0]
+    assert intent["candidate_id"] == "cand-a"
+    assert intent["approval_id"] is None
+    assert intent["capital_authority"] == intent["runtime_authority"] == "none"
 
 
 @pytest.mark.parametrize("command,action", [

@@ -10639,6 +10639,264 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
         self.assertEqual(selected, source.resolve())
         self.assertEqual(metadata["repository_path_source"], "repository_registry")
 
+    def test_handoff_action_formats_error_messages(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config, status_root, _source, workspace, task = self._repository_fixture(
+                Path(directory)
+            )
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_WORKTREE_ROOT": str(workspace)},
+                    clear=True,
+                ),
+                self.assertRaisesRegex(
+                    SystemExit, "^Cannot handoff task: "
+                ),
+            ):
+                ai_status._done_delivery_repository_root(
+                    config, task, "execute_plans", action="handoff"
+                )
+
+    def test_operator_resolves_integration_path_without_workspace_env(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon-status"
+            integration_root = root / "pantheon-integration"
+            status_root.mkdir()
+            integration_root.mkdir()
+            self._git(integration_root, "init", "-b", "dev")
+            self._git(integration_root, "config", "user.name", "Test")
+            self._git(integration_root, "config", "user.email", "test@example.com")
+            (integration_root / "README.md").write_text("pantheon\n", encoding="utf-8")
+            self._git(integration_root, "add", "README.md")
+            self._git(integration_root, "commit", "-m", "initial")
+            self._git(
+                integration_root,
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/ajoe734/pantheon.git",
+            )
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "repo": "ajoe734/pantheon",
+                            "integration_path": str(integration_root),
+                        }
+                    }
+                },
+            }
+            task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(os.environ, {}, clear=True),
+            ):
+                selected, metadata = ai_status._done_delivery_repository_root(
+                    config, task, "pantheon", action="handoff"
+                )
+
+        self.assertEqual(selected, integration_root.resolve())
+        self.assertEqual(metadata["repository_path_source"], "repository_registry")
+
+    def test_operator_resolves_local_path_without_workspace_env(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon-status"
+            local_root = root / "pantheon-local"
+            status_root.mkdir()
+            local_root.mkdir()
+            self._git(local_root, "init", "-b", "dev")
+            self._git(local_root, "config", "user.name", "Test")
+            self._git(local_root, "config", "user.email", "test@example.com")
+            (local_root / "README.md").write_text("pantheon\n", encoding="utf-8")
+            self._git(local_root, "add", "README.md")
+            self._git(local_root, "commit", "-m", "initial")
+            self._git(
+                local_root,
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/ajoe734/pantheon.git",
+            )
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "repo": "ajoe734/pantheon",
+                            "local_path": str(local_root),
+                        }
+                    }
+                },
+            }
+            task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(os.environ, {}, clear=True),
+            ):
+                selected, metadata = ai_status._done_delivery_repository_root(
+                    config, task, "pantheon", action="handoff"
+                )
+
+        self.assertEqual(selected, local_root.resolve())
+        self.assertEqual(metadata["repository_path_source"], "repository_registry")
+
+    def test_operator_handoff_rejects_wrong_origin_remote(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon-status"
+            integration_root = root / "pantheon-integration"
+            status_root.mkdir()
+            integration_root.mkdir()
+            self._git(integration_root, "init", "-b", "dev")
+            self._git(
+                integration_root,
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/example/not-pantheon.git",
+            )
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "repo": "ajoe734/pantheon",
+                            "integration_path": str(integration_root),
+                        }
+                    }
+                },
+            }
+            task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(os.environ, {}, clear=True),
+                self.assertRaisesRegex(
+                    SystemExit, "(origin|repository|remote)"
+                ),
+            ):
+                ai_status._done_delivery_repository_root(
+                    config, task, "pantheon", action="handoff"
+                )
+
+    def test_operator_handoff_rejects_non_git_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon-status"
+            non_git_root = root / "pantheon-non-git"
+            status_root.mkdir()
+            non_git_root.mkdir()
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "repo": "ajoe734/pantheon",
+                            "integration_path": str(non_git_root),
+                        }
+                    }
+                },
+            }
+            task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(os.environ, {}, clear=True),
+                self.assertRaisesRegex(
+                    SystemExit, "must be a git repository root"
+                ),
+            ):
+                ai_status._done_delivery_repository_root(
+                    config, task, "pantheon", action="handoff"
+                )
+
+    def test_operator_handoff_rejects_missing_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon-status"
+            missing_root = root / "non-existent"
+            status_root.mkdir()
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "repo": "ajoe734/pantheon",
+                            "integration_path": str(missing_root),
+                        }
+                    }
+                },
+            }
+            task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(os.environ, {}, clear=True),
+                self.assertRaisesRegex(
+                    SystemExit, "registered delivery repository does not exist"
+                ),
+            ):
+                ai_status._done_delivery_repository_root(
+                    config, task, "pantheon", action="handoff"
+                )
+
+    def test_operator_rejects_relative_or_symlink_integration_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon-status"
+            status_root.mkdir()
+            task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
+            rel_config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "repo": "ajoe734/pantheon",
+                            "integration_path": "relative/path",
+                        }
+                    }
+                },
+            }
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(os.environ, {}, clear=True),
+                self.assertRaisesRegex(
+                    SystemExit, "integration_path must be absolute"
+                ),
+            ):
+                ai_status._done_delivery_repository_root(
+                    rel_config, task, "pantheon", action="handoff"
+                )
+
+            # Test symlink component
+            real_dir = root / "real_dir"
+            real_dir.mkdir()
+            symlink_dir = root / "symlink_dir"
+            symlink_dir.symlink_to(real_dir)
+            symlink_config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "repo": "ajoe734/pantheon",
+                            "integration_path": str(symlink_dir),
+                        }
+                    }
+                },
+            }
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(os.environ, {}, clear=True),
+                self.assertRaisesRegex(
+                    SystemExit, "cannot include a symlink component"
+                ),
+            ):
+                ai_status._done_delivery_repository_root(
+                    symlink_config, task, "pantheon", action="handoff"
+                )
+
 
 class DeliveryMetadataValidationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -19649,3 +19907,46 @@ ai_status._assert_no_active_execution("FIFO-TEST")
             self.assertEqual(
                 ai_status.resolve_approval_queue_file(root), orch / "approval-queue.json"
             )
+
+
+class EntrypointModuleIdentityTests(unittest.TestCase):
+    """Run as a script, ai_status must be the module that lazy importers get.
+
+    rewrite.task_contract calls back into ``ai_status`` during handoff. If that
+    import loads a second copy, the worker lease binding set by the running
+    script is invisible there and every worker handoff fails closed.
+    """
+
+    def test_lazy_import_returns_running_entrypoint(self) -> None:
+        driver = (
+            "import importlib.util, sys\n"
+            "path = sys.argv[1]\n"
+            "sys.argv = [path, 'show', 'NO-SUCH-TASK-ENTRYPOINT-IDENTITY']\n"
+            "spec = importlib.util.spec_from_file_location('__main__', path)\n"
+            "module = importlib.util.module_from_spec(spec)\n"
+            "sys.modules['__main__'] = module\n"
+            "try:\n"
+            "    spec.loader.exec_module(module)\n"
+            "except BaseException:\n"
+            "    pass\n"
+            "from rewrite import task_contract\n"
+            "imported = task_contract._ai_status_module()\n"
+            "assert imported is module, (imported, module)\n"
+            "assert imported._STATUS_COMMAND_LEASE_LOCAL is module._STATUS_COMMAND_LEASE_LOCAL\n"
+            "print('entrypoint-identity-ok')\n"
+        )
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith(("PANTHEON_", "ORCH_"))
+        }
+        with tempfile.TemporaryDirectory(prefix="ai-status-entrypoint-") as temp_dir:
+            result = subprocess.run(
+                [sys.executable, "-B", "-c", driver, str(Path(ai_status.__file__).resolve())],
+                cwd=temp_dir,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        self.assertIn("entrypoint-identity-ok", result.stdout, result.stderr[-2000:])

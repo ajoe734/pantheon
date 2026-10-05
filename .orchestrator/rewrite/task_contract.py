@@ -430,7 +430,9 @@ def validate_handoff_pr_delivery_binding(
     if repository_id == "pantheon":
         import check_commit_trailers
 
-        repository_root = Path(repository_local_path(config, repository_id))
+        repository_root, _ = ai_status._done_delivery_repository_root(
+            config, dict(task), repository_id, action="handoff"
+        )
         commit_range = f"{validated.base_sha}..{normalized['head_sha']}"
         try:
             failures = check_commit_trailers.check_range(

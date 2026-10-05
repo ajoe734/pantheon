@@ -1166,6 +1166,10 @@ if sys.argv[2] == "tw-twse-tpex-official-market":
         )
 print(f"validated {len(hosts)} exact source refresh hosts")
 PY
+  # Real official-source pulls plus durable/index readback can exceed the
+  # controller's ordinary 30s RPC budget. Keep this dev proof finite and no
+  # longer than its outer deadline; ordinary reconcile-only mode is unchanged.
+  export SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS="$(( SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS < 120 ? SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS : 120 ))"
   export SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
   export SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
 }
@@ -2320,7 +2324,9 @@ bootstrap_dev_lifecycle_projection() {
   # One-shot migration from the sealed candidate, before starting its runtime.
   # Migration credentials exist only in this container, never in the projector.
   docker compose -p pantheon -f docker-compose.yml up -d --wait postgres || return
-  docker compose -p pantheon -f docker-compose.yml config --format json | \
+  # PostgreSQL is profile-gated. Render its explicit core service even when
+  # COMPOSE_PROFILES is unset; do not pipe unrelated service credentials.
+  docker compose -p pantheon -f docker-compose.yml --profile core config --format json postgres | \
     run_dev_candidate_compose run --rm --no-deps -T \
     --entrypoint python loop-run-projector-scheduler \
     -m scripts.lifecycle_projector_migrate --bootstrap-only --compose-config-stdin --reconcile-runtime-role
@@ -3767,11 +3773,10 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # and optional integrations are kept out of the default persistent root deploy to prevent
     # deployment timeouts and host memory exhaustion.
     #
-    # Required loop workers are default-on in docker-compose.yml, and validate_required_loop_workers
-    # enforces that the persistent stack contains all required twelve-loop workers.
-    #
+    # Required loop workers are deployed via the root profile (backward-compatible with openclaw).
     # Operators can supply explicit profiles via PANTHEON_DEV_COMPOSE_PROFILES when running bounded verifications.
-    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-openclaw}"
+    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-root}"
+    [[ "${PANTHEON_DEV_COMPOSE_PROFILES}" == openclaw* ]] && PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES/openclaw/root}"
     if [[ "${DEV_PAPER_PRINCIPALS_SUPPORTED}" == true ]]; then
       PANTHEON_DEV_COMPOSE_PROFILES+=",dev-paper-principals"
     fi

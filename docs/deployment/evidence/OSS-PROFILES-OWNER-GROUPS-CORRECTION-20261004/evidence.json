@@ -1,0 +1,189 @@
+{
+  "schema_version": "pantheon.oss-profiles-owner-groups-correction-20261004.evidence.v1",
+  "task_id": "OSS-PROFILES-OWNER-GROUPS-CORRECTION-20261004",
+  "kind": "runtime_profile_owner_groups_correction_evidence",
+  "generated_at": "2026-10-05T00:59:00Z",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "target": {
+    "project": "pantheon-dev-20260902",
+    "vm": "pantheon-dev-deploy",
+    "zone": "asia-east1-b"
+  },
+  "runtime_grouping_corrections": {
+    "problem_statement": "PR #6149 (commit 69d63e63a) isolated dormant smoke and OpenClaw E2E into dedicated profiles, but all 54 persistent application daemons in docker-compose.yml remained unprofiled, causing Docker Compose to treat all 54 services as default and activate all 54 identically under --profile core, --profile research, and --profile execution (default: 54, core: 54, research: 54, execution: 54).",
+    "counterexamples_resolved": [
+      {
+        "issue": "Persistent application owners were unprofiled, preventing bounded business profile activation and dependency decoupling.",
+        "correction": "Profiled all runtime owners across admitted business profiles (core, workers, research, management-ai/openclaw, execution) and assigned canonical nonprod deployment selector profile (root). Declared required: false on cross-profile depends_on edges so decoupled profiles resolve without activating unrequested services.",
+        "effect": "Bounded profile activation now activates only actual business runtime groups (core: 29, workers: 16, research: 4, management-ai: 3, execution: 5), while --profile root activates the complete 56-service canonical deployment closure."
+      },
+      {
+        "issue": "Nonprod deployment workflow and deploy script lacked canonical root selector.",
+        "correction": "Updated deploy_nonprod_vm.sh line 3774 to default PANTHEON_DEV_COMPOSE_PROFILES to root (with backward compatibility for openclaw) and updated nonprod-deploy.yml line 1272 to select root.",
+        "effect": "Canonical root deployment is preserved with complete twelve-loop closure and required loop worker validation."
+      },
+      {
+        "issue": "Root consumer test seams (test_dev_deployment_tenant.py, test_bootstrap_dev_paper_baseline.py) unprofiled compose invocations failed when persistent daemons were profiled into root.",
+        "correction": "Governed-granted test consumer seams now invoke docker compose with the canonical '--profile root' selector, aligning with nonprod deployment without weakening tenant/verifier assertions or polluting service profile lists with empty strings.",
+        "effect": "Complete suite passes cleanly (109 passed, 2 skipped) with strict business profile boundaries and canonical root selector."
+      }
+    ],
+    "preserved_invariants": {
+      "root_deployment": "docker compose --profile root activates all 56 persistent services, satisfying all canonical loop workers in validate_required_loop_workers.",
+      "opt_in_separation": "Benchmark (lifecycle-capacity-benchmark), E2E smoke (openclaw-activation-ready-e2e), dormant smoke (dormant-smoke), and static fallback (static-paper-runtime) remain strictly opt-in.",
+      "minio_closure": "MinIO server, minio-init, and minio-data volume remain intact; core profile startup does not depend on MinIO health.",
+      "image_pins": "All upstream images remain pinned to immutable sha256 digests.",
+      "net_diff_budget": "Cumulative net production line additions remain <= 0."
+    }
+  },
+  "profile_activation_matrix": {
+    "core": {
+      "count": 29,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": false
+    },
+    "workers": {
+      "count": 16,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": false
+    },
+    "research": {
+      "count": 4,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": false
+    },
+    "management-ai": {
+      "count": 3,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": false
+    },
+    "openclaw": {
+      "count": 3,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": false
+    },
+    "execution": {
+      "count": 5,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": false
+    },
+    "root": {
+      "count": 56,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": false
+    },
+    "dormant-smoke": {
+      "count": 7,
+      "dormant_smoke": true,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": false
+    },
+    "openclaw-activation-ready-e2e": {
+      "count": 1,
+      "dormant_smoke": false,
+      "openclaw_e2e": true,
+      "benchmark": false,
+      "static_paper": false
+    },
+    "lifecycle-capacity-benchmark": {
+      "count": 1,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": true,
+      "static_paper": false
+    },
+    "static-paper-runtime": {
+      "count": 1,
+      "dormant_smoke": false,
+      "openclaw_e2e": false,
+      "benchmark": false,
+      "static_paper": true
+    }
+  },
+  "disposable_runtime_receipts": {
+    "project": "ossgroupcorr20261004",
+    "network": "ossgroupcorr20261004-net",
+    "volumes": [
+      "ossgroupcorr-srcdata",
+      "ossgroupcorr-traindata"
+    ],
+    "applications_verified": [
+      {
+        "service": "source-ingest",
+        "profile": "core",
+        "image": "l12closure20260904-source-ingest:latest@sha256:2688f4bf5725028ac2717ecb89f923f4e71c3b94bb323b21072f04ac970ef9e9",
+        "command": "sh -c uvicorn services.source_ingestion.main:app --host 0.0.0.0 --port ${PORT:-8097}",
+        "health_endpoint": "http://source-ingest:8097/readyz",
+        "initial_health": "200 OK",
+        "restart_health": "200 OK",
+        "business_record_persistence": {
+          "storage_type": "source_record_and_manifest",
+          "paths": [
+            "/data/source-ingest/market_data_store/normalized/paper/date=2026-10-05/ingest-a07220b15800.jsonl",
+            "/data/source-ingest/source_evidence.jsonl"
+          ],
+          "record_id": "src-record-test-1",
+          "run_id": "ingest-a07220b15800",
+          "survived_restart": true,
+          "verified_content": {
+            "source_id": "src-record-test-1",
+            "title": "Runtime Grouping Source Record",
+            "task_id": "OSS-PROFILES-OWNER-GROUPS-CORRECTION-20261004"
+          }
+        }
+      },
+      {
+        "service": "training-session-svc",
+        "profile": "research",
+        "image": "l12closure20260904-training-session-svc:latest@sha256:c36e9e9c9430a97e2c2832769e59527174409692a00a4da86e23e9e88b13f36e",
+        "command": "sh -c uvicorn main:app --app-dir services/training-session --host 0.0.0.0 --port ${PORT:-8099}",
+        "health_endpoint": "http://training-session-svc:8099/health",
+        "initial_health": "200 OK",
+        "restart_health": "200 OK",
+        "business_record_persistence": {
+          "storage_type": "teaching_sessions_json",
+          "path": "/data/training-session/teaching_sessions.json",
+          "session_id": "trn-20261005-18b3d441b967",
+          "survived_restart": true,
+          "verified_content": {
+            "session_id": "trn-20261005-18b3d441b967",
+            "persona_id": "persona-alpha",
+            "mode": "evaluation",
+            "objective": "Tune momentum controls"
+          }
+        }
+      }
+    ],
+    "cleanup_verified": "0 dangling containers, networks, or volumes with task prefix ossgroupcorr"
+  },
+  "diff_budget": {
+    "change_class": "corrective",
+    "net_production_diff": -4,
+    "net_test_diff": 12,
+    "budget_status": "satisfied (net production line additions <= 0; actual net -4 lines)"
+  },
+  "validation_summary": {
+    "compose_activation_tests": "passed (policy-learning, research-gateway, research-orchestrator, source-ingestion, training-session)",
+    "compose_wiring_tests": "passed (scripts/test_current_l12_compose_wiring.py)",
+    "deploy_nonprod_tests": "45 passed, 2 skipped (scripts/test_deploy_nonprod_vm.py)",
+    "tenant_and_bootstrap_tests": "47 passed (scripts/test_dev_deployment_tenant.py, scripts/test_bootstrap_dev_paper_baseline.py)",
+    "full_scoped_suite": "109 passed, 2 skipped",
+    "runtime_receipts_isolated_test": "passed (real application startup, /readyz & /health 200 OK, true process restart, and business record persistence verified)"
+  }
+}
