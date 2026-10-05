@@ -107,6 +107,46 @@ def test_projection_bootstrap_renders_profiled_postgres_without_other_credential
     assert services["postgres"]["environment"]["POSTGRES_PASSWORD"] == "isolated-render-test"
 
 
+@pytest.mark.parametrize("outer,expected", [(30, "30"), (90, "90"), (120, "120"), (1800, "120"), (3600, "120")])
+def test_bounded_source_rpc_budget_is_exported_and_capped(outer, expected):
+    result = _source_profile_budget(outer=outer)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.endswith(f"budget={expected}\n")
+
+
+def test_default_source_profile_keeps_ordinary_rpc_budget():
+    result = _source_profile_budget(bounded=False)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.endswith("budget=unset\n")
+
+
+@pytest.mark.parametrize("override,exit_code", [({"SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS": "29"}, 37), ({"PANTHEON_EXTERNAL_EGRESS": "deny"}, 37), ({"PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": "openapi.twse.com.tw"}, 1)])
+def test_source_rpc_budget_does_not_bypass_profile_gates(override, exit_code):
+    result = _source_profile_budget(override=override)
+    assert result.returncode == exit_code
+    assert "budget=" not in result.stdout
+
+
+def _source_profile_budget(*, outer=1800, bounded=True, override=None):
+    function = DEPLOY_SCRIPT.read_text().split("validate_source_refresh_profile() {", 1)[1].split("\n}\n", 1)[0]
+    env = _clean_env({
+        "PANTHEON_DEV_COMPOSE_PROFILES": "root,source-ingest-scheduler" if bounded else "root",
+        "PANTHEON_EXTERNAL_EGRESS": "allowlist" if bounded else "deny",
+        "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw" if bounded else "",
+        "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_and_pull" if bounded else "reconcile_only",
+        "SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL": "reconciled_live_proof" if bounded else "scheduled_tick",
+        "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "1" if bounded else "0",
+        "SOURCE_INGEST_CONTROLLER_RESTART_POLICY": "no" if bounded else "unless-stopped",
+        "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY": "1",
+        "SOURCE_INGEST_MAX_RECORDS": "100",
+        "SOURCE_INGEST_BOUNDED_CONNECTOR_ID": "tw-twse-tpex-official-market",
+        "SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS": str(outer),
+        **(override or {}),
+    })
+    command = "set -euo pipefail\nerror() { echo \"$*\" >&2; exit 37; }\nvalidate_source_refresh_profile() {" + function + "\n}\nvalidate_source_refresh_profile\nbash -c 'echo budget=${SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS-unset}'\n"
+    return subprocess.run(["bash", "-c", command], cwd=ROOT, env=env, capture_output=True, text=True, timeout=20)
+
+
 VALID_NEUTRAL_STAGING_ENV = {
     "PROJECT_ID": "neutral-staging-project",
     "REMOTE_USER": "deployer",

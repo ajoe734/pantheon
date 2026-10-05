@@ -1166,6 +1166,10 @@ if sys.argv[2] == "tw-twse-tpex-official-market":
         )
 print(f"validated {len(hosts)} exact source refresh hosts")
 PY
+  # Real official-source pulls plus durable/index readback can exceed the
+  # controller's ordinary 30s RPC budget. Keep this dev proof finite and no
+  # longer than its outer deadline; ordinary reconcile-only mode is unchanged.
+  export SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS="$(( SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS < 120 ? SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS : 120 ))"
   export SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
   export SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
 }
