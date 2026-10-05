@@ -63,7 +63,7 @@ fi
 # ---------------------------------------------------------------------------
 # Step 1: Start infra services and wait for them to be healthy
 # ---------------------------------------------------------------------------
-INFRA_SERVICES=(postgres minio nats)
+INFRA_SERVICES=(postgres nats)
 echo "==> [1/5] Starting infra services: ${INFRA_SERVICES[*]}"
 docker compose "${COMPOSE_ARGS[@]}" up -d "${INFRA_SERVICES[@]}"
 
@@ -112,10 +112,6 @@ except Exception:
 for svc in "${INFRA_SERVICES[@]}"; do
   _wait_healthy "$svc"
 done
-
-# Bootstrap MinIO bucket
-echo "==> [1/5] Creating MinIO bucket via minio-init..."
-docker compose "${COMPOSE_ARGS[@]}" run --rm minio-init
 
 # ---------------------------------------------------------------------------
 # Step 2: Run DB migrations
