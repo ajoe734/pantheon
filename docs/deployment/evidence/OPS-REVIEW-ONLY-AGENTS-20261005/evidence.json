@@ -1,0 +1,11 @@
+{
+  "task_id": "OPS-REVIEW-ONLY-AGENTS-20261005",
+  "commit": "94b2ad43d",
+  "validation": [
+    "python3 -m unittest .orchestrator/test_supervisor.py: 398 tests OK",
+    ".orchestrator/test_explain_dispatch.py: 8 tests OK",
+    "validate_provider_accounts(.orchestrator/config.json): valid"
+  ],
+  "not_run": "pytest-based suites (test_check_config_drift, test_dispatch_policy): pytest not installed locally",
+  "activation": "requires later runtime promotion"
+}
