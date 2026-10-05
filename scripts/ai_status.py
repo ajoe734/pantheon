@@ -3316,6 +3316,14 @@ def _done_delivery_repository_root(
                 f"Cannot {action} task: registered delivery repository does not exist: "
                 f"{registered_root}."
             )
+        if action == "handoff":
+            _validate_delivery_workspace_repository(
+                config,
+                repository_id=repository_id,
+                repository_root=registered_root,
+                registered_root=registered_root,
+                action=action,
+            )
         return registered_root, {
             "repository_path_source": "repository_registry",
             "workspace_env_names": [],
