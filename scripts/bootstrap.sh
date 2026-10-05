@@ -120,8 +120,8 @@ if [[ "$SKIP_MIGRATION" == "true" ]]; then
   echo "==> [2/5] Skipping DB migrations (--skip-migration flag set)"
 else
   echo "==> [2/5] Running DB migrations..."
-  # Run inside the postgres container where psql is available; Python migration
-  # runs from host using the published port.
+  # Provision the role/database, then apply the canonical migration stream
+  # using either the host psql or the container client (no host asyncpg needed).
   POSTGRES_PORT="${POSTGRES_PORT:-15432}"
   POSTGRES_USER_VAL="${POSTGRES_USER:-postgres}"
   POSTGRES_PASSWORD_VAL="${POSTGRES_PASSWORD:-postgres}"
@@ -182,66 +182,10 @@ else
     )
   fi
 
-  "${APP_PSQL_RUNNER[@]}" <<'SQL'
-CREATE SEQUENCE IF NOT EXISTS telemetry_events_ingested_seq_seq AS BIGINT;
-
-CREATE TABLE IF NOT EXISTS telemetry_events (
-    event_id     TEXT        PRIMARY KEY,
-    event_type   TEXT        NOT NULL,
-    created_at   TIMESTAMPTZ NOT NULL,
-    payload      JSONB       NOT NULL,
-    ingested_seq BIGINT      NOT NULL DEFAULT nextval('telemetry_events_ingested_seq_seq'),
-    ingested_at  TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
-);
-
-ALTER TABLE telemetry_events
-    ADD COLUMN IF NOT EXISTS ingested_seq BIGINT;
-ALTER TABLE telemetry_events
-    ADD COLUMN IF NOT EXISTS ingested_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp();
-ALTER TABLE telemetry_events
-    ALTER COLUMN ingested_seq SET DEFAULT nextval('telemetry_events_ingested_seq_seq');
-UPDATE telemetry_events
-    SET ingested_seq = nextval('telemetry_events_ingested_seq_seq')
-    WHERE ingested_seq IS NULL;
-ALTER TABLE telemetry_events
-    ALTER COLUMN ingested_seq SET NOT NULL;
-ALTER TABLE telemetry_events
-    ALTER COLUMN ingested_at SET DEFAULT clock_timestamp();
-UPDATE telemetry_events
-    SET ingested_at = clock_timestamp()
-    WHERE ingested_at IS NULL;
-ALTER TABLE telemetry_events
-    ALTER COLUMN ingested_at SET NOT NULL;
-ALTER SEQUENCE telemetry_events_ingested_seq_seq
-    OWNED BY telemetry_events.ingested_seq;
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_telemetry_events_ingested_seq
-    ON telemetry_events (ingested_seq);
-
-CREATE INDEX IF NOT EXISTS idx_telemetry_events_ingested_at
-    ON telemetry_events (ingested_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_telemetry_events_event_type_ingested_seq
-    ON telemetry_events (event_type, ingested_seq);
-
-CREATE INDEX IF NOT EXISTS idx_telemetry_events_created_at
-    ON telemetry_events (created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_telemetry_events_event_type
-    ON telemetry_events (event_type);
-
-CREATE INDEX IF NOT EXISTS idx_telemetry_events_binding_id
-    ON telemetry_events ((payload->>'binding_id'));
-
-CREATE INDEX IF NOT EXISTS idx_telemetry_events_runtime_id
-    ON telemetry_events ((payload->>'runtime_id'));
-
-CREATE INDEX IF NOT EXISTS idx_telemetry_events_deployment_stage
-    ON telemetry_events ((payload->>'deployment_stage'));
-
-CREATE INDEX IF NOT EXISTS idx_telemetry_events_payload_gin
-    ON telemetry_events USING GIN (payload);
-SQL
+  # db_migrate.sh owns all schema SQL. --print-sql uses the same ordered
+  # migrations as its asyncpg runner; pipefail and ON_ERROR_STOP keep either
+  # a render failure or a database failure from starting application services.
+  bash "$ROOT_DIR/scripts/db_migrate.sh" --print-sql | "${APP_PSQL_RUNNER[@]}"
 fi
 
 # ---------------------------------------------------------------------------

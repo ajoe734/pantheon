@@ -362,6 +362,9 @@ jobs:
             .orchestrator/development_bridge/tests/test_dev_bridge_reliability.py \
             .orchestrator/test_worker_runner_heartbeat.py \
             scripts/test_promote_supervisor_runtime.py \
+            scripts/test_provision_live_supervisor_config.py \
+            scripts/test_bootstrap_orchestrator_runtime.py \
+            scripts/test_sync_dev_root.py \
             scripts/test_human_ops_status.py \
             scripts/test_verify_task_state_store.py
 
@@ -396,6 +399,9 @@ jobs:
             scripts/test_dev_direct_ssh_workflow_contract.py \
             scripts/test_dev_deploy_worktree_isolation_contract.py \
             scripts/test_run_acceptance.py \
+            scripts/test_db_migrate.py \
+            tests/scripts/test_bootstrap_telemetry_replay.py \
+            services/telemetry/test_loop_prod_tel_002_substrate.py \
             scripts/test_agora_workshop_restart_persistence_smoke.py
 
       - name: Run product or mixed smoke gate

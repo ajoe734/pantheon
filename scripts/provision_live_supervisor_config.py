@@ -932,7 +932,7 @@ def validated_immutable_command_root(path: Path) -> dict[str, str]:
             text=True,
         ).stdout.strip()
         dirty = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "--no-optional-locks", "status", "--porcelain"],
             cwd=root,
             check=True,
             capture_output=True,
@@ -976,11 +976,82 @@ def validated_immutable_command_root(path: Path) -> dict[str, str]:
     }
 
 
+def materialize_command_root(
+    *, source_root: Path, command_root: Path, accepted_ref: str = "origin/dev"
+) -> dict[str, str]:
+    """Build/reuse the exact command runtime for both bootstrap and refresh.
+
+    New runtimes are standalone clones, published without replacing an existing
+    directory. Existing clean runtimes (including earlier bootstrap worktrees)
+    are validated read-only. Promotion still owns sealing and process changes.
+    """
+    source_root = validated_root(source_root, label="source root", required=(".git",))
+    command_root = command_root.expanduser().absolute()
+    if ".." in command_root.parts:
+        raise ValueError(f"command root must be a canonical absolute path: {command_root}")
+    sha = command_root.name
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ValueError("command root must be named by its lowercase full SHA")
+    if first_symlink_component(command_root) is not None:
+        raise ValueError(f"command root contains a symlink component: {command_root}")
+
+    def git(root: Path, *args: str) -> str:
+        try:
+            return subprocess.run(
+                ["git", *args], cwd=root, check=True, capture_output=True, text=True
+            ).stdout.strip()
+        except subprocess.CalledProcessError as exc:
+            raise ValueError(f"command runtime Git operation failed: {exc.stderr.strip()}") from exc
+
+    remote = git(source_root, "remote", "get-url", "origin")
+    accepted_sha = git(
+        source_root, "rev-parse", "--verify", "--end-of-options", f"{accepted_ref}^{{commit}}"
+    )
+    git(source_root, "merge-base", "--is-ancestor", sha, accepted_sha)
+
+    def validate(root: Path) -> dict[str, str]:
+        identity = validated_immutable_command_root(root)
+        if identity["head"] != sha or identity["remote"] != remote:
+            raise ValueError(f"command runtime identity mismatch: {root}")
+        return identity
+
+    if command_root.exists():
+        return validate(command_root)
+    command_root.parent.mkdir(parents=True, exist_ok=True)
+    temporary_parent = Path(
+        tempfile.mkdtemp(prefix=".runtime-materialize-", dir=command_root.parent)
+    )
+    try:
+        candidate = temporary_parent / "runtime"
+        git(source_root, "clone", "--quiet", "--no-local", "--no-checkout",
+            str(source_root), str(candidate))
+        git(candidate, "remote", "set-url", "origin", remote)
+        git(candidate, "fetch", "--quiet", "--no-tags", str(source_root), sha, accepted_sha)
+        git(candidate, "update-ref", "refs/remotes/origin/dev", accepted_sha)
+        git(candidate, "checkout", "--quiet", "--detach", sha)
+        validate(candidate)
+        _publish_directory_no_clobber(candidate, command_root)
+        # A concurrent publisher may win. Validate the actual winner, not the
+        # discarded candidate, without repairing or overwriting it.
+        return validate(command_root)
+    finally:
+        shutil.rmtree(temporary_parent, ignore_errors=True)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-config")
     parser.add_argument("--live-config")
     parser.add_argument("--command-root", required=True)
+    parser.add_argument(
+        "--materialize-command-root", action="store_true",
+        help="Build/reuse the exact runtime from --source-root; never replace an existing tree.",
+    )
+    parser.add_argument("--source-root", help="Git source checkout for runtime materialization.")
+    parser.add_argument(
+        "--accepted-ref", default="origin/dev",
+        help="Source ref that must contain the requested command SHA.",
+    )
     parser.add_argument("--status-root")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument(
@@ -1044,18 +1115,36 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         not args.validate_command_root_only
         and not args.validate_python_dependencies_only
         and not args.ensure_python_environment
+        and not args.materialize_command_root
     ):
         for option in ("repo_config", "live_config", "status_root"):
             if not getattr(args, option):
                 parser.error(f"--{option.replace('_', '-')} is required")
     if args.ensure_python_environment and not args.python_parent:
         parser.error("--python-parent is required with --ensure-python-environment")
+    if args.materialize_command_root:
+        if not args.source_root:
+            parser.error("--source-root is required with --materialize-command-root")
+        if (args.validate_command_root_only or args.validate_python_dependencies_only
+                or args.ensure_python_environment):
+            parser.error("--materialize-command-root cannot be combined with another provisioning mode")
     return args
 
 
 def _main_locked(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
+        if args.materialize_command_root:
+            identity = materialize_command_root(
+                source_root=Path(args.source_root),
+                command_root=Path(args.command_root),
+                accepted_ref=args.accepted_ref,
+            )
+            if args.json:
+                print(json.dumps(identity, indent=2, sort_keys=True))
+            else:
+                print(f"supervisor command runtime ready: {identity['root']}")
+            return 0
         command_identity = validated_immutable_command_root(Path(args.command_root))
         command_root = Path(command_identity["root"])
         if args.validate_command_root_only:
@@ -1241,11 +1330,13 @@ def main(argv: list[str] | None = None) -> int:
     probe.add_argument("--validate-command-root-only", action="store_true")
     probe.add_argument("--validate-python-dependencies-only", action="store_true")
     probe.add_argument("--ensure-python-environment", action="store_true")
+    probe.add_argument("--materialize-command-root", action="store_true")
     known, _ = probe.parse_known_args(argv)
     if (
         known.validate_command_root_only
         or known.validate_python_dependencies_only
         or known.ensure_python_environment
+        or known.materialize_command_root
         or not known.status_root
     ):
         return _main_locked(argv)
