@@ -2320,7 +2320,9 @@ bootstrap_dev_lifecycle_projection() {
   # One-shot migration from the sealed candidate, before starting its runtime.
   # Migration credentials exist only in this container, never in the projector.
   docker compose -p pantheon -f docker-compose.yml up -d --wait postgres || return
-  docker compose -p pantheon -f docker-compose.yml config --format json | \
+  # PostgreSQL is profile-gated. Render its explicit core service even when
+  # COMPOSE_PROFILES is unset; do not pipe unrelated service credentials.
+  docker compose -p pantheon -f docker-compose.yml --profile core config --format json postgres | \
     run_dev_candidate_compose run --rm --no-deps -T \
     --entrypoint python loop-run-projector-scheduler \
     -m scripts.lifecycle_projector_migrate --bootstrap-only --compose-config-stdin --reconcile-runtime-role

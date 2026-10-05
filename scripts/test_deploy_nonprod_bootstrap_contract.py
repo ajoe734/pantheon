@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import json
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -52,7 +54,7 @@ def test_projection_bootstrap_precedes_runtime_and_fails_closed(
 docker() {
   case "$*" in
     'compose -p pantheon -f docker-compose.yml up -d --wait postgres') return 0 ;;
-    'compose -p pantheon -f docker-compose.yml config --format json') cat "$TEST_COMPOSE_CONFIG" ;;
+    'compose -p pantheon -f docker-compose.yml --profile core config --format json postgres') cat "$TEST_COMPOSE_CONFIG" ;;
     *) return 89 ;;
   esac
 }
@@ -82,6 +84,28 @@ bootstrap_dev_lifecycle_projection() {''' + function + '\n}\n' + startup + '''
         else:
             assert result.returncode == 0, result.stderr
             assert "runtime-started" in result.stdout
+
+@pytest.mark.parametrize("profiles", [None, "", "workers"])
+def test_projection_bootstrap_renders_profiled_postgres_without_other_credentials(profiles):
+    """Run the exact config command against real Compose; no containers start."""
+    if not shutil.which("docker"):
+        pytest.skip("Docker Compose is required for the render contract")
+    version = subprocess.run(["docker", "compose", "version"], capture_output=True, timeout=15)
+    if version.returncode:
+        pytest.skip("Docker Compose plugin is unavailable")
+    function = DEPLOY_SCRIPT.read_text().split("bootstrap_dev_lifecycle_projection() {", 1)[1].split("\n}\n", 1)[0]
+    line = next(line for line in function.splitlines() if "config --format json" in line)
+    command = shlex.split(line.split("|", 1)[0])
+    command[2:2] = ["--env-file", "/dev/null"]
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "POSTGRES_PASSWORD": "isolated-render-test"}
+    if profiles is not None:
+        env["COMPOSE_PROFILES"] = profiles
+    result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    services = json.loads(result.stdout)["services"]
+    assert set(services) == {"postgres"}
+    assert services["postgres"]["environment"]["POSTGRES_PASSWORD"] == "isolated-render-test"
+
 
 VALID_NEUTRAL_STAGING_ENV = {
     "PROJECT_ID": "neutral-staging-project",
