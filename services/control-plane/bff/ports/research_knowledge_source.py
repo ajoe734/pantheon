@@ -30,14 +30,6 @@ class ResearchWriteOwnerUnavailableError(RuntimeError):
     must surface a 500/503, never a silent empty/fake success.
     """
 
-try:
-    from services.knowledge.evidence.repository import (
-        InMemoryEvidenceRepository,
-        JsonlEvidenceRepository,
-    )
-except ImportError:  # pragma: no cover
-    InMemoryEvidenceRepository = None  # type: ignore[assignment,misc]
-    JsonlEvidenceRepository = None  # type: ignore[assignment,misc]
 
 try:
     from services.memory.institutional_memory_store import (
@@ -404,12 +396,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         http_get_fn: Optional[Callable[[str, str], Tuple[bool, Any]]] = None,
         http_post_fn: Optional[Callable[[str, str, Dict[str, Any]], Tuple[bool, Any]]] = None,
     ) -> None:
-        if evidence_repository is not None:
-            self._evidence_repo = evidence_repository
-        elif evidence_refs_store is not None:
-            self._evidence_repo = None
-        else:
-            self._evidence_repo = InMemoryEvidenceRepository() if InMemoryEvidenceRepository is not None else None
+        self._evidence_repo = evidence_repository
+        self._evidence_status: Optional[str] = None
         self._institutional_memory_store = institutional_memory_store
         self._search_gateway = search_gateway
         self._search_index_store = search_index_store
@@ -456,7 +444,15 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
     # -------------------------------------------------------------------------
     @staticmethod
     def _default_http_get(base_url: str, path: str) -> Tuple[bool, Any]:
-        return False, None
+        if not base_url:
+            return False, None
+        try:
+            import urllib.request
+            with urllib.request.urlopen(f"{base_url.rstrip('/')}/{path.lstrip('/')}", timeout=2.0) as resp:
+                raw = resp.read()
+                return True, json.loads(raw.decode("utf-8")) if raw else None
+        except Exception:
+            return False, None
 
     @staticmethod
     def _default_http_post(base_url: str, path: str, body: Dict[str, Any]) -> Tuple[bool, Any]:
@@ -504,7 +500,13 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                     return "typed_store"
                 except Exception:
                     return "unavailable"
-            return "typed_store" if self._evidence_refs else "missing"
+            if self._evidence_refs:
+                return "typed_store"
+            if self._source_ingest_service_url:
+                if not self._evidence_status:
+                    self._collect_raw_evidence_refs()
+                return self._evidence_status or "unavailable"
+            return "missing"
         if dataset == "research_experiments":
             return "typed_store" if self._get_research_write_owner() is not None else "missing"
         if dataset in ("research_notes", "insight_cards", "strategy_specs", "research_tickets", "research_analyses", "research_artifacts"):
@@ -980,6 +982,15 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                     "metadata": dict(item.metadata),
                 })
             return refs
+        if self._source_ingest_service_url and not self._evidence_refs:
+            try:
+                avail, payload = self._http_get(self._source_ingest_service_url, "/api/source-ingest/evidence/items")
+                self._evidence_status = "service_client" if avail else "unavailable"
+                if avail and isinstance(payload, dict):
+                    return [dict(it, ref_id=it.get("evidence_item_id") or it.get("ref_id")) for it in (payload.get("items") or [])]
+            except Exception:
+                self._evidence_status = "unavailable"
+            return []
         return list(self._evidence_refs.values())
 
     def list_evidence_refs(
