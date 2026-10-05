@@ -89,5 +89,20 @@
     ]
   },
   "scope": "Tooling and task-contract repository root resolution corrective repair only; no product runtime, credentials, or capital-affecting changes. Continuation net prod 8 lines, total 31 of 40; qualifies operator registered root validation for independent review by assigned reviewer Codex2.",
-  "reviewer_action": "Independent assigned reviewer Codex2 inspects actual 0465 source plus continuation correction and exact continuation head + immutable manifest and records real postmerge review time via ai-status.sh approve."
+  "reviewer_action": "Independent assigned reviewer Codex2 inspects actual 0465 source plus continuation correction and exact continuation head + immutable manifest and records real postmerge review time via ai-status.sh approve.",
+  "qualification_correction": {
+    "recorded_at": "2026-10-05",
+    "source_head_tested": "ea76fcb8b1bd50edd1ad737ae1afa0ba2a7f58e2",
+    "external_negative_control": {
+      "test": "/tmp/pantheon-closeout-continuation-20261004-2327/test_handoff_operator_registered_repository.py::test_operator_handoff_rejects_configured_root_with_wrong_remote",
+      "result": "1 passed in 4.00s using checkout-provisioned Python; direct system python initially lacked pytest and was not counted as validation"
+    },
+    "focused_validation": [
+      "PYTHONPATH=.orchestrator:scripts python3 -m unittest discover -s .orchestrator/rewrite -p 'test_task_contract.py' -v: 16 passed",
+      "python3 -m unittest scripts.test_ai_status.DeliveryWorkspaceAuthorityTests -v: 12 passed",
+      "python3 -m unittest scripts.test_ai_status.ReviewApprovedWorkflowTests scripts.test_ai_status.DeliveryMetadataValidationTests -v: 208 passed"
+    ],
+    "budget_recheck": "python3 scripts/git/diff_budget.py --base 829015b2016e528358cec30a3f5ac4bfb9112795 --head ea76fcb8b1bd50edd1ad737ae1afa0ba2a7f58e2 --change-class corrective --budget 40: production +99/-63, net +36/40. This measured full diff supersedes the earlier task-total estimate of +31; still within cap.",
+    "scope_note": "The exact operator wrong-origin negative now rejects from the configured local_path/integration_path even without worker lease environment. No TaskStore mutation, runtime activation, VM access, or provider operation was performed."
+  }
 }
