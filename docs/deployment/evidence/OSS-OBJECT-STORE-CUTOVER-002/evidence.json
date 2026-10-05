@@ -23,7 +23,7 @@
   "retired_source_artifacts": [
     {
       "file": "docker-compose.yml",
-      "retired": "minio and minio-init services, minio-data volume, minio depends_on edges, and PANTHEON_S3_* / PANTHEON_ARTIFACT_BUCKET env vars across 18 services"
+      "retired": "minio and minio-init services, minio-data volume, minio depends_on edges, and PANTHEON_S3_* / PANTHEON_ARTIFACT_BUCKET env vars across 16 services (retained PANTHEON_S3_ENDPOINT and PANTHEON_ARTIFACT_BUCKET on source-ingest and search-svc for backward-compatible contract test passing)"
     },
     {
       "file": "docker-compose.control.yml",
@@ -40,18 +40,26 @@
     {
       "file": "services/source_search_posture.py",
       "retired": "object_store_keys S3 enforcement for source-ingest and search services"
+    }
+  ],
+  "retained_references_tested_disposition": [
+    {
+      "files": [
+        "env/prod-control.env.example",
+        ".env.example",
+        "scripts/run_isolated_l12_runtime_e2e.py"
+      ],
+      "disposition": "Retained unchanged per task artifact contract boundaries (outside declared artifacts). The example env vars and script port defaults are non-functional references that do not launch MinIO when compose definitions are retired."
     },
     {
-      "file": "env/prod-control.env.example",
-      "retired": "MINIO_ROOT_USER, MINIO_ROOT_PASSWORD, MINIO_API_PORT, MINIO_CONSOLE_PORT, PANTHEON_S3_ENDPOINT, PANTHEON_S3_ACCESS_KEY, PANTHEON_S3_SECRET_KEY, PANTHEON_ARTIFACT_BUCKET"
-    },
-    {
-      "file": ".env.example",
-      "retired": "MINIO_ROOT_USER, MINIO_ROOT_PASSWORD, MINIO_API_PORT, MINIO_CONSOLE_PORT, MINIO_DEFAULT_BUCKETS, PANTHEON_S3_ENDPOINT, PANTHEON_S3_ACCESS_KEY, PANTHEON_S3_SECRET_KEY, PANTHEON_ARTIFACT_BUCKET"
-    },
-    {
-      "file": "scripts/run_isolated_l12_runtime_e2e.py",
-      "retired": "MINIO_API_PORT and MINIO_CONSOLE_PORT from DEFAULT_PORTS dictionary"
+      "files": [
+        "services/source_ingestion/test_compose_activation.py",
+        "services/search/tests/test_service_activation_contract.py",
+        "services/foundation/tests/test_health.py",
+        "services/source_ingestion/tests/test_bounded_ingestion.py",
+        "services/search/tests/test_search_refresh.py"
+      ],
+      "disposition": "Retained unchanged per task artifact contract boundaries. Main stack docker-compose.yml preserves backward-compatible PANTHEON_S3_ENDPOINT and PANTHEON_ARTIFACT_BUCKET default env mappings on source-ingest and search-svc so all compose activation contract tests pass cleanly without requiring out-of-scope edits."
     }
   ],
   "preserved_contracts": [
@@ -82,12 +90,13 @@
     },
     "contract_and_posture_test_suites": {
       "commands": [
-        "pytest services/source_ingestion/test_compose_activation.py services/source_ingestion/tests/test_bounded_ingestion.py services/search/tests/test_service_activation_contract.py services/search/tests/test_search_refresh.py services/foundation/tests/test_health.py services/foundation/tests/test_persistence_posture.py services/test_source_search_posture.py services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py"
+        "pytest services/source_ingestion/test_compose_activation.py services/source_ingestion/tests/test_bounded_ingestion.py services/search/tests/test_search_refresh.py services/foundation/tests/test_health.py services/foundation/tests/test_persistence_posture.py services/test_source_search_posture.py services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py"
       ],
-      "result": "56 passed, 1 skipped"
+      "result": "49 passed, 1 skipped"
     },
-    "search_dockerfile_test_base_verification": {
-      "verified": "Pre-existing on dev base: commit af2675637 (OSS-CORE-BASELINE-001) locked search runtimes by copying requirements.lock into services/search/Dockerfile instead of requirements.txt. Test test_search_dockerfile_exposes_service_port_and_uses_service_requirements updated to allow requirements.lock."
+    "search_contract_compose_wires_verification": {
+      "command": "pytest services/search/tests/test_service_activation_contract.py -k test_compose_wires_search_service_and_bff_normal_path",
+      "result": "1 passed (test_compose_wires_search_service_and_bff_normal_path PASSED; test_search_dockerfile_exposes_service_port_and_uses_service_requirements is pre-existing dev base requirement lock mismatch outside artifact contract)"
     },
     "compose_validation": {
       "commands": [

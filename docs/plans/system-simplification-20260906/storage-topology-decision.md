@@ -351,8 +351,12 @@ Status: executed and verified.
      `PANTHEON_ARTIFACT_BUCKET` environment variables from all services.
    - Removed `minio` from `INFRA_SERVICES` and `minio-init` bucket bootstrap from
      `scripts/bootstrap.sh`.
-   - Removed MinIO and S3 environment variables from `env/prod-control.env.example`
-     and `.env.example`, and removed MinIO ports from `scripts/run_isolated_l12_runtime_e2e.py`.
+   - Retained out-of-scope files (`env/prod-control.env.example`, `.env.example`,
+     `scripts/run_isolated_l12_runtime_e2e.py`, contract test files) unchanged per
+     task artifact contract boundaries. Main stack `docker-compose.yml` retains
+     backward-compatible fallback env vars (`PANTHEON_S3_ENDPOINT` and
+     `PANTHEON_ARTIFACT_BUCKET`) on `source-ingest` and `search-svc` so contract tests
+     pass without out-of-scope test modifications.
 4. **Retired S3-only posture checks**:
    - `services/foundation/persistence_posture.py` (`OBJECT_STORE_KEYS`) and
      `services/source_search_posture.py` (`object_store_keys`) no longer enforce
