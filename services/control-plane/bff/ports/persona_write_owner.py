@@ -103,18 +103,10 @@ class PersonaRegistryHttpWritePort:
         opener: Any = None,
     ) -> None:
         resolved_url = base_url if base_url is not None else _first_env(_PERSONA_URL_ENVS)
-        resolved_token = (
-            service_token
-            if service_token is not None
-            else _first_env(_PERSONA_SERVICE_TOKEN_ENVS)
-        )
+        resolved_token = service_token if service_token is not None else _first_env(_PERSONA_SERVICE_TOKEN_ENVS)
         self._base_url = str(resolved_url or "").strip().rstrip("/")
         self._service_token = str(resolved_token or "").strip()
-        self._timeout_seconds = (
-            max(float(timeout_seconds), 0.1)
-            if timeout_seconds is not None
-            else _timeout_from_env()
-        )
+        self._timeout_seconds = max(float(timeout_seconds), 0.1) if timeout_seconds is not None else _timeout_from_env()
         self._service_actor_id = str(
             service_actor_id
             or os.getenv("PANTHEON_PERSONA_SERVICE_ACTOR_ID")
@@ -128,34 +120,22 @@ class PersonaRegistryHttpWritePort:
 
     @staticmethod
     def _persona_payload(value: Mapping[str, Any]) -> Dict[str, Any]:
-        payload = dict(value)
-        payload["id"] = payload.get("persona_id")
+        payload = {**dict(value), "id": value.get("persona_id"), "canonicalWriteAuthority": "persona_registry_service"}
         metadata = dict(payload.get("metadata") or {})
         tenant_id = str(metadata.get("tenant_id") or metadata.get("tenantId") or "")
         if tenant_id:
-            payload["tenant_id"] = tenant_id
-            payload["tenantId"] = tenant_id
-        payload["canonicalWriteAuthority"] = "persona_registry_service"
+            payload["tenant_id"] = payload["tenantId"] = tenant_id
         return payload
 
     @staticmethod
     def _snapshot_payload(value: Mapping[str, Any]) -> Dict[str, Any]:
-        payload = dict(value)
-        payload["id"] = payload.get("snapshot_id")
-        payload["canonicalWriteAuthority"] = "persona_capability_service"
-        return payload
+        return {**dict(value), "id": value.get("snapshot_id"), "canonicalWriteAuthority": "persona_capability_service"}
 
     def _require_configuration(self, dependency: str, *, write: bool) -> None:
         if not self._base_url:
-            raise PersonaWriteOwnerUnavailable(
-                dependency,
-                "Persona service URL is not configured",
-            )
+            raise PersonaWriteOwnerUnavailable(dependency, "Persona service URL is not configured")
         if write and not self._service_token:
-            raise PersonaWriteOwnerUnavailable(
-                dependency,
-                "Persona service credential is not configured",
-            )
+            raise PersonaWriteOwnerUnavailable(dependency, "Persona service credential is not configured")
 
     def _request(
         self,
@@ -183,10 +163,15 @@ class PersonaRegistryHttpWritePort:
         if body is not None:
             encoded = json.dumps(dict(body), separators=(",", ":")).encode("utf-8")
             headers["Content-Type"] = "application/json"
-        if authorization is not None:
-            headers["Authorization"] = authorization
+        from ..core.owner_reads import authorization as _auth_var, selected_tenant as _tenant_var
+        auth = authorization or _auth_var.get()
+        if auth:
+            headers["Authorization"] = auth
         elif self._service_token:
             headers["Authorization"] = f"Bearer {self._service_token}"
+        tenant = _tenant_var.get()
+        if tenant:
+            headers["X-Tenant-Id"] = tenant
         request = urllib.request.Request(
             url,
             data=encoded,
@@ -529,6 +514,20 @@ class PersonaRegistryHttpWritePort:
             )
         return self._snapshot_payload(value)
 
+    def _get_capability_snapshot_at(self, path: str) -> Optional[Dict[str, Any]]:
+        try:
+            value = self._request("GET", path, dependency="persona_capability_write_owner")
+        except _PersonaHttpResponseError as exc:
+            if exc.status_code == 404:
+                return None
+            raise PersonaWriteOwnerUnavailable("persona_capability_write_owner", exc.reason) from exc
+        if not isinstance(value, dict):
+            raise PersonaWriteOwnerUnavailable(
+                "persona_capability_write_owner",
+                "Persona service returned an invalid capability read response",
+            )
+        return self._snapshot_payload(value)
+
     def get_capability_snapshot(
         self,
         snapshot_id: str | None,
@@ -536,25 +535,9 @@ class PersonaRegistryHttpWritePort:
         clean_id = str(snapshot_id or "").strip()
         if not clean_id:
             return None
-        try:
-            value = self._request(
-                "GET",
-                f"/api/capability-snapshots/{urllib.parse.quote(clean_id, safe='')}",
-                dependency="persona_capability_write_owner",
-            )
-        except _PersonaHttpResponseError as exc:
-            if exc.status_code == 404:
-                return None
-            raise PersonaWriteOwnerUnavailable(
-                "persona_capability_write_owner",
-                exc.reason,
-            ) from exc
-        if not isinstance(value, dict):
-            raise PersonaWriteOwnerUnavailable(
-                "persona_capability_write_owner",
-                "Persona service returned an invalid capability read response",
-            )
-        return self._snapshot_payload(value)
+        return self._get_capability_snapshot_at(
+            f"/api/capability-snapshots/{urllib.parse.quote(clean_id, safe='')}"
+        )
 
     def get_capability_snapshot_for_persona(
         self,
@@ -563,25 +546,9 @@ class PersonaRegistryHttpWritePort:
         clean_id = str(persona_id or "").strip()
         if not clean_id:
             return None
-        try:
-            value = self._request(
-                "GET",
-                f"/api/personas/{urllib.parse.quote(clean_id, safe='')}/capability-snapshot",
-                dependency="persona_capability_write_owner",
-            )
-        except _PersonaHttpResponseError as exc:
-            if exc.status_code == 404:
-                return None
-            raise PersonaWriteOwnerUnavailable(
-                "persona_capability_write_owner",
-                exc.reason,
-            ) from exc
-        if not isinstance(value, dict):
-            raise PersonaWriteOwnerUnavailable(
-                "persona_capability_write_owner",
-                "Persona service returned an invalid capability read response",
-            )
-        return self._snapshot_payload(value)
+        return self._get_capability_snapshot_at(
+            f"/api/personas/{urllib.parse.quote(clean_id, safe='')}/capability-snapshot"
+        )
 
     def get_persona_capabilities(
         self,
@@ -596,10 +563,34 @@ class PersonaRegistryHttpWritePort:
 
     def list_sessions_for_persona(
         self,
-        _persona_id: str,
-        **_kwargs: Any,
+        persona_id: str,
+        *,
+        status: str | None = None,
+        **kwargs: Any,
     ) -> list[Dict[str, Any]]:
-        return []
+        clean_id = str(persona_id or "").strip()
+        if not clean_id:
+            return []
+        params = {"persona_id": clean_id, **{k: v for k, v in kwargs.items() if v is not None}}
+        if status:
+            params["status"] = status
+        try:
+            value = self._request(
+                "GET",
+                "/api/sessions",
+                dependency="persona_session_owner",
+                params=params,
+            )
+        except _PersonaHttpResponseError as exc:
+            if exc.status_code == 404:
+                return []
+            raise PersonaWriteOwnerUnavailable("persona_session_owner", exc.reason) from exc
+        if not isinstance(value, list):
+            raise PersonaWriteOwnerUnavailable(
+                "persona_session_owner",
+                "Persona service returned an invalid list response",
+            )
+        return value
 
     def list_teaching_sessions_for_persona(
         self,
