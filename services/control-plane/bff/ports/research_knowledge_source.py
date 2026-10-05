@@ -448,9 +448,10 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             return False, None
         try:
             import urllib.request
-            with urllib.request.urlopen(f"{base_url.rstrip('/')}/{path.lstrip('/')}", timeout=2.0) as resp:
-                raw = resp.read()
-                return True, json.loads(raw.decode("utf-8")) if raw else None
+            from ..core.owner_reads import authorization, selected_tenant
+            h = {k: v for k, v in (("Authorization", authorization.get()), ("X-Tenant-Id", selected_tenant.get())) if v}
+            with urllib.request.urlopen(urllib.request.Request(f"{base_url.rstrip('/')}/{path.lstrip('/')}", headers=h), timeout=2.0) as resp:
+                return True, json.loads(raw.decode("utf-8")) if (raw := resp.read()) else None
         except Exception:
             return False, None
 
@@ -985,9 +986,10 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         if self._source_ingest_service_url and not self._evidence_refs:
             try:
                 avail, payload = self._http_get(self._source_ingest_service_url, "/api/source-ingest/evidence/items")
-                self._evidence_status = "service_client" if avail else "unavailable"
-                if avail and isinstance(payload, dict):
-                    return [dict(it, ref_id=it.get("evidence_item_id") or it.get("ref_id")) for it in (payload.get("items") or [])]
+                items = payload.get("items") if avail and isinstance(payload, dict) else None
+                self._evidence_status = "service_client" if isinstance(items, list) else "unavailable"
+                if isinstance(items, list):
+                    return [dict(it, ref_id=it.get("evidence_item_id") or it.get("ref_id")) for it in items]
             except Exception:
                 self._evidence_status = "unavailable"
             return []
