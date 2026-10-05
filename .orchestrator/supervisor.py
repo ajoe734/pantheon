@@ -1485,6 +1485,9 @@ def validate_provider_accounts(config: dict[str, Any]) -> None:
             for name in known_agent_display_names(config)
             if canonical_agent_name(config, name)
         }
+        review_only_keys = review_only_agent_keys(config)
+        if review_only_keys - known_reassignment_agents:
+            errors.append("worker_reassignment.review_only_agents has unknown agent")
         for mapping_name in ("owner_fallbacks", "reviewer_fallbacks"):
             mapping = reassignment.get(mapping_name, {})
             if not isinstance(mapping, dict):
@@ -1507,6 +1510,8 @@ def validate_provider_accounts(config: dict[str, Any]) -> None:
                         errors.append(
                             f"worker_reassignment.{mapping_name}.{raw_root} has unknown target {raw_target!r}"
                         )
+                    elif mapping_name == "owner_fallbacks" and target.casefold() in review_only_keys:
+                        errors.append(f"owner_fallbacks.{raw_root} targets review-only agent {raw_target!r}")
     if errors:
         raise ValueError("invalid provider account configuration: " + "; ".join(errors))
 
@@ -5777,6 +5782,12 @@ def worker_reassignment_settings(config: dict[str, Any]) -> dict[str, Any]:
     return settings
 
 
+def review_only_agent_keys(config: dict[str, Any]) -> set[str]:
+    """Casefolded agents that may review but never own execution work."""
+    names = worker_reassignment_settings(config).get("review_only_agents") or []
+    return {canonical_agent_name(config, str(name)).casefold() for name in names}
+
+
 def load_balance_settings(config: Mapping[str, Any]) -> dict[str, Any]:
     """Read-only policy for saturated- or transiently-blocked-lane reassignment.
 
@@ -5878,6 +5889,18 @@ def agent_is_known(config: dict[str, Any], agent_name: str | None) -> bool:
         return True
     agent_id = normalize_agent_id(name)
     return bool(agent_id and agent_id in (config.get("agents", {}) or {}))
+
+
+def review_only_owner_block(
+    config: dict[str, Any], task: dict[str, Any], agent: str
+) -> dict[str, Any] | None:
+    """Reject owner-lane dispatch to a review-only agent; reviews pass through."""
+    key = canonical_agent_name(config, agent).casefold()
+    owner = canonical_agent_name(config, str(task.get("owner") or "")).casefold()
+    if key == owner and key in review_only_agent_keys(config):
+        return {"eligible": False, "first_blocking_gate": "review_only",
+                "block_reason": "Review-only agents are never dispatched for owner work"}
+    return None
 
 
 def reassignment_candidate_order(
@@ -6080,6 +6103,9 @@ def plan_task_assignment_pair(
             exclude={owner} if owner else set(),
         )
         owner_order = ([owner] if owner else []) + owner_fallbacks
+    if fixed_owner is None:
+        owner_order = [n for n in owner_order
+                       if canonical_agent_name(config, n).casefold() not in review_only_agent_keys(config)]
 
     seen_owners: set[str] = set()
     for candidate_owner in owner_order:
@@ -11141,8 +11167,9 @@ def reconcile_unavailable_assignments(
                 role = "reviewer"
                 unavailable_actor = reviewer
         elif task_status in eligible_owner_statuses:
-            unavailable_reason = assignment_terminal_unavailability(
-                config, state, owner
+            unavailable_reason = (
+                "review_only" if owner.casefold() in review_only_agent_keys(config)
+                else assignment_terminal_unavailability(config, state, owner)
             )
             if unavailable_reason:
                 role = "owner"
@@ -16038,7 +16065,7 @@ def dispatch_ready_tasks(
             task_id = str(task.get(task_id_field) or "")
             if not task_id:
                 continue
-            decision = evaluate_dispatch_candidate(
+            decision = review_only_owner_block(config, task, target_agent) or evaluate_dispatch_candidate(
                 config,
                 state,
                 status,
@@ -16091,7 +16118,7 @@ def dispatch_ready_tasks(
             # the same admission predicate immediately before reservation so
             # each accepted event contributes its exact endpoint to the
             # remainder of this plan.
-            decision = evaluate_dispatch_candidate(
+            decision = review_only_owner_block(config, task, target_agent) or evaluate_dispatch_candidate(
                 config,
                 state,
                 status,
@@ -16497,7 +16524,7 @@ def explain_dispatch_for_task(
         target_agent = display_name_for(config, agent_id)
         if not target_agent:
             continue
-        decision = evaluate_dispatch_candidate(
+        decision = review_only_owner_block(config, task, target_agent) or evaluate_dispatch_candidate(
             config,
             state,
             status,
