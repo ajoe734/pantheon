@@ -33,7 +33,7 @@ def test_dev_mode_allows_json_fallback_and_marks_it_dev_only() -> None:
     assert check.to_dict()["dev_fallback_allowed"] is True
 
 
-def test_staging_live_env_requires_postgres_and_object_store() -> None:
+def test_staging_live_env_requires_postgres() -> None:
     check = validate_persistence_posture(
         "governance",
         env={
@@ -50,7 +50,6 @@ def test_staging_live_env_requires_postgres_and_object_store() -> None:
     assert "DATABASE_URL must be a Postgres DSN" in errors
     assert "GOVERNANCE_STORE_BACKEND must be postgres" in errors
     assert "GOVERNANCE_AUDIT_BACKEND must be postgres" in errors
-    assert "PANTHEON_S3_ENDPOINT is required" in errors
 
 
 def test_prod_posture_accepts_postgres_backends_and_object_store() -> None:

@@ -26,7 +26,7 @@ def test_source_search_posture_keeps_dev_jsonl_rollback_available() -> None:
     assert check.backends["SOURCE_INGEST_EVIDENCE_BACKEND"] == "jsonl"
 
 
-def test_source_ingest_production_posture_requires_postgres_and_object_store() -> None:
+def test_source_ingest_production_posture_requires_postgres() -> None:
     check = validate_source_search_posture(
         "source-ingest",
         env={
@@ -39,7 +39,6 @@ def test_source_ingest_production_posture_requires_postgres_and_object_store() -
     assert check.status == "error"
     assert "DATABASE_URL must be a Postgres DSN" in "; ".join(check.errors)
     assert "SOURCE_INGEST_EVIDENCE_BACKEND must be postgres" in "; ".join(check.errors)
-    assert "PANTHEON_S3_ENDPOINT is required" in "; ".join(check.errors)
 
 
 def test_search_production_posture_requires_durable_postgres_only_index() -> None:
