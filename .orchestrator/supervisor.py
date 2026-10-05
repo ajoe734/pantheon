@@ -1485,6 +1485,15 @@ def validate_provider_accounts(config: dict[str, Any]) -> None:
             for name in known_agent_display_names(config)
             if canonical_agent_name(config, name)
         }
+        review_only_keys = set()
+        for raw_name in reassignment.get("review_only_agents", []):
+            name = canonical_agent_name(config, str(raw_name))
+            if not name or name.casefold() not in known_reassignment_agents:
+                errors.append(
+                    f"worker_reassignment.review_only_agents has unknown agent {raw_name!r}"
+                )
+            else:
+                review_only_keys.add(name.casefold())
         for mapping_name in ("owner_fallbacks", "reviewer_fallbacks"):
             mapping = reassignment.get(mapping_name, {})
             if not isinstance(mapping, dict):
@@ -1506,6 +1515,10 @@ def validate_provider_accounts(config: dict[str, Any]) -> None:
                     if not target or target.casefold() not in known_reassignment_agents:
                         errors.append(
                             f"worker_reassignment.{mapping_name}.{raw_root} has unknown target {raw_target!r}"
+                        )
+                    elif mapping_name == "owner_fallbacks" and target.casefold() in review_only_keys:
+                        errors.append(
+                            f"worker_reassignment.owner_fallbacks.{raw_root} targets review-only agent {raw_target!r}"
                         )
     if errors:
         raise ValueError("invalid provider account configuration: " + "; ".join(errors))
@@ -5774,7 +5787,17 @@ def worker_reassignment_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("max_reassignments_per_cycle", 4)
     settings.setdefault("owner_fallbacks", {})
     settings.setdefault("reviewer_fallbacks", {})
+    settings.setdefault("review_only_agents", [])
     return settings
+
+
+def review_only_agent_keys(config: dict[str, Any]) -> set[str]:
+    """Casefolded agents that may review but never own execution work."""
+
+    return {
+        canonical_agent_name(config, str(name)).casefold()
+        for name in worker_reassignment_settings(config)["review_only_agents"]
+    }
 
 
 def load_balance_settings(config: Mapping[str, Any]) -> dict[str, Any]:
@@ -6080,6 +6103,12 @@ def plan_task_assignment_pair(
             exclude={owner} if owner else set(),
         )
         owner_order = ([owner] if owner else []) + owner_fallbacks
+    if fixed_owner is None:
+        review_only = review_only_agent_keys(config)
+        owner_order = [
+            name for name in owner_order
+            if canonical_agent_name(config, name).casefold() not in review_only
+        ]
 
     seen_owners: set[str] = set()
     for candidate_owner in owner_order:
@@ -11141,8 +11170,10 @@ def reconcile_unavailable_assignments(
                 role = "reviewer"
                 unavailable_actor = reviewer
         elif task_status in eligible_owner_statuses:
-            unavailable_reason = assignment_terminal_unavailability(
-                config, state, owner
+            unavailable_reason = (
+                "review_only"
+                if owner.casefold() in review_only_agent_keys(config)
+                else assignment_terminal_unavailability(config, state, owner)
             )
             if unavailable_reason:
                 role = "owner"

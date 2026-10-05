@@ -154,6 +154,10 @@
   },
   "worker_reassignment": {
     "enabled": true,
+    "review_only_agents": [
+      "Codex",
+      "Codex2"
+    ],
     "owner_fallbacks": {
       "Claude": [
         "Claude2",
