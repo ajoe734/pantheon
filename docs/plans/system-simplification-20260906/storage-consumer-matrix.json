@@ -135,8 +135,8 @@
     "minio_server_and_init": "retired from docker-compose.yml and docker-compose.control.yml",
     "minio_data_volume": "retired from docker-compose.yml and docker-compose.control.yml",
     "minio_bootstrap_glue": "retired from scripts/bootstrap.sh",
-    "s3_environment_glue": "retired from all services in docker-compose.control.yml and 16/18 services in docker-compose.yml (retained backward-compatible endpoint/bucket default on source-ingest and search-svc for contract tests)",
-    "retained_references_tested_disposition": "env examples, e2e test script, and contract test suites retained unchanged per task artifact contract boundaries; compose fallback env vars preserve contract test compatibility",
+    "s3_environment_glue": "retired from all services in docker-compose.yml and docker-compose.control.yml",
+    "retained_references_tested_disposition": "env examples and compose contract test suites updated to assert retired topology; compose contract tests pass with retired S3 configuration",
     "posture_enforcement": "retired from services/foundation/persistence_posture.py and services/source_search_posture.py",
     "hosted_inventory_prerequisite": "verified empty by OSS-STORAGE-INVENTORY-20261002 hosted track (0 buckets, 0 objects, 0 bytes; no data movement required)",
     "preserved_gcs_contracts": [

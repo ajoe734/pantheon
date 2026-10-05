@@ -1,6 +1,6 @@
 {
   "task_id": "OSS-OBJECT-STORE-CUTOVER-002",
-  "owner": "Antigravity",
+  "owner": "Antigravity2",
   "reviewer": "Claude",
   "change_class": "simplify",
   "net_prod_line_budget": 0,
@@ -23,7 +23,7 @@
   "retired_source_artifacts": [
     {
       "file": "docker-compose.yml",
-      "retired": "minio and minio-init services, minio-data volume, minio depends_on edges, and PANTHEON_S3_* / PANTHEON_ARTIFACT_BUCKET env vars across 16 services (retained PANTHEON_S3_ENDPOINT and PANTHEON_ARTIFACT_BUCKET on source-ingest and search-svc for backward-compatible contract test passing)"
+      "retired": "minio and minio-init services, minio-data volume, minio depends_on edges, and PANTHEON_S3_* / PANTHEON_ARTIFACT_BUCKET env vars across all services (including source-ingest and search-svc)"
     },
     {
       "file": "docker-compose.control.yml",
@@ -32,6 +32,14 @@
     {
       "file": "scripts/bootstrap.sh",
       "retired": "minio from INFRA_SERVICES array and minio-init bucket bootstrap step"
+    },
+    {
+      "file": "env/prod-control.env.example",
+      "retired": "MINIO_* and PANTHEON_S3_* / PANTHEON_ARTIFACT_BUCKET environment variables"
+    },
+    {
+      "file": ".env.example",
+      "retired": "MINIO_* and PANTHEON_S3_* / PANTHEON_ARTIFACT_BUCKET environment variables"
     },
     {
       "file": "services/foundation/persistence_posture.py",
@@ -45,21 +53,24 @@
   "retained_references_tested_disposition": [
     {
       "files": [
-        "env/prod-control.env.example",
-        ".env.example",
         "scripts/run_isolated_l12_runtime_e2e.py"
       ],
-      "disposition": "Retained unchanged per task artifact contract boundaries (outside declared artifacts). The example env vars and script port defaults are non-functional references that do not launch MinIO when compose definitions are retired."
+      "disposition": "Retained unchanged per task artifact contract boundaries (outside declared artifacts). Script port defaults are non-functional references that do not launch MinIO when compose definitions are retired."
     },
     {
       "files": [
         "services/source_ingestion/test_compose_activation.py",
-        "services/search/tests/test_service_activation_contract.py",
+        "services/search/tests/test_service_activation_contract.py"
+      ],
+      "disposition": "Updated compose activation contract tests to assert absence of PANTHEON_S3_ENDPOINT and PANTHEON_ARTIFACT_BUCKET across source-ingest, search-svc, and prod-control env example; all contract tests pass cleanly with retired topology."
+    },
+    {
+      "files": [
         "services/foundation/tests/test_health.py",
         "services/source_ingestion/tests/test_bounded_ingestion.py",
         "services/search/tests/test_search_refresh.py"
       ],
-      "disposition": "Retained unchanged per task artifact contract boundaries. Main stack docker-compose.yml preserves backward-compatible PANTHEON_S3_ENDPOINT and PANTHEON_ARTIFACT_BUCKET default env mappings on source-ingest and search-svc so all compose activation contract tests pass cleanly without requiring out-of-scope edits."
+      "disposition": "Retained unchanged per task artifact contract boundaries. All pass cleanly with zero MinIO/S3 dependencies."
     }
   ],
   "preserved_contracts": [
@@ -92,16 +103,23 @@
       "commands": [
         "pytest services/source_ingestion/test_compose_activation.py services/source_ingestion/tests/test_bounded_ingestion.py services/search/tests/test_search_refresh.py services/foundation/tests/test_health.py services/foundation/tests/test_persistence_posture.py services/test_source_search_posture.py services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py"
       ],
-      "result": "49 passed, 1 skipped"
+      "result": "49 passed, 1 skipped, 1 warning in 30.04s"
     },
     "search_contract_compose_wires_verification": {
       "command": "pytest services/search/tests/test_service_activation_contract.py -k test_compose_wires_search_service_and_bff_normal_path",
-      "result": "1 passed (test_compose_wires_search_service_and_bff_normal_path PASSED; test_search_dockerfile_exposes_service_port_and_uses_service_requirements is pre-existing dev base requirement lock mismatch outside artifact contract)"
+      "result": "1 passed in 1.33s (test_compose_wires_search_service_and_bff_normal_path PASSED; test_search_dockerfile_exposes_service_port_and_uses_service_requirements is pre-existing dev base requirement lock mismatch outside artifact contract)"
+    },
+    "compose_activation_contract_tests": {
+      "commands": [
+        "pytest services/source_ingestion/test_compose_activation.py",
+        "pytest services/search/tests/test_service_activation_contract.py -k test_compose_wires_search_service_and_bff_normal_path"
+      ],
+      "result": "test_compose_activation.py: 2 passed in 1.54s; test_compose_wires_search_service_and_bff_normal_path: 1 passed in 1.33s"
     },
     "compose_validation": {
       "commands": [
-        "docker compose --env-file env/prod-control.env.example -f docker-compose.control.yml config -q",
-        "docker compose --env-file env/prod-control.env.example -f docker-compose.yml config -q"
+        "PANTHEON_PERSONA_SERVICE_TOKEN=dummy docker compose --env-file env/prod-control.env.example -f docker-compose.control.yml config -q",
+        "PANTHEON_PERSONA_SERVICE_TOKEN=dummy docker compose --env-file env/prod-control.env.example -f docker-compose.yml config -q"
       ],
       "result": "exit 0 (valid syntax, zero orphan services or dangling volume references)"
     },

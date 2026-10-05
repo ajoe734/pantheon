@@ -348,15 +348,14 @@ Status: executed and verified.
    - Removed `minio` and `minio-init` services and `minio-data` volume from
      `docker-compose.yml` and `docker-compose.control.yml`.
    - Removed all `minio` `depends_on` health edges and obsolete `PANTHEON_S3_*` /
-     `PANTHEON_ARTIFACT_BUCKET` environment variables from all services.
+     `PANTHEON_ARTIFACT_BUCKET` environment variables from all services (including
+     `source-ingest` and `search-svc`).
    - Removed `minio` from `INFRA_SERVICES` and `minio-init` bucket bootstrap from
      `scripts/bootstrap.sh`.
-   - Retained out-of-scope files (`env/prod-control.env.example`, `.env.example`,
-     `scripts/run_isolated_l12_runtime_e2e.py`, contract test files) unchanged per
-     task artifact contract boundaries. Main stack `docker-compose.yml` retains
-     backward-compatible fallback env vars (`PANTHEON_S3_ENDPOINT` and
-     `PANTHEON_ARTIFACT_BUCKET`) on `source-ingest` and `search-svc` so contract tests
-     pass without out-of-scope test modifications.
+   - Removed MinIO and S3 environment variables from `env/prod-control.env.example`
+     and `.env.example`.
+   - Updated compose activation contract tests (`services/search/tests/test_service_activation_contract.py`
+     and `services/source_ingestion/test_compose_activation.py`) to assert the retired topology.
 4. **Retired S3-only posture checks**:
    - `services/foundation/persistence_posture.py` (`OBJECT_STORE_KEYS`) and
      `services/source_search_posture.py` (`object_store_keys`) no longer enforce
