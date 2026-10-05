@@ -1,0 +1,94 @@
+{
+  "task_id": "OSS-OBJECT-STORE-CUTOVER-002",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "change_class": "simplify",
+  "net_prod_line_budget": 0,
+  "summary": "Retired unused MinIO server, init, volume, environment variable glue, and S3 posture checks following verified hosted storage inventory (OSS-STORAGE-INVENTORY-20261002 confirmed all stores empty). Preserved existing GCS client adapter, telemetry baseline GCS metadata contract, deploy probe, and BFF tenant authorization boundary. Verified via isolated reversible seeded readback and rollback tests across fresh processes.",
+  "prerequisites": {
+    "OSS-INFRA-PROFILES-002": {
+      "status": "done",
+      "satisfied": true
+    },
+    "OSS-STORAGE-INVENTORY-20261002": {
+      "status": "hosted done",
+      "satisfied": true,
+      "hosted_inventory_truth": "Authorized metadata-only rounds on pantheon-dev-20260902 confirmed 0 GCS buckets visible, MinIO pantheon-artifacts with 0 live objects, 0 versions, 0 delete markers, 0 bytes; 0 non-system volume files; no configured attachment bucket; local attachment fallback directory absent. No populated store; no backup/restore or data movement required."
+    }
+  },
+  "source_consumers_verification": {
+    "method": "git grep across repository for boto3, botocore, s3://, PANTHEON_S3_*, PANTHEON_ARTIFACT_BUCKET",
+    "result": "Zero application source code consumers of MinIO/S3 exist. The only readers were posture presence checks in persistence_posture.py and source_search_posture.py, and Compose/bootstrap service/volume wiring."
+  },
+  "retired_source_artifacts": [
+    {
+      "file": "docker-compose.yml",
+      "retired": "minio and minio-init services, minio-data volume, minio depends_on edges, and PANTHEON_S3_* / PANTHEON_ARTIFACT_BUCKET env vars across 18 services"
+    },
+    {
+      "file": "docker-compose.control.yml",
+      "retired": "minio and minio-init services, minio-data volume, minio depends_on edges, and PANTHEON_S3_* / PANTHEON_ARTIFACT_BUCKET env vars across 12 services"
+    },
+    {
+      "file": "scripts/bootstrap.sh",
+      "retired": "minio from INFRA_SERVICES array and minio-init bucket bootstrap step"
+    },
+    {
+      "file": "services/foundation/persistence_posture.py",
+      "retired": "OBJECT_STORE_KEYS enforcement for PANTHEON_S3_ENDPOINT, PANTHEON_ARTIFACT_BUCKET, PANTHEON_S3_ACCESS_KEY, PANTHEON_S3_SECRET_KEY"
+    },
+    {
+      "file": "services/source_search_posture.py",
+      "retired": "object_store_keys S3 enforcement for source-ingest and search services"
+    }
+  ],
+  "preserved_contracts": [
+    {
+      "component": "services/control-plane/bff/management_ai_store.py",
+      "contract": "ManagementAiAttachmentStore: google-cloud-storage adapter (gs://<bucket>/...) when PANTHEON_MGMT_AI_ATTACH_BUCKET is set, with local disk fallback when unset; no S3 dependency"
+    },
+    {
+      "component": "services/control-plane/bff/assistant/management_service.py",
+      "contract": "Tenant and session authorization boundary: management_ai_get_session_or_404 (404 for missing session/attachment) and management_ai_require_session_access (403 for unauthorized tenant/owner)"
+    },
+    {
+      "component": "scripts/capture_canonical_telemetry_baseline.py",
+      "contract": "GCS object recovery source identity contract: immutable generation, metageneration, and custom pantheon_sha256/sha256 metadata verification"
+    },
+    {
+      "component": "scripts/deploy_nonprod_vm.sh",
+      "contract": "Out-of-band deploy-time GCS JSON API probe (PUT, GET, cmp, DELETE)"
+    }
+  ],
+  "verification": {
+    "fresh_process_isolated_readback": {
+      "test_target": "services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py::test_isolated_fresh_process_seeded_readback_and_rollback_recovery",
+      "method": "Separate subprocess execution for seeder, reader, rollback, and retry",
+      "seeded_items": 3,
+      "verified": "Count, size, sha256 hash, and metadata round-trip; simulated write interruption and rollback cleanly preserve uncorrupted store; retry succeeds; tenant 404/403 boundary and GCS generation/metageneration/pantheon_sha256 contract verified",
+      "status": "PASS"
+    },
+    "posture_tests": {
+      "commands": [
+        "pytest services/foundation/tests/test_persistence_posture.py services/test_source_search_posture.py"
+      ],
+      "result": "21 passed"
+    },
+    "compose_validation": {
+      "commands": [
+        "docker compose --env-file env/prod-control.env.example -f docker-compose.control.yml config -q",
+        "docker compose --env-file env/prod-control.env.example -f docker-compose.yml config -q"
+      ],
+      "result": "exit 0 (valid syntax, zero orphan services or dangling volume references)"
+    },
+    "net_production_diff_budget": {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget 0",
+      "net_production_lines": -219,
+      "budget": 0,
+      "status": "PASS (negative net lines)"
+    }
+  },
+  "hosted_cutover_disposition": {
+    "source_retirement_vs_hosted_cutover": "Source retirement complete in this delivery. Actual hosted cutover requires no volume or object migration on the dev host because pantheon-dev-20260902 inventory confirmed all object stores empty. No host volume/object deletion or data movement is authorized or performed by this worker task."
+  }
+}

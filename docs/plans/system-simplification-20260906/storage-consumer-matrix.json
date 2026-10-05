@@ -128,5 +128,21 @@
     "minio_bootstrap_tooling": "scripts/bootstrap.sh also starts and depends on MinIO outside the two Compose files themselves: line 66 lists `minio` in INFRA_SERVICES and brings it up via `docker compose up -d`, and line 118 runs `docker compose run --rm minio-init` to create the bucket. Any downstream MinIO retirement (OSS-OBJECT-STORE-CUTOVER-001) must also update this script's INFRA_SERVICES list and its minio-init bootstrap step, not only the two docker-compose*.yml files.",
     "google_cloud_storage_client": "Apache-2.0 licensed Python client (google-cloud-storage), backed by the managed Google Cloud Storage service under Google's standard GCP terms; restore/versioning/retention are GCS platform features configured on the bucket, not something Pantheon has to operate.",
     "restore_ownership_today": "docs/deployment/vm-dev-staging-prod-management-plan.md §11.3 declares a general per-release restore-rehearsal and production-shaped restore-drill policy, and lists MinIO alongside Postgres/NATS among stateful backends covered by VM/data-disk backup, but neither it nor docs/deployment/evidence/ops-vm-env-phase0-20260825/service-inventory.md documents a MinIO-specific object-level restore/versioning procedure; restore ownership for MinIO objects today is the same generic VM-disk-snapshot policy as every other stateful backend, not a bucket-specific runbook."
+  },
+  "cutover_disposition_record": {
+    "task_id": "OSS-OBJECT-STORE-CUTOVER-002",
+    "executed_at": "2026-10-05T00:00:00Z",
+    "minio_server_and_init": "retired from docker-compose.yml and docker-compose.control.yml",
+    "minio_data_volume": "retired from docker-compose.yml and docker-compose.control.yml",
+    "minio_bootstrap_glue": "retired from scripts/bootstrap.sh",
+    "s3_environment_glue": "retired from all services in docker-compose.yml and docker-compose.control.yml",
+    "posture_enforcement": "retired from services/foundation/persistence_posture.py and services/source_search_posture.py",
+    "hosted_inventory_prerequisite": "verified empty by OSS-STORAGE-INVENTORY-20261002 hosted track (0 buckets, 0 objects, 0 bytes; no data movement required)",
+    "preserved_gcs_contracts": [
+      "ManagementAiAttachmentStore (google-cloud-storage with local disk fallback)",
+      "scripts/capture_canonical_telemetry_baseline.py GCS generation/metageneration/pantheon_sha256 identity contract",
+      "scripts/deploy_nonprod_vm.sh GCS JSON API PUT/GET/DELETE probe",
+      "services/control-plane/bff/assistant/management_service.py session/tenant authorization boundary (404 nonexistent vs 403 unauthorized split)"
+    ]
   }
 }
