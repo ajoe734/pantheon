@@ -43,25 +43,6 @@ services:
       retries: 10
       start_period: 10s
 
-  minio:
-    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
-    restart: unless-stopped
-    command: ["server", "/data", "--console-address", ":9001"]
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-pantheon}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-pantheonminio}
-    volumes:
-      - minio-data:/data
-    ports:
-      - "${MINIO_API_PORT:-39000}:9000"
-      - "${MINIO_CONSOLE_PORT:-39001}:9001"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
-
   nats:
     image: nats:2.11-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00
     restart: unless-stopped
@@ -77,18 +58,6 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
-
-  minio-init:
-    image: minio/mc:RELEASE.2024-01-16T16-06-34Z
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 $${MINIO_ROOT_USER:-pantheon} $${MINIO_ROOT_PASSWORD:-pantheonminio} &&
-      mc mb --ignore-existing local/$${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
-      "
-    restart: "no"
 
   governance:
     build:
@@ -117,16 +86,10 @@ services:
       PANTHEON_GOVERNANCE_MFA_CLAIMS: ${PANTHEON_BFF_MFA_CLAIMS:-amr,acr,mfa,mfa_verified}
       PANTHEON_GOVERNANCE_MFA_VALUES: ${PANTHEON_BFF_MFA_VALUES:-true,1,yes,mfa,otp,totp,webauthn}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
     volumes:
       - governance-data:/data/governance
     depends_on:
       postgres:
-        condition: service_healthy
-      minio:
         condition: service_healthy
       nats:
         condition: service_healthy
@@ -212,10 +175,6 @@ services:
       POSTMORTEMS_URL: http://postmortems:8091
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
       INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-postgres}
       INCIDENT_STORE_DSN: ${INCIDENT_STORE_DSN:-}
@@ -257,18 +216,12 @@ services:
       # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
       POSTMORTEM_STORE_BACKEND: ${POSTMORTEM_STORE_BACKEND:-postgres}
       POSTMORTEM_STORE_DSN: ${POSTMORTEM_STORE_DSN:-}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
     volumes:
       - incident-data:/data/incidents
     depends_on:
       incidents:
         condition: service_healthy
       postgres:
-        condition: service_healthy
-      minio:
         condition: service_healthy
     ports:
       - "${POSTMORTEMS_PORT:-38091}:8091"
@@ -432,15 +385,12 @@ services:
       PANTHEON_PERSONA_SERVICE_ACTOR_ID: operator-bff
       PANTHEON_REGISTRY_URL: http://registry:8087
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
     depends_on:
       postgres:
         condition: service_healthy
       registry:
         condition: service_healthy
       nats:
-        condition: service_healthy
-      minio:
         condition: service_healthy
     ports:
       - "${PERSONA_PORT:-38002}:8002"
@@ -460,12 +410,8 @@ services:
       PORT: "8084"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
     depends_on:
       postgres:
-        condition: service_healthy
-      minio:
         condition: service_healthy
       nats:
         condition: service_healthy
@@ -487,12 +433,8 @@ services:
       PORT: "8085"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
     depends_on:
       postgres:
-        condition: service_healthy
-      minio:
         condition: service_healthy
       nats:
         condition: service_healthy
@@ -518,14 +460,8 @@ services:
       PANTHEON_MEMORY_STORE_BACKEND: ${PANTHEON_MEMORY_STORE_BACKEND:-postgres}
       PANTHEON_MEMORY_STORE_DSN: ${PANTHEON_MEMORY_STORE_DSN:-}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
     depends_on:
       postgres:
-        condition: service_healthy
-      minio:
         condition: service_healthy
       nats:
         condition: service_healthy
@@ -560,15 +496,9 @@ services:
       PANTHEON_REGISTRY_JWT_ISSUER: ${PANTHEON_REGISTRY_JWT_ISSUER:-}
       PANTHEON_REGISTRY_JWT_AUDIENCE: ${PANTHEON_REGISTRY_JWT_AUDIENCE:-}
       PANTHEON_REGISTRY_ROLE_CLAIMS: ${PANTHEON_REGISTRY_ROLE_CLAIMS:-roles,role}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     depends_on:
       postgres:
-        condition: service_healthy
-      minio:
         condition: service_healthy
       nats:
         condition: service_healthy
@@ -590,12 +520,8 @@ services:
       PORT: "8088"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
     depends_on:
       postgres:
-        condition: service_healthy
-      minio:
         condition: service_healthy
       nats:
         condition: service_healthy
@@ -618,10 +544,6 @@ services:
       PROMOTION_DATA_DIR: /data/promotion
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
       PROMOTION_STORE_BACKEND: ${PROMOTION_STORE_BACKEND:-postgres}
       PROMOTION_STORE_DSN: ${PROMOTION_STORE_DSN:-}
@@ -649,10 +571,6 @@ services:
       CAPITAL_DATA_DIR: /data/capital
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
       CAPITAL_STORE_BACKEND: ${CAPITAL_STORE_BACKEND:-postgres}
       CAPITAL_STORE_DSN: ${CAPITAL_STORE_DSN:-}
@@ -735,10 +653,6 @@ services:
       RECONCILIATION_DRIFT_DATA_DIR: /data/reconciliation-drift
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
       RECONCILIATION_DRIFT_STORE_BACKEND: ${RECONCILIATION_DRIFT_STORE_BACKEND:-postgres}
       RECONCILIATION_DRIFT_STORE_DSN: ${RECONCILIATION_DRIFT_STORE_DSN:-}
@@ -776,7 +690,6 @@ volumes:
   governance-data:
   incident-data:
   lineage-data:
-  minio-data:
   nats-data:
   # Required when docker-compose.staging-full.yml adds the external adapter
   # service; extends does not import top-level volume declarations.

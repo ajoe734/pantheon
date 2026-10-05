@@ -52,8 +52,8 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert source_ingest_env["SOURCE_INGEST_DEFAULT_STALE_THRESHOLD_SECONDS"] == "${SOURCE_INGEST_DEFAULT_STALE_THRESHOLD_SECONDS:-86400}"
     assert source_ingest_env["SEARCH_INGEST_NOTIFY_URL"] == "${SEARCH_INGEST_NOTIFY_URL:-http://search-svc:8098}"
     assert source_ingest_env["PANTHEON_SOURCE_SEARCH_POSTURE"] == "${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}"
-    assert source_ingest_env["PANTHEON_S3_ENDPOINT"] == "${PANTHEON_S3_ENDPOINT:-http://minio:9000}"
-    assert source_ingest_env["PANTHEON_ARTIFACT_BUCKET"] == "${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}"
+    assert "PANTHEON_S3_ENDPOINT" not in source_ingest_env
+    assert "PANTHEON_ARTIFACT_BUCKET" not in source_ingest_env
     assert source_ingest_env["SOURCE_INGEST_EVIDENCE_BACKEND"] == "${SOURCE_INGEST_EVIDENCE_BACKEND:-postgres}"
     assert source_ingest_env["PANTHEON_EXTERNAL_EGRESS"] == "${PANTHEON_EXTERNAL_EGRESS:-deny}"
     assert "source-ingest-data:/data/source-ingest" in source_ingest["volumes"]
@@ -180,7 +180,7 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     prod_env = (compose_path.parent / "env/prod-control.env.example").read_text(encoding="utf-8")
     assert "PANTHEON_SOURCE_SEARCH_POSTURE=production" in prod_env
     assert "SOURCE_INGEST_EVIDENCE_BACKEND=postgres" in prod_env
-    assert "PANTHEON_S3_ENDPOINT=http://minio:9000" in prod_env
+    assert "PANTHEON_S3_ENDPOINT" not in prod_env
 
     prod_smoke = (compose_path.parent / "scripts/smoke_source_search_prod_posture.py").read_text(encoding="utf-8")
     assert "posture_alert_count" in prod_smoke

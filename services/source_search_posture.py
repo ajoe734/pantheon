@@ -72,13 +72,8 @@ def validate_source_search_posture(
         raise ValueError(f"unknown source/search posture service: {service}")
 
     backends = {key: _clean(env_map.get(key)).lower() or "jsonl" for key in backend_keys}
-    object_store_keys = (
-        "PANTHEON_S3_ENDPOINT",
-        "PANTHEON_ARTIFACT_BUCKET",
-        "PANTHEON_S3_ACCESS_KEY",
-        "PANTHEON_S3_SECRET_KEY",
-    )
-    object_store_configured = all(_clean(env_map.get(key)) for key in object_store_keys)
+    object_store_keys: tuple[str, ...] = ()
+    object_store_configured = True
 
     if enforced:
         database_url = _clean(env_map.get("DATABASE_URL"))
