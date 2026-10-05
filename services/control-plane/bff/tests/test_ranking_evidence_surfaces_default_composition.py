@@ -65,6 +65,7 @@ class MockOwnerServer:
         self.bindings: List[Dict[str, Any]] = []
         self.runtime_bindings: List[Dict[str, Any]] = []
         self.evidence_items: List[Dict[str, Any]] = []
+        self.sessions: List[Dict[str, Any]] = []
         self.should_fail_personas: bool = False
         self.should_fail_capital: bool = False
         self.should_fail_source: bool = False
@@ -81,7 +82,7 @@ class MockOwnerServer:
 
             def do_GET(self) -> None:
                 tenant = self.headers.get("x-tenant-id")
-                if outer.should_fail_personas and self.path.startswith("/api/personas"):
+                if outer.should_fail_personas and (self.path.startswith("/api/personas") or self.path.startswith("/api/sessions")):
                     self.send_json(500, {"error": "Persona service internal error"})
                     return
                 if outer.should_fail_capital and (self.path.startswith("/api/capital-pools") or self.path.startswith("/api/bindings")):
@@ -93,6 +94,9 @@ class MockOwnerServer:
 
                 if self.path.startswith("/api/personas"):
                     res = [p for p in outer.personas if tenant is None or p.get("tenant_id") == tenant]
+                    self.send_json(200, res)
+                elif self.path.startswith("/api/sessions"):
+                    res = [s for s in outer.sessions if tenant is None or s.get("tenant_id") == tenant]
                     self.send_json(200, res)
                 elif self.path.startswith("/api/capital-pools"):
                     res = [p for p in outer.capital_pools if tenant is None or p.get("tenant_id") == tenant]
@@ -217,6 +221,9 @@ def test_ranking_evidence_surfaces_ok_populated_default_composition(mock_owner: 
     ]
     mock_owner.evidence_items = [
         {"evidence_item_id": "ev-test-1", "tenant_id": "tenant-test", "title": "Evidence One", "created_at": "2026-01-15T00:00:00Z"},
+    ]
+    mock_owner.sessions = [
+        {"session_id": "sess-test-1", "tenant_id": "tenant-test", "persona_id": "persona-1", "status": "active"},
     ]
 
     app = compose_bff_app()
