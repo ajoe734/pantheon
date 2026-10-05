@@ -3190,43 +3190,44 @@ def _validate_delivery_workspace_repository(
     repository_id: str,
     repository_root: Path,
     registered_root: Path,
+    action: str = "finalize",
 ) -> None:
     if not repository_root.is_dir() or git_toplevel(repository_root) != repository_root:
         raise SystemExit(
-            f"Cannot finalize task: delivery workspace must be a git repository root: {repository_root}."
+            f"Cannot {action} task: delivery workspace must be a git repository root: {repository_root}."
         )
     if not registered_root.is_dir() or git_toplevel(registered_root) != registered_root:
         raise SystemExit(
-            "Cannot finalize task: registered repository local_path is not a git root: "
+            f"Cannot {action} task: registered repository local_path is not a git root: "
             f"{registered_root}."
         )
     if _resolved_git_common_dir(repository_root) != _resolved_git_common_dir(registered_root):
         raise SystemExit(
-            "Cannot finalize task: delivery workspace is not registered to the configured "
+            f"Cannot {action} task: delivery workspace is not registered to the configured "
             f"{repository_id} checkout."
         )
     if repository_root not in _registered_worktree_paths(registered_root):
         raise SystemExit(
-            "Cannot finalize task: delivery workspace is not present in the configured "
+            f"Cannot {action} task: delivery workspace is not present in the configured "
             "repository worktree registry."
         )
     expected_slug = normalize_github_repo_slug(repository_slug(config, repository_id))
     if not expected_slug:
         raise SystemExit(
-            f"Cannot finalize task: repository `{repository_id}` has no configured GitHub slug."
+            f"Cannot {action} task: repository `{repository_id}` has no configured GitHub slug."
         )
     actual_slug = normalize_github_repo_slug(
         run_git_command(
             ["remote", "get-url", "origin"],
             cwd=repository_root,
             failure_message=(
-                "Cannot finalize task: delivery workspace origin remote is unavailable."
+                f"Cannot {action} task: delivery workspace origin remote is unavailable."
             ),
         )
     )
     if actual_slug != expected_slug:
         raise SystemExit(
-            "Cannot finalize task: delivery workspace origin does not match task "
+            f"Cannot {action} task: delivery workspace origin does not match task "
             f"repository ({actual_slug or 'missing'} != {expected_slug})."
         )
 
@@ -3235,30 +3236,33 @@ def _done_delivery_repository_root(
     config: dict[str, Any],
     task: dict[str, Any],
     repository_id: str,
+    *,
+    action: str = "finalize",
 ) -> tuple[Path, dict[str, Any]]:
     try:
         workspace_root = _worker_workspace_root()
     except RuntimeError as exc:
-        raise SystemExit(f"Cannot finalize task: {exc}.") from exc
+        raise SystemExit(f"Cannot {action} task: {exc}.") from exc
     run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
     binding = getattr(_STATUS_COMMAND_LEASE_LOCAL, "binding", None)
     if run_id:
         if not isinstance(binding, Mapping):
             raise SystemExit(
-                "Cannot finalize task: active worker delivery workspace has no validated lease binding."
+                f"Cannot {action} task: active worker delivery workspace has no validated lease binding."
             )
         lease_repository_id = str(
             binding.get("workspace_repository_id") or ""
         ).strip()
         if lease_repository_id != repository_id:
             raise SystemExit(
-                "Cannot finalize task: worker lease repository does not match task artifacts "
+                f"Cannot {action} task: worker lease repository does not match task artifacts "
                 f"({lease_repository_id or 'missing'} != {repository_id})."
             )
         binding_task_id = str(binding.get("task_id") or "").strip()
         if binding_task_id != str(task.get("id") or "").strip():
+            task_label = "closeout" if action == "finalize" else action
             raise SystemExit(
-                "Cannot finalize task: worker lease task does not match closeout task."
+                f"Cannot {action} task: worker lease task does not match {task_label} task."
             )
         try:
             registered_root = _metadata_path(
@@ -3266,34 +3270,50 @@ def _done_delivery_repository_root(
                 label="worker lease workspace_source_root",
             )
         except RuntimeError as exc:
-            raise SystemExit(f"Cannot finalize task: {exc}.") from exc
+            raise SystemExit(f"Cannot {action} task: {exc}.") from exc
     else:
-        configured_root = repository_configured_local_path(config, repository_id)
-        if configured_root is None:
-            raise SystemExit(
-                f"Cannot finalize task: repository `{repository_id}` has no local_path configured."
-            )
-        configured_symlink = first_symlink_component(configured_root)
-        if configured_symlink is not None:
-            raise SystemExit(
-                "Cannot finalize task: registered repository local_path cannot include a "
-                f"symlink component: {configured_symlink}."
-            )
-        resolved_registered_root = repository_local_path(config, repository_id)
-        if resolved_registered_root is None:
-            raise SystemExit(
-                f"Cannot finalize task: repository `{repository_id}` has no local_path configured."
-            )
-        registered_root = resolved_registered_root.resolve(strict=False)
+        repo_dict = resolve_repository(config, repository_id)
+        integration_raw = str(repo_dict.get("integration_path") or "").strip()
+        if action == "handoff" and integration_raw:
+            configured_root = Path(integration_raw).expanduser()
+            if not configured_root.is_absolute():
+                raise SystemExit(
+                    f"Cannot {action} task: repository `{repository_id}` integration_path must be absolute."
+                )
+            configured_symlink = first_symlink_component(configured_root)
+            if configured_symlink is not None:
+                raise SystemExit(
+                    f"Cannot {action} task: registered repository integration_path cannot include a "
+                    f"symlink component: {configured_symlink}."
+                )
+            registered_root = configured_root.resolve(strict=False)
+        else:
+            configured_root = repository_configured_local_path(config, repository_id)
+            if configured_root is None:
+                raise SystemExit(
+                    f"Cannot {action} task: repository `{repository_id}` has no local_path configured."
+                )
+            configured_symlink = first_symlink_component(configured_root)
+            if configured_symlink is not None:
+                raise SystemExit(
+                    f"Cannot {action} task: registered repository local_path cannot include a "
+                    f"symlink component: {configured_symlink}."
+                )
+            resolved_registered_root = repository_local_path(config, repository_id)
+            if resolved_registered_root is None:
+                raise SystemExit(
+                    f"Cannot {action} task: repository `{repository_id}` has no local_path configured."
+                )
+            registered_root = resolved_registered_root.resolve(strict=False)
     if workspace_root is None:
         if run_id:
             raise SystemExit(
-                "Cannot finalize task: active worker delivery workspace requires both "
+                f"Cannot {action} task: active worker delivery workspace requires both "
                 "PANTHEON_WORKTREE_ROOT and ORCH_WORKSPACE_PATH."
             )
         if not registered_root.is_dir():
             raise SystemExit(
-                "Cannot finalize task: registered delivery repository does not exist: "
+                f"Cannot {action} task: registered delivery repository does not exist: "
                 f"{registered_root}."
             )
         return registered_root, {
@@ -3306,13 +3326,14 @@ def _done_delivery_repository_root(
     canonical_status_root = STATUS_ROOT.resolve()
     if workspace_root == canonical_status_root:
         raise SystemExit(
-            "Cannot finalize task: delivery workspace must differ from the canonical status root."
+            f"Cannot {action} task: delivery workspace must differ from the canonical status root."
         )
     _validate_delivery_workspace_repository(
         config,
         repository_id=repository_id,
         repository_root=workspace_root,
         registered_root=registered_root,
+        action=action,
     )
 
     source = "explicit_workspace_env"
