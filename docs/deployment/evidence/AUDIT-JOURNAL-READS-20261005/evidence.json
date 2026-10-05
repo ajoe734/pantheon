@@ -1,0 +1,40 @@
+{
+  "scope": "Source repair of Trade Journal owner reads; not system or hosted closure",
+  "backend_base": "a2d0f66c23a9efe029dcd804a3d8f829daa776a4",
+  "frontend_base": "f2666ccaf87a15c20557bfee797c722fe5812e59",
+  "frontend_repository": "ajoe734/execute-plans",
+  "paired_branch": "task/AUDIT-JOURNAL-READS-20261005",
+  "changes": [
+    "Authenticate and bind a concrete caller tenant before any owner read; forward caller authorization and tenant, including validated browser sessions",
+    "Read Telemetry episode projections through existing tenant-scoped routes; fail closed on malformed or wrong-tenant owner data",
+    "Read saved Persona reflections through its existing tenant owner; include verified tenant metadata in owner response",
+    "Delete the BFF local projection-file loader and its EPISODES/REFLECTIONS/PATTERNS store configuration consumption",
+    "Patterns expose actual saved scheduled_pattern reflection artifacts, not an independently owned file or generated BFF conclusions",
+    "Adapt canonical quantity, coverage and reflection field names to browser DTOs; preserve opaque pagination cursors"
+  ],
+  "validation": {
+    "backend_command": "python3 -m pytest -q services/persona/test_trade_reflection_owner.py services/persona/test_trade_reflection_pipeline.py services/persona/test_trade_reflection_contracts.py services/telemetry/test_trade_episode_projection.py services/telemetry/test_main_routes.py services/control-plane/bff/test_trade_journal_owner_reads.py services/control-plane/bff/test_ptj_004_trade_journal.py",
+    "backend_result": "82 passed, 15 subtests passed",
+    "frontend_command": "NODE_ENV=test vitest run --maxWorkers=4",
+    "frontend_result": "2321 passed, 213 files; unbounded initial run had a worker RPC timeout and was not accepted as a clean run",
+    "frontend_final_delta": "Explicit readonly tuple annotation revalidated by 7 focused tests, tsc --noEmit -p tsconfig.app.json and configured live/strict/read-only production build",
+    "diff_check": "passed"
+  },
+  "independent_source_review": {
+    "identity": "PiAstra",
+    "provider": "openai-codex",
+    "model": "gpt-6-luna",
+    "transport": "Separate no-tools ephemeral review sessions using configured provider/model; no worker VM or SSH access",
+    "findings_addressed": ["malformed nested owner fields", "defensive pattern mistakes rendering", "append/deduplicate Load More pages", "explicit tuple type"],
+    "final_result": "No blocking findings identified in the supplied diff",
+    "canonical_attestation": false,
+    "hosted_approval": false
+  },
+  "remaining_obligations": [
+    "Merge both repository candidates and deploy the exact final FE/BFF pair through the root release lane",
+    "Verify actual hosted owner identities, authenticated tenant/RBAC negative controls, pagination, persisted reflection readback and browser rendering",
+    "Prove a real provider-backed multi-episode artifact is produced and persisted; this patch does not implement or certify a scheduled-pattern producer",
+    "Complete remaining provider, paper/business workflow, storage and environment acceptance from the system audit separately"
+  ],
+  "safety": "All fixtures, signed test tokens, owner stores and provider substitutes used locally only. No hosted business writes, deployment, restart, SSH or real-capital action performed by this source repair."
+}

@@ -2043,7 +2043,7 @@ def create_app(
         except PersonaNotFound as exc:
             raise HTTPException(status_code=404, detail={"error": {"code": "RESOURCE_NOT_FOUND", "message": str(exc)}}) from exc
         rows = [r for r in list((persona.metadata or {}).get("trade_reflections") or []) if (not environment or r.get("environment") == environment) and (not review_state or r.get("review_state") == review_state)]
-        return {"data": rows, "meta": {"source": "persona_reflection", "count": len(rows)}}
+        return {"data": rows, "meta": {"source": "persona_reflection", "count": len(rows), "tenant_id": authority.tenant_id}}
 
     @app.get("/health")
     def health() -> dict[str, Any]:
