@@ -99,7 +99,7 @@ def test_docker_compose_postgres_shm_size_floor_in_source() -> None:
 def test_docker_compose_config_rendered_postgres_shm_size() -> None:
     """docker compose config rendered output must show postgres shm_size >= 256m."""
     proc = subprocess.run(
-        ["docker", "compose", "-f", str(COMPOSE_PATH), "config"],
+        ["docker", "compose", "--profile", "root", "-f", str(COMPOSE_PATH), "config"],
         capture_output=True,
         text=True,
         check=True,
@@ -1194,6 +1194,7 @@ def test_actual_ssh_command_forwards_drift_metadata(fixture, tmp_path):
         "#!/usr/bin/python3\nimport pathlib,sys\n"
         f"pathlib.Path({str(args_file)!r}).write_text('\\n'.join(sys.argv[1:]))\n"
         f"pathlib.Path({str(stdin_file)!r}).write_bytes(b''.join(sys.stdin.buffer.readline() for _ in range(3)))\n")
+    (tmp_path / "bin/ssh").chmod(0o755)
     result = subprocess.run([str(DEPLOY_SCRIPT), "--environment", "dev", "--component", "bff",
                              "--sha", PRIOR, "--artifact-restore", "--artifact-readback-out", str(tmp_path / "readback.json"),
                              "--deadline-seconds", "10"],

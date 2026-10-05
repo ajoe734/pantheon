@@ -1269,7 +1269,7 @@ jobs:
           # The recovery switch is deliberately one boolean with a fixed
           # connector and exact reviewed hosts. Callers cannot inject profiles,
           # wildcard domains, credentials, query strings, or arbitrary egress.
-          PANTHEON_DEV_COMPOSE_PROFILES: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' && 'openclaw,source-ingest-scheduler' || 'openclaw' }}
+          PANTHEON_DEV_COMPOSE_PROFILES: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' && 'root,source-ingest-scheduler' || 'root' }}
           PANTHEON_EXTERNAL_EGRESS: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' && 'allowlist' || 'deny' }}
           PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' && 'openapi.twse.com.tw,www.tpex.org.tw' || '' }}
           SOURCE_INGEST_BOUNDED_CONNECTOR_ID: tw-twse-tpex-official-market

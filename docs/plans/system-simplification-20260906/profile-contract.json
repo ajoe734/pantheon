@@ -1,8 +1,8 @@
 {
-  "task_id": "OSS-PROFILES-RUNTIME-GROUPING-CORRECTION-20261004",
+  "task_id": "OSS-PROFILES-OWNER-GROUPS-CORRECTION-20261004",
   "status": "implemented",
-  "generated_at": "2026-10-04T16:40:00Z",
-  "note": "Contract corrected by OSS-PROFILES-RUNTIME-GROUPING-CORRECTION-20261004. Runtime grouping counterexamples resolved: dormant ML smoke harnesses and openclaw-activation-ready-e2e are opt-in under their own dedicated profiles (dormant-smoke and openclaw-activation-ready-e2e) and never started by ordinary research or management-ai profiles. Core/workers/research/management-ai/execution profiles preserve default root stack and dependency closure.",
+  "generated_at": "2026-10-05T00:00:00Z",
+  "note": "Contract corrected by OSS-PROFILES-OWNER-GROUPS-CORRECTION-20261004. Actual application owners grouped across admitted runtime profiles (core: 29, workers: 16, research: 4, management-ai: 3, execution: 5) and canonical root deployment profile (root: 56). Decoupled cross-profile dependencies declared with required: false to ensure bounded profile activation without failing resolution. Nonprod deployment selects root.",
   "source_of_truth_read": {
     "environment_identity_plan": "docs/04/pantheon_environment_closure_sa_sd_2026-09/SA.md",
     "profile_table_cited": "SA.md §5 Component Profiles & Resource Bounds",
@@ -42,9 +42,13 @@
       "sa_definition": "Postgres, NATS, Caddy, Operator BFF, Projectors, Lifecycle",
       "activation": {"dev": "YES", "ephemeral_staging": "YES", "prod_control": "YES", "prod_execution": "NO"},
       "services": [
-        "postgres", "nats", "operator-bff", "router", "telemetry",
-        "governance", "deployment", "incidents", "postmortems",
-        "loop-run-projector-scheduler", "lineage-read", "web-channel"
+        "capital", "consultation-svc", "deployment", "evaluation", "evolution",
+        "feedback", "governance", "incidents", "lineage-read",
+        "loop-run-projector-scheduler", "memory", "minio", "minio-init",
+        "monitor-agent", "nats", "operator-bff", "optimizer-svc", "persona",
+        "persona-evaluator-agent", "postgres", "postmortems", "promotion",
+        "reconciliation-drift-svc", "registry", "router", "search-svc",
+        "source-ingest", "telemetry", "web-channel"
       ],
       "opt_in_never_default": [
         {
@@ -62,13 +66,14 @@
       "sa_definition": "Scheduler, Outbox consumer, Policy/Audit reconcilers",
       "activation": {"dev": "YES", "ephemeral_staging": "Conditional", "prod_control": "YES (Singleton), except research-owned workers below", "prod_execution": "NO"},
       "services": [
-        "deployment-outbox-consumer", "reconciliation-drift-consumer",
-        "reconciliation-drift-scheduler", "reconciliation-drift-incident-listener",
-        "evolution-dispatch-worker", "evolution-daily-sweep-scheduler",
-        "evolution-threshold-sweep-producer",
-        "search-index-scheduler", "source-ingest-scheduler",
-        "source-ingest-agora-projector", "source-ingest-controller-migrate",
-        "agora-interaction-worker", "strategy-distillation-worker"
+        "agora-interaction-worker", "alpha-replication-worker",
+        "deployment-outbox-consumer", "evolution-daily-sweep-scheduler",
+        "evolution-dispatch-worker", "evolution-threshold-sweep-producer",
+        "policy-learning-shadow-eval-scheduler", "reconciliation-drift-consumer",
+        "reconciliation-drift-incident-listener", "reconciliation-drift-scheduler",
+        "search-index-scheduler", "source-ingest-agora-projector",
+        "source-ingest-controller-migrate", "source-ingest-scheduler",
+        "strategy-distillation-worker", "training-session-preview-worker"
       ],
       "research_owned_workers_conditional_on_research_profile": {
         "services": ["alpha-replication-worker", "training-session-preview-worker", "policy-learning-shadow-eval-scheduler"],
@@ -128,7 +133,7 @@
       "note_two_distinct_compose_projects": "This profile spans two separate Compose files with different service sets; they are not the same running stack and must not be merged into one flat service list.",
       "services": {
         "dev_and_ephemeral_staging_paper_topology__docker_compose_yml": [
-          "runtime-manager", "broker", "signal-store",
+          "runtime-manager", "broker", "capital",
           "paper-signal-producer", "paper-fleet-reconciler"
         ],
         "dev_and_ephemeral_staging_opt_in__docker_compose_yml": {
