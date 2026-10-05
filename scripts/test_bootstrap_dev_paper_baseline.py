@@ -1686,10 +1686,16 @@ def test_deployment_owner_read_auth_boundary_with_default_bff_consumer(tmp_path,
        missing token, forbidden role) are rejected with zero store side effects.
     """
     import io
+    import sys
     import time
     import urllib.error
     import urllib.request
+    from pathlib import Path
     from fastapi.testclient import TestClient
+
+    _cp_gov = Path(__file__).resolve().parent.parent / "services" / "control-plane" / "governance"
+    if str(_cp_gov) not in sys.path:
+        sys.path.insert(0, str(_cp_gov))
 
     from services.deployment import service
     from deployment_plan import (
