@@ -1,0 +1,34 @@
+{
+  "scope": "Corrective caller migration after AUDIT-JOURNAL-READS-20261005",
+  "base": "8362bade3818e213e2202508bb29197a455b00b7",
+  "defect": "The slower Persona Owner Contract CI found Agora context_resolver still importing the deleted trade_journal._load. This was an introduced regression, not an obsolete assertion.",
+  "changes": [
+    "Migrate the final production file-loader caller to exact tenant-bound Telemetry episode reads",
+    "Resolve canonical caller scope before lookup; preserve schema, Persona, strategy, artifact and source-route audience checks",
+    "Preserve unverified Governance journal fallback for optional-owner absence or episode 404, never for configured-owner denial/outage/malformed scope",
+    "Focused Persona journal sources require the owner even with duplicate tab parameters",
+    "Declare the tenant_id already emitted by Telemetry in its projection schema and require exact tenant audience binding",
+    "Replace retired file-backed context fixtures with explicit owner seams and add actual-owner transport/scope regressions"
+  ],
+  "local_validation": {
+    "focused_and_architecture": "184 passed, 9 subtests passed",
+    "full_owner_matrix": "Attempted with disposable local PostgreSQL and isolated psycopg dependencies; guard/SSH fixture failures occurred and the run timed out during teardown. Not reported as passed. Full GitHub owner CI is required before the next merge/deploy.",
+    "guard_reproduction": "test_sender_bootstrap_success_and_exact_exit_status[0] returns contract error exit 75 before its mocked SSH result; deployment transport is not declared broken from this fixture alone",
+    "diff_check": "passed"
+  },
+  "independent_review": {
+    "identity": "PiAstra",
+    "provider_model": "openai-codex/gpt-6-luna",
+    "result": "No blocking findings in the revised patch",
+    "finding_addressed": "duplicate tab parameters must not bypass required-owner behavior",
+    "canonical_or_hosted_approval": false
+  },
+  "delivery_boundary": {
+    "first_preflight_run": "37265839907 rejected an incompatible combination of isolated proof flags before VM mutation",
+    "cancelled_release": "37265986283 cancelled after the introduced ImportError was discovered; controller entered compensation",
+    "public_bff_after_cancel": "61980f66457b9199f7c1a4e77b88228c9e6ca899",
+    "restored_all_owner_images_proven": false,
+    "next_action": "Require full owner CI, merge the correction, then use the root controller to deploy and verify the corrected BE with FE a4f4f6f23e95963f8ec7c441b750e0fdc6ecb052",
+    "system_audit_closed": false
+  }
+}

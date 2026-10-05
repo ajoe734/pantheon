@@ -98,6 +98,34 @@ def owners(monkeypatch, tmp_path):
     return TestClient(main.app), calls
 
 
+def test_context_reader_uses_same_real_tenant_owner(owners):
+    _, calls = owners
+    auth = headers()["Authorization"]
+    assert trade_journal.read_context_episode("e0", auth, "alpha")["tenant_id"] == "alpha"
+    assert trade_journal.read_context_episode("e0", headers("beta")["Authorization"], "beta") is None
+    calls.clear()
+    with pytest.raises(trade_journal.ActionUnavailableError):
+        trade_journal.read_context_episode("e0", auth, "beta")
+    assert calls == []
+
+
+def test_context_reader_missing_owner_distinguishes_optional_governance_and_focused_trade(owners, monkeypatch):
+    monkeypatch.delenv("PANTHEON_TELEMETRY_API_URL")
+    auth = headers()["Authorization"]
+    assert trade_journal.read_context_episode("governance-id", auth, "alpha") is None
+    with pytest.raises(RuntimeError, match="not configured"):
+        trade_journal.read_context_episode("e0", auth, "alpha", required=True)
+
+
+@pytest.mark.parametrize("status,body", [(200, {"tenant_id": "beta", "trade_episode_id": "e0"}),
+                                        (200, {"tenant_id": "alpha", "trade_episode_id": "other"}),
+                                        (403, {}), (503, {})])
+def test_context_reader_never_falls_back_on_wrong_scope_or_owner_failure(owners, monkeypatch, status, body):
+    monkeypatch.setattr(trade_journal, "_http_call", lambda *a, **kw: (status, body))
+    with pytest.raises((RuntimeError, trade_journal.ActionUnavailableError)):
+        trade_journal.read_context_episode("e0", headers()["Authorization"], "alpha")
+
+
 def test_actual_telemetry_scope_pagination_and_dto(owners):
     client, calls = owners
     response = client.get(PATH + "/trade-journal?limit=1&environment=paper", headers=headers())
