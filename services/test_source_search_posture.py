@@ -8,10 +8,6 @@ from services.source_search_posture import validate_source_search_posture
 BASE_PROD_ENV = {
     "PANTHEON_SOURCE_SEARCH_POSTURE": "production",
     "DATABASE_URL": "postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon",
-    "PANTHEON_S3_ENDPOINT": "http://minio:9000",
-    "PANTHEON_ARTIFACT_BUCKET": "pantheon-artifacts",
-    "PANTHEON_S3_ACCESS_KEY": "pantheon",
-    "PANTHEON_S3_SECRET_KEY": "pantheonminio",
 }
 
 

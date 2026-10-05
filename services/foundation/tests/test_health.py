@@ -33,7 +33,7 @@ from services.foundation.health import (
 )
 
 ROOT = Path(__file__).resolve().parents[3]
-INFRASTRUCTURE_SERVICES = {"postgres", "minio", "nats", "signal-store"}
+INFRASTRUCTURE_SERVICES = {"postgres", "nats", "signal-store"}
 
 
 class _ComposeLoader(yaml.SafeLoader):

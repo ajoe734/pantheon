@@ -174,10 +174,6 @@ def test_search_production_posture_fails_closed_without_durable_backend() -> Non
             "SEARCH_INDEX_STORE_BACKEND": "jsonl",
             "SEARCH_EVIDENCE_BACKEND": "postgres",
             "SEARCH_DURABLE_INDEX_ONLY": "false",
-            "PANTHEON_S3_ENDPOINT": "http://minio:9000",
-            "PANTHEON_ARTIFACT_BUCKET": "pantheon-artifacts",
-            "PANTHEON_S3_ACCESS_KEY": "pantheon",
-            "PANTHEON_S3_SECRET_KEY": "pantheonminio",
         },
     )
 

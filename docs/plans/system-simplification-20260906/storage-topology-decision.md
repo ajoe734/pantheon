@@ -351,6 +351,8 @@ Status: executed and verified.
      `PANTHEON_ARTIFACT_BUCKET` environment variables from all services.
    - Removed `minio` from `INFRA_SERVICES` and `minio-init` bucket bootstrap from
      `scripts/bootstrap.sh`.
+   - Removed MinIO and S3 environment variables from `env/prod-control.env.example`
+     and `.env.example`, and removed MinIO ports from `scripts/run_isolated_l12_runtime_e2e.py`.
 4. **Retired S3-only posture checks**:
    - `services/foundation/persistence_posture.py` (`OBJECT_STORE_KEYS`) and
      `services/source_search_posture.py` (`object_store_keys`) no longer enforce

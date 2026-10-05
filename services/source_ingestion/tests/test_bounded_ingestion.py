@@ -142,10 +142,6 @@ def test_source_ingest_production_posture_fails_closed_without_postgres_backend(
             "PANTHEON_SOURCE_SEARCH_POSTURE": "production",
             "DATABASE_URL": "postgresql://pantheon:pantheon@postgres:5432/pantheon",
             "SOURCE_INGEST_EVIDENCE_BACKEND": "jsonl",
-            "PANTHEON_S3_ENDPOINT": "http://minio:9000",
-            "PANTHEON_ARTIFACT_BUCKET": "pantheon-artifacts",
-            "PANTHEON_S3_ACCESS_KEY": "pantheon",
-            "PANTHEON_S3_SECRET_KEY": "pantheonminio",
         },
     )
 
