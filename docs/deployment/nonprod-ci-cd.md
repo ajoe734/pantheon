@@ -113,10 +113,18 @@ Emergency flags:
 
 The hourly workflow has two independent jobs: creating immutable `publish/v*`
 snapshots and reconciling the dev FE/BFF pair. `scripts/auto_deploy_dev_pair.py`
-checks both protected `dev` tips every tick, including frontend-only updates,
-ticks with no new snapshot, and retries after failed deployments. Both exact
-commits must have a successful latest dev-push Branch CI Gate. An active backend
-or frontend deployment defers the check without cancelling it.
+checks both protected `dev` tips every tick, including frontend-only updates
+and ticks with no new snapshot. Both exact commits must have a successful latest
+dev-push Branch CI Gate. An active backend or frontend deployment defers the
+check without cancelling it.
+
+A pair whose latest completed Nonprod Deploy attempt failed or timed out is not
+dispatched again; the tick reports `failed_pair_not_retried` with that run URL.
+Attempts are matched by the exact `Dev release <backend> + <frontend>` run name,
+so a later merge on either `dev` tip is a new pair and deploys normally. A
+cancelled attempt does not block the pair. To retry the same pair after fixing
+the environment, dispatch Nonprod Deploy for it; a successful attempt makes the
+pair `up_to_date`.
 
 An already accepted hosted manifest and matching live BFF version produce
 `up_to_date`. Otherwise the checker explicitly dispatches `nonprod-deploy.yml`
@@ -136,7 +144,8 @@ with a later branch tip. Completed controllers cannot replay superseded pairs;
 the existing live-predecessor CAS and rollback remain mandatory.
 
 The hourly job reports `waiting_for_ci`, `deployment_in_progress`, `ready`,
-`dispatched`, or `up_to_date`, with the deployment run URL when applicable.
+`dispatched`, `failed_pair_not_retried`, or `up_to_date`, with the deployment
+run URL when applicable.
 Dispatch success is not hosted acceptance. Follow Nonprod Deploy and verify the
 served manifest, live version, candidate/post-switch probes and required product
 journeys. A failed release must restore the exact previous FE/BFF artifacts.

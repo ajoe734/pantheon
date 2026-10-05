@@ -19,6 +19,12 @@ BACKEND = "ajoe734/pantheon"
 FRONTEND = "ajoe734/execute-plans"
 DEPLOY = "nonprod-deploy.yml"
 ACTIVE = ("in_progress", "queued", "waiting", "pending", "requested")
+FAILED = ("failure", "timed_out")
+
+
+def pair_title(backend_sha, frontend_sha):
+    # Mirrors the dev run-name in nonprod-deploy.yml; both SHAs identify the pair.
+    return f"Dev release {backend_sha} + {frontend_sha}"
 
 
 def runs(client, workflow, **filters):
@@ -44,6 +50,18 @@ def ci_passed(client, sha):
     return (run.get("head_sha") == sha and run.get("head_branch") == "dev"
             and run.get("event") == "push" and run.get("status") == "completed"
             and run.get("conclusion") == "success")
+
+
+def failed_pair_run(backend, backend_sha, frontend_sha):
+    attempts = [run for run in runs(backend, DEPLOY, event="workflow_dispatch", head_sha=backend_sha)
+                if run.get("display_title") == pair_title(backend_sha, frontend_sha)
+                and run.get("status") == "completed"]
+    if not attempts:
+        return None
+    # Only the latest attempt counts: a cancelled or later successful attempt
+    # leaves the pair eligible, and a new merge on either dev tip is a new pair.
+    latest = max(attempts, key=lambda item: item["id"])
+    return latest["html_url"] if latest.get("conclusion") in FAILED else None
 
 
 def inspect_pair(backend, frontend, *, fe_url, bff_url, fetch=fetch_url_json):
@@ -79,6 +97,9 @@ def inspect_pair(backend, frontend, *, fe_url, bff_url, fetch=fetch_url_json):
             and manifest["releaseAdmission"].get("frontend", {}).get("commitSha") == frontend_sha
             and manifest["releaseAdmission"].get("backend", {}).get("commitSha") == backend_sha):
         return {**result, "state": "up_to_date"}
+    failed_url = failed_pair_run(backend, backend_sha, frontend_sha)
+    if failed_url:
+        return {**result, "state": "failed_pair_not_retried", "run_url": failed_url}
     pending = [client.repository for client, sha in ((backend, backend_sha), (frontend, frontend_sha))
                if not ci_passed(client, sha)]
     if pending:
@@ -105,7 +126,7 @@ def reconcile(backend, frontend, *, fe_url, bff_url, apply=False, fetch=fetch_ur
         "frontend_profile": result["frontend_profile"], "dev_auth_profile": "strict",
         "allow_dirty": "false", "run_loop_prod_tel_002_probe": "true",
     }, ref="dev")
-    expected_title = f"Dev release {result['backend_sha']} + {result['frontend_sha']}"
+    expected_title = pair_title(result["backend_sha"], result["frontend_sha"])
     for _ in range(20):
         for run in runs(backend, DEPLOY, event="workflow_dispatch"):
             if (run["id"] not in previous_ids and run.get("head_sha") == result["backend_sha"]
