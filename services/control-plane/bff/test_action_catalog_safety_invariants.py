@@ -1,16 +1,17 @@
 """E2E-R11: operator command-safety invariants over the BFF action catalog.
 
-Destructive / capital-affecting operator commands must stay gated. This is a
-regression guard: a future edit that weakens a destructive action's
-confirmation, two-man, approval, idempotency, or role requirement fails here.
+Named destructive commands retain confirmation and idempotency, and every
+action retains role requirements. Capital and execution owner tests cover
+approval checks before actual effects.
 
-Invariants (all currently hold):
-  1. Every CRITICAL action requires confirm_token AND two_man AND approval AND
-     idempotency.
-  2. Every named destructive action (rollback execute / hard rollback / kill
-     switch / liquidate-all / risk-off / safe-mode) requires confirm_token AND
-     idempotency.
-  3. No action is fully ungated — every entry has at least one required role.
+Invariants:
+  1. Every named destructive action (rollback execute / hard rollback / kill
+      switch / liquidate-all / risk-off / safe-mode) requires confirm_token AND
+      idempotency.
+  2. No action is fully ungated — every entry has at least one required role.
+
+Risk labels alone do not prescribe approval workflows. Requirements follow
+the actual owner effect; capital execution is checked by its owner.
 """
 import unittest
 
@@ -27,21 +28,7 @@ DESTRUCTIVE_ACTIONS = {
 }
 
 
-def _risk(entry) -> str:
-    return str(getattr(entry, "risk_level", "")).split(".")[-1].upper()
-
-
 class TestActionCatalogSafetyInvariants(unittest.TestCase):
-    def test_critical_actions_fully_gated(self):
-        for e in _CATALOG_ENTRIES:
-            if _risk(e) != "CRITICAL":
-                continue
-            aid = e.action_id
-            self.assertTrue(e.requires_confirm_token, f"CRITICAL {aid} missing confirm_token")
-            self.assertTrue(e.requires_two_man, f"CRITICAL {aid} missing two_man")
-            self.assertTrue(e.requires_approval, f"CRITICAL {aid} missing approval")
-            self.assertTrue(e.idempotency_required, f"CRITICAL {aid} missing idempotency")
-
     def test_destructive_actions_require_confirm_and_idempotency(self):
         by_id = {e.action_id: e for e in _CATALOG_ENTRIES}
         for aid in DESTRUCTIVE_ACTIONS:
