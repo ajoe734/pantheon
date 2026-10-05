@@ -1,0 +1,19 @@
+{
+  "task_id": "OPS-FE-RESEARCH-CLOSEOUT-001",
+  "subject_task_id": "FE-AGORA-RESEARCH-PLANS-001",
+  "scope": "Historical merged-review evidence only; reconciliation pending",
+  "historical_review": {"owner": "PiAstra", "reviewer": "Codex2", "generation": 5, "status": "review_approved", "at": "2026-09-30T19:00:29Z", "activity_event_id": "ai-status-event-cb7a7d2f3f1554d9d47b1824c67514b0ab20c424585594d6da68ac085d91a7c4"},
+  "journal": {"binding": "PANTHEON_TASK_STATE_EVENT_LOG", "file": "task-state-events-v2.jsonl", "sequence_event_sha256": {
+    "26072": "72c66916870906b3c95ad8f47c7e4260f5259e4d8c4a7a084709d4f928eb5173",
+    "26315": "6b6d7789c43b2789d324465a4705d3f64cdbcc7b887122bf953b46913bf7f4c8",
+    "26758": "f2c288776176acc0a7af60469ed2e0ed9b113711b8658edf0099d8db8274ae56",
+    "26767": "7f0bd5927cbb1cf57382a0474e6fce2cce257db0443357d93ebe88be31ea12fc",
+    "26949": "e22e681b31864ad5bea330f6f70cdf3e7d18ad94436ab2d1bf08f60530078795",
+    "26953": "c90fb9ef2c839580117cd96d144866d490a2a9c0d174d0b3153853adb47eedbe"
+  }},
+  "delivery": {"repository": "ajoe734/execute-plans", "pr": 791, "head": "12061ebf90e5769e30fef3ccc6899211deec7d54", "merge": "82dba238c46c7c87959e4c156df49a9f7cec644f", "verified_dev": "638c809beeb968646656fddda88a35530b823877", "manifest_blob": "3e2363d905c50679467b5e9a7d536799aa1f8c44"},
+  "review_evidence": "docs/deployment/evidence/OPS-FE-RESEARCH-CLOSEOUT-001/merged-review.md",
+  "validation": ["governed show of cleanup and subject tasks", "targeted canonical journal identities and digests", "gh pr view 791 --repo ajoe734/execute-plans", "git merge-base --is-ancestor for approved head and merge against fetched origin/dev", "git rev-parse approved-head:historical-manifest"],
+  "limits": {"new_review_attestation": false, "root_reconciled": false, "hosted_acceptance": false, "production_net_lines": 0},
+  "next": "Independent evidence review and Pantheon dev merge; approved command-source promotion; authorized Human/Ops reconcile_merged_done and terminal readback"
+}

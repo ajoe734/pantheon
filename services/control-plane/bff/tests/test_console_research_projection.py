@@ -383,27 +383,19 @@ def test_projected_research_console_surfaces_return_ok_counts(monkeypatch) -> No
         assert analysis_surface is not None and analysis_surface["status"] == "ok"
         assert analyses_body["items"][0]["analysis_id"] == "analysis-rrun-console-001"
 
-        tasks = client.get("/bff/research/tasks", headers=HEADERS)
-        assert tasks.status_code == 200, tasks.text
-        tasks_body = tasks.json()
-        assert tasks_body["page_info"]["total"] > 0
-        assert tasks_body["meta"]["surfaces"]["research_task_list"]["status"] == "ok"
-        assert tasks_body["items"][0]["ticket_id"] == "rtask-console-001"
-
 
 @pytest.mark.parametrize(
-    "state,expected_inbox,expected_analysis,expected_tasks",
+    "state,expected_inbox,expected_analysis",
     [
-        ("fresh", "ok", "ok", "ok"),
-        ("degraded", "degraded", "degraded", "degraded"),
-        ("unavailable", "degraded", "unavailable", "unavailable"),
+        ("fresh", "ok", "ok"),
+        ("degraded", "degraded", "degraded"),
+        ("unavailable", "degraded", "unavailable"),
     ],
 )
 def test_projected_research_console_surfaces_state_parity(
     state: str,
     expected_inbox: str,
     expected_analysis: str,
-    expected_tasks: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("BFF_READ_SURFACE_STATE", state)
@@ -420,7 +412,4 @@ def test_projected_research_console_surfaces_state_parity(
         )
         assert analysis_surface is not None and analysis_surface["status"] == expected_analysis
 
-        tasks = client.get("/bff/research/tasks", headers=HEADERS)
-        assert tasks.status_code == 200, tasks.text
-        assert tasks.json()["meta"]["surfaces"]["research_task_list"]["status"] == expected_tasks
 

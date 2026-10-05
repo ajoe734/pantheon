@@ -161,7 +161,7 @@ def test_replay_headers_publish_window_policy_for_clients(
     assert headers["X-SSE-Replay-Window-Events"] == str(sse_service.max_events)
     assert headers["X-SSE-Buffer-Size"] == str(sse_service.max_events)
     assert headers["X-SSE-Replay-Store"] == "in-memory"
-    assert headers["X-SSE-Resync-Routes"] == "/bff/approvals,/bff/v5/interventions"
+    assert headers["X-SSE-Resync-Routes"] == "/bff/approvals"
 
 
 def test_long_running_reconnect_heartbeat_and_duplicate_replay_contract(

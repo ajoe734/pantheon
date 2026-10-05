@@ -35,6 +35,7 @@ def _verify(request, registry, approval, plan, capital_pool, persona_binding, **
         governance_base_url="http://governance:8082", capital_base_url="http://capital:8092",
         approval_reader=SnapshotApprovalReader(approval),
         registry_fetch_json=lambda url, timeout: registry,
+        capital_fetch_json=helpers._fetcher(registry, approval, plan, capital_pool, persona_binding),
         fetch_json=helpers._fetcher(registry, approval, plan, capital_pool, persona_binding),
         now=datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc),
     )

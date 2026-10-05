@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -106,6 +107,7 @@ class ResearchOrchestratorStore:
         self.proposals_path = self.data_dir / "research_proposals.json"
         self.events_path = self.data_dir / "research_events.jsonl"
         self.event_store = event_store
+        self._lock = threading.RLock()
 
     def _read_map(self, path: Path) -> Dict[str, Dict[str, Any]]:
         if not path.exists():
@@ -120,21 +122,26 @@ class ResearchOrchestratorStore:
 
     def _write_map(self, path: Path, payload: Dict[str, Dict[str, Any]]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+        temporary = path.with_suffix(f"{path.suffix}.tmp")
+        temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+        temporary.replace(path)
 
     def _put_record(self, path: Path, record_id: str, record: Dict[str, Any]) -> Dict[str, Any]:
         if not record_id:
             raise ValueError("record_id is required")
-        records = self._read_map(path)
-        records[record_id] = json.loads(json.dumps(record))
-        self._write_map(path, records)
-        return records[record_id]
+        with self._lock:
+            records = self._read_map(path)
+            records[record_id] = json.loads(json.dumps(record))
+            self._write_map(path, records)
+            return records[record_id]
 
     def _list_records(self, path: Path) -> List[Dict[str, Any]]:
-        return list(self._read_map(path).values())
+        with self._lock:
+            return list(self._read_map(path).values())
 
     def _get_record(self, path: Path, record_id: str) -> Optional[Dict[str, Any]]:
-        return self._read_map(path).get(record_id)
+        with self._lock:
+            return self._read_map(path).get(record_id)
 
     def list_tasks(self) -> List[Dict[str, Any]]:
         return self._list_records(self.tasks_path)
@@ -158,7 +165,21 @@ class ResearchOrchestratorStore:
         run_id = str(run.get("run_id") or run.get("id") or "").strip()
         run["run_id"] = run_id
         run["id"] = run_id
-        return self._put_record(self.runs_path, run_id, run)
+        with self._lock:
+            existing = self._get_record(self.runs_path, run_id)
+            new_status = str(run.get("status") or "").lower()
+            ex_st = str(existing.get("status") or "").lower() if existing else ""
+            ex_fence = existing.get("cancellation_fence") if existing else None
+            task = self._get_record(self.tasks_path, str(run.get("task_id") or "")) if run.get("task_id") else None
+            t_canc = bool(task and (str(task.get("status") or "").lower() in {"canceled", "cancelled"} or task.get("cancellation_fence")))
+            if (ex_fence or ex_st in {"canceled", "cancelled"} or t_canc) and new_status not in {"canceled", "cancelled"}:
+                merged = dict(run)
+                merged["status"] = "canceled"
+                merged["cancellation_fence"] = ex_fence or (task.get("cancellation_fence") if task else None) or run.get("updated_at")
+                if existing and existing.get("completed_at"):
+                    merged["completed_at"] = existing["completed_at"]
+                return self._put_record(self.runs_path, run_id, merged)
+            return self._put_record(self.runs_path, run_id, run)
 
     def list_artifacts(self) -> List[Dict[str, Any]]:
         return self._list_records(self.artifacts_path)
@@ -170,7 +191,17 @@ class ResearchOrchestratorStore:
         artifact_id = str(artifact.get("artifact_id") or artifact.get("id") or "").strip()
         artifact["artifact_id"] = artifact_id
         artifact["id"] = artifact_id
-        return self._put_record(self.artifacts_path, artifact_id, artifact)
+        with self._lock:
+            run_id = str(artifact.get("run_id") or "").strip()
+            task_id = str(artifact.get("task_id") or "").strip()
+            run = self._get_record(self.runs_path, run_id) if run_id else None
+            task = self._get_record(self.tasks_path, task_id) if task_id else None
+            if (
+                (run and (str(run.get("status") or "").lower() in {"canceled", "cancelled"} or run.get("cancellation_fence")))
+                or (task and (str(task.get("status") or "").lower() in {"canceled", "cancelled"} or task.get("cancellation_fence")))
+            ):
+                raise RuntimeError(f"Cannot persist artifact for canceled research run '{run_id}' or task '{task_id}'")
+            return self._put_record(self.artifacts_path, artifact_id, artifact)
 
     def list_proposals(self) -> List[Dict[str, Any]]:
         return self._list_records(self.proposals_path)

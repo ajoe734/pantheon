@@ -8,6 +8,7 @@ Moving storage is a separate, explicitly selected --migrate-storage operation.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import fcntl
 import hashlib
 import json
@@ -20,6 +21,7 @@ import stat
 import subprocess
 import sys
 import time
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -685,7 +687,7 @@ def _preflight_storage_migration(
             new_sym = first_symlink_component(new_p)
             if new_sym is not None or new_p.is_symlink():
                 raise ValueError(f"rendered {key} contains symlink: {new_sym or new_p}")
-            if old_p.exists() and (new_p.exists() or new_p.is_symlink()):
+            if old_p.exists() and not _is_retired_path_fence(old_p) and (new_p.exists() or new_p.is_symlink()):
                 raise RuntimeError(f"target {key} collision: {new_p} already exists")
 
 
@@ -742,37 +744,71 @@ def _is_retired_path_fence(path: Path) -> bool:
 
 
 def _create_retired_path_fence(path: Path) -> None:
+    """Adopt PR5688's directory fence; exchange old FIFOs without an absent-path gap."""
     p = Path(path)
-    if _is_retired_path_fence(p):
-        return
-    if p.exists() or p.is_symlink():
-        raise RuntimeError(f"cannot establish retired-path fence: {p} already exists and is not a fence")
-
-    fifo_err: Exception | None = None
-    if hasattr(os, "mkfifo"):
+    if first_symlink_component(p) is not None:
+        raise RuntimeError(f"cannot establish retired-path fence through symlink: {p}")
+    if p.is_fifo():
+        # Linux RENAME_EXCHANGE permits exchanging a FIFO and a directory.
+        # Failure leaves the FIFO in place; never unlink the fence before mkdir.
+        staging = Path(tempfile.mkdtemp(prefix=".retired-fence-", dir=p.parent))
         try:
-            os.mkfifo(str(p), 0o600)
-        except OSError as exc:
-            fifo_err = exc
-
-    if not _is_retired_path_fence(p):
+            libc = ctypes.CDLL(None, use_errno=True)
+            exchange = libc.renameat2
+            exchange.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+            exchange.restype = ctypes.c_int
+            if exchange(-100, os.fsencode(staging), -100, os.fsencode(p), 2) != 0:
+                error = ctypes.get_errno()
+                raise OSError(error, os.strerror(error), str(p))
+            # Release waiters on the displaced inode without reading its body.
+            for flags in (os.O_RDONLY, os.O_WRONLY):
+                try:
+                    fd = os.open(staging, flags | os.O_NONBLOCK | os.O_NOFOLLOW)
+                except OSError:
+                    continue
+                os.close(fd)
+        finally:
+            if staging.is_fifo():
+                staging.unlink()
+            else:
+                staging.rmdir()
+    elif p.is_dir() and not any(p.iterdir()):
+        os.chmod(p, 0o700)
+    else:
         try:
             p.mkdir(mode=0o700, exist_ok=False)
         except OSError as exc:
-            err_msg = (
-                f"cannot establish retired-path fence at {p}: "
-                f"mkfifo failed ({fifo_err}); mkdir fallback failed ({exc})"
-                if fifo_err
-                else f"cannot establish retired-path fence at {p}: mkdir fallback failed ({exc})"
-            )
-            raise RuntimeError(err_msg) from exc
+            raise RuntimeError(f"cannot establish retired-path fence at {p}: {exc}") from exc
+    _fsync_dir(p.parent)
 
-    if not _is_retired_path_fence(p):
-        try:
-            _remove_retired_path_fence(p)
-        except Exception:
-            pass
-        raise RuntimeError(f"retired-path fence verification failed at {p}")
+
+def _upgrade_retired_fifo_fences(
+    incumbent: Mapping[str, Any] | None, rendered: Mapping[str, Any],
+) -> list[str]:
+    """Upgrade only retired siblings, never a configured active data path."""
+    paths = rendered.get("paths", {})
+    candidates = []
+    for key in ("state_file", "approval_queue"):
+        current = Path(paths[key]) if paths.get(key) else None
+        if current and current.parent.name == "worker-runtime" and current.parent.parent.name == ".orchestrator":
+            candidates.append(current.parent.parent / current.name)
+    current_log = rendered.get("task_state_store", {}).get("event_log")
+    old_log = (incumbent or {}).get("task_state_store", {}).get("event_log")
+    if current_log:
+        current = Path(current_log)
+        retired = Path(old_log) if old_log and old_log != current_log else (
+            current.parent.parent / current.name if current.parent.name == "task-state" else None
+        )
+        if retired:
+            candidates.extend(retired.with_name(retired.name + suffix) for suffix in (".lock", ".head.json"))
+    upgraded = []
+    for candidate in candidates:
+        if first_symlink_component(candidate) is not None:
+            raise ValueError(f"retired fence contains symlink: {candidate}")
+        if candidate.is_fifo():
+            _create_retired_path_fence(candidate)
+            upgraded.append(str(candidate))
+    return upgraded
 
 
 def _remove_retired_path_fence(path: Path) -> None:
@@ -1143,7 +1179,7 @@ def _migrate_storage_paths(
                 for suffix in ("", ".head.json", ".lock", ".legacy-anchor.json"):
                     old_file = old_event_log.with_name(f"{old_event_log.name}{suffix}") if suffix else old_event_log
                     new_file = new_event_log.with_name(f"{new_event_log.name}{suffix}") if suffix else new_event_log
-                    if old_file.exists():
+                    if old_file.exists() and not _is_retired_path_fence(old_file):
                         os.replace(old_file, new_file)
                         moved_files.append((str(old_file), str(new_file)))
                         if suffix in (".lock", ".head.json"):
@@ -1157,7 +1193,7 @@ def _migrate_storage_paths(
             if old_val and new_val and old_val != new_val:
                 old_p = Path(old_val).expanduser()
                 new_p = Path(new_val).expanduser()
-                if old_p.exists():
+                if old_p.exists() and not _is_retired_path_fence(old_p):
                     if new_p.exists() or new_p.is_symlink():
                         raise RuntimeError(f"target {key} collision: {new_p} already exists")
                     new_p.parent.mkdir(parents=True, exist_ok=True)
@@ -1170,6 +1206,8 @@ def _migrate_storage_paths(
                     moved_files.append((str(old_p), str(new_p)))
                     _create_retired_path_fence(old_p)
 
+        upgraded_fences = _upgrade_retired_fifo_fences(incumbent, rendered)
+        dirs_to_fsync.update(Path(p).parent for p in upgraded_fences)
         for d in dirs_to_fsync:
             _fsync_dir(d)
 
@@ -1225,6 +1263,7 @@ def _migrate_storage_paths(
 
     return {
         "migrated": bool(moved_files),
+        "upgraded_fences": upgraded_fences,
         "files": moved_files,
         "fsynced_directories": sorted(str(d) for d in dirs_to_fsync),
         "lock_fd": old_lock_fd if keep_lock else None,
@@ -1448,12 +1487,14 @@ def _replace_supervisor_locked(
             migration_record = (
                 _migrate_storage_paths(incumbent, rendered, keep_lock=True)
                 if migrate_storage
-                else {"migrated": False, "files": []}
+                else {"migrated": False, "files": [],
+                      "upgraded_fences": _upgrade_retired_fifo_fences(incumbent, rendered)}
             )
             lock_fd = migration_record.get("lock_fd")
             result["storage_migration"] = {
                 "migrated": migration_record["migrated"],
                 "files": migration_record["files"],
+                "upgraded_fences": migration_record.get("upgraded_fences", []),
                 "fsynced_directories": migration_record.get("fsynced_directories", []),
             }
             ensure_approval_queue_marker(approval_queue_path)

@@ -29,9 +29,7 @@ import os
 # human_gate_item_id/decision/audit_event fields and does not validate the
 # TTL cap). ``command_adapters.service.CommandAdapterService`` already
 # anticipates injection of exactly this kind of per-command validator via its
-# ``validators`` mapping -- the already-migrated ``test_v5_interventions.py``
-# uses the identical technique for ``RemediateSentinelIntervention`` and
-# ``DecideV5Intervention``. This test supplies a byte-for-byte behavioral
+# ``validators`` mapping. This test supplies a byte-for-byte behavioral
 # mirror of main.py's real validator (same required fields, same role gate,
 # same TTL bounds and error codes) as the injected validator, rather than
 # reimplementing the *command-admission* business logic under test (which
@@ -41,11 +39,7 @@ import os
 # ``command_adapters/contracts.py`` so real callers and tests share one
 # definition.
 _HUMAN_GATE_DECISIONS_BY_COMMAND = {
-    CommandType.HUMAN_GATE_APPROVE: "approve",
-    CommandType.HUMAN_GATE_REJECT: "reject",
-    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: "request_more_evidence",
     CommandType.HUMAN_GATE_REVOKE: "revoke",
-    CommandType.HUMAN_GATE_EXTEND_TTL: "extend_ttl",
 }
 _HUMAN_GATE_REQUIRED = {"human_gate_item_id", "decision"}
 _VALID_HUMAN_GATE_DECISIONS = set(_HUMAN_GATE_DECISIONS_BY_COMMAND.values())
@@ -141,11 +135,7 @@ def _validate_human_gate_decision(params: dict, identity: OperatorIdentity) -> N
 
 
 _B5_COMMAND_VALIDATORS = {
-    CommandType.HUMAN_GATE_APPROVE: _validate_human_gate_decision,
-    CommandType.HUMAN_GATE_REJECT: _validate_human_gate_decision,
-    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: _validate_human_gate_decision,
     CommandType.HUMAN_GATE_REVOKE: _validate_human_gate_decision,
-    CommandType.HUMAN_GATE_EXTEND_TTL: _validate_human_gate_decision,
     "HumanGateApprove": _validate_human_gate_decision,
     "HumanGateReject": _validate_human_gate_decision,
     "HumanGateRequestMoreEvidence": _validate_human_gate_decision,
@@ -374,29 +364,9 @@ def test_human_gate_revoke_fails_closed_after_downstream_execution() -> None:
         assert "compensating action" in details["suggestion"]
 
 
-def test_human_gate_catalog_and_executor_surface_two_man_evidence(monkeypatch) -> None:
-    from services.control_plane.bff import command_executor
-    monkeypatch.setitem(command_executor._EXECUTORS, CommandType.HUMAN_GATE_APPROVE, command_executor._execute_bff_action_adapter)
+def test_human_gate_catalog_requires_two_man_evidence() -> None:
     for command in ("HumanGateApprove", "HumanGateReject", "HumanGateRevoke"):
         entry = get_catalog_entry(command)
         assert entry is not None
         assert entry.risk_level == RiskLevel.HIGH
         assert entry.requires_two_man is True
-
-    status, result, error = execute_command_with_status(
-        "cmd-b5-sec-executor",
-        CommandType.HUMAN_GATE_APPROVE,
-        {
-            "action_id": "approve",
-            "entity_type": "human_gate_item",
-            "entity_id": "approval:b5-sec-executor",
-            "audit_event": "human_gate.approve",
-            "two_man_signature_id": "tms-b5-sec-executor",
-        },
-    )
-
-    assert status == CommandStatus.EXECUTED
-    assert error is None
-    assert result is not None
-    assert result["dispatch_path"] == "bff_action_adapter"
-    assert result["two_man_signature_id"] == "tms-b5-sec-executor"

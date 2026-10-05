@@ -1044,6 +1044,10 @@ def test_validate_tool_denies_non_allowlisted_action() -> None:
     assert exc_info.value.action_id == "LiquidateAll"
 
 
+def _exec_admitted(**kwargs):
+    return execute_governed_tool(submit_command=lambda body, command_id, token: {"data": {"command_id": command_id}}, **kwargs)
+
+
 def test_execute_governed_tool_denies_non_allowlisted_action() -> None:
     """Non-allowlisted action_id raises ToolNotAllowedError from execute."""
     import pytest
@@ -1061,7 +1065,7 @@ def test_execute_governed_tool_denies_non_allowlisted_action() -> None:
 def test_execute_governed_tool_denies_shell_action() -> None:
     """Shell-like or arbitrary action_ids are not in the allowlist."""
     import pytest
-    for action_id in ("shell", "exec", "bash", "StartRuntime", "RemediateSentinelIntervention"):
+    for action_id in ("shell", "exec", "bash"):
         with pytest.raises(ToolNotAllowedError):
             execute_governed_tool(
                 action_id=action_id,
@@ -1134,7 +1138,7 @@ def test_execute_medium_risk_requires_reason() -> None:
 
 def test_execute_low_risk_returns_receipt_shape() -> None:
     """Low-risk execution produces a ToolReceipt with required fields."""
-    receipt = execute_governed_tool(
+    receipt = _exec_admitted(
         action_id="AuditExport",
         entity_type="AuditExport",
         params={"export_format": "csv"},
@@ -1155,7 +1159,7 @@ def test_execute_low_risk_returns_receipt_shape() -> None:
 
 def test_execute_medium_risk_with_reason_returns_receipt() -> None:
     """Medium-risk execution with reason and confirmed=True produces an admitted receipt."""
-    receipt = execute_governed_tool(
+    receipt = _exec_admitted(
         action_id="JobAction",
         entity_type="Job",
         entity_id="job-123",
@@ -1190,16 +1194,9 @@ def test_execute_medium_risk_requires_confirmation() -> None:
     assert exc_info.value.field_name == "confirmed"
 
 
-def test_execute_medium_risk_persona_action_with_confirmation_returns_admitted_receipt(monkeypatch) -> None:
+def test_execute_medium_risk_persona_action_with_confirmation_returns_admitted_receipt() -> None:
     """PersonaAction with reason and confirmed=True produces an admitted receipt with confirmation_marker."""
-    from services.control_plane.bff.models import CommandStatus
-    from services.control_plane.bff import command_executor
-    monkeypatch.setattr(
-        command_executor,
-        "execute_command_with_status",
-        lambda *args, **kwargs: (CommandStatus.EXECUTED, {"command_id": "cmd-001"}, None),
-    )
-    receipt = execute_governed_tool(
+    receipt = _exec_admitted(
         action_id="PersonaAction",
         entity_type="Persona",
         entity_id="p-001",
@@ -1220,7 +1217,7 @@ def test_execute_medium_risk_persona_action_with_confirmation_returns_admitted_r
 def test_receipt_trace_id_propagated() -> None:
     """Caller-supplied trace_id is present in the receipt."""
     trace_id = "asst-tool-test-trace-abc"
-    receipt = execute_governed_tool(
+    receipt = _exec_admitted(
         action_id="AuditExport",
         entity_type="AuditExport",
         params={},
@@ -1237,8 +1234,6 @@ def test_allowlist_does_not_contain_critical_actions() -> None:
         "ActivateKillSwitch",
         "LiquidateAll",
         "HardRollback",
-        "RemediateSentinelIntervention",
-        "StartRuntime",
         "IssueRiskOff",
         "IssueSafeMode",
         "PauseRuntime",
@@ -1257,6 +1252,7 @@ def _make_tool_test_app() -> FastAPI:
         extract_identity=lambda _auth: _AssistantSecurityIdentity(roles=["operator"]),
         require_read_role=lambda _id: None,
         bff_error=bff_error,
+        submit_command_admission=lambda **kw: {"data": {"command_id": kw["idempotency_key"]}, "command": kw["payload"]["command"]},
     )
     app.include_router(router)
     return app
@@ -1464,7 +1460,7 @@ def test_tool_execute_route_boolean_true_passes_medium_risk_gate(tmp_path) -> No
 def test_epic_deny_first_empty_allowlist_returns_403() -> None:
     """EPIC deny-first: non-allowlisted action_id is always denied with 403."""
     client = TestClient(_make_tool_test_app())
-    for action_id in ("ActivateKillSwitch", "LiquidateAll", "HardRollback", "StartRuntime"):
+    for action_id in ("ActivateKillSwitch", "LiquidateAll", "HardRollback"):
         resp = client.post(
             "/bff/assistant/tools/execute",
             json={"action_id": action_id, "entity_type": "Unknown", "params": {}},
@@ -1490,7 +1486,7 @@ def test_epic_unauthorized_skill_fail_closed() -> None:
 
 def test_epic_one_audit_entry_per_execute_invoke() -> None:
     """EPIC one audit per invoke: every execute call produces a ToolReceipt with source tag."""
-    receipt = execute_governed_tool(
+    receipt = _exec_admitted(
         action_id="AuditExport",
         entity_type="AuditExport",
         params={},
@@ -1511,7 +1507,7 @@ def test_epic_one_audit_entry_per_execute_invoke() -> None:
 
 def test_epic_provider_credentials_not_in_receipt(monkeypatch) -> None:
     """EPIC no credential leak: ToolReceipt result must not contain raw credential fields."""
-    receipt = execute_governed_tool(
+    receipt = _exec_admitted(
         action_id="AuditExport",
         entity_type="AuditExport",
         params={"export_format": "csv"},

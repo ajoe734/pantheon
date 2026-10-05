@@ -1064,6 +1064,47 @@ def enrich_pr_status_rollup(
     return {**pr, "statusCheckRollup": new_rollup}
 
 
+def is_versioned_task_branch(base_branch: str, head_ref: str) -> bool:
+    """True when head_ref is `<base_branch>-v<N>`, a rewritten replacement branch."""
+
+    return re.fullmatch(re.escape(base_branch) + r"-v[0-9]+", head_ref or "") is not None
+
+
+SUPERSEDING_VERSION_MAX = 20
+
+
+def _superseding_version_listing(
+    candidate: TaskCandidate,
+    runner: CommandRunner,
+    *,
+    root: Path = ROOT,
+    state: str = "open",
+) -> list[Mapping[str, Any]]:
+    """Discover PRs (in `state`) from `<branch>-vN` when the exact task branch has none.
+
+    Probes each exact `<branch>-vN` head (N=2..SUPERSEDING_VERSION_MAX) so discovery
+    is task-scoped and never depends on a repository-wide listing window.
+
+    Only the branch binding is widened; the exact-head review gate still applies
+    to whatever PR head this returns.
+    """
+
+    found: list[Mapping[str, Any]] = []
+    for version in range(2, SUPERSEDING_VERSION_MAX + 1):
+        rows = gh_json(
+            runner,
+            [
+                "pr", "list", "--head", f"{candidate.branch}-v{version}",
+                "--base", candidate.target_branch, "--state", state,
+                "--json", "number", "--limit", "10",
+            ],
+            cwd=root,
+        )
+        if isinstance(rows, list):
+            found.extend({"number": row.get("number")} for row in rows if isinstance(row, Mapping))
+    return found
+
+
 def fetch_pr_for_task(
     candidate: TaskCandidate,
     settings: Settings,
@@ -1072,13 +1113,14 @@ def fetch_pr_for_task(
     root: Path = ROOT,
     state: str = "open",
 ) -> Mapping[str, Any] | None:
+    head_branch = resolve_authoritative_head_branch(candidate)
     listing = gh_json(
         runner,
         [
             "pr",
             "list",
             "--head",
-            candidate.branch,
+            head_branch,
             "--base",
             candidate.target_branch,
             "--state",
@@ -1090,9 +1132,32 @@ def fetch_pr_for_task(
         ],
         cwd=root,
     )
+    if (not isinstance(listing, list) or not listing) and head_branch != candidate.branch:
+        listing = gh_json(
+            runner,
+            [
+                "pr",
+                "list",
+                "--head",
+                candidate.branch,
+                "--base",
+                candidate.target_branch,
+                "--state",
+                state,
+                "--json",
+                "number",
+                "--limit",
+                "10",
+            ],
+            cwd=root,
+        )
+    superseding = False
+    if not isinstance(listing, list) or not listing:
+        listing = _superseding_version_listing(candidate, runner, root=root, state=state)
+        superseding = True
     if not isinstance(listing, list) or not listing:
         return None
-    if state == "open" and len(listing) > 1:
+    if (state == "open" or superseding) and len(listing) > 1:
         # GitHub ambiguity is never resolved by picking the first row: a second
         # open PR for the same task branch can carry a different head than the
         # one the reviewer approved.
@@ -1119,7 +1184,8 @@ def fetch_pr_for_task(
 def validate_pr(candidate: TaskCandidate, pr: Mapping[str, Any], settings: Settings) -> str | None:
     if bool(pr.get("isDraft")):
         return "pr-is-draft"
-    if str(pr.get("headRefName") or "") != candidate.branch:
+    head_ref = str(pr.get("headRefName") or "")
+    if head_ref != candidate.branch and not is_versioned_task_branch(candidate.branch, head_ref):
         return "head-branch-mismatch"
     if str(pr.get("baseRefName") or "") != candidate.target_branch:
         return "base-branch-mismatch"
@@ -1478,18 +1544,84 @@ def lock_file(lock_path: Path, *, enabled: bool = True) -> Iterator[None]:
         _release_lock_handle(handle)
 
 
-def fetch_refs(candidate: TaskCandidate, runner: CommandRunner, *, root: Path) -> None:
+def resolve_authoritative_head_branch(
+    candidate: TaskCandidate,
+    *,
+    head_branch: str = "",
+) -> str:
+    cleaned_head = str(head_branch or "").strip()
+    if cleaned_head:
+        return cleaned_head
+    raw_review = candidate.raw_task.get("review_binding")
+    if isinstance(raw_review, Mapping):
+        bound_head = str(raw_review.get("head_branch") or "").strip()
+        if bound_head:
+            return bound_head
+    raw_delivery = candidate.raw_task.get("delivery_binding")
+    if isinstance(raw_delivery, Mapping):
+        bound_head = str(raw_delivery.get("head_branch") or "").strip()
+        if bound_head:
+            return bound_head
+    return str(candidate.branch or "").strip()
+
+
+def fetch_refs(
+    candidate: TaskCandidate,
+    runner: CommandRunner,
+    *,
+    root: Path,
+    head_branch: str = "",
+    exact_head: str = "",
+) -> None:
     runner.run(["git", "fetch", "origin", candidate.target_branch, "--quiet"], cwd=root)
-    runner.run(
-        [
-            "git",
-            "fetch",
-            "origin",
-            f"+refs/heads/{candidate.branch}:refs/remotes/origin/{candidate.branch}",
-            "--quiet",
-        ],
-        cwd=root,
+    authoritative_branch = resolve_authoritative_head_branch(
+        candidate, head_branch=head_branch
     )
+    if authoritative_branch:
+        runner.run(
+            [
+                "git",
+                "fetch",
+                "origin",
+                f"+refs/heads/{authoritative_branch}:refs/remotes/origin/{authoritative_branch}",
+                "--quiet",
+            ],
+            cwd=root,
+        )
+
+    optional_branches: set[str] = set()
+    candidate_branch = str(candidate.branch or "").strip()
+    if candidate_branch and candidate_branch != authoritative_branch:
+        optional_branches.add(candidate_branch)
+    raw_delivery = candidate.raw_task.get("delivery_binding")
+    if isinstance(raw_delivery, Mapping):
+        bound_head = str(raw_delivery.get("head_branch") or "").strip()
+        if bound_head and bound_head != authoritative_branch:
+            optional_branches.add(bound_head)
+    raw_review = candidate.raw_task.get("review_binding")
+    if isinstance(raw_review, Mapping):
+        bound_head = str(raw_review.get("head_branch") or "").strip()
+        if bound_head and bound_head != authoritative_branch:
+            optional_branches.add(bound_head)
+
+    for branch in sorted(optional_branches):
+        runner.run(
+            [
+                "git",
+                "fetch",
+                "origin",
+                f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
+                "--quiet",
+            ],
+            cwd=root,
+            check=False,
+        )
+    if exact_head and review_gate.OID_RE.fullmatch(exact_head):
+        runner.run(
+            ["git", "fetch", "origin", exact_head, "--quiet"],
+            cwd=root,
+            check=False,
+        )
 
 
 def run_rebase_smoke(
@@ -1502,8 +1634,15 @@ def run_rebase_smoke(
     extra_smoke_commands: Sequence[str] = (),
     allow_push: bool = True,
     exact_head: str = "",
+    head_branch: str = "",
 ) -> tuple[bool, str]:
-    fetch_refs(candidate, runner, root=root)
+    fetch_refs(
+        candidate,
+        runner,
+        root=root,
+        head_branch=head_branch,
+        exact_head=exact_head,
+    )
     commands = tuple(extra_smoke_commands) or settings.smoke_commands
 
     if not allow_push:
@@ -1567,9 +1706,13 @@ def run_rebase_smoke(
             finally:
                 runner.run(["git", "worktree", "remove", "--force", str(worktree)], cwd=root, check=False)
 
+    target_branch = (
+        resolve_authoritative_head_branch(candidate, head_branch=head_branch)
+        or candidate.branch
+    )
     with tempfile.TemporaryDirectory(prefix=f"pantheon-integrate-{candidate.task_id}-") as tmp:
         worktree = Path(tmp)
-        runner.run(["git", "worktree", "add", "--detach", str(worktree), f"origin/{candidate.branch}"], cwd=root)
+        runner.run(["git", "worktree", "add", "--detach", str(worktree), f"origin/{target_branch}"], cwd=root)
         try:
             before = runner.run(["git", "rev-parse", "HEAD"], cwd=worktree).stdout.strip()
             rebase = runner.run(["git", "rebase", f"origin/{candidate.target_branch}"], cwd=worktree, check=False)
@@ -1583,7 +1726,7 @@ def run_rebase_smoke(
             pushed = False
             if execute and allow_push and changed:
                 runner.run(
-                    ["git", "push", "--force-with-lease", "origin", f"HEAD:{candidate.branch}"],
+                    ["git", "push", "--force-with-lease", "origin", f"HEAD:{target_branch}"],
                     cwd=worktree,
                 )
                 pushed = True
@@ -1974,6 +2117,7 @@ def open_unblock_task(
     execute: bool,
 ) -> str | None:
     try:
+        unblock_contract.require_root_repair_source(candidate.task_id, candidate.raw_task)
         reason = unblock_contract.validate_reason(reason)
     except ValueError as exc:
         print(
@@ -2449,7 +2593,33 @@ def integrate_candidate(
             commands=runner.commands[:],
         )
     if pr is None:
-        merged_pr = fetch_pr_for_task(candidate, settings, runner, root=target_root, state="merged")
+        try:
+            merged_pr = fetch_pr_for_task(
+                candidate, settings, runner, root=target_root, state="merged"
+            )
+        except AmbiguousPullRequests as exc:
+            detail = f"{exc}; refusing to choose a merged head for {candidate.task_id}."
+            unblock = (
+                open_unblock_task(
+                    candidate,
+                    "pr-lookup-failed",
+                    detail,
+                    settings,
+                    runner,
+                    root=status_root_dir,
+                    execute=execute,
+                )
+                if open_unblock
+                else None
+            )
+            return IntegrationResult(
+                candidate.task_id,
+                "blocked",
+                detail,
+                unblock_task_id=unblock,
+                dry_run=not execute,
+                commands=runner.commands[:],
+            )
         if merged_pr is not None:
             number = pr_number(merged_pr)
             url = str(merged_pr.get("url") or "")
@@ -2861,7 +3031,7 @@ def integrate_candidate(
             lookup=tag_lookup,
         )
         if (has_review or has_operator) and reopen_inspection.is_absent:
-            head_branch = candidate.branch or str(pr.get("headRefName") or "")
+            head_branch = str(pr.get("headRefName") or "") or candidate.branch
             base = candidate.target_branch or str(pr.get("baseRefName") or "dev")
             binding = github_review_bridge.ReviewBinding(
                 pr=number,
@@ -2979,6 +3149,7 @@ def integrate_candidate(
             # being evaluated. The sole merge owner never rewrites task heads.
             allow_push=False,
             exact_head=decision.head_oid,
+            head_branch=str(pr.get("headRefName") or "").strip(),
         )
     except CommandFailure as exc:
         detail = f"Local smoke or git command failed for PR #{number}: {exc.output.strip() or exc.args_rendered}"

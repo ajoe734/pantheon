@@ -607,6 +607,7 @@ TRADE_EPISODE_ID = "11111111-1111-4111-8111-111111111111"
 def _trade_episode_projection(**overrides):
     return {
         "trade_episode_id": TRADE_EPISODE_ID,
+        "tenant_id": "pantheon-dev",
         "environment": "paper",
         "persona_id": "ready",
         "strategy_id": "strategy-1",
@@ -627,10 +628,8 @@ def _trade_episode_projection(**overrides):
     }
 
 
-def test_daily_resolver_accepts_scope_checked_trade_episode_from_persona_journal(monkeypatch, tmp_path):
-    episode_path = tmp_path / "trade-episodes.json"
-    episode_path.write_text(json.dumps([_trade_episode_projection()]))
-    monkeypatch.setenv("PANTHEON_BFF_TRADE_EPISODES_STORE", str(episode_path))
+def test_daily_resolver_accepts_scope_checked_trade_episode_from_persona_journal(monkeypatch):
+    monkeypatch.setattr("services.control_plane.bff.trade_journal.read_context_episode", lambda *args, **kwargs: _trade_episode_projection())
     c = client(monkeypatch)
     now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     source_route = "/management/personas/ready?tab=tradeJournal"
@@ -664,6 +663,7 @@ def test_daily_resolver_accepts_scope_checked_trade_episode_from_persona_journal
     [
         ({"artifact_id": None}, "/management/personas/ready?tab=tradeJournal"),
         ({"coverage": None}, "/management/personas/ready?tab=tradeJournal"),
+        ({"tenant_id": "other-tenant"}, "/management/personas/ready?tab=tradeJournal"),
         ({"side": "flat"}, "/management/personas/ready?tab=tradeJournal"),
         ({"strategy_id": "other-strategy"}, "/management/personas/ready?tab=tradeJournal"),
         ({}, "/management/personas/other?tab=tradeJournal"),
@@ -671,12 +671,10 @@ def test_daily_resolver_accepts_scope_checked_trade_episode_from_persona_journal
     ],
 )
 def test_daily_resolver_rejects_trade_episode_without_schema_and_route_binding(
-    monkeypatch, tmp_path, episode_mutation, source_route,
+    monkeypatch, episode_mutation, source_route,
 ):
     episode = _trade_episode_projection(**episode_mutation)
-    episode_path = tmp_path / "trade-episodes.json"
-    episode_path.write_text(json.dumps([episode]))
-    monkeypatch.setenv("PANTHEON_BFF_TRADE_EPISODES_STORE", str(episode_path))
+    monkeypatch.setattr("services.control_plane.bff.trade_journal.read_context_episode", lambda *args, **kwargs: episode)
     c = client(monkeypatch)
     response = c.post(
         "/bff/agora/interactions/context:resolve",
@@ -695,8 +693,10 @@ def test_daily_resolver_rejects_trade_episode_without_schema_and_route_binding(
             "return_route": source_route,
         },
     )
-    assert response.status_code == 503, response.text
-    assert "journal_entry_scope_unavailable" in response.text
+    expected_status = 403 if "tenant_id" in episode_mutation else 503
+    assert response.status_code == expected_status, response.text
+    expected_reason = "journal_entry_audience_mismatch" if expected_status == 403 else "journal_entry_scope_unavailable"
+    assert expected_reason in response.text
 
 
 @pytest.mark.parametrize(

@@ -2102,6 +2102,8 @@ def test_five_domain_routers_preserve_two_instance_isolation(monkeypatch: pytest
         return {
             "spec_version": "1.0",
             "decision_event_id": event_id,
+            "tenant_id": "pantheon-dev",
+            "user_id": "op-test",
             "event_kind": "entry",
             "origin": "strategy_signal",
             "strategy_id": strategy_id,

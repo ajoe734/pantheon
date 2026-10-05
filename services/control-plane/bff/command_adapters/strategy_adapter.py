@@ -309,16 +309,15 @@ def _validate_scoped_receipt(
             error_code="REPLAY_ACTOR_MISMATCH",
         )
 
-    if caller_tenant and caller_tenant != "unscoped":
-        entry_tenant = committed_entry.get("owner_tenant")
-        if entry_tenant and entry_tenant != caller_tenant:
-            raise ActionUnavailableError(
-                f"Registry command receipt committed entry reports tenant {entry_tenant!r}, "
-                f"not the verified caller tenant {caller_tenant!r}.",
-                action_id=action_id,
-                entity_type="Strategy",
-                error_code="READBACK_MISMATCH",
-            )
+    entry_tenant = committed_entry.get("owner_tenant")
+    if entry_tenant and entry_tenant != caller_tenant:
+        raise ActionUnavailableError(
+            f"Registry command receipt committed entry reports tenant {entry_tenant!r}, "
+            f"not the verified caller tenant {caller_tenant!r}.",
+            action_id=action_id,
+            entity_type="Strategy",
+            error_code="READBACK_MISMATCH",
+        )
 
     if expected_entry is not None:
         if (
@@ -365,18 +364,12 @@ class StrategyCommandAdapter(DomainCommandAdapter):
 
     _HANDLED_COMMANDS = {
         "StrategyAction",
-        "RankingFormulaAction",
-        "RankingAction",
-        "QuarterlyRankingRecommendationSubmit",
     }
 
     _HANDLED_ENTITIES = {
         "strategy",
         "strategyspec",
         "strategy-spec",
-        "rankingformula",
-        "ranking-formula",
-        "ranking",
     }
 
     def can_handle(self, command_type: str, entity_type: str, action_id: str) -> bool:
@@ -398,10 +391,6 @@ class StrategyCommandAdapter(DomainCommandAdapter):
 
         if entity_type in {"strategy", "strategyspec", "strategy-spec"} or command_type == "StrategyAction":
             return self._execute_strategy_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif entity_type in {"rankingformula", "ranking-formula"} or command_type == "RankingFormulaAction":
-            return self._execute_formula_action(command_id, entity_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif entity_type == "ranking" or command_type in {"RankingAction", "QuarterlyRankingRecommendationSubmit"}:
-            return self._execute_ranking_action(command_id, entity_id, action_id or command_type, params, auth_token=auth_token, mfa_token=mfa_token)
         else:
             raise ActionUnavailableError(
                 f"Strategy adapter cannot route action {action_id!r} on entity {entity_id!r}",
@@ -1025,50 +1014,3 @@ class StrategyCommandAdapter(DomainCommandAdapter):
             log.warning("Failed to readback command receipt for %s/%s: %s", registry_id, command_id, exc)
             return None, None
 
-    def _execute_formula_action(
-        self,
-        command_id: str,
-        formula_id: str,
-        action_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        target_id = formula_id or str(params.get("formula_id") or "").strip()
-        if not target_id:
-            raise ValueError("RankingFormulaAction requires formula_id.")
-
-        new_status = "published" if action_id.lower() == "publish" else ("deprecated" if action_id.lower() == "deprecate" else "updated")
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="RankingFormula",
-            entity_id=target_id,
-            action_id=action_id,
-            status=new_status,
-            dispatch_path="ranking_formula_registry",
-            domain_receipt={"formula_id": target_id, "status": new_status},
-            authoritative_readback={"formula_id": target_id, "status": new_status},
-            extra={"formula_id": target_id},
-        )
-
-    def _execute_ranking_action(
-        self,
-        command_id: str,
-        ranking_id: str,
-        action_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        target_id = ranking_id or str(params.get("ranking_id") or "rankings-current").strip()
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="Ranking",
-            entity_id=target_id,
-            action_id=action_id,
-            status="submitted" if "submit" in action_id.lower() else "executed",
-            dispatch_path="ranking_governance_authority",
-            domain_receipt={"ranking_id": target_id, "action": action_id, "accepted": True},
-            authoritative_readback={"ranking_id": target_id, "status": "active"},
-            extra={"ranking_id": target_id},
-        )

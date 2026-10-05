@@ -30,6 +30,11 @@
         "allocation_policy",
         "persona_capital_binding",
         "evolution_proposal",
+        "rebalance_apply",
+        "capital_binding_activation",
+        "capital_pool_activation",
+        "persona_lifecycle_transition",
+        "evolution_execute",
         "persona_training_target"
       ],
       "description": "The type of object being approved. Must match a valid governance target."

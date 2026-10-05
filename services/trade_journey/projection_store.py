@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
+from services.trade_journey.materializer import SHARED_IDENTIFIER_TYPES
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_PROJECTION_SCHEMA = "trade_journey_projection"
@@ -426,13 +428,129 @@ class ProjectionStore:
                 f"ProjectionStore connection to database timed out after {self.connect_timeout_seconds}s"
             )
 
-    def bootstrap_schema(self) -> None:
+    def _reconcile_runtime_ddl(self, cur: Any, runtime_role: str) -> None:
+        """Transfer only known projection objects, in the bootstrap transaction."""
+        from psycopg import sql as pgsql
+
+        if self.schema != DEFAULT_PROJECTION_SCHEMA:
+            raise ValueError("Runtime role upgrade requires the known projection schema")
+        tables = ("controller", "event_receipts", "identity_links", "journeys",
+                  "journey_stages", "loop_runs", "quarantine")
+        cur.execute("SELECT oid FROM pg_roles WHERE rolname=%s", (runtime_role,))
+        runtime_oid = cur.fetchone()[0]
+        cur.execute("SELECT oid, rolname FROM pg_roles WHERE rolname=current_user")
+        migration_oid, migration_role = cur.fetchone()
+        cur.execute(
+            "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE oid<>%s AND "
+            "(rolsuper OR rolcreaterole OR rolcreatedb OR oid=%s) "
+            "AND pg_has_role(%s, oid, 'MEMBER'))",
+            (runtime_oid, migration_oid, runtime_oid),
+        )
+        if cur.fetchone()[0]:
+            raise ValueError("Runtime role upgrade refuses inherited administrative authority")
+        cur.execute("SELECT oid, nspowner, nspacl FROM pg_namespace WHERE nspname=%s", (self.schema,))
+        namespace = cur.fetchone()
+        if namespace is None:
+            return
+        schema_oid, owner, _ = namespace
+        if owner not in (runtime_oid, migration_oid):
+            raise ValueError("Runtime role upgrade requires a known schema owner")
+        # PUBLIC/inherited CREATE cannot be repaired without touching other roles.
+        cur.execute(
+            "SELECT EXISTS (SELECT 1 FROM pg_namespace n, "
+            "LATERAL aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner))) a "
+            "WHERE n.oid=%s AND a.privilege_type='CREATE' AND a.grantee<>%s "
+            "AND (a.grantee=0 OR pg_has_role(%s, a.grantee, 'MEMBER')))",
+            (schema_oid, runtime_oid, runtime_oid),
+        )
+        if cur.fetchone()[0]:
+            raise ValueError("Runtime role upgrade refuses PUBLIC or inherited schema CREATE")
+        cur.execute(
+            "SELECT c.relname, c.relkind, c.relowner, p.relname FROM pg_class c "
+            "LEFT JOIN pg_index i ON i.indexrelid=c.oid "
+            "LEFT JOIN pg_class p ON p.oid=i.indrelid WHERE c.relnamespace=%s",
+            (schema_oid,),
+        )
+        objects = cur.fetchall()
+        if any(owner not in (runtime_oid, migration_oid) or not (
+            kind == 'r' and name in tables or kind == 'i' and parent in tables
+        ) for name, kind, owner, parent in objects):
+            raise ValueError("Runtime role upgrade refuses unknown projection objects or owners")
+        cur.execute(
+            "SELECT EXISTS (SELECT 1 FROM pg_proc WHERE pronamespace=%s) OR "
+            "EXISTS (SELECT 1 FROM pg_type WHERE typnamespace=%s AND typrelid=0 AND typelem=0)",
+            (schema_oid, schema_oid),
+        )
+        if cur.fetchone()[0]:
+            raise ValueError("Runtime role upgrade refuses custom projection routines or types")
+        cur.execute(
+            "SELECT EXISTS (SELECT 1 FROM pg_class c, "
+            "LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) a "
+            "WHERE c.relnamespace=%s AND c.relkind='r' AND a.privilege_type='TRIGGER' "
+            "AND a.grantee<>%s AND (a.grantee=0 OR pg_has_role(%s, a.grantee, 'MEMBER'))) "
+            "OR EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid "
+            "WHERE c.relnamespace=%s AND NOT t.tgisinternal)",
+            (schema_oid, runtime_oid, runtime_oid, schema_oid),
+        )
+        if cur.fetchone()[0]:
+            raise ValueError("Runtime role upgrade refuses inherited TRIGGER or custom triggers")
+        # All admission checks precede changes; failures below roll back ownership and ACLs.
+        schema = pgsql.Identifier(self.schema)
+        authority = pgsql.Identifier(migration_role)
+        runtime = pgsql.Identifier(runtime_role)
+        for name, kind, owner, _ in objects:
+            if kind == 'r':
+                table = pgsql.Identifier(name)
+                if owner == runtime_oid:
+                    cur.execute(pgsql.SQL("ALTER TABLE {}.{} OWNER TO {}").format(schema, table, authority))
+                cur.execute(pgsql.SQL("REVOKE TRIGGER ON {}.{} FROM {} RESTRICT").format(schema, table, runtime))
+        if namespace[1] == runtime_oid:
+            cur.execute(pgsql.SQL("ALTER SCHEMA {} OWNER TO {}").format(schema, authority))
+        cur.execute(pgsql.SQL("REVOKE CREATE ON SCHEMA {} FROM {} RESTRICT").format(schema, runtime))
+
+    def bootstrap_schema(self, *, runtime_role: str | None = None,
+                         reconcile_runtime: bool = False) -> None:
         """Apply the versioned migration explicitly with migration credentials."""
 
         sql = INITIAL_MIGRATION_PATH.read_text(encoding="utf-8")
         sql = sql.replace(DEFAULT_PROJECTION_SCHEMA, self.schema)
         with self._connect_db() as conn, conn.cursor() as cur:
+            if runtime_role is not None:
+                # Refuse elevated runtime identities before any DDL or grants.
+                cur.execute(
+                    "SELECT rolsuper, rolcreaterole, rolcreatedb FROM pg_roles WHERE rolname=%s",
+                    (runtime_role,),
+                )
+                role = cur.fetchone()
+                if role is None or any(role):
+                    raise ValueError("Projection runtime must be an existing non-admin role")
+                if reconcile_runtime:
+                    self._reconcile_runtime_ddl(cur, runtime_role)
             cur.execute(sql)
+            if runtime_role is not None:
+                from psycopg import sql as pgsql
+
+                cur.execute(
+                    "SELECT has_schema_privilege(%s, n.oid, 'CREATE') OR "
+                    "pg_has_role(%s, n.nspowner, 'MEMBER') OR EXISTS ("
+                    "SELECT 1 FROM pg_class c WHERE c.relnamespace=n.oid "
+                    "AND (pg_has_role(%s, c.relowner, 'MEMBER') OR EXISTS ("
+                    "SELECT 1 FROM aclexplode(c.relacl) a WHERE a.privilege_type='TRIGGER' "
+                    "AND (a.grantee=0 OR pg_has_role(%s, a.grantee, 'MEMBER'))))) "
+                    "FROM pg_namespace n WHERE n.nspname=%s",
+                    (runtime_role, runtime_role, runtime_role, runtime_role, self.schema),
+                )
+                if cur.fetchone()[0]:
+                    raise ValueError("Projection runtime must not hold schema/table DDL authority")
+                cur.execute(pgsql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                    pgsql.Identifier(self.schema), pgsql.Identifier(runtime_role)
+                ))
+                for table in ("controller", "event_receipts", "identity_links", "journeys",
+                              "journey_stages", "loop_runs", "quarantine"):
+                    cur.execute(pgsql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON {}.{} TO {}").format(
+                        pgsql.Identifier(self.schema), pgsql.Identifier(table),
+                        pgsql.Identifier(runtime_role),
+                    ))
 
     def get_controller_state(
         self, controller_id: str, tenant_scope: str, environment_scope: str
@@ -1169,6 +1287,7 @@ class ProjectionStore:
                     for link in mutation.identity_links
                     if (link.tenant_id, link.environment, link.journey_id)
                     in new_journey_keys
+                    and link.identifier_type not in SHARED_IDENTIFIER_TYPES
                 ]
                 effective_journeys = [
                     journey

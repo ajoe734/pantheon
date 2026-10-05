@@ -18,7 +18,13 @@ ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
-from common import load_config, read_activity_log_tail_bytes
+from common import load_config, read_activity_log_tail_bytes, runtime_source_regular_file
+
+
+def _runtime_source_file(root: Path, name: str) -> Path:
+    modern = root / ".orchestrator" / "worker-runtime" / name
+    legacy = root / ".orchestrator" / name
+    return legacy if not modern.exists() and runtime_source_regular_file(legacy) else modern
 
 
 DASHBOARD_REFRESH_ACTOR_ENV = "PANTHEON_DASHBOARD_REFRESH_ACTOR"
@@ -115,7 +121,7 @@ class NoCacheRequestHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
                 return
-            if not live_path.exists():
+            if not runtime_source_regular_file(live_path):
                 self.send_error(404, f"Live file not found: {parsed.path}")
                 return
             self.send_response(200)
@@ -216,8 +222,8 @@ def main() -> None:
         "/ai-activity-log.jsonl": repo_root / "ai-activity-log.jsonl",
         "/current-work.md": repo_root / "current-work.md",
         "/dashboard-bundle.json": repo_root / "dashboard-bundle.json",
-        "/orchestrator-state.json": repo_root / ".orchestrator" / "state.json",
-        "/approval-queue.json": repo_root / ".orchestrator" / "approval-queue.json",
+        "/orchestrator-state.json": _runtime_source_file(repo_root, "state.json"),
+        "/approval-queue.json": _runtime_source_file(repo_root, "approval-queue.json"),
     }
     # Serve only the last 500 lines of the activity log to keep payload small
     NoCacheRequestHandler.tail_line_map = {

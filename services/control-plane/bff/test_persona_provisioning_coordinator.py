@@ -444,10 +444,8 @@ class FakeOwnerTransport:
         if owner == "capital" and path.endswith("/activate"):
             target = path.removesuffix("/activate")
             binding = self.objects[(owner, target)]
-            binding.update(
-                status="active",
-                approval_decision_id=body["approval_decision_id"],
-            )
+            assert "approval_decision_id" not in body
+            binding.update(status="active")
             return binding
 
         if owner == "deployment" and path == "/api/deployment/plans":

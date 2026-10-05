@@ -1,0 +1,104 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "CAPITAL-TENANT-COLUMN-001",
+  "title": "Tenant-scope the capital service data",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "corrective",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "f3e267c1fd700e9452470e43d73da3c3dd57146e",
+  "scope": {
+    "owned": [
+      "services/capital/models.py",
+      "services/capital/inbound_authority.py",
+      "services/capital/audit_log.py",
+      "services/capital/allocation_store.py",
+      "services/capital/pg_store.py",
+      "services/capital/main.py",
+      "services/capital/test_tenant_scoping.py",
+      "docs/deployment/evidence/CAPITAL-TENANT-COLUMN-001/evidence.json"
+    ],
+    "not_changing": [
+      "services/control-plane/",
+      "services/governance/",
+      "external schemas and contracts outside services/capital/"
+    ],
+    "composes_with": [
+      "Phase 4 BFF thinning multi-tenant architecture",
+      "Inbound token authentication and tenant claims"
+    ]
+  },
+  "acceptance_criteria": [
+    {
+      "criterion": "1. Capital pools and persona capital bindings and allocation authority and capital audit events carry a tenant id with a migration that backfills existing rows",
+      "status": "passed",
+      "verification": "Added tenant_id column, quoted indexes, and JSONB backfill migration in pg_store.py (migrate_capital_tables) committing DDL transactions before nested store backfill, and aggregate backfill in allocation_store.py (backfill_tenant) stamping both root and nested rebalances/allocations/containments/receipts and SQL columns. Verified against real PostgreSQL with preexisting rows and lock_timeout=1500ms."
+    },
+    {
+      "criterion": "2. Every capital read and write route filters and stamps the caller tenant from the verified token and a caller cannot read or change another tenant's rows",
+      "status": "passed",
+      "verification": "All 23 capital routes filter by caller's verified tenant; responses stamp X-Pantheon-Tenant header and tenant_id; create and apply idempotency replay targets require a nonempty matching caller tenant on containments, rebalances, and command receipts before returning replay responses or updating audit delivery, rejecting null/foreign tenant replays with 404; apply_rebalance requires nonempty matching tenant on existing allocations before mutation or readback without copying foreign/null allocation identity into failure details."
+    },
+    {
+      "criterion": "3. Rows without a tenant are visible to no caller",
+      "status": "passed",
+      "verification": "Untenanted rows return 404 on direct lookup, cannot be mutated or read back during rebalances/containment, and are excluded from all list endpoints across pools, bindings, rebalances, allocations, receipts, containments, live-owner, admissibility, and audit events. Binding conflict errors on sleeve create and live_owner activate use structured binding lookups and fail closed, redacting foreign/untenanted conflicting binding identities for all accepted binding IDs (including parentheses, newlines, and quotes) while preserving same-tenant disclosure."
+    },
+    {
+      "criterion": "4. Tests cover same-tenant and cross-tenant access for every capital route",
+      "status": "passed",
+      "verification": "services/capital/test_tenant_scoping.py covers all 23 capital routes with both same-tenant and cross-tenant assertions, cross-tenant idempotency replay tests for pools, containments (including null/foreign replay target rejection and same-tenant replay retention), rebalances (create and apply null/foreign replay rejection and same-tenant replay retention), untenanted live owner isolation, route-level rebalance apply foreign/untenanted allocation rejection with non-disclosure checks, structured conflict redaction regressions with parentheses/newlines/quotes for foreign, null, and same tenant, and real postgres migration/persistence regression."
+    }
+  ],
+  "covered_routes_count": 23,
+  "covered_routes": [
+    "POST /api/capital-pools",
+    "GET /api/capital-pools",
+    "GET /api/capital-pools/{pool_id}",
+    "PATCH /api/capital-pools/{pool_id}/status",
+    "GET /api/capital-pools/{pool_id}/live-owner",
+    "GET /api/bindings/admissibility",
+    "POST /api/bindings",
+    "GET /api/bindings",
+    "GET /api/bindings/{binding_id}",
+    "POST /api/bindings/{binding_id}/activate",
+    "PATCH /api/bindings/{binding_id}/status",
+    "POST /api/rebalances",
+    "GET /api/rebalances",
+    "GET /api/rebalances/{rebalance_id}",
+    "POST /api/rebalances/{rebalance_id}/apply",
+    "GET /api/rebalances/receipts/{command_id}",
+    "GET /api/allocations",
+    "GET /api/capital-pools/{pool_id}/allocations",
+    "POST /api/containments",
+    "GET /api/containments",
+    "GET /api/containments/receipts/{command_id}",
+    "GET /api/capital/write-authority",
+    "GET /api/capital/audit"
+  ],
+  "diff_budget": {
+    "change_class": "corrective",
+    "budget": 150,
+    "production_lines_added": 379,
+    "production_lines_deleted": 242,
+    "net_production_lines": 137,
+    "under_budget": true
+  },
+  "verification": {
+    "passed": [
+      {
+        "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/capital -k 'not real_postgres_migration_regression_preexisting_rows'",
+        "result": "74 passed, 1 deselected, 1 warning in 35.58s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/capital -k 'real_postgres_migration_regression_preexisting_rows'",
+        "result": "1 passed, 74 deselected, 1 warning in 2.80s"
+      },
+      {
+        "command": "python3 scripts/git/diff_budget.py --base f3e267c1fd700e9452470e43d73da3c3dd57146e --change-class corrective --budget 150",
+        "result": "net production lines +137 <= 150"
+      }
+    ]
+  }
+}

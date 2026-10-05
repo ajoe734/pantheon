@@ -7,7 +7,10 @@ SERVICE_DIR = Path(__file__).resolve().parent
 if str(SERVICE_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICE_DIR))
 
+from unittest.mock import MagicMock, patch
+
 from adapter import (
+    DSPyBootstrapFewShotBackend,
     DSPyWorkflowError,
     GovernedPreferenceAdapter,
     StubBootstrapFewShotBackend,
@@ -15,6 +18,7 @@ from adapter import (
     load_prompt_bundle_schema,
     run_dspy_workflow,
 )
+from smoke_test import main as smoke_main
 
 
 class TestDSPyWorkflow(unittest.TestCase):
@@ -117,6 +121,25 @@ class TestDSPyWorkflow(unittest.TestCase):
 
         with self.assertRaisesRegex(DSPyWorkflowError, "dataset.training_examples must contain at least one governed example"):
             GovernedPreferenceAdapter().prepare(dataset)
+
+    def test_offline_disposition_smoke_cli(self):
+        exit_code = smoke_main(["--backend", "stub"])
+        self.assertEqual(exit_code, 0)
+
+    def test_upstream_dspy_backend_denied_without_model(self):
+        backend = DSPyBootstrapFewShotBackend()
+        prepared = GovernedPreferenceAdapter().prepare(self.load_sample())
+        with patch.dict("os.environ", {}, clear=True):
+            with patch.dict("sys.modules", {"dspy": MagicMock()}):
+                with self.assertRaisesRegex(DSPyWorkflowError, "DSPy backend requires PANTHEON_DSPY_MODEL"):
+                    backend.train(prepared, TrainingConfig())
+
+    def test_upstream_dspy_backend_denied_when_dependency_unavailable(self):
+        backend = DSPyBootstrapFewShotBackend()
+        prepared = GovernedPreferenceAdapter().prepare(self.load_sample())
+        with patch.dict("sys.modules", {"dspy": None}):
+            with self.assertRaises(DSPyWorkflowError):
+                backend.train(prepared, TrainingConfig())
 
 
 if __name__ == "__main__":

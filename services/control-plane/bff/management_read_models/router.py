@@ -6,7 +6,6 @@ Consolidates the 17 Management domain HTTP GET routes into create_management_rou
 - Management cockpit aggregate (/bff/management/cockpit)
 - Trading pulse card aggregate (/bff/management/trading-pulse)
 - Trading pulse rankings (/bff/management/trading-pulse/rankings)
-- Sentinel pulse (/bff/management/sentinel-pulse)
 - Operator health status (/api/v1/operator/health-status)
 - Loop throughput metrics (/bff/management/loop-throughput)
 - Risk radar indicators (/bff/management/risk-radar)
@@ -14,7 +13,6 @@ Consolidates the 17 Management domain HTTP GET routes into create_management_rou
 - Human review inbox (/bff/management/human-inbox)
 - Human review inbox detail (/bff/management/human-inbox/{item_id})
 - HIQ backlog (/bff/management/hiq-backlog)
-- Intervention stream (/bff/management/intervention-stream)
 - Evidence explorer (/bff/management/evidence)
 - Operations read model (/bff/management/operations-read-model/{persona_id})
 - Degraded control guidance (/api/v1/operator/degraded-control-guidance)
@@ -280,52 +278,42 @@ def _extract_tenant_id(
 ) -> str:
     if tenant_payload_fn:
         try:
-            import inspect
-            sig = inspect.signature(tenant_payload_fn)
-            if "requested_tenant" in sig.parameters:
-                payload = tenant_payload_fn(identity, requested_tenant=requested_tenant)
-            else:
-                payload = tenant_payload_fn(identity)
+            payload = tenant_payload_fn(identity, requested_tenant=requested_tenant) if "requested_tenant" in inspect.signature(tenant_payload_fn).parameters else tenant_payload_fn(identity)
         except TypeError:
             payload = tenant_payload_fn(identity)
-        if isinstance(payload, dict):
-            val = payload.get("id") or payload.get("tenant_id")
-            return str(val) if val is not None else "pantheon-dev"
-        if isinstance(payload, str):
-            return payload.strip() or "pantheon-dev"
-        return "pantheon-dev"
+        val = (payload.get("id") or payload.get("tenant_id")) if isinstance(payload, dict) else payload
+        if val and str(val).strip():
+            return str(val).strip()
+        raise _default_bff_error(403, ErrorCode.FORBIDDEN, "Tenant access denied", "Caller has no verified tenant authority", precondition_failed="tenant_scope")
 
-    identity_tenant = getattr(identity, "tenant_id", None)
     claims = getattr(identity, "claims", {}) or {}
-    claim_tenant = claims.get("tenant_id") or claims.get("tenantId") or claims.get("tid") or claims.get("org_id")
-    allowed_tenants = getattr(identity, "allowed_tenants", None)
-    if allowed_tenants is None:
-        raw_allowed = claims.get("allowed_tenants") or claims.get("allowedTenants") or claims.get("tenant_ids") or claims.get("tenantIds") or claims.get("tenants")
-        if isinstance(raw_allowed, (list, tuple, set)):
-            allowed_tenants = set(raw_allowed)
-        elif isinstance(raw_allowed, str):
-            allowed_tenants = {t.strip() for t in raw_allowed.split(",") if t.strip()}
-        elif claim_tenant or identity_tenant:
-            allowed_tenants = {claim_tenant or identity_tenant}
-        else:
-            allowed_tenants = set()
+    claim_tenant = str(
+        claims.get("tenant_id") or claims.get("tenantId") or claims.get("tid") or claims.get("org_id")
+        or (claims.get("tenant", {}) if isinstance(claims.get("tenant"), dict) else {}).get("id")
+        or (claims.get("organization", {}) if isinstance(claims.get("organization"), dict) else {}).get("id")
+        or getattr(identity, "tenant_id", "") or ""
+    ).strip()
 
-    default_tenant = claim_tenant or identity_tenant or os.environ.get("PANTHEON_BFF_TENANT_ID") or "pantheon-dev"
-    effective_tenant = requested_tenant or default_tenant
+    raw_allowed = getattr(identity, "allowed_tenants", None) or claims.get("allowed_tenants") or claims.get("allowedTenants") or claims.get("tenant_ids") or claims.get("tenantIds") or claims.get("tenants")
+    allowed_tenants = {str(t).strip() for t in (raw_allowed if isinstance(raw_allowed, (list, tuple, set)) else str(raw_allowed or "").split(",")) if str(t).strip()} or ({claim_tenant} if claim_tenant else set())
 
-    if allowed_tenants and "*" not in allowed_tenants and effective_tenant not in allowed_tenants:
-        raise _default_bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Tenant access denied",
-            "Requested tenant is outside the caller tenant scope",
-            precondition_failed="tenant_scope",
-            details_extra={
-                "tenantId": effective_tenant,
-                "allowedTenantIds": sorted(list(allowed_tenants)),
-            },
-        )
-    return effective_tenant
+    req = str(requested_tenant or "").strip()
+    if req:
+        if "*" not in allowed_tenants and req not in allowed_tenants:
+            raise _default_bff_error(403, ErrorCode.FORBIDDEN, "Tenant access denied", "Requested tenant is outside the caller tenant scope", precondition_failed="tenant_scope", details_extra={"tenantId": req, "allowedTenantIds": sorted(list(allowed_tenants))})
+        return req
+
+    env = (os.getenv("PANTHEON_BFF_TENANT_ID") or os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID") or os.getenv("PANTHEON_TENANT_ID") or "").strip()
+    if env and ("*" in allowed_tenants or env in allowed_tenants):
+        return env
+    if claim_tenant and ("*" in allowed_tenants or claim_tenant in allowed_tenants):
+        return claim_tenant
+    concrete = [t for t in allowed_tenants if t != "*"]
+    if len(concrete) == 1:
+        return concrete[0]
+    if "*" in allowed_tenants:
+        return env or "pantheon-dev"
+    raise _default_bff_error(403, ErrorCode.FORBIDDEN, "Tenant access denied", "Caller has no verified tenant authority", precondition_failed="tenant_scope")
 
 
 def _default_extract_identity(
@@ -1664,31 +1652,6 @@ def create_management_router(
         return svc.get_trading_pulse_rankings(limit=limit, snapshot_at=snap)
 
     # -----------------------------------------------------------------------
-    # 6. Sentinel Pulse
-    # -----------------------------------------------------------------------
-    @router.get("/bff/management/sentinel-pulse")
-    async def bff_management_sentinel_pulse(
-        kind: Optional[str] = Query(default=None),
-        status: Optional[str] = Query(default=None),
-        severity: Optional[str] = Query(default=None),
-        q: str = Query(default=""),
-        page_token: Optional[str] = Query(default=None),
-        page_size: int = Query(default=20, ge=1, le=100),
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        """BFF: Management Sentinel Pulse composed from v5 sentinel read surfaces."""
-        identity = _extract_id(authorization)
-        _req_read(identity)
-        return svc.get_sentinel_pulse(
-            kind=kind,
-            status=status,
-            severity=severity,
-            q=q,
-            page_token=page_token,
-            page_size=page_size,
-        )
-
-    # -----------------------------------------------------------------------
     # 7. Operator Health Status
     # -----------------------------------------------------------------------
     @router.get("/api/v1/operator/health-status")
@@ -1864,7 +1827,7 @@ def create_management_router(
         page_size: int = Query(default=50, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        """BFF: read-only HIQ backlog aggregate for sentinel and intervention review."""
+        """BFF: read-only HIQ backlog aggregate for incident and approval review."""
         identity = _extract_id(authorization)
         _req_read(identity)
         return svc.get_hiq_backlog(
@@ -1876,35 +1839,6 @@ def create_management_router(
             page_token=page_token,
             page_size=page_size,
             identity=identity,
-        )
-
-    # -----------------------------------------------------------------------
-    # 14. Intervention Stream
-    # -----------------------------------------------------------------------
-    @router.get("/bff/management/intervention-stream")
-    async def bff_management_intervention_stream(
-        persona_id: Optional[str] = Query(default=None),
-        personaId: Optional[str] = Query(default=None),
-        status: Optional[str] = Query(default=None),
-        kind: Optional[str] = Query(default=None),
-        q: str = Query(default=""),
-        window_hours: int = Query(default=24, ge=1, le=720),
-        windowHours: Optional[int] = Query(default=None, ge=1, le=720),
-        page_token: Optional[str] = Query(default=None),
-        page_size: int = Query(default=50, ge=1, le=200),
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        """BFF: read-only intervention event stream for Management Console review."""
-        identity = _extract_id(authorization)
-        _req_read(identity)
-        return svc.get_intervention_stream(
-            persona_id=persona_id or personaId,
-            status=status,
-            kind=kind,
-            q=q,
-            window_hours=windowHours or window_hours,
-            page_token=page_token,
-            page_size=page_size,
         )
 
     # -----------------------------------------------------------------------

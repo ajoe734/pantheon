@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "task_id": "RANKING-SNAPSHOT-OWNER-20261002",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "delivery_scope": "Source only; no hosted calls, provider credentials, deployment, or capital mutation.",
+  "base_commit": "8836cdc49d1598408199f28dbcee91fb8c9ef2e9",
+  "python_source_commit": "e02e71f55828836d6591b0d6989a5f74498d412a",
+  "baseline_proof": "At 720c23d7d, a mounted default-composition quarterly GET inserted one actual isolated PostgreSQL Rankings snapshot.",
+  "ownership": "GET computes stable content IDs; the existing scheduled evaluator admits complete quarterly evidence through the same Rankings table before saved recommendations or Governance proposals. No new service, store, table or scheduler.",
+  "contracts": "Success DTOs, G1 proposal-content binding, G2 single Governance consumer and private tenant guards preserved. Rolling diagnostic IDs need no durable admission. Missing/unreadable saved recommendation snapshots return 503; incomplete/redacted evaluator inputs are explicitly degraded.",
+  "regression": {
+    "command": "timeout 600 .venv-pantheon/bin/python -m pytest -q services/rankings/test_store.py services/persona-evaluator-agent/test_persona_evaluator_agent.py services/control-plane/bff/tests/test_ranking_snapshot_write_port.py services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py services/control-plane/bff/tests/test_persona_governance_owner_readback.py services/control-plane/bff/personas/test_router_isolation.py services/control-plane/bff/tests/test_tenant_fallback_audit.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/tests/test_bff_main_composition.py -k 'not test_all_canonical_domain_routers_mounted and not test_training_v3_router_mounted and not test_zero_unreferenced_dead_functions_in_main_py and not test_main_py_zero_lambda_read_store_service_locator_seams' --disable-warnings",
+    "result": "283 passed, 1 skipped, 4 deselected; exit 0",
+    "skip": "ResearchDispatcher retired from BFF; existing audit skip",
+    "baseline_exclusions": [
+      "test_all_canonical_domain_routers_mounted",
+      "test_training_v3_router_mounted",
+      "test_zero_unreferenced_dead_functions_in_main_py",
+      "test_main_py_zero_lambda_read_store_service_locator_seams"
+    ],
+    "baseline_result": "Unmodified 720c23d7d composition suite: same 4 failures, 37 passed; exit 1"
+  },
+  "postgres": {
+    "command": "RANKING_TEST_DSN=<disposable-local-PostgreSQL-DSN> timeout 90 .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_ranking_snapshot_owner_postgres.py --disable-warnings",
+    "result": "9 passed; exit 0; no skips",
+    "image": "postgres@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+    "proof": "Default BFF reader on read-only DB transactions; repeated mounted GET no rows; scheduled owner one row; fresh OS-process readback; evaluator restart reuses result and creation time; real concurrent replay/conflicts; signed tenant denial; missing DSN/table/offline admission; saved HTTP readback and missing/offline reader 503; complete pagination and redaction mismatch. Disposable container removed."
+  },
+  "packaging": {
+    "build": "BUILDX_CONFIG=/tmp/ranking-owner-docker-buildx timeout 120 docker build -f services/persona-evaluator-agent/Dockerfile -t ranking-snapshot-evaluator:test .",
+    "result": "exit 0; network-disabled image import/snapshot smoke exit 0",
+    "compose": "docker compose -f docker-compose.yml config --format json: BFF/evaluator DSN and table equal for defaults and explicit custom overrides; exit 0"
+  },
+  "additional_checks": [
+    "Canonical payload/content helper AST unchanged except shared formula constant rename.",
+    "Context-order regression: 2 passed; architecture test explicitly clears/restores the service ContextVar.",
+    "git diff --check and commit trailers pass.",
+    "Production delta -72 lines; simplify budget <=0."
+  ],
+  "prior_batches": "Initial 180s aggregate batch timed out (exit 124), not passed; a subsequent batch found the composition ContextVar test issue, then the corrected batch passed. No unfinished batch counted as evidence.",
+  "log_sha256": {
+    "/tmp/ranking-final-focused.log": "4ac7149439c1ef176c141ef908d98d12fc7449e59fc7204f6c17733155b98c6f",
+    "/tmp/ranking-pg.log": "27807b5bfb3398d043e90450b9744ee64a2b9ab3cb87dd5dd8d239ba7dfddfda",
+    "/tmp/ranking-baseline-composition.log": "0929c9f75d96e6fa7f053e543533a854d8cd191ebb67a7d9de969d86be587b19",
+    "/tmp/ranking-baseline-probe.log": "6999b9bc8adf65bb0581eb9c8c113b08e9c50991d30114b822af94ed7b07f72d",
+    "/tmp/ranking-image-build.log": "3b4b384e5c54d852ed18f43abbd7cf7de3bbf6d4ba48553bd2c5035479857599",
+    "/tmp/ranking-context-order.log": "87e468bd6f4cb3cf5b49e78f622d936bd79e9a56d4f4856c0db4eda969a674e2",
+    "/tmp/ranking-current-base.log": "54a7a3dc639b79a3e1c296637dd1a514c4da5a036f6d799d461be2f46d287a52",
+    "/tmp/ranking-pg-current-base.log": "5535b16b1fd9dc05647e2e3fd9876c7e80197e459c60564e6e69841e9c9c92e9"
+  },
+  "independent_review": "Pending canonical exact-head handoff; no owner approval or hosted acceptance claimed.",
+  "current_base_validation": {
+    "commit": "d18e0d660e8481edcc5c2c51fd239203130e1306",
+    "base": "ed4d2cd191bdebf87c1d3961b6d2cf44210a3672",
+    "result": "144 passed, 4 known baseline failures deselected; exit 0. Actual PostgreSQL suite 9 passed; exit 0. No skips in either current-base batch.",
+    "scope": "Repeated store, evaluator, snapshot-port, mounted evaluator, Governance readback, representative league route and main composition tests after merging independent Research PR 6134. Python snapshot implementation unchanged.",
+    "command": "timeout 240 .venv-pantheon/bin/python -m pytest -q services/rankings/test_store.py services/persona-evaluator-agent/test_persona_evaluator_agent.py services/control-plane/bff/tests/test_ranking_snapshot_write_port.py services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py services/control-plane/bff/tests/test_persona_governance_owner_readback.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py::test_pm12_persona_league_returns_composed_table services/control-plane/bff/tests/test_bff_main_composition.py -k 'not test_all_canonical_domain_routers_mounted and not test_training_v3_router_mounted and not test_zero_unreferenced_dead_functions_in_main_py and not test_main_py_zero_lambda_read_store_service_locator_seams' --disable-warnings"
+  }
+}

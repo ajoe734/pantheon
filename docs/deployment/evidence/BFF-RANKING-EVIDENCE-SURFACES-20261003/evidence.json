@@ -1,0 +1,125 @@
+{
+  "task_id": "BFF-RANKING-EVIDENCE-SURFACES-20261003",
+  "title": "Read the quarterly ranking evidence surfaces from their owners on deployed dev",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "change_class": "corrective",
+  "net_prod_line_budget": 80,
+  "net_prod_lines": 75,
+  "base_commit": "c390ce2dcf9a94248c353694bbbfdccf5771d989",
+  "acceptance_criteria": {
+    "ac_1_owner_reads_no_bff_cache": {
+      "status": "satisfied",
+      "detail": "Each of the seven ranking evidence surfaces (evidence_refs, knowledge_evidence, capability_snapshots, persona_bindings, runtime_bindings, telemetry_summaries, persona_sessions) is read from its existing owner through the existing owner read path in default BFF composition (compose_bff_app()); none is served from a BFF copy or cache."
+    },
+    "ac_2_reachable_empty_ok_unavailable_distinction": {
+      "status": "satisfied",
+      "detail": "Reachable owners with 0 records report status='ok' and items=[]; unreachable/failing owners report status='unavailable' with source='unavailable'; source='missing' is reserved strictly for unconfigured owners."
+    },
+    "ac_3_default_composition_evaluator_unblocked": {
+      "status": "satisfied",
+      "detail": "With default composition and reachable owners, GET /bff/management/quarterly-ranking reports all surfaces as ok and quarterly_ranking status as ok, allowing the persona evaluator to admit ranking evidence; failing owner degrades the ranking and evaluator."
+    },
+    "ac_4_tenant_scoping_and_evidence_redaction": {
+      "status": "satisfied",
+      "detail": "Tenant scoping filters records by caller tenant_id; cross-tenant records are strictly isolated. Evidence redaction via models.redact_evidence_refs remains intact with 32/32 tests passing in test_evidence_redaction_fail_closed.py."
+    },
+    "ac_5_mounted_default_composition_tests": {
+      "status": "satisfied",
+      "detail": "services/control-plane/bff/tests/test_ranking_evidence_surfaces_default_composition.py covers ok-empty, ok-populated, owner-down, and cross-tenant scenarios."
+    },
+    "ac_6_line_budget_compliance": {
+      "status": "satisfied",
+      "detail": "Net production line growth is +75 lines, complying with the net_prod_line_budget limit of <= 80 lines."
+    }
+  },
+  "surfaces_owner_mapping": {
+    "evidence_refs": {
+      "owner_port": "research_knowledge_source.list_evidence_refs",
+      "owner_source": "DefaultResearchKnowledgeSourcePort / InMemoryEvidenceRepository",
+      "dataset_source": "typed_store"
+    },
+    "knowledge_evidence": {
+      "owner_port": "research_knowledge_source.list_evidence_refs",
+      "owner_source": "DefaultResearchKnowledgeSourcePort / InMemoryEvidenceRepository",
+      "dataset_source": "typed_store"
+    },
+    "capability_snapshots": {
+      "owner_port": "persona_capital_runtime.persona.list_personas",
+      "owner_source": "PersonaRegistryReadsPort / Persona HTTP Service",
+      "dataset_source": "persona_service"
+    },
+    "persona_bindings": {
+      "owner_port": "persona_capital_runtime.capital.list_bindings",
+      "owner_source": "CapitalReadsPort / Capital API Service",
+      "dataset_source": "capital_service"
+    },
+    "runtime_bindings": {
+      "owner_port": "persona_capital_runtime.runtime.list_runtime_bindings",
+      "owner_source": "RuntimeManagerReadsPort / Runtime Manager Service",
+      "dataset_source": "runtime_service"
+    },
+    "telemetry_summaries": {
+      "owner_port": "lifecycle_telemetry_governance.list_telemetry_summaries",
+      "owner_source": "LifecycleTelemetryGovernancePort / Telemetry Service",
+      "dataset_source": "telemetry_service"
+    },
+    "persona_sessions": {
+      "owner_port": "persona_capital_runtime.persona.list_sessions",
+      "owner_source": "PersonaRegistryReadsPort / Persona HTTP Service",
+      "dataset_source": "persona_service"
+    }
+  },
+  "line_budget_summary": {
+    "budget": 80,
+    "actual_net": 75,
+    "files": [
+      {
+        "path": "services/control-plane/bff/personas/service.py",
+        "additions": 438,
+        "deletions": 394,
+        "net": 44
+      },
+      {
+        "path": "services/control-plane/bff/ports/persona_capital_runtime.py",
+        "additions": 41,
+        "deletions": 34,
+        "net": 7
+      },
+      {
+        "path": "services/control-plane/bff/ports/read_surface_ports.py",
+        "additions": 10,
+        "deletions": 1,
+        "net": 9
+      },
+      {
+        "path": "services/control-plane/bff/ports/research_knowledge_source.py",
+        "additions": 19,
+        "deletions": 4,
+        "net": 15
+      }
+    ]
+  },
+  "verification": {
+    "default_composition_suite": {
+      "file": "services/control-plane/bff/tests/test_ranking_evidence_surfaces_default_composition.py",
+      "passed": 4,
+      "failed": 0
+    },
+    "evidence_redaction_suite": {
+      "file": "services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py",
+      "passed": 32,
+      "failed": 0
+    },
+    "evaluator_mounted_ranking_suite": {
+      "file": "services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py",
+      "passed": 3,
+      "failed": 0
+    },
+    "ranking_snapshot_postgres_suite": {
+      "file": "services/control-plane/bff/tests/test_ranking_snapshot_owner_postgres.py",
+      "passed": 1,
+      "skipped": 8
+    }
+  }
+}

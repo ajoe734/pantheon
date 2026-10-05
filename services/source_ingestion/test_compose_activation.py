@@ -71,7 +71,7 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     controller_env = _env_map(controller)
     # Default-on owner is an unbounded internal reconciler. Explicit bounded
     # deployments override these four variables to enable finite provider pull.
-    assert "profiles" not in controller
+    assert set(controller.get("profiles", [])) == {"root", "workers"}
     assert controller["restart"] == "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-unless-stopped}"
     assert controller["command"] == ["python", "-m", "services.source_ingestion.controller_worker"]
     assert controller_env["SOURCE_INGEST_API_URL"] == "http://source-ingest:8097"
@@ -94,10 +94,10 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
 
     projector = services["source-ingest-agora-projector"]
     projector_env = _env_map(projector)
-    assert projector["profiles"] == ["source-ingest-scheduler"]
+    assert set(projector["profiles"]) == {"source-ingest-scheduler", "workers"}
     assert projector["restart"] == "no"
     assert projector["command"] == ["python", "scripts/project_market_data_to_bff_agora_surfaces.py"]
-    assert projector["depends_on"]["source-ingest-scheduler"]["condition"] == "service_completed_successfully"
+    assert projector["depends_on"]["source-ingest-scheduler"]["condition"] == "service_healthy"
     assert projector_env["SOURCE_INGEST_URL"] == "http://source-ingest:8097"
     assert projector_env["AGORA_MARKET_STALE_THRESHOLD_SECONDS"] == "${AGORA_MARKET_STALE_THRESHOLD_SECONDS:-86400}"
     assert "bff-data:/data/bff" in projector["volumes"]

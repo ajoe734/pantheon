@@ -18,6 +18,26 @@ from services.control_plane.bff.agora.strategy_workshop.runner import reconstruc
 from services.control_plane.bff.agora.strategy_workshop.store import MemoryWorkshopStore
 
 
+@pytest.fixture(autouse=True)
+def semantic_response(monkeypatch):
+    """Explicit transport fake; durability tests never call a live provider."""
+    from .semantic_provider import OpenClawOpsClient
+    payload = {
+        "strategy_map": {"hypothesis": {"status": "confirmed", "summary": "Momentum alpha",
+                                        "details": {"message_numbers": [1]}}},
+        "explicit_facts": ["Momentum alpha"], "inferences": [], "assumptions": [],
+        "contradictions": [], "next_best_question": {
+            "question_id": "q-1", "text": "Which universe?", "resolves": ["universe"],
+            "why_now": "Universe is unspecified",
+        }, "strategy_spec": None,
+    }
+    monkeypatch.setattr(OpenClawOpsClient, "_request", lambda *a, **kw: {
+        "status": "ok", "data": {"provider": "openclaw", "status": "completed",
+                                    "output": {"structured_data": payload}},
+    })
+    return payload
+
+
 class _NoRegistryOperations:
     """A canonical-operations stub that always fails closed (no Registry configured)."""
 
@@ -154,7 +174,21 @@ def test_worker_survives_a_crash_after_running_before_completed() -> None:
     assert cards[0]["status"] == "completed"
 
 
-def test_worker_creates_registry_draft_when_active_spec_and_grade_allow() -> None:
+@pytest.mark.parametrize("mismatch", [None, "strategy_spec", "artifact_state", "registry_id", "version"])
+def test_worker_creates_registry_draft_when_active_spec_and_grade_allow(semantic_response, mismatch) -> None:
+    from services.research.strategy_spec.test_models import _strategy_spec_payload
+    from .reconstruction import StrategyMap
+    proposal = _strategy_spec_payload()
+    proposal["strategy_id"] = "strat-1"
+    proposal["lifecycle_state"] = "draft"
+    proposal["governance"]["approval_required"] = True
+    semantic_response["strategy_spec"] = proposal
+    semantic_response["strategy_map"] = {
+        name: {"status": "confirmed", "summary": name, "details": {"message_numbers": [1, 2]}}
+        for name in StrategyMap.model_fields
+    }
+    semantic_response["strategy_map"]["universe"]["details"].update(proposal["market_scope"])
+    semantic_response["strategy_map"]["exit_rules"]["details"]["rebalance_cadence"] = proposal["execution_profile"].get("rebalance_cadence")
     store = MemoryWorkshopStore()
     base_entry = {
         "registry_id": "reg-base-1",
@@ -178,17 +212,29 @@ def test_worker_creates_registry_draft_when_active_spec_and_grade_allow() -> Non
     )
 
     ops = _FakeRegistryOperations(base_entry)
+    if mismatch:
+        create = ops.create_strategy_spec
+        def mismatched_readback(payload):
+            readback = create(payload)
+            readback["entry"][mismatch] = {} if mismatch == "strategy_spec" else "different"
+            return readback
+        ops.create_strategy_spec = mismatched_readback
     outcome = run_reconstruction_worker(
         store=store, canonical=ops, workshop_id=workshop_id,
         tenant_id="tenant-test", user_id="user-test",
     )
     assert outcome["result"]["completeness"]["grade"] != "insufficient"
+    if mismatch:
+        assert outcome["registry_draft_ref"] is None
+        assert len(ops.create_calls) == 1
+        return
     assert outcome["registry_draft_ref"] is not None
     assert outcome["registry_draft_ref"]["artifact_state"] == "draft"
     assert len(ops.create_calls) == 1
     created_payload = ops.create_calls[0]
     assert created_payload["artifact_state"] == "draft"
-    assert created_payload["strategy_spec"] == base_entry["metadata"]["strategy_spec"]
+    assert created_payload["strategy_spec"] == proposal
+    assert created_payload["strategy_spec"] != base_entry["metadata"]["strategy_spec"]
     assert created_payload["metadata"]["reconstruction_id"] == outcome["result"]["reconstruction_id"]
 
     # A replay of the same conversation state must not create a second draft.

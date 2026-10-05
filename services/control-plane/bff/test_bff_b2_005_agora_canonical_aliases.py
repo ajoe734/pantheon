@@ -22,37 +22,6 @@ from services.control_plane.bff.personas.service import (
     _require_operator_role,
     _bff_error,
 )
-try:
-    from agora.service import _AGORA_SIGNAL_WRITE_ROLES, _AGORA_BULK_FEEDBACK_ROLES
-except ImportError:
-    from services.control_plane.bff.agora.service import (
-        _AGORA_SIGNAL_WRITE_ROLES,
-        _AGORA_BULK_FEEDBACK_ROLES,
-    )
-
-
-def _require_agora_signal_write_role(identity: Any) -> None:
-    if not _AGORA_SIGNAL_WRITE_ROLES.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Agora signal creation requires analyst-level role",
-            "Operator does not hold the required analyst, operator, reviewer, approver, or admin role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with analyst-level Agora write access",
-        )
-
-
-def _require_agora_bulk_feedback_role(identity: Any) -> None:
-    if not _AGORA_BULK_FEEDBACK_ROLES.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Agora feedback access requires analyst role",
-            "Operator does not hold the required Agora feedback role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with analyst, operator, reviewer, approver, or admin role",
-        )
 
 
 def _utc_now_rfc3339() -> str:
@@ -263,8 +232,6 @@ def _isolated_bff() -> Iterator[TestClient]:
         require_write_role=_require_operator_role,
         require_operator_role=_require_operator_role,
         require_journal_write_role=_require_operator_role,
-        require_agora_signal_write_role=_require_agora_signal_write_role,
-        require_agora_bulk_feedback_role=_require_agora_bulk_feedback_role,
         bff_error=_bff_error,
         utc_now=_utc_now_rfc3339,
         read_surface=store,
@@ -298,35 +265,12 @@ def _record_ids(payload: dict, key: str) -> list[str]:
 
 def test_bff_b2_005_agora_aliases_share_canonical_read_surfaces() -> None:
     cases = [
-        ("/bff/agora/markets", "/bff/agora/watchlist", "agora_watchlist", "symbol", "AAPL"),
-        (
-            "/bff/agora/committee-sessions",
-            "/bff/agora/sessions",
-            "agora_session_list",
-            "sessionId",
-            "sess-b2-005",
-        ),
-        ("/bff/agora/market-notes", "/bff/agora/notes", "agora_note_list", "id", "note-b2-005"),
         (
             "/bff/agora/decision-journal",
             "/bff/agora/journal",
             "agora_journal_list",
             "id",
             "journal-b2-005",
-        ),
-        (
-            "/bff/agora/research-tasks",
-            "/bff/research/tasks",
-            "research_task_list",
-            "ticket_id",
-            "rt-b2-005",
-        ),
-        (
-            "/bff/agora/incoming",
-            "/bff/agora/handoffs",
-            "agora_handoff_list",
-            "handoffId",
-            "handoff-b2-005",
         ),
     ]
 
@@ -348,13 +292,11 @@ def test_bff_b2_005_agora_aliases_share_canonical_read_surfaces() -> None:
             assert alias_surface["source"] == canonical_surface["source"]
 
 
-def test_bff_b2_005_agora_core_routes_return_envelopes_and_composite_inbox() -> None:
+def test_bff_b2_005_agora_core_routes_return_envelopes() -> None:
     with _isolated_bff() as client:
         cases = [
-            ("/bff/agora/signals", "agora_signal_list", "signal_id", "sig-b2-005"),
             ("/bff/agora/journal", "agora_journal_list", "id", "journal-b2-005"),
             ("/bff/agora/postmortems", "agora_postmortems", "postmortem_id", "pm-b2-005"),
-            ("/bff/agora/ask/sessions", "agora_ask_sessions", "sessionId", "ask-b2-005"),
         ]
 
         for path, surface_key, id_key, expected_id in cases:
@@ -369,38 +311,3 @@ def test_bff_b2_005_agora_core_routes_return_envelopes_and_composite_inbox() -> 
             assert surface["source"] in {"local_snapshot", "bff_local"}
             assert surface["status"] in {"degraded", "ok"}
 
-        detail_response = client.get("/bff/agora/ask/sessions/ask-b2-005", headers=HEADERS)
-        assert detail_response.status_code == 200, detail_response.text
-        detail_payload = detail_response.json()
-        assert detail_payload["data"]["sessionId"] == "ask-b2-005"
-        assert "agora_ask_session_detail" in detail_payload["meta"]["surfaces"]
-
-        inbox_response = client.get("/bff/agora/inbox", headers=HEADERS)
-        assert inbox_response.status_code == 200, inbox_response.text
-        inbox_payload = inbox_response.json()
-        assert inbox_payload["data"] == inbox_payload["items"]
-        items = inbox_payload["items"]
-        assert any(
-            item.get("inboxType") == "insight"
-            and (item.get("id") or item.get("insight_id")) == "ins-b2-005"
-            for item in items
-        )
-        assert any(
-            item.get("inboxType") == "signal" and item.get("signal_id") == "sig-b2-005"
-            for item in items
-        )
-        assert any(
-            item.get("inboxType") == "research_task" and item.get("ticket_id") == "rt-b2-005"
-            for item in items
-        )
-        counts = inbox_payload["meta"]["composition"]["itemCounts"]
-        assert counts["insight"] >= 1
-        assert counts["signal"] >= 1
-        assert counts["research_task"] >= 1
-        for surface_key in (
-            "agora_inbox",
-            "agora_inbox_insights",
-            "agora_inbox_signals",
-            "agora_inbox_research_tasks",
-        ):
-            assert surface_key in inbox_payload["meta"]["surfaces"]

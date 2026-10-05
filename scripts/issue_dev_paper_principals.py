@@ -32,7 +32,13 @@ READERS = {
     "GOVERNANCE_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-governance-registry-reader", "registry-reader"),
     "RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-runtime-approval-reader", "approval_reader"),
     "RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-runtime-registry-reader", "registry-reader"),
+    "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN": ("runtime-manager", "capital-reader"),
+    "DEPLOYMENT_CAPITAL_SERVICE_TOKEN": ("runtime-manager", "capital-reader"),
+    "PERSONA_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-persona-approval-reader", "approval_reader"),
+    "CAPITAL_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-capital-approval-reader", "approval_reader"),
+    "EVOLUTION_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-evolution-approval-reader", "approval_reader"),
     "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-registry-reader", "registry-reader"),
+    "PERSONA_EVALUATOR_BFF_TOKEN": ("pantheon-dev-persona-evaluator-bff-reader", "viewer"),
 }
 WRITERS = {
     "DISTILLATION_REGISTRY_SERVICE_TOKEN": (
@@ -40,15 +46,29 @@ WRITERS = {
         "registry-writer",
         "pantheon:dev-owner-write",
     ),
+    # Subject is the evaluator's owner/actor id; propose-only, no decide/revoke role.
+    "PERSONA_EVALUATOR_GOVERNANCE_TOKEN": (
+        "persona-evaluator-agent",
+        "approval_proposer",
+        "pantheon:dev-owner-write",
+    ),
 }
 CONSUMER_FILES = {
-    "deployment": ("DEPLOYMENT_REGISTRY_SERVICE_TOKEN", "DEPLOYMENT_GOVERNANCE_SERVICE_TOKEN"),
+    "deployment": (
+        "DEPLOYMENT_REGISTRY_SERVICE_TOKEN",
+        "DEPLOYMENT_GOVERNANCE_SERVICE_TOKEN",
+        "DEPLOYMENT_CAPITAL_SERVICE_TOKEN",
+    ),
     "registry": ("REGISTRY_GOVERNANCE_SERVICE_TOKEN",),
     "governance": ("GOVERNANCE_REGISTRY_SERVICE_TOKEN",),
-    "runtime-manager": ("RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN", "RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN"),
+    "runtime-manager": ("RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN", "RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN", "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN"),
+    "persona": ("PERSONA_GOVERNANCE_SERVICE_TOKEN",),
+    "capital": ("CAPITAL_GOVERNANCE_SERVICE_TOKEN",),
+    "evolution": ("EVOLUTION_GOVERNANCE_SERVICE_TOKEN",),
     "operator-bff": ("PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN",),
     "strategy-distillation-worker": ("DISTILLATION_REGISTRY_SERVICE_TOKEN",),
     "alpha-replication-worker": ("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN",),
+    "persona-evaluator-agent": ("PERSONA_EVALUATOR_BFF_TOKEN", "PERSONA_EVALUATOR_GOVERNANCE_TOKEN"),
 }
 REFRESH_SECONDS = 60 * 60
 

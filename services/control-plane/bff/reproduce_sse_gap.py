@@ -18,12 +18,10 @@ def test_sse_compatibility_routes_exposed(client):
         ("/bff/sse/command-center/kpi", "ranking", {}),
         ("/bff/sse/command-center/events", "loop", {}),
         ("/bff/sse/jobs/job-1/progress", "tool", {}),
-        ("/bff/sse/alerts", "sentinel", {}),
+        ("/bff/sse/alerts", "system", {}),
         ("/bff/sse/incidents/inc-1/timeline", "journal", {}),
         ("/bff/sse/deployment/events", "artifact", {}),
         ("/bff/sse/review/updates", "approval", {}),
-        ("/bff/sse/agora/signals", "signal", {}),
-        ("/bff/sse/agora/sessions/sess-1", "ask", {}),
     ]
 
     for route, expected_channel, params in routes:
@@ -56,8 +54,6 @@ if __name__ == "__main__":
         ("/bff/sse/incidents/inc-1/timeline", {}),
         ("/bff/sse/deployment/events", {}),
         ("/bff/sse/review/updates", {}),
-        ("/bff/sse/agora/signals", {}),
-        ("/bff/sse/agora/sessions/sess-1", {}),
     ]
     for r, params in routes:
         res = client_obj.get(r, headers={"Authorization": AUTH}, params=params)

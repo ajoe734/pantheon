@@ -17,15 +17,15 @@ WRITE_AUTHORITY_MATRIX: Dict[Tuple[str, str], List[str]] = {
         "admin",
         "capital.admin",
     ],
-    ("CapitalPool", "update_status"): ["capital.admin"],
+    ("CapitalPool", "update_status"): ["operator", "capital.admin"],
     ("PersonaCapitalBinding", "create"): [
         "operator",
         "approver",
         "admin",
         "persona.admin",
     ],
-    ("PersonaCapitalBinding", "activate"): ["persona.admin"],
-    ("PersonaCapitalBinding", "update_status"): ["persona.admin"],
+    ("PersonaCapitalBinding", "activate"): ["operator", "persona.admin"],
+    ("PersonaCapitalBinding", "update_status"): ["operator", "persona.admin"],
     ("Rebalance", "create"): [
         "operator",
         "approver",

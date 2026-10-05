@@ -40,7 +40,6 @@ EXPECTED_17_ROUTES = {
     ("GET", "/bff/management/cockpit"),
     ("GET", "/bff/management/trading-pulse"),
     ("GET", "/bff/management/trading-pulse/rankings"),
-    ("GET", "/bff/management/sentinel-pulse"),
     ("GET", "/api/v1/operator/health-status"),
     ("GET", "/bff/management/loop-throughput"),
     ("GET", "/bff/management/risk-radar"),
@@ -48,7 +47,6 @@ EXPECTED_17_ROUTES = {
     ("GET", "/bff/management/human-inbox"),
     ("GET", "/bff/management/human-inbox/{item_id}"),
     ("GET", "/bff/management/hiq-backlog"),
-    ("GET", "/bff/management/intervention-stream"),
     ("GET", "/bff/management/evidence"),
     ("GET", "/bff/management/operations-read-model/{persona_id}"),
     ("GET", "/api/v1/operator/degraded-control-guidance"),
@@ -122,10 +120,6 @@ class MockManagementReadStore:
             {"id": "alert-1", "status": "open", "severity": "sev1", "title": "Drawdown breach", "created_at": "2026-08-30T10:30:00Z"},
             {"id": "alert-2", "status": "resolved", "severity": "sev3", "title": "API latency spike", "created_at": "2026-08-30T07:00:00Z"},
         ]
-        self.sentinel_findings = [
-            {"id": "sent-1", "kind": "anomaly", "status": "active", "severity": "high", "summary": "Unusual fill slippage"},
-            {"id": "sent-2", "kind": "drift", "status": "resolved", "severity": "low", "summary": "Weight drift within limits"},
-        ]
         self.loop_executions = [
             {"id": "loop-1", "loop_type": "research", "status": "completed", "created_at": "2026-08-30T11:10:00Z"},
             {"id": "loop-2", "loop_type": "execution", "status": "running", "created_at": "2026-08-30T11:20:00Z"},
@@ -138,10 +132,6 @@ class MockManagementReadStore:
         self.incident_records = [
             {"id": "inc-1", "status": "open", "severity": "critical", "title": "Execution Disconnect", "created_at": "2026-08-30T10:00:00Z"},
             {"id": "inc-2", "status": "resolved", "severity": "medium", "title": "Data Feed Delay", "created_at": "2026-08-30T06:00:00Z"},
-        ]
-        self.interventions = [
-            {"id": "intv-1", "persona_id": "persona-a", "status": "open", "kind": "rebalance_override", "summary": "Manual weight override"},
-            {"id": "intv-2", "persona_id": "persona-b", "status": "completed", "kind": "kill_switch_test", "summary": "Routine drill"},
         ]
         self.evidence_records = [
             {"id": "ev-1", "ref_id": "ref-alpha", "linked_entity_type": "strategy", "linked_entity_ref": "strat-1", "link_type": "backtest", "credibility_tier": "tier1", "verified": True},
@@ -165,9 +155,6 @@ class MockManagementReadStore:
     def list_incident_alerts(self) -> List[Dict[str, Any]]:
         return self.incident_alerts
 
-    def list_sentinel_findings(self) -> List[Dict[str, Any]]:
-        return self.sentinel_findings
-
     def list_loop_executions(self) -> List[Dict[str, Any]]:
         return self.loop_executions
 
@@ -177,8 +164,8 @@ class MockManagementReadStore:
     def list_incident_records(self) -> List[Dict[str, Any]]:
         return self.incident_records
 
-    def list_intervention_records(self) -> List[Dict[str, Any]]:
-        return self.interventions
+    def list_incidents(self) -> List[Dict[str, Any]]:
+        return self.incident_records
 
     def list_evidence_records(self) -> List[Dict[str, Any]]:
         return self.evidence_records
@@ -243,7 +230,7 @@ def test_router_registers_exact_17_catalogued_decorators() -> None:
         for route in router.routes
         for method in getattr(route, "methods", set())
     }
-    assert len(router.routes) == 17
+    assert len(router.routes) == 15
     assert actual == EXPECTED_17_ROUTES
 
 
@@ -430,23 +417,13 @@ def test_management_cockpit_and_trading_pulse() -> None:
     assert len(data["data"]["items"]) == 4
 
 
-def test_sentinel_pulse_and_loop_throughput() -> None:
-    """Test GET /bff/management/sentinel-pulse and /bff/management/loop-throughput."""
+def test_loop_throughput() -> None:
+    """Test GET /bff/management/loop-throughput."""
     mock_store = MockManagementReadStore()
     app = FastAPI()
     app.include_router(create_management_router(get_read_store=lambda: mock_store))
     client = TestClient(app)
 
-    # 1. Sentinel pulse
-    resp = client.get("/bff/management/sentinel-pulse", headers={"Authorization": "Bearer op-1:operator"})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["data"]["id"] == "management-sentinel-pulse"
-    assert len(data["data"]["findings"]) == 2
-    assert data["data"]["summary"]["total_items"] == 2
-    assert data["data"]["summary"]["active_finding_count"] == 1
-
-    # 2. Loop throughput
     resp = client.get("/bff/management/loop-throughput?window_minutes=60", headers={"Authorization": "Bearer op-1:operator"})
     assert resp.status_code == 200
     data = resp.json()
@@ -493,11 +470,10 @@ def test_human_inbox_and_details_and_hiq_backlog() -> None:
     resp = client.get("/bff/management/human-inbox", headers={"Authorization": "Bearer op-1:operator"})
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data["data"]["items"]) == 7
-    assert data["data"]["summary"]["total_items"] == 7
+    assert len(data["data"]["items"]) == 5
+    assert data["data"]["summary"]["total_items"] == 5
     assert data["data"]["summary"]["approval_count"] == 3
-    assert data["data"]["summary"]["intervention_count"] == 2
-    assert data["data"]["summary"]["sentinel_finding_count"] == 2
+    assert data["data"]["summary"]["incident_count"] == 2
 
     # 2. Human inbox item detail
     resp = client.get("/bff/management/human-inbox/app-1", headers={"Authorization": "Bearer op-1:operator"})
@@ -506,17 +482,17 @@ def test_human_inbox_and_details_and_hiq_backlog() -> None:
     assert data["data"]["item_id"] == "app-1"
     assert data["data"]["title"] == "Deploy Strategy Alpha"
 
-    resp_intv = client.get("/bff/management/human-inbox/intv-1", headers={"Authorization": "Bearer op-1:operator"})
-    assert resp_intv.status_code == 200
-    assert resp_intv.json()["data"]["item_id"] == "intv-1"
+    resp_inc = client.get("/bff/management/human-inbox/inc-1", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp_inc.status_code == 200
+    assert resp_inc.json()["data"]["item_id"] == "inc-1"
 
     # 3. HIQ backlog
     resp = client.get("/bff/management/hiq-backlog", headers={"Authorization": "Bearer op-1:operator"})
     assert resp.status_code == 200
     data = resp.json()
     assert data["data"]["id"] == "management-hiq-backlog"
-    assert len(data["data"]["items"]) == 7
-    assert data["data"]["summary"]["total_items"] == 7
+    assert len(data["data"]["items"]) == 5
+    assert data["data"]["summary"]["total"] == 5
 
 
 def test_human_inbox_fail_closed_on_contributor_failure_and_partial_503() -> None:
@@ -552,11 +528,11 @@ def test_human_inbox_fail_closed_on_contributor_failure_and_partial_503() -> Non
     assert err_data.get("code") == "DEPENDENCY_UNAVAILABLE"
     assert err_data.get("details", {}).get("precondition_failed") == "human_inbox_partial_read"
 
-    # 3. Item from surviving contributor (intv-1) returns 200 with partial meta
-    resp_intv = client.get("/bff/management/human-inbox/intv-1", headers={"Authorization": "Bearer op-1:operator"})
-    assert resp_intv.status_code == 200
-    assert resp_intv.json()["data"]["item_id"] == "intv-1"
-    assert resp_intv.json()["meta"]["partial"] is True
+    # 3. Item from surviving contributor (inc-1) returns 200 with partial meta
+    resp_inc = client.get("/bff/management/human-inbox/inc-1", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp_inc.status_code == 200
+    assert resp_inc.json()["data"]["item_id"] == "inc-1"
+    assert resp_inc.json()["meta"]["partial"] is True
 
     # 4. Clean store: absent item returns 404
     clean_store = MockManagementReadStore()
@@ -569,22 +545,13 @@ def test_human_inbox_fail_closed_on_contributor_failure_and_partial_503() -> Non
     assert err_404.get("code") == "RESOURCE_NOT_FOUND"
 
 
-def test_intervention_stream_and_evidence() -> None:
-    """Test GET /bff/management/intervention-stream and /bff/management/evidence."""
+def test_evidence_summary() -> None:
+    """Test GET /bff/management/evidence."""
     mock_store = MockManagementReadStore()
     app = FastAPI()
     app.include_router(create_management_router(get_read_store=lambda: mock_store))
     client = TestClient(app)
 
-    # 1. Intervention stream
-    resp = client.get("/bff/management/intervention-stream?window_hours=24", headers={"Authorization": "Bearer op-1:operator"})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["data"]["id"] == "management-intervention-stream"
-    assert len(data["data"]["items"]) == 2
-    assert data["data"]["summary"]["total_items"] == 2
-
-    # 2. Evidence
     resp = client.get("/bff/management/evidence", headers={"Authorization": "Bearer op-1:operator"})
     assert resp.status_code == 200
     data = resp.json()
@@ -1603,85 +1570,6 @@ def test_incident_timeline_parity_full_projection_and_sorting() -> None:
     assert resp_run.json()["data"]["items"][0]["incident_id"] == "inc-new"
 
 
-def test_intervention_stream_parity_dual_source_and_window_filtering() -> None:
-    """Verify Intervention Stream projects v5 interventions and audit events with time window and search filtering."""
-    now_dt = datetime.now(timezone.utc)
-    recent_time = (now_dt - timedelta(hours=2)).isoformat().replace("+00:00", "Z")
-    old_time = (now_dt - timedelta(hours=36)).isoformat().replace("+00:00", "Z")
-
-    class CustomInterventionStore:
-        def list_v5_interventions(self) -> List[Dict[str, Any]]:
-            return [
-                {
-                    "intervention_id": "intv-recent",
-                    "persona_id": "persona-a",
-                    "status": "approved",
-                    "kind": "circuit_breaker",
-                    "priority": "high",
-                    "occurred_at": recent_time,
-                    "description": "Triggered circuit breaker due to volatility",
-                },
-                {
-                    "intervention_id": "intv-old",
-                    "persona_id": "persona-a",
-                    "status": "completed",
-                    "kind": "manual_override",
-                    "priority": "low",
-                    "occurred_at": old_time,
-                    "description": "Old manual intervention from last week",
-                },
-            ]
-
-        def list_governance_audit_events(self) -> List[Dict[str, Any]]:
-            return [
-                {
-                    "entry_id": "audit-1",
-                    "target_type": "Intervention",
-                    "target_id": "intv-recent",
-                    "action_type": "intervention.approved",
-                    "outcome": "success",
-                    "persona_id": "persona-a",
-                    "occurred_at": recent_time,
-                    "reason": "Operator approved circuit breaker",
-                }
-            ]
-
-    store = CustomInterventionStore()
-    app = FastAPI()
-    app.include_router(create_management_router(get_read_store=lambda: store))
-    client = TestClient(app)
-
-    # 1. 24h window filter excludes intv-old
-    resp = client.get("/bff/management/intervention-stream?window_hours=24", headers={"Authorization": "Bearer op-1:operator"})
-    assert resp.status_code == 200
-    data = resp.json()["data"]
-    items = data["items"]
-    assert len(items) == 2
-    assert all(i["id"] != "intervention-stream-intv-old-completed" for i in items)
-
-    intv_item = next(i for i in items if i["event_source"] == "v5_interventions")
-    assert intv_item["intervention_id"] == "intv-recent"
-    assert intv_item["event_type"] == "intervention.approved"
-    assert intv_item["priority"] == "high"
-    assert intv_item["target"]["id"] == "persona-a"
-    assert intv_item["links"]["human_inbox"] == "/bff/management/human-inbox/intervention:intv-recent"
-
-    audit_item = next(i for i in items if i["event_source"] == "governance_audit_events")
-    assert audit_item["event_type"] == "intervention.approved"
-    assert audit_item["target"]["id"] == "intv-recent"
-
-    # 2. 48h window includes old item
-    resp_48 = client.get("/bff/management/intervention-stream?window_hours=48", headers={"Authorization": "Bearer op-1:operator"})
-    assert resp_48.status_code == 200
-    assert len(resp_48.json()["data"]["items"]) == 3
-
-    # 3. Query string search filter
-    resp_q = client.get("/bff/management/intervention-stream?window_hours=48&q=volatility", headers={"Authorization": "Bearer op-1:operator"})
-    assert resp_q.status_code == 200
-    assert len(resp_q.json()["data"]["items"]) == 1
-    assert resp_q.json()["data"]["items"][0]["intervention_id"] == "intv-recent"
-
-
 def test_all_17_management_router_routes_mounted_and_accessible() -> None:
     """Exhaustive mounted test verifying all 17 catalogued routes return 200 and standard envelope."""
     mock_store = MockManagementReadStore()
@@ -1695,7 +1583,6 @@ def test_all_17_management_router_routes_mounted_and_accessible() -> None:
         "/bff/management/cockpit",
         "/bff/management/trading-pulse",
         "/bff/management/trading-pulse/rankings",
-        "/bff/management/sentinel-pulse",
         "/api/v1/operator/health-status",
         "/bff/management/loop-throughput",
         "/bff/management/risk-radar",
@@ -1703,13 +1590,12 @@ def test_all_17_management_router_routes_mounted_and_accessible() -> None:
         "/bff/management/human-inbox",
         "/bff/management/human-inbox/app-1",
         "/bff/management/hiq-backlog",
-        "/bff/management/intervention-stream",
         "/bff/management/evidence",
         "/bff/management/operations-read-model/persona-a",
         "/api/v1/operator/degraded-control-guidance",
     ]
 
-    assert len(concrete_paths) == 17, f"Expected 17 paths, got {len(concrete_paths)}"
+    assert len(concrete_paths) == 15, f"Expected 15 paths, got {len(concrete_paths)}"
 
     for path in concrete_paths:
         resp = client.get(path, headers={"Authorization": "Bearer op-1:operator,reviewer"})
@@ -1791,96 +1677,6 @@ def test_incident_timeline_semantic_parity_and_alias_normalization() -> None:
     assert data["summary"]["basis"] == "incident_case_opened_at_chronology"
 
 
-def test_intervention_stream_semantic_parity_and_target_source_refs() -> None:
-    """Verify intervention stream preserves runtime/persona/strategy/incident source_refs and target metadata."""
-    now_dt = datetime.now(timezone.utc)
-    recent_time = (now_dt - timedelta(minutes=15)).isoformat().replace("+00:00", "Z")
-
-    class ParityInterventionStore:
-        def list_v5_interventions(self) -> List[Dict[str, Any]]:
-            return [
-                {
-                    "intervention_id": "intv-rich-1",
-                    "kind": "circuit_breaker",
-                    "status": "pending_approval",
-                    "priority": "high",
-                    "occurred_at": recent_time,
-                    "persona_id": "persona-gamma",
-                    "runtime_id": "rt-live-1",
-                    "strategy_id": "strat-momentum",
-                    "incident_id": "inc-breach-101",
-                    "target_type": "Strategy",
-                    "target_id": "strat-momentum",
-                    "description": "Triggered by volatility breaker",
-                }
-            ]
-
-        def list_governance_audit_events(self) -> List[Dict[str, Any]]:
-            return [
-                {
-                    "entry_id": "audit-rich-1",
-                    "target_type": "Intervention",
-                    "target_id": "intv-rich-1",
-                    "action_type": "intervention.approved",
-                    "outcome": "approved",
-                    "occurred_at": recent_time,
-                    "actor": "operator-alice",
-                    "runtime_id": "rt-live-1",
-                    "strategy_id": "strat-momentum",
-                    "incident_id": "inc-breach-101",
-                    "audit_context": {
-                        "intervention_id": "intv-rich-1",
-                        "persona_id": "persona-gamma",
-                        "reason": "Approved manual weight override",
-                    },
-                }
-            ]
-
-    store = ParityInterventionStore()
-    app = FastAPI()
-    app.include_router(create_management_router(get_read_store=lambda: store))
-    client = TestClient(app)
-
-    resp = client.get("/bff/management/intervention-stream?window_hours=24", headers={"Authorization": "Bearer op-1:operator"})
-    assert resp.status_code == 200
-    payload = resp.json()
-    items = payload["data"]["items"]
-    assert len(items) == 2
-
-    # 1. Check sequence numbers
-    assert [i["stream_sequence"] for i in items] == [1, 2]
-
-    # 2. Check v5 intervention item
-    v5_item = next(i for i in items if i["event_source"] == "v5_interventions")
-    assert v5_item["intervention_id"] == "intv-rich-1"
-    assert v5_item["persona_id"] == "persona-gamma"
-    assert v5_item["runtime_id"] == "rt-live-1"
-    assert v5_item["strategy_id"] == "strat-momentum"
-    assert v5_item["target"] == {"type": "Strategy", "id": "strat-momentum"}
-    v5_refs = v5_item["source_refs"]
-    assert v5_refs["source_dataset"] == "v5_interventions"
-    assert v5_refs["intervention_ids"] == ["intv-rich-1"]
-    assert "rt-live-1" in v5_refs["runtime_ids"]
-    assert "persona-gamma" in v5_refs["persona_ids"]
-    assert "strat-momentum" in v5_refs["strategy_ids"]
-    assert "inc-breach-101" in v5_refs["incident_ids"]
-
-    # 3. Check governance audit item
-    audit_item = next(i for i in items if i["event_source"] == "governance_audit_events")
-    assert audit_item["intervention_id"] == "intv-rich-1"
-    assert audit_item["persona_id"] == "persona-gamma"
-    assert audit_item["target"] == {"type": "Intervention", "id": "intv-rich-1"}
-    audit_refs = audit_item["source_refs"]
-    assert audit_refs["source_dataset"] == "governance_audit_events"
-    assert audit_refs["intervention_ids"] == ["intv-rich-1"]
-    assert "rt-live-1" in audit_refs["runtime_ids"]
-    assert "persona-gamma" in audit_refs["persona_ids"]
-    assert "strat-momentum" in audit_refs["strategy_ids"]
-    assert "inc-breach-101" in audit_refs["incident_ids"]
-    assert audit_item["links"]["source"] == "/bff/audit"
-    assert audit_item["links"]["intervention"] == "/bff/v5/interventions/intv-rich-1"
-
-
 def test_main_composes_management_router_without_legacy_decorators():
     """Main must mount the canonical router instead of retaining its handlers."""
     import re
@@ -1894,14 +1690,12 @@ def test_main_composes_management_router_without_legacy_decorators():
         "/api/v1/operator/home",
         "/bff/management/trading-pulse",
         "/bff/management/trading-pulse/rankings",
-        "/bff/management/sentinel-pulse",
         "/api/v1/operator/health-status",
         "/bff/management/loop-throughput",
         "/bff/management/risk-radar",
         "/bff/management/incident-timeline",
         "/bff/management/human-inbox",
         "/bff/management/hiq-backlog",
-        "/bff/management/intervention-stream",
         "/bff/management/evidence",
         "/bff/management/operations-read-model/{persona_id}",
         "/api/v1/operator/degraded-control-guidance",
@@ -1932,7 +1726,6 @@ def test_main_management_routes_have_zero_duplicate_registrations():
         "/bff/management/cockpit",
         "/bff/management/trading-pulse",
         "/bff/management/trading-pulse/rankings",
-        "/bff/management/sentinel-pulse",
         "/api/v1/operator/health-status",
         "/bff/management/loop-throughput",
         "/bff/management/risk-radar",
@@ -1940,7 +1733,6 @@ def test_main_management_routes_have_zero_duplicate_registrations():
         "/bff/management/human-inbox",
         "/bff/management/human-inbox/{item_id}",
         "/bff/management/hiq-backlog",
-        "/bff/management/intervention-stream",
         "/bff/management/evidence",
         "/bff/management/operations-read-model/{persona_id}",
         "/api/v1/operator/degraded-control-guidance",

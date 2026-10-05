@@ -1034,12 +1034,12 @@ def test_migrate_storage_paths_moves_task_state_and_worker_runtime_files(tmp_pat
     assert (runtime / "task-state" / "events.jsonl.legacy-anchor.json").exists()
 
     assert not old_state.is_file()
-    assert old_state.is_fifo()
+    assert old_state.is_dir()
     assert new_state.exists()
     assert json.loads(new_state.read_text(encoding="utf-8")) == {"workers": {}}
 
     assert not old_queue.is_file()
-    assert old_queue.is_fifo()
+    assert old_queue.is_dir()
     assert new_queue.exists()
     assert json.loads(new_queue.read_text(encoding="utf-8")) == {"version": 2}
 
@@ -1879,7 +1879,7 @@ def test_retained_immutable_writer_fails_closed_and_does_not_recreate_retired_st
 
     record = promotion._migrate_storage_paths(old_cfg, new_cfg)
     assert record["migrated"] is True
-    assert old_state.is_fifo()
+    assert old_state.is_dir()
     assert not old_state.is_file()
 
     old_root = Path(os.environ.get("PANTHEON_COMMAND_ROOT", Path.cwd()))
@@ -1900,7 +1900,7 @@ with runtime_state.runtime_state_update(cfg) as s:
     )
 
     assert proc.returncode != 0
-    assert old_state.is_fifo()
+    assert old_state.is_dir()
     assert not old_state.is_file()
     new_token = json.loads(new_state.read_text())["auto_commit_archive"]["pending_token"]
     assert new_token == "before-migration"
@@ -2592,3 +2592,240 @@ def test_first_activation_requires_quiescent_legacy_workers_and_reservations(tmp
     with promotion.runtime_state.runtime_state_update(config) as state:
         state["supervisor"]["runtime_phase_reservations"] = {}
     _REAL_VERIFY_DRAIN_CAPABILITY(config, identity)
+
+
+# --- retired-path fences must fail fast, never block (2026-09-08 FIFO hang) ---
+
+
+def test_create_retired_path_fence_is_a_directory_that_fails_fast(tmp_path: Path) -> None:
+    fence = tmp_path / "state.json"
+    promotion._create_retired_path_fence(fence)
+    assert fence.is_dir()
+    assert not fence.is_fifo()
+    assert promotion._is_retired_path_fence(fence)
+    with pytest.raises(IsADirectoryError):
+        open(fence, "rb")
+    # idempotent
+    promotion._create_retired_path_fence(fence)
+    assert fence.is_dir()
+
+
+def test_create_retired_path_fence_never_uses_mkfifo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def forbidden(*args, **kwargs):
+        raise AssertionError("mkfifo must never be used for a retired-path fence")
+
+    monkeypatch.setattr(os, "mkfifo", forbidden)
+    fence = tmp_path / "approval-queue.json"
+    promotion._create_retired_path_fence(fence)
+    assert fence.is_dir()
+
+
+def test_create_retired_path_fence_upgrades_existing_fifo_fence(tmp_path: Path) -> None:
+    fence = tmp_path / "state.json"
+    os.mkfifo(str(fence), 0o600)
+    promotion._create_retired_path_fence(fence)
+    assert fence.is_dir()
+    assert not fence.is_fifo()
+
+
+@pytest.mark.parametrize("kind", ["file", "symlink", "parent_symlink", "nonempty_dir"])
+def test_fence_refuses_unrelated_paths(tmp_path, kind):
+    target = tmp_path / "target"
+    target.mkdir()
+    sentinel = target / "sentinel"
+    sentinel.write_text("preserve")
+    fence = tmp_path / "fence"
+    if kind == "file":
+        fence.write_text("preserve")
+    elif kind == "symlink":
+        fence.symlink_to(sentinel)
+    elif kind == "parent_symlink":
+        fence.symlink_to(target, target_is_directory=True)
+        fence = fence / "new"
+    else:
+        fence = target
+    with pytest.raises(RuntimeError, match="cannot establish retired-path fence"):
+        promotion._create_retired_path_fence(fence)
+    assert sentinel.read_text() == "preserve"
+    assert not (target / "new").exists()
+    if kind == "file":
+        assert fence.read_text() == "preserve"
+    elif kind == "symlink":
+        assert fence.is_symlink()
+
+
+@pytest.mark.parametrize("failure", ["mkdir", "exchange", "fsync"])
+def test_fifo_upgrade_failure_never_removes_the_fence(tmp_path, monkeypatch, failure):
+    fence = tmp_path / "state.json"
+    os.mkfifo(fence, 0o600)
+    inode = fence.lstat().st_ino
+    if failure == "mkdir":
+        monkeypatch.setattr(promotion.tempfile, "mkdtemp", mock.Mock(side_effect=OSError(errno.ENOSPC, "full")))
+    elif failure == "exchange":
+        exchange = mock.Mock(return_value=-1)
+        monkeypatch.setattr(promotion.ctypes, "CDLL", lambda *a, **k: SimpleNamespace(renameat2=exchange))
+        monkeypatch.setattr(promotion.ctypes, "get_errno", lambda: errno.EIO)
+    else:
+        monkeypatch.setattr(promotion, "_fsync_dir", mock.Mock(side_effect=OSError(errno.EIO, "fsync")))
+    with pytest.raises(OSError):
+        promotion._create_retired_path_fence(fence)
+    if failure == "fsync":
+        assert fence.is_dir()  # The stronger fence remains safe for a retry.
+    else:
+        assert fence.is_fifo()
+        assert fence.lstat().st_ino == inode
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["state.json"]
+
+
+def test_fifo_upgrade_releases_actual_blocked_reader_and_future_opens_fail(tmp_path):
+    fence = tmp_path / "state.json"
+    os.mkfifo(fence, 0o600)
+    reader = subprocess.Popen([sys.executable, "-c", "import sys; open(sys.argv[1], 'rb').read()", str(fence)])
+    try:
+        deadline = time.monotonic() + 5
+        while "wait_for_partner" not in Path(f"/proc/{reader.pid}/wchan").read_text():
+            assert reader.poll() is None
+            assert time.monotonic() < deadline, "reader did not block on temporary FIFO"
+            time.sleep(.01)
+        promotion._create_retired_path_fence(fence)
+        assert reader.wait(timeout=5) == 0
+    finally:
+        if reader.poll() is None:
+            reader.kill()
+        reader.wait(timeout=5)
+    assert stat.S_IMODE(fence.stat().st_mode) == 0o700
+    probe = subprocess.run([sys.executable, "-c", "import sys; open(sys.argv[1], 'rb')", str(fence)],
+                           capture_output=True, timeout=5)
+    assert probe.returncode != 0
+    assert b"IsADirectoryError" in probe.stderr
+
+
+def test_common_json_read_of_actual_fifo_is_bounded(tmp_path):
+    fence = tmp_path / "state.json"
+    os.mkfifo(fence, 0o600)
+    program = "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); import common; common.load_json(Path(sys.argv[2]))"
+    result = subprocess.run([sys.executable, "-c", program, str(promotion.ORCHESTRATOR_DIR), str(fence)],
+                            capture_output=True, timeout=5)
+    assert result.returncode != 0
+    assert b"non-regular file" in result.stderr
+
+
+def test_dashboard_reads_current_layout_and_refuses_actual_retired_fifo(tmp_path):
+    import functools
+    import threading
+    import urllib.error
+    import urllib.request
+    import dashboard_server
+    from http.server import ThreadingHTTPServer
+    root = tmp_path / ".orchestrator"
+    modern = root / "worker-runtime"
+    modern.mkdir(parents=True)
+    retired = root / "state.json"
+    os.mkfifo(retired, 0o600)
+    (modern / "state.json").write_text('{"current": true}')
+    current = dashboard_server._runtime_source_file(tmp_path, "state.json")
+    assert current == modern / "state.json"
+    class Handler(dashboard_server.NoCacheRequestHandler):
+        live_file_map = {"/current": current, "/retired": retired}
+    server = ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Handler, directory=str(tmp_path)))
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}/current", timeout=3) as response:
+            assert json.load(response) == {"current": True}
+        with pytest.raises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}/retired", timeout=3)
+        assert error.value.code == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("launch_fails", [False, True])
+def test_ordinary_promotion_upgrades_all_four_fences_without_moving_store(tmp_path, monkeypatch, launch_fails):
+    candidate, status_root = _candidate(tmp_path)
+    live = tmp_path / "runtime/live.json"
+    incumbent, identity = promotion.render_v2_config(candidate, status_root=status_root,
+        live_config_path=live, python_executable=Path(sys.executable))
+    old_identity = {**identity, "head": "a" * 40}
+    promotion.write_json_atomic(live, incumbent)
+    log = Path(incumbent["task_state_store"]["event_log"])
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_bytes(b"unchanged journal\n")
+    retired_log = log.parent.parent / log.name
+    fences = [status_root / ".orchestrator" / name for name in ("state.json", "approval-queue.json")]
+    fences += [retired_log.with_name(retired_log.name + suffix) for suffix in (".lock", ".head.json")]
+    for fence in fences:
+        os.mkfifo(fence, 0o600)
+    monkeypatch.setattr(promotion, "qualify_incumbent_identity", lambda *a, **k: old_identity)
+    monkeypatch.setattr(promotion, "stop_existing_supervisor", lambda *a, **k: 41)
+    monkeypatch.setattr(promotion, "qualify_and_drain_incumbent_writers", lambda *a, **k: {})
+    def launch(config, *, identity, **kwargs):
+        assert config["task_state_store"] == incumbent["task_state_store"]
+        assert all(f.is_dir() and stat.S_IMODE(f.stat().st_mode) == 0o700 for f in fences)
+        if launch_fails and identity != old_identity:
+            raise RuntimeError("isolated launch failure")
+        return 43 if identity == old_identity else 42
+    monkeypatch.setattr(promotion, "launch_v2_supervisor", launch)
+    result = promotion.replace_supervisor(candidate, status_root=status_root, live_config_path=live,
+        python_executable=Path(sys.executable), termination_timeout=1)
+    assert result["outcome"] == ("failed" if launch_fails else "launched"), result
+    assert set(result["storage_migration"]["upgraded_fences"]) == set(map(str, fences))
+    assert not result["storage_migration"]["migrated"]
+    assert result["storage_migration"]["files"] == []
+    assert log.read_bytes() == b"unchanged journal\n"
+    assert not retired_log.exists()
+    assert all(f.is_dir() for f in fences)
+    if launch_fails:
+        assert result["restarted_pid"] == 43
+        assert json.loads(live.read_text()) == incumbent
+
+
+def test_migrate_storage_paths_upgrades_fifo_fences_and_ignores_fenced_old_paths(
+    tmp_path: Path,
+) -> None:
+    orch = tmp_path / "status" / ".orchestrator"
+    modern = orch / "worker-runtime"
+    modern.mkdir(parents=True)
+    (modern / "state.json").write_text('{"workers": {}}', encoding="utf-8")
+    (modern / "approval-queue.json").write_text("{}", encoding="utf-8")
+    legacy_state = orch / "state.json"
+    legacy_queue = orch / "approval-queue.json"
+    os.mkfifo(str(legacy_state), 0o600)
+    os.mkfifo(str(legacy_queue), 0o600)
+
+    old_log = tmp_path / "runtime" / "events.jsonl"
+    old_lock = old_log.with_name("events.jsonl.lock")
+    new_log = tmp_path / "runtime" / "task-state" / "events.jsonl"
+    new_log.parent.mkdir(parents=True)
+    new_log.write_text("", encoding="utf-8")
+    os.mkfifo(str(old_lock), 0o600)
+
+    incumbent = {
+        "paths": {"state_file": str(legacy_state), "approval_queue": str(legacy_queue)},
+        "task_state_store": {"event_log": str(old_log)},
+    }
+    rendered = {
+        "paths": {
+            "state_file": str(modern / "state.json"),
+            "approval_queue": str(modern / "approval-queue.json"),
+        },
+        "task_state_store": {"event_log": str(new_log)},
+    }
+
+    # Before: the FIFO at the incumbent path "exists", so this used to raise a
+    # target collision instead of recognising the fence.
+    record = promotion._migrate_storage_paths(incumbent, rendered)
+
+    assert record["migrated"] is False
+    assert sorted(record["upgraded_fences"]) == sorted(
+        [str(legacy_state), str(legacy_queue), str(old_lock)]
+    )
+    for fence in (legacy_state, legacy_queue, old_lock):
+        assert fence.is_dir(), fence
+    assert (modern / "state.json").read_text(encoding="utf-8") == '{"workers": {}}'
+    assert new_log.exists()

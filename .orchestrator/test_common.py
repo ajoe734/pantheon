@@ -272,11 +272,11 @@ class JsonLoadResilienceTests(unittest.TestCase):
     def test_load_json_retries_after_transient_decode_error(self) -> None:
         payload = {"ok": True}
         with (
-            mock.patch.object(Path, "exists", return_value=True),
+            tempfile.NamedTemporaryFile() as source,
             mock.patch.object(Path, "read_text", side_effect=['{"broken": 1}{"extra": 2}', json.dumps(payload)]),
             mock.patch.object(common.time, "sleep") as sleep,
         ):
-            result = common.load_json(Path("/tmp/transient.json"), default={})
+            result = common.load_json(Path(source.name), default={})
 
         self.assertEqual(result, payload)
         sleep.assert_called_once()
@@ -3751,6 +3751,139 @@ class LogicalActivityReaderTests(unittest.TestCase):
             if old_log_file is not None:
                 ai_status.LOG_FILE = old_log_file
 
+    def _rotate_into_archives(self, entries: list[dict]) -> None:
+        config = {
+            "paths": {
+                "activity_log": str(self.log_path),
+                "activity_log_rotate_bytes": 1,
+            }
+        }
+        for entry in entries:
+            common.write_activity_log(config, entry)
+
+    def _recent_digests(self, event_ids: set[str], not_before: float) -> dict[str, str]:
+        with common.activity_audit_lock_file(
+            self.log_path, shared=False, nonblocking=False
+        ):
+            return common.recent_activity_event_digests_unlocked(
+                self.log_path, event_ids, not_before=not_before
+            )
+
+    def test_lineage_chain_still_detects_a_rewritten_middle_row(self):
+        self._rotate_into_archives([{"event_id": f"chain-{i}"} for i in range(4)])
+        lineage_path = common.activity_rotation_lineage_path(self.log_path)
+        lines = lineage_path.read_bytes().splitlines(keepends=True)
+        self.assertGreaterEqual(len(lines), 3)
+        common._load_activity_rotation_lineage_unlocked(self.log_path)
+
+        # Same row content, different bytes: only the next row's chain digest
+        # can notice.
+        lines[1] = (json.dumps(json.loads(lines[1])) + "\n").encode("utf-8")
+        lineage_path.write_bytes(b"".join(lines))
+        with self.assertRaisesRegex(RuntimeError, "lineage previous digest mismatch"):
+            common._load_activity_rotation_lineage_unlocked(self.log_path)
+
+    def test_recent_event_lookup_reads_only_archives_newer_than_the_events(self):
+        self._rotate_into_archives(
+            [{"event_id": "archived-event"}, {"event_id": "later-event"}]
+        )
+        self.assertEqual(
+            set(self._recent_digests({"archived-event"}, not_before=0)),
+            {"archived-event"},
+        )
+        two_hours_ago = time.time() - 7200
+        for archive in self.archive_dir.glob("*.gz"):
+            os.utime(archive, (two_hours_ago, two_hours_ago))
+        self.assertEqual(
+            self._recent_digests({"archived-event"}, not_before=time.time() - 3600),
+            {},
+        )
+
+    def test_recent_logical_activity_keeps_append_order_and_skips_old_archives(self):
+        ids = [f"ordered-{index}" for index in range(6)]
+        self._rotate_into_archives([{"event_id": event_id} for event_id in ids])
+        two_hours_ago = time.time() - 7200
+        aged: set[str] = set()
+        for archive in self.archive_dir.glob("*.gz"):
+            with gzip.open(archive, "rt", encoding="utf-8") as handle:
+                held = {json.loads(line).get("event_id") for line in handle if line.strip()}
+            if held & {"ordered-0", "ordered-1"}:
+                os.utime(archive, (two_hours_ago, two_hours_ago))
+                aged |= held
+        self.assertTrue({"ordered-0", "ordered-1"} <= aged)
+
+        rows = common.recent_logical_activity(
+            self.log_path, not_before=time.time() - 3600
+        )
+        seen = [entry.get("event_id") for entry, _source, _line in rows]
+        self.assertEqual(seen, [event_id for event_id in ids if event_id not in aged])
+
+    def test_recent_event_lookup_rejects_archive_not_matching_its_name(self):
+        self._rotate_into_archives(
+            [{"event_id": "event-a"}, {"event_id": "event-b"}]
+        )
+        archive = sorted(self.archive_dir.glob("*.gz"))[0]
+        self._write_gz(archive, [{"event_id": "event-a", "message": "forged"}])
+        with self.assertRaisesRegex(RuntimeError, "basename digest mismatch"):
+            self._recent_digests({"event-a"}, not_before=0)
+
+    def test_recover_outbox_with_ts_skips_full_history_validation(self):
+        sys.path.append(str(common.ROOT / "scripts"))
+        import ai_status
+
+        now = common.utc_now()
+        rotated = {"ts": now, "agent": "Orchestrator", "event_id": "outbox-rotated", "type": "t"}
+        pending = {"ts": now, "agent": "Orchestrator", "event_id": "outbox-pending", "type": "t"}
+        # A crash after appending `rotated`, then a rotation, left it archived
+        # while the outbox still lists it.
+        self._rotate_into_archives([rotated, {"event_id": "after-crash"}])
+        self.assertNotIn(b"outbox-rotated", self.log_path.read_bytes())
+        events = [rotated, pending]
+        state = {
+            "tasks": [],
+            "status_activity_outbox": {
+                "schema_version": 1,
+                "transaction_id": "ai-status-tx-" + common._canonical_json_sha256(events),
+                "events": events,
+            },
+        }
+        saved = {
+            name: getattr(ai_status, name)
+            for name in ("STATUS_ROOT", "STATUS_FILE", "LOG_FILE")
+        }
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key
+            not in (
+                "PANTHEON_TASK_STATE_EVENT_LOG",
+                "PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON",
+                "PANTHEON_TASK_STATE_STORE_MODE",
+            )
+        }
+        env["PANTHEON_STATUS_ROOT"] = str(self.root)
+        try:
+            ai_status.STATUS_ROOT = self.root
+            ai_status.STATUS_FILE = self.root / "ai-status.json"
+            ai_status.LOG_FILE = self.log_path
+            with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
+                ai_status,
+                "validated_activity_event_digests_unlocked",
+                side_effect=AssertionError("full history validation was used"),
+            ):
+                self.assertTrue(ai_status.recover_status_activity_outbox(state))
+        finally:
+            for name, value in saved.items():
+                setattr(ai_status, name, value)
+
+        self.assertIsNone(state["status_activity_outbox"])
+        counts: dict[str, int] = {}
+        for entry, _source, _line in common.stream_logical_activity(self.log_path):
+            event_id = str(entry.get("event_id") or "")
+            counts[event_id] = counts.get(event_id, 0) + 1
+        self.assertEqual(counts.get("outbox-rotated"), 1)
+        self.assertEqual(counts.get("outbox-pending"), 1)
+
     def test_sqlite_snapshot_is_unlinked_during_all_lifecycle_events(self):
         # Prepare a valid file
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
@@ -4347,3 +4480,49 @@ class RunCommandStdinIsolationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CanonicalStatusPathsFenceTests(unittest.TestCase):
+    """A promotion fence (directory, or FIFO from older promotions) at a retired
+    ``.orchestrator/{state,approval-queue}.json`` path must never nominate the
+    legacy layout: every later open() on it would fail or block forever."""
+
+    def test_retired_path_fences_never_nominate_the_legacy_layout(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="status-paths-fence-") as temp_dir:
+            status_root = Path(temp_dir).resolve()
+            orch = status_root / ".orchestrator"
+            modern = orch / "worker-runtime"
+            modern.mkdir(parents=True)
+            (modern / "state.json").write_text("{}", encoding="utf-8")
+            (orch / "state.json").mkdir()
+            os.mkfifo(str(orch / "approval-queue.json"), 0o600)
+
+            rendered = common.canonical_status_paths({}, status_root, fill_defaults=True)
+            self.assertEqual(rendered["state_file"], str(modern / "state.json"))
+            self.assertEqual(rendered["approval_queue"], str(modern / "approval-queue.json"))
+
+    def test_fences_without_modern_files_still_choose_the_modern_layout(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="status-paths-fence-") as temp_dir:
+            status_root = Path(temp_dir).resolve()
+            orch = status_root / ".orchestrator"
+            orch.mkdir()
+            (orch / "state.json").mkdir()
+            os.mkfifo(str(orch / "approval-queue.json"), 0o600)
+
+            rendered = common.canonical_status_paths({}, status_root, fill_defaults=True)
+            self.assertEqual(rendered["state_file"], str(orch / "worker-runtime" / "state.json"))
+            self.assertEqual(
+                rendered["approval_queue"], str(orch / "worker-runtime" / "approval-queue.json")
+            )
+
+    def test_real_legacy_files_still_win_while_modern_layout_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="status-paths-fence-") as temp_dir:
+            status_root = Path(temp_dir).resolve()
+            orch = status_root / ".orchestrator"
+            orch.mkdir()
+            (orch / "state.json").write_text("{}", encoding="utf-8")
+            (orch / "approval-queue.json").write_text("{}", encoding="utf-8")
+
+            rendered = common.canonical_status_paths({}, status_root, fill_defaults=True)
+            self.assertEqual(rendered["state_file"], str(orch / "state.json"))
+            self.assertEqual(rendered["approval_queue"], str(orch / "approval-queue.json"))

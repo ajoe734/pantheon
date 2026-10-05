@@ -1597,6 +1597,29 @@ class IntegrationPlanTests(unittest.TestCase):
                     auto_integrator.Settings(), FakeRunner(), root=root, execute=True))
             self.assertFalse((root / auto_integrator.UNBLOCK_REQUEST_INBOX).exists())
 
+    def test_repair_tasks_never_spawn_children_for_any_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            for task_id, provenance in (
+                ("INTEGRATION-UNBLOCK-ABC", {}),
+                ("renamed-repair", {"unblock_request": {"source_task_id": "ABC"}}),
+                ("legacy-repair", {"auto_created_by": "auto_integrator"}),
+                ("current-repair", {"auto_created_by": "supervisor:auto_integrator_unblock_request"}),
+            ):
+                candidate = auto_integrator.TaskCandidate(
+                    task_id=task_id, title="Repair", owner="Codex", reviewer="Claude",
+                    branch=f"task/{task_id}", raw_task=provenance | {
+                        "generation": 2, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD},
+                    },
+                )
+                for reason in auto_integrator.unblock_contract.REASONS:
+                    for execute in (False, True):
+                        with self.subTest(task_id=task_id, reason=reason, execute=execute):
+                            self.assertIsNone(auto_integrator.open_unblock_task(
+                                candidate, reason, "still blocked", auto_integrator.Settings(),
+                                FakeRunner(), root=root, execute=execute))
+            self.assertFalse((root / auto_integrator.UNBLOCK_REQUEST_INBOX).exists())
+
     def test_red_checks_open_unblock_in_execute_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir, mock.patch.dict(
             os.environ, {}, clear=True
@@ -4035,6 +4058,150 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         self.assertEqual(result.action, "blocked")
         self.assertIn("Failed to inspect PR", result.detail)
         self.assertIsNone(result.unblock_task_id)
+
+
+class SupersedingVersionDiscoveryTests(unittest.TestCase):
+    """`task/<ID>-vN` replacement PRs are discovered (open and merged) unambiguously."""
+
+    def _candidate(self) -> auto_integrator.TaskCandidate:
+        return auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+            repository_root=Path("/worker/source/pantheon"),
+        )
+
+    def _runner(self, rows_by_state: Mapping[str, list[dict[str, Any]]]):
+        class Runner(FakeRunner):
+            def run(self, args, **kwargs):  # type: ignore[override]
+                command = [str(arg) for arg in args]
+                if command[:3] == ["gh", "pr", "list"]:
+                    self.commands.append(command)
+                    if "--head" in command and command[command.index("--head") + 1] == "task/ABC-001":
+                        return completed(command, stdout="[]")
+                    state = command[command.index("--state") + 1]
+                    head = command[command.index("--head") + 1] if "--head" in command else None
+                    rows = [
+                        {"number": r["number"]}
+                        for r in rows_by_state.get(state, [])
+                        if head is None or r["headRefName"] == head
+                    ]
+                    return completed(command, stdout=auto_integrator.json.dumps(rows))
+                return super().run(args, **kwargs)
+
+        runner = Runner(
+            pr={"number": 7, "headRefName": "task/ABC-001-v2"},
+            merged_pr={"number": 8, "headRefName": "task/ABC-001-v3"},
+        )
+        return runner
+
+    def test_open_versioned_pr_discovered(self) -> None:
+        runner = self._runner({"open": [
+            {"number": 7, "headRefName": "task/ABC-001-v2"},
+            {"number": 9, "headRefName": "task/ABC-001-extra"},
+        ]})
+        pr = auto_integrator.fetch_pr_for_task(
+            self._candidate(), auto_integrator.Settings(), runner
+        )
+        self.assertEqual(pr["number"], 7)
+
+    def test_merged_versioned_pr_discovered_for_recovery(self) -> None:
+        runner = self._runner({"merged": [{"number": 8, "headRefName": "task/ABC-001-v3"}]})
+        pr = auto_integrator.fetch_pr_for_task(
+            self._candidate(), auto_integrator.Settings(), runner, state="merged"
+        )
+        self.assertEqual(pr["number"], 8)
+
+    def test_multiple_versioned_prs_are_ambiguous(self) -> None:
+        for state in ("open", "merged"):
+            runner = self._runner({state: [
+                {"number": 7, "headRefName": "task/ABC-001-v2"},
+                {"number": 8, "headRefName": "task/ABC-001-v3"},
+            ]})
+            with self.assertRaises(auto_integrator.AmbiguousPullRequests):
+                auto_integrator.fetch_pr_for_task(
+                    self._candidate(), auto_integrator.Settings(), runner, state=state
+                )
+
+    def test_versioned_pr_beyond_first_hundred_rows_is_discovered(self) -> None:
+        noise = [{"number": 1000 + i, "headRefName": f"task/OTHER-{i}"} for i in range(150)]
+        runner = self._runner({"open": noise + [{"number": 7, "headRefName": "task/ABC-001-v2"}]})
+        pr = auto_integrator.fetch_pr_for_task(
+            self._candidate(), auto_integrator.Settings(), runner
+        )
+        self.assertEqual(pr["number"], 7)
+
+    def test_highest_probed_version_is_discovered(self) -> None:
+        head = f"task/ABC-001-v{auto_integrator.SUPERSEDING_VERSION_MAX}"
+        runner = self._runner({"open": [{"number": 7, "headRefName": head}]})
+        pr = auto_integrator.fetch_pr_for_task(
+            self._candidate(), auto_integrator.Settings(), runner
+        )
+        self.assertEqual(pr["number"], 7)
+
+    def test_ambiguous_merged_versions_block_task_without_aborting_run(self) -> None:
+        runner = self._runner({"merged": [
+            {"number": 7, "headRefName": "task/ABC-001-v2"},
+            {"number": 8, "headRefName": "task/ABC-001-v3"},
+        ]})
+        result = auto_integrator.integrate_candidate(
+            self._candidate(),
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            open_unblock=False,
+            gate=approved_gate(),
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("refusing to choose a merged head", result.detail)
+
+    def test_ambiguous_merged_versions_publish_unblock_request_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            status_root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001",
+                title="Ready",
+                owner="Codex",
+                reviewer="Claude",
+                branch="task/ABC-001",
+                repository_root=Path("/worker/source/pantheon"),
+                raw_task={
+                    "generation": 1,
+                    "delivery_binding": {"pr": 7, "head_sha": APPROVED_HEAD},
+                },
+            )
+            runner = self._runner({"merged": [
+                {"number": 7, "headRefName": "task/ABC-001-v2"},
+                {"number": 8, "headRefName": "task/ABC-001-v3"},
+            ]})
+            settings = auto_integrator.Settings(
+                status_identity_sha256="d" * 64,
+                command_runtime_sha="b" * 40,
+            )
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                settings,
+                runner,
+                status_root=status_root,
+                execute=True,
+                open_unblock=True,
+                gate=approved_gate(),
+            )
+            self.assertEqual(result.action, "blocked")
+            self.assertEqual(
+                result.unblock_task_id,
+                auto_integrator.unblock_task_id(candidate, "pr-lookup-failed"),
+            )
+            self.assertIn("refusing to choose a merged head", result.detail)
+            requests = list((status_root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))
+            self.assertEqual(len(requests), 1)
+            request = json.loads(requests[0].read_text(encoding="utf-8"))
+            self.assertEqual(request["reason"], "pr-lookup-failed")
+            self.assertIn("refusing to choose a merged head", request["detail"])
+            self.assertEqual(request["pr"], 7)
+            self.assertEqual(request["head_sha"], APPROVED_HEAD)
 
 
 class TwoTaskFakeRunner(FakeRunner):

@@ -34,6 +34,10 @@ services:
       - dev-paper-bff-tokens:/issued/operator-bff
       - dev-paper-distillation-tokens:/issued/strategy-distillation-worker
       - dev-paper-alpha-replication-tokens:/issued/alpha-replication-worker
+      - dev-paper-persona-tokens:/issued/persona
+      - dev-paper-capital-tokens:/issued/capital
+      - dev-paper-evolution-tokens:/issued/evolution
+      - dev-paper-persona-evaluator-tokens:/issued/persona-evaluator-agent
     healthcheck:
       test: ["CMD", "python", "/issuer/issue_dev_paper_principals.py", "--healthcheck"]
       interval: 30s
@@ -42,7 +46,8 @@ services:
       start_period: 5s
 
   postgres:
-    image: postgres:16-alpine
+    profiles: ["core", "root"]
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     restart: unless-stopped
     shm_size: 256m
     environment:
@@ -69,6 +74,7 @@ services:
       start_period: 10s
 
   minio:
+    profiles: ["core", "root"]
     image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
@@ -88,6 +94,7 @@ services:
       start_period: 15s
 
   minio-init:
+    profiles: ["core", "root"]
     image: minio/mc:RELEASE.2024-01-16T16-06-34Z
     depends_on:
       minio:
@@ -105,7 +112,8 @@ services:
     restart: on-failure
 
   nats:
-    image: nats:2.11-alpine
+    profiles: ["core", "root"]
+    image: nats:2.11-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00
     restart: unless-stopped
     command: ["--jetstream", "--http_port", "8222", "--store_dir", "/data/jetstream"]
     volumes:
@@ -121,7 +129,8 @@ services:
       start_period: 10s
 
   signal-store:
-    image: redis:7-alpine
+    profiles: ["execution", "root"]
+    image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -130,6 +139,7 @@ services:
       retries: 5
 
   consultation-svc:
+    profiles: ["core", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -147,11 +157,7 @@ services:
       # Dev rollback defaults to JSONL; staging/prod select postgres via env.
       CONSULTATION_STORE_BACKEND: ${CONSULTATION_STORE_BACKEND:-jsonl}
       CONSULTATION_STORE_DSN: ${CONSULTATION_STORE_DSN:-}
-      # L12-MANIFEST-001 dev manifest admission: consultation has a source
-      # supported bearer-token boundary. Keep it enabled by default in the
-      # local/dev stack with a non-production placeholder token; hosted
-      # environments override CONSULTATION_SERVICE_TOKEN from their secret
-      # store.
+      # Consultation bearer-token boundary; hosted overrides from secret store.
       CONSULTATION_AUTH_REQUIRED: ${CONSULTATION_AUTH_REQUIRED:-true}
       CONSULTATION_SERVICE_TOKEN: ${CONSULTATION_SERVICE_TOKEN:-pantheon-local-consultation-service}
       CONSULTATION_API_TOKEN: ${CONSULTATION_SERVICE_TOKEN:-pantheon-local-consultation-service}
@@ -174,6 +180,7 @@ services:
         condition: service_healthy
       openclaw-gateway-adapter:
         condition: service_healthy
+        required: false
       governance:
         condition: service_healthy
     healthcheck:
@@ -188,6 +195,7 @@ services:
       start_period: 5s
 
   source-ingest:
+    profiles: ["core", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -196,25 +204,22 @@ services:
     environment:
       PORT: "8097"
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      PANTHEON_RUNTIME_AUTH_MODE: strict
+      PANTHEON_RUNTIME_JWT_SECRET: ${PANTHEON_RUNTIME_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}
+      PANTHEON_RUNTIME_JWT_ISSUER: ${PANTHEON_RUNTIME_JWT_ISSUER:-${PANTHEON_BFF_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-}}}
+      PANTHEON_RUNTIME_JWT_AUDIENCE: ${PANTHEON_RUNTIME_JWT_AUDIENCE:-${PANTHEON_BFF_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-}}}
       SOURCE_INGEST_DATA_DIR: /data/source-ingest
       SOURCE_INGEST_CONNECTOR_STORE_PATH: /data/source-ingest/connector_config.jsonl
       SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
       SOURCE_INGEST_CONTROLLER_STATE_PATH: /data/source-ingest/controller_state.json
       SOURCE_INGEST_REQUIREMENT_STATE_PATH: /data/source-ingest/requirement_snapshots.jsonl
       SOURCE_INGEST_CONTROLLER_TOKEN_FILE: /data/source-ingest/controller_token
-      # The canonical Source-owned stored-snapshot projection shares this
-      # durable volume with completed ingest. Paper reads it only through the
-      # Source API; no paper service receives a provider credential or feed.
+      # Stored-snapshot projection shared with completed ingest; paper reads via Source API.
       SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH: /data/source-ingest/latest_market_snapshots.jsonl
-      # Shared with strategy-distillation-worker: a normalized SourceRecord
-      # commit here admits its job to the same durable queue that controller
-      # tick's catch_up polls, so the two never diverge into separate queues.
+      # Shared queue with strategy-distillation-worker for normalized SourceRecord commits.
       DISTILLATION_JOB_QUEUE_PATH: /data/source-ingest/distill_job_queue.jsonl
       SOURCE_INGEST_MAX_RECORDS: ${SOURCE_INGEST_MAX_RECORDS:-100}
-      # A bounded deployment refresh resolves this list from the durable,
-      # read-only RuntimeBinding store before source-ingest starts. The
-      # provider adapter uses it only to order official records before the
-      # unchanged global record cap.
+      # Bounded deployment refresh resolves active symbols from RuntimeBinding store.
       SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS: ${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}
       SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: ${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}
       SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS: ${SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS:-2}
@@ -258,6 +263,7 @@ services:
       start_period: 5s
 
   source-ingest-controller-migrate:
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
@@ -271,17 +277,16 @@ services:
 
   # Keep the legacy service key so non-prod upgrades replace the prior
   # scheduler container instead of leaving a second ticking orphan behind.
+        required: false
   source-ingest-scheduler:
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
     command: ["python", "-m", "services.source_ingestion.controller_worker"]
     restart: "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-unless-stopped}"
     stop_grace_period: 30s
-    # This same controller is the sole durable owner. Operators retain an
-    # explicit bounded smoke with `docker compose run --rm -e
-    # SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 source-ingest-scheduler`; there is
-    # no second scheduler service or profile-only production owner.
+    # Sole durable owner. Explicit bounded smoke via SOURCE_INGEST_CONTROLLER_MAX_TICKS=1.
     environment:
       SOURCE_INGEST_API_URL: http://source-ingest:8097
       SOURCE_INGEST_DESIRED_STATE_PATH: /workspace/services/source_ingestion/default_desired_state.json
@@ -309,6 +314,7 @@ services:
     depends_on:
       source-ingest:
         condition: service_healthy
+        required: false
       source-ingest-controller-migrate:
         condition: service_completed_successfully
     healthcheck:
@@ -328,7 +334,7 @@ services:
       dockerfile: services/source_ingestion/Dockerfile
     command: ["python", "scripts/project_market_data_to_bff_agora_surfaces.py"]
     restart: "no"
-    profiles: ["source-ingest-scheduler"]
+    profiles: ["source-ingest-scheduler", "workers"]
     environment:
       SOURCE_INGEST_URL: http://source-ingest:8097
       OUT_DIR: /data/bff
@@ -338,10 +344,12 @@ services:
     depends_on:
       source-ingest:
         condition: service_healthy
+        required: false
       source-ingest-scheduler:
-        condition: service_completed_successfully
+        condition: service_healthy
 
   strategy-distillation-worker:
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
@@ -350,10 +358,7 @@ services:
     stop_grace_period: 30s
     environment:
       SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS: ${SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS:-60}
-      # The source-ingest scheduler deliberately sets its shared max-ticks
-      # input to 1 for bounded provider pulls. Distillation is an always-on
-      # controller, so it must not inherit that one-shot value or Docker will
-      # restart the successful process forever under `unless-stopped`.
+      # Distillation is an always-on controller; must not inherit scheduler one-shot ticks.
       SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${STRATEGY_DISTILLATION_CONTROLLER_MAX_TICKS:-0}
       DISTILLATION_CONTROLLER_STATE_PATH: /data/source-ingest/distill_controller_state.json
       DISTILLATION_CONTROLLER_ALIVE_PATH: /data/source-ingest/distill_controller_alive
@@ -376,8 +381,10 @@ services:
     depends_on:
       source-ingest:
         condition: service_healthy
+        required: false
       registry:
         condition: service_healthy
+        required: false
     # The controller rewrites its alive file in the `finally` of every
     # reconcile tick, so file freshness is a true liveness heartbeat and does
     # not flip unhealthy on a single upstream business failure.
@@ -393,6 +400,7 @@ services:
       start_period: 180s
 
   alpha-replication-worker:
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/research/Dockerfile
@@ -422,8 +430,10 @@ services:
     depends_on:
       research-orchestrator-svc:
         condition: service_healthy
+        required: false
       registry:
         condition: service_healthy
+        required: false
     healthcheck:
       test:
         [
@@ -436,6 +446,7 @@ services:
       start_period: 60s
 
   search-svc:
+    profiles: ["core", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -486,6 +497,7 @@ services:
       start_period: 5s
 
   search-index-scheduler:
+    profiles: ["root", "workers"]
     # Default-on: this scheduler only talks to the in-stack search service, so
     # the runtime manifest — not an operator-selected profile — is the single
     # source of truth for whether the required loop worker is running.
@@ -507,6 +519,7 @@ services:
     depends_on:
       search-svc:
         condition: service_healthy
+        required: false
     healthcheck:
       test:
         [
@@ -519,6 +532,7 @@ services:
       start_period: 60s
 
   training-session-svc:
+    profiles: ["research", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -565,8 +579,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
       source-ingest:
         condition: service_healthy
+        required: false
     healthcheck:
       test:
         [
@@ -579,6 +595,7 @@ services:
       start_period: 5s
 
   training-session-preview-worker:
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/training-session/Dockerfile
@@ -595,13 +612,14 @@ services:
       # HS256 dev service JWT signed by the API's published local/dev secret.
       # Hosted environments override both the verifier secret and this token.
       TRAINING_SESSION_WORKER_TOKEN: ${TRAINING_SESSION_WORKER_TOKEN:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhbGxvd2VkX3RlbmFudHMiOlsiKiJdLCJyb2xlcyI6WyJ0cmFpbmluZy1zZXJ2aWNlIl0sInNlcnZpY2UiOiJ0cmFpbmluZy1zZXNzaW9uLXByZXZpZXctd29ya2VyIiwic3ViIjoidHJhaW5pbmctc2Vzc2lvbi1wcmV2aWV3LXdvcmtlciJ9.eb4LoU20NsZEfH8VYjhl1xyOaa37bzzg7yC-D87Uu2g}
-      TRAINING_SESSION_TENANT_ID: ${TRAINING_SESSION_TENANT_ID:-default}
+      TRAINING_SESSION_TENANT_ID: ${TRAINING_SESSION_TENANT_ID:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}}
       TRAINING_SESSION_WORKER_SERVICE_ID: training-session-preview-worker
     volumes:
       - training-session-data:/data/training-session
     depends_on:
       training-session-svc:
         condition: service_healthy
+        required: false
     healthcheck:
       test:
         [
@@ -614,6 +632,7 @@ services:
       start_period: 60s
 
   policy-learning-svc:
+    profiles: ["research", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -655,6 +674,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
     healthcheck:
       test:
         [
@@ -667,11 +687,8 @@ services:
       start_period: 5s
 
   policy-learning-shadow-eval-scheduler:
-    # Default-on. This is the human-imitation shadow-evaluation loop worker;
-    # leaving it behind an opt-in profile meant the loop never ticked on a
-    # normal deploy. It performs no external egress: it authenticates to the
-    # in-stack policy-learning API with the same service token and tenant
-    # scope as that API authorizes.
+    profiles: ["root", "workers"]
+    # Human-imitation shadow-evaluation loop worker (L12-IMIT-001).
     build:
       context: .
       dockerfile: services/policy-learning/Dockerfile
@@ -707,8 +724,10 @@ services:
     depends_on:
       policy-learning-svc:
         condition: service_healthy
+        required: false
       operator-bff:
         condition: service_healthy
+        required: false
     healthcheck:
       test: ["CMD", "python", "services/policy-learning/scheduler_worker.py", "healthcheck"]
       interval: 30s
@@ -717,6 +736,7 @@ services:
       start_period: 180s
 
   research-orchestrator-svc:
+    profiles: ["research", "root"]
     build:
       context: .
       dockerfile: services/research/Dockerfile
@@ -748,6 +768,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
     healthcheck:
       test:
         [
@@ -760,18 +781,15 @@ services:
       start_period: 5s
 
   openclaw-data-init:
-    profiles: ["openclaw"]
-    image: busybox:1.36
+    profiles: ["management-ai", "openclaw", "root"]
+    image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
     command: ["sh", "-c", "mkdir -p /home/node/.openclaw && chown -R 1000:1000 /home/node/.openclaw"]
     volumes:
       - openclaw-data:/home/node/.openclaw
 
   openclaw-gateway:
-    profiles: ["openclaw"]
-    # Pantheon-derived image: governed upstream OpenClaw 2026.7.1 plus Claude
-    # Code and Gemini CLIs, so the shared model pool can serve Anthropic and
-    # Google CLI-backed routes. Upstream pin governed (see
-    # OSS_INTEGRATION_CHECKLIST.md / integrations/openclaw/governance.md).
+    profiles: ["management-ai", "openclaw", "root"]
+    # Governed OpenClaw gateway image with Claude Code and Gemini CLIs.
     build:
       context: .
       dockerfile: integrations/openclaw/gateway/Dockerfile
@@ -785,14 +803,7 @@ services:
       # Persist Claude CLI login on the openclaw-data volume so the one-time
       # `claude auth login` survives container recreate (subscription OAuth, no key).
       CLAUDE_CONFIG_DIR: ${OPENCLAW_CLAUDE_CONFIG_DIR:-/home/node/.openclaw/claude-cli}
-      # Optional long-lived credential (`claude setup-token`, ~1 year) for the
-      # Claude CLI. Takes precedence over the CLAUDE_CONFIG_DIR session above
-      # when set, so it does not depend on anything periodically exercising
-      # the CLI to keep a short-lived OAuth session's access token refreshed.
-      # openclaw-configure-shared-model-pool.sh binds this explicit product
-      # credential to the Claude backend with a reference-only env override;
-      # ambient presence alone is cleared by OpenClaw before CLI execution.
-      # Empty is a no-op: the CLI falls back to the CLAUDE_CONFIG_DIR session.
+      # Optional long-lived credential (`claude setup-token`) for Claude CLI.
       CLAUDE_CODE_OAUTH_TOKEN: ${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}
       PANTHEON_ASSISTANT_CODEX_HOST_HOME: ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}
       PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME: ${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}
@@ -831,6 +842,7 @@ services:
       start_period: 60s
 
   openclaw-gateway-adapter:
+    profiles: ["management-ai", "openclaw", "root"]
     build:
       context: .
       dockerfile: services/openclaw-gateway-adapter/Dockerfile
@@ -853,17 +865,9 @@ services:
       # must mutate the exact gateway-owned state and workspace volume.
       PANTHEON_OPENCLAW_GATEWAY_STATE_DIR: /home/node/.openclaw
       PANTHEON_OPENCLAW_AGENT_IDEMPOTENCY_DB: /root/.openclaw/pantheon-agent-ensure.sqlite3
-      # Per-turn budget for `openclaw agent` (used as the CLI --timeout AND the
-      # subprocess timeout). A real agent turn (gpt-5.5 + medium thinking + the
-      # full management context pack) runs ~60-90s+, so the default 90 was too
-      # tight. Must stay BELOW the BFF's PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS
-      # (180) so the adapter returns its own result before the BFF gives up.
+      # Per-turn budget for `openclaw agent`, kept below BFF assistant timeout.
       OPENCLAW_ASSISTANT_TIMEOUT_SECONDS: ${OPENCLAW_ASSISTANT_TIMEOUT_SECONDS:-170}
-      # The `openclaw agent` client refuses plaintext ws:// to a non-loopback
-      # address (the gateway resolves to a docker-bridge IP). The adapter↔gateway
-      # hop stays inside the single-host docker network (never routed off-box), so
-      # the upstream-sanctioned break-glass for trusted private networks applies.
-      # Revisit if the gateway is ever exposed off-host (then use wss://).
+      # Adapter↔gateway ws:// stays inside trusted private docker network.
       OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-1}
       OPENCLAW_UPSTREAM_TIMEOUT: ${OPENCLAW_UPSTREAM_TIMEOUT:-3}
       OPENCLAW_UPSTREAM_RETRIES: ${OPENCLAW_UPSTREAM_RETRIES:-1}
@@ -892,19 +896,13 @@ services:
     volumes:
       - ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
       - ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
-      # Persist the adapter's OpenClaw device identity + pairing approval so the
-      # one-time `openclaw devices approve` survives container recreate (the CLI
-      # connects to the gateway as a paired device; a fresh state dir re-pairs).
-      # See docs/runbooks/openclaw-adapter-device-pairing.md.
+      # Persist adapter device identity and pairing approval across recreates.
       - openclaw-adapter-data:/root/.openclaw
       # Shared only for the governed internal agent ensure surface. The adapter
       # validates an exact /workspaces/<persona-id> target before every write.
       - openclaw-data:/home/node/.openclaw:rw
     depends_on:
-      # Hosted/root deployments enable the openclaw profile and must not admit
-      # agent writes until the shared volume owner and gateway are ready. These
-      # stay optional so a profile-less local stack can expose honest degraded
-      # adapter health without Compose rejecting the graph.
+      # Wait for shared volume owner and gateway before admitting agent writes.
       openclaw-data-init:
         condition: service_completed_successfully
         required: false
@@ -925,6 +923,7 @@ services:
       start_period: 5s
 
   broker:
+    profiles: ["execution", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -952,6 +951,7 @@ services:
       start_period: 5s
 
   runtime-manager:
+    profiles: ["execution", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -967,6 +967,8 @@ services:
       RUNTIME_MANAGER_GOVERNANCE_TIMEOUT_SECONDS: ${RUNTIME_MANAGER_GOVERNANCE_TIMEOUT_SECONDS:-5}
       RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN: ${RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN:-}
       RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN_FILE: ${RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN_FILE:-}
+      RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN: ${RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN:-}
+      RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN_FILE: ${RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN_FILE:-}
       PORT: "8081"
       PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
       PANTHEON_COMMAND_STATE_FILE: /data/runtime/internal_api_commands.json
@@ -977,20 +979,7 @@ services:
       # to the governance service from this path.
       PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
       PANTHEON_DEPLOYMENT_SERVICE_TOKEN: ${PANTHEON_DEPLOYMENT_SERVICE_TOKEN:-runtime-manager:service}
-      # NOTE (DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001): every other
-      # service in this file chains its tenant default through
-      # ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}; this var
-      # previously skipped that chain and hardcoded 'default'. A real dev
-      # paper baseline reproduction creates every persona/plan/saga under
-      # tenant 'tenant-dev' (the dev-login operator's default allowed
-      # tenant, matching PANTHEON_DEV_BFF_TENANT_ID's own 'tenant-dev'
-      # default), so the outbox consumer's X-Tenant-Id header never matched
-      # any queued event's tenant and it silently claimed zero events
-      # forever -- the saga never advanced past 'runtime.binding.requested'
-      # and the provisioning coordinator's readback eventually timed out.
-      # Chain through the same convention plus the dev-paper tenant so this
-      # only changes behavior for a deploy that actually configured one of
-      # those, never for an environment that left every tenant var unset.
+      # Chain tenant default through PANTHEON_TENANT_ID/PANTHEON_BFF_TENANT_ID for dev tenant match.
       PANTHEON_DEPLOYMENT_TENANT_ID: ${PANTHEON_DEPLOYMENT_TENANT_ID:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-default}}}}
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
       PANTHEON_REGISTRY_API_URL: http://registry:8087
@@ -1012,6 +1001,7 @@ services:
     depends_on:
       consultation-svc:
         condition: service_healthy
+        required: false
     # Note: deployment/governance are not declared as `depends_on` because
     # runtime-manager's primary contract (runtime CRUD, kill-switch) does not
     # require them at boot. ApproveDeployment requests fail cleanly with
@@ -1026,6 +1016,7 @@ services:
       start_period: 5s
 
   governance:
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/governance/Dockerfile
@@ -1093,6 +1084,7 @@ services:
       start_period: 5s
 
   telemetry:
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/telemetry/Dockerfile
@@ -1118,6 +1110,7 @@ services:
     depends_on:
       runtime-manager:
         condition: service_healthy
+        required: false
       postgres:
         condition: service_healthy
       nats:
@@ -1132,6 +1125,7 @@ services:
       start_period: 300s
 
   incidents:
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/incidents/Dockerfile
@@ -1162,6 +1156,7 @@ services:
     depends_on:
       runtime-manager:
         condition: service_healthy
+        required: false
       telemetry:
         condition: service_healthy
       postgres:
@@ -1178,6 +1173,7 @@ services:
       start_period: 5s
 
   postmortems:
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/postmortems/Dockerfile
@@ -1222,6 +1218,7 @@ services:
       start_period: 5s
 
   operator-bff:
+    profiles: ["core", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -1231,6 +1228,8 @@ services:
         BUILD_TIME: ${BUILD_TIME:-unknown}
     restart: unless-stopped
     environment:
+      RANKING_STORE_DSN: ${RANKING_STORE_DSN:-${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}}
+      RANKING_STORE_TABLE: ${RANKING_STORE_TABLE:-rankings.rankings}
       PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID: ${PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID:-pantheon-dev-paper-provisioner}
       PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN: ${PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN:-}
       PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE: ${PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE:-}
@@ -1356,10 +1355,7 @@ services:
       PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH: ${PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH:-/data/bff/management-nl-command-idempotency.json}
       PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS: ${PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS:-300}
       PANTHEON_ASSISTANT_PROVIDER: ${PANTHEON_ASSISTANT_PROVIDER:-openclaw}
-      # BFF→adapter HTTP budget. Raised 75→180: a real openclaw agent turn runs
-      # ~60-90s+ (gpt-5.5 + thinking + full context pack); at 75 the BFF gave up
-      # before the turn finished and served the deterministic fallback ("OpenClaw
-      # adapter request failed"). Kept ABOVE the adapter's per-turn budget (170).
+      # BFF→adapter HTTP budget kept above adapter per-turn budget.
       PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS: ${PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS:-180.0}
       PANTHEON_ASSISTANT_KERNEL_ENABLED: ${PANTHEON_ASSISTANT_KERNEL_ENABLED:-true}
       PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH: ${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-/data/bff/assistant-control-mode.json}
@@ -1368,13 +1364,7 @@ services:
       # into the BFF container.
       PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH: ${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH:-}
       PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS: ${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-300}
-      # Dev tier defaults to strict JWT auth. CI/dev browser clients can exchange
-      # dev-only client credentials for a short-lived JWT through
-      # POST /bff/auth/dev-login.
-      #
-      # Dev tier defaults to strict JWT auth without a stub bypass.
-      # Staging/prod compose files must explicitly export
-      # PANTHEON_BFF_AUTH_STUB=false and PANTHEON_BFF_AUTH_MODE=strict.
+      # Dev tier defaults to strict JWT auth without stub bypass.
       PANTHEON_BFF_AUTH_STUB: ${PANTHEON_BFF_AUTH_STUB:-false}
       PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-strict}
       # Kernel capabilities must be supplied explicitly for an authorized
@@ -1413,6 +1403,8 @@ services:
       PANTHEON_BFF_MFA_CLAIMS: ${PANTHEON_BFF_MFA_CLAIMS:-amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor}
       PANTHEON_BFF_MFA_VALUES: ${PANTHEON_BFF_MFA_VALUES:-true,1,yes,mfa,otp,totp,webauthn}
       PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED: ${PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED:-false}
+      PANTHEON_GOVERNANCE_API_URL: http://governance:8082
+      PANTHEON_TRADE_JOURNAL_COMMAND_OWNER_URL: ${PANTHEON_TRADE_JOURNAL_COMMAND_OWNER_URL:-}
       PANTHEON_INTERNAL_API_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
@@ -1470,6 +1462,8 @@ services:
       PERSONA_URL: ${PERSONA_URL:-http://persona:8002}
       PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}
       PANTHEON_PERSONA_SERVICE_ACTOR_ID: operator-bff
+      PERSONA_EVALUATOR_URL: http://persona-evaluator-agent:8105
+      PERSONA_EVALUATOR_READ_TOKEN: ${PERSONA_EVALUATOR_READ_TOKEN:-persona-evaluator-read-internal}
       PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
       PANTHEON_SOURCE_INGEST_API_URL: http://source-ingest:8097
       # DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001: the dev paper bootstrap
@@ -1519,22 +1513,29 @@ services:
         condition: service_healthy
       training-session-svc:
         condition: service_healthy
+        required: false
       policy-learning-svc:
         condition: service_healthy
+        required: false
       research-orchestrator-svc:
         condition: service_healthy
+        required: false
       research-worker-gateway-svc:
         condition: service_healthy
+        required: false
       memory:
         condition: service_healthy
       openclaw-gateway-adapter:
         condition: service_healthy
+        required: false
       paper-fleet-reconciler:
         condition: service_healthy
+        required: false
       governance:
         condition: service_healthy
       runtime-manager:
         condition: service_healthy
+        required: false
       deployment:
         condition: service_healthy
       capital:
@@ -1573,6 +1574,7 @@ services:
       start_period: 5s
 
   agora-interaction-worker:
+    profiles: ["root", "workers"]
     stop_grace_period: 30s
     build:
       context: .
@@ -1599,17 +1601,23 @@ services:
       AGORA_RESEARCH_STORE_SCHEMA: ${AGORA_RESEARCH_STORE_SCHEMA:-agora_research}
       AGORA_RESEARCH_BACKEND_URL: ${AGORA_RESEARCH_BACKEND_URL:-http://research-orchestrator-svc:8101}
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
-      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-default}
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PANTHEON_AGORA_WORKER_ID: agora-interaction-worker
+      PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
     volumes:
       - bff-data:/data/bff
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
       operator-bff:
         condition: service_healthy
+        required: false
       research-orchestrator-svc:
         condition: service_healthy
+        required: false
     healthcheck:
       test: ["CMD", "python", "scripts/run_agora_interaction_worker.py", "--healthcheck"]
       interval: 30s
@@ -1618,6 +1626,7 @@ services:
       start_period: 5s
 
   loop-run-projector-scheduler:
+    profiles: ["core", "root"]
     # Preserve the legacy service key so deploys replace the snapshot cron
     # instead of leaving a second writer.  The implementation is now the
     # canonical committed-telemetry lifecycle projector.
@@ -1707,10 +1716,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
       telemetry:
         condition: service_healthy
 
+        required: false
   persona:
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/control-plane/persona/Dockerfile
@@ -1718,6 +1730,7 @@ services:
     environment:
       PERSONA_TRAINING_TARGET_GOVERNANCE_BASE_URL: ${PERSONA_TRAINING_TARGET_GOVERNANCE_BASE_URL:-http://governance:8082}
       PERSONA_GOVERNANCE_SERVICE_TOKEN: ${PERSONA_GOVERNANCE_SERVICE_TOKEN:-}
+      PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE: ${PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE:-}
       PERSONA_GOVERNANCE_TIMEOUT_SECONDS: ${PERSONA_GOVERNANCE_TIMEOUT_SECONDS:-5}
       PORT: "8002"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -1728,11 +1741,20 @@ services:
       PERSONA_CAPABILITY_STORE_DSN: ${PERSONA_CAPABILITY_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PERSONA_CAPABILITY_STORE_TABLE: ${PERSONA_CAPABILITY_STORE_TABLE:-persona.capability_snapshots}
       PERSONA_AUTH_MODE: ${PERSONA_AUTH_MODE:-strict}
+      # Verify the operator JWT the BFF forwards using the BFF's own signing
+      # configuration (same secret/issuer/audience the BFF verifies with).
+      PERSONA_JWT_SECRET: ${PERSONA_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-pantheon-local-bff-jwt-secret}}
+      PERSONA_JWT_ISSUER: ${PERSONA_JWT_ISSUER:-${PANTHEON_BFF_JWT_ISSUER:-}}
+      PERSONA_JWT_AUDIENCE: ${PERSONA_JWT_AUDIENCE:-${PANTHEON_BFF_JWT_AUDIENCE:-}}
       PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}
       PANTHEON_PERSONA_SERVICE_ACTOR_ID: operator-bff
+      PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       PANTHEON_REGISTRY_URL: http://registry:8087
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+    volumes:
+      - dev-paper-persona-tokens:/run/pantheon-principals:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -1752,6 +1774,7 @@ services:
       start_period: 5s
 
   router:
+    profiles: ["core", "root"]
     build:
       context: services/control-plane/router
       dockerfile: Dockerfile
@@ -1776,6 +1799,7 @@ services:
       start_period: 5s
 
   web-channel:
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/channels/web/Dockerfile
@@ -1797,6 +1821,7 @@ services:
       start_period: 5s
 
   evaluation:
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/evaluation/Dockerfile
@@ -1824,6 +1849,7 @@ services:
       start_period: 5s
 
   feedback:
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/control-plane/feedback/Dockerfile
@@ -1843,6 +1869,7 @@ services:
       start_period: 5s
 
   memory:
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/memory/Dockerfile
@@ -1854,6 +1881,10 @@ services:
       # Dev rollback defaults to JSON; staging/prod select postgres via env.
       PANTHEON_MEMORY_STORE_BACKEND: ${PANTHEON_MEMORY_STORE_BACKEND:-json}
       PANTHEON_MEMORY_STORE_DSN: ${PANTHEON_MEMORY_STORE_DSN:-}
+      PANTHEON_MEMORY_AUTH_MODE: strict
+      PANTHEON_MEMORY_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}
+      PANTHEON_MEMORY_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
+      PANTHEON_MEMORY_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
       PANTHEON_MEMORY_DATA_DIR: /data/memory
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
@@ -1879,6 +1910,7 @@ services:
       start_period: 5s
 
   registry:
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/registry/Dockerfile
@@ -1898,27 +1930,8 @@ services:
       REGISTRY_STORE_DSN: ${REGISTRY_STORE_DSN:-}
       PANTHEON_REGISTRY_AUTH_MODE: ${PANTHEON_REGISTRY_AUTH_MODE:-strict}
       PANTHEON_REGISTRY_JWT_SECRET: ${PANTHEON_REGISTRY_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-pantheon-local-registry-jwt-secret}}
-      # Chained from operator-bff's owner-agnostic signer values (see the
-      # CAPITAL_JWT_ISSUER/AUDIENCE comment on the operator-bff service) so the
-      # postgres-backed strict-auth guard below has a non-empty expected
-      # issuer/audience that actually matches what operator-bff signs.
-      # NOTE: docker compose interpolation resolves every service's ${VAR:-...}
-      # independently against the top-level shell/.env environment -- it does
-      # NOT read another service's own already-resolved container value. So
-      # chaining only through ${CAPITAL_JWT_ISSUER:-...} is correct when the
-      # deploy environment exports CAPITAL_JWT_ISSUER itself, but silently
-      # breaks whenever only PANTHEON_DEV_BFF_JWT_ISSUER/AUDIENCE is set
-      # (the dev-paper-principal-issuer profile's actual export contract):
-      # operator-bff's own CAPITAL_JWT_ISSUER line falls through to
-      # PANTHEON_DEV_BFF_JWT_ISSUER and signs with it, but this line's
-      # ${CAPITAL_JWT_ISSUER:-...} reads the same (unset) shell variable and
-      # falls straight to the literal default instead, so registry validates
-      # against a different issuer/audience than operator-bff actually signs.
-      # Reproduced with `docker compose --env-file /dev/null config` setting
-      # only PANTHEON_DEV_BFF_JWT_ISSUER/AUDIENCE. Add the same
-      # PANTHEON_DEV_BFF_JWT_ISSUER/AUDIENCE fallback level operator-bff's own
-      # CAPITAL_JWT_ISSUER/AUDIENCE line already has, so both resolve
-      # identically for every combination of which variable is actually set.
+      # Chained from operator-bff signer values with PANTHEON_DEV_BFF_JWT_ISSUER/AUDIENCE
+      # fallback so registry strict-auth matches operator-bff regardless of which var is set.
       PANTHEON_REGISTRY_JWT_ISSUER: ${PANTHEON_REGISTRY_JWT_ISSUER:-${CAPITAL_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-pantheon-dev-control-plane}}}
       PANTHEON_REGISTRY_JWT_AUDIENCE: ${PANTHEON_REGISTRY_JWT_AUDIENCE:-${CAPITAL_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-pantheon-dev-owners}}}
       PANTHEON_REGISTRY_ROLE_CLAIMS: ${PANTHEON_REGISTRY_ROLE_CLAIMS:-roles,role}
@@ -1946,6 +1959,7 @@ services:
       start_period: 5s
 
   optimizer-svc:
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/optimizer-svc/Dockerfile
@@ -1973,6 +1987,7 @@ services:
       start_period: 5s
 
   promotion:
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/promotion/Dockerfile
@@ -2004,6 +2019,7 @@ services:
       start_period: 5s
 
   capital:
+    profiles: ["core", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -2012,6 +2028,11 @@ services:
     environment:
       PORT: "8092"
       CAPITAL_DATA_DIR: /data/capital
+      CAPITAL_GOVERNANCE_BASE_URL: ${CAPITAL_GOVERNANCE_BASE_URL:-http://governance:8082}
+      CAPITAL_GOVERNANCE_SERVICE_TOKEN: ${CAPITAL_GOVERNANCE_SERVICE_TOKEN:-}
+      CAPITAL_GOVERNANCE_SERVICE_TOKEN_FILE: ${CAPITAL_GOVERNANCE_SERVICE_TOKEN_FILE:-}
+      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
+      PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
@@ -2036,8 +2057,10 @@ services:
       CAPITAL_JWT_AUDIENCE: ${CAPITAL_JWT_AUDIENCE:-}
       CAPITAL_ROLE_CLAIMS: ${CAPITAL_ROLE_CLAIMS:-roles,role}
       CAPITAL_PERMISSIVE_ALLOWED_TENANTS: ${CAPITAL_PERMISSIVE_ALLOWED_TENANTS:-${PANTHEON_BFF_TENANT_ID:-default}}
+      CAPITAL_ALLOWED_READER_SERVICES: ${CAPITAL_ALLOWED_READER_SERVICES:-control-plane-bff,runtime-manager}
     volumes:
       - capital-data:/data/capital
+      - dev-paper-capital-tokens:/run/pantheon-principals:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -2051,6 +2074,7 @@ services:
       start_period: 5s
 
   deployment:
+    profiles: ["core", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -2068,6 +2092,8 @@ services:
       DEPLOYMENT_REGISTRY_SERVICE_TOKEN: ${DEPLOYMENT_REGISTRY_SERVICE_TOKEN:-}
       DEPLOYMENT_REGISTRY_SERVICE_TOKEN_FILE: ${DEPLOYMENT_REGISTRY_SERVICE_TOKEN_FILE:-}
       DEPLOYMENT_REGISTRY_TIMEOUT_SECONDS: ${DEPLOYMENT_REGISTRY_TIMEOUT_SECONDS:-5}
+      DEPLOYMENT_CAPITAL_SERVICE_TOKEN: ${DEPLOYMENT_CAPITAL_SERVICE_TOKEN:-}
+      DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE: ${DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE:-}
       PORT: "8095"
       DEPLOYMENT_DATA_DIR: /data/governance
       PANTHEON_GOVERNANCE_DATA_DIR: /data/governance
@@ -2075,6 +2101,10 @@ services:
       PANTHEON_PERSONA_BINDING_STORE_PATH: /data/capital/persona_capital_bindings.json
       PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
       PANTHEON_DEPLOYMENT_AUTH_MODE: ${PANTHEON_DEPLOYMENT_AUTH_MODE:-permissive}
+      PANTHEON_DEPLOYMENT_JWT_SECRET: ${PANTHEON_DEPLOYMENT_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}
+      PANTHEON_DEPLOYMENT_JWT_ISSUER: ${PANTHEON_DEPLOYMENT_JWT_ISSUER:-${PANTHEON_BFF_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-}}}
+      PANTHEON_DEPLOYMENT_JWT_AUDIENCE: ${PANTHEON_DEPLOYMENT_JWT_AUDIENCE:-${PANTHEON_BFF_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-}}}
+      PANTHEON_DEPLOYMENT_JWKS_URI: ${PANTHEON_DEPLOYMENT_JWKS_URI:-${PANTHEON_BFF_JWKS_URI:-${PANTHEON_DEV_BFF_JWKS_URI:-}}}
     volumes:
       - dev-paper-deployment-tokens:/run/pantheon-principals:ro
       - governance-data:/data/governance
@@ -2093,6 +2123,7 @@ services:
       start_period: 5s
 
   deployment-outbox-consumer:
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/deployment/Dockerfile
@@ -2107,6 +2138,8 @@ services:
       RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN_FILE: ${DEPLOYMENT_GOVERNANCE_SERVICE_TOKEN_FILE:-}
       RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN: ${DEPLOYMENT_REGISTRY_SERVICE_TOKEN:-}
       RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN_FILE: ${DEPLOYMENT_REGISTRY_SERVICE_TOKEN_FILE:-}
+      RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN: ${DEPLOYMENT_CAPITAL_SERVICE_TOKEN:-}
+      RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN_FILE: ${DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE:-}
       DEPLOYMENT_API_URL: http://deployment:8095
       DEPLOYMENT_OUTBOX_CONSUMER_NAME: ${DEPLOYMENT_OUTBOX_CONSUMER_NAME:-deployment-outbox-consumer}
       DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS: ${DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS:-10}
@@ -2121,20 +2154,7 @@ services:
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
       PANTHEON_DEPLOYMENT_SERVICE_TOKEN: ${PANTHEON_DEPLOYMENT_SERVICE_TOKEN:-deployment-outbox-consumer:deployment_consumer}
-      # NOTE (DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001): every other
-      # service in this file chains its tenant default through
-      # ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}; this var
-      # previously skipped that chain and hardcoded 'default'. A real dev
-      # paper baseline reproduction creates every persona/plan/saga under
-      # tenant 'tenant-dev' (the dev-login operator's default allowed
-      # tenant, matching PANTHEON_DEV_BFF_TENANT_ID's own 'tenant-dev'
-      # default), so the outbox consumer's X-Tenant-Id header never matched
-      # any queued event's tenant and it silently claimed zero events
-      # forever -- the saga never advanced past 'runtime.binding.requested'
-      # and the provisioning coordinator's readback eventually timed out.
-      # Chain through the same convention plus the dev-paper tenant so this
-      # only changes behavior for a deploy that actually configured one of
-      # those, never for an environment that left every tenant var unset.
+      # Chain tenant default through PANTHEON_TENANT_ID/PANTHEON_BFF_TENANT_ID for dev tenant match.
       PANTHEON_DEPLOYMENT_TENANT_ID: ${PANTHEON_DEPLOYMENT_TENANT_ID:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-default}}}}
       PANTHEON_REGISTRY_API_URL: http://registry:8087
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
@@ -2147,8 +2167,10 @@ services:
     depends_on:
       deployment:
         condition: service_healthy
+        required: false
       runtime-manager:
         condition: service_healthy
+        required: false
     healthcheck:
       test:
         [
@@ -2164,6 +2186,7 @@ services:
       start_period: 60s
 
   evolution:
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
@@ -2173,6 +2196,9 @@ services:
       PORT: "8093"
       EVOLUTION_DATA_DIR: /data/evolution
       INCIDENT_DATA_DIR: /data/incidents
+      EVOLUTION_GOVERNANCE_BASE_URL: ${EVOLUTION_GOVERNANCE_BASE_URL:-http://governance:8082}
+      EVOLUTION_GOVERNANCE_SERVICE_TOKEN: ${EVOLUTION_GOVERNANCE_SERVICE_TOKEN:-}
+      EVOLUTION_GOVERNANCE_SERVICE_TOKEN_FILE: ${EVOLUTION_GOVERNANCE_SERVICE_TOKEN_FILE:-}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
       EVOLUTION_STORE_BACKEND: ${EVOLUTION_STORE_BACKEND:-json}
@@ -2196,9 +2222,11 @@ services:
     volumes:
       - evolution-data:/data/evolution
       - incident-data:/data/incidents
+      - dev-paper-evolution-tokens:/run/pantheon-principals:ro
     depends_on:
       runtime-manager:
         condition: service_healthy
+        required: false
       governance:
         condition: service_healthy
     ports:
@@ -2211,6 +2239,7 @@ services:
       start_period: 5s
 
   evolution-dispatch-worker:
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
@@ -2220,6 +2249,9 @@ services:
     environment:
       EVOLUTION_API_URL: http://evolution:8093
       EVOLUTION_DATA_DIR: /data/evolution
+      EVOLUTION_GOVERNANCE_BASE_URL: ${EVOLUTION_GOVERNANCE_BASE_URL:-http://governance:8082}
+      EVOLUTION_GOVERNANCE_SERVICE_TOKEN: ${EVOLUTION_GOVERNANCE_SERVICE_TOKEN:-}
+      EVOLUTION_GOVERNANCE_SERVICE_TOKEN_FILE: ${EVOLUTION_GOVERNANCE_SERVICE_TOKEN_FILE:-}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
       EVOLUTION_STORE_BACKEND: ${EVOLUTION_STORE_BACKEND:-json}
@@ -2233,9 +2265,11 @@ services:
       EVOLUTION_DISPATCH_HEALTH_FILE: ${EVOLUTION_DISPATCH_HEALTH_FILE:-/tmp/evolution-dispatch-health.json}
     volumes:
       - evolution-data:/data/evolution
+      - dev-paper-evolution-tokens:/run/pantheon-principals:ro
     depends_on:
       evolution:
         condition: service_healthy
+        required: false
     healthcheck:
       test: ["CMD", "python", "-m", "services.evolution.dispatch_worker", "healthcheck"]
       interval: 10s
@@ -2244,6 +2278,7 @@ services:
       start_period: 10s
 
   evolution-daily-sweep-scheduler:
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
@@ -2262,6 +2297,7 @@ services:
     depends_on:
       evolution:
         condition: service_healthy
+        required: false
     healthcheck:
       test: ["CMD", "python", "-m", "services.evolution.scheduler_worker", "healthcheck"]
       interval: 30s
@@ -2270,6 +2306,7 @@ services:
       start_period: 30s
 
   evolution-threshold-sweep-producer:
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
@@ -2294,8 +2331,10 @@ services:
     depends_on:
       telemetry:
         condition: service_healthy
+        required: false
       incidents:
         condition: service_healthy
+        required: false
     healthcheck:
       test: ["CMD", "python", "-m", "services.evolution.threshold_sweep_worker", "healthcheck"]
       interval: 30s
@@ -2304,6 +2343,7 @@ services:
       start_period: 30s
 
   lineage-read:
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/lineage-read/Dockerfile
@@ -2323,6 +2363,7 @@ services:
       start_period: 5s
 
   paper-fleet-reconciler:
+    profiles: ["execution", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -2358,6 +2399,7 @@ services:
         condition: service_healthy
       source-ingest:
         condition: service_healthy
+        required: false
     ports:
       - "${PAPER_FLEET_RECONCILER_PORT:-18011}:8011"
     healthcheck:
@@ -2368,6 +2410,7 @@ services:
       start_period: 10s
 
   paper-signal-producer:
+    profiles: ["execution", "root"]
     build:
       context: .
       dockerfile: services/execution/lean_runtime/Dockerfile
@@ -2398,6 +2441,7 @@ services:
         condition: service_healthy
       source-ingest:
         condition: service_healthy
+        required: false
     healthcheck:
       test: ["CMD", "python", "-m", "services.execution.lean_runtime.paper_signal_producer", "healthcheck"]
       interval: 30s
@@ -2406,6 +2450,7 @@ services:
       start_period: 30s
 
   reconciliation-drift-svc:
+    profiles: ["core", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -2440,6 +2485,7 @@ services:
         condition: service_healthy
       runtime-manager:
         condition: service_healthy
+        required: false
       postgres:
         condition: service_healthy
       incidents:
@@ -2458,6 +2504,7 @@ services:
       start_period: 30s
 
   reconciliation-drift-consumer:
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -2481,8 +2528,10 @@ services:
     depends_on:
       reconciliation-drift-svc:
         condition: service_healthy
+        required: false
       telemetry:
         condition: service_healthy
+        required: false
     healthcheck:
       test: ["CMD", "python", "services/reconciliation-drift/consumer.py", "healthcheck"]
       interval: 30s
@@ -2491,6 +2540,7 @@ services:
       start_period: 300s
 
   reconciliation-drift-scheduler:
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -2509,6 +2559,7 @@ services:
     depends_on:
       reconciliation-drift-svc:
         condition: service_healthy
+        required: false
     healthcheck:
       test: ["CMD", "python", "services/reconciliation-drift/scheduler_worker.py", "healthcheck"]
       interval: 30s
@@ -2517,6 +2568,7 @@ services:
       start_period: 300s
 
   reconciliation-drift-incident-listener:
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -2534,20 +2586,18 @@ services:
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE:-/tmp/reconciliation-drift-incident-listener-health.json}
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS:-300}
       RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
-      # Must match reconciliation-drift-svc's own _configured_tenant_id()
-      # fallback ("default" when PANTHEON_TENANT_ID/RECONCILIATION_DRIFT_DEFAULT_TENANT_ID
-      # are unset) so post_incident_trigger() has a tenant to put in
-      # X-Tenant-Id when the fetched incident carries none. Without this the
-      # svc's token-auth middleware rejects every consume call with 400
-      # "X-Tenant-Id is required", and the listener silently retries forever.
-      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-default}
+      # Fetches from incidents, whose tenant is the product/BFF fallback chain;
+      # supplies X-Tenant-Id when a fetched incident carries none (else 400).
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
     volumes:
       - reconciliation-drift-data:/data/reconciliation-drift
     depends_on:
       reconciliation-drift-svc:
         condition: service_healthy
+        required: false
       incidents:
         condition: service_healthy
+        required: false
     healthcheck:
       test: ["CMD", "python", "services/reconciliation-drift/incident_listener.py", "healthcheck"]
       interval: 30s
@@ -2556,6 +2606,7 @@ services:
       start_period: 300s
 
   research-worker-gateway-svc:
+    profiles: ["research", "root"]
     build:
       context: .
       dockerfile: services/research-worker-gateway/Dockerfile
@@ -2579,6 +2630,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
       research-orchestrator-svc:
         condition: service_healthy
     ports:
@@ -2627,14 +2679,19 @@ services:
     depends_on:
       signal-store:
         condition: service_healthy
+        required: false
       runtime-manager:
         condition: service_healthy
+        required: false
       telemetry:
         condition: service_healthy
+        required: false
       source-ingest:
         condition: service_healthy
+        required: false
       operator-bff:
         condition: service_healthy
+        required: false
     volumes:
       - runtime-data:/data/runtime
     ports:
@@ -2683,72 +2740,91 @@ services:
     depends_on:
       consultation-svc:
         condition: service_healthy
+        required: false
       source-ingest:
         condition: service_healthy
+        required: false
       search-svc:
         condition: service_healthy
+        required: false
       training-session-svc:
         condition: service_healthy
+        required: false
       policy-learning-svc:
         condition: service_healthy
+        required: false
       research-orchestrator-svc:
         condition: service_healthy
+        required: false
       reconciliation-drift-svc:
         condition: service_healthy
+        required: false
       research-worker-gateway-svc:
         condition: service_healthy
+        required: false
       openclaw-gateway-adapter:
         condition: service_healthy
+        required: false
       web-channel:
         condition: service_healthy
+        required: false
       governance:
         condition: service_healthy
+        required: false
       runtime-manager:
         condition: service_healthy
+        required: false
       telemetry:
         condition: service_healthy
+        required: false
       incidents:
         condition: service_healthy
+        required: false
       postmortems:
         condition: service_healthy
+        required: false
       capital:
         condition: service_healthy
+        required: false
       deployment:
         condition: service_healthy
+        required: false
       evolution:
         condition: service_healthy
+        required: false
       lineage-read:
         condition: service_healthy
+        required: false
       operator-bff:
         condition: service_healthy
+        required: false
       persona:
         condition: service_healthy
+        required: false
       router:
         condition: service_healthy
+        required: false
       evaluation:
         condition: service_healthy
+        required: false
       feedback:
         condition: service_healthy
+        required: false
       memory:
         condition: service_healthy
+        required: false
       registry:
         condition: service_healthy
+        required: false
       optimizer-svc:
         condition: service_healthy
+        required: false
       promotion:
         condition: service_healthy
+        required: false
     command: ["python", "scripts/smoke_honest_stack.py"]
 
-  # ===========================================================================
-  # Activation-ready OSS smoke matrix — disabled by default.
-  #
-  # Run:
-  #   docker compose --profile activation-ready-smoke run --rm oss-activation-ready-smoke-matrix
-  #
-  # This CI-friendly matrix proves default gates fail closed, explicit offline
-  # test gates can emit local artifacts, and registry/governance/broker/live
-  # writes remain absent.
-  # ===========================================================================
+  # Activation-ready OSS smoke matrix — gated under activation-ready-smoke profile.
 
   oss-activation-ready-smoke-matrix:
     profiles: ["activation-ready-smoke"]
@@ -2761,17 +2837,7 @@ services:
     command: ["python", "scripts/smoke_oss_activation_ready_matrix.py"]
     restart: "no"
 
-  # ===========================================================================
-  # OpenClaw activation-ready E2E smoke — disabled by default.
-  #
-  # Run:
-  #   docker compose --profile openclaw-activation-ready-e2e run --rm openclaw-activation-ready-e2e
-  #
-  # The smoke starts local fake OpenClaw/runtime-manager/broker fixtures inside
-  # the container and proves facade, session lifecycle, tool bridge, gated paper
-  # simulation, and explicit live denial without publishing ports or enabling
-  # production broker paths.
-  # ===========================================================================
+  # OpenClaw activation-ready E2E smoke — gated under openclaw-activation-ready-e2e profile.
 
   openclaw-activation-ready-e2e:
     profiles: ["openclaw-activation-ready-e2e"]
@@ -2789,17 +2855,9 @@ services:
     command: ["python", "scripts/smoke_openclaw_activation_ready_e2e.py"]
     restart: "no"
 
-  # ===========================================================================
-  # Source/search bounded CI smoke — disabled by default.
-  #
-  # Run:
-  #   docker compose --profile source-search-bounded run --rm --use-aliases source-search-bounded-smoke
-  #
-  # The smoke verifies configured static_records and guarded external_feed
-  # connectors, DLQ/frontier/audit replay, incremental search refresh, and no
-  # unrestricted crawler mode.
-  # ===========================================================================
+  # Source/search bounded CI smoke — gated under source-search-bounded profile.
 
+  # Run: docker compose --profile source-search-bounded run --rm --use-aliases source-search-bounded-smoke
   source-search-bounded-smoke:
     profiles: ["source-search-bounded"]
     build:
@@ -2815,26 +2873,14 @@ services:
     depends_on:
       source-ingest:
         condition: service_healthy
+        required: false
       search-svc:
         condition: service_healthy
+        required: false
     command: ["python", "scripts/smoke_source_search_bounded.py"]
     restart: "no"
 
-  # ===========================================================================
-  # Dormant OSS deferred-prep smoke profiles — activation-gated; not started by default
-  #
-  # Run a single service:
-  #   docker compose --profile dormant-smoke up --wait mlflow-dormant-smoke
-  #   docker compose --profile dormant-smoke run --rm finrl-dormant-smoke
-  #   docker compose --profile dormant-smoke run --rm rllib-dormant-smoke
-  #   docker compose --profile dormant-smoke run --rm ray-tune-dormant-smoke
-  #   docker compose --profile dormant-smoke run --rm qlib-dormant-smoke
-  #   docker compose --profile dormant-smoke run --rm trl-dormant-smoke
-  #   docker compose --profile dormant-smoke run --rm experiments-dormant-smoke
-  #
-  # No ports, secrets, or live broker routes are exposed in this profile.
-  # Each service exits after the smoke run completes.
-  # ===========================================================================
+  # Dormant OSS smoke profiles — activation-gated under profile dormant-smoke.
 
   mlflow-dormant-smoke:
     profiles: ["dormant-smoke"]
@@ -2964,6 +3010,61 @@ services:
     command: ["python", "smoke_test.py", "--backend", "memory"]
     restart: "no"
 
+  monitor-agent:
+    profiles: ["core", "root"]
+    build:
+      context: .
+      dockerfile: services/monitor-agent/Dockerfile
+    restart: unless-stopped
+    environment:
+      PANTHEON_INCIDENTS_API_URL: http://incidents:8090
+      PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
+      PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      MONITOR_AGENT_INTERVAL_SECONDS: ${MONITOR_AGENT_INTERVAL_SECONDS:-900}
+      MONITOR_AGENT_STATE_PATH: /data/monitor-agent/creations.json
+    volumes:
+      - monitor-agent-data:/data/monitor-agent
+    depends_on:
+      incidents:
+        condition: service_healthy
+      openclaw-gateway-adapter:
+        condition: service_started
+
+        required: false
+  persona-evaluator-agent:
+    profiles: ["core", "root"]
+    build:
+      context: .
+      dockerfile: services/persona-evaluator-agent/Dockerfile
+    restart: unless-stopped
+    environment:
+      RANKING_STORE_DSN: ${RANKING_STORE_DSN:-${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}}
+      RANKING_STORE_TABLE: ${RANKING_STORE_TABLE:-rankings.rankings}
+      PERSONA_EVALUATOR_BFF_URL: http://operator-bff:8001
+      PERSONA_EVALUATOR_BFF_TOKEN: ${PERSONA_EVALUATOR_BFF_TOKEN:-}
+      PERSONA_EVALUATOR_BFF_TOKEN_FILE: ${PERSONA_EVALUATOR_BFF_TOKEN_FILE:-}
+      PANTHEON_GOVERNANCE_API_URL: http://governance:8082
+      PERSONA_EVALUATOR_GOVERNANCE_TOKEN: ${PERSONA_EVALUATOR_GOVERNANCE_TOKEN:-}
+      PERSONA_EVALUATOR_GOVERNANCE_TOKEN_FILE: ${PERSONA_EVALUATOR_GOVERNANCE_TOKEN_FILE:-}
+      PERSONA_EVALUATOR_READ_TOKEN: ${PERSONA_EVALUATOR_READ_TOKEN:-persona-evaluator-read-internal}
+      PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      PERSONA_EVALUATOR_INTERVAL_SECONDS: ${PERSONA_EVALUATOR_INTERVAL_SECONDS:-900}
+      PERSONA_EVALUATOR_STATE_PATH: /data/persona-evaluator-agent/state.json
+    volumes:
+      - persona-evaluator-agent-data:/data/persona-evaluator-agent
+      - dev-paper-persona-evaluator-tokens:/run/pantheon-principals:ro
+    depends_on:
+      governance:
+        condition: service_healthy
+      openclaw-gateway-adapter:
+        condition: service_started
+
+        required: false
 volumes:
   dev-paper-deployment-tokens:
   dev-paper-registry-tokens:
@@ -2972,6 +3073,10 @@ volumes:
   dev-paper-bff-tokens:
   dev-paper-distillation-tokens:
   dev-paper-alpha-replication-tokens:
+  dev-paper-persona-tokens:
+  dev-paper-capital-tokens:
+  dev-paper-evolution-tokens:
+  dev-paper-persona-evaluator-tokens:
   broker-data:
   bff-data:
   capital-data:
@@ -2982,9 +3087,11 @@ volumes:
   incident-data:
   minio-data:
   memory-data:
+  monitor-agent-data:
   nats-data:
   openclaw-data:
   openclaw-adapter-data:
+  persona-evaluator-agent-data:
   policy-learning-data:
   postgres-data:
   promotion-data:

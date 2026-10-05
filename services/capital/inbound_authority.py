@@ -177,11 +177,16 @@ def authority_configuration_health(*, persistence_enforced: bool) -> dict[str, A
         "allowed_services": _csv(
             os.getenv("CAPITAL_ALLOWED_CALLER_SERVICES", "control-plane-bff")
         ),
+        "allowed_reader_services": _csv(
+            os.getenv("CAPITAL_ALLOWED_READER_SERVICES")
+            or os.getenv("CAPITAL_ALLOWED_CALLER_SERVICES", "control-plane-bff")
+        ),
     }
 
 
 def authenticate_capital_request(
     *,
+    method: str = "POST",
     authorization: Optional[str],
     tenant_id: Optional[str],
     actor_service: Optional[str],
@@ -207,42 +212,30 @@ def authenticate_capital_request(
                     "reviewer",
                     "admin",
                     "risk_owner",
+                    "viewer",
+                    "reader",
+                    "capital-reader",
                 }
             ),
             token_kind="test-disabled",
         )
 
     clean_tenant = _clean(tenant_id)
-    if not clean_tenant:
-        raise CapitalInboundAuthorityError(
-            "TENANT_REQUIRED",
-            "X-Tenant-Id is required for Capital mutations",
-            400,
-        )
     clean_service = _clean(actor_service)
-    if not clean_service:
-        raise CapitalInboundAuthorityError(
-            "ACTOR_SERVICE_REQUIRED",
-            "X-Pantheon-Service is required for Capital mutations",
-            400,
-        )
-    allowed_services = set(
-        _csv(os.getenv("CAPITAL_ALLOWED_CALLER_SERVICES", "control-plane-bff"))
+    is_read = str(method or "").upper() in {"GET", "HEAD"}
+    allowed_setting = (
+        (os.getenv("CAPITAL_ALLOWED_READER_SERVICES") if is_read else None)
+        or os.getenv("CAPITAL_ALLOWED_CALLER_SERVICES", "control-plane-bff")
     )
-    if clean_service not in allowed_services:
-        raise CapitalInboundAuthorityError(
-            "ACTOR_SERVICE_FORBIDDEN",
-            "Caller service is not authorized for Capital mutations",
-            403,
-        )
-    allowed_roles = tuple(
-        _csv(
-            os.getenv(
-                "CAPITAL_ALLOWED_ROLES",
-                "capital.admin,persona.admin,operator,approver,reviewer,admin,risk_owner",
-            )
-        )
-    )
+    allowed_services = set(_csv(allowed_setting))
+    if not authorization:
+        if not clean_tenant:
+            raise CapitalInboundAuthorityError("TENANT_REQUIRED", "X-Tenant-Id is required for Capital mutations", 400)
+        if not clean_service:
+            raise CapitalInboundAuthorityError("ACTOR_SERVICE_REQUIRED", "X-Pantheon-Service is required for Capital mutations", 400)
+        if clean_service not in allowed_services and "*" not in allowed_services:
+            raise CapitalInboundAuthorityError("ACTOR_SERVICE_FORBIDDEN", "Caller service is not authorized for Capital mutations", 403)
+    allowed_roles = tuple(_csv(os.getenv("CAPITAL_ALLOWED_ROLES", "capital.admin,persona.admin,operator,approver,reviewer,admin,risk_owner,viewer,reader,capital-reader")))
     auth_env = _auth_env()
     try:
         context: AuthContext = validate_request_auth(
@@ -257,12 +250,13 @@ def authenticate_capital_request(
     bound_services = _claim_strings(context.claims, _SERVICE_CLAIMS)
     if context.token_kind == "structured":
         bound_services.append(context.actor_id)
+    clean_service = clean_service or (bound_services[0] if bound_services else None)
+    if not clean_service:
+        raise CapitalInboundAuthorityError("ACTOR_SERVICE_REQUIRED", "X-Pantheon-Service is required for Capital mutations", 400)
+    if clean_service not in allowed_services and "*" not in allowed_services:
+        raise CapitalInboundAuthorityError("ACTOR_SERVICE_FORBIDDEN", "Caller service is not authorized for Capital mutations", 403)
     if clean_service not in bound_services:
-        raise CapitalInboundAuthorityError(
-            "ACTOR_SERVICE_MISMATCH",
-            "X-Pantheon-Service does not match the verified token",
-            403,
-        )
+        raise CapitalInboundAuthorityError("ACTOR_SERVICE_MISMATCH", "X-Pantheon-Service does not match the verified token", 403)
     allowed_tenants = _claim_strings(context.claims, _TENANT_CLAIMS)
     if context.token_kind == "structured":
         allowed_tenants.extend(_csv(os.getenv("CAPITAL_PERMISSIVE_ALLOWED_TENANTS")))
@@ -271,6 +265,14 @@ def authenticate_capital_request(
             "TENANT_CLAIM_REQUIRED",
             "Verified caller token does not contain tenant authority",
             403,
+        )
+    if not clean_tenant and len(allowed_tenants) == 1 and allowed_tenants[0] != "*":
+        clean_tenant = allowed_tenants[0]
+    if not clean_tenant:
+        raise CapitalInboundAuthorityError(
+            "TENANT_REQUIRED",
+            "X-Tenant-Id is required for Capital mutations",
+            400,
         )
     if "*" not in allowed_tenants and clean_tenant not in allowed_tenants:
         raise CapitalInboundAuthorityError(

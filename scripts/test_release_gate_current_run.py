@@ -89,7 +89,6 @@ def _strict_dry_run_items(*, with_side_effect_checks: bool = True, mismatched_re
         {"family": "dry-run-strategy-create-readback-not-persisted", "ok": True, "error_envelope": True, "error_envelope_shape": canonical_error_shape()},
         {"family": "dry-run-ranking-formula-create", "ok": True, "extracted": {"data.id": ranking_formula_id}},
         {"family": "dry-run-ranking-formula-create-readback-not-persisted", "ok": True, "error_envelope": True, "error_envelope_shape": canonical_error_shape()},
-        {"family": "dry-run-v5-intervention-claim", "ok": True},
         {"family": "dry-run-invalid-strategy", "ok": True, "error_envelope": True, "error_envelope_shape": canonical_error_shape()},
         {"family": "dry-run-invalid-ranking-formula", "ok": True, "error_envelope": True, "error_envelope_shape": canonical_error_shape()},
     ]
@@ -98,7 +97,6 @@ def _strict_dry_run_items(*, with_side_effect_checks: bool = True, mismatched_re
         "dry-run-strategy-create-readback-not-persisted": ("GET", f"/bff/strategies/{strategy_id}", 404),
         "dry-run-ranking-formula-create": ("POST", "/bff/ranking-formulas", 200),
         "dry-run-ranking-formula-create-readback-not-persisted": ("GET", f"/bff/ranking-formulas/{ranking_formula_id}", 404),
-        "dry-run-v5-intervention-claim": ("POST", "/bff/v5/interventions/int-live-dry-run/claim", 200),
         "dry-run-invalid-strategy": ("POST", "/bff/strategies", 422),
         "dry-run-invalid-ranking-formula": ("POST", "/bff/ranking-formulas", 422),
     }
@@ -145,13 +143,6 @@ def _strict_dry_run_items(*, with_side_effect_checks: bool = True, mismatched_re
             "error_code": "RESOURCE_NOT_FOUND",
             "target_family": "dry-run-ranking-formula-create",
             "target_id_sha256_12": _sha256_12("other-ranking-formula-id" if mismatched_readback_target else ranking_formula_id),
-        },
-        {
-            "kind": "dry_run_command_meta",
-            "ok": True,
-            "dryRun": True,
-            "durable": False,
-            "liveCapitalSideEffects": False,
         },
         {"kind": "validation_rejected_before_persistence", "ok": True, "error_code": "VALIDATION_FAILED"},
         {"kind": "validation_rejected_before_persistence", "ok": True, "error_code": "VALIDATION_FAILED"},
@@ -294,13 +285,12 @@ def _strict_rbac_matrix_items(
     read_paths = {
         "bff-strategies": "/bff/strategies",
         "bff-ranking-formulas": "/bff/ranking-formulas",
-        "bff-agora-signals": "/bff/agora/signals",
+        "bff-agora-journal": "/bff/agora/journal",
     }
     write_paths = {
         "strategy": "/bff/strategies",
         "ranking-formula": "/bff/ranking-formulas",
-        "agora-note": "/bff/agora/notes",
-        "intervention-claim": "/bff/v5/interventions/int-live-rbac-matrix/claim",
+        "agora-journal": "/bff/agora/journal",
     }
     read_allowed = {"viewer", "operator", "reviewer", "approver", "admin"}
     write_allowed = {"operator", "reviewer", "approver", "admin"}
@@ -353,7 +343,7 @@ def _strict_rbac_matrix_items(
             if with_write_side_effect_checks:
                 if label in write_allowed:
                     readback = None
-                    if name == "agora-note":
+                    if name == "agora-journal":
                         readback = {
                             "kind": "list_readback_not_persisted",
                             "ok": True,
@@ -469,10 +459,10 @@ def _write_strict_authenticated_live_json(
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -752,10 +742,10 @@ def test_release_gate_ignores_step_outcome_evidence_outside_current_run(tmp_path
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -1750,10 +1740,10 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -1822,9 +1812,9 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
     )
 
     assert rbac_check["status"] == "pass"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:16/16 writeMarkerLinks:32/32"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:48/48 matrixCoverage:48/48 detailLinks:48/48 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:24/24 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:12/12 writeMarkerLinks:24/24"
     assert dry_run_check["status"] == "pass"
-    assert dry_run_check["note"] == "strict:true dryRun:7/7 familyCoverage:7/7 invalidEnvelope:true readbackLinked:true dryRunRequests:5/5 sideEffectProofs:7/7 sideEffects:none"
+    assert dry_run_check["note"] == "strict:true dryRun:6/6 familyCoverage:6/6 invalidEnvelope:true readbackLinked:true dryRunRequests:4/4 sideEffectProofs:6/6 sideEffects:none"
     assert race_check["status"] == "pass"
     assert race_check["note"] == "strict:true bounded:true accepted:1 safeErrors:1 safeErrorEnvelope:1/1 results:2/2 targetLinks:2/2 duplicateWinners:false tokenPair:true tokenPairDistinct:true"
     assert two_man_check["status"] == "pass"
@@ -1885,7 +1875,7 @@ def test_release_gate_rejects_strict_auth_when_smoke_preflight_hash_mismatches(t
     assert rbac_check["status"] == "fail"
     assert dry_run_check["status"] == "fail"
     assert "bearerPreflight:false" in rbac_check["note"]
-    assert "preflightBearerLinks:49/49" in rbac_check["note"]
+    assert "preflightBearerLinks:42/42" in rbac_check["note"]
 
 
 def test_release_gate_rejects_strict_rbac_when_preflight_inventory_hash_mismatches(tmp_path: Path) -> None:
@@ -1945,7 +1935,7 @@ def test_release_gate_rejects_strict_rbac_when_preflight_inventory_hash_mismatch
     assert rbac_check["status"] == "fail"
     assert dry_run_check["status"] == "pass"
     assert "bearerPreflight:true" in rbac_check["note"]
-    assert "preflightBearerLinks:42/49" in rbac_check["note"]
+    assert "preflightBearerLinks:36/42" in rbac_check["note"]
 
 
 def test_release_gate_rejects_race_evidence_without_distinct_token_hashes(tmp_path: Path) -> None:
@@ -1983,10 +1973,10 @@ def test_release_gate_rejects_race_evidence_without_distinct_token_hashes(tmp_pa
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -2084,10 +2074,10 @@ def test_release_gate_rejects_approval_race_without_safe_error_envelope(tmp_path
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -2177,10 +2167,10 @@ def test_release_gate_rejects_approval_race_with_unlinked_target_detail(tmp_path
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -2269,10 +2259,10 @@ def test_release_gate_rejects_two_man_race_with_replayed_detail(tmp_path: Path) 
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -2365,10 +2355,10 @@ def test_release_gate_rejects_two_man_race_with_unlinked_target_detail(tmp_path:
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -2458,10 +2448,10 @@ def test_release_gate_rejects_two_man_race_with_duplicate_signature_link(tmp_pat
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -2556,10 +2546,10 @@ def test_release_gate_rejects_strict_rbac_matrix_without_required_family_coverag
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -2611,7 +2601,7 @@ def test_release_gate_rejects_strict_rbac_matrix_without_required_family_coverag
         if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
     )
     assert rbac_check["status"] == "fail"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:55/56 detailLinks:55/56 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:16/16 writeMarkerLinks:32/32"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:48/48 matrixCoverage:47/48 detailLinks:47/48 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:24/24 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:12/12 writeMarkerLinks:24/24"
 
 
 def test_release_gate_rejects_strict_rbac_matrix_with_unlinked_detail(tmp_path: Path) -> None:
@@ -2649,10 +2639,10 @@ def test_release_gate_rejects_strict_rbac_matrix_with_unlinked_detail(tmp_path: 
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -2704,7 +2694,7 @@ def test_release_gate_rejects_strict_rbac_matrix_with_unlinked_detail(tmp_path: 
         if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
     )
     assert rbac_check["status"] == "fail"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:55/56 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:16/16 writeMarkerLinks:32/32"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:48/48 matrixCoverage:48/48 detailLinks:47/48 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:24/24 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:12/12 writeMarkerLinks:24/24"
 
 
 def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_path: Path) -> None:
@@ -2747,10 +2737,10 @@ def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_pa
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -2802,7 +2792,7 @@ def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_pa
         if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
     )
     assert rbac_check["status"] == "fail"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:6/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:16/16 writeMarkerLinks:32/32"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:48/48 matrixCoverage:48/48 detailLinks:48/48 providedCases:7/7 distinctBearers:6/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:24/24 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:12/12 writeMarkerLinks:24/24"
 
 
 def test_release_gate_rejects_strict_rbac_matrix_without_write_side_effect_proofs(tmp_path: Path) -> None:
@@ -2840,10 +2830,10 @@ def test_release_gate_rejects_strict_rbac_matrix_without_write_side_effect_proof
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
                     "rbac_write_side_effect_proofs": 0,
-                    "dry_run_probes": 7,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -2895,7 +2885,7 @@ def test_release_gate_rejects_strict_rbac_matrix_without_write_side_effect_proof
         if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
     )
     assert rbac_check["status"] == "fail"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:0/32 writeReadbackProofs:0/12 writeDeniedEnvelopeProofs:0/16 writeMarkerLinks:0/32"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:48/48 matrixCoverage:48/48 detailLinks:48/48 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:0/24 writeReadbackProofs:0/12 writeDeniedEnvelopeProofs:0/12 writeMarkerLinks:0/24"
 
 
 def test_release_gate_rejects_strict_rbac_matrix_with_unlinked_write_marker(tmp_path: Path) -> None:
@@ -2933,10 +2923,10 @@ def test_release_gate_rejects_strict_rbac_matrix_with_unlinked_write_marker(tmp_
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -2988,22 +2978,22 @@ def test_release_gate_rejects_strict_rbac_matrix_with_unlinked_write_marker(tmp_
         if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
     )
     assert rbac_check["status"] == "fail"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:16/16 writeMarkerLinks:31/32"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:48/48 matrixCoverage:48/48 detailLinks:48/48 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:24/24 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:12/12 writeMarkerLinks:23/24"
 
 @pytest.mark.parametrize(
     ("mutation", "expected_note"),
     [
         (
             "read-denial",
-            "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:8/9 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:16/16 writeMarkerLinks:32/32",
+            "strict:true bearer:true rbac:48/48 matrixCoverage:48/48 detailLinks:48/48 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:8/9 writeSideEffectProofs:24/24 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:12/12 writeMarkerLinks:24/24",
         ),
         (
             "write-denial",
-            "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:32/32 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:15/16 writeMarkerLinks:32/32",
+            "strict:true bearer:true rbac:48/48 matrixCoverage:48/48 detailLinks:48/48 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:24/24 writeReadbackProofs:12/12 writeDeniedEnvelopeProofs:11/12 writeMarkerLinks:24/24",
         ),
         (
             "write-readback",
-            "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 detailLinks:56/56 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:32/32 writeReadbackProofs:11/12 writeDeniedEnvelopeProofs:16/16 writeMarkerLinks:32/32",
+            "strict:true bearer:true rbac:48/48 matrixCoverage:48/48 detailLinks:48/48 providedCases:7/7 distinctBearers:7/7 readDeniedEnvelopeProofs:9/9 writeSideEffectProofs:24/24 writeReadbackProofs:11/12 writeDeniedEnvelopeProofs:12/12 writeMarkerLinks:24/24",
         ),
     ],
 )
@@ -3058,10 +3048,10 @@ def test_release_gate_rejects_strict_rbac_matrix_with_noncanonical_error_shape(
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -3151,10 +3141,10 @@ def test_release_gate_rejects_strict_two_man_race_without_operator_scope(tmp_pat
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -3223,7 +3213,7 @@ def test_release_gate_rejects_strict_dry_run_without_required_family_coverage(tm
     rbac_cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in rbac_labels})
     dry_run = _strict_dry_run_items()
     for item in dry_run:
-        if item["family"] == "dry-run-v5-intervention-claim":
+        if item["family"] == "dry-run-invalid-ranking-formula":
             item["family"] = "dry-run-strategy-create"
             item["extracted"] = {"data.id": "strategy-dry-run-001"}
             break
@@ -3251,10 +3241,10 @@ def test_release_gate_rejects_strict_dry_run_without_required_family_coverage(tm
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -3306,7 +3296,7 @@ def test_release_gate_rejects_strict_dry_run_without_required_family_coverage(tm
         if check["label"] == "Authenticated: strict live dry-run evidence has BffErrorEnvelope and no side effects."
     )
     assert dry_run_check["status"] == "fail"
-    assert dry_run_check["note"] == "strict:true dryRun:7/7 familyCoverage:6/7 invalidEnvelope:true readbackLinked:true dryRunRequests:5/5 sideEffectProofs:7/7 sideEffects:none"
+    assert dry_run_check["note"] == "strict:true dryRun:6/6 familyCoverage:5/6 invalidEnvelope:false readbackLinked:true dryRunRequests:4/4 sideEffectProofs:6/6 sideEffects:none"
 
 
 def test_release_gate_rejects_strict_dry_run_with_unlinked_readback_target(tmp_path: Path) -> None:
@@ -3345,10 +3335,10 @@ def test_release_gate_rejects_strict_dry_run_with_unlinked_readback_target(tmp_p
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -3400,7 +3390,7 @@ def test_release_gate_rejects_strict_dry_run_with_unlinked_readback_target(tmp_p
         if check["label"] == "Authenticated: strict live dry-run evidence has BffErrorEnvelope and no side effects."
     )
     assert dry_run_check["status"] == "fail"
-    assert dry_run_check["note"] == "strict:true dryRun:7/7 familyCoverage:7/7 invalidEnvelope:true readbackLinked:false dryRunRequests:5/5 sideEffectProofs:7/7 sideEffects:none"
+    assert dry_run_check["note"] == "strict:true dryRun:6/6 familyCoverage:6/6 invalidEnvelope:true readbackLinked:false dryRunRequests:4/4 sideEffectProofs:6/6 sideEffects:none"
 
 
 def test_release_gate_rejects_strict_dry_run_without_per_probe_side_effect_proofs(tmp_path: Path) -> None:
@@ -3438,10 +3428,10 @@ def test_release_gate_rejects_strict_dry_run_without_per_probe_side_effect_proof
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -3493,7 +3483,7 @@ def test_release_gate_rejects_strict_dry_run_without_per_probe_side_effect_proof
         if check["label"] == "Authenticated: strict live dry-run evidence has BffErrorEnvelope and no side effects."
     )
     assert dry_run_check["status"] == "fail"
-    assert dry_run_check["note"] == "strict:true dryRun:7/7 familyCoverage:7/7 invalidEnvelope:true readbackLinked:false dryRunRequests:5/5 sideEffectProofs:0/7 sideEffects:none"
+    assert dry_run_check["note"] == "strict:true dryRun:6/6 familyCoverage:6/6 invalidEnvelope:true readbackLinked:false dryRunRequests:4/4 sideEffectProofs:0/6 sideEffects:none"
 
 
 def test_release_gate_rejects_strict_dry_run_with_noncanonical_error_shape(tmp_path: Path) -> None:
@@ -3542,10 +3532,10 @@ def test_release_gate_rejects_strict_dry_run_with_noncanonical_error_shape(tmp_p
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -3597,7 +3587,7 @@ def test_release_gate_rejects_strict_dry_run_with_noncanonical_error_shape(tmp_p
         if check["label"] == "Authenticated: strict live dry-run evidence has BffErrorEnvelope and no side effects."
     )
     assert dry_run_check["status"] == "fail"
-    assert dry_run_check["note"] == "strict:true dryRun:7/7 familyCoverage:7/7 invalidEnvelope:false readbackLinked:true dryRunRequests:5/5 sideEffectProofs:7/7 sideEffects:none"
+    assert dry_run_check["note"] == "strict:true dryRun:6/6 familyCoverage:6/6 invalidEnvelope:false readbackLinked:true dryRunRequests:4/4 sideEffectProofs:6/6 sideEffects:none"
 
 
 def test_release_gate_rejects_strict_dry_run_without_x_dry_run_request_header(tmp_path: Path) -> None:
@@ -3639,10 +3629,10 @@ def test_release_gate_rejects_strict_dry_run_without_x_dry_run_request_header(tm
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,
@@ -3692,7 +3682,7 @@ def test_release_gate_rejects_strict_dry_run_without_x_dry_run_request_header(tm
         if check["label"] == "Authenticated: strict live dry-run evidence has BffErrorEnvelope and no side effects."
     )
     assert dry_run_check["status"] == "fail"
-    assert dry_run_check["note"] == "strict:true dryRun:7/7 familyCoverage:7/7 invalidEnvelope:true readbackLinked:true dryRunRequests:4/5 sideEffectProofs:7/7 sideEffects:none"
+    assert dry_run_check["note"] == "strict:true dryRun:6/6 familyCoverage:6/6 invalidEnvelope:true readbackLinked:true dryRunRequests:3/4 sideEffectProofs:6/6 sideEffects:none"
 
 
 def test_release_gate_rejects_strict_approval_race_without_winner(tmp_path: Path) -> None:
@@ -3731,10 +3721,10 @@ def test_release_gate_rejects_strict_approval_race_without_winner(tmp_path: Path
                     "total": 65,
                     "passed": 65,
                     "failed": 0,
-                    "rbac_matrix_probes": 56,
-                    "rbac_write_probes": 32,
-                    "rbac_write_side_effect_proofs": 32,
-                    "dry_run_probes": 7,
+                    "rbac_matrix_probes": 48,
+                    "rbac_write_probes": 24,
+                    "rbac_write_side_effect_proofs": 24,
+                    "dry_run_probes": 6,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
                     "two_man_race_probes": 1,

@@ -1,0 +1,381 @@
+{
+  "task_id": "BFF-TENANT-FALLBACK-AUDIT-20261003",
+  "scope": "source/local validation only; no hosted or VM acceptance claimed",
+  "rule": "The authenticated caller identity is the only tenant authority. Payload/kwargs/stored-record tenants may be compared for equality, never fill a missing trusted tenant.",
+  "sites": [
+    {
+      "site": "services/control-plane/bff/command_executor.py:244 -> :245 (_post_json)",
+      "disposition": "fixed",
+      "trusted_source": "explicit tenant_id kwarg, else the verified JWT tenant claim of auth_token (_token_tenant)",
+      "note": "Payload tenant may only equal the trusted tenant (bound_tenant). Empty trusted tenant or mismatch raises ActionUnavailableError(TENANT_MISMATCH) before urlopen; zero downstream POSTs."
+    },
+    {
+      "site": "services/control-plane/bff/command_adapters/base.py:133-154 (_token_tenants) and :162-198 (bound_tenant, _headers)",
+      "disposition": "fixed",
+      "trusted_source": "verified JWT/identity tenant claims of auth_token (_token_tenants); kwargs may select from verified allowed_tenants but never manufacture tenant authority",
+      "note": "bound_tenant raises TENANT_MISMATCH when trusted tenant is missing or mismatched; kwargs (tenant_id) cannot manufacture authority when caller lacks verified tenant claims (e.g. auth_token=None or Bearer reviewer:operator:mfa), failing closed with zero downstream calls before outbound POST/GET. Outbound write tenant validation in _headers and http_request_json requires trusted tenant before every outbound mutation regardless of token representation (signed JWT or structured identity). Preserves all 12 signed single, nested, organization, and multi-tenant claim shapes across outbound binding."
+    },
+    {
+      "site": "services/control-plane/bff/agora/performance/store.py:243 (get_suggestion) and :299 (list_suggestions)",
+      "disposition": "fixed",
+      "trusted_source": "positional tenant_id from the Agora scope",
+      "note": "Empty tenant used to drop the tenant filter; now raises ValueError. Mounted route verified by absent (403), foreign, and same-tenant (200) controls under built-in and active environment defaults."
+    },
+    {
+      "site": "services/control-plane/bff/agora/performance/store.py:358-401 (get_receipt) and router (/bff/agora/performance/action-receipts/{id}, /bff/agora/trading-room/strategies/{id}/performance/suggestions/{id}/actions)",
+      "disposition": "fixed",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope",
+      "note": "Performance read and write routes resolve tenant authority via central resolve_agora_user_scope. Empty tenant returns None in store and 403 at route layer. Mounted signed-JWT tests under built-in default ('pantheon-dev') and active environment default ('tenant-b') verify 403 on tenantless JWT, zero receipt disclosures, zero suggestion action writes, foreign tenant isolation (404), and positive same-tenant control (200)."
+    },
+    {
+      "site": "services/control-plane/bff/agora/performance/store.py:367,390 (incidents proxy query params)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from get_receipt",
+      "note": "Query params are only built after empty-tenant check, so proxy path always forwards non-empty trusted tenant."
+    },
+    {
+      "site": "services/control-plane/bff/governance/decision_journal_write_owner.py:174 (create_entry) and :272-292 (_recover_committed_entry_result)",
+      "disposition": "fixed",
+      "trusted_source": "tenant_id kwarg from Agora scope",
+      "note": "Payload fallback removed; missing tenant raises ValueError. Recovery returns None on empty trusted tenant; scoped get_entry only uses trusted tenant. Mounted crash recovery test covers missing/foreign/same controls."
+    },
+    {
+      "site": "services/control-plane/bff/command_adapters/strategy_adapter.py:312 (_validate_scoped_receipt)",
+      "disposition": "fixed",
+      "trusted_source": "verified JWT tenant claim from _authenticate_caller",
+      "note": "Removed falsy/'unscoped' skip of readback tenant comparison. Mounted POST /bff/v1/commands StrategyAction test verifies tenant enforcement; direct test verifies READBACK_MISMATCH on divergence."
+    },
+    {
+      "site": "services/control-plane/bff/agora/service.py:944 (create_journal_entry) and :776 (patch_journal_entry)",
+      "disposition": "fixed",
+      "trusted_source": "verified JWT caller identity claims and allowed_tenants delegated to central resolve_canonical_agora_scope",
+      "note": "create_journal_entry and patch_journal_entry delegate tenant validation directly to central resolve_canonical_agora_scope. When strict auth / JWT is active, caller without verified tenant authority in claims is rejected with 403 Forbidden before scope resolution, idempotency check, owner call, or storage write. Payload tenant is never passed as fallback to resolve_canonical_agora_scope; payload tenant if present must equal verified caller tenant, and resolved tenant must be in verified caller scope. Absent body tenant, built-in default ('pantheon-dev'), and active environment default ('tenant-b') all fail closed with 403 and zero stored rows on tenantless JWT."
+    },
+    {
+      "site": "services/control-plane/bff/agora/identity/scope.py:186-196 (resolve_agora_user_scope / resolve_canonical_agora_scope)",
+      "disposition": "fixed",
+      "trusted_source": "caller identity token claims and allowed_tenants",
+      "note": "resolve_agora_user_scope distinguishes token callers from unauthenticated callers. Multiple admitted tenants without primary/requested selector or authorized configured default fail closed with 403 without picking arbitrary first tenant. Unauthorized configured default fails closed with 403 (AGORA_SCOPE_TENANT_DENIED) preserving decision journal scope guard expectations."
+    },
+    {
+      "site": "services/control-plane/bff/agora/router.py:448 and :518",
+      "disposition": "proven safe",
+      "trusted_source": "OperatorIdentity claims via central resolve_agora_user_scope",
+      "note": "Header/body tenant is requested_tenant_id into resolve_agora_user_scope which fails closed with 403 when caller identity lacks verified tenant claims in token; journal write handler also validates body tenant matches resolved caller tenant."
+    },
+    {
+      "site": "services/control-plane/bff/agora/operational_readiness.py:271 -> :263 (_visible_to_scope)",
+      "disposition": "fixed",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope",
+      "note": "Operational readiness resolves scope via resolve_agora_user_scope. When caller presents tenantless signed JWT, scope resolution fails closed, setting scope=None. Under scope=None, private records are hidden and only public/shared records are returned. Mounted signed-JWT tests confirm zero disclosures of private tenant rows under built-in and active environment defaults, while same-tenant callers see their scoped private records."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/dispatcher.py:18-32 (resolve_governed_dataset)",
+      "disposition": "fixed",
+      "trusted_source": "trusted tenant_id kwarg from caller scope",
+      "note": "Plan/stage tenants no longer fill missing caller tenant; resolve_governed_dataset raises ValueError without trusted tenant. In dev, ResearchDispatcher and in-process drain_outbox were retired under single-owner research orchestrator (PR #6103), while resolve_governed_dataset is retained for projection and enforces caller tenant authority. Mounted POST /bff/agora/research-plans/{id}/runs test verifies 403 on tenantless JWT under built-in and active env defaults, 404 on foreign tenant, and 202 on same-tenant positive control."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/dispatcher.py (ResearchDispatcher.drain_outbox)",
+      "disposition": "proven safe (retired in single-owner dev / PR #6103)",
+      "trusted_source": "outbox record tenant written at enqueue; caller tenant_id is an optional filter",
+      "caller_proof": "ResearchDispatcher and in-process drain_outbox were removed from BFF dispatcher.py in PR #6103 (assert not hasattr(disp_mod, 'ResearchDispatcher')); execution runs exclusively through single-owner research orchestrator."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/service.py:1249 (list_candidate_discussions)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope",
+      "caller_proof": "Mounted callers in agora/research/routes/candidates.py:379 and :445 resolve scope via ctx.read_scope / resolve_agora_user_scope which fails closed with 403 on missing tenant claims under strict JWT auth; tenant_id kwarg is omitted by routes so scope.tenant_id is always used; pool access is verified via require_pool_access(pool, scope) before listing discussions."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:131 (InMemoryResearchStore.get_plan)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py / dispatcher.py",
+      "caller_proof": "Callers in research/service.py and research/dispatcher.py pass verified scope.tenant_id resolved via resolve_agora_user_scope, which fails closed with 403 under strict JWT auth when tenant claims are missing; guard skips filtering only when caller explicitly passes None during internal/test usage."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:149 (InMemoryResearchStore.update_plan)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py / dispatcher.py",
+      "caller_proof": "Callers in research/service.py and research/dispatcher.py pass verified scope.tenant_id resolved via resolve_agora_user_scope; update is scoped to verified tenant."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:169 (InMemoryResearchStore.list_plans_for_workshop)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Callers in research/service.py pass verified scope.tenant_id from resolve_agora_user_scope; plans for foreign tenants are filtered out."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:197 (InMemoryResearchStore.get_run)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py / dispatcher.py",
+      "caller_proof": "Callers in research/service.py and research/dispatcher.py pass verified scope.tenant_id from resolve_agora_user_scope."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:215 (InMemoryResearchStore.update_run)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py / dispatcher.py",
+      "caller_proof": "Callers in research/service.py and research/dispatcher.py pass verified scope.tenant_id from resolve_agora_user_scope."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:235 (InMemoryResearchStore.list_runs_for_plan)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py / dispatcher.py",
+      "caller_proof": "Callers in research/service.py and research/dispatcher.py pass verified scope.tenant_id from resolve_agora_user_scope."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:294 (InMemoryResearchStore.get_candidate_pool)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Callers in research/service.py pass verified scope.tenant_id from resolve_agora_user_scope; foreign pools are not returned."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:386 (InMemoryResearchStore.update_candidate_pool)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Callers in research/service.py pass verified scope.tenant_id from resolve_agora_user_scope."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:406 (InMemoryResearchStore.get_candidate_member)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Callers in research/service.py pass verified scope.tenant_id from resolve_agora_user_scope."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:428 (InMemoryResearchStore.update_candidate_member)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Callers in research/service.py pass verified scope.tenant_id from resolve_agora_user_scope."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:526 (InMemoryResearchStore.list_candidate_discussions)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Callers in research/service.py pass verified scope.tenant_id; pool access verified via require_pool_access before discussion enumeration."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:597 (InMemoryResearchStore.get_outbox_record)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/dispatcher.py",
+      "caller_proof": "Callers in research/dispatcher.py pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:615 (InMemoryResearchStore.update_outbox_record)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/dispatcher.py",
+      "caller_proof": "Callers in research/dispatcher.py pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:662 (InMemoryResearchStore.list_outbox_records)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/dispatcher.py",
+      "caller_proof": "Callers in research/dispatcher.py pass verified scope.tenant_id; drain_outbox filters by tenant."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:698 (InMemoryResearchStore.list_audit_actions)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Callers in research/service.py pass verified scope.tenant_id from resolve_agora_user_scope."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:842 (PostgresResearchStore.get_plan)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py / dispatcher.py",
+      "caller_proof": "Postgres store implementation of get_plan; callers in research/service.py and dispatcher.py pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:889 (PostgresResearchStore.get_run)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py / dispatcher.py",
+      "caller_proof": "Postgres store implementation of get_run; callers pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:963 (PostgresResearchStore.get_candidate_pool)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Postgres store implementation of get_candidate_pool; callers pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:1095 (PostgresResearchStore.update_candidate_member)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Postgres store implementation of update_candidate_member; callers pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:1160 (PostgresResearchStore.list_candidate_discussions)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Postgres store implementation of list_candidate_discussions; callers pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:1201 (PostgresResearchStore.get_outbox_record)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/dispatcher.py",
+      "caller_proof": "Postgres store implementation of get_outbox_record; callers pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:1263 (PostgresResearchStore.list_outbox_records)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/dispatcher.py",
+      "caller_proof": "Postgres store implementation of list_outbox_records; callers pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/agora/research/store.py:1291 (PostgresResearchStore.list_audit_actions)",
+      "disposition": "proven safe",
+      "trusted_source": "scope.tenant_id from resolve_agora_user_scope via research/service.py",
+      "caller_proof": "Postgres store implementation of list_audit_actions; callers pass verified scope.tenant_id."
+    },
+    {
+      "site": "services/control-plane/bff/command_adapters/evolution_adapter.py:289",
+      "disposition": "fixed",
+      "trusted_source": "verified JWT tenant claim of auth_token",
+      "note": "params/sub_payload tenant, EVOLUTION_DEFAULT_TENANT_ID, PANTHEON_TENANT_ID and 'default' no longer supply X-Tenant-Id; missing -> TENANT_REQUIRED, mismatch -> TENANT_MISMATCH before http_request_json."
+    },
+    {
+      "site": "services/control-plane/bff/command_adapters/capital_adapter.py:55 (_tenant) and :174 (_ctx) and base.py:146-160 (bound_tenant / _headers)",
+      "disposition": "fixed",
+      "trusted_source": "verified JWT/identity tenant claims of auth_token (bound_tenant via _token_tenants)",
+      "note": "CapitalCommandAdapter.execute, _ctx, and CapitalOwnerWriter._tenant require trusted tenant before every outbound mutation regardless of token representation (signed JWT or structured identity) before outbound transport across HTTP helpers (_set_status PATCH /api/capital-pools/{id}/status); absent verified tenant and mismatched tenant fail closed with zero downstream calls and zero owner writes before transport; base.py bound_tenant ensures tenant_id kwarg cannot override or fill a missing verified tenant claim."
+    },
+    {
+      "site": "services/capital/capital_guard.py:192 (_tenant_of metadata fallback)",
+      "disposition": "proven safe",
+      "trusted_source": "authenticate_capital_request authority tenant",
+      "note": "Stored record tenant is only compared with authority tenant; capital_guard rejects when caller tenant is empty."
+    },
+    {
+      "site": "services/capital/allocation_store.py:522, :547, :593, :793, :873, :900, :1027",
+      "disposition": "proven safe",
+      "trusted_source": "services/capital/main.py stamps payload['tenant_id'] = _current_tenant() from inbound_authority",
+      "caller_proof": "Only callers are CapitalService methods in capital/main.py reached by mounted GET /api/rebalances/{id}, /api/rebalances/receipts/{cmd}, /api/containments/receipts/{cmd}; inbound_authority resolves non-empty tenant or raises 400/403 before handler runs."
+    },
+    {
+      "site": "services/capital/pg_store.py:291, :344, :381",
+      "disposition": "proven safe",
+      "trusted_source": "_current_tenant() via CapitalService.audit_events (capital/main.py:961), mounted GET /api/capital/audit",
+      "caller_proof": "Tenantless multi-tenant token without X-Tenant-Id -> 400 TENANT_REQUIRED; :381 is storage-row label for aggregate JSON blob."
+    },
+    {
+      "site": "services/control-plane/bff/personas/service.py:2263, :2294, :2338 and :3330 -- REPORT ONLY",
+      "disposition": "finding, not edited",
+      "trusted_source": "caller identity where passed",
+      "note": "Empty tenant lists all personas in snapshot and skips foreign session filtering; at :2263 falls back to store.list_all() and at :2294 skips isolation when tenant_id is empty; file is owned by concurrent tasks per contract AC4. Reproduced by test_reproduction_personas_service_report_only_finding in test_tenant_fallback_audit.py."
+    },
+    {
+      "site": "services/control-plane/bff/command_adapters/runtime_adapter.py:148, :232-234 (_execute_pause)",
+      "disposition": "fixed",
+      "trusted_source": "verified JWT tenant claim of auth_token (_token_tenant)",
+      "caller_proof": "Reached via RuntimeCommandAdapter.execute from command_executor.execute_command (mounted POST /bff/v1/commands PausePaperRuntime/ResumePaperRuntime). Missing or mismatched tenant raises TENANT_MISMATCH with zero downstream calls."
+    },
+    {
+      "site": "services/control-plane/bff/management_read_models/service.py:5188 (get_operations_read_model)",
+      "disposition": "fixed",
+      "trusted_source": "tenant_id argument resolved by caller identity",
+      "note": "The `tenant_id and` guard skipped isolation check when caller tenant was empty; tenant-owned persona now returns None for empty or foreign tenant."
+    },
+    {
+      "site": "services/control-plane/bff/management_read_models/router.py:274-336 (_extract_tenant_id) and :1708, :1942 (/bff/management/risk-radar, /bff/management/operations-read-model/{persona_id})",
+      "disposition": "fixed",
+      "trusted_source": "authenticated caller identity claims/tenant_id and tenant_payload_fn",
+      "note": "Delegates to tenant_payload_fn (bff_me_tenant_payload) to resolve authorized defaults for authenticated multi-tenant callers, while ensuring tenantless callers fail closed with 403. Fallback extracts claim_tenant and allowed_tenants, selecting configured default before primary claim only when explicitly authorized in allowed_tenants; tenantless callers fail closed with 403. Mounted signed-JWT tests cover missing/foreign/same controls for custom tenant, built-in ('pantheon-dev'), environment defaults, and multi-tenant authorized defaults."
+    },
+    {
+      "site": "services/control-plane/bff/agora/interaction/store.py:1170, :1205 (lease_next)",
+      "disposition": "proven safe (background-only exception)",
+      "trusted_source": "none needed: no request-scoped caller",
+      "caller_proof": "Method lease_next in interaction/store.py is internal queue scheduling for interaction request processing, called exclusively by background worker loop without HTTP request exposure; tenant_id is an optional lease-scoping filter, not an authentication boundary or request-time tenant authority."
+    },
+    {
+      "site": "services/control-plane/bff/ports/read_surface_ports.py:40, 48, 56",
+      "disposition": "proven safe",
+      "trusted_source": "record own tenant_id",
+      "note": "Projection copies record's own tenant_id into response; not an authorization decision."
+    },
+    {
+      "site": "services/control-plane/bff/assistant_conversation_store.py:336, :373-377, :660, :699-703",
+      "disposition": "proven safe",
+      "trusted_source": "identity.operator_id and _mgmt_nl_caller_tenant",
+      "caller_proof": "Only caller is assistant/management_service.py:448 which always passes owner_id=identity.operator_id; all returned sessions are filtered through management_ai_require_session_access."
+    },
+    {
+      "site": "services/control-plane/bff/main.py:3749-3755",
+      "disposition": "proven safe (dead code)",
+      "caller_proof": "Never instantiated in production; zero internal calls and zero external imports (all runtime imports use personas.service)."
+    },
+    {
+      "site": "services/control-plane/bff/migrations/overlay_retirement.py:457, 597, 796, 994, 1087, 1432",
+      "disposition": "proven safe for request paths",
+      "caller_proof": "Migration/shadow-comparison adapters used only by migration test/CLI harnesses, never reached by HTTP request handlers."
+    },
+    {
+      "site": "services/control-plane/bff/agora/trading_room/routes/common.py:586 (_workspace_scope)",
+      "disposition": "fixed",
+      "trusted_source": "central resolve_canonical_agora_scope(identity)",
+      "note": "Workspace scope resolution delegates to central resolve_canonical_agora_scope. Callers lacking verified tenant authority in claims fail closed with 403 Forbidden instead of falling back to 'pantheon-dev'. Mounted GET /bff/agora/trading-room/workspaces/{id} test confirms 403 on missing tenant, 403 on foreign tenant, and 200 on same tenant."
+    },
+    {
+      "site": "services/control-plane/bff/command_queue.py:352-363 (get_command_by_idempotency_key)",
+      "disposition": "proven safe",
+      "trusted_source": "caller tenant_id argument",
+      "caller_proof": "Internal idempotency deduplication query; tenant_id if provided is used only for equality comparison against command record tenant, never fills a missing trusted tenant or scopes a read/write without caller identity."
+    },
+    {
+      "site": "services/control-plane/bff/governance/command_audit.py:72, :141, :178 (project_command_record_audit_event, _record_tenant_id, list_projected_governance_audit_events)",
+      "disposition": "fixed",
+      "trusted_source": "caller tenant_id argument and verified command record audit/params/foundation tenant",
+      "note": "Projected governance audit events retain command record tenant scope in event, audit_context, and metadata. _record_tenant_id inspects audit and params, and list_projected_governance_audit_events respects tenant_id filter. Downstream filtering preserves private tenant isolation."
+    },
+    {
+      "site": "services/control-plane/bff/governance/decision_journal_write_owner.py:382, 433, 465, 482, 519, 531 (idempotency conflict checks)",
+      "disposition": "proven safe",
+      "trusted_source": "caller tenant_id argument",
+      "note": "Stores and idempotency checks compare stored record/result tenant against requested tenant for equality, returning cross_tenant_scope_mismatch conflict on divergence; never fills a missing trusted tenant."
+    },
+    {
+      "site": "services/control-plane/bff/auth/policy.py:730-774 (identity_claim_strings, TENANT_PRIMARY_CLAIM_PATHS, TENANT_ALLOWED_CLAIM_PATHS, bff_me_tenant_payload)",
+      "disposition": "fixed",
+      "trusted_source": "verified JWT/identity tenant claims and allowed_tenants",
+      "note": "Fails closed with 403 Forbidden when caller lacks verified tenant authority under strict auth instead of falling back to default tenant. Separates scalar primary claims (TENANT_PRIMARY_CLAIM_PATHS) from multi-tenant membership lists (TENANT_ALLOWED_CLAIM_PATHS), preventing tenant_ids/tenantIds lists from arbitrarily choosing the first element in ambiguous multi-tenant tokens. Supports explicit requested_tenant, authorized env default when in allowed_tenants before primary claim, and primary claim_default. Preserves all 12 supported signed single/nested/organization and multi-tenant claim shapes."
+    },
+    {
+      "site": "services/control-plane/bff/events/router.py:268, :578-583 (_resolve_caller_tenant_scope, stream_generic_events)",
+      "disposition": "fixed",
+      "trusted_source": "caller identity claims via bff_me_tenant_payload",
+      "note": "Fails closed with 403 on missing tenant authority; truthy check removed so empty allowed_tenants triggers denial rather than fallthrough; anonymous liveness stream on /bff/events/stream preserved."
+    },
+    {
+      "site": "services/control-plane/bff/assistant/management_service.py:4080-4089 (_mgmt_nl_caller_tenant)",
+      "disposition": "fixed",
+      "trusted_source": "caller identity claims via bff_me_tenant_payload",
+      "note": "Rejects absent trusted tenant with 403 Forbidden; empty/missing tenant fails closed rather than falling back to pantheon-dev; preserves public identity metadata behavior on /bff/me."
+    },
+    {
+      "site": "services/control-plane/bff/assistant/management_service.py:4134-4140 (_mgmt_nl_record_matches_tenant)",
+      "disposition": "fixed",
+      "trusted_source": "verified caller tenant_id argument",
+      "note": "Caller-empty truthy guard removed: missing or empty caller tenant fails closed (returns False), and untagged/empty record tenants fail closed. Matches only explicit tenant or wildcard '*'."
+    },
+    {
+      "site": "services/control-plane/bff/assistant/routes.py:101-156 (build_session_context_pack)",
+      "disposition": "fixed",
+      "trusted_source": "caller identity via extract_identity / management_service",
+      "note": "Assistant endpoints enforce verified operator identity with read/write roles and delegate record filtering to management_service._mgmt_nl_filter_tenant_records which fails closed on empty or foreign caller tenant. Mounted signed-JWT regression confirms zero private foreign command audit events disclosed."
+    }
+  ],
+  "mounted_signed_jwt_tests": ["test_journal_create_uses_jwt_tenant_and_denies_foreign_body_tenant: mounted POST /bff/agora/journal (foreign body tenant -> 403, 0 stored rows; same tenant -> 201; absent body tenant -> 201).", "test_journal_create_denies_jwt_without_tenant_authority_under_all_defaults: mounted POST /bff/agora/journal with tenantless JWT under built-in default ('pantheon-dev') with absent body tenant (403, 0 stored rows), matching default body tenant (403, 0 stored rows), foreign body tenant (403, 0 stored rows); under active environment default ('tenant-b') with absent body tenant (403, 0 stored rows), matching env default body tenant (403, 0 stored rows), foreign body tenant (403, 0 stored rows); and valid JWT positive controls (same -> 201, absent -> 201, foreign -> 403, 0 added rows).", "test_journal_create_regressions_under_auth_modes: mounted POST /bff/agora/journal under unset, normalized strict ('STRICT'), and permissive modes with verified JWT (absent tenant -> 403, 0 stored rows; absent with built-in or env default -> 403, 0 stored rows; foreign tenant -> 403, 0 stored rows; same tenant -> 201, 1 stored row).", "test_mounted_journal_crash_recovery_scopes_to_the_jwt_tenant: mounted POST /bff/agora/journal with pending dead-PID idempotency record (absent -> >=400, foreign -> 403, same -> 201).", "test_mounted_runtime_pause_resume_use_the_jwt_tenant: mounted POST /bff/v1/commands PausePaperRuntime/ResumePaperRuntime (tenantless JWT without and with body tenant -> not executed, 0 downstream calls; foreign tenant -> 0 calls; same-tenant -> executes once).", "test_mounted_suggestion_read_route_scopes_to_the_jwt_tenant: GET /bff/agora/trading-room/strategies/{id}/performance (tenantless JWT fails closed with 403, 0 store reads under built-in 'pantheon-dev' and active env default 'tenant-b'; same tenant reads only own rows with 200).", "test_receipt_route_and_store_never_widen_to_an_empty_tenant: GET /bff/agora/performance/action-receipts/{id} and POST /bff/agora/trading-room/strategies/{id}/performance/suggestions/{id}/actions (foreign -> 404, absent -> 403, 0 action writes/rows under built-in 'pantheon-dev' and active env default 'tenant-b'; same-tenant read -> 200; same-tenant action write -> 200, 1 write).", "test_mounted_research_run_dispatch_scopes_to_the_jwt_tenant: POST /bff/agora/research-plans/{id}/runs (tenantless JWT fails closed with 403, 0 runs under built-in 'pantheon-dev' and active env default 'tenant-a'; foreign -> 404, 0 runs; same-tenant -> 202, 1 run).", "test_readiness_route_denies_tenantless_jwt_authority_under_all_defaults: GET /bff/agora/operational-readiness (tenantless JWT fails closed to scope=None under built-in 'pantheon-dev' and active env default 'tenant-a'; returns only public/shared rows with 0 disclosures of private tenant rows).", "test_reproduction_personas_service_report_only_finding: reproduction test for personas/service.py:2338 and :3330 confirming that empty caller tenant bypasses foreign tenant filtering while explicit tenant authority isolates records; marked report-only per AC4.", "test_mounted_operations_read_model_route_scopes_to_the_jwt_tenant: GET /bff/management/operations-read-model/{id} (tenantless JWT under custom, built-in 'pantheon-dev', and active env 'custom-default' -> 403; foreign -> 404/200; same -> 200; nested tenant/organization claims -> 200; multi-tenant authorized active default -> 200, foreign -> 404, absent -> 403; primary tenant differing from configured default with tenant_ids ordering -> 200/404).", "test_mounted_operations_read_model_primary_tenant_differs_from_configured_default: mounted GET /bff/management/operations-read-model/{id} with primary tenant_id=tenant-a and allowed_tenants/tenant_ids authorizing both tenant-a and tenant-b selects authorized configured default PANTHEON_BFF_TENANT_ID=tenant-b (pB -> 200, pA -> 404), matching Agora resolve_agora_user_scope; verifies tenant_ids ordering, foreign configured default fallback to primary tenant, and missing tenant denial.", "test_bff_me_tenant_payload_primary_tenant_differs_from_authorized_configured_default: unit bff_me_tenant_payload verification that authorized configured default takes precedence before primary claim across all tenant_ids/allowed_tenants shapes and orderings, explicit requested_tenant overrides, and foreign configured default falls back to primary claim.", "test_mounted_risk_radar_scopes_to_the_jwt_tenant: GET /bff/management/risk-radar (tenantless JWT -> 403 before store; foreign -> 200 without Persona B; same -> 200 with Persona B; multi-tenant authorized active default -> 200 with Persona A only).", "test_mounted_strategy_command_route_with_tenant_enforcing_owner: mounted POST /bff/v1/commands StrategyAction with tenant-enforcing owner (absent -> 0 writes; foreign -> 0 writes; same -> 202, 1 write).", "test_mounted_workspace_route_scopes_to_the_jwt_tenant: mounted GET /bff/agora/trading-room/workspaces/{id} (absent tenant in JWT claims -> 403, zero data disclosed; foreign tenant -> 403; same tenant -> 200).", "test_authorized_configured_default_is_not_replaced_by_allowlist_order: mounted GET /bff/agora/performance/action-receipts/{id} with multi-tenant allowed_tenants selects active configured default (PANTHEON_BFF_TENANT_ID) over allowlist position -> 200.", "test_event_stream_requires_verified_tenant_authority: mounted GET /api/v1/stream/system with synthetic private event (missing tenant -> 403, zero data disclosed; foreign tenant -> 200, private event delivered).", "test_mounted_capital_command_route_scopes_to_the_jwt_tenant: mounted POST /bff/v1/commands CapitalPoolAction target CapitalPool/pool-b matrix covering absent-tenant JWT plus absent body tenant, absent-tenant plus foreign body tenant, foreign JWT vs body tenant, and same-tenant controls; absent-tenant and foreign controls fail closed with zero downstream calls and unexecuted command status; same-tenant controls execute with 1 PATCH and 1 GET call with verified X-Tenant-Id.", "test_mounted_assistant_audit_projection_scopes_to_the_jwt_tenant: mounted POST /bff/assistant/sessions/review/context with mode=kernel_debug and include=['audit'] (tenantless JWT and foreign tenant JWT fail closed with 0 private tenant-b audit events disclosed; same-tenant JWT positive control returns 201 with PRIVATE_B_AUDIT visible).", "test_signed_supported_claims_are_preserved: unit/mounted bound_tenant parameterization testing all 12 single, nested, organization, and multi-tenant claim shapes across same-tenant and foreign-tenant scopes.", "test_bff_me_tenant_payload_supported_claims: unit bff_me_tenant_payload parameterization testing all 12 claim shapes with OperatorIdentity under strict JWT auth.", "test_mounted_management_ai_conversations_scope_to_the_jwt_tenant: mounted GET /bff/management/ai/conversations and GET /bff/management/ai/conversations/{id} with JsonAssistantConversationStore seeded with private default tenant session (missing tenant -> 403, zero data disclosed; foreign tenant -> 200/404, zero data disclosed; same tenant positive control -> 200, session visible).", "test_mounted_management_ai_ask_write_scopes_to_the_jwt_tenant: mounted POST /bff/management/nl/ask (missing tenant -> 403, zero downstream writes/zero stored rows; foreign tenant write against private default session -> 403, zero downstream writes; same tenant positive control -> 202 accepted).", "test_post_json_and_adapters_reject_tenant_kwarg_without_verified_tenant_claims: P1 AC1/AC5 regression verifying _post_json, _headers, and http_request_json reject tenant_id kwarg when caller auth_token lacks verified tenant claims (auth_token=None, Bearer reviewer:operator:mfa, Bearer not-a-jwt), raising TENANT_MISMATCH with zero downstream urlopen calls.", "test_tenantless_structured_caller_never_dispatches: mounted POST /bff/v1/commands with structured identity without tenant claims (reviewer:operator:mfa) fails closed before downstream POST/GET with zero downstream calls across empty params and tenant kwargs (tenant_id, tenant).", "test_journal_verified_selection: mounted signed Journal selection matrix (unauthorized configured default environment-only -> 403, 0 stored rows; authorized configured default tenant-a -> 201; dual allowed without selector -> 403; reversed allowlist without selector -> 403; authorized configured B -> 201; primary A with authorized configured B -> 201; explicit admitted A overrides configured B -> 201).", "test_operations_read_model_multi_tenant_lists_fail_closed_without_selector: mounted GET /bff/management/operations-read-model/{id} P2 regression proving allowed_tenants, tenant_ids, and tenantIds lists across both orderings fail closed to 403 without an explicit selector or authorized default, while singleton positive controls succeed (200).", "test_structured_identity_capital_patch_controls: mounted POST /bff/v1/commands CapitalPoolAction target CapitalPool/pool-b matrix covering absent-tenant structured identity (reviewer:operator:mfa) with absent and foreign body tenant, foreign structured identity (reviewer:operator:mfa::tenant-a) with foreign body tenant, and same-tenant controls; absent-tenant and foreign controls fail closed with zero downstream calls and zero owner writes; same-tenant positive controls execute with PATCH and GET calls with verified X-Tenant-Id: tenant-a."],
+  "validation": {
+    "local_postgresql_acceptance": {
+      "host": "127.0.0.1:32804",
+      "database": "pantheon",
+      "dsns": ["CAPITAL_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:32804/pantheon", "CAPITAL_TEST_ADMIN_DSN=postgresql://postgres:postgres@127.0.0.1:32804/pantheon", "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:32804/pantheon"],
+      "results": "216 passed, 9 subtests passed, 0 failed across all focused BFF and Capital test suites against local PostgreSQL 127.0.0.1:32804/pantheon; 117 passed in test_tenant_fallback_audit.py."
+    },
+    "test_commands": [
+      "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_tenant_fallback_audit.py services/capital/test_tenant_scoping.py => exit 0, 136 passed, 2 skipped, 3 warnings in 78.07s",
+      "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_capital_owner_forwarding.py services/control-plane/bff/tests/test_command_audit_scope.py services/control-plane/bff/tests/test_bff_auth_facade.py services/control-plane/bff/tests/test_bff_auth_refresh.py services/control-plane/bff/tests/test_http_auth_composition_owner.py services/control-plane/bff/tests/test_workshop_request_authorization.py services/control-plane/bff/tests/test_agora_research_run_projection.py => exit 0, 67 passed, 3 warnings in 64.80s",
+      "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_tenant_fallback_audit.py => exit 0, 125 passed, 1 skipped, 3 warnings in 71.82s",
+      "python3 scripts/git/diff_budget.py --base 50cb6f7bad176f9c7b918dd83735ec27466f5c3e --head HEAD --change-class corrective --budget 60 => production net +48 <= 60"
+    ],
+    "diff_budget": "diff_budget.py --base 50cb6f7bad176f9c7b918dd83735ec27466f5c3e --head HEAD --change-class corrective --budget 60 passes (production net +48 <= 60)."
+  }
+}

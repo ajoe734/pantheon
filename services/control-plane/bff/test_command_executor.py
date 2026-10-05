@@ -15,19 +15,16 @@ from unittest.mock import patch
 # context. Importing through the canonical ``services.control_plane.bff``
 # path (as every other passing test in this directory already does) gives
 # ``.models``/``.command_adapters`` a real parent package.
+from fastapi import HTTPException
 from services.control_plane.bff.models import CommandStatus, CommandType
+from services.control_plane.bff.governance.approval_owner import UnsupportedApprovalAction
 from services.control_plane.bff.command_executor import (
     execute_command,
     execute_command_with_status,
     _execute_approve_deployment,
-    _execute_approve_decision,
-    _execute_reject_decision,
-    _execute_request_approval_revision,
     _execute_pause_runtime,
     _execute_escalate_diff,
     _execute_rollback,
-    _execute_approve_rollback,
-    _execute_reject_rollback,
     _execute_activate_kill_switch,
     _execute_approve_evolution_decision,
     _execute_approve_mutation,
@@ -35,13 +32,6 @@ from services.control_plane.bff.command_executor import (
     _execute_reject_mutation,
     _execute_review_mutation,
     _execute_execute_mutation,
-    _execute_remediate_sentinel_intervention,
-    _execute_restart_paper_runtime,
-    _execute_restart_telemetry_bridge,
-    _execute_terminate_stale_paper_monitoring_session,
-    _execute_start_paper_monitoring_session,
-    _execute_probe_telemetry_ingest,
-    _execute_bff_action_adapter,
 )
 
 
@@ -91,59 +81,56 @@ class TestPauseRuntimeExecutor(unittest.TestCase):
 
 
 class TestApprovalDecisionExecutors(unittest.TestCase):
+    """Approval commands forward the caller's JWT to the Governance owner (no local write)."""
+
+    OWNER = "services.control_plane.bff.governance.approval_owner.call_owner"
+    TOKEN = "Bearer h." + __import__("base64").urlsafe_b64encode(
+        b'{"sub":"rev-1","roles":["governance_reviewer"]}').decode().rstrip("=") + ".s"
+
     def setUp(self):
-        os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
+        os.environ["PANTHEON_GOVERNANCE_APPROVAL_API_URL"] = "http://governance:8082"
 
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_approve_decision_success(self, mock_post):
-        mock_post.return_value = {
-            "decision_id": "appr-001",
-            "decision_state": "approved",
-            "status": "submitted",
-            "audit_id": "audit-appr-001",
-            "approved_at": "2026-04-18T06:00:00Z",
-        }
-        result = _execute_approve_decision("cmd-approve-decision", {
-            "decision_id": "appr-001",
-            "approval_notes": "Looks good",
-        })
-        self.assertEqual(result["decision_id"], "appr-001")
-        self.assertEqual(result["decision_state"], "approved")
-        self.assertEqual(result["command_id"], "cmd-approve-decision")
+    def test_approve_and_reject_forward_vote_with_stable_idempotency_key(self):
+        for command, params, outcome in (
+            (CommandType.APPROVE_DECISION, {"approval_notes": "Looks good"}, "approved"),
+            (CommandType.REJECT_DECISION, {"rejection_reason": "Risk evidence insufficient"}, "rejected"),
+        ):
+            with patch(self.OWNER, return_value={"decision_id": "appr-001", "decision_state": "under_review", "version": 2}) as owner:
+                result = execute_command("cmd-1", command, {"decision_id": "appr-001", "expected_version": 1, **params},
+                                         auth_token=self.TOKEN)
+            self.assertEqual(result["command_id"], "cmd-1")
+            self.assertEqual(result["status"], "under_review")
+            args, kwargs = owner.call_args
+            self.assertEqual(args[:3], ("POST", "/api/governance/approvals/appr-001/decide", self.TOKEN))
+            self.assertEqual(kwargs["idempotency_key"], "cmd-1")
+            self.assertEqual((kwargs["body"]["outcome"], kwargs["body"]["actor_id"], kwargs["body"]["expected_version"]),
+                             (outcome, "rev-1", 1))
 
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_reject_decision_success(self, mock_post):
-        mock_post.return_value = {
-            "decision_id": "appr-001",
-            "decision_state": "rejected",
-            "status": "submitted",
-            "audit_id": "audit-appr-001",
-            "rejected_at": "2026-04-18T06:05:00Z",
-        }
-        result = _execute_reject_decision("cmd-reject-decision", {
-            "decision_id": "appr-001",
-            "rejection_reason": "Risk evidence insufficient",
-        })
-        self.assertEqual(result["decision_id"], "appr-001")
-        self.assertEqual(result["decision_state"], "rejected")
-        self.assertEqual(result["command_id"], "cmd-reject-decision")
+    def test_request_revision_is_retired_with_410_and_no_owner_call(self):
+        with patch(self.OWNER) as owner:
+            with self.assertRaises(HTTPException) as ctx:
+                execute_command("cmd-2", "RequestApprovalRevision",
+                                {"decision_id": "appr-001", "expected_version": 1, "revision_notes": "rework"}, auth_token=self.TOKEN)
+            self.assertEqual(ctx.exception.status_code, 410)
+            self.assertIn("RejectDecision with notes", str(ctx.exception.detail))
+            owner.assert_not_called()
 
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_request_revision_success(self, mock_post):
-        mock_post.return_value = {
-            "decision_id": "appr-001",
-            "decision_state": "pending_revision",
-            "status": "submitted",
-            "audit_id": "audit-appr-001",
-            "requested_at": "2026-04-18T06:10:00Z",
-        }
-        result = _execute_request_approval_revision("cmd-request-revision", {
-            "decision_id": "appr-001",
-            "revision_notes": "Need clearer evidence links",
-        })
-        self.assertEqual(result["decision_id"], "appr-001")
-        self.assertEqual(result["decision_state"], "pending_revision")
-        self.assertEqual(result["command_id"], "cmd-request-revision")
+        with patch(self.OWNER) as owner:
+            status, result, error = execute_command_with_status(
+                "cmd-2", "RequestApprovalRevision",
+                {"decision_id": "appr-001", "expected_version": 1, "revision_notes": "rework"}, auth_token=self.TOKEN
+            )
+            self.assertEqual(status, CommandStatus.FAILED)
+            self.assertEqual(error["downstream_status"], 410)
+            self.assertFalse(error["retryable"])
+            owner.assert_not_called()
+
+    def test_dispatch_approve_decision(self):
+        with patch(self.OWNER, return_value={"decision_id": "appr-001", "decision_state": "decided", "version": 3}):
+            result = execute_command("cmd-3", CommandType.APPROVE_DECISION,
+                                     {"decision_id": "appr-001", "expected_version": 2, "approval_notes": "Proceed"},
+                                     auth_token=self.TOKEN)
+        self.assertEqual(result["status"], "decided")
 
 
 class TestDeploymentDiffExecutor(unittest.TestCase):
@@ -190,49 +177,6 @@ class TestRollbackExecutor(unittest.TestCase):
         self.assertEqual(result["command_id"], "cmd-003")
 
 
-class TestRollbackReviewCommandExecutors(unittest.TestCase):
-    def setUp(self):
-        os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
-        os.environ["PANTHEON_GOVERNANCE_SERVICE_URL"] = "http://localhost:5002"
-
-    def tearDown(self):
-        os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
-
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_approve_rollback_success(self, mock_post):
-        mock_post.return_value = {
-            "rollback_id": "rollback-rb-001",
-            "decision": "approved",
-            "status": "submitted",
-            "audit_id": "audit-rb-001",
-            "approved_at": "2026-04-17T07:00:00Z",
-        }
-        result = _execute_approve_rollback("cmd-003a", {
-            "rollback_id": "rollback-rb-001",
-            "approval_notes": "Looks safe",
-        })
-        self.assertEqual(result["rollback_id"], "rollback-rb-001")
-        self.assertEqual(result["decision"], "approved")
-        self.assertEqual(result["command_id"], "cmd-003a")
-
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_reject_rollback_success(self, mock_post):
-        mock_post.return_value = {
-            "rollback_id": "rollback-rb-001",
-            "decision": "rejected",
-            "status": "submitted",
-            "audit_id": "audit-rb-001",
-            "rejected_at": "2026-04-17T07:05:00Z",
-        }
-        result = _execute_reject_rollback("cmd-003b", {
-            "rollback_id": "rollback-rb-001",
-            "rejection_reason": "Impact summary insufficient",
-        })
-        self.assertEqual(result["rollback_id"], "rollback-rb-001")
-        self.assertEqual(result["decision"], "rejected")
-        self.assertEqual(result["command_id"], "cmd-003b")
-
-
 class TestKillSwitchExecutor(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
@@ -255,118 +199,6 @@ class TestKillSwitchExecutor(unittest.TestCase):
         })
         self.assertEqual(result["kill_switch_order_id"], "ks-123456")
         self.assertEqual(result["command_id"], "cmd-004")
-
-
-class TestRuntimeRepairExecutors(unittest.TestCase):
-    def setUp(self):
-        os.environ["PANTHEON_RUNTIME_MANAGER_API_URL"] = "http://runtime-manager:8080"
-
-    def tearDown(self):
-        os.environ.pop("PANTHEON_RUNTIME_MANAGER_API_URL", None)
-
-    def _success_body(self, **extra):
-        payload = {
-            "status": "accepted",
-            "runtime_id": "paper-runtime-1",
-            "audit_id": "audit-runtime-repair-1",
-            "trace_id": "trace-runtime-repair-1",
-            "heartbeat_freshness": {"age_seconds": 12, "state": "fresh"},
-            "telemetry_projection": {"surface": "runtime_state", "state": "fresh"},
-        }
-        payload.update(extra)
-        return payload
-
-    def _params(self, **extra):
-        payload = {
-            "runtime_id": "paper-runtime-1",
-            "confirm_token": "confirm-runtime-repair",
-            "idempotency_key": "idem-runtime-repair",
-            "actor_id": "operator-1",
-            "trace_id": "trace-runtime-repair-1",
-            "reason": "stale telemetry recovery",
-        }
-        payload.update(extra)
-        return payload
-
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_restart_paper_runtime_dispatches_to_runtime_manager_with_audit_receipt(self, mock_post):
-        mock_post.return_value = self._success_body()
-        result = _execute_restart_paper_runtime("cmd-repair-1", self._params())
-
-        self.assertEqual(result["action_id"], "RestartPaperRuntime")
-        self.assertEqual(result["dispatch_path"], "runtime_manager_repair_api")
-        self.assertEqual(result["success_condition"], "heartbeat_freshness")
-        self.assertFalse(result["live_broker_side_effects"])
-        self.assertFalse(result["capital_authority_granted"])
-        self.assertEqual(result["audit_receipt"]["idempotency_key"], "idem-runtime-repair")
-        called_url = mock_post.call_args[0][0]
-        self.assertIn("/runtime-repair/paper-runtimes/paper-runtime-1/restart", called_url)
-        payload = mock_post.call_args[0][1]
-        self.assertEqual(payload["command_id"], "cmd-repair-1")
-        self.assertEqual(payload["confirm_token"], "confirm-runtime-repair")
-
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_restart_telemetry_bridge_dispatches_to_bridge_repair_path(self, mock_post):
-        mock_post.return_value = self._success_body()
-        result = _execute_restart_telemetry_bridge("cmd-repair-bridge", self._params())
-
-        self.assertEqual(result["action_id"], "RestartTelemetryBridge")
-        called_url = mock_post.call_args[0][0]
-        self.assertIn(
-            "/runtime-repair/paper-runtimes/paper-runtime-1/telemetry-bridge/restart",
-            called_url,
-        )
-
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_terminate_stale_monitoring_session_requires_staleness_evidence(self, mock_post):
-        with self.assertRaises(ValueError) as ctx:
-            _execute_terminate_stale_paper_monitoring_session(
-                "cmd-stale-deny",
-                {"session_id": "session-1", "confirm_token": "confirm-runtime-repair"},
-            )
-        self.assertIn("staleness_evidence", str(ctx.exception))
-        mock_post.assert_not_called()
-
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_terminate_stale_monitoring_session_forwards_staleness_evidence(self, mock_post):
-        mock_post.return_value = self._success_body(session_id="session-1")
-        result = _execute_terminate_stale_paper_monitoring_session(
-            "cmd-stale-1",
-            self._params(
-                session_id="session-1",
-                staleness_evidence={
-                    "heartbeat_age_seconds": 600,
-                    "observed_at": "2026-06-09T00:00:00Z",
-                },
-            ),
-        )
-
-        self.assertEqual(result["action_id"], "TerminateStalePaperMonitoringSession")
-        self.assertEqual(result["session_id"], "session-1")
-        payload = mock_post.call_args[0][1]
-        self.assertEqual(payload["staleness_evidence"]["heartbeat_age_seconds"], 600)
-
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_start_monitoring_session_and_probe_ingest_are_dispatchable(self, mock_post):
-        mock_post.return_value = self._success_body()
-        start = _execute_start_paper_monitoring_session("cmd-start-session", self._params())
-        probe = _execute_probe_telemetry_ingest("cmd-probe-ingest", self._params())
-
-        self.assertEqual(start["action_id"], "StartPaperMonitoringSession")
-        self.assertEqual(probe["action_id"], "ProbeTelemetryIngest")
-        self.assertEqual(mock_post.call_count, 2)
-
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_execute_command_dispatches_runtime_repair_types(self, mock_post):
-        mock_post.return_value = self._success_body()
-        for command_type in (
-            CommandType.RESTART_PAPER_RUNTIME,
-            CommandType.RESTART_TELEMETRY_BRIDGE,
-            CommandType.START_PAPER_MONITORING_SESSION,
-            CommandType.PROBE_TELEMETRY_INGEST,
-        ):
-            result = execute_command("cmd-runtime-repair", command_type, self._params())
-            self.assertEqual(result["action_id"], command_type.value)
 
 
 class TestEvolutionDecisionExecutor(unittest.TestCase):
@@ -671,19 +503,6 @@ class TestExecuteCommandDispatch(unittest.TestCase):
         self.assertEqual(result["state_after"], "approved")
 
     @patch("services.control_plane.bff.command_executor._post_json")
-    def test_dispatch_approve_decision(self, mock_post):
-        mock_post.return_value = {
-            "decision_id": "appr-001",
-            "decision_state": "approved",
-            "status": "submitted",
-        }
-        result = execute_command("cmd-approval-queue", CommandType.APPROVE_DECISION, {
-            "decision_id": "appr-001",
-            "approval_notes": "Proceed",
-        })
-        self.assertEqual(result["decision_state"], "approved")
-
-    @patch("services.control_plane.bff.command_executor._post_json")
     def test_dispatch_escalate_diff(self, mock_post):
         mock_post.return_value = {
             "plan_id": "plan-dp-001",
@@ -698,36 +517,6 @@ class TestExecuteCommandDispatch(unittest.TestCase):
     def test_dispatch_unknown_command_type(self):
         with self.assertRaises(ValueError):
             execute_command("cmd-001", "FakeCommand", {})
-
-
-class TestBffActionAdapterExecutor(unittest.TestCase):
-    def test_records_final_command_source_without_deprecated_receipt(self):
-        result = _execute_bff_action_adapter("cmd-action-final", {
-            "action_id": "promote_paper",
-            "entity_type": "strategy",
-            "entity_id": "stg-024",
-            "audit_event": "strategy.promote_paper",
-            "frontend_source_route": "/bff/v1/commands",
-        })
-
-        self.assertEqual(result["source_route"], "/bff/v1/commands")
-        self.assertFalse(result["deprecated_action_receipt"])
-        self.assertFalse(result["live_capital_side_effects"])
-
-    def test_marks_legacy_adapter_source_as_deprecated_receipt(self):
-        result = _execute_bff_action_adapter("cmd-action-legacy", {
-            "action_id": "submit_review",
-            "entity_type": "strategy",
-            "entity_id": "stg-024",
-            "audit_event": "strategy.submit_review",
-            "adapter_source_route": "POST /bff/actions/{entityType}/{entityId}/{actionId}",
-        })
-
-        self.assertEqual(
-            result["source_route"],
-            "POST /bff/actions/{entityType}/{entityId}/{actionId}",
-        )
-        self.assertTrue(result["deprecated_action_receipt"])
 
 
 class TestExecuteCommandWithStatus(unittest.TestCase):
@@ -787,88 +576,6 @@ class TestExecuteCommandWithStatus(unittest.TestCase):
         self.assertIsNone(result)
         self.assertIsNotNone(error)
         self.assertEqual(error["code"], "DEPENDENCY_UNAVAILABLE")
-
-
-class TestRemediateSentinelInterventionExecutor(unittest.TestCase):
-    def setUp(self):
-        os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
-
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_remediate_sentinel_success(self, mock_post):
-        """Executor forwards to sentinel endpoint and returns structured result."""
-        mock_post.return_value = {
-            "intervention_id": "intv-exec-001",
-            "status": "remediated",
-            "remediated_at": "2026-05-08T10:00:00Z",
-            "two_man_signature_id": "tms-exec-001",
-        }
-        result = _execute_remediate_sentinel_intervention("cmd-sentinel-001", {
-            "intervention_id": "intv-exec-001",
-            "remediation_action": "resolve",
-            "two_man_signature_id": "tms-exec-001",
-        })
-        self.assertEqual(result["command_id"], "cmd-sentinel-001")
-        self.assertEqual(result["intervention_id"], "intv-exec-001")
-        self.assertEqual(result["status"], "remediated")
-        self.assertNotIn("stub", result)
-        mock_post.assert_called_once()
-        call_url = mock_post.call_args[0][0]
-        self.assertIn("intv-exec-001", call_url)
-        self.assertIn("/sentinel/interventions/", call_url)
-
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_remediate_sentinel_downstream_failure_propagates(self, mock_post):
-        """Downstream failure must propagate — no stub result returned."""
-        import urllib.error
-        mock_post.side_effect = urllib.error.URLError("Connection refused")
-        with self.assertRaises(urllib.error.URLError):
-            _execute_remediate_sentinel_intervention("cmd-sentinel-fail-001", {
-                "intervention_id": "intv-fail-001",
-                "remediation_action": "resolve",
-                "two_man_signature_id": "tms-fail-001",
-            })
-
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_remediate_sentinel_downstream_failure_returns_failed_status(self, mock_post):
-        """execute_command_with_status must return FAILED (not EXECUTED with stub) on downstream error."""
-        import urllib.error
-        mock_post.side_effect = urllib.error.URLError("Connection refused")
-        status, result, error = execute_command_with_status(
-            "cmd-sentinel-fail-002",
-            CommandType.REMEDIATE_SENTINEL_INTERVENTION,
-            {
-                "intervention_id": "intv-fail-002",
-                "remediation_action": "resolve",
-                "two_man_signature_id": "tms-fail-002",
-            },
-        )
-        self.assertEqual(status, CommandStatus.FAILED)
-        self.assertIsNone(result)
-        self.assertIsNotNone(error)
-        self.assertEqual(error["code"], "DEPENDENCY_UNAVAILABLE")
-
-    def test_remediate_sentinel_missing_intervention_id_raises(self):
-        """Executor raises ValueError when intervention_id is absent."""
-        with self.assertRaises(ValueError):
-            _execute_remediate_sentinel_intervention("cmd-sentinel-bad-001", {
-                "remediation_action": "resolve",
-                "two_man_signature_id": "tms-bad-001",
-            })
-
-    @patch("services.control_plane.bff.command_executor._post_json")
-    def test_remediate_sentinel_result_has_no_stub_field(self, mock_post):
-        """Successful result must not carry a stub flag."""
-        mock_post.return_value = {
-            "intervention_id": "intv-nostub-001",
-            "status": "remediated",
-            "remediated_at": "2026-05-08T10:00:00Z",
-        }
-        result = _execute_remediate_sentinel_intervention("cmd-nostub-001", {
-            "intervention_id": "intv-nostub-001",
-            "remediation_action": "resolve",
-            "two_man_signature_id": "tms-nostub-001",
-        })
-        self.assertNotIn("stub", result)
 
 
 if __name__ == "__main__":

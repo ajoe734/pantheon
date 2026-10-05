@@ -61,6 +61,11 @@ class TargetType(str, Enum):
     ALLOCATION_POLICY = "allocation_policy"
     PERSONA_CAPITAL_BINDING = "persona_capital_binding"
     EVOLUTION_PROPOSAL = "evolution_proposal"
+    REBALANCE_APPLY = "rebalance_apply"
+    CAPITAL_BINDING_ACTIVATION = "capital_binding_activation"
+    CAPITAL_POOL_ACTIVATION = "capital_pool_activation"
+    PERSONA_LIFECYCLE_TRANSITION = "persona_lifecycle_transition"
+    EVOLUTION_EXECUTE = "evolution_execute"
 
 
 class RiskLevel(str, Enum):
@@ -88,6 +93,7 @@ class EvidenceRefType(str, Enum):
 from services.governance.write_authority import (
     WRITE_AUTHORITY_MATRIX, REVOKE_AUTHORITY, is_authorized_to_decide,
 )
+from services.governance import approval_targets
 from services.governance.paper_approval_scope import (
     authorization_scope_errors,
     normalize_authorization_scope,
@@ -300,6 +306,7 @@ class ApprovalDecision:
         proof_digest: Optional[str] = None,
         expires_at: Optional[str] = None,
         authorization_scope: Optional[Dict[str, Any]] = None,
+        subject: Optional[Dict[str, str]] = None,
     ) -> "ApprovalDecision":
         """Create a new decision in the *proposed* state."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -334,6 +341,7 @@ class ApprovalDecision:
             proof_digest=proof_digest,
             expires_at=expires_at,
             authorization_scope=authorization_scope,
+            metadata={"subject": dict(subject)} if subject else None,
         )
 
     def accept_review(self, actor_role: ActorRole | str, actor_id: str) -> None:
@@ -389,9 +397,37 @@ class ApprovalDecision:
                 )
         elif conditions:
             raise ValueError("conditions require 'approved_with_conditions'")
+        is_approved = outcome in (
+            DecisionOutcome.APPROVED,
+            DecisionOutcome.APPROVED_WITH_CONDITIONS,
+            "approved",
+            "approved_with_conditions",
+        )
+        if approval_targets.is_action_target(self.target_type):
+            if effective_actor_id == self.owner_user_id:
+                raise ValueError("decider must not be the proposer")
+            errors = approval_targets.subject_errors(self.target_type, self.metadata)
+            if errors:
+                raise ValueError("; ".join(errors))
+            if is_approved:
+                if expires_at is not None:
+                    approval_targets.parse_expiry(expires_at)
+                prior = list((self.metadata or {}).get("approvals") or [])
+                if effective_actor_id in approval_targets.approvers(self.metadata):
+                    raise ValueError("decider has already approved this decision")
+                prior.append({"actor_id": effective_actor_id, "actor_role": normalized_role.value,
+                              "conditions": list(conditions or []), "expires_at": expires_at})
+                self.metadata = {**(self.metadata or {}), "approvals": prior}
+                if len(prior) < approval_targets.required_deciders(self.target_type, self.metadata):
+                    return  # stays under_review until enough distinct deciders approve
         effective_refs = evidence_refs if evidence_refs is not None else self.evidence_refs
         if consultation_gate_required(self.target_type, self.risk_level):
             validate_consultation_gate(effective_refs)
+        if approval_targets.is_action_target(self.target_type) and is_approved:
+            # A later unconditional or longer-lived vote must not broaden an earlier constrained one.
+            conditions, expires_at = approval_targets.merged_constraints(self.metadata)
+            if conditions:
+                outcome = DecisionOutcome.APPROVED_WITH_CONDITIONS
         self.conditions = list(conditions or [])
         if evidence_refs:
             self.evidence_refs = evidence_refs
@@ -409,12 +445,6 @@ class ApprovalDecision:
         self.decided_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.actor_role = normalized_role
         self.actor_id = effective_actor_id
-        is_approved = outcome in (
-            DecisionOutcome.APPROVED,
-            DecisionOutcome.APPROVED_WITH_CONDITIONS,
-            "approved",
-            "approved_with_conditions",
-        )
         if is_approved:
             self.authority_status = "authoritative"
             self.controller_record_ref = self.controller_record_ref or f"governance-controller://approval-{self.decision_id}"

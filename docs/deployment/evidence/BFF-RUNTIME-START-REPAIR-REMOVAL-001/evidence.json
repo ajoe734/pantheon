@@ -1,0 +1,39 @@
+{
+  "task_id": "BFF-RUNTIME-START-REPAIR-REMOVAL-001",
+  "change_class": "simplify",
+  "base_sha": "0fcdec080e628697d08bf80eb0f4b66eeb0ae440",
+  "validated_source_head": "0a71940927efa3a52c2af16afa66ac0d2d7a2117",
+  "integration": "Normal merge of current dev; published PR6070 history preserved without rebase/force-push. Evidence-only commit follows validated source.",
+  "changes": [
+    "Remove six dead runtime command types, catalog entries, executor handlers, wrapper aliases, adapter branches, repair URL helpers/exports and obsolete tests.",
+    "Preserve legitimate runtime pause/resume/stop, wrapper admission, original caller JWT, tenant/target binding, Persona lifecycle authority and confirmation audit publisher.",
+    "Replace runtime repair document with reconciler start/restart runbook; pause until worker removal, then resume to reset restart count."
+  ],
+  "unchanged": "Reconciler/runtime-manager implementation, assistant tool contracts and preconditions; no deleted references remain in those files.",
+  "validation": [
+    {"command": "timeout 180s /tmp/bff-runtime-removal-venv/bin/python -m pytest -q --tb=short services/control-plane/bff/test_command_executor.py services/control-plane/bff/tests/test_management_domain_actions.py services/control-plane/bff/tests/test_assistant_security.py", "exit_status": 0, "result": "104 passed, 2 subtests passed", "log": "/tmp/bff-removal-resume-core.log", "sha256": "c129a1e41c3da89891857e62ae2be5f1c105f618b3f75631784b19446646066c"},
+    {"command": "timeout 240s /tmp/bff-runtime-removal-venv/bin/python -m pytest -q --tb=short services/control-plane/bff/tests/test_command_adapters_router.py -k 'RuntimeAction or runtime or unmapped or accepted_wrapped_alias or wrong_domain or action_catalog or command_confirmations_lifecycle or confirm_command_by_token_contract_and_regressions'", "exit_status": 0, "result": "179 passed, 464 deselected", "log": "/tmp/bff-removal-resume-focused-router.log", "sha256": "7be12ee31dde22905dc951e70cf1a3d6d341c6c6c12b0c07c632ee4630e25af0"},
+    {"command": "timeout 180s /tmp/bff-runtime-removal-venv/bin/python -m pytest -q --tb=short services/control-plane/bff/test_bff_write_gap_2026_05_28.py", "exit_status": 0, "result": "35 passed; confirmation audit regression passes", "log": "/tmp/bff-removal-resume-write-gap.log", "sha256": "3ad23759ec955783bdebc09dfc213fec758f7d18199f26ae6c15f7069b11c223"},
+    {"command": "timeout 360s /tmp/bff-runtime-removal-venv/bin/python -m pytest -q --tb=short services/control-plane/bff/tests/test_persona_lifecycle_forward.py", "exit_status": 0, "result": "192 passed; original caller JWT, formal tenant, canonical target, real owner lifecycle and confirmation gates", "log": "/tmp/bff-removal-resume-persona.log", "sha256": "f92b53e3cbb576412cd089bf8c398cf0846201f1082336113d26089d00913b7b"},
+    {"command": "timeout 180s env PYTHONPATH=/tmp/clean-bff-venv/lib/python3.12/site-packages /tmp/bff-runtime-removal-venv/bin/python -m pytest -q --tb=short services/paper_fleet_reconciler/test_paper_fleet_reconciler.py", "exit_status": 0, "result": "65 passed, including Redis fencing and pause/resume recovery", "log": "/tmp/bff-removal-resume-reconciler.log", "sha256": "3a5c87fd70cf4772f3262005f7aa29afd52729236eff9ed627ae708f59323b86"},
+    {"command": "timeout 90s /tmp/bff-runtime-removal-venv/bin/python -m pytest -q --tb=short scripts/test_agora_bundle_digests.py scripts/test_dev_paper_diagnostics_failure_path.py", "exit_status": 0, "result": "29 passed", "log": "/tmp/bff-removal-resume-smoke-tail.log", "sha256": "08008e42595ccb8b97f567415ed7034aa14f3e8e22db02103a4a985fb003d49a"},
+    {"command": "timeout 300s env PATH=\"/tmp/bff-runtime-removal-venv/bin:$PATH\" PYTHON=/tmp/bff-runtime-removal-venv/bin/python bash scripts/run-acceptance.sh smoke", "exit_status": 0, "result": "Complete smoke acceptance passed after local transport file permissions corrected", "log": "/tmp/bff-removal-resume-smoke-secure-mode.log", "sha256": "28b19ee974709e8ff94f1d34377b8864c9f6ce5b8cc4bc5855527f99b2a0b06e"},
+    {"command": "timeout 60s /tmp/bff-runtime-removal-venv/bin/python -m pytest -q --tb=short services/control-plane/bff/tests/test_command_adapters_router.py::test_zero_reverse_main_imports services/control-plane/bff/test_action_catalog.py", "exit_status": 1, "result": "10 passed; 2 baseline failures", "log": "/tmp/bff-removal-resume-failures.log", "sha256": "feec8caa42fc0b37eb925483ccdf92f2e7d85c1a2ba357c56150e838653f4991"},
+    {"command": "timeout 180s /tmp/bff-runtime-removal-venv/bin/python -m pytest -q --tb=short services/control-plane/bff/tests/test_command_adapters_router.py::test_zero_reverse_main_imports services/control-plane/bff/test_action_catalog.py scripts/test_deploy_nonprod_vm.py::test_actual_ssh_command_forwards_drift_metadata", "exit_status": 1, "result": "12 passed; same 2 baseline failures", "log": "/tmp/bff-removal-resume-baseline.log", "sha256": "c2dbcea3a475f980066b2fecd6cc56761ad31a6f9ef26f443992de25417758cd", "cwd": "/tmp/bff-removal-current-base-0fcdec080 (git archive of base_sha)"}
+  ],
+  "known_baseline_failures": [
+    "test_zero_reverse_main_imports: existing sys.modules.get(main) accesses in service/preconditions.",
+    "test_critical_actions_require_two_man: PromoteEvolutionCandidateLive lacks two-man metadata."
+  ],
+  "incomplete_attempts": [
+    "Combined catalog/write-gap/Persona batch and full router batch each timed out at 180s, exit124; neither counted passed. Completed focused batches replace these attempts.",
+    "Initial smoke exit1: transport helper/watchdog had group-write permissions (775/664); unchanged baseline archive with 755/644 passed. Removed group/other write permissions on task-worktree scripts/dev_vm_ssh.sh and scripts/dev_remote_watchdog.py (no tracked content change), then complete smoke passed."
+  ],
+  "static_checks": [
+    "Retired command CamelCase/snake/upper identifiers absent from services/scripts/tests Python, TypeScript, TSX and shell sources.",
+    "git diff --check origin/dev..HEAD; check_commit_trailers.py --range origin/dev..HEAD --skip-merge; all task-range subjects <=72 characters.",
+    "python3 scripts/git/diff_budget.py --base origin/dev --change-class simplify --budget -300"
+  ],
+  "diff_budget": {"production_added": 3, "production_deleted": 445, "production_net": -442, "limit": -300},
+  "limits": "No hosted deployment claim; independent Claude review and supervisor integration pending. Baseline failures are not waived or reported passed."
+}

@@ -26,7 +26,7 @@ from services.control_plane.bff.tests.conftest import build_consolidated_cross_c
 from services.control_plane.bff.tools_integrations.service import SSE_CHANNEL_CATALOG
 
 
-HEADERS = {"Authorization": "Bearer op-2:operator"}
+HEADERS = {"Authorization": "Bearer op-2:operator:tenant-a"}
 FIXTURE_PATH = Path(__file__).resolve().parent / "data" / "fixtures_pack_c.json"
 
 SERVICE_ENV_BLANKS = {
@@ -63,7 +63,11 @@ class FixturePackCTestReadPorts(ReadSurfacePorts):
         return {"status": status, "source": src, "snapshot_at": snapshot_at}
 
     def _get_dataset(self, name: str) -> dict[str, Any] | list[Any]:
-        return self._data.get(name, {})
+        data = self._data.get(name, {})
+        if not name.startswith("approval_"):
+            return data
+        stamp = lambda item: {**item, "tenant_id": "tenant-a"}  # noqa: E731
+        return {k: stamp(v) for k, v in data.items()} if isinstance(data, dict) else [stamp(v) for v in data]
 
     def list_alerts(self, **kwargs: Any) -> list[dict[str, Any]]:
         ds = self._get_dataset("alerts")
@@ -264,7 +268,6 @@ def test_pack_c_live_smoke_routes_return_non_empty_records() -> None:
             routes = (
                 "/bff/alerts",
                 "/bff/incidents",
-                "/bff/approvals",
                 "/bff/audit",
                 "/bff/jobs",
                 "/bff/channels",
@@ -308,7 +311,6 @@ def test_pack_c_live_detail_routes_use_fixture_records() -> None:
         with _fresh_pack_c_client() as client:
             checks = (
                 ("/bff/incidents/inc-pack-c-001", "incident_id", "inc-pack-c-001"),
-                ("/bff/approvals/approval-pack-c-deploy", "id", "approval-pack-c-deploy"),
                 ("/bff/tools/tool-pack-c-risk-snapshot", "tool_id", "tool-pack-c-risk-snapshot"),
                 (
                     "/bff/skills/skill-pack-c-incident-summarizer",
@@ -338,13 +340,3 @@ def test_pack_c_live_detail_routes_use_fixture_records() -> None:
                     failures.append((path, key, data))
 
             assert not failures
-
-            approval = client.get("/bff/approvals/approval-pack-c-deploy", headers=HEADERS)
-            assert approval.status_code == 200, approval.text
-            approval_data = approval.json()["data"]
-            assert approval_data["target_type"] == "DeploymentPlan"
-            assert approval_data["target_id"] == "plan-pack-c-paper-001"
-            assert approval_data["deployment_ref"] == {
-                "plan_id": "plan-pack-c-paper-001",
-                "href": "/bff/deployments/plan-pack-c-paper-001",
-            }

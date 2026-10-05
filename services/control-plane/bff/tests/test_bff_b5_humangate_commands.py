@@ -49,17 +49,14 @@ def _test_extract_identity(
 
 
 class MockReadStore:
-    def __init__(self, interventions: list[dict[str, Any]]):
-        self.interventions = interventions
+    def __init__(self, approvals: list[dict[str, Any]]):
+        self.approvals = approvals
 
-    def get_v5_intervention(self, intervention_id: str) -> Optional[dict[str, Any]]:
-        for item in self.interventions:
-            if item.get("intervention_id") == intervention_id or item.get("id") == intervention_id:
+    def get_approval_decision(self, decision_id: str) -> Optional[dict[str, Any]]:
+        for item in self.approvals:
+            if item.get("decision_id") == decision_id:
                 return item
         return None
-
-    def list_v5_interventions(self) -> list[dict[str, Any]]:
-        return list(self.interventions)
 
     def get_ranking_snapshot(self, snapshot_id: str) -> Optional[dict[str, Any]]:
         from datetime import datetime, timezone
@@ -115,12 +112,11 @@ def _build_test_app() -> FastAPI:
             "data": {
                 "items": [
                     {
-                        "id": "intervention:intv-b5-human-001",
-                        "source_id": "intv-b5-human-001",
-                        "source_type": "intervention",
-                        "kind": "hiq_sentinel",
+                        "id": "approval:b5-human-001",
+                        "source_id": "b5-human-001",
+                        "source_type": "approval",
                         "status": "pending",
-                        "title": "B5 HumanGate intervention fixture.",
+                        "title": "B5 HumanGate approval fixture.",
                     }
                 ]
             }
@@ -156,29 +152,9 @@ def _isolated_b5_client() -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
         command_store = CommandStore(os.path.join(td, "commands.jsonl"))
         read_store = MockReadStore(
-            interventions=[
-                {
-                    "intervention_id": "intv-b5-human-001",
-                    "kind": "hiq_sentinel",
-                    "status": "pending",
-                    "target_type": "Runtime",
-                    "target_id": "runtime-b5-human-001",
-                    "triggered_at": "2026-05-23T10:00:00Z",
-                    "description": "B5 HumanGate intervention fixture.",
-                    "correlation_id": "corr-b5-human-001",
-                },
-                {
-                    "intervention_id": "b5-revoke",
-                    "kind": "hiq_sentinel",
-                    "status": "pending",
-                    "risk_level": "medium",
-                    "target_type": "Runtime",
-                    "target_id": "runtime-b5-revoke-001",
-                    "triggered_at": "2026-05-23T10:01:00Z",
-                    "description": "B5 HumanGate revocation source fixture.",
-                    "triggered_by": "governance-queue",
-                    "correlation_id": "corr-b5-revoke-001",
-                },
+            approvals=[
+                {"decision_id": "b5-human-001", "status": "pending", "requested_by": "governance-queue"},
+                {"decision_id": "b5-revoke", "status": "pending", "requested_by": "governance-queue"},
             ]
         )
         _FINAL_CONTRACT_IDEMPOTENCY.clear()
@@ -230,8 +206,8 @@ def test_humangate_command_names_are_admitted_through_bff_v1_commands() -> None:
         ("HumanGateApprove", "approval:b5-approve", {}),
         ("HumanGateReject", "approval:b5-reject", {"rejection_reason": "risk budget exceeded"}),
         ("HumanGateRequestMoreEvidence", "approval:b5-evidence", {"evidence_request": "attach PM-12 packet"}),
-        ("HumanGateRevoke", "intervention:b5-revoke", {"revoke_reason": "stale intervention"}),
-        ("HumanGateExtendTtl", "intervention:b5-ttl", {"ttlSeconds": 3600}),
+        ("HumanGateRevoke", "approval:b5-revoke", {"revoke_reason": "stale approval"}),
+        ("HumanGateExtendTtl", "approval:b5-ttl", {"ttlSeconds": 3600}),
     ]
 
     with _isolated_b5_client() as client:
@@ -274,11 +250,11 @@ def test_human_inbox_decision_flow_can_submit_decisions_via_command_path() -> No
         inbox = client.get(
             "/bff/management/human-inbox",
             headers=HEADERS,
-            params={"source_type": "intervention", "page_size": 1},
+            params={"source_type": "approval", "page_size": 1},
         )
         assert inbox.status_code == 200, inbox.text
         item = inbox.json()["data"]["items"][0]
-        assert item["id"].startswith("intervention:")
+        assert item["id"].startswith("approval:")
 
         for command in (
             "HumanGateApprove",
@@ -301,13 +277,17 @@ def test_human_inbox_decision_flow_can_submit_decisions_via_command_path() -> No
             record = command_store.get_command(command_id)
             assert record is not None
             assert record["target"]["id"] == item["id"]
-            assert record["params"]["source_type"] == "intervention"
+            assert record["params"]["source_type"] == "approval"
             assert record["params"]["source_record_id"] == item["source_id"]
             command_store.update_status(command_id, CommandStatus.EXECUTED)
 
 
-def test_quarterly_ranking_recommendation_submit_uses_command_response_without_live_mutation() -> None:
+def test_quarterly_ranking_recommendation_submit_uses_command_response_without_live_mutation(
+    _saved_evaluator_result_stub,
+) -> None:
     with _isolated_b5_client() as client:
+        snapshot = read_store.get_ranking_snapshot("snap-b5-001")
+        _saved_evaluator_result_stub.record({**snapshot, "ranking_snapshot_id": "snap-b5-001"})
         recommendations = client.get(
             "/bff/management/quarterly-ranking/recommendations",
             headers=HEADERS,
@@ -355,9 +335,7 @@ def test_quarterly_ranking_recommendation_submit_uses_command_response_without_l
         )
 
 
-def test_b5_commands_are_in_action_catalog_and_executor_dispatch(monkeypatch) -> None:
-    from services.control_plane.bff import command_executor
-    monkeypatch.setitem(command_executor._EXECUTORS, CommandType.HUMAN_GATE_APPROVE, command_executor._execute_bff_action_adapter)
+def test_b5_commands_are_in_action_catalog() -> None:
     expected = {
         "HumanGateApprove": "HumanGateItem",
         "HumanGateReject": "HumanGateItem",
@@ -372,20 +350,3 @@ def test_b5_commands_are_in_action_catalog_and_executor_dispatch(monkeypatch) ->
         assert entry is not None
         assert entry.entity_type == entity_type
         assert entry.endpoint == "/bff/v1/commands"
-
-    status, result, error = execute_command_with_status(
-        "cmd-b5-human-executor",
-        CommandType.HUMAN_GATE_APPROVE,
-        {
-            "action_id": "approve",
-            "entity_type": "human_gate_item",
-            "entity_id": "approval:b5-executor",
-            "audit_event": "human_gate.approve",
-        },
-    )
-    assert status == CommandStatus.EXECUTED
-    assert error is None
-    assert result is not None
-    assert result["dispatch_path"] == "bff_action_adapter"
-    assert result["live_capital_side_effects"] is False
-    assert result["two_man_signature_id"] is None

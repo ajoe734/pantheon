@@ -872,7 +872,10 @@ def _first_sequence(*values: Any) -> list[str]:
 def _normalize_lineage(lineage: Any) -> dict[str, Any]:
     if not isinstance(lineage, Mapping):
         return {}
-    normalized = dict(lineage)
+    # Registry serializes absent lineage fields as null; the promoted artifact
+    # metadata schema types them as arrays/strings, so omit them as
+    # Lineage.to_dict() does.
+    normalized = {key: value for key, value in lineage.items() if value is not None}
     if "source_run_ids" not in normalized and normalized.get("source_run_id"):
         normalized["source_run_ids"] = [normalized["source_run_id"]]
     return normalized

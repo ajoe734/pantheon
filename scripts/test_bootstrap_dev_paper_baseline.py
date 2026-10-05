@@ -1398,6 +1398,31 @@ def test_compose_operator_bff_wires_owner_service_jwt_credentials() -> None:
         "${PANTHEON_GOVERNANCE_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-pantheon-dev-owners}}"
     )
 
+    source_ingest_env = services["source-ingest"]["environment"]
+    assert source_ingest_env["PANTHEON_RUNTIME_JWT_SECRET"] == (
+        "${PANTHEON_RUNTIME_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}"
+    )
+    assert source_ingest_env["PANTHEON_RUNTIME_JWT_ISSUER"] == (
+        "${PANTHEON_RUNTIME_JWT_ISSUER:-${PANTHEON_BFF_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-}}}"
+    )
+    assert source_ingest_env["PANTHEON_RUNTIME_JWT_AUDIENCE"] == (
+        "${PANTHEON_RUNTIME_JWT_AUDIENCE:-${PANTHEON_BFF_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-}}}"
+    )
+
+    deployment_env = services["deployment"]["environment"]
+    assert deployment_env["PANTHEON_DEPLOYMENT_JWT_SECRET"] == (
+        "${PANTHEON_DEPLOYMENT_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}"
+    )
+    assert deployment_env["PANTHEON_DEPLOYMENT_JWT_ISSUER"] == (
+        "${PANTHEON_DEPLOYMENT_JWT_ISSUER:-${PANTHEON_BFF_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-}}}"
+    )
+    assert deployment_env["PANTHEON_DEPLOYMENT_JWT_AUDIENCE"] == (
+        "${PANTHEON_DEPLOYMENT_JWT_AUDIENCE:-${PANTHEON_BFF_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-}}}"
+    )
+    assert deployment_env["PANTHEON_DEPLOYMENT_JWKS_URI"] == (
+        "${PANTHEON_DEPLOYMENT_JWKS_URI:-${PANTHEON_BFF_JWKS_URI:-${PANTHEON_DEV_BFF_JWKS_URI:-}}}"
+    )
+
 
 def test_compose_resolves_owner_issuer_audience_for_nondefault_dev_values() -> None:
     """Regression for DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001 P2:
@@ -1439,13 +1464,19 @@ def test_compose_resolves_owner_issuer_audience_for_nondefault_dev_values() -> N
         "PANTHEON_REGISTRY_JWT_AUDIENCE",
         "PANTHEON_GOVERNANCE_JWT_ISSUER",
         "PANTHEON_GOVERNANCE_JWT_AUDIENCE",
+        "PANTHEON_DEPLOYMENT_JWT_ISSUER",
+        "PANTHEON_DEPLOYMENT_JWT_AUDIENCE",
+        "PANTHEON_RUNTIME_JWT_ISSUER",
+        "PANTHEON_RUNTIME_JWT_AUDIENCE",
+        "PANTHEON_BFF_JWT_ISSUER",
+        "PANTHEON_BFF_JWT_AUDIENCE",
     ):
         env.pop(key, None)
     env["PANTHEON_DEV_BFF_JWT_ISSUER"] = "review-test-issuer"
     env["PANTHEON_DEV_BFF_JWT_AUDIENCE"] = "review-test-audience"
 
     result = subprocess.run(
-        ["docker", "compose", "--env-file", "/dev/null", "config", "--format", "json"],
+        ["docker", "compose", "--profile", "root", "--env-file", "/dev/null", "config", "--format", "json"],
         cwd=str(repo_root),
         env=env,
         capture_output=True,
@@ -1465,6 +1496,8 @@ def test_compose_resolves_owner_issuer_audience_for_nondefault_dev_values() -> N
     bff_env = services["operator-bff"]["environment"]
     registry_env = services["registry"]["environment"]
     governance_env = services["governance"]["environment"]
+    deployment_env = services["deployment"]["environment"]
+    source_ingest_env = services["source-ingest"]["environment"]
 
     assert bff_env["CAPITAL_JWT_ISSUER"] == "review-test-issuer"
     assert bff_env["CAPITAL_JWT_AUDIENCE"] == "review-test-audience"
@@ -1472,6 +1505,10 @@ def test_compose_resolves_owner_issuer_audience_for_nondefault_dev_values() -> N
     assert registry_env["PANTHEON_REGISTRY_JWT_AUDIENCE"] == "review-test-audience"
     assert governance_env["PANTHEON_GOVERNANCE_JWT_ISSUER"] == "review-test-issuer"
     assert governance_env["PANTHEON_GOVERNANCE_JWT_AUDIENCE"] == "review-test-audience"
+    assert deployment_env["PANTHEON_DEPLOYMENT_JWT_ISSUER"] == "review-test-issuer"
+    assert deployment_env["PANTHEON_DEPLOYMENT_JWT_AUDIENCE"] == "review-test-audience"
+    assert source_ingest_env["PANTHEON_RUNTIME_JWT_ISSUER"] == "review-test-issuer"
+    assert source_ingest_env["PANTHEON_RUNTIME_JWT_AUDIENCE"] == "review-test-audience"
 
 
 def test_compose_deployment_tenant_id_chains_like_every_other_service() -> None:
@@ -1535,7 +1572,7 @@ def test_compose_resolves_deployment_tenant_id_for_dev_paper_tenant() -> None:
     env["PANTHEON_DEV_BFF_TENANT_ID"] = "tenant-dev"
 
     result = subprocess.run(
-        ["docker", "compose", "--env-file", "/dev/null", "config", "--format", "json"],
+        ["docker", "compose", "--profile", "root", "--env-file", "/dev/null", "config", "--format", "json"],
         cwd=str(repo_root),
         env=env,
         capture_output=True,
@@ -1557,3 +1594,425 @@ def test_compose_resolves_deployment_tenant_id_for_dev_paper_tenant() -> None:
         services["deployment-outbox-consumer"]["environment"]["PANTHEON_DEPLOYMENT_TENANT_ID"]
         == "tenant-dev"
     )
+
+
+def test_compose_resolves_owner_secret_and_jwks_with_precedence() -> None:
+    """Regression for DEV-EXISTING-OWNER-VERIFIER-BINDINGS-20261005:
+
+    Asserts that docker compose root config resolves deployment and source-ingest
+    verifier environment variables from PANTHEON_DEV_BFF_* names and respects
+    service-specific overrides.
+    """
+    import shutil
+    import subprocess
+    import yaml
+
+    if shutil.which("docker") is None:
+        pytest.skip("docker is not available in this environment")
+
+    repo_root = Path(__file__).resolve().parents[1]
+
+    # Baseline case: Only PANTHEON_DEV_BFF_* set
+    env = dict(os.environ)
+    for key in (
+        "PANTHEON_DEPLOYMENT_JWT_SECRET",
+        "PANTHEON_DEPLOYMENT_JWKS_URI",
+        "PANTHEON_RUNTIME_JWT_SECRET",
+        "PANTHEON_BFF_JWT_SECRET",
+        "PANTHEON_BFF_JWKS_URI",
+    ):
+        env.pop(key, None)
+    env["PANTHEON_DEV_BFF_JWT_SECRET"] = "dev-bff-secret-value"
+    env["PANTHEON_DEV_BFF_JWKS_URI"] = "https://dev.auth.example.com/jwks.json"
+
+    result = subprocess.run(
+        ["docker", "compose", "--profile", "root", "--env-file", "/dev/null", "config", "--format", "json"],
+        cwd=str(repo_root),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"docker compose config unavailable: {result.stderr.strip()}")
+
+    compose = yaml.safe_load(result.stdout) if result.stdout.strip().startswith(("{", "[")) else None
+    if compose is None:
+        import json
+
+        compose = json.loads(result.stdout)
+    services = compose["services"]
+
+    assert services["deployment"]["environment"]["PANTHEON_DEPLOYMENT_JWT_SECRET"] == "dev-bff-secret-value"
+    assert services["deployment"]["environment"]["PANTHEON_DEPLOYMENT_JWKS_URI"] == "https://dev.auth.example.com/jwks.json"
+    assert services["source-ingest"]["environment"]["PANTHEON_RUNTIME_JWT_SECRET"] == "dev-bff-secret-value"
+
+    # Override case: Service-specific overrides take precedence
+    env["PANTHEON_DEPLOYMENT_JWT_SECRET"] = "custom-deployment-secret"
+    env["PANTHEON_RUNTIME_JWT_SECRET"] = "custom-runtime-secret"
+    result_override = subprocess.run(
+        ["docker", "compose", "--profile", "root", "--env-file", "/dev/null", "config", "--format", "json"],
+        cwd=str(repo_root),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result_override.returncode == 0
+    compose_override = (
+        yaml.safe_load(result_override.stdout)
+        if result_override.stdout.strip().startswith(("{", "["))
+        else None
+    )
+    if compose_override is None:
+        import json
+
+        compose_override = json.loads(result_override.stdout)
+    services_override = compose_override["services"]
+    assert services_override["deployment"]["environment"]["PANTHEON_DEPLOYMENT_JWT_SECRET"] == "custom-deployment-secret"
+    assert services_override["source-ingest"]["environment"]["PANTHEON_RUNTIME_JWT_SECRET"] == "custom-runtime-secret"
+
+
+def test_deployment_owner_read_auth_boundary_with_default_bff_consumer(tmp_path, monkeypatch) -> None:
+    """Regression for DEV-EXISTING-OWNER-VERIFIER-BINDINGS-20261005 AC1, AC3, AC4:
+
+    Tests real deployment service app with real default BFF consumer
+    (create_owner_domain_ports().deployment and read_records). Verifies:
+    1. Unconfigured verifier in deployment service rejects real operator token with
+       401 AUTH_JWT_UNVERIFIED and BFF existing plan read raises / reports unavailable.
+    2. Configured verifier accepts genuine signed operator token and returns
+       populated 200 read of existing deployment plan.
+    3. Boundary negatives (mismatched tenant, invalid signature, expired token,
+       missing token, forbidden role) are rejected with zero store side effects.
+    """
+    import io
+    import sys
+    import time
+    import urllib.error
+    import urllib.request
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+
+    _cp_gov = Path(__file__).resolve().parent.parent / "services" / "control-plane" / "governance"
+    if str(_cp_gov) not in sys.path:
+        sys.path.insert(0, str(_cp_gov))
+
+    from services.deployment import service
+    from deployment_plan import (
+        DeploymentPlan,
+        DeploymentPlanStore,
+        DeploymentStage,
+        PlanStatus,
+        RuntimeAction,
+        TransitionType,
+    )
+    from services.control_plane.bff.command_adapters.base import deployment_url
+    from services.control_plane.bff.core.owner_reads import (
+        authorization,
+        create_owner_domain_ports,
+        read_records,
+        selected_tenant,
+    )
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    secret = "synthetic-dev-principal-unit-key-4444"
+    issuer = "pantheon-dev-control-plane"
+    audience = "pantheon-dev-owners"
+
+    plan_store_path = tmp_path / "deployment_plans.json"
+    test_store = DeploymentPlanStore(str(plan_store_path))
+    plan_id = "plan-persona-paper-32b8fd84b82f35138206"
+    test_plan = DeploymentPlan(
+        plan_id=plan_id,
+        approval_decision_id="approval-paper-test-001",
+        artifact_id="artifact-paper-test-001",
+        artifact_version="1.0.0",
+        artifact_type="model",
+        strategy_id="strat-paper-001",
+        capital_pool_id="pool-paper-001",
+        current_stage=DeploymentStage.PAPER,
+        target_stage=DeploymentStage.PAPER,
+        transition_type=TransitionType.ACTIVATE,
+        runtime_action=RuntimeAction.DEPLOY_NEW_BINDING,
+        status=PlanStatus.APPROVED,
+        created_at="2026-10-05T00:00:00Z",
+        created_by="operator_a",
+        metadata={"tenant_id": "tenant-dev"},
+    )
+    test_store.put(test_plan)
+
+    monkeypatch.setattr(service, "store", test_store)
+    monkeypatch.setattr(
+        service,
+        "planner_service",
+        service.DeploymentPlannerService(plan_store=test_store),
+    )
+
+    client = TestClient(service.app)
+
+    def fake_urlopen(req, timeout=30):
+        method = req.get_method()
+        url = req.full_url
+        headers = dict(req.header_items())
+        body = req.data
+        path = "/" + url.split("://", 1)[1].split("/", 1)[1]
+        res = client.request(method, path, headers=headers, content=body)
+        if res.status_code >= 400:
+            raise urllib.error.HTTPError(
+                url, res.status_code, res.text, res.headers, io.BytesIO(res.content)
+            )
+
+        class FakeResp:
+            status = res.status_code
+
+            def read(self):
+                return res.content
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+        return FakeResp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_API_URL", "http://127.0.0.1:8000")
+
+    now = int(time.time())
+    token = encode_jwt_hs256(
+        {
+            "sub": "operator_a",
+            "roles": ["operator"],
+            "tenant_id": "tenant-dev",
+            "allowed_tenants": ["tenant-dev"],
+            "iss": issuer,
+            "aud": audience,
+            "iat": now,
+            "exp": now + 3600,
+        },
+        secret=secret,
+    )
+
+    # 1. Unconfigured verifier in deployment service (prior root state)
+    monkeypatch.delenv("PANTHEON_DEPLOYMENT_JWT_SECRET", raising=False)
+    monkeypatch.delenv("PANTHEON_BFF_JWT_SECRET", raising=False)
+    monkeypatch.delenv("PANTHEON_RUNTIME_JWT_SECRET", raising=False)
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_AUTH_MODE", "permissive")
+
+    tok_ref = authorization.set(f"Bearer {token}")
+    ten_ref = selected_tenant.set("tenant-dev")
+    try:
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            read_records(deployment_url, "/api/deployment/plans")
+        assert exc_info.value.code == 401
+
+        ports = create_owner_domain_ports()
+        assert ports.deployment.get_surface_status()["status"] == "unavailable"
+    finally:
+        selected_tenant.reset(ten_ref)
+        authorization.reset(tok_ref)
+
+    # 2. Configured verifier (fixed root state)
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_JWT_ISSUER", issuer)
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_JWT_AUDIENCE", audience)
+
+    tok_ref = authorization.set(f"Bearer {token}")
+    ten_ref = selected_tenant.set("tenant-dev")
+    try:
+        plans = read_records(deployment_url, "/api/deployment/plans")
+        assert len(plans) == 1
+        assert plans[0]["plan_id"] == plan_id
+
+        ports = create_owner_domain_ports()
+        assert ports.deployment.get_surface_status()["status"] == "ok"
+        plans_from_port = ports.deployment.list_deployment_plans()
+        assert len(plans_from_port) == 1
+        assert plans_from_port[0]["plan_id"] == plan_id
+        single_plan = ports.deployment.get_deployment_plan(plan_id)
+        assert single_plan is not None
+        assert single_plan["plan_id"] == plan_id
+    finally:
+        selected_tenant.reset(ten_ref)
+        authorization.reset(tok_ref)
+
+    # 3. Negatives: tenant, signature, expiry, missing token, forbidden role
+    # Missing token
+    r_missing = client.get("/api/deployment/plans", headers={"X-Tenant-Id": "tenant-dev"})
+    assert r_missing.status_code == 401
+    assert r_missing.json()["error_code"] in ("401", "AUTH_TOKEN_MISSING")
+
+    # Invalid signature
+    bad_token = encode_jwt_hs256(
+        {
+            "sub": "operator_a",
+            "roles": ["operator"],
+            "tenant_id": "tenant-dev",
+            "allowed_tenants": ["tenant-dev"],
+            "iss": issuer,
+            "aud": audience,
+            "iat": now,
+            "exp": now + 3600,
+        },
+        secret="wrong-secret-key",
+    )
+    r_bad_sig = client.get(
+        "/api/deployment/plans",
+        headers={"Authorization": f"Bearer {bad_token}", "X-Tenant-Id": "tenant-dev"},
+    )
+    assert r_bad_sig.status_code == 401
+    assert r_bad_sig.json()["error_code"] == "AUTH_JWT_BAD_SIGNATURE"
+
+    # Expired token
+    exp_token = encode_jwt_hs256(
+        {
+            "sub": "operator_a",
+            "roles": ["operator"],
+            "tenant_id": "tenant-dev",
+            "allowed_tenants": ["tenant-dev"],
+            "iss": issuer,
+            "aud": audience,
+            "iat": now - 7200,
+            "exp": now - 3600,
+        },
+        secret=secret,
+    )
+    r_exp = client.get(
+        "/api/deployment/plans",
+        headers={"Authorization": f"Bearer {exp_token}", "X-Tenant-Id": "tenant-dev"},
+    )
+    assert r_exp.status_code == 401
+    assert r_exp.json()["error_code"] == "AUTH_JWT_EXPIRED"
+
+    # Forbidden role
+    role_token = encode_jwt_hs256(
+        {
+            "sub": "operator_a",
+            "roles": ["viewer"],
+            "tenant_id": "tenant-dev",
+            "allowed_tenants": ["tenant-dev"],
+            "iss": issuer,
+            "aud": audience,
+            "iat": now,
+            "exp": now + 3600,
+        },
+        secret=secret,
+    )
+    r_role = client.get(
+        "/api/deployment/plans",
+        headers={"Authorization": f"Bearer {role_token}", "X-Tenant-Id": "tenant-dev"},
+    )
+    assert r_role.status_code == 403
+    assert r_role.json()["error_code"] == "AUTH_FORBIDDEN"
+
+    # Mismatched tenant
+    r_tenant = client.get(
+        "/api/deployment/plans",
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": "other-tenant"},
+    )
+    assert r_tenant.status_code == 403
+    assert r_tenant.json()["error_code"] == "TENANT_BOUNDARY_DENIED"
+
+    # Zero side effects on store
+    assert len(test_store.list_all()) == 1
+    assert test_store.get(plan_id).plan_id == plan_id
+
+
+def test_source_ingest_owner_read_auth_boundary_with_runtime_verifier(monkeypatch) -> None:
+    """Regression for DEV-EXISTING-OWNER-VERIFIER-BINDINGS-20261005 AC1, AC4:
+
+    Tests source-ingest runtime verifier in strict auth mode:
+    1. Unconfigured verifier raises 503 AUTH_JWT_SECRET_MISSING.
+    2. Configured verifier with matching secret resolves admitted tenant.
+    3. Mismatched tenant, invalid signature, expired, and missing token are rejected.
+    """
+    import time
+    from fastapi import HTTPException
+    from services.runtime_auth_inbound import encode_jwt_hs256
+    from services.source_ingestion.routers.ingest_operations import _source_read_tenant
+
+    secret = "synthetic-dev-principal-unit-key-4444"
+    issuer = "pantheon-dev-control-plane"
+    audience = "pantheon-dev-owners"
+
+    now = int(time.time())
+    token = encode_jwt_hs256(
+        {
+            "sub": "operator_a",
+            "roles": ["operator"],
+            "tenant_id": "tenant-dev",
+            "allowed_tenants": ["tenant-dev"],
+            "iss": issuer,
+            "aud": audience,
+            "iat": now,
+            "exp": now + 3600,
+        },
+        secret=secret,
+    )
+
+    # 1. Unconfigured runtime verifier secret
+    monkeypatch.delenv("PANTHEON_RUNTIME_JWT_SECRET", raising=False)
+    with pytest.raises(HTTPException) as exc_info:
+        _source_read_tenant(f"Bearer {token}", "tenant-dev")
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail["code"] == "AUTH_JWT_SECRET_MISSING"
+
+    # 2. Configured runtime verifier
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_ISSUER", issuer)
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_AUDIENCE", audience)
+
+    resolved = _source_read_tenant(f"Bearer {token}", "tenant-dev")
+    assert resolved == "tenant-dev"
+
+    # 3. Negatives
+    # Missing token
+    with pytest.raises(HTTPException) as exc_info:
+        _source_read_tenant(None, "tenant-dev")
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail["code"] in ("401", "AUTH_TOKEN_MISSING")
+
+    # Invalid signature
+    bad_token = encode_jwt_hs256(
+        {
+            "sub": "operator_a",
+            "roles": ["operator"],
+            "tenant_id": "tenant-dev",
+            "allowed_tenants": ["tenant-dev"],
+            "iss": issuer,
+            "aud": audience,
+            "iat": now,
+            "exp": now + 3600,
+        },
+        secret="wrong-secret",
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        _source_read_tenant(f"Bearer {bad_token}", "tenant-dev")
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail["code"] == "AUTH_JWT_BAD_SIGNATURE"
+
+    # Expired token
+    exp_token = encode_jwt_hs256(
+        {
+            "sub": "operator_a",
+            "roles": ["operator"],
+            "tenant_id": "tenant-dev",
+            "allowed_tenants": ["tenant-dev"],
+            "iss": issuer,
+            "aud": audience,
+            "iat": now - 7200,
+            "exp": now - 3600,
+        },
+        secret=secret,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        _source_read_tenant(f"Bearer {exp_token}", "tenant-dev")
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail["code"] == "AUTH_JWT_EXPIRED"
+
+    # Mismatched tenant
+    with pytest.raises(HTTPException) as exc_info:
+        _source_read_tenant(f"Bearer {token}", "other-tenant")
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail["code"] == "TENANT_SCOPE_DENIED"

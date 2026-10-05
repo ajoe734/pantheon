@@ -10,6 +10,7 @@ Tests that:
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -311,3 +312,96 @@ def test_open_gate_job_status_endpoint_includes_stdout_stderr() -> None:
     assert body["stderr"] == "warn\n"
     assert body["exit_code"] == 0
     assert body["status"] == "completed"
+
+
+def test_offline_worker_timeout_is_failure_not_false_success() -> None:
+    module = _load_gateway_module(offline_gate="true")
+    client = TestClient(module.app)
+    with mock.patch.object(
+        module.subprocess,
+        "run",
+        side_effect=subprocess.TimeoutExpired(cmd=["worker"], timeout=300),
+    ):
+        result = client.post(
+            "/api/research-worker-gateway/jobs",
+            json={
+                "worker": "qlib",
+                "requested_mode": "offline",
+                "dispatch_mode": "offline",
+                "idempotency_key": "offline-timeout-is-failure",
+                "requested_at": "2026-04-30T05:16:00Z",
+            },
+        )
+    job = result.json()
+    assert job["status"] == "failed"
+    assert job["exit_code"] == -1
+    assert "timed out" in job["stderr"]
+    assert job["events"][-1]["event_type"] == "job_failed"
+
+
+def test_offline_worker_start_failure_is_failure_not_false_success() -> None:
+    module = _load_gateway_module(offline_gate="true")
+    client = TestClient(module.app)
+    with mock.patch.object(module.subprocess, "run", side_effect=OSError("spawn denied")):
+        result = client.post(
+            "/api/research-worker-gateway/jobs",
+            json={
+                "worker": "finrl",
+                "requested_mode": "offline",
+                "dispatch_mode": "offline",
+                "idempotency_key": "offline-start-failure",
+                "requested_at": "2026-04-30T05:17:00Z",
+            },
+        )
+    job = result.json()
+    assert job["status"] == "failed"
+    assert job["exit_code"] == -2
+    assert job["stderr"] == "spawn denied"
+    assert job["events"][-1]["event_type"] == "job_failed"
+
+
+def test_failed_offline_retry_with_same_idempotency_key_is_not_redispatched() -> None:
+    module = _load_gateway_module(offline_gate="true")
+    client = TestClient(module.app)
+    payload = {
+        "worker": "qlib",
+        "requested_mode": "offline",
+        "dispatch_mode": "offline",
+        "idempotency_key": "failed-offline-retry-is-stable",
+        "requested_at": "2026-04-30T05:18:00Z",
+    }
+    with mock.patch.object(
+        module,
+        "_execute_worker",
+        return_value={"stdout": "", "stderr": "dependency missing", "exit_code": 1},
+    ) as execute:
+        first = client.post("/api/research-worker-gateway/jobs", json=payload)
+        retry = client.post("/api/research-worker-gateway/jobs", json=payload)
+    assert first.json()["status"] == "failed"
+    assert retry.json() == first.json()
+    execute.assert_called_once()
+
+
+def test_failed_offline_job_can_be_retried_with_new_idempotency_key() -> None:
+    module = _load_gateway_module(offline_gate="true")
+    client = TestClient(module.app)
+    first_request = {
+        "worker": "qlib",
+        "requested_mode": "offline",
+        "dispatch_mode": "offline",
+        "idempotency_key": "offline-first-attempt",
+        "requested_at": "2026-04-30T05:19:00Z",
+    }
+    retry_request = {**first_request, "idempotency_key": "offline-retry-attempt"}
+    outcomes = [
+        {"stdout": "", "stderr": "temporary worker failure", "exit_code": 1},
+        {"stdout": "{\"ok\":true}", "stderr": "", "exit_code": 0},
+    ]
+    with mock.patch.object(module, "_execute_worker", side_effect=outcomes) as execute:
+        first = client.post("/api/research-worker-gateway/jobs", json=first_request)
+        retry = client.post("/api/research-worker-gateway/jobs", json=retry_request)
+    assert first.json()["status"] == "failed"
+    assert retry.json()["status"] == "completed"
+    assert retry.json()["exit_code"] == 0
+    assert len(retry.json()["events"]) == 2
+    execute.assert_has_calls([mock.call(mock.ANY, {}), mock.call(mock.ANY, {})])

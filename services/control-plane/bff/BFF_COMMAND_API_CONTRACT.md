@@ -226,7 +226,7 @@ confirmation, and audit gates.
 | Class | Commands | Minimum Admission Contract |
 |---|---|---|
 | Deployment | `ApproveDeployment`, `EscalateDiff` | approver/admin or governance operator role; deployment target; audit reason; idempotency key. |
-| Approval | `ApproveDecision`, `RejectDecision`, `RequestApprovalRevision`, `ApproveRollback`, `RejectRollback` | approver/admin role; approval or rollback target; policy decision and audit action. |
+| Approval | `ApproveDecision`, `RejectDecision` (`RequestApprovalRevision`, `ApproveRollback`, `RejectRollback` are retired: 410, not CommandType values) | approver/admin role; approval or rollback target; policy decision and audit action. |
 | Runtime | `PauseRuntime`, `PauseExecution`, `ExecuteRollback`, `HardRollback` | operator/admin/approver role per action; runtime or runtime-binding target; live broker scope fail-closed when disabled. |
 | Incident / kill switch | `IssueRiskOff`, `LiquidateAll`, `IssueSafeMode`, `ActivateKillSwitch` | operator/admin role per action; admin+MFA for destructive commands; audit reason and command receipt. |
 | Evolution / governance | `ApproveEvolutionDecision`, `ExecuteEvolutionAction`, `ApproveMutation`, `RejectMutation`, `RecordSponsorDecision` | policy-gated governance role; target state checked against read projection before dispatch. |
@@ -392,7 +392,7 @@ Historical route template (retired; mapping preserved for reference only): `POST
 | `complete_program` | `evolution-program` | `CompleteEvolutionProgram` | `evolution-program:{entityId}:complete_program:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `evolution.complete_program` | operator |
 | `retire_program` | `evolution-program` | `RetireEvolutionProgram` | `evolution-program:{entityId}:retire_program:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `evolution.retire_program` | approver |
 | `promote_candidate_paper` | `evolution-program` | `PromoteEvolutionCandidatePaper` | `evolution-program:{entityId}:promote_candidate_paper:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `evolution.promote_paper` | approver |
-| `promote_candidate_live` | `evolution-program` | `PromoteEvolutionCandidateLive` | `evolution-program:{entityId}:promote_candidate_live:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `evolution.promote_live` | approver; confirm-token required |
+| `promote_candidate_live` | `evolution-program` | `PromoteEvolutionCandidateLive` | `evolution-program:{entityId}:promote_candidate_live:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `evolution.promote_live` | approver; confirm-token, approval evidence and two-man signature required (CRITICAL) |
 | `freeze_generation` | `evolution-program` | `FreezeEvolutionGeneration` | `evolution-program:{entityId}:freeze_generation:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `evolution.freeze_generation` | approver |
 | `approve_mutation` | `evolution-program` | `ApproveMutation` | `evolution-program:{entityId}:approve_mutation:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `evolution.approve_mutation` | approver |
 | `reject_mutation` | `evolution-program` | `RejectMutation` | `evolution-program:{entityId}:reject_mutation:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `evolution.reject_mutation` | approver |
@@ -557,7 +557,6 @@ but must also be adapted to the `/bff/v1/commands` envelope in BFF-CONSOL-019.
 |---|---|---|---|---|---|---|---|
 | `/bff/approvals/{id}/decide` | POST | `ApproveDecision` / `RejectDecision` / `RequestApprovalRevision` / `EscalateDecision` / `FreezeDecision` | `approval:{id}:decide:{decision}:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `approval.{decision}` | approver |
 | `/bff/alerts/{id}/acknowledge` | POST | `AcknowledgeAlert` | `alert:{id}:acknowledge:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `alert.acknowledge` | operator |
-| `/bff/v5/interventions/{id}/decide` | POST | `DecideV5Intervention` | `intervention:{id}:decide:{decision}:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `intervention.{decision}` | operator or approver |
 | `/bff/confirm-tokens` | POST | `IssueConfirmToken` | `confirm-token:{actionId}:{entityId}:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `{actionId}.confirm_token.issued` | role-specific per high-risk action catalog |
 | `/bff/confirm-tokens/{tokenId}/redeem` | POST | `RedeemConfirmToken` | `confirm-token:{tokenId}:redeem:{idemKey}` | `auth_token.sub` | `X-Trace-Id`, `X-Correlation-Id` | `confirm_token.redeem` | operator (token already carries role gate) |
 

@@ -242,6 +242,8 @@ class CapitalPoolStore:
             updated = CapitalPool(
                 **{**pool.to_dict(), "status": new_status, "updated_at": utc_now()},
             )
+            if hasattr(pool, "tenant_id"):  # keep authoritative formal owner through reconstruction
+                object.__setattr__(updated, "tenant_id", pool.tenant_id)
             snapshot = dict(self._pools)
             self._pools[pool_id] = updated
             try:

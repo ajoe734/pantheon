@@ -12,10 +12,8 @@ import uuid
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from ..dispatcher import (
-    ALLOWLISTED_STAGE_BACKENDS,
-    ResearchDispatcher,
-)
+from services.research.constants import ALLOWLISTED_STAGE_BACKENDS
+
 
 
 # ---------------------------------------------------------------------------
@@ -457,6 +455,7 @@ class _StageRequest(BaseModel):
     output_refs: Optional[List[str]] = None
     parameters: Optional[Dict[str, Any]] = None
     blocking_reasons: Optional[List[str]] = None
+    dataset: Optional[Dict[str, Any]] = None
 
 
 class _ExecutionConstraintsRequest(BaseModel):
@@ -483,6 +482,12 @@ class ResearchPlanCreateRequest(BaseModel):
     stages: List[_StageRequest] = Field(min_length=1)
     budget: Optional[_PlanBudgetRequest] = None
     execution_constraints: Optional[_ExecutionConstraintsRequest] = None
+    dataset: Optional[Dict[str, Any]] = None
+
+
+class ServantResearchProposalRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    prompt: str = Field(min_length=1, max_length=4000)
 
 
 class CandidatePoolFilterRequest(BaseModel):
@@ -1160,8 +1165,8 @@ def _run_projection_with_defaults(run: Dict[str, Any], store: Optional[Any] = No
         "workshop_id": run.get("workshop_id", ""),
         "strategy_id": run.get("strategy_id", ""),
         "strategy_spec_registry_id": run.get("strategy_spec_registry_id", ""),
-        "stage_id": run["stage_id"],
-        "stage_type": run["stage_type"],
+        "stage_id": run.get("stage_id", ""),
+        "stage_type": run.get("stage_type", ""),
         "execution_status": run.get("execution_status", "queued"),
         "outcome": run.get("outcome", "pending"),
         "progress": dict(run.get("progress") or {
@@ -1379,6 +1384,8 @@ def _build_plan(
             normalized["parameters"] = stage.parameters
         if stage.blocking_reasons is not None:
             normalized["blocking_reasons"] = stage.blocking_reasons
+        if stage.dataset is not None:
+            normalized["dataset"] = stage.dataset
         stages.append(normalized)
 
     resolved_correlation = _resolve_originating_correlation(
@@ -1405,6 +1412,8 @@ def _build_plan(
         "lock_version": 1,
         "run_ids": [],
     }
+    if body.dataset:
+        plan["dataset"] = body.dataset
     if body.budget:
         plan["budget"] = body.budget.model_dump(exclude_none=True)
     if body.execution_constraints:
@@ -1552,7 +1561,6 @@ class AgoraResearchRouteContext:
     utc_now: Callable[[], str]
     require_write_role: Optional[Callable[..., None]] = None
     store: Any = None
-    dispatcher: Optional[ResearchDispatcher] = None
     workshop_store: Optional[Any] = None
     dataset_store: Optional[Any] = None
     service: Optional[Any] = None
@@ -1563,7 +1571,6 @@ class AgoraResearchRouteContext:
             from ..service import AgoraResearchService
             self.service = AgoraResearchService(
                 store=raw_store,
-                dispatcher=self.dispatcher,
                 workshop_store=self.workshop_store,
                 dataset_store=self.dataset_store,
                 utc_now=self.utc_now,
@@ -1630,25 +1637,18 @@ class AgoraResearchRouteContext:
             from services.control_plane.bff.agora.models import AGORA_REQUIRED_ROLES
 
         identity = self.extract_identity(authorization)
-        auth_mode = os.environ.get("PANTHEON_BFF_AUTH_MODE", "strict").lower()
-        auth_stub = os.environ.get("PANTHEON_BFF_AUTH_STUB", "false").lower() == "true"
-
         if self.require_write_role is not None:
-            if auth_mode == "permissive" and auth_stub and "viewer" in getattr(identity, "roles", []):
-                pass
-            else:
-                self.require_write_role(identity)
+            self.require_write_role(identity)
         else:
             roles = set(getattr(identity, "roles", []) or [])
             if not (roles & AGORA_REQUIRED_ROLES):
-                if not (auth_mode == "permissive" and auth_stub and "viewer" in roles):
-                    ErrorCode = self.error_code_enum()
-                    raise self.bff_error(
-                        403, ErrorCode.FORBIDDEN,
-                        "Write authority required for Agora research mutations",
-                        "operator_write_role_required",
-                        suggestion="Ensure caller holds one of operator, approver, admin, reviewer roles",
-                    )
+                ErrorCode = self.error_code_enum()
+                raise self.bff_error(
+                    403, ErrorCode.FORBIDDEN,
+                    "Write authority required for Agora research mutations",
+                    "operator_write_role_required",
+                    suggestion="Ensure caller holds one of operator, approver, admin, reviewer roles",
+                )
         try:
             return resolve_agora_user_scope(
                 identity,

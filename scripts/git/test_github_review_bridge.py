@@ -1657,6 +1657,18 @@ class GitHubReviewBridgeTests(unittest.TestCase):
         file_calls = [cmd for cmd, _ in runner.calls if "/pulls/4269/files" in " ".join(cmd)]
         self.assertEqual(len(file_calls), 1)
 
+    def test_list_pull_request_files_keeps_well_formed_line_counts(self) -> None:
+        page1 = [
+            {"filename": "a.py", "sha": "a" * 40, "status": "modified", "additions": 7, "deletions": 3},
+            {"filename": "b.py", "sha": "b" * 40, "status": "added", "additions": "7", "deletions": -1},
+        ]
+        files = bridge.list_pull_request_files(
+            repository=REPOSITORY, pr=4269, runner=FakeRunner(pr_files_by_page={1: page1})
+        )
+        self.assertEqual((files[0]["additions"], files[0]["deletions"]), (7, 3))
+        self.assertNotIn("additions", files[1])
+        self.assertNotIn("deletions", files[1])
+
     def test_list_pull_request_files_rejects_malformed_response(self) -> None:
         class NonListRunner(FakeRunner):
             def run_json(self, args: Sequence[str], *, payload: Mapping[str, Any] | None = None) -> Any:

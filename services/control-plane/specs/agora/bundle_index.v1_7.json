@@ -3,7 +3,7 @@
   "extends": {
     "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_6.json",
     "bundle_version": "1.6",
-    "bundle_index_sha256": "bc71b8c13828d62ab8fce9f5fac1ec28e4fad3c4699c1c1090e53f63c7e377d5"
+    "bundle_index_sha256": "2a6eca384cf930b4cd6b8828771caec3345eb619d5da8178ac83119644558f3a"
   },
   "files": {
     "specs/agora/v8/pint_ooda_live_routes.schema.json": "45d9e6e07ba6a2fb1980027d8b0bc0dbae0810ea5181e52ede7c24a9b09ae750",

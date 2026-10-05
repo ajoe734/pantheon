@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
 
 BFF_DIR = Path(__file__).resolve().parents[1]
 
@@ -335,11 +337,13 @@ def test_personas_service_no_import_time_stores_and_explicit_constructor() -> No
     # Verify _get_ranking_write_owner raises RuntimeError if not configured, rather than self-creating defaults
     original_owner = ps._ranking_write_owner
     ps._ranking_write_owner = None
+    context_token = ps._current_persona_service.set(None)
     try:
         with pytest.raises(RuntimeError):
             ps._get_ranking_write_owner()
     finally:
         ps._ranking_write_owner = original_owner
+        ps._current_persona_service.reset(context_token)
 
     with pytest.raises((TypeError, RuntimeError)):
         ps.PersonaService()  # type: ignore[call-arg]
@@ -359,7 +363,7 @@ def test_app_dependencies_concrete_types_and_no_any_ports() -> None:
     assert getattr(hints["command_store"], "__name__", "") == "CommandStore", f"Expected CommandStore, got {hints['command_store']}"
     assert getattr(hints["settings_store"], "__name__", "") == "SettingsStore", f"Expected SettingsStore, got {hints['settings_store']}"
     assert getattr(hints["persona_write_owner"], "__name__", "") == "PersonaRegistryHttpWritePort", f"Expected PersonaRegistryHttpWritePort, got {hints['persona_write_owner']}"
-    assert getattr(hints["ranking_write_owner"], "__name__", "") == "RankingSnapshotWriteOwnerPort", f"Expected RankingSnapshotWriteOwnerPort, got {hints['ranking_write_owner']}"
+    assert getattr(hints["ranking_write_owner"], "__name__", "") == "RankingSnapshotReadPort", f"Expected RankingSnapshotReadPort, got {hints['ranking_write_owner']}"
 
     sig = inspect.signature(AppDependencies.create_default)
     for param_name, param in sig.parameters.items():
@@ -499,3 +503,84 @@ def test_dataset_surface_status_full_app_parity(state: str, monkeypatch: pytest.
         assert full_res == min_res
 
 
+
+
+# BFF-MUTATION-ROUTE-ROLES-001: state-changing routes require the operator role,
+# exercised through the mounted composition root (this reviewed composition suite).
+
+MUTATION_ROUTES = [
+    ("POST", "/bff/jobs/j1/actions/retry", 410, "VALIDATION_FAILED", {"reason": "operator retry"}),
+    ("POST", "/bff/rankings/r1/actions/publish", 410, "VALIDATION_FAILED", {}),
+    ("POST", "/api/v1/personas/p1/strategy-discovery", 202, None, {"query": "momentum", "lookback_days": 30}),
+    ("POST", "/bff/personas/p1/strategy-discovery", 202, None, {"query": "momentum", "lookback_days": 30}),
+    ("POST", "/api/v1/personas/p1/strategy-matches/m1/actions", 202, None, {"action": "promote_seed_candidate", "notes": "operator approved"}),
+    ("POST", "/bff/personas/p1/strategy-matches/m1/actions", 202, None, {"action": "promote_seed_candidate", "notes": "operator approved"}),
+    ("POST", "/bff/personas/p1/test-prompt", 202, None, {"prompt": "What is current portfolio exposure?"}),
+]
+
+@pytest.fixture(scope="module")
+def mutation_roles_client():
+    mp = pytest.MonkeyPatch()
+    mp.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    mp.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    from services.control_plane.bff import main
+    from services.control_plane.bff.personas import service as persona_service
+    from services.control_plane.bff.personas.routes import lifecycle
+
+    # main.py calls get_catalog_entry without importing it (pre-existing, out of scope here).
+    from services.control_plane.bff.action_catalog import get_catalog_entry
+    mp.setattr(main, "get_catalog_entry", get_catalog_entry, raising=False)
+    # Valid fixture resources for every id the routes look up.
+    store = type(main.read_store)
+    mp.setattr(store, "get_job_bff", lambda self, job_id: {"job_id": job_id, "status": "failed"}, raising=False)
+    mp.setattr(store, "get_ranking", lambda self, rid: {"ranking_id": rid}, raising=False)
+    match = {"match_id": "m1", "matched_object_type": "strategy_spec_seed", "matched_object_id": "seed-1", "metadata": {}}
+    mp.setattr(persona_service, "_ensure_persona_exists", lambda *a, **k: None)
+    mp.setattr(lifecycle, "_ensure_persona_exists", lambda *a, **k: None)
+    mp.setattr(persona_service, "_persona_strategy_discovery_payload", lambda *a, **k: {
+        "profile": {}, "matches": [match], "surfaces": {}, "candidate_counts": {}})
+    yield TestClient(main.app, raise_server_exceptions=False)
+    mp.undo()
+
+def _resolve(mutation_roles_client, path):
+    return path
+
+@pytest.mark.parametrize("method,path,status,code,payload", MUTATION_ROUTES)
+def test_viewer_token_is_forbidden(mutation_roles_client, method, path, status, code, payload):
+    r = mutation_roles_client.request(method, _resolve(mutation_roles_client, path), json=payload, headers={
+        "Authorization": "Bearer viewer-1:viewer", "Idempotency-Key": f"k-viewer-{path}"})
+    assert r.status_code == 403, r.text
+
+@pytest.mark.parametrize("method,path,status,code,payload", MUTATION_ROUTES)
+def test_operator_token_keeps_handler_behavior(mutation_roles_client, method, path, status, code, payload):
+    r = mutation_roles_client.request(method, _resolve(mutation_roles_client, path), json=payload, headers={
+        "Authorization": "Bearer op-1:operator", "Idempotency-Key": f"k-op-{path}"})
+    assert r.status_code == status, r.text
+    body = r.json()
+    if code:
+        assert body["error"]["code"] == code
+        assert body["error"]["message"]
+    else:
+        assert "data" in body
+        assert isinstance(body["data"], (dict, list))
+
+def test_reviewer_token_cannot_execute_retired_ranking_action(mutation_roles_client):
+    r = mutation_roles_client.post("/bff/rankings/r1/actions/publish", json={}, headers={
+        "Authorization": "Bearer rev-1:reviewer", "Idempotency-Key": "k-reviewer-ranking"})
+    assert r.status_code == 410, r.text
+    assert r.json()["error"]["details"]["replacement"] == "GET /bff/rankings"
+
+@pytest.mark.parametrize("missing_reader", [True, False])
+def test_lifecycle_readiness_reports_unavailable_projection(monkeypatch, missing_reader):
+    from services.control_plane.bff import main
+    from services.control_plane.bff.trade_journey_projection_store import ProjectionReadUnavailable
+
+    def unavailable(**kwargs):
+        raise ProjectionReadUnavailable("owner unavailable")
+
+    reader = None if missing_reader else SimpleNamespace(controller_freshness=unavailable)
+    monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "postgres")
+    monkeypatch.setattr(main, "read_store", SimpleNamespace(trade_journey_projection_reader=lambda: reader))
+    result = main._lifecycle_projector_dependency()
+    assert result["ready"] is False
+    assert any(reason.startswith("projection_reader_unavailable:") for reason in result["reasons"])

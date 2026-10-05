@@ -26,19 +26,18 @@ def _seed_remote(tmp_path: Path) -> tuple[Path, Path]:
     (seed / ".orchestrator").mkdir()
     (seed / "scripts").mkdir()
     (seed / ".orchestrator" / "supervisor.py").write_text("# V2\n", encoding="utf-8")
+    (seed / ".orchestrator" / "config.json").write_text("{}\n", encoding="utf-8")
+    watchdog = seed / "scripts" / "run-supervisor-watchdog.sh"
+    watchdog.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    watchdog.chmod(0o755)
+    (seed / "scripts" / "runtime_provision.py").write_bytes(
+        (REPO_ROOT / "scripts" / "provision_live_supervisor_config.py").read_bytes()
+    )
     (seed / ".orchestrator" / "requirements.txt").write_text("pydantic\n", encoding="utf-8")
     (seed / "version.txt").write_text("one\n", encoding="utf-8")
     (seed / "scripts" / "provision_live_supervisor_config.py").write_text(
-        # Fakes only the wiring this suite exercises: --validate-command-root-only
-        # (used by materialize_candidate_runtime) is a pure no-op success, and
-        # --ensure-python-environment reports whatever _stub_supervisor_python
-        # already pre-seeded as "reused" -- the same shortcut the old
-        # --validate-python-dependencies-only stub took, now against the single
-        # consolidated entrypoint in the real
-        # scripts/provision_live_supervisor_config.py. The real provisioning
-        # policy itself is exercised against the genuine module in
-        # test_provision_live_supervisor_config.py and
-        # test_bootstrap_orchestrator_runtime.py, not here.
+        # Exercise the real shared runtime materializer, stubbing only Python
+        # dependency provisioning (no package-index network in this suite).
         "import argparse\n"
         "import json\n"
         "import sys\n"
@@ -58,7 +57,10 @@ def _seed_remote(tmp_path: Path) -> tuple[Path, Path]:
         "        'reused': python_executable.is_file(),\n"
         "        'python_dependencies': {},\n"
         "    }))\n"
-        "sys.exit(0)\n",
+        "    sys.exit(0)\n"
+        "sys.dont_write_bytecode = True\n"
+        "import runtime_provision\n"
+        "sys.exit(runtime_provision.main())\n",
         encoding="utf-8",
     )
     promotion = seed / "scripts" / "promote-supervisor-runtime.sh"

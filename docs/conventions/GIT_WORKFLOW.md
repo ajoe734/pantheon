@@ -453,6 +453,13 @@ committed `--range` or `--rev` to inspect.
 trailer check tolerates legacy commits that carry it but does not
 require it on new commits.)
 
+For Pantheon pull-request delivery, owner handoff admission invokes the same
+range checker on the frozen `base_sha..head_sha` range with merge commits
+skipped and `--delivery-class auto`. Any failure rejects handoff before review
+state changes and identifies the offending commit and rule; repair the commit
+through `scripts/git/worker_commit.py` and submit a new exact-head handoff.
+Cross-repository deliveries do not run Pantheon's local Git checker.
+
 ### 5.3 Optional trailers
 
 - `Verified: <command summary>` — required when tests / checks ran.

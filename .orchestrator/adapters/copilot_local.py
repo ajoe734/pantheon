@@ -6,6 +6,7 @@ from pathlib import Path
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 from common import (
+    agent_config_for,
     command_exists,
     delivery_runtime_env,
     delivery_workspace_root,
@@ -147,6 +148,11 @@ class CopilotLocalAdapter(BaseAdapter):
             gh_token = _gh_auth_token(self.config)
             if gh_token:
                 env["GH_TOKEN"] = gh_token
+        # worker_commit.py derives the per-agent Git author from AI_NAME.
+        try:
+            env["AI_NAME"] = str(agent_config_for(self.config, request.agent_id).get("display_name") or request.agent_id)
+        except ValueError:
+            pass
         env.update(
             {
                 "ORCH_RUN_ID": run_id,

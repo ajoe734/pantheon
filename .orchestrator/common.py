@@ -611,6 +611,8 @@ def ensure_parent(path: Path) -> None:
 def load_json(path: Path, default: Any | None = None) -> Any:
     if not path.exists():
         return deepcopy(default)
+    if not path.is_file():
+        raise RuntimeError(f"cannot load JSON from a non-regular file: {path}")
     last_error: json.JSONDecodeError | None = None
     for attempt in range(10):
         text = path.read_text(encoding="utf-8").strip()
@@ -776,6 +778,11 @@ def repo_root_for_config(config: dict[str, Any]) -> Path:
     return config_path(config, "status_file").parents[0]
 
 
+def runtime_source_regular_file(path: Path) -> bool:
+    """A retired FIFO/directory or symlink must never nominate a runtime layout."""
+    return not path.is_symlink() and path.is_file()
+
+
 def canonical_status_paths(
     repo_config: dict[str, Any],
     status_root: Path,
@@ -788,8 +795,8 @@ def canonical_status_paths(
     legacy_queue = (status_root / ".orchestrator" / "approval-queue.json").resolve()
     worker_runtime_queue = (status_root / ".orchestrator" / "worker-runtime" / "approval-queue.json").resolve()
 
-    use_legacy = (legacy_state.exists() or legacy_queue.exists()) and not (
-        worker_runtime_state.exists() or worker_runtime_queue.exists()
+    use_legacy = (runtime_source_regular_file(legacy_state) or runtime_source_regular_file(legacy_queue)) and not (
+        runtime_source_regular_file(worker_runtime_state) or runtime_source_regular_file(worker_runtime_queue)
     )
 
     if fill_defaults:
@@ -834,7 +841,7 @@ def canonical_status_paths(
     if (
         rendered.get("state_file") == str(worker_runtime_state)
         and not worker_runtime_state.exists()
-        and legacy_state.exists()
+        and runtime_source_regular_file(legacy_state)
     ):
         rendered["state_file"] = str(legacy_state)
         if rendered.get("approval_queue") == str(worker_runtime_queue) and not worker_runtime_queue.exists():
@@ -842,7 +849,7 @@ def canonical_status_paths(
     elif (
         rendered.get("state_file") == str(legacy_state)
         and not legacy_state.exists()
-        and worker_runtime_state.exists()
+        and runtime_source_regular_file(worker_runtime_state)
     ):
         rendered["state_file"] = str(worker_runtime_state)
         if rendered.get("approval_queue") == str(legacy_queue) and not legacy_queue.exists():
@@ -1034,6 +1041,13 @@ def git_toplevel(path: Path) -> Path | None:
     except RuntimeError:
         return None
     return Path(top).resolve() if top else None
+
+
+def task_branch_matches(candidate: str, canonical_branch: str) -> bool:
+    """Match one task's branch and its numbered replacement branches."""
+    return bool(canonical_branch) and re.fullmatch(
+        re.escape(canonical_branch) + r"(?:-v[0-9]+)?", candidate
+    ) is not None
 
 
 def normalize_github_repo_slug(value: str | None) -> str:
@@ -2734,7 +2748,7 @@ def _validate_activity_rotation_lineage_row(
     *,
     expected_sequence: int,
     previous_row: dict[str, Any] | None,
-    previous_lineage_bytes: bytes,
+    previous_lineage_sha256: str,
     validate_archive: bool,
 ) -> Path:
     required = {
@@ -2790,8 +2804,7 @@ def _validate_activity_rotation_lineage_row(
     ):
         if not isinstance(row.get(key), int) or int(row[key]) < 0:
             raise RuntimeError("activity lineage count is invalid")
-    expected_previous_sha = _sha256_bytes(previous_lineage_bytes)
-    if row.get("previous_lineage_sha256") != expected_previous_sha:
+    if row.get("previous_lineage_sha256") != previous_lineage_sha256:
         raise RuntimeError("activity lineage previous digest mismatch")
     if previous_row is None:
         if row.get("previous_sequence") != 0 or row.get("previous_transaction_id") is not None:
@@ -2929,9 +2942,10 @@ def _load_activity_rotation_lineage_unlocked(
         raise RuntimeError("activity lineage file is truncated")
     rows: list[dict[str, Any]] = []
     archive_paths: list[Path] = []
-    previous_bytes = b""
+    # Each row binds the digest of every row before it; hash the prefix
+    # incrementally instead of rehashing it per row (quadratic in rows).
+    prefix_hash = hashlib.sha256()
     previous_row: dict[str, Any] | None = None
-    offset = 0
     seen_sequences: set[int] = set()
     seen_transactions: set[str] = set()
     seen_archives: set[Path] = set()
@@ -2955,7 +2969,7 @@ def _load_activity_rotation_lineage_unlocked(
             row,
             expected_sequence=expected_sequence,
             previous_row=previous_row,
-            previous_lineage_bytes=previous_bytes,
+            previous_lineage_sha256=prefix_hash.hexdigest(),
             validate_archive=validate_archives,
         )
         sequence = int(row["sequence"])
@@ -2975,8 +2989,7 @@ def _load_activity_rotation_lineage_unlocked(
         seen_archives.add(archive_path)
         rows.append(row)
         archive_paths.append(archive_path)
-        offset += len(raw_line)
-        previous_bytes = lineage_bytes[:offset]
+        prefix_hash.update(raw_line)
         previous_row = row
     return lineage_bytes, rows, archive_paths
 
@@ -3100,7 +3113,7 @@ def _validated_activity_rotation_resolution_row(
     row: Any,
     *,
     expected_sequence: int,
-    previous_resolutions_bytes: bytes,
+    previous_resolutions_sha256: str,
     validate_archives: bool,
 ) -> Path:
     if not isinstance(row, dict) or set(row) != ACTIVITY_ROTATION_RESOLUTION_ROW_KEYS:
@@ -3135,9 +3148,7 @@ def _validated_activity_rotation_resolution_row(
         or not str(row["writer_guard_attestation"]).strip()
     ):
         raise RuntimeError("activity resolution guard attestation is missing")
-    if row.get("previous_resolutions_sha256") != _sha256_bytes(
-        previous_resolutions_bytes
-    ):
+    if row.get("previous_resolutions_sha256") != previous_resolutions_sha256:
         raise RuntimeError("activity resolution previous digest mismatch")
     if row.get("resolution_id") != activity_rotation_resolution_id(row):
         raise RuntimeError("activity resolution id mismatch")
@@ -3295,8 +3306,7 @@ def _load_activity_rotation_resolutions_unlocked(
         raise RuntimeError("activity resolutions file is truncated")
     rows: list[dict[str, Any]] = []
     archive_paths: list[Path] = []
-    previous_bytes = b""
-    offset = 0
+    prefix_hash = hashlib.sha256()
     seen_ids: set[str] = set()
     seen_transactions: set[str] = set()
     seen_archives: set[Path] = set()
@@ -3318,7 +3328,7 @@ def _load_activity_rotation_resolutions_unlocked(
             log_path,
             row,
             expected_sequence=expected_sequence,
-            previous_resolutions_bytes=previous_bytes,
+            previous_resolutions_sha256=prefix_hash.hexdigest(),
             validate_archives=validate_archives,
         )
         resolution_id = str(row["resolution_id"])
@@ -3334,8 +3344,7 @@ def _load_activity_rotation_resolutions_unlocked(
         seen_archives.add(archive_path)
         rows.append(row)
         archive_paths.append(archive_path)
-        offset += len(raw_line)
-        previous_bytes = resolutions_bytes[:offset]
+        prefix_hash.update(raw_line)
     return resolutions_bytes, rows, archive_paths
 
 
@@ -4751,6 +4760,129 @@ def validated_activity_event_digests_unlocked(
         return result
     finally:
         conn.close()
+
+
+def _recent_activity_sources_unlocked(
+    log_path: Path,
+    not_before: float,
+) -> list[tuple[Path, bytes]]:
+    """Return rotated archives written since ``not_before`` and the active log.
+
+    An archive is written when it is rotated, so one last modified earlier
+    (epoch seconds) cannot hold activity recorded after that time. Sources are
+    in rotation order, so their rows are in append order. The caller must hold
+    the activity audit lock; whole-history validation stays with rotation and
+    the logical readers.
+    """
+
+    _lineage_bytes, _rows, registered = _load_activity_rotation_lineage_unlocked(
+        log_path,
+        validate_archives=False,
+    )
+    # Unregistered archives predate the lineage (timestamped legacy names sort
+    # chronologically); they are still read so a duplicate cannot hide there.
+    registered_set = {path.resolve() for path in registered}
+    archive_dir = log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR
+    unregistered = [
+        path
+        for path in sorted(archive_dir.glob(f"{log_path.name}-*.gz"))
+        if path.resolve() not in registered_set
+    ]
+    sources: list[tuple[Path, bytes]] = []
+    for path in [*unregistered, *registered]:
+        try:
+            modified = path.lstat().st_mtime
+        except FileNotFoundError as exc:
+            raise RuntimeError(f"activity lineage archive is missing: {path}") from exc
+        if modified < not_before:
+            continue
+        payload = _activity_archive_payload(path)[1]
+        if classify_source(path) == "content_addressed":
+            _assert_content_addressed_archive_identity(path, _sha256_bytes(payload))
+        sources.append((path, payload))
+    if log_path.is_file():
+        sources.append((log_path, _read_active_payload_without_lineage_head(log_path)[1]))
+    return sources
+
+
+def _activity_payload_rows(
+    payload: bytes,
+) -> Generator[tuple[int, dict[str, Any]], None, None]:
+    for line_number, raw_line in enumerate(payload.splitlines(), start=1):
+        if not raw_line.strip():
+            continue
+        try:
+            entry = strict_activity_json_loads(raw_line.decode("utf-8"))
+        except (
+            UnicodeError,
+            json.JSONDecodeError,
+            DuplicateActivityJSONKeyError,
+        ) as exc:
+            raise RuntimeError(f"activity audit row is unreadable: {exc}") from exc
+        if not isinstance(entry, dict):
+            raise RuntimeError("activity audit row is not an object")
+        yield line_number, entry
+
+
+def recent_activity_event_digests_unlocked(
+    log_path: Path,
+    event_ids: Iterable[str],
+    *,
+    not_before: float,
+) -> dict[str, str]:
+    """Return digests of requested events that did not exist before ``not_before``.
+
+    The caller must hold the activity audit lock exclusively.
+    """
+
+    requested = set(event_ids)
+    log_path = _resolved_activity_log_path(log_path)
+    prepare_activity_audit_unlocked(log_path)
+    result: dict[str, str] = {}
+    for _path, payload in _recent_activity_sources_unlocked(log_path, not_before):
+        for _line_number, entry in _activity_payload_rows(payload):
+            event_id = str(entry.get("event_id") or "").strip()
+            if event_id not in requested:
+                continue
+            digest = _canonical_json_sha256(entry)
+            previous = result.get(event_id)
+            if previous is not None:
+                detail = (
+                    "duplicate across sources" if previous == digest else "payload mismatch"
+                )
+                raise RuntimeError(f"activity event_id {detail}: {event_id}")
+            result[event_id] = digest
+    return result
+
+
+def recent_logical_activity(
+    log_path: Path,
+    *,
+    not_before: float,
+) -> list[tuple[dict[str, Any], Path, int]]:
+    """Return activity recorded since ``not_before`` in append order.
+
+    For readers that only need recent rows (for example the approvals of a PR
+    head created at ``not_before``), without revalidating the whole history.
+    """
+
+    requested_log_path = Path(log_path)
+    try:
+        log_path = _resolved_activity_log_path(requested_log_path)
+        with activity_audit_lock_file(log_path, shared=True):
+            assert_activity_audit_stable_unlocked(log_path)
+            sources = _recent_activity_sources_unlocked(log_path, not_before)
+        return [
+            (entry, path, line_number)
+            for path, payload in sources
+            for line_number, entry in _activity_payload_rows(payload)
+        ]
+    except RuntimeError as exc:
+        raise activity_audit_invariant_error(
+            exc,
+            log_path=requested_log_path,
+            operation="recent_activity_read",
+        ) from exc
 
 
 def _resolved_activity_log_path(log_path: Path) -> Path:

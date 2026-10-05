@@ -33,11 +33,6 @@ Routes implemented (owning module in parens):
   POST     /bff/agora/workshops/{id}/consultations    (execution)
   POST     /bff/agora/workshops/{id}/conclude         (execution)
   GET      /bff/agora/workshops/{id}/stream           (stream)
-
-Routes still in main.py (migration pending -- see router stub comment):
-  GET  /bff/agora/training-examples
-  POST /bff/agora/training-examples
-  ...  (all the old committee/evaluation/persona-lab routes)
 """
 from __future__ import annotations
 

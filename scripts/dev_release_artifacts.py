@@ -29,6 +29,8 @@ CONTAINER_FORMAT = '{"image_id":{{json .Image}},"status":{{json .State.Status}},
 BASELINE_PRINCIPAL_CONFIG = {
     "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE": "/run/pantheon-principals/PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN",
     "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": "pantheon-dev-paper-provisioner",
+    "PERSONA_EVALUATOR_BFF_TOKEN_FILE": "/run/pantheon-principals/PERSONA_EVALUATOR_BFF_TOKEN",
+    "PERSONA_EVALUATOR_GOVERNANCE_TOKEN_FILE": "/run/pantheon-principals/PERSONA_EVALUATOR_GOVERNANCE_TOKEN",
 }
 # Historical auth configuration, not defaults for new candidate token issuance.
 # Keep the exact strings (including absence/empty) in the existing sealed manifest.
@@ -228,7 +230,7 @@ def _document_bytes(path: Path) -> bytes:
         return raw
 
 
-def _current(docker: Docker, service: str) -> dict:
+def _current(docker: Docker, service: str, *, require_healthy: bool = True) -> dict:
     ids = docker.call("ps", "--all", "--quiet", "--filter", "label=com.docker.compose.project=pantheon",
                       "--filter", f"label=com.docker.compose.service={service}").split()
     if len(ids) != 1 or not re.fullmatch(r"[0-9a-f]{12,64}", ids[0]):
@@ -236,7 +238,7 @@ def _current(docker: Docker, service: str) -> dict:
     row = _json(docker.call("inspect", "--format", CONTAINER_FORMAT, ids[0]))
     _keys(row, ("image_id", "status", "health"), "container")
     _match(row["image_id"], IMAGE, "container image ID")
-    if row["status"] != "running" or row["health"] != "healthy":
+    if row["status"] != "running" or (require_healthy and row["health"] != "healthy"):
         raise ArtifactError(f"{service}: container is not running and healthy")
     return row
 
@@ -256,13 +258,15 @@ def capture_images(*, docker: Docker, archive_root: Path, source_sha: str,
 
     ``source_sha`` must already be bound to the served baseline by the caller.
     An absent OCI revision remains absent; it is not inferred from that SHA.
+    Preserve running predecessors even when unhealthy so a repair can deploy;
+    artifact capture does not certify health. Restore/readback still require it.
     """
     _match(source_sha, SHA, "source SHA")
     root = _directory(archive_root, private=True)
     check_lease()
     services, archives = {}, {}
     for service in SERVICES:
-        image_id = _current(docker, service)["image_id"]
+        image_id = _current(docker, service, require_healthy=False)["image_id"]
         image = _image(docker, image_id)
         revision = image["revision"]
         valid_revisions = {None, "", "unknown", source_sha}
@@ -293,7 +297,7 @@ def capture_images(*, docker: Docker, archive_root: Path, source_sha: str,
                     raise ArtifactError("existing image archive differs; refusing overwrite")
             archives[image_id] = {"name": name, "sha256": digest, "size": size}
     for service in SERVICES:
-        if _current(docker, service)["image_id"] != services[service]["image_id"]:
+        if _current(docker, service, require_healthy=False)["image_id"] != services[service]["image_id"]:
             raise ArtifactError("container changed during artifact capture")
     check_lease()
     result = {"schema_version": SCHEMA, "source_sha": source_sha,

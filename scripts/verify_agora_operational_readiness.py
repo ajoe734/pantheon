@@ -296,7 +296,7 @@ class AgoraOperationalReadinessVerifier:
         payload_stale = svc.compose_readiness(now_dt=now_dt).model_dump()
         stale_freshness = payload_stale["data"]["source"]["freshness"]
         stale_producer_reason = payload_stale["data"]["signal_producer"]["reason"]
-        stale_surface_reason = payload_stale["data"]["surfaces"]["signals"]["reason"]
+        stale_surface_reason = payload_stale["data"]["surfaces"]["journal"]["reason"]
 
         if stale_freshness != "stale":
             raise AgoraOperationalReadinessVerificationError(
@@ -317,7 +317,7 @@ class AgoraOperationalReadinessVerifier:
             "source_freshness": stale_freshness,
             "producer_status": payload_stale["data"]["signal_producer"]["status"],
             "producer_reason": stale_producer_reason,
-            "surface_status": payload_stale["data"]["surfaces"]["signals"]["status"],
+            "surface_status": payload_stale["data"]["surfaces"]["journal"]["status"],
         }
 
         # 2. Empty-Fresh state
@@ -336,8 +336,8 @@ class AgoraOperationalReadinessVerifier:
         })
         payload_empty = svc.compose_readiness(now_dt=now_dt).model_dump()
         empty_freshness = payload_empty["data"]["source"]["freshness"]
-        empty_surface_status = payload_empty["data"]["surfaces"]["signals"]["status"]
-        empty_surface_reason = payload_empty["data"]["surfaces"]["signals"]["reason"]
+        empty_surface_status = payload_empty["data"]["surfaces"]["journal"]["status"]
+        empty_surface_reason = payload_empty["data"]["surfaces"]["journal"]["reason"]
 
         if empty_freshness != "empty_fresh":
             raise AgoraOperationalReadinessVerificationError(
@@ -359,7 +359,7 @@ class AgoraOperationalReadinessVerifier:
         svc.reset_custom_state()
         payload_unavail = svc.compose_readiness(now_dt=now_dt).model_dump()
         unavail_freshness = payload_unavail["data"]["source"]["freshness"]
-        unavail_surface_status = payload_unavail["data"]["surfaces"]["signals"]["status"]
+        unavail_surface_status = payload_unavail["data"]["surfaces"]["journal"]["status"]
 
         if unavail_freshness != "unavailable":
             raise AgoraOperationalReadinessVerificationError(
@@ -477,7 +477,7 @@ class AgoraOperationalReadinessVerifier:
             "enqueued": 3,
             "reason": "healthy",
         })
-        svc.set_surface_data("signals", {"status": "ok", "count": 3, "cursor": "sig-003"})
+        svc.set_surface_data("journal", {"status": "ok", "count": 3, "cursor": "jrn-003"})
         svc.set_surface_data("decision_events", {"status": "ok", "count": 1, "cursor": "dec-001"})
 
         readiness = svc.compose_readiness(now_dt=now_dt)
@@ -488,14 +488,14 @@ class AgoraOperationalReadinessVerifier:
             )
         recovery_steps.append("5. Confirmed paper-signal-producer consumed exact refreshed snapshot")
 
-        # 6. Verify terminal signal/projection readbacks
-        signals_surface = readiness.data.surfaces.get("signals")
-        if not signals_surface or signals_surface.status != "ok" or signals_surface.count < 1:
+        # 6. Verify terminal journal/projection readbacks
+        journal_surface = readiness.data.surfaces.get("journal")
+        if not journal_surface or journal_surface.status != "ok" or journal_surface.count < 1:
             raise AgoraOperationalReadinessVerificationError(
                 "bounded_recovery_sequence",
-                "Terminal signals readback failed or empty",
+                "Terminal journal readback failed or empty",
             )
-        recovery_steps.append(f"6. Verified terminal signals readback: count={signals_surface.count}")
+        recovery_steps.append(f"6. Verified terminal journal readback: count={journal_surface.count}")
 
         # 7. Restore normal dev posture
         svc.reset_custom_state()
@@ -558,15 +558,15 @@ class AgoraOperationalReadinessVerifier:
                 f"Expected source freshness 'empty_fresh', got '{data.source.freshness}'",
             )
 
-        if data.surfaces["signals"].status != "empty_fresh":
+        if data.surfaces["journal"].status != "empty_fresh":
             raise AgoraOperationalReadinessVerificationError(
                 "empty_fresh_evaluation_receipt",
-                f"Expected signals surface status 'empty_fresh', got '{data.surfaces['signals'].status}'",
+                f"Expected journal surface status 'empty_fresh', got '{data.surfaces['journal'].status}'",
             )
 
         return {
             "evaluation_receipt": rule_evaluation_receipt,
-            "surface_status": data.surfaces["signals"].status,
+            "surface_status": data.surfaces["journal"].status,
             "reason": data.signal_producer.reason,
         }
 

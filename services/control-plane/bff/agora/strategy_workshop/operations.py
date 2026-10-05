@@ -75,7 +75,9 @@ class WorkshopCanonicalOperations:
         consultation_base_url: Optional[str] = None,
         approval_resolver: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
         timeout_seconds: Optional[float] = None,
+        transport: Optional[Callable[..., Any]] = None,
     ) -> None:
+        self.transport = transport
         self.registry_base_url = (
             registry_base_url
             or os.getenv("PANTHEON_REGISTRY_API_URL")
@@ -106,6 +108,7 @@ class WorkshopCanonicalOperations:
             raise CanonicalOperationError(
                 authority,
                 "canonical service URL is not configured",
+                status_code=503,
                 retryable=True,
             )
         return f"{base_url}/{path.lstrip('/')}"
@@ -118,6 +121,20 @@ class WorkshopCanonicalOperations:
         path: str,
         payload: Optional[Dict[str, Any]] = None,
     ) -> Any:
+        if self.transport is not None:
+            return self.transport(authority, method, base_url, path, payload)
+        if authority == "research_orchestrator":
+            from services.control_plane.bff.research.client import ResearchCommandError, ResearchServiceClient
+            try:
+                return ResearchServiceClient(base_url=base_url)._call(method, path, payload)
+            except ResearchCommandError as exc:
+                message = getattr(exc, "message", None) or str(exc)
+                raise CanonicalOperationError(
+                    authority,
+                    message,
+                    status_code=exc.status_code,
+                    retryable=exc.status_code >= 500 or exc.status_code == 429,
+                ) from exc
         url = self._url(base_url, path, authority)
         body = None
         headers = {"Accept": "application/json"}
@@ -341,19 +358,26 @@ class WorkshopCanonicalOperations:
             )
         return {"task": task_readback, "run": run_readback}
 
+    def list_research_runs(self, *, task_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        query = f"?task_id={urllib.parse.quote(task_id, safe='')}" if task_id else ""
+        value = self._request_json("research_orchestrator", "GET", self.research_base_url, f"/api/research-orchestrator/runs{query}")
+        return value if isinstance(value, list) else []
+
     def get_research_run(self, run_id: str) -> Dict[str, Any]:
-        value = self._request_json(
-            "research_orchestrator",
-            "GET",
-            self.research_base_url,
-            f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}",
-        )
+        value = self._request_json("research_orchestrator", "GET", self.research_base_url, f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}")
         if not isinstance(value, dict) or str(value.get("run_id") or value.get("id") or "") != run_id:
-            raise CanonicalOperationError(
-                "research_orchestrator",
-                "authoritative research run readback id mismatch",
-            )
+            raise CanonicalOperationError("research_orchestrator", "authoritative research run readback id mismatch")
         return value
+
+    def cancel_research_run(self, run_id: str, *, reason: Optional[str] = None) -> Dict[str, Any]:
+        return self._request_json("research_orchestrator", "POST", self.research_base_url, f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}/cancel", {"reason": reason or "Research run canceled by operator."})
+
+    def cancel_research_task(self, task_id: str, *, reason: Optional[str] = None) -> Dict[str, Any]:
+        return self._request_json("research_orchestrator", "POST", self.research_base_url, f"/api/research-orchestrator/tasks/{urllib.parse.quote(task_id, safe='')}/cancel", {"reason": reason or "Research task canceled by operator."})
+
+    def get_research_artifacts(self, run_id: str) -> List[Dict[str, Any]]:
+        value = self._request_json("research_orchestrator", "GET", self.research_base_url, f"/api/research-orchestrator/runs/{urllib.parse.quote(run_id, safe='')}/artifacts")
+        return value if isinstance(value, list) else []
 
     # -- Consultation Service --------------------------------------------
 

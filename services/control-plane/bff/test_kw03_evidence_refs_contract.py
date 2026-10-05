@@ -426,8 +426,16 @@ def test_bff_final_007_redact_evidence_refs_insufficient_capability() -> None:
     assert job_ref["kind"] == "job"
 
 
-def test_bff_final_007_redact_evidence_refs_none_capabilities_is_noop() -> None:
-    """When capabilities=None, redaction is a no-op (backwards-compatible)."""
+def test_bff_final_007_redact_evidence_refs_none_capabilities_fails_closed() -> None:
+    """capabilities=None must fail closed (no capabilities), not no-op.
+
+    BFF-EVIDENCE-REDACTION-FAIL-CLOSED-001: this test previously asserted
+    the fail-open behaviour (capabilities=None passed every ref through
+    unredacted with redacted_count == 0). That was the exact bug this task
+    closes: a missing/unresolved capability lookup must be treated as an
+    identity with no capabilities, so every capability-required ref is
+    withheld.
+    """
     OperatorIdentity = auth_policy.OperatorIdentity
     _redact = redact_evidence_refs
 
@@ -439,8 +447,13 @@ def test_bff_final_007_redact_evidence_refs_none_capabilities_is_noop() -> None:
 
     processed, redacted_count = _redact(identity, refs, capabilities=None)
 
-    assert redacted_count == 0
-    assert processed == refs
+    assert redacted_count == 2
+    assert processed[0]["redacted"] is True
+    assert processed[0]["required_capability"] == "metric.read"
+    assert processed[0]["reason"] == "insufficient_capability"
+    assert processed[1]["redacted"] is True
+    assert processed[1]["required_capability"] == "risk.alert.read"
+    assert processed[1]["reason"] == "insufficient_capability"
 
 
 # --------------------------------------------------------------------------- #

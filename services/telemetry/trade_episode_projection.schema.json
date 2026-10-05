@@ -24,6 +24,11 @@
       "format": "uuid",
       "description": "Unique identifier of the trade episode."
     },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Canonical tenant scope carried by the Telemetry owner projection."
+    },
     "environment": {
       "type": "string",
       "enum": ["paper", "canary", "live", "frozen"]

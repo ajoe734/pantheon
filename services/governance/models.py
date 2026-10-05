@@ -46,6 +46,11 @@ class TargetType(str, Enum):
     ALLOCATION_POLICY = "allocation_policy"
     PERSONA_CAPITAL_BINDING = "persona_capital_binding"
     EVOLUTION_PROPOSAL = "evolution_proposal"
+    REBALANCE_APPLY = "rebalance_apply"
+    CAPITAL_BINDING_ACTIVATION = "capital_binding_activation"
+    CAPITAL_POOL_ACTIVATION = "capital_pool_activation"
+    PERSONA_LIFECYCLE_TRANSITION = "persona_lifecycle_transition"
+    EVOLUTION_EXECUTE = "evolution_execute"
 
 
 class RiskLevel(str, Enum):
@@ -92,6 +97,7 @@ class ProposeApprovalRequest(ApprovalCommand):
     candidate_digest: Optional[str] = None
     proof_digest: Optional[str] = None
     expires_at: Optional[str] = None
+    subject: Optional[Dict[str, str]] = None  # binds one exact action for action-bound target types
 
 
 class AcceptReviewRequest(ApprovalCommand):

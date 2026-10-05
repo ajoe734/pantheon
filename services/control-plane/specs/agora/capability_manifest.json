@@ -12,26 +12,12 @@
         "agora_user_scope.schema.json",
         "servant_profile.schema.json"
       ],
-      "bff_route_families": ["agora-core"],
-      "bff_path_prefixes": [
-        "/bff/agora/sessions",
-        "/bff/agora/ask"
+      "bff_route_families": [
+        "agora-core"
       ],
-      "auth_level": "operator"
-    },
-    {
-      "name": "agora.session.v1",
-      "description": "Ask-persona sessions, messages, handoffs, inbox, and SSE channels.",
-      "schemas": [],
-      "bff_route_families": ["agora-core", "agora-extended"],
       "bff_path_prefixes": [
-        "/bff/agora/ask/sessions",
-        "/bff/agora/sessions",
-        "/bff/agora/inbox",
-        "/bff/agora/incoming",
-        "/bff/agora/messages",
-        "/bff/agora/handoffs",
-        "/bff/channels"
+        "/bff/agora/me",
+        "/bff/agora/capabilities"
       ],
       "auth_level": "operator"
     },
@@ -42,15 +28,12 @@
         "strategy_workshop.schema.json",
         "strategy_completeness.schema.json"
       ],
-      "bff_route_families": ["agora-core", "agora-extended"],
+      "bff_route_families": [
+        "agora-core",
+        "agora-extended"
+      ],
       "bff_path_prefixes": [
-        "/bff/agora/evaluation-runs",
-        "/bff/agora/evaluation-suites",
-        "/bff/agora/training-examples",
-        "/bff/agora/skill-coaching",
-        "/bff/agora/committee",
-        "/bff/agora/committee-sessions",
-        "/bff/agora/persona-lab"
+        "/bff/agora/workshops"
       ],
       "auth_level": "operator"
     },
@@ -62,10 +45,11 @@
         "research_run_summary.schema.json",
         "candidate_pool.schema.json"
       ],
-      "bff_route_families": ["agora-core"],
+      "bff_route_families": [
+        "agora-core"
+      ],
       "bff_path_prefixes": [
-        "/bff/agora/research-tasks",
-        "/bff/research/tasks"
+        "/bff/agora/research"
       ],
       "auth_level": "operator"
     },
@@ -77,10 +61,12 @@
         "trading_intent.schema.json",
         "shadow_decision.schema.json"
       ],
-      "bff_route_families": ["agora-core"],
+      "bff_route_families": [
+        "agora-core"
+      ],
       "bff_path_prefixes": [
-        "/bff/agora/signals",
-        "/bff/agora/feedback"
+        "/bff/agora/trading-intents",
+        "/bff/agora/trading-room"
       ],
       "auth_level": "operator",
       "safety_notes": [
@@ -96,35 +82,15 @@
         "dashboard_recipe.schema.json",
         "widget_spec.schema.json"
       ],
-      "bff_route_families": ["agora-core"],
+      "bff_route_families": [
+        "agora-core"
+      ],
       "bff_path_prefixes": [
-        "/bff/agora/daily",
-        "/bff/agora/markets",
-        "/bff/agora/market-notes",
-        "/bff/agora/watchlist",
         "/bff/agora/postmortems",
-        "/bff/agora/alerts",
         "/bff/agora/journal",
-        "/bff/agora/notes",
         "/bff/agora/decision-journal"
       ],
       "auth_level": "operator"
-    },
-    {
-      "name": "agora.personalization.v1",
-      "description": "Operator personalization events, persona memory, insights, and preference management.",
-      "schemas": [
-        "personalization_event.schema.json"
-      ],
-      "bff_route_families": ["agora-core"],
-      "bff_path_prefixes": [
-        "/bff/agora/memory",
-        "/bff/agora/insights",
-        "/bff/insights",
-        "/bff/memory"
-      ],
-      "auth_level": "operator",
-      "writeback_note": "PersonalizationEvent.memory_writeback_eligible=true events may trigger operator memory writeback in the persona memory service."
     }
   ],
   "schema_bundle_index": "services/control-plane/specs/agora/bundle_index.json",

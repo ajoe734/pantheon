@@ -1,0 +1,104 @@
+{
+  "schema_version": "pantheon.oss-profiles-runtime-grouping-correction-20261004.evidence.v1",
+  "task_id": "OSS-PROFILES-RUNTIME-GROUPING-CORRECTION-20261004",
+  "kind": "runtime_profile_grouping_correction_evidence",
+  "generated_at": "2026-10-04T16:42:00Z",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "target": {
+    "project": "pantheon-dev-20260902",
+    "vm": "pantheon-dev-deploy",
+    "zone": "asia-east1-b"
+  },
+  "runtime_grouping_corrections": {
+    "counterexamples_resolved": [
+      {
+        "issue": "Dormant smoke stub/memory jobs were bundled into the research profile in docker-compose.yml:2888-3005 and profile-contract.json",
+        "services": [
+          "mlflow-dormant-smoke",
+          "finrl-dormant-smoke",
+          "rllib-dormant-smoke",
+          "ray-tune-dormant-smoke",
+          "qlib-dormant-smoke",
+          "trl-dormant-smoke",
+          "experiments-dormant-smoke"
+        ],
+        "correction": "Removed 'research' from profiles in docker-compose.yml; now strictly profiles: ['dormant-smoke']. Moved from research.services to research.opt_in_never_default in profile-contract.json.",
+        "effect": "Ordinary 'research' profile activation runs only active research APIs and never starts dormant smoke placeholders."
+      },
+      {
+        "issue": "openclaw-activation-ready-e2e smoke harness was bundled into the management-ai profile in docker-compose.yml:2825 and profile-contract.json",
+        "services": ["openclaw-activation-ready-e2e"],
+        "correction": "Removed 'management-ai' from profiles in docker-compose.yml; now strictly profiles: ['openclaw-activation-ready-e2e']. Moved from management-ai.services to management-ai.opt_in_never_default in profile-contract.json.",
+        "effect": "Ordinary 'management-ai' and 'openclaw' profiles activate genuine daemons (openclaw-data-init, openclaw-gateway) and adapter without triggering the e2e test harness."
+      }
+    ],
+    "preserved_invariants": {
+      "root_default_owners": "Unprofiled docker compose up starts all 54 persistent root services, preserving all canonical default loop workers without hiding them behind profiles.",
+      "opt_in_separation": "Benchmark (lifecycle-projector-capacity-benchmark), E2E smoke (openclaw-activation-ready-e2e), dormant smoke (dormant-smoke), and static fallback (pantheon-paper-runtime) remain strictly opt-in.",
+      "minio_closure": "MinIO server, minio-init, and minio-data volume remain intact; core profile startup does not depend on MinIO health.",
+      "image_pins": "All upstream images remain pinned to immutable sha256 digests (postgres:16-alpine, nats:2.11-alpine, redis:7-alpine, busybox:1.36)."
+    }
+  },
+  "profile_activation_matrix": {
+    "<default>": {"count": 54, "dormant_smoke": false, "openclaw_e2e": false, "benchmark": false, "static_paper": false},
+    "core": {"count": 54, "dormant_smoke": false, "openclaw_e2e": false, "benchmark": false, "static_paper": false},
+    "workers": {"count": 55, "dormant_smoke": false, "openclaw_e2e": false, "benchmark": false, "static_paper": false},
+    "research": {"count": 54, "dormant_smoke": false, "openclaw_e2e": false, "benchmark": false, "static_paper": false},
+    "management-ai": {"count": 56, "dormant_smoke": false, "openclaw_e2e": false, "benchmark": false, "static_paper": false},
+    "openclaw": {"count": 56, "dormant_smoke": false, "openclaw_e2e": false, "benchmark": false, "static_paper": false},
+    "execution": {"count": 54, "dormant_smoke": false, "openclaw_e2e": false, "benchmark": false, "static_paper": false},
+    "dormant-smoke": {"count": 61, "dormant_smoke": true, "openclaw_e2e": false, "benchmark": false, "static_paper": false},
+    "openclaw-activation-ready-e2e": {"count": 55, "dormant_smoke": false, "openclaw_e2e": true, "benchmark": false, "static_paper": false},
+    "lifecycle-capacity-benchmark": {"count": 55, "dormant_smoke": false, "openclaw_e2e": false, "benchmark": true, "static_paper": false},
+    "static-paper-runtime": {"count": 55, "dormant_smoke": false, "openclaw_e2e": false, "benchmark": false, "static_paper": true}
+  },
+  "disposable_runtime_receipts": {
+    "project": "ossgroupcorr-8f44552cfd",
+    "network": "ossgroupcorr-8f44552cfd-net",
+    "volumes": [
+      "ossgroupcorr-8f44552cfd-pgdata",
+      "ossgroupcorr-8f44552cfd-redisdata",
+      "ossgroupcorr-8f44552cfd-ocdata"
+    ],
+    "tests_executed": [
+      {
+        "unit": "openclaw-data-init",
+        "image": "busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+        "command": "mkdir -p /home/node/.openclaw && chown -R 1000:1000 /home/node/.openclaw && chmod 755 /home/node/.openclaw",
+        "verified_stat": "1000:1000 755",
+        "idempotent_rerun": "pass"
+      },
+      {
+        "unit": "redis-signal-store",
+        "image": "redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf",
+        "fence_key": "grouping_correction_fence",
+        "fence_val": "verified_20261004",
+        "restart_persistence": "pass"
+      },
+      {
+        "unit": "postgres",
+        "image": "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+        "table": "grouping_correction_receipt",
+        "record": "isolated runtime verified",
+        "restart_persistence": "pass"
+      }
+    ],
+    "cleanup_verified": "0 dangling containers, networks, or volumes with task label"
+  },
+  "diff_budget": {
+    "change_class": "corrective",
+    "net_production_diff": 0,
+    "net_test_diff": 0,
+    "budget_status": "satisfied (net production line additions <= 0)"
+  },
+  "validation_summary": {
+    "compose_activation_tests": "10 passed (policy-learning, research-gateway, research-orchestrator, source-ingestion, training-session)",
+    "compose_wiring_tests": "passed (scripts/test_current_l12_compose_wiring.py)",
+    "openclaw_e2e_smoke_tests": "3 passed (scripts/test_smoke_openclaw_activation_ready_e2e.py)",
+    "deploy_nonprod_tests": "45 passed, 2 skipped (scripts/test_deploy_nonprod_vm.py)",
+    "lease_deploy_profile_tests": "8 passed (scripts/test_dev_environment_lease_deploy_contract.py -k 'profile or dormant')",
+    "split_topology_verification": "passed (scripts/validate_split_topology.sh)",
+    "profile_config_inspections": "all 11 profile configurations verified"
+  }
+}

@@ -64,16 +64,3 @@ def validate_emergency_containment(params: Dict[str, Any]) -> None:
     target_stage = str(params.get("target_stage") or "").strip().lower()
     if target_stage in {"canary_candidate", "canary_running", "live_candidate", "live_running"}:
         raise ValueError("emergency containment cannot promote a persona")
-
-
-def containment_receipt_fields(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Project the evidence needed by downstream audit/review consumers."""
-    return {
-        "containment": True,
-        "containment_action": params.get("action") or params.get("containment_action"),
-        "trigger_type": params.get("trigger") or params.get("trigger_type"),
-        "evidence_refs": list(params.get("evidence_refs") or []),
-        "rollback_ref": params.get("rollback_ref"),
-        "risk_direction": "decrease_only",
-        "live_capital_side_effects": False,
-    }

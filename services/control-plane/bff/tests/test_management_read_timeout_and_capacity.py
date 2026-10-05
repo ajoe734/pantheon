@@ -28,8 +28,8 @@ finer-grained per-contributor timeout/capacity story (a `persona_readiness`
 surface independently timing out with `meta.partial=True` while sibling
 surfaces stay populated). Tracing the real `/bff/management/human-inbox`
 route (management_read_models/service.py::get_human_inbox) shows each of
-its six contributor blocks (approvals, governance reviews, interventions,
-sentinel findings, persona readiness, promotion reviews) reads directly
+its contributor blocks (approvals, governance reviews, incidents,
+persona readiness, promotion reviews) reads directly
 from `store`/the command log inline, with no per-contributor async
 offload, timeout, or `meta.partial` computation at all -- only the whole
 `get_human_inbox` call is offloaded/bounded as a single unit. Building
@@ -104,7 +104,7 @@ def _isolated_bff(tmp_path) -> Iterator[Tuple[TestClient, ReadSurfacePorts]]:
 def _append_submitted_promotion_review(command_store: CommandStore, *, recommendation_id: str, persona_id: str) -> None:
     command_store.submit_command(
         command_id=f"cmd-{recommendation_id}",
-        command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+        command_type="QuarterlyRankingRecommendationSubmit",
         target=TargetObject(type=ObjectType.RANKING, id=recommendation_id),
         submitted_at="2026-07-13T00:00:00Z",
         params={

@@ -62,7 +62,7 @@ def _http_error(url: str, status_code: int) -> urllib.error.HTTPError:
 
 
 @pytest.fixture
-def integrated_state(tmp_path, monkeypatch):
+def integrated_state(tmp_path, monkeypatch, execution_approvals):
     """Give both services isolated durable stores and connect their HTTP edges."""
     decision_store = evo_main.EvolutionDecisionStore(
         storage_path=str(tmp_path / "evolution" / "decisions.json")

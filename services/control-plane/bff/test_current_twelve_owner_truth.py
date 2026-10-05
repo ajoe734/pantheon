@@ -500,6 +500,43 @@ class TestTaskArchiveLivenessRejection:
 class TestAllTwelveProductLoopsRuntimeObservations:
     """Validate positive and negative runtime observation acceptance across all twelve loops."""
 
+    @pytest.mark.parametrize("record_kind", ["missing", "healthy", "stale", "degraded", "undeclared"])
+    def test_health_metadata_matches_admission_without_test_side_rewriting(self, record_kind) -> None:
+        loop_id = "consultation" if record_kind == "undeclared" else "source_ingestion"
+        now = datetime.now(timezone.utc)
+        row = _build_valid_controller_row(
+            loop_id,
+            now=now,
+            heartbeat_at=now - timedelta(hours=2) if record_kind == "stale" else now,
+            worker_health={"ready": False, "status": "degraded"} if record_kind == "degraded" else None,
+        )
+        store = {} if record_kind == "missing" else {loop_id: row}
+        with _scoped_health_client(loop_health_store=store) as client:
+            listing = client.get("/bff/v5/loop-health", headers=HEADERS)
+            detail = client.get(f"/bff/v5/loop-health/{loop_id}", headers=HEADERS)
+
+        assert listing.status_code == detail.status_code == 200
+        accepted = record_kind == "healthy"
+        source = "missing" if record_kind == "missing" else "controller_store"
+        for response, complete in [(listing, False), (detail, accepted)]:
+            meta = response.json()["meta"]
+            surface = meta["surfaces"]["loop_health"]
+            assert surface["status"] == ("ok" if complete else "degraded")
+            assert surface["accepted_live"] is complete
+            assert surface["truth_level"] == ("controller_store" if accepted else "registry_metadata")
+            assert meta["surfaces"]["loop_health_snapshots"] == {
+                "source": source, "status": surface["status"],
+            }
+            assert meta["coverage"]["controller_health_record_count"] == int(accepted)
+            assert meta["coverage"]["accepted_controller_health_records_available"] is accepted
+            assert meta["coverage"]["canonical_loop_count"] == 12
+            assert meta["coverage"]["composite_overlay_count"] == 1
+            assert meta["coverage"]["inventory_entry_count"] == 13
+            assert meta["scope"]["tenant_id"] == TENANT_ID
+            overlays = meta["composite_overlay_inventory"]
+            assert [item["loop_id"] for item in overlays] == ["per_persona_ooda"]
+            assert all(item["live_status"]["is_live"] is False for item in overlays)
+
     def test_positive_runtime_observations_respect_catalog_controller_admission(self) -> None:
         conformance = _loop_conformance_module()
         now = datetime.now(timezone.utc)
@@ -519,6 +556,7 @@ class TestAllTwelveProductLoopsRuntimeObservations:
             EXPECTED_IMPLEMENTED_CONTROLLERS
         )
         assert payload["meta"]["surfaces"]["loop_health"]["status"] == "degraded"
+        assert payload["meta"]["surfaces"]["loop_health"]["accepted_live"] is False
 
         items = {item["loop_id"]: item for item in payload["items"]}
         for loop_id in conformance.CANONICAL_LOOP_IDS:

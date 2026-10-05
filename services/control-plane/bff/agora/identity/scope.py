@@ -20,6 +20,11 @@ from ..models import (
     AgoraReadPredicate,
     AgoraServantPolicy,
 )
+try:
+    from ...auth.policy import bff_auth_mode
+except (ImportError, ValueError):
+    from services.control_plane.bff.auth.policy import bff_auth_mode
+
 
 
 _TENANT_CLAIM_PATHS = [
@@ -122,8 +127,15 @@ def _env_csv(name: str) -> List[str]:
 
 
 def _claims(identity: Any) -> Dict[str, Any]:
+    if isinstance(identity, dict):
+        claims = identity.get("claims")
+        return {**identity, **claims} if isinstance(claims, dict) else dict(identity)
     claims = getattr(identity, "claims", {})
     return claims if isinstance(claims, dict) else {}
+
+
+def _ident_prop(identity: Any, key: str, default: Any = "") -> Any:
+    return getattr(identity, key, None) or (identity.get(key, default) if isinstance(identity, dict) else default)
 
 
 def _expires_at_from_claims(claims: Dict[str, Any]) -> Optional[str]:
@@ -164,7 +176,7 @@ def resolve_agora_user_scope(
     list them in the caller's allowed tenant set.
     """
     claims = _claims(identity)
-    operator_id = str(getattr(identity, "operator_id", "") or "").strip()
+    operator_id = str(_ident_prop(identity, "operator_id") or _ident_prop(identity, "user_id") or "").strip()
     if not operator_id:
         raise AgoraScopeResolutionError(
             "Agora scope requires an authenticated operator",
@@ -173,35 +185,38 @@ def resolve_agora_user_scope(
         )
 
     user_id = _first_nonblank(*_claim_strings(claims, _USER_CLAIM_PATHS), operator_id)
-    env_default_tenant = _first_nonblank(
-        os.getenv("PANTHEON_BFF_TENANT_ID"),
-        os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
-        os.getenv("PANTHEON_TENANT_ID"),
-    )
-    default_tenant = _first_nonblank(
-        env_default_tenant,
-        *_claim_strings(claims, _TENANT_CLAIM_PATHS),
-        "pantheon-dev",
-    )
-    allowed_tenants = _claim_strings(claims, _ALLOWED_TENANT_CLAIM_PATHS)
+    token_kind = str(_ident_prop(identity, "token_kind") or claims.get("token_kind") or "").strip().lower()
+    is_token = token_kind in ("jwt", "structured", "cookie") or bool(claims and any(k in claims for k in ("iss", "aud", "exp", "iat")))
+
+    claim_tenants = _claim_strings(claims, _TENANT_CLAIM_PATHS)
+    ident_tenant = str(_ident_prop(identity, "tenant_id") or "").strip()
+    if ident_tenant and ident_tenant not in claim_tenants:
+        claim_tenants.append(ident_tenant)
+    allowed_tenants = _claim_strings(claims, _ALLOWED_TENANT_CLAIM_PATHS) or list(claim_tenants)
+    if ident_tenant and ident_tenant not in allowed_tenants:
+        allowed_tenants.append(ident_tenant)
+
+    env_default = _first_nonblank(os.getenv("PANTHEON_BFF_TENANT_ID"), os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"), os.getenv("PANTHEON_TENANT_ID"))
+    if not is_token and not allowed_tenants:
+        allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [env_default or "pantheon-dev"]
+
     if not allowed_tenants:
-        allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [default_tenant]
-    tenant_id = _first_nonblank(requested_tenant_id, default_tenant)
+        raise AgoraScopeResolutionError("Tenant access denied for Agora scope", reason="AGORA_SCOPE_TENANT_DENIED", status_code=403, details={"tenantId": requested_tenant_id or "", "allowedTenantIds": []})
+
+    clean_req = str(requested_tenant_id or "").strip()
+    concrete = [t for t in allowed_tenants if t != "*"]
+    single = concrete[0] if len(concrete) == 1 else ""
+    auth_claim = _first_nonblank(*[t for t in claim_tenants if ("*" in allowed_tenants or t in allowed_tenants)])
+    tenant_id = clean_req or env_default or auth_claim or single
+    if not tenant_id and "*" in allowed_tenants:
+        tenant_id = env_default or "pantheon-dev"
+
+    if "*" not in allowed_tenants and tenant_id not in allowed_tenants:
+        raise AgoraScopeResolutionError("Tenant access denied for Agora scope", reason="AGORA_SCOPE_TENANT_DENIED", status_code=403, details={"tenantId": tenant_id, "allowedTenantIds": allowed_tenants})
 
     if not tenant_id or not user_id:
-        raise AgoraScopeResolutionError(
-            "Agora scope requires tenant_id and user_id",
-            reason="AGORA_SCOPE_PREDICATE_MISSING",
-            status_code=403,
-            details={"tenant_id_present": bool(tenant_id), "user_id_present": bool(user_id)},
-        )
-    if "*" not in allowed_tenants and tenant_id not in allowed_tenants:
-        raise AgoraScopeResolutionError(
-            "Tenant access denied for Agora scope",
-            reason="AGORA_SCOPE_TENANT_DENIED",
-            status_code=403,
-            details={"tenantId": tenant_id, "allowedTenantIds": allowed_tenants},
-        )
+        raise AgoraScopeResolutionError("Agora scope requires tenant_id and user_id", reason="AGORA_SCOPE_PREDICATE_MISSING", status_code=403, details={"tenant_id_present": bool(tenant_id), "user_id_present": bool(user_id)})
+
 
     roles = list(getattr(identity, "roles", []) or [])
     granted_capabilities = _dedupe_nonblank(
@@ -350,8 +365,8 @@ def resolve_canonical_agora_scope(
         resolved_tenant = str(scope.tenant_id or "").strip()
         resolved_user = str(scope.user_id or "").strip()
         if clean_user and clean_user != resolved_user:
-            roles = set(getattr(identity, "roles", []) or [])
-            operator_id = str(getattr(identity, "operator_id", "") or "").strip()
+            roles = set(_ident_prop(identity, "roles") or [])
+            operator_id = str(_ident_prop(identity, "operator_id") or _ident_prop(identity, "user_id") or "").strip()
             if clean_user != operator_id and not ({"admin", "system"} & roles):
                 raise AgoraScopeResolutionError(
                     f"User scope {clean_user!r} denied for operator {operator_id!r}",

@@ -205,7 +205,7 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
                 )
 
     def test_main_py_all_read_store_attributes_are_inventoried_and_mapped(self) -> None:
-        """Prove that all 44 read_store attributes in main.py are inventoried and mapped or isolated.
+        """Prove that all 25 read_store attributes in main.py are inventoried and mapped or isolated.
 
         BFF-ASSISTANT-SOURCE-COLLECTOR-SEAM-CORRECTIVE-001 moved the
         `read_store.list_events_bff(...)` call for the assistant `recent_sse`
@@ -227,8 +227,8 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
 
         self.assertEqual(
             len(read_store_attrs),
-            28,
-            "Expected exactly 28 read_store attributes in main.py following domain router modularization",
+            25,
+            "Expected exactly 25 read_store attributes in main.py after dead admission pipeline removal",
         )
 
         ports_instance = create_read_surface_ports()
@@ -250,9 +250,9 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
             [],
             f"Found uninventoried read_store attributes in main.py: {uninventoried}",
         )
-        self.assertEqual(len(mapped_reads), 28)
+        self.assertEqual(len(mapped_reads), 25)
         self.assertEqual(len(deferred_writes), 0)
-        self.assertEqual(len(mapped_reads) + len(deferred_writes), 28)
+        self.assertEqual(len(mapped_reads) + len(deferred_writes), 25)
 
 
 class TestAgoraPersonaClientMigration(unittest.TestCase):
@@ -307,7 +307,6 @@ class TestReadSurfacePortsPreservesBehavior(unittest.TestCase):
             },
             ooda_management_kwargs={
                 "ooda_packets": [{"id": "pkt-100", "strategy_id": "strat-100", "runtime_id": "rt-100"}],
-                "interventions": [{"id": "int-100", "action": "pause"}],
                 "synthesis_conflict_logs": [{"id": "log-100", "conflict_type": "divergence"}],
                 "approval_decisions": [{"decision_id": "app-100", "state": "under_review", "target_type": "ApprovalDecision"}],
                 "deployment_diffs": {"dp-100": {"plan_id": "dp-100", "diff": "allocated +50k"}},
@@ -365,7 +364,6 @@ class TestReadSurfacePortsPreservesBehavior(unittest.TestCase):
 
     def test_ooda_management_delegates(self) -> None:
         self.assertEqual(len(self.ports.list_ooda_packets()), 1)
-        self.assertEqual(len(self.ports.list_interventions()), 1)
         self.assertEqual(len(self.ports.list_synthesis_conflict_logs()), 1)
         self.assertEqual(len(self.ports.list_governance_review_queue_items()), 1)
         self.assertEqual(len(self.ports.list_approval_queue_items()), 1)
@@ -770,8 +768,6 @@ class TestEndpointLevelRetainedCallers(unittest.TestCase):
                 require_write_role=bff_main._require_operator_role,
                 require_operator_role=bff_main._require_operator_role,
                 require_journal_write_role=bff_main._require_journal_write_role,
-                require_agora_signal_write_role=bff_main._require_agora_signal_write_role,
-                require_agora_bulk_feedback_role=bff_main._require_agora_bulk_feedback_role,
                 bff_error=bff_main._bff_error,
                 utc_now=bff_main.utc_now,
                 get_read_store=lambda: self.ports,
@@ -818,27 +814,6 @@ class TestEndpointLevelRetainedCallers(unittest.TestCase):
     def tearDown(self) -> None:
         pass
 
-
-    def test_endpoint_list_committee_session_memos(self) -> None:
-        response = self.client.get(
-            "/bff/agora/committee/sessions/sess-comm-1/memos",
-            headers=self.auth_headers,
-        )
-        self.assertEqual(response.status_code, 200, response.text)
-        data = response.json()
-        self.assertIn("items", data)
-        self.assertEqual(len(data["items"]), 1)
-        self.assertEqual(data["items"][0]["memo_id"], "memo-comm-1")
-
-    def test_endpoint_get_committee_session_memo_detail(self) -> None:
-        response = self.client.get(
-            "/bff/agora/committee/sessions/sess-comm-1/memos/memo-comm-1",
-            headers=self.auth_headers,
-        )
-        self.assertEqual(response.status_code, 200, response.text)
-        data = response.json()
-        self.assertIn("data", data)
-        self.assertEqual(data["data"]["memo_id"], "memo-comm-1")
 
     def test_endpoint_deployment_plans_list(self) -> None:
         response = self.client.get(

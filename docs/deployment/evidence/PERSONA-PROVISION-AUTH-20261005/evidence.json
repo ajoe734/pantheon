@@ -1,0 +1,47 @@
+{
+  "task_id": "PERSONA-PROVISION-AUTH-20261005",
+  "base_sha": "4a37bba402acdaba91c1d669bd79512e081081dd",
+  "scope": "Persona HTTP port credential selection, preserving human lifecycle and caller read authority",
+  "incident": {
+    "release_run": "37285009632",
+    "observed": "Persona POST /api/personas HTTP403 surfaced as BFF provisioning HTTP502",
+    "source_reproduction": "Restoring only baseline _request in memory reproduces PERSONA_OWNER_REQUIRED in the new authenticated-operator contract test",
+    "credential_check": "Read-only VM inspection confirms BFF and Persona service credentials are configured and match; credential values were not disclosed"
+  },
+  "validation": {
+    "focused_actual_sessions_and_architecture": "269 passed",
+    "baseline_regression": "1 expected failure using baseline _request; corrected implementation passes",
+    "coordinator_supplement": "32 passed, 1 failed: obsolete StrategySpecSeedStore monkeypatch. Same failure independently reproduced on unchanged prior task baseline; not counted as a pass",
+    "diff_check": "passed",
+    "coverage": [
+      "Authenticated operator context cannot override provisioning service identity",
+      "Create, duplicate-create readback, update, and capability snapshot use the intended authority",
+      "Missing or invalid service credential cannot borrow a privileged ambient caller",
+      "Explicit human lifecycle bearer wins over unrelated ambient context",
+      "Invalid or foreign-tenant caller reads cannot borrow service privileges",
+      "Background private reads authenticate as the service; missing service credentials are denied by the real owner"
+    ]
+  },
+  "review": {
+    "reviewer": "PiAstra",
+    "configured_provider_model": "openai-codex/gpt-6-luna",
+    "mode": "Independent ephemeral source review with no tools or VM access",
+    "result": "No scoped blocker after examining public route guards and legitimate service-authenticated background reconciliation",
+    "limitation": "Not canonical review attestation or hosted acceptance"
+  },
+  "persisted_release_intent": {
+    "read_only": true,
+    "idempotency_key": "dev-paper-release-37285009632-1",
+    "persona_id": "persona-c6ef44745087d11cc138",
+    "state": "provisioning",
+    "current_step": "schedule_registered",
+    "attempt_count": 1,
+    "error": null,
+    "compensation": null,
+    "observed_side_effects": "Registry, Governance, Capital, Deployment and schedule receipts exist. Do not treat the failed HTTP response as no writes or blindly resubmit",
+    "historical_default_key": "Initial read queried the old bootstrap default; this was corrected to the release-specific key. No store writes were performed"
+  },
+  "evidence_root": "/tmp/pantheon-persona-auth-evidence-20261005/",
+  "hosted_status": "NOT ACCEPTED: corrected pair has not been deployed or qualified; prior release intent recovery and hosted business acceptance remain open",
+  "safety": "No auth gate, tenant filter, market freshness gate, production setting, real-capital permission, canonical task state or historical record changed"
+}

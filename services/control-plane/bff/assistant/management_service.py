@@ -4083,7 +4083,16 @@ def _mgmt_nl_caller_tenant(
     requested_tenant: Optional[str] = None,
 ) -> str:
     tenant = _bff_me_tenant_payload(identity, requested_tenant=requested_tenant)
-    return str(tenant.get("id") or "pantheon-dev")
+    caller_tenant = str(tenant.get("id") or "").strip()
+    if not caller_tenant:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Tenant access denied",
+            "Caller has no verified tenant authority",
+            precondition_failed="tenant_scope",
+        )
+    return caller_tenant
 def _mgmt_nl_scope_values(value: Any) -> List[str]:
     if value in (None, ""):
         return []
@@ -4134,10 +4143,8 @@ def _mgmt_nl_record_tenant_ids(record: Dict[str, Any]) -> List[str]:
 def _mgmt_nl_record_matches_tenant(record: Dict[str, Any], tenant_id: Optional[str]) -> bool:
     clean_tenant = str(tenant_id or "").strip()
     if not clean_tenant:
-        return True
+        return False
     record_tenants = _mgmt_nl_record_tenant_ids(record)
-    if not record_tenants:
-        return True
     return "*" in record_tenants or clean_tenant in record_tenants
 def _mgmt_nl_filter_tenant_records(
     records: List[Dict[str, Any]],

@@ -905,28 +905,6 @@ mutation_routes:
   readback_projection: management_deployment_projection
   legacy_path: null
   legacy_removal_wave: null
-- route: POST /bff/actions/{param}/{param}/{param}
-  command: sem_canonical_action_command
-  router: command_adapters
-  application_owner: command_adapter_application
-  store_owner: command_store
-  table_or_stream: commands
-  outbox_subject: command.dispatched.v1
-  idempotency_scope: command_id
-  readback_projection: management_command_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /api/v1/operator/commands
-  command: submit_command
-  router: command_adapters
-  application_owner: command_adapter_application
-  store_owner: command_store
-  table_or_stream: commands
-  outbox_subject: command.dispatched.v1
-  idempotency_scope: command_id
-  readback_projection: management_command_projection
-  legacy_path: null
-  legacy_removal_wave: null
 - route: POST /bff/v1/commands
   command: submit_final_command
   router: command_adapters
@@ -1543,28 +1521,6 @@ mutation_routes:
   readback_projection: management_capital_projection
   legacy_path: null
   legacy_removal_wave: null
-- route: POST /bff/rebalances/{param}/approve
-  command: bff_approve_rebalance_apply
-  router: capital
-  application_owner: capital_application
-  store_owner: capital_store
-  table_or_stream: capital_pools
-  outbox_subject: capital.allocation.v1
-  idempotency_scope: pool_id
-  readback_projection: management_capital_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/rebalances/{param}/two-man-sign
-  command: bff_sign_rebalance_apply
-  router: capital
-  application_owner: capital_application
-  store_owner: capital_store
-  table_or_stream: capital_pools
-  outbox_subject: capital.allocation.v1
-  idempotency_scope: pool_id
-  readback_projection: management_capital_projection
-  legacy_path: null
-  legacy_removal_wave: null
 - route: POST /bff/rebalances
   command: bff_create_rebalance
   router: capital
@@ -1686,96 +1642,8 @@ mutation_routes:
   readback_projection: management_governance_projection
   legacy_path: null
   legacy_removal_wave: null
-- route: POST /bff/v5/interventions/{param}/remediate
-  command: remediate_v5_intervention
-  router: control_loops
-  application_owner: control_loop_application
-  store_owner: control_loop_store
-  table_or_stream: control_loops
-  outbox_subject: control_loop.status.v1
-  idempotency_scope: intervention_id
-  readback_projection: management_control_loop_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/v5/interventions/{param}/decide
-  command: sem_v5_intervention_decide_command
-  router: control_loops
-  application_owner: control_loop_application
-  store_owner: control_loop_store
-  table_or_stream: control_loops
-  outbox_subject: control_loop.status.v1
-  idempotency_scope: intervention_id
-  readback_projection: management_control_loop_projection
-  legacy_path: null
-  legacy_removal_wave: null
 - route: POST /bff/v5/interventions/{param}/two-man-sign
   command: sem_v5_intervention_command
-  router: control_loops
-  application_owner: control_loop_application
-  store_owner: control_loop_store
-  table_or_stream: control_loops
-  outbox_subject: control_loop.status.v1
-  idempotency_scope: intervention_id
-  readback_projection: management_control_loop_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/v5/interventions/{param}/release
-  command: sem_v5_intervention_command
-  router: control_loops
-  application_owner: control_loop_application
-  store_owner: control_loop_store
-  table_or_stream: control_loops
-  outbox_subject: control_loop.status.v1
-  idempotency_scope: intervention_id
-  readback_projection: management_control_loop_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/v5/interventions/{param}/escalate
-  command: sem_v5_intervention_command
-  router: control_loops
-  application_owner: control_loop_application
-  store_owner: control_loop_store
-  table_or_stream: control_loops
-  outbox_subject: control_loop.status.v1
-  idempotency_scope: intervention_id
-  readback_projection: management_control_loop_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/v5/interventions/{param}/claim
-  command: sem_v5_intervention_command
-  router: control_loops
-  application_owner: control_loop_application
-  store_owner: control_loop_store
-  table_or_stream: control_loops
-  outbox_subject: control_loop.status.v1
-  idempotency_scope: intervention_id
-  readback_projection: management_control_loop_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/v5/sentinel/findings/{param}/status
-  command: sem_v5_sentinel_status_command
-  router: control_loops
-  application_owner: control_loop_application
-  store_owner: control_loop_store
-  table_or_stream: control_loops
-  outbox_subject: control_loop.status.v1
-  idempotency_scope: intervention_id
-  readback_projection: management_control_loop_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/v5/sentinel/remediation/build
-  command: sem_v5_sentinel_remediation_build_command
-  router: control_loops
-  application_owner: control_loop_application
-  store_owner: control_loop_store
-  table_or_stream: control_loops
-  outbox_subject: control_loop.status.v1
-  idempotency_scope: intervention_id
-  readback_projection: management_control_loop_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/v5/sentinel/remediation/{param}/execute
-  command: sem_v5_sentinel_remediation_execute_command
   router: control_loops
   application_owner: control_loop_application
   store_owner: control_loop_store
@@ -1970,72 +1838,6 @@ mutation_routes:
   outbox_subject: integration.event.v1
   idempotency_scope: tool_id
   readback_projection: management_integration_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/sessions
-  command: bff_create_agora_session
-  router: agora_identity
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/sessions/{param}/messages
-  command: bff_create_agora_session_message
-  router: agora_identity
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/messages/{param}/actions/{param}
-  command: bff_agora_message_action
-  router: agora_identity
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/ask/sessions
-  command: sem_agora_ask_create_session
-  router: agora_identity
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/ask/sessions/{param}/close
-  command: sem_agora_ask_close_session
-  router: agora_identity
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/ask
-  command: sem_agora_ask
-  router: agora_identity
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
   legacy_path: null
   legacy_removal_wave: null
 - route: POST /bff/agora/servant/ensure
@@ -2280,6 +2082,19 @@ mutation_routes:
   readback_projection: management_experiment_projection
   legacy_path: null
   legacy_removal_wave: null
+# Source-observed draft owner, not a claim that research execution has moved
+# out of BFF. This route never dispatches a run or publishes a durable outbox.
+- route: POST /bff/agora/workshops/{param}/research-plans/servant-proposal
+  command: propose_workshop_research_plan
+  router: agora/research/routes/plans.py
+  application_owner: AgoraResearchService.create_workshop_plan
+  store_owner: agora.research.store.make_research_plan_store
+  table_or_stream: research plans and audit; postgres uses agora_research.research_aggregate
+  outbox_subject: null
+  idempotency_scope: user_id:tenant_id:endpoint:Idempotency-Key
+  readback_projection: GET /bff/agora/research-plans/{plan_id}
+  legacy_path: null
+  legacy_removal_wave: null
 - route: POST /bff/agora/research-plans/{param}/approve
   command: approve_agora_research_plan
   router: research
@@ -2470,149 +2285,6 @@ mutation_routes:
 - route: POST /bff/agora/trading-room/strategies/{param}/performance/suggestions/{param}/actions
   command: act_on_suggestion
   router: agora_performance
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/strategies/{param}/dashboard-recipes/proposals
-  command: propose_dashboard_recipe
-  router: agora_dashboard
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/dashboard-recipes/{param}/accept
-  command: accept_dashboard_recipe
-  router: agora_dashboard
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: PATCH /bff/agora/dashboard-recipes/{param}/layout
-  command: patch_dashboard_recipe_layout
-  router: agora_dashboard
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/dashboard-recipes/{param}/rollback
-  command: rollback_dashboard_recipe
-  router: agora_dashboard
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/dashboard-recipes/{param}/feedback
-  command: submit_dashboard_recipe_feedback
-  router: agora_dashboard
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/widgets/validate
-  command: validate_agora_widget
-  router: agora_dashboard
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/widgets/{param}/feedback
-  command: submit_widget_feedback
-  router: agora_dashboard
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/widgets/propose-plugin
-  command: propose_widget_plugin
-  router: agora_dashboard
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/insights
-  command: bff_create_agora_insight
-  router: agora_personalization
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/insights/{param}/actions/{param}
-  command: bff_agora_insight_action
-  router: agora_personalization
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/memory/{param}/actions/{param}
-  command: bff_agora_memory_action
-  router: agora_personalization
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/memory/{param}/actions/quarantine
-  command: bff_memory_quarantine_action
-  router: agora_personalization
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/insights/{param}/actions/attach-strategy
-  command: bff_insight_attach_strategy_action
-  router: agora_personalization
   application_owner: agora_application
   store_owner: agora_store
   table_or_stream: agora_records
@@ -2841,72 +2513,6 @@ mutation_routes:
   readback_projection: governance_decision_journal_projection
   legacy_path: null
   legacy_removal_wave: null
-- route: POST /bff/agora/signals
-  command: agora_create_signal
-  router: agora_agora_core
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/feedback
-  command: agora_create_bulk_feedback
-  router: agora_agora_core
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/signals/{param}/feedback
-  command: agora_record_signal_feedback
-  router: agora_agora_core
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/committee/{param}/evidence-pack
-  command: agora_committee_evidence_pack
-  router: agora_agora_core
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/committee/{param}/evidence-pack/files
-  command: agora_committee_evidence_files
-  router: agora_agora_core
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/notes
-  command: agora_create_note
-  router: agora_agora_core
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
 - route: POST /bff/agora/journal
   command: agora_create_journal_entry
   router: agora_agora_core
@@ -2916,83 +2522,6 @@ mutation_routes:
   outbox_subject: governance.decision_journal.v1
   idempotency_scope: agora_id
   readback_projection: governance_decision_journal_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/training-examples
-  command: agora_create_training_example
-  router: agora_agora_core
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/persona-lab/{param}/actions/submit-commit
-  command: agora_submit_persona_lab_commit
-  router: agora_agora_core
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/committee/sessions
-  command: agora_create_committee_session
-  router: agora_agora_core
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/committee/sessions/{param}/open
-  command: agora_open_committee_session
-  router: agora_agora_core
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/committee/sessions/{param}/close
-  command: agora_close_committee_session
-  router: agora_agora_core
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/committee/sessions/{param}/memos
-  command: agora_submit_committee_session_memo
-  router: agora_agora_core
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
-  legacy_path: null
-  legacy_removal_wave: null
-- route: POST /bff/agora/committee/sessions/{param}/memos/{param}/publish
-  command: agora_publish_committee_session_memo
-  router: agora_agora_core
-  application_owner: agora_application
-  store_owner: agora_store
-  table_or_stream: agora_records
-  outbox_subject: agora.event.v1
-  idempotency_scope: agora_id
-  readback_projection: management_agora_projection
   legacy_path: null
   legacy_removal_wave: null
 workers:

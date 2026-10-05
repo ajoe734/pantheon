@@ -24,6 +24,7 @@ from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, Body, Header, Query
 
+from ..auth.policy import require_operator_role as _policy_operator_role
 from ..models import ErrorCode
 from ..ports.job_read import JobSourceUnavailableError
 
@@ -37,6 +38,7 @@ def create_jobs_router(
     get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Callable[[Optional[str]], Any],
     require_read_role: Callable[[Any], None],
+    require_operator_role: Optional[Callable[[Any], None]] = None,
     bff_error: Callable[..., Exception],
     utc_now: Callable[[], str],
     page_slice: Callable[..., Any],
@@ -168,7 +170,7 @@ def create_jobs_router(
     ):
         """BFF: job action."""
         identity = extract_identity(authorization)
-        require_read_role(identity)
+        (require_operator_role or _policy_operator_role)(identity)
         reject_body_idempotency_key(payload)
         resolved_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         job = _lookup_job(job_id)
@@ -178,6 +180,6 @@ def create_jobs_router(
                 "Job not found",
                 f"Job {job_id} does not exist",
             )
-        return submit_job_action(job_id, action_id, resolved_key, identity, payload)
+        return submit_job_action(job_id, action_id, resolved_key, identity, payload, authorization=authorization)
 
     return router

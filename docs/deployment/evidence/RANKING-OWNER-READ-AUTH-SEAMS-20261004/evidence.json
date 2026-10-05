@@ -1,0 +1,42 @@
+{
+  "task_id": "RANKING-OWNER-READ-AUTH-SEAMS-20261004",
+  "change_class": "corrective",
+  "owner_read_boundary": {
+    "persona_sessions": "verified tenant -> existing SESSION_STORE.list/get -> retained Persona owner tenant_id",
+    "source_evidence": "verified tenant -> existing tenant-indexed EvidenceRepository reads",
+    "persona_privacy": "scoped ownership lookup before business materialization; anonymous and foreign denial on private trade reflections; public static roster preserved separately",
+    "session_persistence": "in-memory only; no fresh-process durability claim"
+  },
+  "validation": [
+    {
+      "command": "PYTHONPATH=/tmp/pantheon-closeout-continuation-20261004-0925:. .venv-pantheon/bin/python3 -m pytest -q /tmp/pantheon-closeout-continuation-20261004-0925/test_trade_journal_direct_owner_contract.py /tmp/pantheon-closeout-continuation-20261004-0925/test_trade_journal_private_owner_reads.py /tmp/pantheon-closeout-continuation-20261004-0925/test_trade_journal_two_owner_claim.py /tmp/pantheon-closeout-continuation-20261004-0925/test_trade_journal_actual_served_parent.py /tmp/pantheon-closeout-continuation-20261004-0925/test_trade_journal_collection_record_scope.py",
+      "result": "17 passed, 1 warning in 7.66s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/persona/test_main.py services/persona/test_trade_reflection_owner.py services/persona/test_training_target_owner.py services/persona/test_lifecycle_approval_verifier.py",
+      "result": "49 passed, 3 subtests passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/test_src001_source_record_contract.py services/source_ingestion/test_service.py -k 'not test_registry_reads_each_persistent_store_once_at_production_scale and not test_concurrent_ingest_scaling'",
+      "result": "27 passed, 1 deselected in 38.67s"
+    },
+    {
+      "command": "origin/dev archive at 6037745e6: run services/source_ingestion/test_service.py::test_registry_reads_each_persistent_store_once_at_production_scale",
+      "result": "same failure: observed 2 freshness reads, expected 1; head run reproduces the identical assertion"
+    },
+    {
+      "command": "docker compose config --quiet",
+      "result": "rendered valid compose configuration"
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/tests/test_persona_create_owner_contract.py",
+      "result": "31 passed in 11.82s"
+    },
+    {
+      "command": "git diff --numstat origin/dev -- docker-compose.yml services/control-plane/persona/main.py services/persona/write_owner.py services/source_ingestion/routers/ingest_operations.py",
+      "result": "passed; 211 added, 57 deleted, net 154 production lines (budget 160)"
+    }
+  ],
+  "production_net_lines": 154,
+  "hosted_or_deployment_proof": false
+}

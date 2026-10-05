@@ -1,6 +1,7 @@
 """Contract tests for the standalone Capital Allocation router."""
 from __future__ import annotations
 
+import json
 import os
 import sys
 from copy import deepcopy
@@ -18,7 +19,7 @@ TASK_REVIEW_MANIFEST = {
     "owned_layer": "standalone Capital Allocation router and service",
     "not_changing": "main.py composition and existing persona-capital port behavior",
     "review_scope": {
-        "route_count": 25,
+        "route_count": 23,
         "durable_readback": "Capital pool id, normalized risk limits, and allocation digest",
         "write_boundary": "Capital Allocation Manager only; missing owner mutation methods return 503",
     },
@@ -58,6 +59,7 @@ class _CapitalStore:
                 "lines": [{"strategy_id": "alpha", "target_weight": 0.20}],
             }
         }
+        self.calls: List[Any] = []
         self.allocation_rows: List[Dict[str, Any]] = [
             {"capital_pool_id": "pool-paper", "strategy_id": "alpha", "target_weight": 0.20, "commission": 12.5},
             {"capital_pool_id": "pool-paper", "strategy_id": "beta", "target_weight": 0.15, "commission": 7.5},
@@ -81,41 +83,28 @@ class _CapitalStore:
     def get_rebalance(self, requested_id: str) -> Optional[Dict[str, Any]]:
         return self.rebalances.get(requested_id)
 
-    def create_capital_pool(self, payload: Dict[str, Any], **_: Any) -> Dict[str, Any]:
+    # Owner writer interface (CapitalOwnerWriter): every call receives the caller context.
+    def create_pool(self, payload: Dict[str, Any], **ctx: Any) -> Dict[str, Any]:
+        self.calls.append(("create_pool", ctx))
         pool_id = str(payload.get("id") or "pool-created")
         item = {"id": pool_id, "status": "active", **deepcopy(payload)}
         self.pools[pool_id] = item
         return item
 
-    def patch_capital_pool(self, payload: Dict[str, Any], pool_id: str, **_: Any) -> Dict[str, Any]:
-        self.pools[pool_id].update(deepcopy(payload))
-        return self.pools[pool_id]
+    def pool_action(self, payload: Dict[str, Any], **ctx: Any) -> Dict[str, Any]:
+        self.calls.append(("pool_action", ctx))
+        return {"pool_id": ctx["target_id"], "action_id": payload["action_id"], "status": "paused"}
 
-    def capital_pool_action(self, payload: Dict[str, Any], pool_id: str, **_: Any) -> Dict[str, Any]:
-        return {"pool_id": pool_id, "action_id": payload["action_id"], "status": "accepted"}
-
-    def create_rebalance(self, payload: Dict[str, Any], **_: Any) -> Dict[str, Any]:
+    def create_rebalance(self, payload: Dict[str, Any], **ctx: Any) -> Dict[str, Any]:
+        self.calls.append(("create_rebalance", ctx))
         item = {"id": str(payload.get("id") or "rebalance-created"), "status": "proposed", **deepcopy(payload)}
         self.rebalances[item["id"]] = item
         return item
 
-    def approve_rebalance(self, payload: Dict[str, Any], rebalance_id: str, **_: Any) -> Dict[str, Any]:
-        self.rebalances[rebalance_id]["status"] = "approved"
-        return {"rebalance_id": rebalance_id, "decision": "approved", **deepcopy(payload)}
-
-    def sign_rebalance(self, payload: Dict[str, Any], rebalance_id: str, **_: Any) -> Dict[str, Any]:
-        return {"rebalance_id": rebalance_id, "signature": "recorded", **deepcopy(payload)}
-
-    def apply_rebalance(self, payload: Dict[str, Any], rebalance_id: str, **_: Any) -> Dict[str, Any]:
-        self.rebalances[rebalance_id]["status"] = "applied"
-        return {"rebalance_id": rebalance_id, "state": "applied", **deepcopy(payload)}
-
-    def rebalance_action(self, payload: Dict[str, Any], rebalance_id: str, **_: Any) -> Dict[str, Any]:
-        return {"rebalance_id": rebalance_id, "action_id": payload["action_id"], "status": "accepted"}
-
-    def patch_rebalance(self, payload: Dict[str, Any], rebalance_id: str, **_: Any) -> Dict[str, Any]:
-        self.rebalances[rebalance_id].update(deepcopy(payload))
-        return self.rebalances[rebalance_id]
+    def apply_rebalance(self, payload: Dict[str, Any], **ctx: Any) -> Dict[str, Any]:
+        self.calls.append(("apply_rebalance", ctx))
+        self.rebalances[ctx["target_id"]]["status"] = "applied"
+        return {"rebalance_id": ctx["target_id"], "state": "applied", **deepcopy(payload)}
 
 
 def _client(store: _CapitalStore) -> TestClient:
@@ -130,7 +119,20 @@ def _client(store: _CapitalStore) -> TestClient:
     return TestClient(app)
 
 
-def test_capital_router_registers_the_25_catalogued_routes() -> None:
+def _client_with_auth(store: _CapitalStore, extract_identity: Any) -> TestClient:
+    app = FastAPI()
+    app.include_router(
+        create_capital_router(
+            get_read_store=lambda: store,
+            get_capital_authority=lambda: store,
+            extract_identity=extract_identity,
+            utc_now=lambda: "2026-08-30T21:00:00Z",
+        )
+    )
+    return TestClient(app)
+
+
+def test_capital_router_registers_the_23_owner_backed_routes() -> None:
     router = create_capital_router()
     routes = {(method, route.path) for route in router.routes for method in route.methods}
     expected = {
@@ -142,8 +144,6 @@ def test_capital_router_registers_the_25_catalogued_routes() -> None:
         ("PATCH", "/bff/capital-pools/{pool_id}"),
         ("POST", "/bff/capital-pools/{pool_id}/actions/{action_id}"),
         ("POST", "/bff/management/allocation-policy/evaluate"),
-        ("POST", "/bff/rebalances/{rebalance_id}/approve"),
-        ("POST", "/bff/rebalances/{rebalance_id}/two-man-sign"),
         ("GET", "/bff/rebalances"),
         ("POST", "/bff/rebalances"),
         ("POST", "/bff/rebalances/{rebalance_id}/apply"),
@@ -161,7 +161,7 @@ def test_capital_router_registers_the_25_catalogued_routes() -> None:
         ("PATCH", "/bff/rebalances/{rebalance_id}"),
     }
     assert routes == expected
-    assert len(router.routes) == 25
+    assert len(router.routes) == 23
     assert TASK_REVIEW_MANIFEST["review_scope"]["route_count"] == len(router.routes)
 
 
@@ -220,44 +220,28 @@ def test_allocation_and_management_readbacks_retain_pool_and_risk_lineage() -> N
 def test_capital_and_rebalance_writes_are_owner_delegated_and_idempotent() -> None:
     store = _CapitalStore()
     client = _client(store)
+    headers = {"Authorization": "Bearer caller-jwt", "Idempotency-Key": "pool-create-1"}
+    body = {"id": "pool-created", "name": "Created Pool", "risk_limits": {"max_gross_exposure": 0.25}}
 
-    created = client.post(
-        "/bff/capital-pools",
-        json={"id": "pool-created", "name": "Created Pool", "risk_limits": {"max_gross_exposure": 0.25}},
-        headers={"Idempotency-Key": "pool-create-1"},
-    )
+    created = client.post("/bff/capital-pools", json=body, headers=headers)
     assert created.status_code == 201
     assert created.json()["meta"]["replayed"] is False
+    name, ctx = store.calls[-1]
+    assert (name, ctx["auth_token"], ctx["actor_role"], ctx["key"]) == ("create_pool", "Bearer caller-jwt", "operator", "pool-create-1")
 
-    replay = client.post(
-        "/bff/capital-pools",
-        json={"id": "pool-created", "name": "Created Pool", "risk_limits": {"max_gross_exposure": 0.25}},
-        headers={"Idempotency-Key": "pool-create-1"},
-    )
+    replay = client.post("/bff/capital-pools", json=body, headers=headers)
     assert replay.status_code == 201
     assert replay.json()["meta"]["replayed"] is True
+    assert len(store.calls) == 1  # one owner effect
 
-    mismatch = client.post(
-        "/bff/capital-pools",
-        json={"id": "pool-created", "name": "Changed Request"},
-        headers={"Idempotency-Key": "pool-create-1"},
-    )
+    mismatch = client.post("/bff/capital-pools", json={**body, "name": "Changed"}, headers=headers)
     assert mismatch.status_code == 409
 
-    patched = client.patch(
-        "/bff/capital-pools/pool-created",
-        json={"risk_limits": {"max_gross_exposure": 0.20}},
-        headers={"Idempotency-Key": "pool-patch-1"},
+    action = client.post(
+        "/bff/capital-pools/pool-created/actions/pause", json={}, headers={"Idempotency-Key": "pool-action-1"},
     )
-    assert patched.status_code == 200
-    assert store.pools["pool-created"]["risk_limits"]["max_gross_exposure"] == 0.20
-
-    pool_action = client.post(
-        "/bff/capital-pools/pool-created/actions/ApprovePool",
-        json={}, headers={"Idempotency-Key": "pool-action-1"},
-    )
-    assert pool_action.status_code == 202
-    assert pool_action.json()["data"]["action_id"] == "ApprovePool"
+    assert action.status_code == 202
+    assert store.calls[-1][1]["target_id"] == "pool-created"
 
     created_rebalance = client.post(
         "/bff/rebalances",
@@ -266,38 +250,130 @@ def test_capital_and_rebalance_writes_are_owner_delegated_and_idempotent() -> No
     )
     assert created_rebalance.status_code == 201
 
-    approved = client.post(
-        "/bff/rebalances/rebalance-created/approve",
-        json={"memo": "approved"}, headers={"Idempotency-Key": "rebalance-approve-1"},
+    # Missing confirmation token must be rejected with 428 without calling owner
+    missing_confirm = client.post(
+        "/bff/rebalances/rebalance-created/apply",
+        json={},
+        headers={"Idempotency-Key": "rebalance-apply-1"},
     )
-    assert approved.status_code == 201
-    assert store.rebalances["rebalance-created"]["status"] == "approved"
-
-    signed = client.post(
-        "/bff/rebalances/rebalance-created/two-man-sign",
-        json={"signature": "reviewer-2"}, headers={"Idempotency-Key": "rebalance-sign-1"},
-    )
-    assert signed.status_code == 202
+    assert missing_confirm.status_code == 428
+    assert "CONFIRM_TOKEN_MISSING" in missing_confirm.text
 
     applied = client.post(
         "/bff/rebalances/rebalance-created/apply",
-        json={}, headers={"Idempotency-Key": "rebalance-apply-1"},
+        json={},
+        headers={"Idempotency-Key": "rebalance-apply-1", "X-Confirm-Token": "ct-apply-1"},
     )
     assert applied.status_code == 202
     assert store.rebalances["rebalance-created"]["status"] == "applied"
 
-    action = client.post(
-        "/bff/rebalances/rebalance-created/actions/contain",
-        json={}, headers={"Idempotency-Key": "rebalance-action-1"},
-    )
-    assert action.status_code == 202
 
-    patched_rebalance = client.patch(
-        "/bff/rebalances/rebalance-created",
-        json={"status": "paused"}, headers={"Idempotency-Key": "rebalance-patch-1"},
+def test_capital_idempotency_binds_target_and_tenant_preserving_conflicts_and_isolation() -> None:
+    store = _CapitalStore()
+    client = _client(store)
+
+    # 1. Action on pool-paper
+    r1 = client.post(
+        "/bff/capital-pools/pool-paper/actions/pause",
+        json={},
+        headers={"Idempotency-Key": "idem-action-key"},
     )
-    assert patched_rebalance.status_code == 200
-    assert store.rebalances["rebalance-created"]["status"] == "paused"
+    assert r1.status_code == 202
+    assert r1.json().get("meta", {}).get("replayed") is False
+    assert r1.json().get("data", {}).get("pool_id") == "pool-paper"
+
+    # Replay on same target and same payload replays cleanly
+    r1_replay = client.post(
+        "/bff/capital-pools/pool-paper/actions/pause",
+        json={},
+        headers={"Idempotency-Key": "idem-action-key"},
+    )
+    assert r1_replay.status_code == 202
+    assert r1_replay.json().get("meta", {}).get("replayed") is True
+
+    # 2. Cross-target conflict: Action on pool-paused with the same idempotency key must conflict (409)
+    # rather than silently returning the cached readback for pool-paper
+    r2_conflict = client.post(
+        "/bff/capital-pools/pool-paused/actions/pause",
+        json={},
+        headers={"Idempotency-Key": "idem-action-key"},
+    )
+    assert r2_conflict.status_code == 409
+    body_conflict = r2_conflict.json()
+    err = body_conflict.get("detail", {}).get("error") or body_conflict.get("error") or {}
+    assert err.get("code") == "IDEMPOTENCY_CONFLICT"
+
+    # 3. Cross-tenant isolation: different tenant identities with the same idempotency key are isolated
+    class _TenantIdentity:
+        def __init__(self, tenant_id: str):
+            self.operator_id = f"operator-{tenant_id}"
+            self.tenant_id = tenant_id
+            self.roles = {"admin", "operator"}
+
+    def _extract_tenant_identity(auth: Optional[str] = None):
+        t = (auth or "tenant-a").replace("Bearer ", "")
+        return _TenantIdentity(t)
+
+    tenant_client = _client_with_auth(store, _extract_tenant_identity)
+    res_ta = tenant_client.post(
+        "/bff/capital-pools/pool-paper/actions/pause",
+        json={},
+        headers={"Idempotency-Key": "shared-key", "Authorization": "Bearer tenant-a"},
+    )
+    assert res_ta.status_code == 202
+    assert res_ta.json().get("meta", {}).get("replayed") is False
+
+    res_tb = tenant_client.post(
+        "/bff/capital-pools/pool-paper/actions/pause",
+        json={},
+        headers={"Idempotency-Key": "shared-key", "Authorization": "Bearer tenant-b"},
+    )
+    assert res_tb.status_code == 202
+    assert res_tb.json().get("meta", {}).get("replayed") is False
+
+
+def test_operations_without_an_owner_endpoint_are_retired_not_simulated() -> None:
+    store = _CapitalStore()
+    client = _client(store)
+    key = {"Idempotency-Key": "retired-1"}
+    for method, path in (
+        ("patch", "/bff/capital-pools/pool-paper"),
+        ("post", "/bff/rebalances/rebalance-1/actions/contain"),
+        ("patch", "/bff/rebalances/rebalance-1"),
+    ):
+        response = getattr(client, method)(path, json={"status": "paused"}, headers=key)
+        assert response.status_code == 410, path
+    assert store.calls == []
+    for path in ("/bff/rebalances/rebalance-1/approve", "/bff/rebalances/rebalance-1/two-man-sign"):
+        assert client.post(path, json={}, headers=key).status_code in {404, 405}
+
+
+def test_owner_http_failures_keep_rejection_conflict_and_unavailability_distinct() -> None:
+    import io
+    import urllib.error
+
+    class _Failing(_CapitalStore):
+        failure: Exception
+
+        def create_pool(self, payload: Dict[str, Any], **ctx: Any) -> Dict[str, Any]:
+            raise self.failure
+
+    def post(failure: Exception) -> int:
+        store = _Failing()
+        store.failure = failure
+        response = _client(store).post("/bff/capital-pools", json={"id": "p", "name": "P"}, headers={"Idempotency-Key": "k"})
+        return response.status_code
+
+    def http(code: int) -> urllib.error.HTTPError:
+        return urllib.error.HTTPError("u", code, "x", {}, io.BytesIO(b'{"detail": "owner said no"}'))
+
+    assert post(http(403)) == 403
+    assert post(http(409)) == 409
+    assert post(http(503)) == 503
+    assert post(urllib.error.URLError("down")) == 503
+    assert post(json.JSONDecodeError("truncated", "{", 1)) == 503
+    assert post(RuntimeError("Capital authority returned a pool with mismatched create semantics")) == 502
+    assert post(ValueError("pool_id is required")) == 422
 
 
 def test_capital_writes_fail_closed_without_an_owner_mutation_method() -> None:
@@ -312,3 +388,62 @@ def test_capital_writes_fail_closed_without_an_owner_mutation_method() -> None:
         headers={"Idempotency-Key": "no-owner-1"},
     )
     assert response.status_code == 503
+
+
+def test_rest_mounted_tenant_resolution_coverage() -> None:
+    store = _CapitalStore()
+
+    class _Identity:
+        def __init__(self, allowed_tenants, tenant_id=""):
+            self.operator_id = "op-test"
+            self.roles = {"operator", "admin"}
+            self.claims = {"allowed_tenants": allowed_tenants, "tenant_id": tenant_id}
+
+    # 1. Ambiguous caller with multiple allowed tenants
+    ambiguous_client = _client_with_auth(store, lambda _: _Identity(["tenant-a", "tenant-b"]))
+    endpoints = [
+        ("post", "/bff/capital-pools", {"id": "pool-ambig", "name": "Pool Ambig"}, "pool-ambig-k"),
+        ("post", "/bff/capital-pools/pool-paper/actions/pause", {}, "pool-action-ambig-k"),
+        ("post", "/bff/rebalances", {"capital_pool_id": "pool-paper", "allocations": []}, "rebalance-ambig-k"),
+        ("post", "/bff/rebalances/rebalance-1/apply", {}, "rebalance-apply-ambig-k"),
+    ]
+
+    # Without X-Tenant-Id -> 400 for all write endpoints
+    for method, path, payload, key in endpoints:
+        headers = {"Idempotency-Key": key, "X-Confirm-Token": "confirm-valid"}
+        resp = getattr(ambiguous_client, method)(path, json=payload, headers=headers)
+        assert resp.status_code == 400, f"Expected 400 without X-Tenant-Id on {path}, got {resp.status_code}"
+
+    # With forbidden X-Tenant-Id -> 403 for all write endpoints
+    for method, path, payload, key in endpoints:
+        headers = {"Idempotency-Key": f"{key}-forbidden", "X-Confirm-Token": "confirm-valid", "X-Tenant-Id": "tenant-forbidden"}
+        resp = getattr(ambiguous_client, method)(path, json=payload, headers=headers)
+        assert resp.status_code == 403, f"Expected 403 on {path}, got {resp.status_code}"
+
+    # With allowed explicit X-Tenant-Id: tenant-b -> succeeds and passes tenant_id to store
+    for method, path, payload, key in endpoints:
+        headers = {"Idempotency-Key": f"{key}-b", "X-Confirm-Token": "confirm-valid", "X-Tenant-Id": "tenant-b"}
+        resp = getattr(ambiguous_client, method)(path, json=payload, headers=headers)
+        assert resp.status_code in {201, 202}, f"Expected success on {path}, got {resp.status_code}: {resp.text}"
+        _, ctx = store.calls[-1]
+        assert ctx.get("tenant_id") == "tenant-b"
+
+    # 2. Wildcard caller
+    wildcard_client = _client_with_auth(store, lambda _: _Identity(["*"]))
+    # Without X-Tenant-Id -> 400
+    resp = wildcard_client.post("/bff/capital-pools", json={"id": "p-wild", "name": "Wild"}, headers={"Idempotency-Key": "w-1"})
+    assert resp.status_code == 400
+    # With X-Tenant-Id: * -> 400
+    resp = wildcard_client.post("/bff/capital-pools", json={"id": "p-wild", "name": "Wild"}, headers={"Idempotency-Key": "w-2", "X-Tenant-Id": "*"})
+    assert resp.status_code == 400
+    # With concrete X-Tenant-Id: any-tenant -> 201
+    resp = wildcard_client.post("/bff/capital-pools", json={"id": "p-wild", "name": "Wild"}, headers={"Idempotency-Key": "w-3", "X-Tenant-Id": "any-tenant"})
+    assert resp.status_code == 201
+    assert store.calls[-1][1].get("tenant_id") == "any-tenant"
+
+    # 3. Unambiguous single tenant caller
+    single_client = _client_with_auth(store, lambda _: _Identity(["tenant-single"]))
+    resp = single_client.post("/bff/capital-pools", json={"id": "p-single", "name": "Single"}, headers={"Idempotency-Key": "s-1"})
+    assert resp.status_code == 201
+    assert store.calls[-1][1].get("tenant_id") == "tenant-single"
+

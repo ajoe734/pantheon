@@ -22,6 +22,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
@@ -722,6 +723,26 @@ class FailClosedTests(unittest.TestCase):
         self.assertFalse(decision.allow_merge)
         self.assertEqual(decision.reason, "head_branch_mismatch")
 
+    def test_versioned_replacement_branch_allowed_with_bound_approval(self) -> None:
+        decision = decide(
+            pr=open_pr(headRefName="task/ABC-001-v2"),
+            events=[approval_event(review_binding=approval_binding(head_branch="task/ABC-001-v2"))],
+        )
+
+        self.assertTrue(decision.allow_merge, decision.reason)
+
+    def test_versioned_replacement_branch_rejects_approval_for_other_branch(self) -> None:
+        decision = decide(pr=open_pr(headRefName="task/ABC-001-v2"))
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_head_branch_mismatch")
+
+    def test_non_numeric_version_suffix_blocks(self) -> None:
+        decision = decide(pr=open_pr(headRefName="task/ABC-001-vx"))
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "head_branch_mismatch")
+
     def test_wrong_base_branch_blocks(self) -> None:
         decision = decide(pr=open_pr(baseRefName="master"))
 
@@ -882,6 +903,94 @@ class RotatedActivityChronologyTests(unittest.TestCase):
         self.assertTrue(record.present)
         self.assertFalse(record.revoked)
         self.assertEqual(record.approved_at_text, "2026-09-04T15:18:00Z")
+
+    def _rotated_approval_then_resumed_blocker(self, root: Path) -> Path:
+        log_path = root / "ai-activity-log.jsonl"
+        log_path.write_text(
+            json.dumps(approval_event(ts="2026-09-04T15:18:00Z")) + "\n",
+            encoding="utf-8",
+        )
+        with orchestrator_common.activity_audit_lock_file(log_path, shared=False):
+            archive = orchestrator_common.rotate_activity_log_unlocked(
+                log_path, max_bytes=1
+            )
+            orchestrator_common.append_activity_log_entries_unlocked(
+                log_path,
+                [
+                    {
+                        "ts": "2026-09-04T15:19:00Z",
+                        "agent": "Codex",
+                        "type": "blocker",
+                        "task_id": "ABC-001",
+                        "message": "Integrator lock is read-only in the worker sandbox.",
+                        "event_id": "blocker-1519",
+                    },
+                    integration_resume_event(ts="2026-09-04T15:20:00Z"),
+                ],
+            )
+        assert archive is not None
+        return archive
+
+    def test_head_bound_lookup_reads_only_recent_activity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._rotated_approval_then_resumed_blocker(root)
+            with mock.patch.object(
+                orchestrator_common,
+                "stream_logical_activity",
+                side_effect=AssertionError("whole-history validation was used"),
+            ):
+                record = gate.load_approval_record(
+                    "ABC-001",
+                    status_root=root,
+                    not_before=datetime(2026, 9, 4, 15, 0, tzinfo=timezone.utc),
+                )
+
+        self.assertTrue(record.present)
+        self.assertFalse(record.revoked)
+        self.assertEqual(record.approved_at_text, "2026-09-04T15:18:00Z")
+
+    def test_head_bound_lookup_skips_archives_written_before_the_head(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = self._rotated_approval_then_resumed_blocker(root)
+            two_days_ago = datetime.now(timezone.utc).timestamp() - 2 * 86400
+            os.utime(archive, (two_days_ago, two_days_ago))
+            record = gate.load_approval_record(
+                "ABC-001",
+                status_root=root,
+                not_before=datetime.now(timezone.utc),
+            )
+
+        self.assertFalse(record.present)
+        self.assertFalse(record.scan_error)
+
+    def test_gate_bounds_approval_lookup_by_newest_pr_commit(self) -> None:
+        pr = open_pr(
+            commits=[
+                {"oid": "a" * 40, "committedDate": "2026-07-26T10:00:00Z"},
+                {"oid": "b" * 40, "committedDate": "2026-07-26T11:30:00Z"},
+            ]
+        )
+        contract = gate.TaskContract(
+            task_id="ABC-001", source="active", owner="Codex", reviewer="Claude"
+        )
+        with (
+            mock.patch.object(gate, "load_task_contract", return_value=contract),
+            mock.patch.object(
+                gate,
+                "load_approval_record",
+                return_value=gate.ApprovalRecord(task_id="ABC-001"),
+            ) as load,
+        ):
+            gate.gate_for_task("ABC-001", pr, status_root="/status")
+
+        load.assert_called_once_with(
+            "ABC-001",
+            status_root="/status",
+            events=None,
+            not_before=datetime(2026, 7, 26, 11, 30, tzinfo=timezone.utc),
+        )
 
     def test_truncated_rotation_lineage_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

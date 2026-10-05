@@ -1166,6 +1166,10 @@ if sys.argv[2] == "tw-twse-tpex-official-market":
         )
 print(f"validated {len(hosts)} exact source refresh hosts")
 PY
+  # Real official-source pulls plus durable/index readback can exceed the
+  # controller's ordinary 30s RPC budget. Keep this dev proof finite and no
+  # longer than its outer deadline; ordinary reconcile-only mode is unchanged.
+  export SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS="$(( SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS < 120 ? SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS : 120 ))"
   export SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
   export SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
 }
@@ -2314,6 +2318,18 @@ ensure_dev_management_ai_bucket() {
       return
     fi
   fi
+}
+
+bootstrap_dev_lifecycle_projection() {
+  # One-shot migration from the sealed candidate, before starting its runtime.
+  # Migration credentials exist only in this container, never in the projector.
+  docker compose -p pantheon -f docker-compose.yml up -d --wait postgres || return
+  # PostgreSQL is profile-gated. Render its explicit core service even when
+  # COMPOSE_PROFILES is unset; do not pipe unrelated service credentials.
+  docker compose -p pantheon -f docker-compose.yml --profile core config --format json postgres | \
+    run_dev_candidate_compose run --rm --no-deps -T \
+    --entrypoint python loop-run-projector-scheduler \
+    -m scripts.lifecycle_projector_migrate --bootstrap-only --compose-config-stdin --reconcile-runtime-role
 }
 
 ensure_dev_management_ai_postgres_role() {
@@ -3662,14 +3678,14 @@ prepare_dev_paper_principals() {
   if [[ "${PANTHEON_DEPLOY_COMPONENT}" == bff && "${PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED}" == true ]]; then
     # First adoption changes owner contracts and mounts: BFF-only is insufficient.
     local owner owner_id
-    for owner in governance registry deployment runtime-manager deployment-outbox-consumer; do
+    for owner in governance registry deployment runtime-manager deployment-outbox-consumer persona-evaluator-agent; do
       owner_id="$(docker compose -p pantheon -f docker-compose.yml ps -q "${owner}")"
       [[ -n "${owner_id}" ]] || { info "paper principal adoption requires root deploy"; return 1; }
       docker inspect "${owner_id}" | python3 -c '
 import json,sys
 c=json.load(sys.stdin)[0]
 mounted=any(m.get("Destination")=="/run/pantheon-principals" and not m.get("RW") for m in c.get("Mounts",[]))
-configured=any("_SERVICE_TOKEN_FILE=/run/pantheon-principals/" in e for e in c["Config"].get("Env",[]))
+configured=any("_TOKEN_FILE=/run/pantheon-principals/" in e for e in c["Config"].get("Env",[]))
 sys.exit(0 if mounted and configured else 1)
 ' || { info "paper principal adoption requires root deploy"; return 1; }
     done
@@ -3757,11 +3773,10 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # and optional integrations are kept out of the default persistent root deploy to prevent
     # deployment timeouts and host memory exhaustion.
     #
-    # Required loop workers are default-on in docker-compose.yml, and validate_required_loop_workers
-    # enforces that the persistent stack contains all required twelve-loop workers.
-    #
+    # Required loop workers are deployed via the root profile (backward-compatible with openclaw).
     # Operators can supply explicit profiles via PANTHEON_DEV_COMPOSE_PROFILES when running bounded verifications.
-    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-openclaw}"
+    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-root}"
+    [[ "${PANTHEON_DEV_COMPOSE_PROFILES}" == openclaw* ]] && PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES/openclaw/root}"
     if [[ "${DEV_PAPER_PRINCIPALS_SUPPORTED}" == true ]]; then
       PANTHEON_DEV_COMPOSE_PROFILES+=",dev-paper-principals"
     fi
@@ -3785,6 +3800,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       docker compose -p pantheon -f docker-compose.yml build \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     seal_dev_candidate_images || rollback_dev_bff_on_failure "candidate_image_seal"
+    bootstrap_dev_lifecycle_projection || rollback_dev_bff_on_failure "projection_bootstrap"
     start_dev_paper_principal_issuer || rollback_dev_bff_on_failure "paper_principal_issuer"
     resolve_bounded_source_refresh_active_symbols \
       || rollback_dev_bff_on_failure "source_refresh_active_symbols"
@@ -3939,6 +3955,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       docker compose -p pantheon -f docker-compose.yml build operator-bff agora-interaction-worker loop-run-projector-scheduler "${DEV_PAPER_ISSUER_BUILD_TARGETS[@]}" \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     seal_dev_candidate_images || rollback_dev_bff_on_failure "candidate_image_seal"
+    bootstrap_dev_lifecycle_projection || rollback_dev_bff_on_failure "projection_bootstrap"
     start_dev_paper_principal_issuer || rollback_dev_bff_on_failure "paper_principal_issuer"
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"

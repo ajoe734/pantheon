@@ -29,19 +29,17 @@ MAX_SSE_EVENTS = 500
 DEFAULT_SSE_CHANNEL_CATALOG: tuple[str, ...] = (
     "approval", "ask", "artifact", "runtime", "mcp", "skill", "channel",
     "tool", "ranking", "rebalance", "evolution", "research", "signal",
-    "inbox", "journal", "postmortem", "loop", "sentinel", "intervention",
+    "inbox", "journal", "postmortem", "loop",
     "audit", "system", "telemetry", "alerts", "trading", "governance",
     "command_center", "kpi", "approvals", "feed", "signals", "decisions",
     "risk", "backtest",
 )
 
 DEFAULT_SSE_RESYNC_ROUTES: Dict[str, tuple[str, ...]] = {
-    "approval": ("/bff/approvals", "/bff/v5/interventions"),
+    "approval": ("/bff/approvals",),
     "ask": (
         "/bff/management/ai/conversations",
         "/bff/management/ai/conversations/{id}",
-        "/bff/agora/ask/sessions/{id}",
-        "/bff/agora/committee/sessions/{id}",
     ),
 }
 

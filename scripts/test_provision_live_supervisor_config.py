@@ -43,6 +43,134 @@ def _roots(tmp_path: Path) -> tuple[Path, Path]:
     return command, status
 
 
+def _materialization_roots(tmp_path: Path) -> tuple[Path, Path]:
+    source, _ = _roots(tmp_path)
+    sha = _git(source, "rev-parse", "HEAD")
+    _git(source, "update-ref", "refs/remotes/origin/dev", sha)
+    return source, tmp_path / "command-runtimes" / sha
+
+
+def test_materialize_command_runtime_is_standalone_and_reused_read_only(tmp_path: Path) -> None:
+    source, destination = _materialization_roots(tmp_path)
+    first = provision.materialize_command_root(source_root=source, command_root=destination)
+    assert first["head"] == destination.name
+    assert (destination / ".git").is_dir()
+    assert _git(destination, "rev-parse", "--path-format=absolute", "--git-common-dir") == str(destination / ".git")
+    assert _git(destination, "rev-parse", "origin/dev") == destination.name
+    before = {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in destination.rglob("*") if p.is_file()}
+    assert provision.materialize_command_root(source_root=source, command_root=destination) == first
+    assert before == {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in destination.rglob("*") if p.is_file()}
+    assert not list(destination.parent.glob(".runtime-materialize-*"))
+    assert not (source / ".git/worktrees").exists()
+
+
+def test_materialize_preserves_accepted_ref_ahead_of_checkout(tmp_path: Path) -> None:
+    source, destination = _materialization_roots(tmp_path)
+    _git(source, "commit", "--allow-empty", "-m", "newer dev")
+    accepted = _git(source, "rev-parse", "HEAD")
+    _git(source, "update-ref", "refs/remotes/origin/dev", accepted)
+    _git(source, "reset", "--hard", destination.name)
+    provision.materialize_command_root(source_root=source, command_root=destination)
+    assert _git(destination, "rev-parse", "HEAD") == destination.name
+    assert _git(destination, "rev-parse", "origin/dev") == accepted
+
+
+def test_materialize_cli_does_not_render_live_config(tmp_path: Path, capsys) -> None:
+    source, destination = _materialization_roots(tmp_path)
+    assert provision.main([
+        "--materialize-command-root", "--source-root", str(source),
+        "--command-root", str(destination), "--json",
+    ]) == 0
+    assert json.loads(capsys.readouterr().out)["head"] == destination.name
+
+
+@pytest.mark.parametrize("mode", ["--validate-command-root-only", "--validate-python-dependencies-only"])
+def test_materialize_rejects_ambiguous_cli_mode(mode: str) -> None:
+    with pytest.raises(SystemExit) as exc:
+        provision.parse_args([
+            "--materialize-command-root", "--source-root", "/source",
+            "--command-root", "/runtime", mode,
+        ])
+    assert exc.value.code == 2
+
+
+def test_materialize_reuses_old_bootstrap_worktree_without_conversion(tmp_path: Path) -> None:
+    source, destination = _materialization_roots(tmp_path)
+    destination.parent.mkdir()
+    _git(source, "worktree", "add", "--detach", str(destination), destination.name)
+    gitfile = (destination / ".git").read_bytes()
+    provision.materialize_command_root(source_root=source, command_root=destination)
+    assert (destination / ".git").read_bytes() == gitfile
+
+
+@pytest.mark.parametrize("damage", ["dirty", "wrong-head", "wrong-remote", "symlink"])
+def test_materialize_rejects_existing_invalid_runtime_without_repair(tmp_path: Path, damage: str) -> None:
+    source, destination = _materialization_roots(tmp_path)
+    provision.materialize_command_root(source_root=source, command_root=destination)
+    if damage == "dirty":
+        (destination / "untracked").write_text("keep me")
+    elif damage == "wrong-head":
+        _git(destination, "config", "user.name", "Test")
+        _git(destination, "config", "user.email", "test@example.invalid")
+        _git(destination, "commit", "--allow-empty", "-m", "wrong identity")
+    elif damage == "wrong-remote":
+        _git(destination, "remote", "set-url", "origin", "https://example.invalid/other")
+    else:
+        destination.rename(destination.parent / "original")
+        destination.symlink_to(destination.parent / "original", target_is_directory=True)
+    before = _git(destination, "rev-parse", "HEAD")
+    with pytest.raises(ValueError):
+        provision.materialize_command_root(source_root=source, command_root=destination)
+    assert _git(destination, "rev-parse", "HEAD") == before
+    if damage == "dirty":
+        assert (destination / "untracked").read_text() == "keep me"
+    assert not list(destination.parent.glob(".runtime-materialize-*"))
+
+
+def test_materialize_rejects_unaccepted_sha_before_creating_runtime(tmp_path: Path) -> None:
+    source, destination = _materialization_roots(tmp_path)
+    _git(source, "commit", "--allow-empty", "-m", "not on dev")
+    destination = destination.parent / _git(source, "rev-parse", "HEAD")
+    with pytest.raises(ValueError, match="Git operation failed"):
+        provision.materialize_command_root(source_root=source, command_root=destination)
+    assert not destination.parent.exists()
+
+
+def test_materialize_does_not_publish_missing_launch_entrypoints(tmp_path: Path) -> None:
+    source, destination = _materialization_roots(tmp_path)
+    _git(source, "rm", "scripts/run-supervisor-watchdog.sh")
+    _git(source, "commit", "-m", "incomplete runtime")
+    _git(source, "update-ref", "refs/remotes/origin/dev", "HEAD")
+    destination = destination.parent / _git(source, "rev-parse", "HEAD")
+    with pytest.raises(ValueError, match="missing regular non-symlink path"):
+        provision.materialize_command_root(source_root=source, command_root=destination)
+    assert not destination.exists()
+    assert not list(destination.parent.iterdir())
+
+
+@pytest.mark.parametrize("valid_winner", [True, False])
+def test_materialize_validates_publish_race_winner(tmp_path: Path, monkeypatch, valid_winner: bool) -> None:
+    import shutil
+
+    source, destination = _materialization_roots(tmp_path)
+    publish = provision._publish_directory_no_clobber
+
+    def racing_publish(candidate: Path, target: Path) -> None:
+        shutil.copytree(candidate, target)
+        if not valid_winner:
+            (target / "untracked").write_text("race winner")
+        publish(candidate, target)
+
+    monkeypatch.setattr(provision, "_publish_directory_no_clobber", racing_publish)
+    if valid_winner:
+        assert provision.materialize_command_root(source_root=source, command_root=destination)["head"] == destination.name
+    else:
+        with pytest.raises(ValueError, match="must be clean"):
+            provision.materialize_command_root(source_root=source, command_root=destination)
+        assert (destination / "untracked").read_text() == "race winner"
+    assert not list(destination.parent.glob(".runtime-materialize-*"))
+
+
 def _integration_clone(tmp_path: Path, repository_id: str) -> Path:
     remote = tmp_path / f"{repository_id}.git"
     source = tmp_path / f"{repository_id}-source"
