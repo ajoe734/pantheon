@@ -46,7 +46,7 @@ services:
       start_period: 5s
 
   postgres:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     restart: unless-stopped
     shm_size: 256m
@@ -74,7 +74,7 @@ services:
       start_period: 10s
 
   minio:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
@@ -94,7 +94,7 @@ services:
       start_period: 15s
 
   minio-init:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     image: minio/mc:RELEASE.2024-01-16T16-06-34Z
     depends_on:
       minio:
@@ -112,7 +112,7 @@ services:
     restart: on-failure
 
   nats:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     image: nats:2.11-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00
     restart: unless-stopped
     command: ["--jetstream", "--http_port", "8222", "--store_dir", "/data/jetstream"]
@@ -129,7 +129,7 @@ services:
       start_period: 10s
 
   signal-store:
-    profiles: ["execution", "root", ""]
+    profiles: ["execution", "root"]
     image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
     restart: unless-stopped
     healthcheck:
@@ -139,7 +139,7 @@ services:
       retries: 5
 
   consultation-svc:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -195,7 +195,7 @@ services:
       start_period: 5s
 
   source-ingest:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -263,7 +263,7 @@ services:
       start_period: 5s
 
   source-ingest-controller-migrate:
-    profiles: ["root", "workers", ""]
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
@@ -279,7 +279,7 @@ services:
   # scheduler container instead of leaving a second ticking orphan behind.
         required: false
   source-ingest-scheduler:
-    profiles: ["root", "workers", ""]
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
@@ -349,7 +349,7 @@ services:
         condition: service_healthy
 
   strategy-distillation-worker:
-    profiles: ["root", "workers", ""]
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
@@ -400,7 +400,7 @@ services:
       start_period: 180s
 
   alpha-replication-worker:
-    profiles: ["root", "workers", ""]
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/research/Dockerfile
@@ -446,7 +446,7 @@ services:
       start_period: 60s
 
   search-svc:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -497,7 +497,7 @@ services:
       start_period: 5s
 
   search-index-scheduler:
-    profiles: ["root", "workers", ""]
+    profiles: ["root", "workers"]
     # Default-on: this scheduler only talks to the in-stack search service, so
     # the runtime manifest — not an operator-selected profile — is the single
     # source of truth for whether the required loop worker is running.
@@ -532,7 +532,7 @@ services:
       start_period: 60s
 
   training-session-svc:
-    profiles: ["research", "root", ""]
+    profiles: ["research", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -595,7 +595,7 @@ services:
       start_period: 5s
 
   training-session-preview-worker:
-    profiles: ["root", "workers", ""]
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/training-session/Dockerfile
@@ -632,7 +632,7 @@ services:
       start_period: 60s
 
   policy-learning-svc:
-    profiles: ["research", "root", ""]
+    profiles: ["research", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -687,7 +687,7 @@ services:
       start_period: 5s
 
   policy-learning-shadow-eval-scheduler:
-    profiles: ["root", "workers", ""]
+    profiles: ["root", "workers"]
     # Human-imitation shadow-evaluation loop worker (L12-IMIT-001).
     build:
       context: .
@@ -736,7 +736,7 @@ services:
       start_period: 180s
 
   research-orchestrator-svc:
-    profiles: ["research", "root", ""]
+    profiles: ["research", "root"]
     build:
       context: .
       dockerfile: services/research/Dockerfile
@@ -781,14 +781,14 @@ services:
       start_period: 5s
 
   openclaw-data-init:
-    profiles: ["management-ai", "openclaw", "root", ""]
+    profiles: ["management-ai", "openclaw", "root"]
     image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
     command: ["sh", "-c", "mkdir -p /home/node/.openclaw && chown -R 1000:1000 /home/node/.openclaw"]
     volumes:
       - openclaw-data:/home/node/.openclaw
 
   openclaw-gateway:
-    profiles: ["management-ai", "openclaw", "root", ""]
+    profiles: ["management-ai", "openclaw", "root"]
     # Governed OpenClaw gateway image with Claude Code and Gemini CLIs.
     build:
       context: .
@@ -842,7 +842,7 @@ services:
       start_period: 60s
 
   openclaw-gateway-adapter:
-    profiles: ["management-ai", "openclaw", "root", ""]
+    profiles: ["management-ai", "openclaw", "root"]
     build:
       context: .
       dockerfile: services/openclaw-gateway-adapter/Dockerfile
@@ -923,7 +923,7 @@ services:
       start_period: 5s
 
   broker:
-    profiles: ["execution", "root", ""]
+    profiles: ["execution", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -951,7 +951,7 @@ services:
       start_period: 5s
 
   runtime-manager:
-    profiles: ["execution", "root", ""]
+    profiles: ["execution", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -1016,7 +1016,7 @@ services:
       start_period: 5s
 
   governance:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/governance/Dockerfile
@@ -1084,7 +1084,7 @@ services:
       start_period: 5s
 
   telemetry:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/telemetry/Dockerfile
@@ -1125,7 +1125,7 @@ services:
       start_period: 300s
 
   incidents:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/incidents/Dockerfile
@@ -1173,7 +1173,7 @@ services:
       start_period: 5s
 
   postmortems:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/postmortems/Dockerfile
@@ -1218,7 +1218,7 @@ services:
       start_period: 5s
 
   operator-bff:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -1574,7 +1574,7 @@ services:
       start_period: 5s
 
   agora-interaction-worker:
-    profiles: ["root", "workers", ""]
+    profiles: ["root", "workers"]
     stop_grace_period: 30s
     build:
       context: .
@@ -1626,7 +1626,7 @@ services:
       start_period: 5s
 
   loop-run-projector-scheduler:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     # Preserve the legacy service key so deploys replace the snapshot cron
     # instead of leaving a second writer.  The implementation is now the
     # canonical committed-telemetry lifecycle projector.
@@ -1722,7 +1722,7 @@ services:
 
         required: false
   persona:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/control-plane/persona/Dockerfile
@@ -1774,7 +1774,7 @@ services:
       start_period: 5s
 
   router:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     build:
       context: services/control-plane/router
       dockerfile: Dockerfile
@@ -1799,7 +1799,7 @@ services:
       start_period: 5s
 
   web-channel:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/channels/web/Dockerfile
@@ -1821,7 +1821,7 @@ services:
       start_period: 5s
 
   evaluation:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/evaluation/Dockerfile
@@ -1849,7 +1849,7 @@ services:
       start_period: 5s
 
   feedback:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/control-plane/feedback/Dockerfile
@@ -1869,7 +1869,7 @@ services:
       start_period: 5s
 
   memory:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/memory/Dockerfile
@@ -1910,7 +1910,7 @@ services:
       start_period: 5s
 
   registry:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/registry/Dockerfile
@@ -1959,7 +1959,7 @@ services:
       start_period: 5s
 
   optimizer-svc:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/optimizer-svc/Dockerfile
@@ -1987,7 +1987,7 @@ services:
       start_period: 5s
 
   promotion:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/promotion/Dockerfile
@@ -2019,7 +2019,7 @@ services:
       start_period: 5s
 
   capital:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -2074,7 +2074,7 @@ services:
       start_period: 5s
 
   deployment:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -2119,7 +2119,7 @@ services:
       start_period: 5s
 
   deployment-outbox-consumer:
-    profiles: ["root", "workers", ""]
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/deployment/Dockerfile
@@ -2182,7 +2182,7 @@ services:
       start_period: 60s
 
   evolution:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
@@ -2235,7 +2235,7 @@ services:
       start_period: 5s
 
   evolution-dispatch-worker:
-    profiles: ["root", "workers", ""]
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
@@ -2274,7 +2274,7 @@ services:
       start_period: 10s
 
   evolution-daily-sweep-scheduler:
-    profiles: ["root", "workers", ""]
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
@@ -2302,7 +2302,7 @@ services:
       start_period: 30s
 
   evolution-threshold-sweep-producer:
-    profiles: ["root", "workers", ""]
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
@@ -2339,7 +2339,7 @@ services:
       start_period: 30s
 
   lineage-read:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/lineage-read/Dockerfile
@@ -2359,7 +2359,7 @@ services:
       start_period: 5s
 
   paper-fleet-reconciler:
-    profiles: ["execution", "root", ""]
+    profiles: ["execution", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -2406,7 +2406,7 @@ services:
       start_period: 10s
 
   paper-signal-producer:
-    profiles: ["execution", "root", ""]
+    profiles: ["execution", "root"]
     build:
       context: .
       dockerfile: services/execution/lean_runtime/Dockerfile
@@ -2446,7 +2446,7 @@ services:
       start_period: 30s
 
   reconciliation-drift-svc:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     stop_grace_period: 30s
     build:
       context: .
@@ -2500,7 +2500,7 @@ services:
       start_period: 30s
 
   reconciliation-drift-consumer:
-    profiles: ["root", "workers", ""]
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -2536,7 +2536,7 @@ services:
       start_period: 300s
 
   reconciliation-drift-scheduler:
-    profiles: ["root", "workers", ""]
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -2564,7 +2564,7 @@ services:
       start_period: 300s
 
   reconciliation-drift-incident-listener:
-    profiles: ["root", "workers", ""]
+    profiles: ["root", "workers"]
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -2602,7 +2602,7 @@ services:
       start_period: 300s
 
   research-worker-gateway-svc:
-    profiles: ["research", "root", ""]
+    profiles: ["research", "root"]
     build:
       context: .
       dockerfile: services/research-worker-gateway/Dockerfile
@@ -3007,7 +3007,7 @@ services:
     restart: "no"
 
   monitor-agent:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/monitor-agent/Dockerfile
@@ -3031,7 +3031,7 @@ services:
 
         required: false
   persona-evaluator-agent:
-    profiles: ["core", "root", ""]
+    profiles: ["core", "root"]
     build:
       context: .
       dockerfile: services/persona-evaluator-agent/Dockerfile

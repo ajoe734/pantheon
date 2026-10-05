@@ -40,7 +40,7 @@ def _env(service: str) -> dict[str, str]:
 def test_source_controller_is_the_single_default_durable_owner() -> None:
     owner = SERVICES["source-ingest-scheduler"]
 
-    assert set(owner.get("profiles", [])) == {"root", "workers", ""}
+    assert set(owner.get("profiles", [])) == {"root", "workers"}
     assert (
         owner["restart"]
         == "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-unless-stopped}"

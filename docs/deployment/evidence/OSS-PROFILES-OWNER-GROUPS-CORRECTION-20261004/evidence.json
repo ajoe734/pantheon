@@ -2,7 +2,7 @@
   "schema_version": "pantheon.oss-profiles-owner-groups-correction-20261004.evidence.v1",
   "task_id": "OSS-PROFILES-OWNER-GROUPS-CORRECTION-20261004",
   "kind": "runtime_profile_owner_groups_correction_evidence",
-  "generated_at": "2026-10-05T00:40:00Z",
+  "generated_at": "2026-10-05T00:59:00Z",
   "owner": "Antigravity2",
   "reviewer": "Antigravity",
   "target": {
@@ -24,9 +24,9 @@
         "effect": "Canonical root deployment is preserved with complete twelve-loop closure and required loop worker validation."
       },
       {
-        "issue": "Default unprofiled docker compose config in Persona Owner Contract CI failed with KeyError on runtime-manager and operator-bff.",
-        "correction": "Added empty profile (\"\") to all 56 root persistent service profile lists so unprofiled compose invocations resolve the default root stack, while business profile activations (core: 29, workers: 16, research: 4, management-ai: 3, execution: 5) and opt-in exclusions remain strictly bounded.",
-        "effect": "CI suites (test_dev_deployment_tenant.py, test_bootstrap_dev_paper_baseline.py) and scoped activation/wiring tests pass completely (64 passed)."
+        "issue": "Root consumer test seams (test_dev_deployment_tenant.py, test_bootstrap_dev_paper_baseline.py) unprofiled compose invocations failed when persistent daemons were profiled into root.",
+        "correction": "Governed-granted test consumer seams now invoke docker compose with the canonical '--profile root' selector, aligning with nonprod deployment without weakening tenant/verifier assertions or polluting service profile lists with empty strings.",
+        "effect": "Complete suite passes cleanly (109 passed, 2 skipped) with strict business profile boundaries and canonical root selector."
       }
     ],
     "preserved_invariants": {
@@ -114,64 +114,76 @@
       "openclaw_e2e": false,
       "benchmark": false,
       "static_paper": true
-    },
-    "default_unprofiled": {
-      "count": 56,
-      "dormant_smoke": false,
-      "openclaw_e2e": false,
-      "benchmark": false,
-      "static_paper": false
     }
   },
   "disposable_runtime_receipts": {
     "project": "ossgroupcorr20261004",
     "network": "ossgroupcorr20261004-net",
     "volumes": [
-      "ossgroupcorr20261004-pgdata",
-      "ossgroupcorr20261004-appdata",
-      "ossgroupcorr20261004-traindata"
+      "ossgroupcorr-srcdata",
+      "ossgroupcorr-traindata"
     ],
     "applications_verified": [
       {
         "service": "source-ingest",
         "profile": "core",
-        "image": "l12closure20260904-source-ingest:latest",
+        "image": "l12closure20260904-source-ingest:latest@sha256:2688f4bf5725028ac2717ecb89f923f4e71c3b94bb323b21072f04ac970ef9e9",
+        "command": "sh -c uvicorn services.source_ingestion.main:app --host 0.0.0.0 --port ${PORT:-8097}",
         "health_endpoint": "http://source-ingest:8097/readyz",
         "initial_health": "200 OK",
         "restart_health": "200 OK",
-        "volume_persistence": {
-          "path": "/data/source-ingest/task_receipt.json",
+        "business_record_persistence": {
+          "storage_type": "source_record_and_manifest",
+          "paths": [
+            "/data/source-ingest/market_data_store/normalized/paper/date=2026-10-05/ingest-a07220b15800.jsonl",
+            "/data/source-ingest/source_evidence.jsonl"
+          ],
+          "record_id": "src-record-test-1",
+          "run_id": "ingest-a07220b15800",
           "survived_restart": true,
-          "content": "{\"task\": \"OSS-PROFILES-OWNER-GROUPS-CORRECTION-20261004\", \"verified\": true}"
+          "verified_content": {
+            "source_id": "src-record-test-1",
+            "title": "Runtime Grouping Source Record",
+            "task_id": "OSS-PROFILES-OWNER-GROUPS-CORRECTION-20261004"
+          }
         }
       },
       {
         "service": "training-session-svc",
         "profile": "research",
-        "image": "l12closure20260904-training-session-svc:latest",
-        "health_endpoint": "http://training-session-svc:8099/readyz",
+        "image": "l12closure20260904-training-session-svc:latest@sha256:c36e9e9c9430a97e2c2832769e59527174409692a00a4da86e23e9e88b13f36e",
+        "command": "sh -c uvicorn main:app --app-dir services/training-session --host 0.0.0.0 --port ${PORT:-8099}",
+        "health_endpoint": "http://training-session-svc:8099/health",
         "initial_health": "200 OK",
         "restart_health": "200 OK",
-        "volume_persistence": {
-          "path": "/data/training-session/training_receipt.json",
+        "business_record_persistence": {
+          "storage_type": "teaching_sessions_json",
+          "path": "/data/training-session/teaching_sessions.json",
+          "session_id": "trn-20261005-18b3d441b967",
           "survived_restart": true,
-          "content": "{\"training_state\": \"active\", \"verified\": true}"
+          "verified_content": {
+            "session_id": "trn-20261005-18b3d441b967",
+            "persona_id": "persona-alpha",
+            "mode": "evaluation",
+            "objective": "Tune momentum controls"
+          }
         }
       }
     ],
-    "cleanup_verified": "0 dangling containers, networks, or volumes with task prefix ossgroupcorr20261004"
+    "cleanup_verified": "0 dangling containers, networks, or volumes with task prefix ossgroupcorr"
   },
   "diff_budget": {
     "change_class": "corrective",
-    "net_production_diff": -3,
-    "net_test_diff": 15,
-    "budget_status": "satisfied (net production line additions <= 0; actual net -3 lines)"
+    "net_production_diff": -4,
+    "net_test_diff": 12,
+    "budget_status": "satisfied (net production line additions <= 0; actual net -4 lines)"
   },
   "validation_summary": {
     "compose_activation_tests": "passed (policy-learning, research-gateway, research-orchestrator, source-ingestion, training-session)",
     "compose_wiring_tests": "passed (scripts/test_current_l12_compose_wiring.py)",
-    "deploy_nonprod_tests": "44 passed, 2 skipped",
-    "full_scoped_suite": "64 passed (compose activation/wiring, tenant interpolation, bootstrap paper baseline)",
-    "runtime_receipts_isolated_test": "passed (real application startup, /readyz health 200 OK, restart, and persistence verified)"
+    "deploy_nonprod_tests": "45 passed, 2 skipped (scripts/test_deploy_nonprod_vm.py)",
+    "tenant_and_bootstrap_tests": "47 passed (scripts/test_dev_deployment_tenant.py, scripts/test_bootstrap_dev_paper_baseline.py)",
+    "full_scoped_suite": "109 passed, 2 skipped",
+    "runtime_receipts_isolated_test": "passed (real application startup, /readyz & /health 200 OK, true process restart, and business record persistence verified)"
   }
 }
