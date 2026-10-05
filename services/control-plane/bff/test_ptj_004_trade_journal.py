@@ -33,21 +33,7 @@ def _make_app() -> FastAPI:
     return app
 
 
-def _client(td: str) -> TestClient:
-    episodes = [
-        {"trade_episode_id": "e1", "persona_id": "p1", "environment": "paper", "status": "reflected", "instrument_id": "SPY", "account_id": "secret", "coverage": {"execution": {"state": "complete"}}},
-        {"trade_episode_id": "e2", "persona_id": "p1", "environment": "paper", "status": "reflection_failed", "instrument_id": "QQQ", "missing_refs": ["pnl"], "coverage": {"outcome": {"state": "partial"}}},
-        {"trade_episode_id": "other", "persona_id": "p2", "environment": "paper"},
-    ]
-    reflections = [{"reflection_id": "r1", "trade_episode_id": "e1", "persona_id": "p1", "environment": "paper", "review_state": "proposed"}]
-    patterns = [{"pattern_id": "pat1", "persona_id": "p1", "environment": "paper", "sample_size": 3}]
-    for env, name, data in (("PANTHEON_BFF_TRADE_EPISODES_STORE", "episodes.json", episodes), ("PANTHEON_BFF_TRADE_REFLECTIONS_STORE", "reflections.json", reflections), ("PANTHEON_BFF_TRADE_PATTERNS_STORE", "patterns.json", patterns)):
-        path = Path(td) / name; path.write_text(json.dumps(data)); os.environ[env] = str(path)
-    lessons = [
-        {"lesson_id": "l1", "persona_id": "p1", "status": "draft"},
-        {"lesson_id": "l2", "persona_id": "p1", "status": "pending_review"},
-    ]
-    lessons_path = Path(td) / "lessons.json"; lessons_path.write_text(json.dumps(lessons)); os.environ["PANTHEON_BFF_TRADE_LESSONS_STORE"] = str(lessons_path)
+def _client(_td: str) -> TestClient:
     return TestClient(_make_app())
 
 
@@ -83,26 +69,16 @@ class DurableOwner:
             return _Response(response)
 
 
-def test_list_detail_inbox_patterns_pagination_and_partial() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client = _client(td)
-        first = client.get("/bff/personas/p1/trade-journal?environment=paper&limit=1", headers=HEADERS)
-        assert first.status_code == 200
-        assert first.json()["page_info"] == {"next_cursor": 1, "has_more": True}
-        second = client.get("/bff/personas/p1/trade-journal?cursor=1&coverage_state=partial", headers=HEADERS)
-        assert second.status_code == 200
-        detail = client.get("/bff/personas/p1/trade-journal/e1", headers=HEADERS)
-        assert detail.json()["data"]["account_id"] == "secret"
-        assert client.get("/bff/personas/p1/trade-reflections", headers=HEADERS).json()["data"][0]["reflection_id"] == "r1"
-        assert client.get("/bff/personas/p1/trade-patterns", headers=HEADERS).json()["data"][0]["sample_size"] == 3
+# Read contracts use signed identities and actual owner routes in
+# test_trade_journal_owner_reads.py, never an unscoped local BFF file.
 
 
 def test_auth_rbac_cross_persona_and_masking(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as td:
         client = _client(td)
         assert client.get("/bff/personas/p1/trade-journal").status_code == 401
-        viewer = client.get("/bff/personas/p1/trade-journal/e1", headers={"Authorization": "Bearer view:viewer"})
-        assert viewer.json()["data"]["account_id"] == "***"
+        from types import SimpleNamespace
+        assert trade_journal._mask({"account_id": "secret"}, SimpleNamespace(roles=["viewer"])) == {"account_id": "***"}
         monkeypatch.setattr(trade_journal, "_allowed", lambda identity, persona_id: persona_id == "p1")
         assert client.get("/bff/personas/p2/trade-journal", headers=HEADERS).status_code == 403
         assert client.post("/bff/personas/p1/trade-journal/e1/reflection:retry", headers={"Authorization": "Bearer view:viewer", "Idempotency-Key": "x"}, json={"reason": "retry"}).status_code == 403
@@ -197,15 +173,6 @@ def test_concurrent_same_key_is_atomically_owned_downstream(monkeypatch) -> None
         assert {r.status_code for r in responses} == {202}
         assert {r.json()["data"]["receipt_id"] for r in responses} == {"owner-1"}
         assert len(owner.records) == 1
-
-
-def test_downstream_unavailable_is_explicit() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client = _client(td)
-        os.environ["PANTHEON_BFF_TRADE_EPISODES_STORE"] = str(Path(td) / "missing.json")
-        response = client.get("/bff/personas/p1/trade-journal", headers=HEADERS)
-        assert response.status_code == 503
-        assert response.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
 
 
 def test_default_mounted_bff_path_with_real_isolated_owners_and_durable_stores(monkeypatch) -> None:

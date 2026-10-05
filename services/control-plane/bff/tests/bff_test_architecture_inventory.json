@@ -15,6 +15,7 @@
     "test_execute_plans_final_live_wiring_contract.py",
     "test_normalized_route_uniqueness.py",
     "test_route_resolution_no_shadowing.py",
+    "test_trade_journal_owner_reads.py",
     "tests/test_agora_servant_production_write_owner.py",
     "tests/test_bff_main_composition.py",
     "tests/test_bff_rebalance_proposals.py",
