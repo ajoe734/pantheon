@@ -13,7 +13,6 @@ from hashlib import sha256
 import json
 import logging
 import os
-import re
 import sys
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -496,12 +495,6 @@ class CommandAdapterService:
     def _guarded_command_confirm_token_id(self, record: Dict[str, Any]) -> Optional[str]:
         cmd_type = str(record.get("type") or "")
         entry = get_catalog_entry(cmd_type)
-        if cmd_type == CommandType.EVOLUTION_PROGRAM_ACTION.value:
-            params = record.get("params") if isinstance(record.get("params"), dict) else {}
-            action = str(record.get("action") or params.get("action_id") or params.get("actionId") or "").strip()
-            norm = re.sub(r"[^a-z0-9]", "", action.lower())
-            if norm in {"promotecandidatelive", "promoteevolutioncandidatelive"}:
-                entry = get_catalog_entry("PromoteEvolutionCandidateLive")
         if entry is None or not getattr(entry, "requires_confirm_token", False):
             return None
         audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}

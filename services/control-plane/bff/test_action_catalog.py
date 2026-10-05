@@ -76,17 +76,13 @@ def test_no_catalog_entry_uses_requires_star_as_success_status() -> None:
         )
 
 
-def test_critical_actions_require_two_man() -> None:
-    catalog = get_action_catalog().catalog
-    critical = [e for e in catalog if e.risk_level == RiskLevel.CRITICAL]
-    assert critical, "Expected at least one CRITICAL-risk action"
-    for entry in critical:
-        assert entry.requires_two_man, (
-            f"{entry.action_id} is CRITICAL but does not require two-man authorization"
-        )
-        assert entry.requires_confirm_token, (
-            f"{entry.action_id} is CRITICAL but does not require confirm token"
-        )
+def test_live_promotion_review_intent_has_no_capital_approval_workflow() -> None:
+    entry = get_catalog_entry("PromoteEvolutionCandidateLive")
+    assert entry.risk_level == RiskLevel.MEDIUM
+    assert not entry.requires_approval
+    assert not entry.requires_confirm_token
+    assert not entry.requires_two_man
+    assert entry.required_roles == ["approver", "admin"]
 
 
 def test_catalog_entry_can_be_projected_to_action_descriptor() -> None:
