@@ -563,15 +563,15 @@ class PersonaRegistryHttpWritePort:
 
     def list_sessions_for_persona(
         self,
-        persona_id: str,
+        persona_id: str | None = None,
         *,
         status: str | None = None,
         **kwargs: Any,
     ) -> list[Dict[str, Any]]:
         clean_id = str(persona_id or "").strip()
-        if not clean_id:
-            return []
-        params = {"persona_id": clean_id, **{k: v for k, v in kwargs.items() if v is not None}}
+        params = {k: v for k, v in kwargs.items() if v is not None}
+        if clean_id:
+            params["persona_id"] = clean_id
         if status:
             params["status"] = status
         try:
@@ -582,8 +582,6 @@ class PersonaRegistryHttpWritePort:
                 params=params,
             )
         except _PersonaHttpResponseError as exc:
-            if exc.status_code == 404:
-                return []
             raise PersonaWriteOwnerUnavailable("persona_session_owner", exc.reason) from exc
         if not isinstance(value, list):
             raise PersonaWriteOwnerUnavailable(

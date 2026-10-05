@@ -69,7 +69,7 @@ from services.control_plane.bff.ports.persona_capital_runtime import (
     CompositePersonaCapitalRuntimePort,
     DeploymentPlanPort,
     EvolutionProjectionPort,
-    InMemoryPersonaCapitalRuntimePort,
+    _is_unconfigured,
     PersonaCapitalRuntimeDomainPort,
     PersonaFleetPort,
     RankingProjectionPort,
@@ -489,11 +489,18 @@ class ReadSurfacePorts:
                 return "typed_store"
             except Exception:
                 return "unavailable"
+        if dataset in ("persona_sessions", "sessions"):
+            store = getattr(getattr(self, "persona_training", None), "persona", None)
+            if store is None or getattr(store, "_store", None) is None:
+                return "missing"
+            try:
+                self.list_persona_sessions("")
+                return "store"
+            except Exception as exc:
+                return "missing" if _is_unconfigured(exc) else "unavailable"
         owner_ports = {
             "personas": self.persona_capital_runtime.persona,
             "capability_snapshots": self.persona_capital_runtime.persona,
-            "sessions": self.persona_capital_runtime.persona,
-            "persona_sessions": self.persona_capital_runtime.persona,
             "capital_pools": self.persona_capital_runtime.capital,
             "bindings": self.persona_capital_runtime.capital,
             "persona_bindings": self.persona_capital_runtime.capital,
