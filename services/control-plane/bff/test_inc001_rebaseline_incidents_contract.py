@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from services.control_plane.bff.core.errors import register_error_handlers
@@ -40,6 +40,7 @@ _INCIDENT_CASE_EVIDENCE_FIELDS = (
 @contextmanager
 def _isolated_incident_bff(
     incidents: list[dict[str, Any]] | None,
+    recorded_writes: list[dict[str, Any]] | None = None,
 ) -> Iterator[TestClient]:
     original_env = {key: os.environ.get(key) for key in _TRACKED_ENV}
     with tempfile.TemporaryDirectory(prefix="inc001_bff_") as td:
@@ -62,18 +63,29 @@ def _isolated_incident_bff(
                 }
             )
             store.dataset_source = lambda ds: "service_store" if ds == "incidents" else "typed_store"
+            if recorded_writes is not None:
+                inc_port = store.lifecycle_telemetry_governance.incidents
+                original_create = inc_port.create_incident
+
+                def recording_create_incident(payload: dict[str, Any]) -> dict[str, Any]:
+                    inc_id = str(payload.get("incident_id") or payload.get("id") or "")
+                    incidents_dict = getattr(inc_port, "_incidents", None)
+                    if incidents_dict is not None and inc_id in incidents_dict:
+                        raise HTTPException(status_code=409, detail=f"IncidentCase '{inc_id}' already exists")
+                    recorded_writes.append(dict(payload))
+                    return original_create(payload)
+
+                inc_port.create_incident = recording_create_incident
         else:
             store = create_in_memory_read_surface_ports()
             store.dataset_source = lambda ds: "missing" if ds == "incidents" else "typed_store"
 
         app = FastAPI()
         register_error_handlers(app)
-        idempotency_ledger: dict[str, Any] = {}
         app.include_router(
             create_incident_router(
                 read_surface=store,
                 get_read_store=lambda: store,
-                idempotency_ledger=idempotency_ledger,
             )
         )
         try:
@@ -173,7 +185,8 @@ def test_bff_incident_create_preserves_canonical_incident_case_fields() -> None:
         "telemetry_event_ids": ["tel-inc001-created"],
         "evidence_summary": "Threshold breach opened an incident case.",
     }
-    with _isolated_incident_bff(_incident_records()) as client:
+    recorded_writes: list[dict[str, Any]] = []
+    with _isolated_incident_bff(_incident_records(), recorded_writes=recorded_writes) as client:
         response = client.post(
             "/bff/incidents",
             json=created_incident,
@@ -187,6 +200,8 @@ def test_bff_incident_create_preserves_canonical_incident_case_fields() -> None:
 
     assert response.status_code == 201, response.text
     assert replay.status_code == 201, replay.text
+    assert len(recorded_writes) == 1
+    assert recorded_writes[0]["incident_id"] == "inc-inc001-created"
     payload = response.json()
     assert replay.json() == payload
     for field in _INCIDENT_CASE_EVIDENCE_FIELDS:

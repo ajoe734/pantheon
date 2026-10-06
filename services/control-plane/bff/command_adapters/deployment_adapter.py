@@ -28,7 +28,6 @@ class DeploymentCommandAdapter(DomainCommandAdapter):
         "DeploymentAction",
         "ApproveDeployment",
         "EscalateDiff",
-        "CreateDeployment",
         "PatchDeployment",
     }
 
@@ -56,8 +55,6 @@ class DeploymentCommandAdapter(DomainCommandAdapter):
 
         if command_type == "EscalateDiff":
             return self._execute_escalate_diff(command_id, plan_id, params, auth_token=auth_token, mfa_token=mfa_token)
-        elif command_type == "CreateDeployment" or action_id.lower() in {"create", "createdeployment"}:
-            return self._execute_create_deployment(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif command_type == "PatchDeployment" or action_id.lower() in {"patch", "update", "patchdeployment"}:
             return self._execute_patch_deployment(command_id, plan_id, params, auth_token=auth_token, mfa_token=mfa_token)
         elif action_id.lower() == "dispatch":
@@ -93,36 +90,6 @@ class DeploymentCommandAdapter(DomainCommandAdapter):
             domain_receipt=body,
             authoritative_readback={"plan_id": target_plan_id, "status": body.get("status") or "escalated"},
             extra={"plan_id": target_plan_id, "audit_id": body.get("audit_id")},
-        )
-
-    def _execute_create_deployment(
-        self,
-        command_id: str,
-        params: Dict[str, Any],
-        auth_token: Optional[str] = None,
-        mfa_token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        url = deployment_url("/api/deployment/plans")
-        body = http_request_json(url, method="POST", payload=params, auth_token=auth_token, mfa_token=mfa_token)
-        target_plan_id = str(body.get("plan_id") or body.get("id") or "").strip()
-
-        readback = None
-        if target_plan_id:
-            try:
-                readback = http_request_json(deployment_url(f"/api/deployment/plans/{quote(target_plan_id, safe='')}"), method="GET", auth_token=auth_token, mfa_token=mfa_token)
-            except Exception:
-                pass
-
-        return build_domain_receipt(
-            command_id=command_id,
-            entity_type="DeploymentPlan",
-            entity_id=target_plan_id,
-            action_id="CreateDeployment",
-            status="created",
-            dispatch_path=url,
-            domain_receipt=body,
-            authoritative_readback=readback,
-            extra={"plan_id": target_plan_id},
         )
 
     def _execute_patch_deployment(

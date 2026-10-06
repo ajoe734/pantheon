@@ -1,0 +1,11 @@
+{
+  "task_id": "STIMULUS-VERIFIER-OUTBOUND-AUTH-20261006",
+  "local_verification": {
+    "command": "pytest services/trade_journey/test_hosted_lifecycle_stimulus.py test_telemetry_rows.py test_hosted_lifecycle_probe.py test_lifecycle_projector.py scripts/test_loop_prod_tel_002_hosted_workflow.py",
+    "result": "passed"
+  },
+  "hosted_track": {
+    "status": "external_wait",
+    "detail": "next automatic dev pair release must reach the reconciliation step or name the next failing gate"
+  }
+}

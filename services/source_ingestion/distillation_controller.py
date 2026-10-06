@@ -27,6 +27,7 @@ from services.service_token_file import configured_service_token
 from services.source_ingestion.connectors.base import SourceRecord, SourceRecordStatus
 from services.source_ingestion.controller_state import (
     ControllerState,
+    ControllerStateError,
     ControllerStateStore,
     read_controller_state,
     utc_now,
@@ -433,6 +434,7 @@ def run_controller_tick(
     state: ControllerState,
     store: ControllerStateStore,
     writer: Any,
+    queue: DistillationJobQueue | None = None,
 ) -> dict[str, Any]:
     state.record_tick_started()
     store.save(state)
@@ -462,8 +464,12 @@ def run_controller_tick(
         # 2. Transactionally admit source versions and process leased events.
         # A job is acknowledged only after Registry terminal readback.
         try:
+            if queue is None:
+                queue = DistillationJobQueue(
+                    config.job_queue_path, default_max_attempts=config.max_attempts,
+                )
             worker = make_distillation_worker(
-                queue_path=config.job_queue_path,
+                job_queue=queue,
                 seed_store_path=config.seed_store_path,
                 created_by="strategy-distillation-controller",
                 worker_id=state.controller_id,
@@ -488,10 +494,6 @@ def run_controller_tick(
             raise DistillationControllerError("reconcile_worker", f"Failed to run distillation catch-up: {exc}")
 
         # 3. Read durable outbox/inbox/DLQ actual state.
-        queue = DistillationJobQueue(
-            config.job_queue_path,
-            default_max_attempts=config.max_attempts,
-        )
         queue_metrics = queue.metrics()
         terminal_drafts = [
             {
@@ -577,9 +579,10 @@ def run_controller_tick(
         # Write failure to DB
         try:
             asyncio.run(
-                writer.record_tick(
+                writer.record_failure(
                     loop_id=loop_id,
-                    truth_level="reconciled_live_proof",
+                    reason=f"{stage}: {reason}",
+                    truth_level="scheduled_tick",
                     payload={
                         "error_stage": stage,
                         "error_reason": reason,
@@ -625,7 +628,16 @@ def _new_state() -> ControllerState:
 
 
 def refresh_runtime_identity(state: ControllerState) -> ControllerState:
-    state.controller_id = f"distill-controller-{uuid.uuid4().hex[:8]}"
+    """Refresh this process, never adopt another scope's business checkpoint."""
+    runtime = _new_state()
+    if state.tenant_id != runtime.tenant_id or state.environment != runtime.environment:
+        raise ControllerStateError(
+            "persisted controller state tenant/environment does not match this runtime"
+        )
+    state.controller_id = runtime.controller_id
+    state.controller_name = runtime.controller_name
+    state.deployment = runtime.deployment
+    state.started_at = runtime.started_at
     state.heartbeat_at = utc_now()
     return state
 
@@ -652,13 +664,20 @@ def main() -> int:
     )
     
     writer = build_loop_writer(dsn=config.database_url, state=state)
+    # One queue per controller process, shared by admission, processing and
+    # readback. Corrupt storage fails startup closed; no automatic replacement.
+    queue = DistillationJobQueue(
+        config.job_queue_path, default_max_attempts=config.max_attempts,
+    )
     tick = 0
     last_tick_failed = False
     
     while True:
         tick += 1
         try:
-            result = run_controller_tick(config=config, state=state, store=store, writer=writer)
+            result = run_controller_tick(
+                config=config, state=state, store=store, writer=writer, queue=queue,
+            )
             last_tick_failed = False
             print(json.dumps({"tick": tick, **result}), flush=True)
         except Exception as exc:

@@ -293,7 +293,6 @@ def build_consolidated_cross_cutting_app(read_surface: Any) -> FastAPI:
             resolve_final_idempotency_key=lambda h, b: "",
             reject_body_idempotency_key=lambda p: None,
             request_dry_run_requested=lambda **kw: False,
-            gov_bff_idempotency={},
             publish_event=lambda *a, **k: "",
             sse_buffers={},
             sse_subscribers={},

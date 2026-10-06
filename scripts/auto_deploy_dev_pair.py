@@ -20,6 +20,7 @@ FRONTEND = "ajoe734/execute-plans"
 DEPLOY = "nonprod-deploy.yml"
 ACTIVE = ("in_progress", "queued", "waiting", "pending", "requested")
 FAILED = ("failure", "timed_out")
+LEASE_STEP = "Acquire shared dev environment lease"
 
 
 def pair_title(backend_sha, frontend_sha):
@@ -52,16 +53,26 @@ def ci_passed(client, sha):
             and run.get("conclusion") == "success")
 
 
+def lost_lease_race(backend, run_id):
+    # Without the lease no later step touches the VM, so the pair was never tried.
+    jobs = backend.request("GET", f"/repos/{backend.repository}/actions/runs/{run_id}/jobs?per_page=100")["jobs"]
+    return any(step.get("name") == LEASE_STEP and step.get("conclusion") == "failure"
+               for job in jobs for step in job.get("steps") or [])
+
+
 def failed_pair_run(backend, backend_sha, frontend_sha):
     attempts = [run for run in runs(backend, DEPLOY, event="workflow_dispatch", head_sha=backend_sha)
                 if run.get("display_title") == pair_title(backend_sha, frontend_sha)
                 and run.get("status") == "completed"]
     if not attempts:
         return None
-    # Only the latest attempt counts: a cancelled or later successful attempt
-    # leaves the pair eligible, and a new merge on either dev tip is a new pair.
+    # Only the latest attempt counts: a cancelled, lease-starved or later
+    # successful attempt leaves the pair eligible, and a new merge on either
+    # dev tip is a new pair.
     latest = max(attempts, key=lambda item: item["id"])
-    return latest["html_url"] if latest.get("conclusion") in FAILED else None
+    if latest.get("conclusion") not in FAILED or lost_lease_race(backend, latest["id"]):
+        return None
+    return latest["html_url"]
 
 
 def inspect_pair(backend, frontend, *, fe_url, bff_url, fetch=fetch_url_json):

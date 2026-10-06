@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Generator, Iterator
 
 import pytest
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from collections import deque
@@ -44,6 +45,7 @@ from services.control_plane.bff.command_adapters.preconditions import (
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.core.errors import register_error_handlers
 from services.control_plane.bff.deployment.adapters import DeploymentReadSurfaceAdapter
+from services.control_plane.bff.command_adapters.retired import reject_retired_command
 from services.control_plane.bff.deployment.router import create_deployment_router
 from services.control_plane.bff.models import (
     CommandType,
@@ -93,7 +95,6 @@ _sse_subscribers: dict[str, list[Any]] = {
     "approval": [],
 }
 _AGORA_CORE_BFF_IDEMPOTENCY: dict[str, dict[str, Any]] = {}
-_GOV_BFF_IDEMPOTENCY: dict[str, dict[str, Any]] = {}
 _WIZARD_APPROVAL_DECISIONS: dict[str, dict[str, Any]] = {}
 _event_seq = 0
 
@@ -172,14 +173,6 @@ class _FakeRankingWriteOwner:
         return list(self.snapshots.values())
 
 
-class _TestDeploymentCommands:
-    def __init__(self, store: Any) -> None:
-        self._store = store
-
-    def create_deployment_plan(self, **kwargs: Any) -> dict[str, Any]:
-        return self._store.create_deployment_plan(**kwargs)
-
-
 def _create_approval_decisions_router() -> APIRouter:
     router = APIRouter()
 
@@ -231,11 +224,20 @@ def _create_approval_decisions_router() -> APIRouter:
         is_dry_run = str(x_dry_run or "").strip().lower() in ("1", "true", "yes")
 
         clean_key = idempotency_key.strip() if idempotency_key else None
-        if clean_key and clean_key in _GOV_BFF_IDEMPOTENCY:
-            cached = _GOV_BFF_IDEMPOTENCY[clean_key]
-            return JSONResponse(status_code=cached["status_code"], content=cached["content"])
-
         if plan_id in _WIZARD_APPROVAL_DECISIONS:
+            existing = _WIZARD_APPROVAL_DECISIONS[plan_id]
+            if clean_key and existing.get("idempotency_key") == clean_key:
+                return JSONResponse(
+                    status_code=202,
+                    content={
+                        "data": existing,
+                        "meta": {
+                            "dryRun": False,
+                            "evidenceKind": "approval.decide",
+                            "correlationId": x_correlation_id,
+                        },
+                    },
+                )
             raise HTTPException(
                 status_code=409,
                 detail={"error": {"code": "RESOURCE_CONFLICT", "message": f"Approval decision for {plan_id} already exists"}},
@@ -257,8 +259,6 @@ def _create_approval_decisions_router() -> APIRouter:
                     "correlationId": x_correlation_id,
                 },
             }
-            if clean_key:
-                _GOV_BFF_IDEMPOTENCY[clean_key] = {"status_code": 200, "content": res_content}
             return JSONResponse(status_code=200, content=res_content)
 
         command_id = f"cmd-appr-{uuid.uuid4().hex[:8]}"
@@ -270,6 +270,7 @@ def _create_approval_decisions_router() -> APIRouter:
             "memo": memo,
             "approver_id": identity.operator_id,
             "decided_at": "2026-05-28T00:00:00Z",
+            "idempotency_key": clean_key,
         }
         _WIZARD_APPROVAL_DECISIONS[plan_id] = record
         _publish_event_stream("approval", "approval.decided", record)
@@ -282,8 +283,6 @@ def _create_approval_decisions_router() -> APIRouter:
                 "correlationId": x_correlation_id,
             },
         }
-        if clean_key:
-            _GOV_BFF_IDEMPOTENCY[clean_key] = {"status_code": 202, "content": res_content}
         return JSONResponse(status_code=202, content=res_content)
 
     return router
@@ -645,6 +644,7 @@ class WriteGapTestReadPorts(ReadSurfacePorts):
             "created_at": timestamp,
             "updated_at": timestamp,
             "created_by": actor_id,
+            "idempotency_key": kwargs.get("idempotency_key"),
         }
         self._data.setdefault("runtime_bindings", {})[rid] = record
         self._data.setdefault("runtime_bindings", {})[bid] = record
@@ -674,48 +674,6 @@ class WriteGapTestReadPorts(ReadSurfacePorts):
         return next((p for p in ds if p.get("id") == plan_id or p.get("plan_id") == plan_id), None)
 
     def put_deployment_plan(self, plan_id: str, record: dict[str, Any]) -> dict[str, Any]:
-        self._data.setdefault("deployment_plans", {})[plan_id] = record
-        return record
-
-    def create_deployment_plan(
-        self,
-        *,
-        plan_id: str,
-        binding_id: str,
-        artifact_id: str,
-        deployment_mode: str,
-        capital_pool_id: str,
-        actor_id: str,
-        created_at: str | None = None,
-        params: dict[str, Any] | None = None,
-        locked: bool = False,
-        status: str = "pending_approval",
-    ) -> dict[str, Any]:
-        timestamp = created_at or "2026-05-28T00:00:00Z"
-        record = {
-            "id": plan_id,
-            "plan_id": plan_id,
-            "binding_id": binding_id,
-            "persona_capital_binding_id": binding_id,
-            "artifact_id": artifact_id,
-            "deployment_mode": deployment_mode,
-            "deployment_stage": deployment_mode,
-            "target_stage": deployment_mode,
-            "capital_pool_id": capital_pool_id,
-            "target_pool_id": capital_pool_id,
-            "status": status,
-            "locked": bool(locked),
-            "params": params or {},
-            "created_at": timestamp,
-            "updated_at": timestamp,
-            "created_by": actor_id,
-            "metadata": {
-                "created_via": "POST /api/v1/deployment-plans",
-                "persistenceMode": "bff_local_dev_store",
-            },
-            "canonicalWriteAuthority": "deployment_service",
-            "persistenceMode": "bff_local_dev_store",
-        }
         self._data.setdefault("deployment_plans", {})[plan_id] = record
         return record
 
@@ -807,7 +765,6 @@ def _isolated_runtime_bff(runtime_bindings: list[dict[str, Any]]) -> Iterator[Te
             encoding="utf-8",
         )
         os.environ["PANTHEON_RUNTIME_DATA_DIR"] = str(runtime_dir)
-        _GOV_BFF_IDEMPOTENCY.clear()
         _sse_buffers["runtime"].clear()
         rb_map = {rb.get("binding_id") or rb.get("id"): rb for rb in runtime_bindings if isinstance(rb, dict)}
         store = WriteGapTestReadPorts(
@@ -816,7 +773,6 @@ def _isolated_runtime_bff(runtime_bindings: list[dict[str, Any]]) -> Iterator[Te
         )
         deps = {
             "_GOVERNANCE_APPROVAL_QUEUE_ROUTE": "/api/v1/governance-review-queue",
-            "_GOV_BFF_IDEMPOTENCY": _GOV_BFF_IDEMPOTENCY,
             "_aggregate_group_surface": lambda *a, **kw: {},
             "_alert_target_ref": lambda *a, **kw: "",
             "_bff_error": _bff_error,
@@ -864,7 +820,6 @@ def _isolated_runtime_bff(runtime_bindings: list[dict[str, Any]]) -> Iterator[Te
         try:
             yield TestClient(app)
         finally:
-            _GOV_BFF_IDEMPOTENCY.clear()
             _sse_buffers["runtime"].clear()
             for key, value in original_env.items():
                 if value is None:
@@ -938,17 +893,27 @@ def _runtime_create_payload(binding_id: str = "binding-runtime-create-001") -> d
 
 
 def test_post_bff_runtimes_creates_stopped_runtime_and_replays_idempotently() -> None:
-    with _isolated_runtime_bff([]) as client:
-        response = client.post("/bff/runtimes", json=_runtime_create_payload(), headers=RUNTIME_HEADERS)
-        replay = client.post("/bff/runtimes", json=_runtime_create_payload(), headers=RUNTIME_HEADERS)
-        runtime_id = response.json()["data"]["id"]
-        detail = client.get(
-            f"/bff/runtimes/{runtime_id}",
-            headers={"Authorization": RUNTIME_HEADERS["Authorization"]},
-        )
-        event_types = [event["type"] for _event_id, event in _sse_buffers["runtime"]]
+    recorded_owner_writes: list[dict[str, Any]] = []
+    original_create = WriteGapTestReadPorts.create_runtime_binding
+
+    def recording_create_runtime_binding(self, **kwargs):
+        recorded_owner_writes.append(dict(kwargs))
+        return original_create(self, **kwargs)
+
+    with patch.object(WriteGapTestReadPorts, "create_runtime_binding", recording_create_runtime_binding):
+        with _isolated_runtime_bff([]) as client:
+            response = client.post("/bff/runtimes", json=_runtime_create_payload(), headers=RUNTIME_HEADERS)
+            replay = client.post("/bff/runtimes", json=_runtime_create_payload(), headers=RUNTIME_HEADERS)
+            runtime_id = response.json()["data"]["id"]
+            detail = client.get(
+                f"/bff/runtimes/{runtime_id}",
+                headers={"Authorization": RUNTIME_HEADERS["Authorization"]},
+            )
+            event_types = [event["type"] for _event_id, event in _sse_buffers["runtime"]]
 
     assert response.status_code == 201, response.text
+    assert len(recorded_owner_writes) == 1
+    assert recorded_owner_writes[0]["idempotency_key"] == "bff-write-gap-runtime-create-001"
     payload = response.json()
     assert payload["data"]["name"] == "Paper Runtime 001"
     assert payload["data"]["state"] == "stopped"
@@ -966,6 +931,18 @@ def test_post_bff_runtimes_creates_stopped_runtime_and_replays_idempotently() ->
     assert detail.json()["data"]["status"] == "stopped"
 
     assert event_types == ["runtime.created", "management.runtime-status"]
+
+
+def test_post_bff_runtimes_fails_closed_when_owner_cannot_honor_idempotency_key(monkeypatch) -> None:
+    def owner_without_idempotency(self, *, runtime_id=None, name="", persona_id="", binding_id="", deployment_plan_id="", runtime_kind="paper", actor_id="", created_at=None, params=None):
+        raise AssertionError("an owner that cannot honor the key must not be written")
+
+    monkeypatch.setattr(WriteGapTestReadPorts, "create_runtime_binding", owner_without_idempotency)
+    with _isolated_runtime_bff([]) as client:
+        response = client.post("/bff/runtimes", json=_runtime_create_payload(), headers=RUNTIME_HEADERS)
+
+    assert response.status_code == 503, response.text
+    assert response.json()["error"]["details"]["precondition_failed"] == "owner_idempotency_unsupported"
 
 
 def test_post_bff_runtimes_rejects_binding_that_already_has_runtime() -> None:
@@ -1003,52 +980,29 @@ def test_post_bff_runtimes_validates_runtime_kind() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# P0-6 — POST /api/v1/deployment-plans (persona onboarding wizard step 3)
+# Retired deployment-plan create routes
 # --------------------------------------------------------------------------- #
 
 DEPLOYMENT_PLAN_HEADERS = {
     "Authorization": "Bearer bff-write-gap-dp:operator",
     "Idempotency-Key": "bff-write-gap-dp-create-001",
-    "X-Correlation-Id": "corr-dp-create-001",
-    "X-Request-Id": "req-dp-create-001",
 }
 
 
-def _deployment_plan_seed(registry_entries: dict[str, Any] | None = None) -> dict[str, Any]:
-    return {
-        "deployment_plans": {},
-        "bindings": {
-            "binding-dp-001": {
-                "id": "binding-dp-001",
-                "binding_id": "binding-dp-001",
-                "persona_id": "persona-dp-001",
-                "capital_pool_id": "pool-dp-001",
-                "role": "paper_owner",
-            }
-        },
-        "registry_entries": registry_entries or {},
-    }
+def _deployment_plan_seed() -> dict[str, Any]:
+    return {"deployment_plans": {}, "bindings": {}, "registry_entries": {}}
 
 
 @contextmanager
-def _isolated_deployment_plan_bff(
-    registry_entries: dict[str, Any] | None = None,
-) -> Iterator[TestClient]:
-    seed = _deployment_plan_seed(registry_entries)
-    store = WriteGapTestReadPorts(
-        seed_data=seed,
-        allow_local_snapshot_fallback=True,
-    )
-    _GOV_BFF_IDEMPOTENCY.clear()
+def _isolated_deployment_plan_bff() -> Iterator[TestClient]:
+    store = WriteGapTestReadPorts(seed_data=_deployment_plan_seed(), allow_local_snapshot_fallback=True)
     _sse_buffers["audit"].clear()
-    queries = DeploymentReadSurfaceAdapter(store)
-    commands = _TestDeploymentCommands(store)
     router = create_deployment_router(
-        queries=queries,
-        commands=commands,
+        queries=DeploymentReadSurfaceAdapter(store),
+        commands=None,
         extract_identity=_extract_identity,
-        require_operator_role=lambda id: None,
-        require_read_role=lambda id: None,
+        require_operator_role=lambda identity: None,
+        require_read_role=lambda identity: None,
         bff_error=_bff_error,
         utc_now=utc_now,
         page_slice=lambda items, c=None, ps=50: (items[:ps], None),
@@ -1063,14 +1017,13 @@ def _isolated_deployment_plan_bff(
         stable_json_hash=stable_json_hash,
         resolve_final_idempotency_key=resolve_final_idempotency_key,
         reject_body_idempotency_key=reject_body_idempotency_key,
-        request_dry_run_requested=lambda h=None: str(h or "").strip().lower() in {"1", "true", "yes"},
-        gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
+        request_dry_run_requested=lambda h=None: False,
         publish_event=_publish_event,
         sse_buffers=_sse_buffers,
         sse_subscribers=_sse_subscribers,
         gov_bff_action_command=lambda *a, **kw: {},
         deprecated_bff_path_response=lambda *a, **kw: None,
-        sem_command_response=lambda *a, **kw: None,
+        sem_command_response=lambda **kwargs: reject_retired_command(kwargs["command_type"].value),
         stream_generic_events=lambda *a, **kw: None,
         surface_degradation_reason=lambda *a, **kw: None,
     )
@@ -1080,190 +1033,24 @@ def _isolated_deployment_plan_bff(
     try:
         yield TestClient(app)
     finally:
-        _GOV_BFF_IDEMPOTENCY.clear()
         _sse_buffers["audit"].clear()
 
 
-def _deployment_plan_create_payload(plan_id: str | None = None) -> dict[str, Any]:
-    body: dict[str, Any] = {
-        "binding_id": "binding-dp-001",
-        "artifact_id": "artifact-dp-001",
-        "deployment_mode": "paper",
-        "capital_pool_id": "pool-dp-001",
-        "params": {"max_notional": 100000},
-        "locked": False,
-    }
-    if plan_id:
-        body["plan_id"] = plan_id
-    return body
-
-
-def test_post_deployment_plan_creates_pending_approval_and_replays() -> None:
+@pytest.mark.parametrize("path", ["/api/v1/deployment-plans", "/bff/deployments"])
+def test_deployment_plan_create_routes_are_retired_without_side_effects(path: str) -> None:
     with _isolated_deployment_plan_bff() as client:
-        body = _deployment_plan_create_payload(plan_id="plan-dp-write-gap-001")
-        response = client.post(
-            "/api/v1/deployment-plans", headers=DEPLOYMENT_PLAN_HEADERS, json=body
-        )
-        replay = client.post(
-            "/api/v1/deployment-plans", headers=DEPLOYMENT_PLAN_HEADERS, json=body
-        )
-        detail = client.get(
-            "/api/v1/deployment-plans/plan-dp-write-gap-001",
-            headers={"Authorization": DEPLOYMENT_PLAN_HEADERS["Authorization"]},
-        )
-        listing = client.get(
+        response = client.post(path, headers=DEPLOYMENT_PLAN_HEADERS, json={"id": "retired-plan"})
+        plans = client.get(
             "/api/v1/deployment-plans",
             headers={"Authorization": DEPLOYMENT_PLAN_HEADERS["Authorization"]},
         )
-        event_types = [event["type"] for _event_id, event in _sse_buffers["audit"]]
-        events = [event for _event_id, event in _sse_buffers["audit"]]
 
-    assert response.status_code == 201, response.text
-    payload = response.json()
-    data = payload["data"]
-    assert data["id"] == "plan-dp-write-gap-001"
-    assert data["binding_id"] == "binding-dp-001"
-    assert data["artifact_id"] == "artifact-dp-001"
-    assert data["deployment_mode"] == "paper"
-    assert data["status"] == "pending_approval"
-    assert data["capital_pool_id"] == "pool-dp-001"
-    assert data["locked"] is False
-    assert data["created_at"]
-    assert payload["meta"]["dryRun"] is False
-    assert payload["meta"]["evidenceKind"] == "deployment_plan.create"
-    assert payload["meta"]["correlationId"] == "corr-dp-create-001"
-    assert response.headers["X-Correlation-Id"] == "corr-dp-create-001"
-
-    assert replay.status_code == 201, replay.text
-    assert replay.json()["data"] == data
-
-    assert detail.status_code == 200, detail.text
-    assert detail.json()["data"]["id"] == "plan-dp-write-gap-001"
-    assert listing.status_code == 200, listing.text
-    assert any(p["id"] == "plan-dp-write-gap-001" for p in listing.json()["data"])
-
-    assert event_types == ["deployment-plan.created"]
-    assert events[0]["data"]["persona_id"] == "persona-dp-001"
-    assert events[0]["data"]["status"] == "pending_approval"
-
-
-def test_post_deployment_plan_honors_locked_flag() -> None:
-    payload = _deployment_plan_create_payload(plan_id="plan-dp-locked-001")
-    payload["locked"] = True
-    payload["deployment_mode"] = "live"
-    with _isolated_deployment_plan_bff() as client:
-        response = client.post(
-            "/api/v1/deployment-plans",
-            headers={**DEPLOYMENT_PLAN_HEADERS, "Idempotency-Key": "bff-write-gap-dp-locked-001"},
-            json=payload,
-        )
-        detail = client.get(
-            "/api/v1/deployment-plans/plan-dp-locked-001",
-            headers={"Authorization": DEPLOYMENT_PLAN_HEADERS["Authorization"]},
-        )
-
-    assert response.status_code == 201, response.text
-    data = response.json()["data"]
-    assert data["locked"] is True
-    assert data["deployment_mode"] == "live"
-    assert detail.status_code == 200, detail.text
-    assert detail.json()["data"]["locked"] is True
-
-
-def test_post_deployment_plan_dry_run_returns_200_without_persistence() -> None:
-    with _isolated_deployment_plan_bff() as client:
-        response = client.post(
-            "/api/v1/deployment-plans",
-            headers={
-                **DEPLOYMENT_PLAN_HEADERS,
-                "X-Dry-Run": "1",
-                "Idempotency-Key": "bff-write-gap-dp-dry-run-001",
-            },
-            json=_deployment_plan_create_payload(plan_id="plan-dp-dry-run-001"),
-        )
-        detail = client.get(
-            "/api/v1/deployment-plans/plan-dp-dry-run-001",
-            headers={"Authorization": DEPLOYMENT_PLAN_HEADERS["Authorization"]},
-        )
-        audit_events = list(_sse_buffers["audit"])
-
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert payload["data"]["id"] == "plan-dp-dry-run-001"
-    assert payload["data"]["status"] == "pending_approval"
-    assert payload["meta"]["dryRun"] is True
-    assert detail.status_code == 404, detail.text
-    assert len(audit_events) == 0
-
-
-def test_post_deployment_plan_validates_deployment_mode() -> None:
-    payload = _deployment_plan_create_payload()
-    payload["deployment_mode"] = "shadow"
-    with _isolated_deployment_plan_bff() as client:
-        response = client.post(
-            "/api/v1/deployment-plans",
-            headers={**DEPLOYMENT_PLAN_HEADERS, "Idempotency-Key": "bff-write-gap-dp-mode-001"},
-            json=payload,
-        )
-
-    assert response.status_code == 422, response.text
+    assert response.status_code == 410, response.text
     error = response.json()["error"]
-    assert error["code"] == "VALIDATION_FAILED"
-    assert error["details"]["precondition_failed"] == "deployment_mode"
-
-
-def test_post_deployment_plan_requires_binding_id() -> None:
-    payload = _deployment_plan_create_payload()
-    payload.pop("binding_id")
-    with _isolated_deployment_plan_bff() as client:
-        response = client.post(
-            "/api/v1/deployment-plans",
-            headers={**DEPLOYMENT_PLAN_HEADERS, "Idempotency-Key": "bff-write-gap-dp-missing-001"},
-            json=payload,
-        )
-
-    assert response.status_code == 422, response.text
-    error = response.json()["error"]
-    assert error["code"] == "VALIDATION_FAILED"
-    assert error["details"]["precondition_failed"] == "binding_id"
-
-
-def test_post_deployment_plan_rejects_unapproved_artifact() -> None:
-    registry = {
-        "artifact-dp-001": {
-            "id": "artifact-dp-001",
-            "artifact_id": "artifact-dp-001",
-            "status": "draft",
-        }
-    }
-    with _isolated_deployment_plan_bff(registry_entries=registry) as client:
-        response = client.post(
-            "/api/v1/deployment-plans",
-            headers={**DEPLOYMENT_PLAN_HEADERS, "Idempotency-Key": "bff-write-gap-dp-unapproved-001"},
-            json=_deployment_plan_create_payload(),
-        )
-
-    assert response.status_code == 409, response.text
-    assert response.json()["error"]["code"] == "RESOURCE_CONFLICT"
-
-
-def test_post_deployment_plan_idempotency_conflict_on_changed_payload() -> None:
-    with _isolated_deployment_plan_bff() as client:
-        first = client.post(
-            "/api/v1/deployment-plans",
-            headers=DEPLOYMENT_PLAN_HEADERS,
-            json=_deployment_plan_create_payload(plan_id="plan-dp-conflict-001"),
-        )
-        changed = _deployment_plan_create_payload(plan_id="plan-dp-conflict-002")
-        conflict = client.post(
-            "/api/v1/deployment-plans",
-            headers=DEPLOYMENT_PLAN_HEADERS,
-            json=changed,
-        )
-
-    assert first.status_code == 201, first.text
-    assert conflict.status_code == 409, conflict.text
-    assert conflict.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+    assert error["code"] == "ACTION_RETIRED"
+    assert "POST /api/deployment/plans/validate" in error["details"]["replacement"]
+    assert plans.json()["data"] == []
+    assert _sse_buffers["audit"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -1284,7 +1071,6 @@ def _isolated_confirm_bff() -> Iterator[TestClient]:
         store_path = Path(td) / "commands.jsonl"
         store_path.touch()
         command_store = CommandStore(str(store_path))
-        _GOV_BFF_IDEMPOTENCY.clear()
         _sse_buffers["audit"].clear()
         svc = CommandAdapterService(
             command_store=command_store,
@@ -1298,7 +1084,6 @@ def _isolated_confirm_bff() -> Iterator[TestClient]:
         try:
             yield TestClient(app)
         finally:
-            _GOV_BFF_IDEMPOTENCY.clear()
             _sse_buffers["audit"].clear()
 
 
@@ -1588,7 +1373,6 @@ def test_get_persona_management_deploymentplans_and_approvals_are_lists() -> Non
 @contextmanager
 def _isolated_approval_decisions_bff() -> Iterator[TestClient]:
     _WIZARD_APPROVAL_DECISIONS.clear()
-    _GOV_BFF_IDEMPOTENCY.clear()
     _sse_buffers["approval"].clear()
     router = _create_approval_decisions_router()
     app = FastAPI()
@@ -1598,7 +1382,6 @@ def _isolated_approval_decisions_bff() -> Iterator[TestClient]:
         yield TestClient(app, raise_server_exceptions=False)
     finally:
         _WIZARD_APPROVAL_DECISIONS.clear()
-        _GOV_BFF_IDEMPOTENCY.clear()
         _sse_buffers["approval"].clear()
 
 
@@ -1682,9 +1465,10 @@ def test_post_approval_decisions_idempotent_replay() -> None:
             headers=_approval_headers("approval-idem-001"),
             json=_approval_payload(plan_id="plan-idem-001"),
         )
-    assert first.status_code == 202, first.text
-    assert replay.status_code == 202, replay.text
-    assert first.json()["data"]["commandId"] == replay.json()["data"]["commandId"]
+        assert first.status_code == 202, first.text
+        assert replay.status_code == 202, replay.text
+        assert first.json()["data"]["commandId"] == replay.json()["data"]["commandId"]
+        assert _WIZARD_APPROVAL_DECISIONS["plan-idem-001"]["idempotency_key"] == "approval-idem-001"
 
 
 def test_post_approval_decisions_conflict_same_plan_second_write() -> None:

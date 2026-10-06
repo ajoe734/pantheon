@@ -311,6 +311,7 @@ class TestJournalRuntimeContract(unittest.TestCase):
         decision_journal_write_owner=injected)) returned selected owner injected=False and
         selected path default-journal instead of injected-journal.
         """
+        from services.control_plane.bff.tests.bff_compose_stand_ins import resolve_with_stand_ins
         from services.control_plane.bff.core.app_factory import compose_bff_app
 
         with tempfile.TemporaryDirectory() as sentinel_dir:
@@ -327,7 +328,7 @@ class TestJournalRuntimeContract(unittest.TestCase):
                     deps = AppDependencies.create_default(
                         decision_journal_write_owner=sentinel
                     )
-                    app = compose_bff_app(app_deps=deps)
+                    app = compose_bff_app(dependency_resolver=resolve_with_stand_ins, app_deps=deps)
 
         self.assertIs(app.state.decision_journal_write_owner, sentinel)
         # The agora_service must expose the sentinel owner, not a freshly built default.
@@ -387,7 +388,7 @@ class TestJournalRuntimeContract(unittest.TestCase):
             deps = AppDependencies.create_default(decision_journal_write_owner=owner)
             with patch("services.control_plane.bff.agora.router.build_decision_journal_write_owner",
                        side_effect=AssertionError("must not replace selected owner")):
-                app = compose_bff_app(app_deps=deps, _extract_identity=lambda *a, **k: OperatorIdentity(
+                app = compose_bff_app(dependency_resolver=resolve_with_stand_ins, app_deps=deps, _extract_identity=lambda *a, **k: OperatorIdentity(
                     operator_id="paper-reviewer", roles=["operator"], claims={"tenant_id": "tenant-a"}))
             with TestClient(app) as client:
                 response = client.post("/bff/agora/journal", json={"title": "Paper"},
@@ -447,7 +448,7 @@ def paper_factory_probe(phase: str) -> None:
 
     deps = AppDependencies.create_default()
     owner = deps.decision_journal_write_owner
-    app = compose_bff_app(app_deps=deps, _extract_identity=identity)
+    app = compose_bff_app(dependency_resolver=resolve_with_stand_ins, app_deps=deps, _extract_identity=identity)
     assert app.state.decision_journal_write_owner is owner
     if phase != "unavailable":
         assert app.state.agora_router.agora_service.journal_write_owner is owner

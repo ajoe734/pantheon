@@ -1,0 +1,8 @@
+{
+  "task_id": "RECON-DRIFT-TELEMETRY-AUTH-20261006",
+  "change": "reconciliation-drift reads telemetry runtime summaries through one authenticated client (services/reconciliation-drift/telemetry_client.py); 401/403 raise TelemetryAuthError (failure_code telemetry_auth_failed) distinct from telemetry_unavailable; compose passes PANTHEON_TELEMETRY_SERVICE_TOKEN to svc and consumer, PANTHEON_TENANT_ID to consumer; stimulus reports reconciliation_owner_<status> for owner failures without append results.",
+  "tests": {
+    "services/reconciliation-drift/tests + services/trade_journey/test_hosted_lifecycle_stimulus.py": "pass (real telemetry auth middleware accept/reject covered by test_telemetry_client_auth.py)"
+  },
+  "hosted_track": "external_wait: next automatic dev pair release must pass the paper lifecycle probe reconciliation step"
+}

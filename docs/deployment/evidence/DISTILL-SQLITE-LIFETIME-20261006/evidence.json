@@ -1,0 +1,42 @@
+{
+  "task_id": "DISTILL-SQLITE-LIFETIME-20261006",
+  "base_sha": "b06a22610f41934c801cc7c7da7b373bc33aa8db",
+  "scope": [
+    "Remove raw header open/close that drops the process's SQLite POSIX locks; do not silently redirect legacy/corrupt files to an empty sidecar.",
+    "Close every SQLite connection deterministically including PRAGMA setup failure; preserve transaction commit/rollback.",
+    "Reuse one queue in controller main, worker processing and actual readback.",
+    "Fail closed on bootstrap integrity errors; remove unsafe online quarantine/recreate and its process-local recovery lock."
+  ],
+  "validation": [
+    {"selection": "independent-PID SQLite shared-byte lock probe with an active read transaction", "result": "base: blocked before constructor but acquired after constructor; repaired: blocked before and after. SQLite 3.45.1; retained connection and disabled GC are deliberate local controls"},
+    {"selection": "eight new regression cases on immutable base", "result": "6 failed / 2 passed. Of three two-process trials one raised disk I/O error and two passed. This is not a reproduction of the operator's separate 12/12 corruption experiment"},
+    {"selection": "test_distillation_queue_lifetime.py on repair", "result": "8 passed. Three additional runs of its three two-process cases also passed: 12/12 repaired trials in total; each preserves 80 source versions, terminal synthetic inbox receipts and quick_check, without quarantine or sidecar diversion"},
+    {"selection": "six existing distillation/acceptance files, with explicit local REGISTRY_STORE_BACKEND=memory", "result": "84 passed / 5 failed; the same five Registry integration cases failed on immutable base"},
+    {"selection": "distillation selection including new regressions and explicitly excluding the five reproduced baseline Registry failures", "result": "92 passed / 5 deselected"},
+    {"selection": "runtime latest-source, multi-process reconciliation and persona reconciliation files in a separate pytest process", "result": "56 passed"},
+    {"selection": "combined distillation plus runtime selection", "result": "147 passed / 1 failed / 5 deselected. The latest-price-source test sees an earlier test's 9999 record; same ordered existing-suite run on immutable base gives 141 passed / the same 1 failed / 5 deselected. Combined run is NOT claimed green"}
+  ],
+  "hosted_observation": {
+    "observed_at": "2026-10-06T02:53:28Z",
+    "method": "metadata only: Docker identities, stat, /proc/*/fd and /proc/locks; no DB/WAL/SHM content open",
+    "controller_declared_sha": "ddc431ba5624c307e798470d4dad2164f4430f00",
+    "controller_pid": 2492083,
+    "samples": 5,
+    "main_db_inode": 4205335,
+    "main_db_fds": 17,
+    "main_db_locks_observed": 0,
+    "wal_fds": 13,
+    "shm_inode": 4205287,
+    "shm_lock": "POSIX READ, byte 128",
+    "main_db_birth": "2026-10-05T07:22:58Z",
+    "retained_quarantine_id": "20261005T072258347149Z-4612410e84fb",
+    "qualification": "supports the locally proven mechanism, not complete historical causation or recoverability; current containers were recreated October 6 at 02:19, so their missing historical log markers do not exclude earlier events"
+  },
+  "not_completed": [
+    "Independent exact-head review and canonical integration are pending.",
+    "No shared service stop/restart, deployment, database replacement, queue replay or hosted business write occurred.",
+    "Existing corrupted data, tenant-mismatched controller checkpoint, loss bounds, coordinated recovery, natural Registry readback and stable hosted L2 operation remain outstanding.",
+    "Five baseline Registry integration failures and the combined-suite source-record isolation failure remain open; none was weakened or silently skipped."
+  ],
+  "runbook": "docs/operations/distillation-sqlite-lifetime-repair.md"
+}
