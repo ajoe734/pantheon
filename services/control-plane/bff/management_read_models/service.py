@@ -1259,6 +1259,7 @@ def _project_operator_runtime_state_row(
     return {
         "runtime_id": runtime_id,
         "runtime_binding_id": runtime_binding_id,
+        **{key: binding[key] for key in ("strategy_id", "persona_id") if binding.get(key)},
         "deployment_stage": binding.get("deployment_stage") or binding.get("deployment_mode"),
         "status": binding.get("status"),
         "capital_pool_id": binding.get("capital_pool_id"),
@@ -1385,6 +1386,8 @@ def _build_trading_pulse_baseline_comparison(
     return {
         "runtimeId": runtime_id or None,
         "runtime_id": runtime_id or None,
+        **({"strategyId": row["strategy_id"], "strategy_id": row["strategy_id"]}
+           if row.get("strategy_id") else {}),
         "runtimeBindingId": row.get("runtime_binding_id"),
         "runtime_binding_id": row.get("runtime_binding_id"),
         "deploymentStage": row.get("deployment_stage"),

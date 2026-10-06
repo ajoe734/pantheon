@@ -1,0 +1,37 @@
+{
+  "schema_version": "pantheon.corrective-source-evidence.v1",
+  "task_id": "BFF-READ-WIRING-20261006",
+  "base_sha": "ddc431ba5624c307e798470d4dad2164f4430f00",
+  "scope": "Native runtime projector capture, RuntimePort metadata identities, monitoring source classification, additive trading-pulse strategy identity",
+  "author": "Codex",
+  "review_status": "pending independent Claude review; no approval claimed",
+  "validation": [
+    {
+      "command": "python -m pytest -q -o addopts='' services/control-plane/bff/tests/test_owner_read_wiring.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/tests/test_bff_main_composition.py",
+      "result": "60 passed"
+    },
+    {
+      "command": "same focused selection plus services/control-plane/bff/tests/test_read_surface_port_cutover.py",
+      "result": "79 passed, 1 failed",
+      "baseline_comparison": "The same Research experiment fixture failure reproduces on exact base: TestResearchKnowledgeSourcePortCutover::test_knowledge_and_research_lists. Deprecated injected experiment store is ignored by the Research owner. Not changed in this repair."
+    },
+    {
+      "command": "services/control-plane/bff/tests/test_persona_capital_runtime_ports.py with runtime board contracts",
+      "baseline_comparison": "Two existing empty-owner degraded-vs-ok assertions fail on base: TestPersonaFleetPort::test_empty_records_degraded and TestCapitalPoolPort::test_unavailable_and_degraded. No changes to those owners."
+    }
+  ],
+  "test_boundaries": [
+    "Fresh-process native main/router composition; only owner I/O replaced with in-memory dependencies",
+    "Distinct binding/runtime/strategy/persona identities through the real RuntimePort and read DTOs",
+    "Monitoring healthy-empty, nonempty, malformed, unavailable and unconfigured states",
+    "No auth, approval, paper/live or capital guard changes"
+  ],
+  "hosted_acceptance": "not run; no deployment or product-closure claim",
+  "remaining_obligations": [
+    "Independent exact-head review and required CI before merge",
+    "Paired frontend consumption of additive strategy identity",
+    "Telemetry owner wiring, scoped/windowed throughput and true rollback owner remain separate repairs",
+    "Monitoring classification still performs an owner read; request-local batch prefetch is not claimed",
+    "No monitor start, outbox replay, queue recovery, or runtime mutation in this change"
+  ]
+}

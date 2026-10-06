@@ -483,6 +483,18 @@ class ReadSurfacePorts:
             # The incident owner can be down while list_incidents() swallows
             # the outage and returns []; surface its real availability.
             return self.lifecycle_telemetry_governance.dataset_source("incidents")
+        if dataset == "paper_runtime_monitoring_sessions":
+            provider = self._paper_runtime_monitoring_sessions_provider
+            base_url = self._paper_fleet_reconciler_url or os.getenv(
+                "PANTHEON_PAPER_FLEET_RECONCILER_URL", ""
+            )
+            if provider is None and not str(base_url or "").strip():
+                return "missing"
+            try:
+                self.list_authoritative_paper_runtime_monitoring_sessions()
+                return "service"
+            except Exception:
+                return "unavailable"
         if dataset == "telemetry_summaries":
             try:
                 self.lifecycle_telemetry_governance.list_telemetry_summaries()

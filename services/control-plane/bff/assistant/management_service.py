@@ -2832,6 +2832,7 @@ def _project_operator_runtime_state_row_impl(
     return {
         "runtime_id": runtime_id,
         "runtime_binding_id": runtime_binding_id,
+        **{key: binding[key] for key in ("strategy_id", "persona_id") if binding.get(key)},
         "deployment_stage": binding.get("deployment_stage") or binding.get("deployment_mode"),
         "status": binding.get("status"),
         "capital_pool_id": binding.get("capital_pool_id"),
