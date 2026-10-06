@@ -7,7 +7,6 @@ import os
 import re
 import sys
 import tempfile
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -752,7 +751,7 @@ def test_confirm_command_by_token_contract_and_regressions() -> None:
         assert replay_resp.json()["data"] == valid_payload["data"]
 
 
-def test_command_confirmation_degraded_read_surface() -> None:
+def test_command_confirmation_degraded_read_surface(tmp_path) -> None:
     """Test POST /bff/command-confirmations projects staleness_warning when read surface is degraded."""
     from services.control_plane.bff.models import StalenessWarning
 
@@ -762,6 +761,7 @@ def test_command_confirmation_degraded_read_surface() -> None:
         message="Command submitted against stale read surface data. Verify target state via secondary control path before confirming action.",
     )
     router = create_command_adapters_router(
+        command_store=CommandStore(str(tmp_path / "degraded.jsonl")),
         check_read_surface_state=lambda: custom_warning,
         extract_identity=_test_extract_identity,
     )
@@ -800,6 +800,7 @@ def test_command_confirmation_degraded_read_surface() -> None:
 
     # 3. Fresh read surface returns no staleness_warning
     fresh_router = create_command_adapters_router(
+        command_store=CommandStore(str(tmp_path / "fresh.jsonl")),
         check_read_surface_state=lambda: None,
         extract_identity=_test_extract_identity,
     )
@@ -901,7 +902,6 @@ _ALIAS_PARAMS: Dict[str, Dict[str, Any]] = {
     "HumanGateRevoke": {"human_gate_item_id": "alias-target-1", "decision": "revoke", "source_type": "approval", "source_id": "alias-target-1"},
     "HumanGateExtendTtl": {"human_gate_item_id": "alias-target-1", "decision": "extend_ttl", "ttl_seconds": 3600},
     "EmergencyContainment": {"action": "freeze", "trigger": "forced_kill", "evidence_refs": ["ev-1"]},
-    "QuarterlyRankingRecommendationSubmit": {"quarter": "2026-Q4", "ranking_snapshot_id": "snapshot-alias-1"},
 }
 _ALIAS_TARGET_TYPES = {"HardRollback": ObjectType.RUNTIME, "ExecuteRollback": ObjectType.RUNTIME}
 
@@ -919,19 +919,6 @@ class _ApprovedDecisions:
     def get_runtime_binding_by_runtime_id(self, runtime_id: str):
         return {"runtime_id": runtime_id, "binding_id": "binding-1", "deployment_mode": "paper", "tenant_id": "tenant-alias"}
 
-    def get_ranking_snapshot(self, snapshot_id: str):
-        from services.control_plane.bff.pm12.service import _PM12_LEAGUE_FORMULA_VERSION, _stable_json_hash
-
-        content = {
-            "surface": "quarterly", "period": "2026-Q4", "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
-            "items": [{"persona_id": "persona-alias", "score": 90, "stage": "paper"}],
-        }
-        return {
-            **content, "content_digest": _stable_json_hash(content),
-            "snapshot_id": snapshot_id, "period": "2026-Q4",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-
     def __getattr__(self, name: str):
         if name.startswith("get_"):
             return lambda *args, **kwargs: None
@@ -943,8 +930,7 @@ def _alias_target(canonical: str) -> Dict[str, str]:
 
     entity_type = get_catalog_entry(canonical).entity_type
     target_type = _ALIAS_TARGET_TYPES.get(canonical) or next((o for o in ObjectType if o.value == entity_type), ObjectType.RUNTIME)
-    target_id = "pm12-2026-q4-persona-alias-promote_to_canary_candidate" if canonical == "QuarterlyRankingRecommendationSubmit" else "alias-target-1"
-    return {"type": target_type.value, "id": target_id}
+    return {"type": target_type.value, "id": "alias-target-1"}
 
 
 _ALIAS_RECORDS: List[Dict[str, Any]] = []
@@ -1011,17 +997,7 @@ def _submit_alias(wrapper: str, verb: str, canonical: str, *, wrapped: bool, tok
             )
             assert issued.status_code == 201, issued.text
             headers["X-Confirm-Token"] = "ct-alias-1"
-        rec = {
-            "recommendation_id": "pm12-2026-q4-persona-alias-promote_to_canary_candidate",
-            "ranking_snapshot_id": "snapshot-alias-1",
-            "persona_id": "persona-alias",
-            "action_id": "promote_to_canary_candidate",
-            "rationale": "Provider rationale.",
-            "evidence_ref_ids": [],
-        }
-        from unittest.mock import patch
-        with patch("services.control_plane.bff.pm12.evaluator_results.saved_recommendation", return_value=rec):
-            resp = client.post("/bff/v1/commands", headers=headers, json=body)
+        resp = client.post("/bff/v1/commands", headers=headers, json=body)
         _ALIAS_RECORDS[:] = [r for r in store._get_all_commands() if r.get("type") == canonical]
         stored = [
             {
@@ -1036,18 +1012,59 @@ def _submit_alias(wrapper: str, verb: str, canonical: str, *, wrapped: bool, tok
         return resp.status_code, _scrub(resp.json()), stored
 
 
-def _alias_cases():
+def _retired_alias_cases():
+    from services.control_plane.bff.command_adapters.contracts import _WRAPPER_VERB_ALIASES
+    from services.control_plane.bff.command_adapters.retired import RETIRED_COMMANDS
+
+    return [
+        pytest.param(wrapper, verb, canonical, id=f"{wrapper}-{verb}-retired")
+        for (wrapper, verb), canonical in sorted(_WRAPPER_VERB_ALIASES.items())
+        if canonical in RETIRED_COMMANDS
+    ]
+
+
+@pytest.mark.parametrize("wrapper,verb,canonical", _retired_alias_cases())
+def test_retired_aliases_match_direct_retirement_without_storage(tmp_path, wrapper, verb, canonical):
+    from services.control_plane.bff.command_adapters.retired import RETIRED_COMMANDS
+
+    store = CommandStore(str(tmp_path / "retired-aliases.jsonl"))
+    service = CommandAdapterService(command_store=store, extract_identity=_test_extract_identity)
+    app = FastAPI()
+    app.include_router(create_command_adapters_router(service=service))
+    client = TestClient(app)
+    target = {"type": "Runtime" if canonical in {"ApproveRollback", "RejectRollback"} else "Review", "id": "retired-target"}
+    headers = {**HEADERS, "Idempotency-Key": "retired-alias"}
+    direct = client.post("/bff/v1/commands", headers=headers, json={"command": canonical, "target": target})
+    wrapped = client.post("/bff/v1/commands", headers=headers, json={"command": wrapper, "action": verb, "target": target})
+    assert direct.status_code == wrapped.status_code == 410
+    assert direct.json() == wrapped.json()
+    error = direct.json()["detail"]["error"]
+    assert error["code"] == "ACTION_RETIRED"
+    assert error["details"]["replacement"] == RETIRED_COMMANDS[canonical]
+    assert store._get_all_commands() == []
+
+
+def _live_alias_rows():
+    from services.control_plane.bff.action_catalog import get_catalog_entry
     from services.control_plane.bff.command_adapters.contracts import _WRAPPER_VERB_ALIASES
 
-    canonicals = sorted(set(_WRAPPER_VERB_ALIASES.values()))
-    for (wrapper, verb), canonical in sorted(_WRAPPER_VERB_ALIASES.items()):
+    return sorted(
+        (wrapper, verb, canonical)
+        for (wrapper, verb), canonical in _WRAPPER_VERB_ALIASES.items()
+        if get_catalog_entry(canonical) is not None
+    )
+
+
+def _live_alias_cases():
+    canonicals = sorted({canonical for _wrapper, _verb, canonical in _live_alias_rows()})
+    for wrapper, verb, canonical in _live_alias_rows():
         other = next(c for c in canonicals if c != canonical)
         yield pytest.param(wrapper, verb, canonical, canonical, id=f"{wrapper}-{verb}-own-token")
         yield pytest.param(wrapper, verb, canonical, other, id=f"{wrapper}-{verb}-cross-token")
         yield pytest.param(wrapper, verb, canonical, None, id=f"{wrapper}-{verb}-no-token")
 
 
-@pytest.mark.parametrize("wrapper,verb,canonical,token_for", list(_alias_cases()))
+@pytest.mark.parametrize("wrapper,verb,canonical,token_for", list(_live_alias_cases()))
 def test_wrapped_alias_is_admitted_exactly_like_its_canonical_command(wrapper, verb, canonical, token_for) -> None:
     wrapped = _submit_alias(wrapper, verb, canonical, wrapped=True, token_for=token_for)
     direct = _submit_alias(wrapper, verb, canonical, wrapped=False, token_for=token_for)
@@ -1063,7 +1080,7 @@ def test_wrapped_alias_is_admitted_exactly_like_its_canonical_command(wrapper, v
         assert status == 428
 
 
-@pytest.mark.parametrize("wrapper,verb,canonical", sorted((w, v, c) for (w, v), c in __import__("services.control_plane.bff.command_adapters.contracts", fromlist=["x"])._WRAPPER_VERB_ALIASES.items()))
+@pytest.mark.parametrize("wrapper,verb,canonical", _live_alias_rows())
 def test_every_alias_has_an_accepted_path_stored_as_canonical(wrapper, verb, canonical) -> None:
     from unittest.mock import patch
 
@@ -1077,7 +1094,7 @@ def test_every_alias_has_an_accepted_path_stored_as_canonical(wrapper, verb, can
     assert [row["type"] for row in stored if row["request_hash"]] == [canonical]
 
 
-@pytest.mark.parametrize("wrapper,verb,canonical", sorted((w, v, c) for (w, v), c in __import__("services.control_plane.bff.command_adapters.contracts", fromlist=["x"])._WRAPPER_VERB_ALIASES.items()))
+@pytest.mark.parametrize("wrapper,verb,canonical", _live_alias_rows())
 @pytest.mark.parametrize("params", [None, [], ["invalid"], "invalid", 0, False])
 def test_malformed_params_rejected_identically_for_every_alias(wrapper, verb, canonical, params) -> None:
     wrapped = _submit_alias(wrapper, verb, canonical, wrapped=True, token_for=canonical, params=params)
@@ -1107,16 +1124,6 @@ def test_valid_action_and_alias_fallback_keep_canonical_admission(key, action) -
     assert wrapped == direct
     assert wrapped[0] == 202
     assert [row["type"] for row in wrapped[2]] == ["AlertAcknowledge"]
-
-
-@pytest.mark.parametrize("params,expected", [({}, 422), (_ALIAS_PARAMS["QuarterlyRankingRecommendationSubmit"], 202)])
-def test_ranking_adapter_existing_canonical_alias_parity(params, expected) -> None:
-    canonical = "QuarterlyRankingRecommendationSubmit"
-    wrapped = _submit_alias("RankingAction", canonical, canonical, wrapped=True, token_for=canonical, params=params)
-    direct = _submit_alias("RankingAction", canonical, canonical, wrapped=False, token_for=canonical, params=params)
-    assert wrapped == direct
-    assert wrapped[0] == expected
-    assert [row["type"] for row in wrapped[2]] == ([canonical] if expected == 202 else [])
 
 
 _DISPATCH_CASES = [
@@ -1261,7 +1268,8 @@ def test_assistant_admission_uses_injected_service_and_returns_stored_command_id
         app = FastAPI()
         app.include_router(captured["router"])
         resp = TestClient(app).post("/bff/assistant/tools/execute", json={
-            "action_id": "AuditExport", "entity_type": "AuditExport", "entity_id": "audit-test", "params": {}, "reason": "probe",
+            "action_id": "EscalateDiff", "entity_type": "EvolutionDecision", "entity_id": "plan-1",
+            "params": {"plan_id": "plan-1", "escalation_reason": "probe"}, "reason": "probe",
         })
         assert resp.status_code == 201, resp.text
         stored = [r["command_id"] for r in store._get_all_commands()]

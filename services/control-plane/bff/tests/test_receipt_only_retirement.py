@@ -100,6 +100,22 @@ def test_default_composed_retired_resource_has_no_receipt(default_app, method, p
     assert deps.command_store.get_command_by_idempotency_key("retired-resource", operator_id="admin-1") is None
 
 
+@pytest.mark.parametrize("method,path", [
+    ("POST", "/api/v1/deployment-plans"),
+    ("POST", "/bff/deployments"),
+])
+def test_deployment_create_routes_are_retired_without_receipt(default_app, method, path):
+    client, deps = default_app
+    response = client.request(method, path, json={"plan_id": "deployment-create-retired"}, headers={
+        "Authorization": "Bearer admin-1:admin", "Idempotency-Key": f"retired-{path}",
+    })
+    assert response.status_code == 410, response.text
+    error = response.json()["error"]
+    assert error["code"] == "ACTION_RETIRED"
+    assert error["details"]["replacement"] == RETIRED_COMMANDS["CreateDeployment"]
+    assert deps.command_store.get_command_by_idempotency_key(f"retired-{path}", operator_id="admin-1") is None
+
+
 def test_retired_values_are_not_command_types():
     from services.control_plane.bff.models import CommandType
     retired = set(RETIRED_COMMANDS) | {"RequestApprovalRevision"}
