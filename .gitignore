@@ -65,3 +65,5 @@ ai-status.json.bak.*
 
 # Real env files with secrets (env/*.env.example templates stay tracked)
 env/.env*
+*.egg-info/
+/uv.lock
