@@ -434,6 +434,7 @@ def run_controller_tick(
     state: ControllerState,
     store: ControllerStateStore,
     writer: Any,
+    queue: DistillationJobQueue | None = None,
 ) -> dict[str, Any]:
     state.record_tick_started()
     store.save(state)
@@ -463,8 +464,12 @@ def run_controller_tick(
         # 2. Transactionally admit source versions and process leased events.
         # A job is acknowledged only after Registry terminal readback.
         try:
+            if queue is None:
+                queue = DistillationJobQueue(
+                    config.job_queue_path, default_max_attempts=config.max_attempts,
+                )
             worker = make_distillation_worker(
-                queue_path=config.job_queue_path,
+                job_queue=queue,
                 seed_store_path=config.seed_store_path,
                 created_by="strategy-distillation-controller",
                 worker_id=state.controller_id,
@@ -489,10 +494,6 @@ def run_controller_tick(
             raise DistillationControllerError("reconcile_worker", f"Failed to run distillation catch-up: {exc}")
 
         # 3. Read durable outbox/inbox/DLQ actual state.
-        queue = DistillationJobQueue(
-            config.job_queue_path,
-            default_max_attempts=config.max_attempts,
-        )
         queue_metrics = queue.metrics()
         terminal_drafts = [
             {
@@ -663,13 +664,20 @@ def main() -> int:
     )
     
     writer = build_loop_writer(dsn=config.database_url, state=state)
+    # One queue per controller process, shared by admission, processing and
+    # readback. Corrupt storage fails startup closed; no automatic replacement.
+    queue = DistillationJobQueue(
+        config.job_queue_path, default_max_attempts=config.max_attempts,
+    )
     tick = 0
     last_tick_failed = False
     
     while True:
         tick += 1
         try:
-            result = run_controller_tick(config=config, state=state, store=store, writer=writer)
+            result = run_controller_tick(
+                config=config, state=state, store=store, writer=writer, queue=queue,
+            )
             last_tick_failed = False
             print(json.dumps({"tick": tick, **result}), flush=True)
         except Exception as exc:
