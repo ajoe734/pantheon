@@ -22,25 +22,21 @@ DEFAULT_STALE_THRESHOLD_SECONDS = 86_400
 SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS = 300
 
 
-def _fetch_source_ingest_json(
-    url: str,
-    token: str | None = None,
-    tenant_id: str | None = None,
-) -> Any:
+def _fetch_source_ingest_json(url: str) -> Any:
     cred = str(
-        token
-        or os.getenv("AGORA_PROJECTOR_SERVICE_JWT")
+        os.getenv("AGORA_PROJECTOR_SERVICE_JWT")
         or os.getenv("PANTHEON_AGORA_PROJECTOR_SERVICE_JWT")
         or ""
     ).strip()
     if not cred:
         raise RuntimeError("AGORA_PROJECTOR_SERVICE_JWT is required")
-    tenant = str(tenant_id or os.getenv("PANTHEON_TENANT_ID") or "").strip()
+    tenant = str(os.getenv("PANTHEON_TENANT_ID") or "").strip()
+    if not tenant:
+        raise RuntimeError("PANTHEON_TENANT_ID is required")
     headers = {
-        "Authorization": cred if cred.lower().startswith("bearer ") else f"Bearer {cred}"
+        "Authorization": cred if cred.lower().startswith("bearer ") else f"Bearer {cred}",
+        "X-Tenant-Id": tenant,
     }
-    if tenant:
-        headers["X-Tenant-Id"] = tenant
     try:
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=30) as response:
@@ -53,32 +49,16 @@ def _fetch_source_ingest_json(
         raise
 
 
-def _get_source_records(
-    base_url: str,
-    token: str | None = None,
-    tenant_id: str | None = None,
-) -> list[dict[str, Any]]:
-    payload = _fetch_source_ingest_json(
-        f"{base_url.rstrip('/')}/api/source-ingest/source-records",
-        token=token,
-        tenant_id=tenant_id,
-    )
+def _get_source_records(base_url: str) -> list[dict[str, Any]]:
+    payload = _fetch_source_ingest_json(f"{base_url.rstrip('/')}/api/source-ingest/source-records")
     records = payload.get("source_records") if isinstance(payload, dict) else None
     if not isinstance(records, list):
         raise ValueError("source-ingest response has no source_records list")
     return [record for record in records if isinstance(record, dict)]
 
 
-def _get_connector_readback(
-    base_url: str,
-    token: str | None = None,
-    tenant_id: str | None = None,
-) -> dict[str, Any]:
-    payload = _fetch_source_ingest_json(
-        f"{base_url.rstrip('/')}/api/source-ingest/controller/readback",
-        token=token,
-        tenant_id=tenant_id,
-    )
+def _get_connector_readback(base_url: str) -> dict[str, Any]:
+    payload = _fetch_source_ingest_json(f"{base_url.rstrip('/')}/api/source-ingest/controller/readback")
     connectors = payload.get("connectors") if isinstance(payload, dict) else None
     if not isinstance(connectors, list):
         raise ValueError("source-ingest readback has no connectors list")
@@ -88,12 +68,8 @@ def _get_connector_readback(
     raise ValueError(f"source-ingest readback has no connector {CONNECTOR_ID}")
 
 
-def _get_connector_freshness(
-    base_url: str,
-    token: str | None = None,
-    tenant_id: str | None = None,
-) -> dict[str, Any]:
-    connector = _get_connector_readback(base_url, token=token, tenant_id=tenant_id)
+def _get_connector_freshness(base_url: str) -> dict[str, Any]:
+    connector = _get_connector_readback(base_url)
     freshness = connector.get("freshness")
     if not isinstance(freshness, dict):
         raise ValueError(f"source-ingest readback for {CONNECTOR_ID} has no freshness object")
@@ -228,15 +204,27 @@ def _freshness_metadata(
                         "detail": str(exc),
                     }
 
-    stale = (
-        connector_freshness.get("status") == "stale"
-        or connector_freshness.get("source_timestamp_status") in {"missing", "invalid", "future"}
-        or source_timestamp_status != "valid"
-        or (tw_stale if tw_stale is not None else (age_seconds is None or age_seconds > threshold))
-        or lineage_invalid
-        or run_mismatch
-        or source_mismatch
-    )
+    if tw_stale is not None:
+        stale = (
+            connector_freshness.get("status") == "stale"
+            or connector_freshness.get("source_timestamp_status") in {"missing", "invalid", "future"}
+            or source_timestamp_status != "valid"
+            or tw_stale
+            or lineage_invalid
+            or run_mismatch
+            or source_mismatch
+        )
+    else:
+        stale = (
+            connector_freshness.get("status") == "stale"
+            or connector_freshness.get("source_timestamp_status") in {"missing", "invalid", "future"}
+            or source_timestamp_status != "valid"
+            or age_seconds is None
+            or age_seconds > threshold
+            or lineage_invalid
+            or run_mismatch
+            or source_mismatch
+        )
     return {
         "schemaVersion": "agora_source_freshness.v1",
         "status": "stale" if stale else "fresh",
@@ -273,11 +261,30 @@ def project(
     now: datetime | None = None,
     stale_threshold_seconds: int = DEFAULT_STALE_THRESHOLD_SECONDS,
 ) -> dict[str, dict[str, dict[str, Any]]]:
-    readback = connector_readback if isinstance(connector_readback, dict) else {}
-    freshness_readback = dict(readback.get("freshness") or connector_freshness or {})
-    latest_source_record = readback.get("latest_source_record") if isinstance(readback.get("latest_source_record"), dict) else {}
-    latest_receipt = freshness_readback.get("latest_receipt") or {}
-    latest_run = freshness_readback.get("latest_run") or {}
+    if connector_readback is not None and isinstance(connector_readback, dict):
+        freshness_readback = dict(connector_readback.get("freshness") or {})
+        latest_source_record = (
+            connector_readback.get("latest_source_record")
+            if isinstance(connector_readback.get("latest_source_record"), dict)
+            else {}
+        )
+    elif connector_freshness is not None and isinstance(connector_freshness, dict):
+        freshness_readback = dict(connector_freshness)
+        latest_source_record = {}
+    else:
+        freshness_readback = {}
+        latest_source_record = {}
+
+    latest_receipt = (
+        freshness_readback.get("latest_receipt")
+        if isinstance(freshness_readback.get("latest_receipt"), dict)
+        else {}
+    )
+    latest_run = (
+        freshness_readback.get("latest_run")
+        if isinstance(freshness_readback.get("latest_run"), dict)
+        else {}
+    )
     accepted_run_id = str(
         latest_receipt.get("ingest_run_id")
         or latest_run.get("ingest_run_id")
@@ -443,12 +450,10 @@ def write_projection(stores: dict[str, dict[str, dict[str, Any]]], out_dir: str 
 def main() -> int:
     base_url = os.environ.get("SOURCE_INGEST_URL", "http://source-ingest:8097")
     out_dir = os.environ.get("OUT_DIR", "/data/bff")
-    token = os.getenv("AGORA_PROJECTOR_SERVICE_JWT") or os.getenv("PANTHEON_AGORA_PROJECTOR_SERVICE_JWT")
-    tenant_id = os.getenv("PANTHEON_TENANT_ID")
-    connector_readback = _get_connector_readback(base_url, token=token, tenant_id=tenant_id)
+    connector_readback = _get_connector_readback(base_url)
     freshness = connector_readback.get("freshness") if isinstance(connector_readback.get("freshness"), dict) else {}
     stores = project(
-        _get_source_records(base_url, token=token, tenant_id=tenant_id),
+        _get_source_records(base_url),
         connector_freshness=freshness,
         connector_readback=connector_readback,
         stale_threshold_seconds=max(

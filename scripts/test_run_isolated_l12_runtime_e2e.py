@@ -281,10 +281,12 @@ def test_stimulus_gate_projector_credential_passed_only_to_projector_and_redacte
     }
     projector_env = dict(compose_env)
     projector_env["AGORA_PROJECTOR_SERVICE_JWT"] = token
+    projector_env["PANTHEON_TENANT_ID"] = "tenant-dev"
 
     # Token must only be in projector_env, not in compose_env
     assert "AGORA_PROJECTOR_SERVICE_JWT" not in compose_env
     assert projector_env["AGORA_PROJECTOR_SERVICE_JWT"] == token
+    assert projector_env["PANTHEON_TENANT_ID"] == "tenant-dev"
 
     # Ensure token redaction works for diagnostics
     diag_file = tmp_path / "diagnostics" / f"{harness.STIMULUS_PROJECTOR_SERVICE}.txt"

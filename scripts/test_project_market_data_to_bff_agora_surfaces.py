@@ -799,6 +799,15 @@ def test_projector_missing_credential_fails_closed(monkeypatch: pytest.MonkeyPat
         _get_connector_readback("http://127.0.0.1:9999")
 
 
+def test_projector_missing_tenant_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGORA_PROJECTOR_SERVICE_JWT", "dummy-projector-token")
+    monkeypatch.delenv("PANTHEON_TENANT_ID", raising=False)
+    with pytest.raises(RuntimeError, match="PANTHEON_TENANT_ID is required"):
+        _get_source_records("http://127.0.0.1:9999")
+    with pytest.raises(RuntimeError, match="PANTHEON_TENANT_ID is required"):
+        _get_connector_readback("http://127.0.0.1:9999")
+
+
 def test_projector_wrong_role_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     secret = "secret-projector-wrong-role"
     monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", secret)

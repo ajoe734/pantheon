@@ -5,19 +5,19 @@
   "summary": "Authenticate Agora market projector to strict source-ingest reads using env-provisioned runtime service JWT (AGORA_PROJECTOR_SERVICE_JWT / PANTHEON_AGORA_PROJECTOR_SERVICE_JWT) with role source_ingest_reader and configured tenant.",
   "acceptance_verification": {
     "ac1_service_jwt_authenticated_reads": "passed: projector authenticates connector readback and source records with runtime service JWT passing services/runtime_auth_inbound.py strict validation (role source_ingest_reader, tenant-scoped)",
-    "ac2_fail_closed_error_naming_credential": "passed: missing or rejected (401/403) credential fails closed with RuntimeError explicitly naming AGORA_PROJECTOR_SERVICE_JWT; unauthenticated read is never performed and source guard is never weakened",
-    "ac3_compose_wiring_no_secret_default": "passed: docker-compose.yml wires AGORA_PROJECTOR_SERVICE_JWT and PANTHEON_TENANT_ID with no secret default; verified by services/source_ingestion/test_compose_activation.py",
-    "ac4_isolated_l12_harness_provisioning": "passed: scripts/run_isolated_l12_runtime_e2e.py provisions projector JWT signed with isolated run secret and passes only to projector run via env; tokens are redacted from diagnostics and never written to evidence",
-    "ac5_test_coverage": "passed: tests cover authorized read, missing credential, wrong role, and foreign tenant in scripts/test_project_market_data_to_bff_agora_surfaces.py and scripts/test_run_isolated_l12_runtime_e2e.py",
+    "ac2_fail_closed_error_naming_credential": "passed: missing or rejected (401/403) credential fails closed with RuntimeError explicitly naming AGORA_PROJECTOR_SERVICE_JWT, and missing tenant fails closed with RuntimeError explicitly naming PANTHEON_TENANT_ID; unauthenticated read is never performed and source guard is never weakened",
+    "ac3_compose_wiring_no_secret_default": "passed: docker-compose.yml wires AGORA_PROJECTOR_SERVICE_JWT and PANTHEON_TENANT_ID with no secret default and no silent tenant default; verified by services/source_ingestion/test_compose_activation.py",
+    "ac4_isolated_l12_harness_provisioning": "passed: scripts/run_isolated_l12_runtime_e2e.py provisions projector JWT signed with isolated run secret, passes tenant explicitly to projector run and token minting, and passes only to projector run via env; tokens are redacted from diagnostics and never written to evidence",
+    "ac5_test_coverage_and_isolated_run": "passed: tests cover authorized read, missing credential, missing tenant, wrong role, and foreign tenant in scripts/test_project_market_data_to_bff_agora_surfaces.py and scripts/test_run_isolated_l12_runtime_e2e.py (42 tests pass). Live isolated stack projector one-shot against seeded data is recorded as pending Human/Ops execution against exact PR head outside sandbox due to worker sandbox docker rm constraint; Human/Ops will post exit code and redacted output on PR #6204.",
     "ac6_hosted_dev_follow_up": "recorded: hosted dev needs AGORA_PROJECTOR_SERVICE_JWT provisioned at deploy time as a hosted follow-up; no hosted or VM action taken",
-    "ac7_net_prod_change_budget": "passed: net production change <= 60 readable lines (54 net lines across docker-compose.yml, scripts/project_market_data_to_bff_agora_surfaces.py, scripts/run_isolated_l12_runtime_e2e.py)"
+    "ac7_net_prod_change_budget": "passed: net production change <= 60 readable lines (60 net lines across docker-compose.yml, scripts/project_market_data_to_bff_agora_surfaces.py, scripts/run_isolated_l12_runtime_e2e.py; no out-of-scope refactor, no compressed code)"
   },
   "local_verification": {
     "commands": [
-      ".venv-pantheon/bin/python3 -m pytest scripts/test_project_market_data_to_bff_agora_surfaces.py services/source_ingestion/test_compose_activation.py scripts/test_run_isolated_l12_runtime_e2e.py",
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest scripts/test_project_market_data_to_bff_agora_surfaces.py services/source_ingestion/test_compose_activation.py scripts/test_run_isolated_l12_runtime_e2e.py",
       "python3 $PANTHEON_COMMAND_ROOT/scripts/git/diff_budget.py --base origin/dev --budget 60 --change-class corrective"
     ],
-    "result": "passed (41 passed)"
+    "result": "passed (42 passed)"
   },
   "hosted_track": {
     "status": "external_wait",

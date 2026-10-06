@@ -215,7 +215,7 @@ def _post_json(url: str, body: Mapping[str, Any], headers: Mapping[str, str] | N
 def _mint_projector_service_jwt(
     secret: str,
     *,
-    tenant_id: str = "default",
+    tenant_id: str,
     issuer: str | None = None,
     audience: str | None = None,
 ) -> str:
@@ -1022,15 +1022,20 @@ def main(argv: list[str] | None = None) -> int:
                     f"{' '.join(projector_command)}"
                 )
                 projector_secret = compose_env.get("PANTHEON_RUNTIME_JWT_SECRET") or compose_env.get("PANTHEON_BFF_JWT_SECRET") or ""
+                projector_tenant = compose_env.get("PANTHEON_TENANT_ID") or compose_env.get("PANTHEON_BFF_TENANT_ID") or "default"
                 projector_token = _mint_projector_service_jwt(
                     projector_secret,
-                    tenant_id=compose_env.get("PANTHEON_TENANT_ID") or "default",
+                    tenant_id=projector_tenant,
                     issuer=compose_env.get("PANTHEON_RUNTIME_JWT_ISSUER") or compose_env.get("PANTHEON_BFF_JWT_ISSUER"),
                     audience=compose_env.get("PANTHEON_RUNTIME_JWT_AUDIENCE") or compose_env.get("PANTHEON_BFF_JWT_AUDIENCE"),
                 )
                 projector_process = subprocess.run(
                     projector_command,
-                    env={**compose_env, "AGORA_PROJECTOR_SERVICE_JWT": projector_token},
+                    env={
+                        **compose_env,
+                        "AGORA_PROJECTOR_SERVICE_JWT": projector_token,
+                        "PANTHEON_TENANT_ID": projector_tenant,
+                    },
                     capture_output=True,
                     text=True,
                     check=False,
@@ -1038,19 +1043,15 @@ def main(argv: list[str] | None = None) -> int:
                 diagnostics_dir = args.evidence_output.resolve().parent / "diagnostics"
                 diagnostics_dir.mkdir(parents=True, exist_ok=True)
                 raw_out = f"{projector_process.stdout}\n{projector_process.stderr}"
-                if projector_token:
-                    raw_out = raw_out.replace(projector_token, "[REDACTED]")
+                sanitized_out = raw_out.replace(projector_token, "[REDACTED]") if projector_token else raw_out
                 (diagnostics_dir / f"{STIMULUS_PROJECTOR_SERVICE}.txt").write_text(
-                    f"# exit={projector_process.returncode}\n{raw_out}",
+                    f"# exit={projector_process.returncode}\n{sanitized_out}",
                     encoding="utf-8",
                 )
                 if projector_process.returncode != 0:
-                    err_sample = (projector_process.stderr or projector_process.stdout)[-2000:]
-                    if projector_token:
-                        err_sample = err_sample.replace(projector_token, "[REDACTED]")
                     raise RuntimeError(
                         f"{STIMULUS_PROJECTOR_SERVICE} exited "
-                        f"{projector_process.returncode}: {err_sample}"
+                        f"{projector_process.returncode}: {sanitized_out[-2000:]}"
                     )
 
         print("[*] Verifying service readiness across HTTP boundaries...")
