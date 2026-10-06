@@ -100,6 +100,8 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert projector["depends_on"]["source-ingest-scheduler"]["condition"] == "service_healthy"
     assert projector_env["SOURCE_INGEST_URL"] == "http://source-ingest:8097"
     assert projector_env["AGORA_MARKET_STALE_THRESHOLD_SECONDS"] == "${AGORA_MARKET_STALE_THRESHOLD_SECONDS:-86400}"
+    assert projector_env["AGORA_PROJECTOR_SERVICE_JWT"] == "${AGORA_PROJECTOR_SERVICE_JWT:-${PANTHEON_AGORA_PROJECTOR_SERVICE_JWT:-}}"
+    assert projector_env["PANTHEON_TENANT_ID"] == "${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}"
     assert "bff-data:/data/bff" in projector["volumes"]
 
     distillation = services["strategy-distillation-worker"]

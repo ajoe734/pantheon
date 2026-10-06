@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -130,6 +131,7 @@ def test_busy_shared_lease_returns_before_compose_work(
             raise harness.DevEnvironmentLeaseBusy("held by deployment")
 
     monkeypatch.setattr(harness, "_DevEnvironmentLeaseSession", BusySession)
+    monkeypatch.delenv(harness.WORKER_TASK_ID_ENV, raising=False)
     assert harness.main(["--provision-services"]) == 75
 
 
@@ -246,3 +248,52 @@ def test_projection_bootstrap_fails_closed(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(harness.subprocess, "run", fake_run)
     with pytest.raises(RuntimeError, match="projection bootstrap failed"):
         harness._bootstrap_trade_journey_projection("proj", ["a.yml"], {})
+
+
+def test_mint_projector_service_jwt_has_required_role_and_claims() -> None:
+    secret = "test-isolated-secret-48"
+    token = harness._mint_projector_service_jwt(
+        secret,
+        tenant_id="tenant-isolated",
+        issuer="pantheon-l12-isolated-e2e",
+        audience="pantheon-operator-bff",
+    )
+    import base64
+    payload_b64 = token.split(".")[1]
+    payload_b64 += "=" * ((4 - len(payload_b64) % 4) % 4)
+    claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+    assert claims["roles"] == ["source_ingest_reader"]
+    assert claims["tenant_id"] == "tenant-isolated"
+    assert claims["iss"] == "pantheon-l12-isolated-e2e"
+    assert claims["aud"] == "pantheon-operator-bff"
+    assert claims["sub"] == "agora-market-projector"
+
+
+def test_stimulus_gate_projector_credential_passed_only_to_projector_and_redacted(
+    tmp_path: Path,
+) -> None:
+    secret = "secret-isolated-jwt-token"
+    token = harness._mint_projector_service_jwt(secret, tenant_id="tenant-dev")
+
+    compose_env = {
+        "PANTHEON_RUNTIME_JWT_SECRET": secret,
+        "PANTHEON_TENANT_ID": "tenant-dev",
+    }
+    projector_env = dict(compose_env)
+    projector_env["AGORA_PROJECTOR_SERVICE_JWT"] = token
+
+    # Token must only be in projector_env, not in compose_env
+    assert "AGORA_PROJECTOR_SERVICE_JWT" not in compose_env
+    assert projector_env["AGORA_PROJECTOR_SERVICE_JWT"] == token
+
+    # Ensure token redaction works for diagnostics
+    diag_file = tmp_path / "diagnostics" / f"{harness.STIMULUS_PROJECTOR_SERVICE}.txt"
+    diag_file.parent.mkdir(parents=True)
+    raw_output = f"# exit=0\nprojected with {token}\n"
+    sanitized = raw_output.replace(token, "[REDACTED]")
+    diag_file.write_text(sanitized, encoding="utf-8")
+
+    content = diag_file.read_text(encoding="utf-8")
+    assert token not in content
+    assert "[REDACTED]" in content
+
