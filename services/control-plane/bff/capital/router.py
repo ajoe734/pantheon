@@ -273,16 +273,13 @@ def create_capital_router(
 
     def _status(dataset: str, snapshot_at: Optional[str] = None, **kwargs: Any) -> Dict[str, Any]:
         st = resolved_get_read_store()
-        fn = getattr(st, "dataset_surface_status", None)
-        if fn is not None and type(st).__name__ != "ReadSurfacePorts":
-            return fn(dataset, snapshot_at=snapshot_at or utc_now(), **kwargs)
         if hasattr(st, "dataset_source") and callable(st.dataset_source):
             src = st.dataset_source(dataset)
             if src in ("missing", "unavailable"):
                 return {"status": "unavailable", "source": src, "snapshot_at": snapshot_at or utc_now(), "message": f"{dataset} source unavailable"}
             if src:
                 return {"status": "ok", "source": src, "snapshot_at": snapshot_at or utc_now()}
-        fn = fn or dataset_surface_status
+        fn = getattr(st, "dataset_surface_status", None) or dataset_surface_status
         return fn(dataset, snapshot_at=snapshot_at or utc_now(), **kwargs)
 
     def _raise_if_unavailable(surface: Dict[str, Any], label: str) -> None:
