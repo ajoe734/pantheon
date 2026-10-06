@@ -219,3 +219,99 @@ def test_malformed_nested_episode_is_dependency_error(owners, monkeypatch, bad):
     assert client.get(PATH + "/trade-journal", headers=headers()).status_code == 503
     monkeypatch.setattr(trade_journal, "_http_call", lambda *a, **kw: (200, row))
     assert client.get(PATH + "/trade-journal/e0", headers=headers()).status_code == 503
+
+
+def test_pattern_review_producer_end_to_end_reads_through_mounted_bff(monkeypatch, tmp_path):
+    """Real producer entry -> mounted Persona owner -> real telemetry projection -> default BFF route."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "persona-evaluator-agent"))
+    import persona_evaluator_agent as agent
+    from services.persona.trade_pattern_review import telemetry_episode_lister
+    from services.telemetry import main as telemetry
+
+    for prefix in ("PANTHEON_BFF", "PANTHEON_RUNTIME", "PANTHEON_TELEMETRY", "PERSONA"):
+        monkeypatch.setenv(prefix + "_JWT_SECRET", SECRET)
+        monkeypatch.setenv(prefix + "_JWT_ISSUER", "")
+        monkeypatch.setenv(prefix + "_JWT_AUDIENCE", "")
+        monkeypatch.setenv(prefix + "_AUTH_MODE", "strict")
+    monkeypatch.delenv("PANTHEON_BFF_AUTH_STUB", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_DATA_DIR", str(tmp_path / "bff"))
+    monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", "http://test-telemetry")
+    monkeypatch.setenv("PERSONA_URL", "http://test-persona")
+    monkeypatch.setenv("PANTHEON_PERSONA_SERVICE_TOKEN", "persona-svc-token")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "telemetry-svc-token")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TENANTS", "alpha")
+
+    store = TradeEpisodeProjectionStore(projections_path=tmp_path / "episodes.json", events_path=tmp_path / "events.json")
+    sequence = 0
+    for episode, persona_id, tenant in (("e0", "p1", "alpha"), ("e1", "p1", "alpha"), ("e2", "p1", "beta"), ("e3", "p2", "alpha")):
+        for event_type in ("opened", "closed"):
+            sequence += 1
+            store.project_event({
+                "event_id": f"event-{sequence}", "event_type": f"trade_episode.{event_type}", "schema_version": "1.0",
+                "trade_episode_id": episode, "persona_id": persona_id, "tenant_id": tenant, "environment": "paper",
+                "occurred_at": f"2026-10-05T00:00:{sequence:02d}Z", "sequence_number": sequence,
+                "payload": {"instrument_id": "SPY", "requested_quantity": 4} if event_type == "opened" else {"realized_pnl": 5.0},
+            })
+    monkeypatch.setattr(telemetry, "_get_service", lambda: SimpleNamespace(
+        list_trade_episode_projections=store.list, get_trade_episode_projection=store.get,
+    ))
+    telemetry_client = telemetry.app.test_client()
+
+    class Provider:
+        name, model, calls = "stand-in", "stand-in-v1", 0
+
+        def reflect(self, *, facts, trigger):
+            Provider.calls += 1
+            assert trigger == "scheduled_pattern" and [e["trade_episode_id"] for e in facts["episodes"]] == ["e0", "e1"]
+            return {"attribution": "process", "mistakes": ["late exits"], "counterfactuals": [], "lesson_candidates": []}
+
+    def telemetry_transport(req, timeout=10):
+        response = telemetry_client.get(req.full_url.removeprefix("http://test-telemetry"), headers=dict(req.header_items()))
+        assert response.status_code == 200, response.data
+        return io.BytesIO(response.data)
+
+    persona = PersistentPersonaOwner.from_json_path(tmp_path / "personas.json")
+    for persona_id in ("p1", "p2"):
+        persona.create(CreatePersonaRequest(actor_id="fixture", persona_id=persona_id, name=persona_id, mandate="Test only", tenant_id="alpha"))
+    persona_client = TestClient(create_app(
+        persona, reflection_provider=Provider(),
+        pattern_episode_lister=telemetry_episode_lister("http://test-telemetry", "telemetry-svc-token", telemetry_transport),
+    ))
+
+    def producer_fetch(url, data=None, headers=None, timeout=20):
+        path = url.removeprefix("http://test-persona")
+        response = persona_client.post(path, json=data, headers=headers) if data is not None else persona_client.get(path, headers=headers)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def run():
+        return agent.pattern_review_once(persona_url="http://test-persona", token="persona-svc-token", tenant="alpha", fetch=producer_fetch)
+
+    def bff_transport(req, timeout=5):
+        response = persona_client.get(req.full_url.removeprefix("http://test-persona"), headers=dict(req.header_items()))
+        if response.status_code >= 400:
+            raise HTTPError(req.full_url, response.status_code, "test owner rejection", {}, io.BytesIO(response.content))
+        result = io.BytesIO(response.content)
+        result.status = response.status_code
+        return result
+
+    monkeypatch.setattr(trade_journal.urllib_request, "urlopen", bff_transport)
+    from services.control_plane.bff import main
+    bff = TestClient(main.app)
+    assert bff.get(PATH + "/trade-patterns", headers=headers()).json()["meta"]["coverage_state"] == "empty"
+
+    first = run()
+    assert first == {"status": "ok", "reviewed": 1, "unchanged": 0, "no_op": 1, "failed": 0}  # p2 has one closed episode only
+    second = run()
+    assert second == {"status": "ok", "reviewed": 0, "unchanged": 1, "no_op": 1, "failed": 0}
+    assert Provider.calls == 1
+
+    patterns = bff.get(PATH + "/trade-patterns", headers=headers())
+    assert patterns.status_code == 200, patterns.text
+    body = patterns.json()
+    assert body["meta"]["coverage_state"] == "complete"
+    assert [row["trigger"] for row in body["data"]] == ["scheduled_pattern"]
+    assert body["data"][0]["mistakes"] == ["late exits"]
+    assert bff.get(PATH + "/trade-patterns", headers=headers("beta")).status_code == 403
