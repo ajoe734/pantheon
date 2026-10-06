@@ -85,6 +85,17 @@ def test_third_episode_does_not_rereview_the_pair_or_overlap(stack):
     assert covered == [{"ep-1", "ep-2"}, {"ep-3", "ep-4"}] and stack["provider"].calls == 2
 
 
+def test_write_rejects_overlap_when_request_read_stale_existing_rows(stack, monkeypatch):
+    stack["client"].post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE)
+    stack["rows"].append(_episode("ep-3"))
+    import services.persona.write_owner as write_owner
+    real = write_owner.review_pattern
+    monkeypatch.setattr(write_owner, "review_pattern", lambda **kw: real(**{**kw, "existing": []}))
+    result = stack["client"].post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE).json()["data"]
+    assert result["status"] == "unchanged" and result["reflection_id"] is None
+    assert [set(r["covered_episode_ids"]) for r in _stored(stack)] == [{"ep-1", "ep-2"}]
+
+
 def test_history_larger_than_cap_is_reviewed_in_bounded_batches(stack, monkeypatch):
     monkeypatch.setattr("services.persona.trade_pattern_review.MAX_REVIEW_EPISODES", 3)
     stack["rows"] = [_episode(f"ep-{i}", opened_at=f"2026-01-0{i}") for i in range(1, 8)]

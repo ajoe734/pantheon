@@ -2063,7 +2063,9 @@ def create_app(
         identity, snapshot_hash = artifact["trade_episode_id"], artifact["facts_snapshot_hash"]
 
         def _not_yet_persisted(cur: PersonaBody) -> bool:
-            return not any(r.get("trade_episode_id") == identity and r.get("facts_snapshot_hash") == snapshot_hash for r in (cur.metadata or {}).get("trade_reflections", []))
+            rows = (cur.metadata or {}).get("trade_reflections", [])
+            covered = {e for r in rows if r.get("trigger") == "scheduled_pattern" for e in r.get("covered_episode_ids") or ()}
+            return not covered.intersection(artifact.get("covered_episode_ids") or ()) and not any(r.get("trade_episode_id") == identity and r.get("facts_snapshot_hash") == snapshot_hash for r in rows)
 
         for _ in range(5):
             try:
