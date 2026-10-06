@@ -1,0 +1,18 @@
+{
+  "task_id": "OPS-PROBE-JSONB-CLOSEOUT-20261006",
+  "subject_task_id": "LOOP-PROD-TEL-002-PROBE-JSONB-20261006",
+  "scope": "Historical merged-review evidence only; reconciliation pending",
+  "historical_review": {"owner": "PiAstra", "reviewer": "Antigravity", "generation": 3, "status": "review_approved", "at": "2026-10-06T02:46:15Z", "activity_event_id": "ai-status-event-43a6b334edc024e792390ea9803c031cf0bd4ff7bd60a48ba0b4d17235a03bd1"},
+  "journal": {"binding": "PANTHEON_TASK_STATE_EVENT_LOG", "file": "task-state-events-v2.jsonl", "sequence_event_id": {
+    "31230": "task-state-4341d67161652d14225b8dea351c3d777c30be3335f02cd76a9ae28273f47f3d",
+    "31285": "task-state-e71ed48f43247232417f9435e29993330f84ada2a5c4ea3f24c4f6b9bf91b1c8",
+    "31321": "task-state-3b2c0e3571177f47e8aff59aa80c454984d2366b5e7718025370468cf44bbf76",
+    "31328": "task-state-c12117cb550b82d91c61cf30bb7e6419dc3fd701276edafe2f852af594deabe9",
+    "31329": "task-state-33c8bc5ca9e7133ac3903092ea5981bc1470031b317edbc0e3eb90df4e0da333"
+  }},
+  "delivery": {"repository": "ajoe734/pantheon", "pr": 6176, "head": "3a69da42b4d1d40cc41b27985f931e0c5f382619", "merge": "218a55e7a3ce049e9c19aeb0227afc99219ddab1", "manifest_blob": "0e5140347ad742c7aa955a6c0300bdc6b5adad9b"},
+  "review_evidence": "docs/deployment/evidence/LOOP-PROD-TEL-002-PROBE-JSONB-20261006/merged-review.md",
+  "validation": ["task-state journal read for sequences 31230, 31285, 31287, 31301, 31321, 31328, 31329", "gh pr view 6176 --repo ajoe734/pantheon", "git log of head commit trailer and author time"],
+  "limits": {"new_review_attestation": false, "root_reconciled": false, "production_net_lines": 0},
+  "next": "Independent evidence review and dev merge; runtime promotion; Human/Ops reconcile_merged_done"
+}
