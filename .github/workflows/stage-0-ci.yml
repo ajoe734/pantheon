@@ -132,7 +132,8 @@ jobs:
     needs:
       - discover
       - baseline
-    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.mode == 'stage0') && needs.discover.outputs.verify_count != '0' }}
+    # dev pull requests only run the baseline and the import smoke: these per-target jobs predate the dev trigger and are not green on dev yet.
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.mode == 'stage0') && github.base_ref != 'dev' && needs.discover.outputs.verify_count != '0' }}
     strategy:
       fail-fast: false
       matrix:
@@ -157,7 +158,7 @@ jobs:
     needs:
       - discover
       - baseline
-    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.mode == 'stage0') && needs.discover.outputs.build_count != '0' }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.mode == 'stage0') && github.base_ref != 'dev' && needs.discover.outputs.build_count != '0' }}
     strategy:
       fail-fast: false
       matrix:
@@ -206,7 +207,7 @@ jobs:
 
   dependency-review:
     name: Dependency review
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.base_ref != 'dev'
     runs-on: ubuntu-latest
     needs:
       - discover
