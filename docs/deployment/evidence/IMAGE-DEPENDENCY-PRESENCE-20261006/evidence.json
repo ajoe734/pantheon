@@ -82,10 +82,10 @@
   "image_import_smoke": {
     "how": "python3 scripts/ci_stage0.py import-smoke --image-id <id>: docker build, then docker run --entrypoint python with the compose environment (and the compose postgres service for images that open stores at import) importing the effective ENTRYPOINT+CMD or compose command; uvicorn app attributes are checked, scripts run under runpy with a non-__main__ name so dataclasses resolve, shell commands get bash -n.",
     "triggers": "pull_request to dev (images whose Dockerfile, named lock/requirements, Python source, compose file, .dockerignore or compose-command script changed), schedule 17 3 * * *, workflow_dispatch (all images), and the promote-head dispatch (all images); docker-compose.control.yml images (feedback) are included",
-    "full_run": "https://github.com/ajoe734/pantheon/actions/runs/37455665861",
-    "full_run_head": "b1eaa1445efde137272fc58afbadb8b3ee07ebac",
-    "full_run_import_jobs": "41 of 41 succeeded; 64 of 64 services passed",
-    "pull_request_run": "https://github.com/ajoe734/pantheon/actions/runs/37455671830 (38 selected images succeeded; Branch CI Gate success on the same head)",
+    "full_run": "https://github.com/ajoe734/pantheon/actions/runs/37466874285",
+    "full_run_head": "23115d41187e868dd954ba7a9c2c8d4b675269a9",
+    "full_run_import_jobs": "workflow_dispatch full sweep: all 64 successful jobs include every Import smoke image job; the 5 failures are the pre-existing per-target jobs below, none is an import smoke job",
+    "pull_request_run": "https://github.com/ajoe734/pantheon/actions/runs/37465816762 (pull_request to dev, same head: 42 jobs success, 6 skipped, 0 failed; baseline + selected import smoke jobs, per-target verify/build skipped by design)",
     "services": {
       "agora-interaction-worker": {
         "image": "services-control-plane-bff-Dockerfile",
@@ -343,12 +343,11 @@
         "image": "services-channels-web-Dockerfile",
         "result": "passed"
       }
-    },
-    "services_results_note": "services below are the results recorded at full_run_head; Stage 0 must be re-run on the head that carries this change (push/PR run, then workflow_dispatch for the full sweep) and its run links recorded in the handoff."
+    }
   },
   "stage0_zero_job_runs": {
     "finding": "The 99 earlier zero-job Stage 0 runs were bot-triggered pull_request runs on promote/* heads: runs created for a PR opened with GITHUB_TOKEN do not start workflows. It was not a workflow file error (actionlint is clean).",
     "fix": "publish_promote.dispatch_promote_ci now also dispatches stage-0-ci.yml on the promote ref with expected_head_sha/promote_pr_number (validated in the import-smoke-plan job), best-effort so a promote ref predating the inputs cannot block promotion. The stage-0 dispatch inputs approval_race_id/two_man_race_id are no longer required."
   },
-  "residual_stage0_failures_not_in_scope": "Verify changed services (persona, bff, cron, governance-api) and Docker build dry run (research-base) were long broken (missing bff/read_store.py in py_compile, missing pytest/pydantic, stale smoke tests that need PYTHONPATH or a terminal execution receipt, research-base build context). Pull requests to dev and promote dispatches therefore run only the baseline and the import smoke; those per-target jobs keep running for other base branches and are left to a follow-up task."
+  "residual_stage0_failures_not_in_scope": "Verify changed services (persona, bff, cron, governance-api) and Docker build dry run (research-base) were long broken (missing bff/read_store.py in py_compile, missing pytest/pydantic, stale smoke tests that need PYTHONPATH or a terminal execution receipt, research-base build context). Pull requests to dev and promote dispatches therefore run only the baseline and the import smoke; those per-target jobs keep running for other base branches and are left to a follow-up task. The full-sweep dispatch and the nightly schedule still run them and are red on exactly: Verify changed services (bff, persona, governance-api, cron) and Docker build dry run (research-base)."
 }
