@@ -107,33 +107,16 @@ class InstitutionalMemoryEntry:
     tenant_id: Optional[str] = None
 
     def __post_init__(self) -> None:
-        try:
-            KnowledgeType(self.knowledge_type)
-        except ValueError as exc:
-            raise InstitutionalMemoryError(
-                f"Invalid knowledge_type: {self.knowledge_type!r}. "
-                f"Must be one of {[e.value for e in KnowledgeType]}."
-            ) from exc
-        try:
-            SourceEventType(self.source_event_type)
-        except ValueError as exc:
-            raise InstitutionalMemoryError(
-                f"Invalid source_event_type: {self.source_event_type!r}. "
-                f"Must be one of {[e.value for e in SourceEventType]}."
-            ) from exc
-        try:
-            WriteAuthority(self.write_authority)
-        except ValueError as exc:
-            raise InstitutionalMemoryError(
-                f"Invalid write_authority: {self.write_authority!r}. "
-                f"Must be one of {[e.value for e in WriteAuthority]}."
-            ) from exc
-        try:
-            Scope(self.scope)
-        except ValueError as exc:
-            raise InstitutionalMemoryError(
-                f"Invalid scope: {self.scope!r}. Must be one of {[e.value for e in Scope]}."
-            ) from exc
+        for enum_cls, val, label in (
+            (KnowledgeType, self.knowledge_type, "knowledge_type"),
+            (SourceEventType, self.source_event_type, "source_event_type"),
+            (WriteAuthority, self.write_authority, "write_authority"),
+            (Scope, self.scope, "scope"),
+        ):
+            try:
+                enum_cls(val)
+            except ValueError as exc:
+                raise InstitutionalMemoryError(f"Invalid {label}: {val!r}. Must be one of {[e.value for e in enum_cls]}.") from exc
         if self.reuse_count < 0:
             raise InstitutionalMemoryError("reuse_count must be >= 0")
         if not isinstance(self.content, dict):

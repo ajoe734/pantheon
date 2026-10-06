@@ -9,7 +9,6 @@ Public API
 CapitalPool          — immutable dataclass representing a capital pool
 CapitalPoolStore     — in-memory store with optional JSON persistence
 validate_pool()      — semantic validation helper
-validate_pool_json() — structural JSON-schema validation helper
 
 Single-runtime rule
 -------------------
@@ -99,20 +98,11 @@ class CapitalPool:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        try:
-            OwnerType(self.owner_type)
-        except ValueError:
-            raise CapitalPoolError(
-                f"Invalid owner_type: {self.owner_type!r}. "
-                f"Must be one of {[e.value for e in OwnerType]}."
-            )
-        try:
-            PoolStatus(self.status)
-        except ValueError:
-            raise CapitalPoolError(
-                f"Invalid status: {self.status!r}. "
-                f"Must be one of {[e.value for e in PoolStatus]}."
-            )
+        for enum_cls, val, label in ((OwnerType, self.owner_type, "owner_type"), (PoolStatus, self.status, "status")):
+            try:
+                enum_cls(val)
+            except ValueError:
+                raise CapitalPoolError(f"Invalid {label}: {val!r}. Must be one of {[e.value for e in enum_cls]}.")
         if self.budget is not None and self.budget < 0:
             raise CapitalPoolError("budget must be >= 0")
 
@@ -145,6 +135,27 @@ def validate_pool(pool: CapitalPool) -> List[str]:
     if not pool.owner_id:
         errors.append("owner_id must not be empty")
     return errors
+
+
+def atomic_save_json(path: Path, records: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(records, handle, indent=2, ensure_ascii=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+        try:
+            dfd = os.open(str(path.parent), os.O_RDONLY)
+            os.fsync(dfd)
+            os.close(dfd)
+        except OSError:
+            pass
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
 
 
 # ---------------------------------------------------------------------------
@@ -244,32 +255,7 @@ class CapitalPoolStore:
 
     def _save(self) -> None:
         if self._path:
-            records = [p.to_dict() for p in self._pools.values()]
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            fd, temp_name = tempfile.mkstemp(
-                dir=str(self._path.parent),
-                prefix=f".{self._path.name}.",
-                suffix=".tmp",
-            )
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                    json.dump(records, handle, indent=2, ensure_ascii=True)
-                    handle.write("\n")
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.replace(temp_name, self._path)
-                try:
-                    directory_fd = os.open(str(self._path.parent), os.O_RDONLY)
-                except OSError:
-                    directory_fd = None
-                if directory_fd is not None:
-                    try:
-                        os.fsync(directory_fd)
-                    finally:
-                        os.close(directory_fd)
-            finally:
-                if os.path.exists(temp_name):
-                    os.unlink(temp_name)
+            atomic_save_json(self._path, [p.to_dict() for p in self._pools.values()])
 
     def _load(self, path: Path) -> None:
         with self._lock:

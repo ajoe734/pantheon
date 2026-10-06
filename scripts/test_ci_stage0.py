@@ -111,6 +111,7 @@ class ValidateConfigTests(unittest.TestCase):
                         "schema_version": 1,
                         "baseline": {"setup": [], "commands": ["python3 -m py_compile scripts/ci_stage0.py"]},
                         "global_paths": ["scripts/ci_stage0.py"],
+                        "compose_services": ["router"],
                         "targets": [
                             {
                                 "id": "router",
@@ -136,6 +137,41 @@ class ValidateConfigTests(unittest.TestCase):
                 ci_stage0.ROOT = root
                 with self.assertRaises(ci_stage0.Stage0ConfigError):
                     ci_stage0.load_config(matrix_path, doc_path)
+            finally:
+                ci_stage0.ROOT = original_root
+
+    def test_load_config_requires_compose_services_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            matrix_path = root / ".github" / "pantheon-stage0-matrix.json"
+            matrix_path.parent.mkdir(parents=True, exist_ok=True)
+            doc_path = root / "deploy.md"
+            doc_path.write_text(
+                "### 4.3 Wave 1 core service inventory\n| `router` | `services/router/` |\n.github/pantheon-stage0-matrix.json\n",
+                encoding="utf-8",
+            )
+            compose_path = root / "docker-compose.yml"
+            compose_path.write_text(
+                "services:\n  router:\n    build:\n      context: services/router\n",
+                encoding="utf-8",
+            )
+            matrix_path.write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "baseline": {"setup": [], "commands": ["echo 1"]},
+                    "global_paths": ["a"],
+                    "targets": [{"id": "router", "family": "f", "profile": "p", "repo_paths": ["services/router"], "changed_paths": ["services/router/**"]}],
+                    "compose_services": [],
+                }),
+                encoding="utf-8",
+            )
+            (root / "services" / "router").mkdir(parents=True, exist_ok=True)
+            original_root = ci_stage0.ROOT
+            try:
+                ci_stage0.ROOT = root
+                with self.assertRaises(ci_stage0.Stage0ConfigError) as ctx:
+                    ci_stage0.load_config(matrix_path, doc_path, compose_path)
+                self.assertIn("Compose project services missing from stage-0 matrix: router", str(ctx.exception))
             finally:
                 ci_stage0.ROOT = original_root
 
@@ -174,6 +210,7 @@ class RunTargetTests(unittest.TestCase):
         args = SimpleNamespace(
             matrix=Path("unused"),
             doc=Path("unused"),
+            compose=Path("nonexistent"),
             target_id="research-qlib",
             mode="build",
             tag_suffix="sha123",
@@ -190,6 +227,41 @@ class RunTargetTests(unittest.TestCase):
             "--build-arg PANTHEON_INSTALL_UPSTREAM_DEPS=false "
             "--tag pantheon-stage0/research-qlib:sha123 ."
         )
+
+    def test_build_mode_runs_compose_entrypoint_import_check(self) -> None:
+        config = {
+            "targets": [
+                {
+                    "id": "router",
+                    "build": {
+                        "context": "services/control-plane/router",
+                        "dockerfile": "services/control-plane/router/Dockerfile",
+                        "tag": "pantheon-stage0/router",
+                    },
+                }
+            ]
+        }
+        args = SimpleNamespace(
+            matrix=Path("unused"),
+            doc=Path("unused"),
+            compose=Path("docker-compose.yml"),
+            target_id="router",
+            mode="build",
+            tag_suffix="sha123",
+        )
+
+        with (
+            mock.patch("ci_stage0.load_config", return_value=config),
+            mock.patch("ci_stage0.run_shell_command") as run_shell_command,
+            mock.patch("ci_stage0.get_target_entrypoint_import_commands", return_value=["docker run --rm pantheon-stage0/router:sha123 python3 -c 'import main'"]),
+        ):
+            self.assertEqual(ci_stage0.cmd_run_target(args), 0)
+
+        self.assertEqual(run_shell_command.call_count, 2)
+        run_shell_command.assert_has_calls([
+            mock.call("docker build --file services/control-plane/router/Dockerfile --tag pantheon-stage0/router:sha123 services/control-plane/router"),
+            mock.call("docker run --rm pantheon-stage0/router:sha123 python3 -c 'import main'"),
+        ])
 
 
 if __name__ == "__main__":
