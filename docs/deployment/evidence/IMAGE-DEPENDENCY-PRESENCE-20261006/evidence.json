@@ -3,11 +3,7 @@
   "base_sha": "5f6044d20e8095929b6f87ce3b44019e1c8aec08",
   "scope": [
     "Ensure shared-module dependencies reach every service Docker image and fail closed when validator dependencies are missing.",
-    "Shared modules imported by service images declare runtime dependencies once (services/loop-control/requirements.txt: asyncpg, jsonschema).",
-    "scripts/check_service_lock_shared_deps.py validates that every service lock importing a shared module declares its runtime dependencies; verified 0 errors against all 7 importing locks.",
-    "scripts/ci_stage0.py and .github/pantheon-stage0-matrix.json track all 64 compose project services and verify entrypoint import viability inside built images.",
-    "Deleted orphan validators with no production callers (validate_pool_json, validate_binding_json).",
-    "Switched optional import fallbacks to fail-closed across datasources.py, institutional_memory_store.py, persona_memory_store.py, signal_consumer.py, and ingest_svc.py."
+    "IMAGE-IMPORT-SMOKE-ON-DEV-20261006 corrects the original delivery: the in-image import check now covers every compose service that builds from project code (64 services, 41 images), runs on dev pull requests and on a schedule, and lists each service result below."
   ],
   "deleted_orphan_validators": [
     {
@@ -40,37 +36,318 @@
     },
     {
       "file": "services/telemetry/ingest_svc.py",
-      "change": "jsonschema import is mandatory; missing schema or validator error rejects event instead of silently passing."
+      "change": "_validate_event rejects with 'Telemetry schema is unavailable' when schema_path is configured but the telemetry or trade-journal schema failed to load."
+    },
+    {
+      "file": "services/telemetry/capture.py",
+      "change": "validate_event returns False when jsonschema is unavailable or the schema is invalid instead of True; the optional import stays so the lineage-read image, which imports the package without jsonschema, still starts."
+    },
+    {
+      "file": "services/execution/artifact_loader.py",
+      "change": "jsonschema import and Draft7Validator are mandatory; metadata schema validation can no longer be skipped."
+    },
+    {
+      "file": "services/control-plane/feedback/main.py",
+      "change": "validate_against_schema raises when the validator is unavailable (ingest returns 422) instead of accepting the event."
     }
   ],
   "shared_module_locks_check": {
     "script": "scripts/check_service_lock_shared_deps.py",
-    "shared_module": "services/loop-control",
-    "declared_dependencies": ["asyncpg>=0.29.0", "jsonschema>=4.20.0"],
-    "verified_locks": [
-      "services-consultation.txt",
-      "services-control-plane-bff.txt",
-      "services-policy-learning.txt",
-      "services-reconciliation-drift.txt",
-      "services-research.txt",
-      "services-source_ingestion.txt",
-      "services-training-session.txt"
-    ],
-    "unauthorized_hand_edits_to_prereq_locks": 0,
-    "missing_dependencies_count": 0
-  },
-  "stage0_compose_service_coverage": {
-    "total_compose_project_services": 64,
-    "matrix_compose_services_count": 64,
-    "validation_command": "python3 scripts/ci_stage0.py validate",
-    "entrypoint_import_resolution": "scripts/ci_stage0.py:get_target_entrypoint_import_commands"
+    "method": "ast import and literal import_module/__import__ detection; shared module = any services/<dir> with requirements.txt, including ones with their own Dockerfile",
+    "known_gaps_listed_in_script": 20,
+    "unlisted_gaps": 0,
+    "known_gap_reason": "Every importing image passes the in-image import smoke below; remove an entry when its lock is recompiled with the module's requirements.",
+    "tests": "scripts/test_check_service_lock_shared_deps.py (10 tests)"
   },
   "validation_summary": {
-    "ci_stage0_unit_tests": "scripts/test_ci_stage0.py passed (9 tests)",
-    "check_service_lock_shared_deps_unit_tests": "scripts/test_check_service_lock_shared_deps.py passed (3 tests)",
-    "memory_unit_tests": "test_institutional_memory_store.py (24 tests) and test_persona_memory_store.py (17 tests) passed",
-    "governance_unit_tests": "test_capital_pool.py (25 tests) and test_persona_capital_binding.py (56 tests) passed",
-    "bff_data_sources_contract_tests": "test_bff_management_data_sources_contract.py (6 tests) passed",
-    "diff_budget": "diff_budget.py verified net production growth +11 lines <= budget 20 lines"
-  }
+    "ci_stage0_unit_tests": "scripts/test_ci_stage0.py passed (20 tests)",
+    "check_service_lock_shared_deps_unit_tests": "scripts/test_check_service_lock_shared_deps.py passed (10 tests)",
+    "bff_data_sources_contract_tests": "test_bff_management_data_sources_contract.py passed (6 tests); the fallback test fails when the permissive fallback is restored",
+    "telemetry": "test_infrastructure_health_ingest.py 54 passed; smoke_test_ingest.py passed; two test_lineage_write_path.py full-stack cases fail identically without this change",
+    "diff_budget": "diff_budget.py --change-class corrective --budget 120: net production +120"
+  },
+  "corrections_to_original_evidence": {
+    "import_check_coverage": "The original claim of tracking all 64 compose services covered only the 9 services whose Dockerfile matched a stage-0 matrix build target; the matrix compose_services mirror is removed and scripts/ci_stage0.py now derives every service from docker compose config.",
+    "lock_check_coverage": "The original check inspected only services/loop-control by substring match and skipped any shared package that ships its own Dockerfile; it now parses imports with ast (import statements and literal importlib.import_module/__import__ calls) over every services/*/requirements.txt module and reports 20 pre-existing gaps, recorded as KNOWN_GAPS in scripts/check_service_lock_shared_deps.py.",
+    "datasources_test": "The original test exec'd a copy of the fallback source; it now re-imports the real module with the policy modules unavailable and was verified to fail when the permissive fallback is restored.",
+    "telemetry_ingest_missing_schema": "Before this task TelemetryIngestService._validate_event returned valid when the configured schema file was missing; it now rejects every event when a schema_path is configured but the schema did not load (test: TestMissingSchemaFileFailsClosed). With no schema_path configured it stays pass-through, as in unit fixtures."
+  },
+  "validators_left_as_is": [
+    {
+      "file": "services/research/statsmodels/production_cointegration.py",
+      "function": "_validate_registry_schema_when_available",
+      "reason": "Safe to leave: it only builds draft signal_snapshot registry entries after the artifact_type, draft state, sha256 checksum and lineage checks above it have already passed, and registry admission re-validates the schema. Its image is hash-locked (dependencies/locks/services-research-statsmodels.txt) without jsonschema, is not a compose service, and a lock recompile needs uv with network access."
+    }
+  ],
+  "image_import_smoke": {
+    "how": "python3 scripts/ci_stage0.py import-smoke --image-id <id>: docker build, then docker run --entrypoint python with the compose environment (and the compose postgres service for images that open stores at import) importing the effective ENTRYPOINT+CMD or compose command; uvicorn app attributes are checked, scripts run under runpy with a non-__main__ name so dataclasses resolve, shell commands get bash -n.",
+    "triggers": "pull_request to dev (images whose Dockerfile, named lock/requirements or Python source changed), schedule 17 3 * * *, and workflow_dispatch (all images)",
+    "full_run": "https://github.com/ajoe734/pantheon/actions/runs/37455665861",
+    "full_run_head": "b1eaa1445efde137272fc58afbadb8b3ee07ebac",
+    "full_run_import_jobs": "41 of 41 succeeded; 64 of 64 services passed",
+    "pull_request_run": "https://github.com/ajoe734/pantheon/actions/runs/37455671830 (38 selected images succeeded; Branch CI Gate success on the same head)",
+    "services": {
+      "agora-interaction-worker": {
+        "image": "services-control-plane-bff-Dockerfile",
+        "result": "passed"
+      },
+      "operator-bff": {
+        "image": "services-control-plane-bff-Dockerfile",
+        "result": "passed"
+      },
+      "alpha-replication-worker": {
+        "image": "services-research-Dockerfile",
+        "result": "passed"
+      },
+      "research-orchestrator-svc": {
+        "image": "services-research-Dockerfile",
+        "result": "passed"
+      },
+      "broker": {
+        "image": "services-broker-Dockerfile",
+        "result": "passed"
+      },
+      "capital": {
+        "image": "services-capital-Dockerfile",
+        "result": "passed"
+      },
+      "consultation-svc": {
+        "image": "services-consultation-Dockerfile",
+        "result": "passed"
+      },
+      "deployment": {
+        "image": "services-deployment-Dockerfile",
+        "result": "passed"
+      },
+      "deployment-outbox-consumer": {
+        "image": "services-deployment-Dockerfile",
+        "result": "passed"
+      },
+      "dev-paper-principal-issuer": {
+        "image": "services-dev-paper-principal-issuer-Dockerfile",
+        "result": "passed"
+      },
+      "evaluation": {
+        "image": "services-evaluation-Dockerfile",
+        "result": "passed"
+      },
+      "evolution": {
+        "image": "services-evolution-Dockerfile",
+        "result": "passed"
+      },
+      "evolution-daily-sweep-scheduler": {
+        "image": "services-evolution-Dockerfile",
+        "result": "passed"
+      },
+      "evolution-dispatch-worker": {
+        "image": "services-evolution-Dockerfile",
+        "result": "passed"
+      },
+      "evolution-threshold-sweep-producer": {
+        "image": "services-evolution-Dockerfile",
+        "result": "passed"
+      },
+      "experiments-dormant-smoke": {
+        "image": "services-registry-experiments-Dockerfile",
+        "result": "passed"
+      },
+      "feedback": {
+        "image": "services-control-plane-feedback-Dockerfile",
+        "result": "passed"
+      },
+      "finrl-dormant-smoke": {
+        "image": "services-research-finrl-Dockerfile",
+        "result": "passed"
+      },
+      "governance": {
+        "image": "services-governance-Dockerfile",
+        "result": "passed"
+      },
+      "incidents": {
+        "image": "services-incidents-Dockerfile",
+        "result": "passed"
+      },
+      "lifecycle-projector-capacity-benchmark": {
+        "image": "services-telemetry-Dockerfile",
+        "result": "passed"
+      },
+      "loop-run-projector-scheduler": {
+        "image": "services-telemetry-Dockerfile",
+        "result": "passed"
+      },
+      "telemetry": {
+        "image": "services-telemetry-Dockerfile",
+        "result": "passed"
+      },
+      "lineage-read": {
+        "image": "services-lineage-read-Dockerfile",
+        "result": "passed"
+      },
+      "memory": {
+        "image": "services-memory-Dockerfile",
+        "result": "passed"
+      },
+      "mlflow-dormant-smoke": {
+        "image": "services-research-mlflow-Dockerfile",
+        "result": "passed"
+      },
+      "monitor-agent": {
+        "image": "services-monitor-agent-Dockerfile",
+        "result": "passed"
+      },
+      "openclaw-activation-ready-e2e": {
+        "image": "services-openclaw-gateway-adapter-Dockerfile",
+        "result": "passed"
+      },
+      "openclaw-gateway-adapter": {
+        "image": "services-openclaw-gateway-adapter-Dockerfile",
+        "result": "passed"
+      },
+      "optimizer-svc": {
+        "image": "services-optimizer-svc-Dockerfile",
+        "result": "passed"
+      },
+      "oss-activation-ready-smoke-matrix": {
+        "image": "Dockerfile.smoke",
+        "result": "passed"
+      },
+      "smoke-stack": {
+        "image": "Dockerfile.smoke",
+        "result": "passed"
+      },
+      "source-search-bounded-smoke": {
+        "image": "Dockerfile.smoke",
+        "result": "passed"
+      },
+      "pantheon-paper-runtime": {
+        "image": "services-execution-lean_runtime-Dockerfile",
+        "result": "passed"
+      },
+      "paper-signal-producer": {
+        "image": "services-execution-lean_runtime-Dockerfile",
+        "result": "passed"
+      },
+      "paper-fleet-reconciler": {
+        "image": "services-paper_fleet_reconciler-Dockerfile",
+        "result": "passed"
+      },
+      "persona": {
+        "image": "services-control-plane-persona-Dockerfile",
+        "result": "passed"
+      },
+      "persona-evaluator-agent": {
+        "image": "services-persona-evaluator-agent-Dockerfile",
+        "result": "passed"
+      },
+      "policy-learning-shadow-eval-scheduler": {
+        "image": "services-policy-learning-Dockerfile",
+        "result": "passed"
+      },
+      "policy-learning-svc": {
+        "image": "services-policy-learning-Dockerfile",
+        "result": "passed"
+      },
+      "postmortems": {
+        "image": "services-postmortems-Dockerfile",
+        "result": "passed"
+      },
+      "promotion": {
+        "image": "services-promotion-Dockerfile",
+        "result": "passed"
+      },
+      "qlib-dormant-smoke": {
+        "image": "services-research-qlib-Dockerfile",
+        "result": "passed"
+      },
+      "ray-tune-dormant-smoke": {
+        "image": "services-research-rllib-Dockerfile",
+        "result": "passed"
+      },
+      "rllib-dormant-smoke": {
+        "image": "services-research-rllib-Dockerfile",
+        "result": "passed"
+      },
+      "reconciliation-drift-consumer": {
+        "image": "services-reconciliation-drift-Dockerfile",
+        "result": "passed"
+      },
+      "reconciliation-drift-incident-listener": {
+        "image": "services-reconciliation-drift-Dockerfile",
+        "result": "passed"
+      },
+      "reconciliation-drift-scheduler": {
+        "image": "services-reconciliation-drift-Dockerfile",
+        "result": "passed"
+      },
+      "reconciliation-drift-svc": {
+        "image": "services-reconciliation-drift-Dockerfile",
+        "result": "passed"
+      },
+      "registry": {
+        "image": "services-registry-Dockerfile",
+        "result": "passed"
+      },
+      "research-worker-gateway-svc": {
+        "image": "services-research-worker-gateway-Dockerfile",
+        "result": "passed"
+      },
+      "router": {
+        "image": "services-control-plane-router-Dockerfile",
+        "result": "passed"
+      },
+      "runtime-manager": {
+        "image": "services-runtime-manager-Dockerfile",
+        "result": "passed"
+      },
+      "search-index-scheduler": {
+        "image": "services-search-Dockerfile",
+        "result": "passed"
+      },
+      "search-svc": {
+        "image": "services-search-Dockerfile",
+        "result": "passed"
+      },
+      "source-ingest": {
+        "image": "services-source_ingestion-Dockerfile",
+        "result": "passed"
+      },
+      "source-ingest-agora-projector": {
+        "image": "services-source_ingestion-Dockerfile",
+        "result": "passed"
+      },
+      "source-ingest-controller-migrate": {
+        "image": "services-source_ingestion-Dockerfile",
+        "result": "passed"
+      },
+      "source-ingest-scheduler": {
+        "image": "services-source_ingestion-Dockerfile",
+        "result": "passed"
+      },
+      "strategy-distillation-worker": {
+        "image": "services-source_ingestion-Dockerfile",
+        "result": "passed"
+      },
+      "training-session-preview-worker": {
+        "image": "services-training-session-Dockerfile",
+        "result": "passed"
+      },
+      "training-session-svc": {
+        "image": "services-training-session-Dockerfile",
+        "result": "passed"
+      },
+      "trl-dormant-smoke": {
+        "image": "services-learning-trl-Dockerfile",
+        "result": "passed"
+      },
+      "web-channel": {
+        "image": "services-channels-web-Dockerfile",
+        "result": "passed"
+      }
+    }
+  },
+  "stage0_zero_job_runs": {
+    "finding": "The 99 earlier zero-job Stage 0 failures were pull_request runs on promote/* heads opened by github-actions[bot]; every other pull_request workflow on those heads (Regression Tests, Syntax Tests, Research Regression Tests, Build & Test Lean, BFF Route Diff, Canonical Review Gate) failed the same way, so the cause is the bot-opened PR event, not a line in stage-0-ci.yml (actionlint is clean and the run name resolves to the workflow title). The workflow had never run on a dev pull request; with the dev trigger it now schedules jobs (run 37455671830).",
+    "not_fixed": "Promote PRs opened with GITHUB_TOKEN still do not get Stage 0 jobs; Branch CI Gate already covers them through an explicit workflow_dispatch."
+  },
+  "residual_stage0_failures_not_in_scope": "Verify changed services (persona, bff, cron, governance-api) fail because pytest is not installed for their unittest discovery, and Docker build dry run (research-base) fails; these targets had not run since the workflow stopped triggering and are outside this task."
 }
