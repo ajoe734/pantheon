@@ -64,6 +64,11 @@ ROUTE_STATUS_OVERRIDES: dict[str, dict] = {
         "status": "superseded",
         "covered_by": "GET /bff/management/fleet",
     },
+    # Retired promotion-review decision route stays mounted only to return ACTION_RETIRED.
+    "POST /bff/management/promotion-reviews/{review_id}/decisions": {
+        "status": "superseded",
+        "covered_by": "POST /bff/approvals/{decision_id}/decide",
+    },
     # Track E OODA read routes are backend-owned first; frontend cards/drawer
     # activate in follow-on MGMT-OODA tasks.
     "GET /bff/strategies/{strategy_id}/ooda": {"family": "ooda-packet-foundation"},

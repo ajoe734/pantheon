@@ -53,7 +53,6 @@ from services.control_plane.bff.governance.promotion_review import (
 )
 from services.control_plane.bff.governance.human_inbox import (
     _human_inbox_decision_projection_from_record,
-    _human_inbox_promotion_review_item,
     _submitted_promotion_review_records,
 )
 from services.control_plane.bff.personas.routes.common import (
@@ -337,12 +336,6 @@ def test_promotion_review_submission_and_decision_explicit_command_store():
     assert reviews[0]["review_id"] == rev_id
     assert reviews[0]["decision_status"] == "accepted"
 
-    # 4. Human inbox item conversion
-    inbox_item = _human_inbox_promotion_review_item(reviews[0])
-    assert inbox_item is not None
-    assert inbox_item["category"] == "promotion_review"
-    assert inbox_item["status"] == "accepted"
-
 
 def test_raise_if_promotion_review_direct_mutation_requested():
     with pytest.raises(HTTPException) as exc_info:
@@ -542,7 +535,6 @@ def test_human_inbox_governance_seam_delegation():
     from services.control_plane.bff.governance.human_inbox import (
         _human_inbox_payload,
         _human_inbox_priority,
-        _human_inbox_promotion_review_item,
     )
     bff_main = importlib.import_module("services.control_plane.bff.main")
 
@@ -552,7 +544,6 @@ def test_human_inbox_governance_seam_delegation():
     # of these names. Step 2 below exercises the real human_inbox seam directly.
     assert bff_main._human_inbox_payload is _human_inbox_payload
     assert bff_main._human_inbox_priority is _human_inbox_priority
-    assert bff_main._human_inbox_promotion_review_item is _human_inbox_promotion_review_item
 
     # 2. Priority normalization handles sev/p prefixes
     assert _human_inbox_priority("sev1") == "critical"
