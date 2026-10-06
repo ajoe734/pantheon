@@ -266,15 +266,20 @@ def create_runtime_router(
             str(incidents[0].get("incident_id") or "").strip() if incidents else None
         )
 
-        report_surface = (
-            _dataset_surface_status("paper_live_drift_reports", snapshot_at=snapshot_at)
-            if report is not None
-            else _unavailable_surface(
+        base_report_surface = _dataset_surface_status("paper_live_drift_reports", snapshot_at=snapshot_at)
+        if report is not None:
+            report_surface = base_report_surface
+        elif base_report_surface.get("status") == "ok":
+            report_surface = {
+                **base_report_surface,
+                "message": "No paper/live telemetry metrics available for this runtime.",
+            }
+        else:
+            report_surface = _unavailable_surface(
                 "paper_live_drift_reports",
                 snapshot_at=snapshot_at,
                 message="Paper/live drift report unavailable for this runtime.",
             )
-        )
         runtime_surface = (
             _dataset_surface_status(
                 "runtime_bindings",
@@ -354,12 +359,16 @@ def create_runtime_router(
             degraded_message="Paper/live drift view is available, but one or more supporting surfaces are degraded.",
         )
         if report is None:
-            paper_live_drift_surface["status"] = "unavailable"
-            paper_live_drift_surface["message"] = "Paper/live drift view unavailable."
-            paper_live_drift_surface.setdefault(
-                "staleness",
-                {"served_from": "unverifiable", "last_known_at": snapshot_at},
-            )
+            if report_surface.get("status") == "ok":
+                paper_live_drift_surface["status"] = "ok"
+                paper_live_drift_surface["message"] = "No paper/live telemetry metrics available."
+            else:
+                paper_live_drift_surface["status"] = "unavailable"
+                paper_live_drift_surface["message"] = "Paper/live drift view unavailable."
+                paper_live_drift_surface.setdefault(
+                    "staleness",
+                    {"served_from": "unverifiable", "last_known_at": snapshot_at},
+                )
 
         recommended_actions = []
         if report:

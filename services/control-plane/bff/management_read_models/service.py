@@ -1259,6 +1259,7 @@ def _project_operator_runtime_state_row(
     return {
         "runtime_id": runtime_id,
         "runtime_binding_id": runtime_binding_id,
+        **{key: binding[key] for key in ("strategy_id", "persona_id") if binding.get(key)},
         "deployment_stage": binding.get("deployment_stage") or binding.get("deployment_mode"),
         "status": binding.get("status"),
         "capital_pool_id": binding.get("capital_pool_id"),
@@ -1385,6 +1386,8 @@ def _build_trading_pulse_baseline_comparison(
     return {
         "runtimeId": runtime_id or None,
         "runtime_id": runtime_id or None,
+        **({"strategyId": row["strategy_id"], "strategy_id": row["strategy_id"]}
+           if row.get("strategy_id") else {}),
         "runtimeBindingId": row.get("runtime_binding_id"),
         "runtime_binding_id": row.get("runtime_binding_id"),
         "deploymentStage": row.get("deployment_stage"),
@@ -2972,8 +2975,8 @@ class ManagementService:
 
         def _make_dataset_surface(ds: str) -> Dict[str, Any]:
             src = _get_dataset_source(ds)
-            surf: Dict[str, Any] = {"status": "ok" if src != "missing" else "unavailable", "source": src}
-            if src == "missing":
+            surf: Dict[str, Any] = {"status": "ok" if src not in {"missing", "unavailable"} else "unavailable", "source": src}
+            if src in {"missing", "unavailable"}:
                 surf.setdefault("staleness", {"served_from": "unverifiable", "last_known_at": snap})
             elif src == "local_snapshot":
                 surf["status"] = "degraded"
@@ -3014,9 +3017,16 @@ class ManagementService:
             )
 
         paper_live_drift_surface = _make_dataset_surface("paper_live_drift_reports")
-        if (
+        live_rows = [row for row in runtime_rows if _trading_pulse_stage(row) in {"live", "canary"}]
+        if not live_rows and baseline_available_count == 0:
+            if paper_live_drift_surface.get("status") == "ok":
+                paper_live_drift_surface["message"] = "No live runtimes require paper/live baseline comparison."
+        elif (
             runtime_rows
-            and baseline_available_count < len(runtime_rows)
+            and (
+                (live_rows and baseline_available_count < len(live_rows))
+                or (baseline_available_count > 0 and baseline_available_count < len(runtime_rows))
+            )
             and paper_live_drift_surface.get("status") == "ok"
         ):
             paper_live_drift_surface["status"] = "degraded"

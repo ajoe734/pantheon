@@ -167,12 +167,16 @@ class _DummyLoopWriter:
     def __init__(self) -> None:
         self.successes: list[dict[str, Any]] = []
         self.ticks: list[dict[str, Any]] = []
+        self.failures: list[dict[str, Any]] = []
 
     async def record_success(self, **kwargs: Any) -> None:
         self.successes.append(kwargs)
 
     async def record_tick(self, **kwargs: Any) -> None:
         self.ticks.append(kwargs)
+
+    async def record_failure(self, **kwargs: Any) -> None:
+        self.failures.append(kwargs)
 
 
 def _controller_config(
@@ -675,8 +679,10 @@ class TestRegistryFailureIsTruthful:
         assert isinstance(error, DistillationControllerError)
         assert error.stage == "registry_sync"
         assert writer.successes == []
-        assert len(writer.ticks) == 1
-        assert "registry_sync" in json.dumps(writer.ticks[0])
+        assert writer.ticks == []
+        assert len(writer.failures) == 1
+        assert writer.failures[0]["truth_level"] == "scheduled_tick"
+        assert "registry_sync" in writer.failures[0]["reason"]
         assert state.last_success_at is None
         assert state.last_failure_stage == "registry_sync"
         assert state.consecutive_failures == 1

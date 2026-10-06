@@ -1,6 +1,7 @@
 """Tests for CapitalPool and CapitalPoolStore (CAP-001)."""
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -10,7 +11,9 @@ _GOV_DIR = Path(__file__).resolve().parent
 if str(_GOV_DIR) not in sys.path:
     sys.path.insert(0, str(_GOV_DIR))
 
+import capital_pool
 from capital_pool import (
+    atomic_save_json,
     CapitalPool,
     CapitalPoolError,
     CapitalPoolStore,
@@ -109,6 +112,34 @@ class TestValidatePool:
 # ---------------------------------------------------------------------------
 
 class TestCapitalPoolStore:
+    def test_atomic_save_propagates_directory_fsync_failure_and_closes_fd(self, tmp_path, monkeypatch):
+        real_fsync = os.fsync
+        real_close = os.close
+        fsync_calls = 0
+        closed_fds = []
+
+        def fail_directory_fsync(fd):
+            nonlocal fsync_calls
+            fsync_calls += 1
+            if fsync_calls == 2:
+                raise OSError("directory sync failed")
+            real_fsync(fd)
+
+        def record_close(fd):
+            closed_fds.append(fd)
+            real_close(fd)
+
+        monkeypatch.setattr(capital_pool.os, "fsync", fail_directory_fsync)
+        monkeypatch.setattr(capital_pool.os, "close", record_close)
+
+        with pytest.raises(OSError, match="directory sync failed"):
+            atomic_save_json(tmp_path / "pools.json", [])
+
+        assert fsync_calls == 2
+        assert len(closed_fds) == 1
+        with pytest.raises(OSError):
+            os.fstat(closed_fds[0])
+
     def test_create_and_get(self):
         store = CapitalPoolStore()
         pool = make_pool()
