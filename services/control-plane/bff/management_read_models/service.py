@@ -2975,8 +2975,8 @@ class ManagementService:
 
         def _make_dataset_surface(ds: str) -> Dict[str, Any]:
             src = _get_dataset_source(ds)
-            surf: Dict[str, Any] = {"status": "ok" if src != "missing" else "unavailable", "source": src}
-            if src == "missing":
+            surf: Dict[str, Any] = {"status": "ok" if src not in {"missing", "unavailable"} else "unavailable", "source": src}
+            if src in {"missing", "unavailable"}:
                 surf.setdefault("staleness", {"served_from": "unverifiable", "last_known_at": snap})
             elif src == "local_snapshot":
                 surf["status"] = "degraded"
@@ -3017,9 +3017,16 @@ class ManagementService:
             )
 
         paper_live_drift_surface = _make_dataset_surface("paper_live_drift_reports")
-        if (
+        live_rows = [row for row in runtime_rows if _trading_pulse_stage(row) in {"live", "canary"}]
+        if not live_rows and baseline_available_count == 0:
+            if paper_live_drift_surface.get("status") == "ok":
+                paper_live_drift_surface["message"] = "No live runtimes require paper/live baseline comparison."
+        elif (
             runtime_rows
-            and baseline_available_count < len(runtime_rows)
+            and (
+                (live_rows and baseline_available_count < len(live_rows))
+                or (baseline_available_count > 0 and baseline_available_count < len(runtime_rows))
+            )
             and paper_live_drift_surface.get("status") == "ok"
         ):
             paper_live_drift_surface["status"] = "degraded"

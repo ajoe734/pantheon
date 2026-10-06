@@ -78,3 +78,87 @@ def test_unconfigured_monitoring_owner_is_missing(monkeypatch):
     store._paper_fleet_reconciler_url = None
     monkeypatch.delenv("PANTHEON_PAPER_FLEET_RECONCILER_URL", raising=False)
     assert store.dataset_source("paper_runtime_monitoring_sessions") == "missing"
+
+
+@pytest.mark.parametrize("records", [[], [{"runtime_id": "r-1", "binding_id": "b-1", "deployment_stage": "live"}]])
+def test_reconciliation_drift_owner_empty_and_nonempty_are_available(records):
+    store = create_in_memory_read_surface_ports(reconciliation_records_provider=lambda **kw: records)
+    assert store.dataset_source("paper_live_drift_reports") == "service"
+
+
+def test_reconciliation_drift_unconfigured_is_unavailable(monkeypatch):
+    monkeypatch.delenv("RECONCILIATION_DRIFT_URL", raising=False)
+    monkeypatch.delenv("PANTHEON_RECONCILIATION_DRIFT_URL", raising=False)
+    store = create_in_memory_read_surface_ports()
+    store.reconciliation_drift_reads._records_provider = None
+    store.reconciliation_drift_reads._base_url = ""
+    assert store.dataset_source("paper_live_drift_reports") == "unavailable"
+
+
+def test_reconciliation_drift_records_mapping_and_paper_filtering():
+    records = [
+        {
+            "id": "rec-paper-1",
+            "runtime_id": "rt-paper",
+            "binding_id": "bind-paper",
+            "deployment_stage": "paper",
+            "generated_at": "2026-10-06T00:00:00Z",
+            "delta_summary": {
+                "baseline_metrics": {"sharpe": 1.5},
+                "observed_metrics": {"sharpe": 1.4},
+            },
+        },
+        {
+            "id": "rec-live-1",
+            "runtime_id": "rt-live",
+            "binding_id": "bind-live",
+            "deployment_stage": "live",
+            "generated_at": "2026-10-06T01:00:00Z",
+            "artifact_id": "art-1",
+            "artifact_version": "v1.0.0",
+            "plan_id": "plan-1",
+            "delta_summary": {
+                "baseline_metrics": {"drawdown": 0.05, "avg_slippage_bps": 2.0},
+                "observed_metrics": {"drawdown": 0.08, "avg_slippage_bps": 3.5},
+                "drift_checks": [
+                    {
+                        "metric": "drawdown",
+                        "status": "warning",
+                        "baseline": 0.05,
+                        "observed": 0.08,
+                        "relative_delta": 0.6,
+                    },
+                    {
+                        "metric": "avg_slippage_bps",
+                        "status": "breached",
+                        "baseline": 2.0,
+                        "observed": 3.5,
+                        "relative_delta": 0.75,
+                    },
+                ],
+            },
+        },
+    ]
+    store = create_in_memory_read_surface_ports(reconciliation_records_provider=lambda **kw: records)
+    # Paper-only runtime should return None (no live drift comparison)
+    assert store.get_paper_live_drift_report("rt-paper") is None
+
+    # Live runtime returns mapped report with baseline, observed, drift groups and threshold evaluation
+    report = store.get_paper_live_drift_report("rt-live")
+    assert report is not None
+    assert report["runtime_id"] == "rt-live"
+    assert report["binding_id"] == "bind-live"
+    assert report["artifact_id"] == "art-1"
+    assert report["artifact_version"] == "v1.0.0"
+    assert report["plan_id"] == "plan-1"
+    assert report["paper_baseline"]["deployment_stage"] == "paper"
+    assert report["paper_baseline"]["metrics"]["drawdown"] == 0.05
+    assert report["observed_state"]["deployment_stage"] == "live"
+    assert report["observed_state"]["metrics"]["drawdown"] == 0.08
+    assert report["threshold_evaluation"]["overall_status"] == "breached"
+    assert "avg_slippage_bps" in report["threshold_evaluation"]["breached_metric_ids"]
+
+    # list_paper_live_drift_reports only returns live reports
+    reports = store.list_paper_live_drift_reports()
+    assert len(reports) == 1
+    assert reports[0]["runtime_id"] == "rt-live"

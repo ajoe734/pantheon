@@ -81,6 +81,10 @@ from services.control_plane.bff.ports.read_surface_ports import (
     create_read_surface_ports,
     create_in_memory_read_surface_ports,
 )
+from services.control_plane.bff.ports.reconciliation_drift_reads import (
+    ReconciliationDriftReadsPort,
+    map_reconciliation_record_to_drift_report,
+)
 from services.control_plane.bff.ports.persona_write_owner import (
     PersonaRegistryHttpWritePort,
     PersonaWriteConflict,
@@ -158,6 +162,8 @@ __all__ = [
     "ReadSurfacePorts",
     "create_read_surface_ports",
     "create_in_memory_read_surface_ports",
+    "ReconciliationDriftReadsPort",
+    "map_reconciliation_record_to_drift_report",
     # Persona write owner (deliberately outside ReadSurfacePorts)
     "PersonaRegistryHttpWritePort",
     "PersonaWriteConflict",

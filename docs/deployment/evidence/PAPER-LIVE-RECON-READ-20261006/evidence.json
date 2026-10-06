@@ -1,0 +1,47 @@
+{
+  "task_id": "PAPER-LIVE-RECON-READ-20261006",
+  "base_sha": "5f6044d209fc3b68078972e2cf5a799f92cf6c4d",
+  "change_class": "corrective",
+  "net_prod_line_budget": 120,
+  "summary": "Read paper and live comparisons from authoritative reconciliation-drift records instead of empty in-memory telemetry drift reports; support healthy-empty state for dev paper-only runtimes.",
+  "scope": [
+    "services/reconciliation-drift/main.py: accept binding_id and runtime_id query params in list_reconciliation_records",
+    "services/control-plane/bff/ports/reconciliation_drift_reads.py: dedicated authenticated read port and record mapper preserving delta_summary, deployment_stage, and generated_at",
+    "services/control-plane/bff/ports/read_surface_ports.py: integrate ReconciliationDriftReadsPort, remove hardcoded typed_store classification, delegate drift report lookups",
+    "services/control-plane/bff/data/read_surfaces.json: prune obsolete fake seed data under paper_live_drift_reports",
+    "services/control-plane/bff/management_read_models/service.py: treat unavailable reconciliation surface properly and return healthy-empty status for dev paper-only baseline comparisons",
+    "services/control-plane/bff/runtime/router.py: report healthy-empty status when reconciliation service is available but no live runtime drift comparison exists",
+    "docker-compose.yml & scripts/deploy_nonprod_vm.sh: configure RECONCILIATION_DRIFT_URL and RECONCILIATION_DRIFT_AUTH_TOKEN for operator-bff"
+  ],
+  "validation": [
+    {
+      "suite": "services/control-plane/bff/tests/test_owner_read_wiring.py",
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/control-plane/bff/tests/test_owner_read_wiring.py",
+      "result": "20 passed"
+    },
+    {
+      "suite": "services/control-plane/bff/test_pkt014_paper_live_drift_contract.py",
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/control-plane/bff/test_pkt014_paper_live_drift_contract.py",
+      "result": "3 passed"
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+      "result": "5 passed"
+    },
+    {
+      "suite": "services/reconciliation-drift/tests/",
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/reconciliation-drift/tests/",
+      "result": "107 passed"
+    },
+    {
+      "check": "diff_budget",
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD --change-class corrective --budget 120",
+      "result": "passed (net production lines <= 120, evidence file <= 400 lines)"
+    }
+  ],
+  "hosted_track": {
+    "status": "external_wait",
+    "detail": "After the next root deployment an authenticated management read in dev shows the honest comparison state (healthy-empty when paper only); recorded as external_wait until then."
+  }
+}
