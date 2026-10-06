@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextvars
 import hmac
 import json
+import logging
 import math
 import os
 import re
@@ -524,6 +525,7 @@ def _post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         method="POST",
     )
     timeout_seconds = float(os.getenv("PANTHEON_INCIDENTS_API_TIMEOUT_SECONDS", "90"))
+    started = time.monotonic()
     try:
         with urllib.request.urlopen(  # noqa: S310 - service URL is operator configured.
             request,
@@ -536,6 +538,10 @@ def _post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         raise HTTPException(status_code=502, detail=f"incident service rejected request: {detail}") from exc
     except urllib.error.URLError as exc:
         raise HTTPException(status_code=502, detail=f"incident service unavailable: {exc.reason}") from exc
+    except OSError as exc:  # read timeouts raise bare TimeoutError, not URLError
+        raise HTTPException(status_code=502, detail=f"incident service unavailable: {exc!r}") from exc
+    finally:
+        logging.getLogger(__name__).info("incidents call took %.2fs", time.monotonic() - started)
 
 
 def _classify_drift_report_incident(report: Dict[str, Any]) -> Dict[str, Any] | None:
