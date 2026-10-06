@@ -1679,6 +1679,7 @@ from services.persona.trade_reflection_pipeline import (
     TradeReflectionPipeline,
     facts_snapshot,
 )
+from services.persona.trade_pattern_review import EpisodeLister, review_pattern, telemetry_episode_lister
 
 
 class OpenClawReflectionProvider:
@@ -1724,6 +1725,7 @@ def create_app(
     governance_decision_verifier: GovernanceDecisionVerifier | None = None,
     reflection_provider: ReflectionProvider | None = None,
     telemetry_fetcher: Callable[[str, str | None, str | None], dict[str, Any] | None] | None = None,
+    pattern_episode_lister: EpisodeLister | None = None,
 ) -> FastAPI:
     persistent_owner = owner or build_persona_owner()
     governance_decision_verifier = (
@@ -1736,6 +1738,7 @@ def create_app(
     )
     active_reflection_provider = reflection_provider or OpenClawReflectionProvider()
     active_telemetry_fetcher = telemetry_fetcher or _default_telemetry_fetcher
+    active_episode_lister = pattern_episode_lister or telemetry_episode_lister()
     app = FastAPI(
         title="Pantheon Persona Registry Owner",
         version="1.0.0",
@@ -2032,6 +2035,48 @@ def create_app(
                 persistent_owner.try_metadata_cas(persona_id, guard=lambda cur: dict((cur.metadata or {}).get("trade_reflection_idempotency") or {}).get(clean_key, {}).get("response") is None, metadata_updates=lambda cur: {"trade_reflection_idempotency": {k: v for k, v in dict((cur.metadata or {}).get("trade_reflection_idempotency") or {}).items() if k != clean_key}}, actor_id=authority.actor_id)
             except Exception: pass
             raise
+
+    @app.post("/api/personas/{persona_id}/trade-reflections:pattern-review")
+    def review_trade_pattern(persona_id: str, body: dict[str, Any], authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        """Produce the scheduled_pattern reflection for one persona; the only writer of that trigger."""
+        tenant_id = str(body.get("tenant_id") or "").strip()
+        try:
+            if not tenant_id: raise PersonaAuthorityError("TENANT_SCOPE_DENIED", "tenant_id is required", 403)
+            authority, persona = _require_owner_persona(persistent_owner, persona_id, authorization)
+            _, admitted = resolve_persona_tenant_scope(authorization, tenant_id)
+            if admitted != tenant_id or persona.tenant_id != tenant_id:
+                raise PersonaAuthorityError("TENANT_SCOPE_DENIED", "Exact tenant match required", 403)
+        except PersonaAuthorityError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"error": {"code": exc.code, "message": exc.message}}) from exc
+        except PersonaNotFound as exc:
+            raise HTTPException(status_code=404, detail={"error": {"code": "RESOURCE_NOT_FOUND", "message": str(exc)}}) from exc
+        try:
+            result = review_pattern(
+                persona_id=persona_id, tenant_id=tenant_id,
+                existing=list((persona.metadata or {}).get("trade_reflections") or []),
+                list_episodes=active_episode_lister, pipeline=TradeReflectionPipeline(active_reflection_provider),
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": f"Pattern review failed: {exc}", "retryable": True}}) from exc
+        artifact = result.pop("artifact", None)
+        if artifact is None: return {"data": result}
+        identity, snapshot_hash = artifact["trade_episode_id"], artifact["facts_snapshot_hash"]
+
+        def _not_yet_persisted(cur: PersonaBody) -> bool:
+            rows = (cur.metadata or {}).get("trade_reflections", [])
+            covered = {e for r in rows if r.get("trigger") == "scheduled_pattern" for e in r.get("covered_episode_ids") or ()}
+            return not covered.intersection(artifact.get("covered_episode_ids") or ()) and not any(r.get("trade_episode_id") == identity and r.get("facts_snapshot_hash") == snapshot_hash for r in rows)
+
+        for _ in range(5):
+            try:
+                ok, _ = persistent_owner.try_metadata_cas(
+                    persona_id, guard=_not_yet_persisted,
+                    metadata_updates=lambda cur: {"trade_reflections": [r for r in (cur.metadata or {}).get("trade_reflections", []) if r.get("trade_episode_id") != identity] + [artifact]},
+                    actor_id=authority.actor_id,
+                )
+                return {"data": {**result, "status": "reviewed" if ok else "unchanged", "reflection_id": artifact["reflection_id"] if ok else None}}
+            except PersonaConcurrentUpdate: continue
+        raise HTTPException(status_code=409, detail={"error": {"code": "CONCURRENT_UPDATE", "message": "Failed to persist pattern reflection"}})
 
     @app.get("/api/personas/{persona_id}/trade-reflections")
     def list_trade_reflections(persona_id: str, environment: str | None = Query(default=None), review_state: str | None = Query(default=None), authorization: str | None = Header(default=None)) -> dict[str, Any]:
