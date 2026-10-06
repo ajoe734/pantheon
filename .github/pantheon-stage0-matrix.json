@@ -34,32 +34,6 @@
     "docker-compose.remote-dev.yml",
     "Pantheon_GCP_GitHub_Docker_正式部署與環境設計_v2.md"
   ],
-  "compose_services": [
-    "agora-interaction-worker", "alpha-replication-worker", "broker", "capital",
-    "consultation-svc", "deployment", "deployment-outbox-consumer",
-    "dev-paper-principal-issuer", "evaluation", "evolution",
-    "evolution-daily-sweep-scheduler", "evolution-dispatch-worker",
-    "evolution-threshold-sweep-producer", "experiments-dormant-smoke",
-    "feedback", "finrl-dormant-smoke", "governance", "incidents",
-    "lifecycle-projector-capacity-benchmark", "lineage-read",
-    "loop-run-projector-scheduler", "memory", "mlflow-dormant-smoke",
-    "monitor-agent", "openclaw-activation-ready-e2e",
-    "openclaw-gateway-adapter", "operator-bff", "optimizer-svc",
-    "oss-activation-ready-smoke-matrix", "pantheon-paper-runtime",
-    "paper-fleet-reconciler", "paper-signal-producer", "persona",
-    "persona-evaluator-agent", "policy-learning-shadow-eval-scheduler",
-    "policy-learning-svc", "postmortems", "promotion", "qlib-dormant-smoke",
-    "ray-tune-dormant-smoke", "reconciliation-drift-consumer",
-    "reconciliation-drift-incident-listener", "reconciliation-drift-scheduler",
-    "reconciliation-drift-svc", "registry", "research-orchestrator-svc",
-    "research-worker-gateway-svc", "rllib-dormant-smoke", "router",
-    "runtime-manager", "search-index-scheduler", "search-svc",
-    "smoke-stack", "source-ingest", "source-ingest-agora-projector",
-    "source-ingest-controller-migrate", "source-ingest-scheduler",
-    "source-search-bounded-smoke", "strategy-distillation-worker",
-    "telemetry", "training-session-preview-worker", "training-session-svc",
-    "trl-dormant-smoke", "web-channel"
-  ],
   "targets": [
     {
       "id": "router",

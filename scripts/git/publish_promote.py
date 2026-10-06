@@ -41,6 +41,7 @@ RELEASE_TAG_RE = re.compile(r"^refs/tags/release/(v\d{4}\.\d{2}(?:\.\d+){1,2})$"
 DAILY_RELEASE_RE = re.compile(r"^v\d{4}\.\d{2}\.\d{2}\.\d+$")
 BRANCH_CI_WORKFLOW = "branch-ci.yml"
 BRANCH_CI_WORKFLOW_PATH = ".github/workflows/branch-ci.yml"
+STAGE0_WORKFLOW = "stage-0-ci.yml"
 REQUIRED_PROMOTE_CHECKS = frozenset(
     {
         "Commit trailers",
@@ -330,6 +331,24 @@ def dispatch_promote_ci(
             f"promote_pr_number={pr_number}",
         ],
         check=True,
+        cwd=ROOT,
+    )
+    # Stage 0 (baseline + in-image import smoke) is not a required check, so a promote ref that predates its
+    # dispatch inputs must not block the promotion.
+    subprocess.run(
+        [
+            "gh",
+            "workflow",
+            "run",
+            STAGE0_WORKFLOW,
+            "--ref",
+            promote_branch,
+            "-f",
+            f"expected_head_sha={expected_head_sha}",
+            "-f",
+            f"promote_pr_number={pr_number}",
+        ],
+        check=False,
         cwd=ROOT,
     )
 
