@@ -17,12 +17,7 @@
     {
       "suite": "services/control-plane/bff/tests/test_owner_read_wiring.py",
       "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/control-plane/bff/tests/test_owner_read_wiring.py",
-      "result": "20 passed"
-    },
-    {
-      "suite": "services/control-plane/bff/test_pkt014_paper_live_drift_contract.py",
-      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/control-plane/bff/test_pkt014_paper_live_drift_contract.py",
-      "result": "3 passed"
+      "result": "21 passed"
     },
     {
       "suite": "services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",

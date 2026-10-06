@@ -162,3 +162,84 @@ def test_reconciliation_drift_records_mapping_and_paper_filtering():
     reports = store.list_paper_live_drift_reports()
     assert len(reports) == 1
     assert reports[0]["runtime_id"] == "rt-live"
+
+
+def test_pkt014_paper_live_drift_healthy_empty_when_service_available_but_no_live_report() -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from services.control_plane.bff.runtime.router import create_runtime_router
+
+    store = create_in_memory_read_surface_ports()
+    store.get_runtime_binding_by_runtime_id = lambda runtime_id: {
+        "id": "runtime-042",
+        "runtime_id": "runtime-042",
+        "deployment_stage": "paper",
+        "status": "running",
+        "plan_id": "plan-F-042",
+    } if runtime_id == "runtime-042" else None
+    store.get_paper_live_drift_report = lambda runtime_id: None
+    store.get_deployment_plan = lambda plan_id: {
+        "plan_id": "plan-F-042",
+        "approval_decision_id": None,
+    } if plan_id == "plan-F-042" else None
+    store.get_approval_decision = lambda decision_id: None
+    store.get_telemetry_summary = lambda runtime_id: None
+    store.get_telemetry_performance = lambda artifact_id: None
+    store.list_incidents = lambda **kwargs: []
+    store.get_evolution_decisions_by_incident = lambda incident_id: []
+    store.dataset_source = lambda dataset: {
+        "paper_live_drift_reports": "service",
+        "runtime_bindings": "canonical",
+        "telemetry_summaries": "service",
+        "telemetry_performance": "service",
+        "approval_decisions": "service",
+        "incidents": "service",
+        "evolution_decisions": "service",
+    }.get(dataset, "missing")
+
+    def _dataset_surface_status(dataset: str, snapshot_at: Any = None, has_data: Any = None, missing_message: Any = None) -> dict[str, Any]:
+        src = store.dataset_source(dataset) if hasattr(store, "dataset_source") else "canonical"
+        if src == "missing" or has_data is False:
+            return {"status": "unavailable", "source": src}
+        elif src == "local_snapshot":
+            return {"status": "degraded", "source": "local_snapshot"}
+        return {"status": "ok", "source": src}
+
+    def _aggregate_group_surface(key: str, surfaces: list[dict[str, Any]], snapshot_at: Any = None, unavailable_message: Any = None, degraded_message: Any = None) -> dict[str, Any]:
+        statuses = [s.get("status", "ok") for s in surfaces]
+        if all(s == "ok" for s in statuses):
+            return {"status": "ok", "source": "bff_composed"}
+        if all(s == "unavailable" for s in statuses):
+            return {"status": "unavailable", "source": "bff_composed", "message": unavailable_message}
+        return {"status": "degraded", "source": "bff_composed", "message": degraded_message}
+
+    deps = {
+        "utc_now": lambda: "2026-04-18T06:10:00Z",
+        "_extract_identity": lambda auth: {"roles": ["operator"]},
+        "_require_read_role": lambda id: None,
+        "_dataset_surface_status": _dataset_surface_status,
+        "_aggregate_group_surface": _aggregate_group_surface,
+        "_snapshot_meta": lambda s: {"snapshot_at": s},
+        "_alert_target_ref": lambda surface_id, label, href, target_id=None: {
+            "surface_id": surface_id, "label": label, "href": href, **({"target_id": target_id} if target_id else {})
+        },
+        "_deployment_review_href": lambda p: f"/operator/deployment-review?plan={p}",
+        "_GOVERNANCE_APPROVAL_QUEUE_ROUTE": "/governance-approval-queue",
+    }
+    app = FastAPI()
+    app.include_router(create_runtime_router(read_surface=store, dependencies=deps))
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/v1/operator/paper-live-drift/runtime-042",
+        headers={"Authorization": "Bearer op-2:operator"},
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    assert payload["paper_baseline"] is None
+    assert payload["observed_state"] is None
+    assert payload["drift_groups"] == []
+    assert payload["meta"]["surfaces"]["paper_live_drift"]["status"] == "ok"
+    assert payload["meta"]["surfaces"]["paper_live_drift"]["message"] == "No paper/live telemetry metrics available."
+
