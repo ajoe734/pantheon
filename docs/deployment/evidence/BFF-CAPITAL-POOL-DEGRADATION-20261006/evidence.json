@@ -78,6 +78,10 @@
       {
         "command": "python3 scripts/git/diff_budget.py",
         "result": "production net added lines <= 60 (net 51 lines)"
+      },
+      {
+        "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py -k test_migrated_suites_do_not_mutate_sys_path",
+        "result": "1 passed, 0 failed"
       }
     ]
   },

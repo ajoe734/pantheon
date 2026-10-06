@@ -7,13 +7,8 @@ from __future__ import annotations
 import os
 import tempfile
 import uuid
-import sys
 from pathlib import Path
 from typing import Any
-
-_tests_dir = str(Path(__file__).resolve().parent / "tests")
-if _tests_dir not in sys.path:
-    sys.path.insert(0, _tests_dir)
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
