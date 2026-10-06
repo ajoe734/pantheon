@@ -17,6 +17,7 @@ RETIRED_COMMANDS = {
     "HumanGateRequestMoreEvidence": "GET /bff/approvals/{decision_id}",
     "HumanGateExtendTtl": "GET /bff/approvals/{decision_id}",
     "RequestReview": "GET /bff/approvals",
+    "CreateDeployment": "approval then POST /api/deployment/plans/validate and POST /api/deployment/plans",
 }
 
 

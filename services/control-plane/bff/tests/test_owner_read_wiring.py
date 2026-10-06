@@ -179,14 +179,15 @@ def test_pkt014_paper_live_drift_healthy_empty_when_service_available_but_no_liv
         "deployment_stage": "paper",
         "status": "running",
         "plan_id": "plan-F-042",
+        "artifact_id": "art-042",
     } if runtime_id == "runtime-042" else None
     store.get_deployment_plan = lambda plan_id: {
         "plan_id": "plan-F-042",
-        "approval_decision_id": None,
+        "approval_decision_id": "app-042",
     } if plan_id == "plan-F-042" else None
-    store.get_approval_decision = lambda decision_id: None
-    store.get_telemetry_summary = lambda runtime_id: None
-    store.get_telemetry_performance = lambda artifact_id: None
+    store.get_approval_decision = lambda decision_id: {"decision_id": "app-042"}
+    store.get_telemetry_summary = lambda runtime_id: {"runtime_id": runtime_id}
+    store.get_telemetry_performance = lambda artifact_id: {"metrics": {}}
     store.list_incidents = lambda **kwargs: []
     store.get_evolution_decisions_by_incident = lambda incident_id: []
     store.dataset_source = lambda dataset: {
@@ -469,17 +470,9 @@ def test_reconciliation_drift_contract_composition_and_trading_pulse() -> None:
     assert live_comp["paper_live_drift"]["available"] is True
     assert live_comp["threshold_evaluation"]["overall_status"] == "breached"
 
-    assert "runtime-paper-01" in comparisons
-    paper_comp = comparisons["runtime-paper-01"]
-    assert paper_comp["status"] == "unavailable"
-    assert paper_comp["paper_live_drift"]["available"] is False
-    assert paper_comp["paper_baseline"] is None
-    assert paper_comp["observed_state"] is None
-    assert paper_comp["drift_groups"] == []
-
-    # With mixed live and paper runtimes, baseline comparisons accurately reflect each runtime:
+    # Paper-only runtimes produce no comparison object in baseline_comparisons:
+    assert "runtime-paper-01" not in comparisons
     assert live_comp["paper_live_drift"]["status"] == "breached"
-    assert paper_comp["paper_live_drift"]["status"] == "unavailable"
 
 
 def test_paper_only_bindings_trading_pulse_healthy_empty() -> None:
@@ -567,14 +560,7 @@ def test_paper_only_bindings_trading_pulse_healthy_empty() -> None:
     assert pulse_resp.status_code == 200
     pulse_dto = pulse_resp.json()
     comparisons = pulse_dto["data"]["baseline_comparisons"]
-    assert len(comparisons) == 1
-    comp = comparisons[0]
-    assert comp["runtime_id"] == "runtime-paper-02"
-    assert comp["status"] == "unavailable"
-    assert comp["paper_live_drift"]["available"] is False
-    assert comp["paper_baseline"] is None
-    assert comp["observed_state"] is None
-    assert comp["drift_groups"] == []
+    assert comparisons == []
 
     # AC5: healthy empty status on both surfaces
     assert pulse_dto["meta"]["surfaces"]["paper_live_drift"]["status"] == "ok"
@@ -582,4 +568,249 @@ def test_paper_only_bindings_trading_pulse_healthy_empty() -> None:
         "No live runtimes require paper/live baseline comparison."
     )
     assert pulse_dto["meta"]["surfaces"]["baseline_comparison"]["status"] == "ok"
+
+
+def test_reconciliation_drift_tenant_derivation_uses_bound_tenant_and_fails_closed_403():
+    # AC1: Tenant derivation in reconciliation read port uses bound_tenant and fails closed with 403
+    import base64
+    import json
+    from fastapi import HTTPException
+    from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
+    from services.control_plane.bff.ports.reconciliation_drift_reads import ReconciliationDriftReadsPort
+
+    port = ReconciliationDriftReadsPort(base_url="http://test-recon")
+
+    # 1. Unresolvable tenant without auth fails closed with 403
+    authorization.set(None)
+    selected_tenant.set("unverified-tenant")
+    with pytest.raises(HTTPException) as exc_info:
+        port._resolve_tenant_id()
+    assert exc_info.value.status_code == 403
+
+    # 2. Token tenant mismatch fails closed with 403
+    header_b64 = base64.urlsafe_b64encode(b'{"alg":"none"}').decode().rstrip("=")
+    payload_b64 = base64.urlsafe_b64encode(json.dumps({"tenant_id": "tenant-alpha"}).encode()).decode().rstrip("=")
+    token = f"{header_b64}.{payload_b64}."
+    authorization.set(f"Bearer {token}")
+    selected_tenant.set("tenant-beta")  # mismatch!
+    with pytest.raises(HTTPException) as exc_info:
+        port._resolve_tenant_id()
+    assert exc_info.value.status_code == 403
+
+    # 3. Matching tenant succeeds
+    selected_tenant.set("tenant-alpha")
+    assert port._resolve_tenant_id() == "tenant-alpha"
+
+    # Clean up context vars
+    authorization.set(None)
+    selected_tenant.set(None)
+
+
+def test_reconciliation_drift_http_client_url_bearer_headers_and_401():
+    # AC7: Tests cover HTTP client URL, bearer, tenant header, 401 handling, and owner runtime_id query filter
+    import io
+    import json
+    import urllib.error
+    from unittest.mock import patch, MagicMock
+    from fastapi import HTTPException
+    from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
+    from services.control_plane.bff.ports.reconciliation_drift_reads import ReconciliationDriftReadsPort
+
+    port = ReconciliationDriftReadsPort(
+        base_url="http://recon-drift.internal:8000",
+        auth_token="secret-token-xyz",
+        default_tenant_id="tenant-prod-1",
+    )
+
+    recorded_output = [{
+        "runtime_id": "rt-live-1",
+        "deployment_stage": "live",
+        "generated_at": "2026-10-06T05:00:00Z",
+        "expected_ref": "paper_baseline",
+        "delta_summary": {},
+    }]
+
+    captured_req = None
+    def mock_urlopen(req, timeout=None):
+        nonlocal captured_req
+        captured_req = req
+        resp = MagicMock()
+        resp.read.return_value = json.dumps(recorded_output).encode("utf-8")
+        resp.__enter__.return_value = resp
+        return resp
+
+    authorization.set(None)
+    selected_tenant.set(None)
+    with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+        report = port.get_paper_live_drift_report(runtime_id="rt-live-1")
+
+    assert report is not None
+    assert captured_req is not None
+    assert captured_req.full_url == "http://recon-drift.internal:8000/api/reconciliation-drift/reconciliation-records?runtime_id=rt-live-1"
+    assert captured_req.headers["Authorization"] == "Bearer secret-token-xyz"
+    assert captured_req.headers["X-tenant-id"] == "tenant-prod-1"
+    assert captured_req.headers["Accept"] == "application/json"
+
+    def mock_401(req, timeout=None):
+        fp = io.BytesIO(b'{"detail":"Unauthorized"}')
+        raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, fp)
+
+    with patch("urllib.request.urlopen", side_effect=mock_401):
+        with pytest.raises(HTTPException) as exc_info:
+            port.get_paper_live_drift_report(runtime_id="rt-live-1")
+        assert exc_info.value.status_code == 401
+        assert port.get_surface_status() == "unavailable"
+
+
+def test_availability_check_health_probe_without_downloading_records():
+    # AC8: Availability check does not download whole tenant records; operator endpoint makes at most one owner records fetch per request
+    from unittest.mock import patch, MagicMock
+    from services.control_plane.bff.ports.reconciliation_drift_reads import ReconciliationDriftReadsPort
+
+    port = ReconciliationDriftReadsPort(
+        base_url="http://recon-drift.internal:8000",
+        default_tenant_id="tenant-prod-1",
+    )
+
+    requested_urls = []
+    def mock_urlopen(req, timeout=None):
+        url = getattr(req, "full_url", str(req))
+        requested_urls.append(url)
+        resp = MagicMock()
+        resp.status = 200
+        resp.read.return_value = b'{"status":"healthy"}'
+        resp.__enter__.return_value = resp
+        return resp
+
+    with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+        status = port.get_surface_status()
+
+    assert status == "service"
+    assert len(requested_urls) == 1
+    assert requested_urls[0] == "http://recon-drift.internal:8000/health"
+    assert "/api/reconciliation-drift/reconciliation-records" not in requested_urls[0]
+
+
+def test_canary_record_reading_and_mapping_against_stated_baseline():
+    # AC3 & AC4: Canary records read and compared against stated baseline; helper keys filtered, owner units/sign kept
+    from services.control_plane.bff.ports.reconciliation_drift_reads import map_reconciliation_record_to_drift_report
+
+    canary_owner_record = {
+        "id": "recon-canary-01",
+        "runtime_id": "rt-canary-01",
+        "deployment_stage": "canary",
+        "recon_type": "canary_run",
+        "expected_ref": "paper_baseline",
+        "actual_ref": "canary_telemetry",
+        "generated_at": "2026-10-06T06:00:00Z",
+        "delta_summary": {
+            "baseline_metrics": {
+                "drawdown": 0.05,
+                "drawdown_sample_count": 50,
+                "drawdown_latest": 0.05,
+            },
+            "observed_metrics": {
+                "drawdown": 0.08,
+                "drawdown_sample_count": 50,
+                "drawdown_latest": 0.08,
+            },
+            "drift_checks": [
+                {
+                    "metric": "drawdown",
+                    "status": "warning",
+                    "baseline": 0.05,
+                    "observed": 0.08,
+                    "relative_delta": 0.6,
+                    "unit": "pct_ratio",
+                },
+                {
+                    "metric": "pnl",
+                    "status": "warning",
+                    "baseline": 1.0,
+                    "observed": 0.8,
+                    "relative_delta": 0.2,
+                    "unit": "ratio",
+                }
+            ],
+        },
+    }
+
+    report = map_reconciliation_record_to_drift_report(canary_owner_record)
+    assert report is not None
+    assert report["deployment_stage"] == "canary"
+    assert report["paper_baseline"]["deployment_stage"] == "paper"
+    assert "captured_at" not in report["paper_baseline"]
+    assert report["paper_baseline"]["metrics"] == {"drawdown": 0.05}
+    assert report["observed_state"]["metrics"] == {"drawdown": 0.08}
+    assert "drawdown_sample_count" not in report["observed_state"]["metrics"]
+    assert "drawdown_latest" not in report["observed_state"]["metrics"]
+    metrics = {m["metric_id"]: m for m in report["drift_groups"][0]["metrics"]}
+    assert metrics["drawdown"]["delta"] == 0.6
+    assert metrics["drawdown"]["unit"] == "pct_ratio"
+    assert metrics["pnl"]["delta"] == -0.2
+    assert metrics["pnl"]["unit"] == "ratio"
+
+
+def test_operator_paper_live_drift_endpoint_degraded_for_live_without_record_and_preserves_degraded():
+    # AC6: Operator paper-live-drift endpoint does not force aggregate status to ok over degraded supporting surfaces;
+    # agrees with trading pulse (degraded) for live runtime without record.
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+    from services.control_plane.bff.runtime.router import create_runtime_router
+
+    store = create_in_memory_read_surface_ports(reconciliation_records_provider=lambda **kw: [])
+    live_binding = {
+        "id": "runtime-live-missing",
+        "runtime_id": "runtime-live-missing",
+        "deployment_stage": "live",
+        "status": "running",
+        "plan_id": "plan-live-m",
+    }
+    store.get_runtime_binding_by_runtime_id = lambda rid: live_binding if rid == "runtime-live-missing" else None
+    store.get_deployment_plan = lambda pid: {"plan_id": "plan-live-m", "approval_decision_id": None}
+    store.get_approval_decision = lambda did: None
+    store.get_telemetry_summary = lambda rid: None
+    store.get_telemetry_performance = lambda aid: None
+    store.list_incidents = lambda **kwargs: []
+    store.get_evolution_decisions_by_incident = lambda iid: []
+
+    deps = {
+        "utc_now": lambda: "2026-10-06T07:00:00Z",
+        "_extract_identity": lambda auth: {"roles": ["operator"]},
+        "_require_read_role": lambda id: None,
+        "_dataset_surface_status": lambda ds, **kw: {"status": "ok", "source": "service"},
+        "_aggregate_group_surface": lambda k, s, **kw: {
+            "status": "degraded" if any(x.get("status") == "degraded" for x in s) else "ok",
+            "source": "bff_composed",
+        },
+        "_snapshot_meta": lambda s: {"snapshot_at": s},
+        "_alert_target_ref": lambda surface_id, label, href, target_id=None: {"surface_id": surface_id, "label": label, "href": href},
+        "_deployment_review_href": lambda p: f"/operator/deployment-review?plan={p}",
+        "_GOVERNANCE_APPROVAL_QUEUE_ROUTE": "/governance-approval-queue",
+    }
+
+    app = FastAPI()
+    app.include_router(create_runtime_router(read_surface=store, dependencies=deps))
+    client = TestClient(app)
+
+    resp = client.get(
+        "/api/v1/operator/paper-live-drift/runtime-live-missing",
+        headers={"Authorization": "Bearer op:operator"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["meta"]["surfaces"]["paper_live_drift"]["status"] == "degraded"
+
+
+def test_reconciliation_drift_owner_url_setting_name(monkeypatch):
+    # AC9: Owner URL setting name matches PANTHEON_RECONCILIATION_DRIFT_API_URL
+    from services.control_plane.bff.ports.reconciliation_drift_reads import ReconciliationDriftReadsPort
+
+    monkeypatch.setenv("PANTHEON_RECONCILIATION_DRIFT_API_URL", "http://primary-api-url:9000")
+    monkeypatch.setenv("RECONCILIATION_DRIFT_URL", "http://fallback-url:9000")
+
+    port = ReconciliationDriftReadsPort()
+    assert port._base_url == "http://primary-api-url:9000"
+
 

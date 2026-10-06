@@ -248,8 +248,6 @@ def create_rankings_long_tail_router(
     deprecated_bff_path_response: Optional[Callable[..., Any]] = None,
     reject_body_idempotency_key: Optional[Callable[[Dict[str, Any]], None]] = None,
     resolve_final_idempotency_key: Optional[Callable[..., str]] = None,
-    capital_bff_idempotency_check: Optional[Callable[..., Optional[Dict[str, Any]]]] = None,
-    capital_bff_idempotency_store: Optional[Callable[..., None]] = None,
     capital_bff_action_command: Optional[Callable[..., Any]] = None,
     object_type: Any = None,
     command_type: Any = None,

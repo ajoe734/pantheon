@@ -97,6 +97,7 @@ from services.control_plane.bff.assistant.management_service import (
     set_assistant_control_mode_store,
     reset_assistant_control_mode_store,
 )
+from services.control_plane.bff.tests.bff_compose_stand_ins import resolve_with_stand_ins
 from services.control_plane.bff.core.app_factory import compose_bff_app
 from services.control_plane.bff.models import OperatorIdentity
 
@@ -130,7 +131,7 @@ def test_mgmt_nl_ask_standalone_composition_serves_end_to_end():
     # Ensure main is not in sys.modules prior to composition
     main_was_loaded = "services.control_plane.bff.main" in sys.modules
 
-    app = compose_bff_app()
+    app = compose_bff_app(dependency_resolver=resolve_with_stand_ins)
     assert isinstance(app, FastAPI)
 
     client = TestClient(app)
@@ -158,7 +159,7 @@ def test_mgmt_nl_ask_standalone_composition_serves_end_to_end():
 
 def test_mgmt_nl_ask_standalone_high_risk_refusal():
     """Verify high-risk query refusal functions in standalone composition without main.py."""
-    app = compose_bff_app()
+    app = compose_bff_app(dependency_resolver=resolve_with_stand_ins)
     client = TestClient(app)
 
     resp = client.post(

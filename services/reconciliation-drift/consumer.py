@@ -25,6 +25,7 @@ from services.background_worker_health import (
     write_health,
 )
 from services.trade_journey.correlation_envelope import propagate_envelope
+from telemetry_client import fetch_runtime_summaries
 
 
 LOOP_ID = os.getenv("PANTHEON_LOOP_ID") or "telemetry_reconciliation"
@@ -487,39 +488,6 @@ def post_events(service_url: str, events: list[dict[str, Any]]) -> dict[str, Any
         raise RuntimeError(f"reconciliation-drift consume failed: {exc.code} {detail}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"reconciliation-drift service unavailable: {exc.reason}") from exc
-
-
-def fetch_runtime_summaries(telemetry_url: str, *, timeout_seconds: float = 10.0) -> list[dict[str, Any]]:
-    """Read the telemetry-owned authoritative runtime-summary projection."""
-    if not telemetry_url:
-        raise RuntimeError("PANTHEON_TELEMETRY_API_URL is required")
-    request = urllib.request.Request(
-        telemetry_url.rstrip("/") + "/api/telemetry/runtime-summaries",
-        headers={"Accept": "application/json"},
-        method="GET",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
-            body = response.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"telemetry runtime summaries rejected: {exc.code} {detail}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"telemetry service unavailable: {exc.reason}") from exc
-
-    try:
-        payload = json.loads(body) if body else {}
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("telemetry runtime summaries returned invalid JSON") from exc
-    if isinstance(payload, list):
-        summaries = payload
-    elif isinstance(payload, dict):
-        summaries = payload.get("summaries") or payload.get("items") or []
-    else:
-        raise RuntimeError("telemetry runtime summaries returned an invalid envelope")
-    if not isinstance(summaries, list):
-        raise RuntimeError("telemetry runtime summaries must be a list")
-    return [item for item in summaries if isinstance(item, dict)]
 
 
 def runtime_summary_to_event(summary: dict[str, Any]) -> dict[str, Any]:
@@ -1016,7 +984,7 @@ def run_runtime_summary_consumer_once(
     summaries: list[dict[str, Any]] = []
     try:
         summaries = fetch_runtime_summaries(telemetry_url)
-    except RuntimeError as exc:
+    except RuntimeError as exc:  # TelemetryError subclasses RuntimeError
         source_error = str(exc)
         state.last_failure_at = observed_at
         state.last_failure_error = source_error

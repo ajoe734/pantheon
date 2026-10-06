@@ -30,16 +30,20 @@ def map_reconciliation_record_to_drift_report(
     delta_summary = delta if isinstance(delta, dict) else {}
     gen_at = record.get("generated_at")
 
-    def _metric_state(metrics: Any, stage: Any, ts_key: str) -> Optional[Dict[str, Any]]:
+    def _metric_state(metrics: Any, stage: Any, ts: Optional[str] = None, ts_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
         if not isinstance(metrics, dict):
             return None
-        res: Dict[str, Any] = {"deployment_stage": stage, "metrics": dict(metrics)}
-        if gen_at is not None:
-            res[ts_key] = gen_at
+        filtered = {k: v for k, v in metrics.items() if not k.endswith(("_sample_count", "_latest"))}
+        res: Dict[str, Any] = {"deployment_stage": stage, "metrics": filtered}
+        if ts_key and ts is not None:
+            res[ts_key] = ts
         return res
 
-    paper_baseline = _metric_state(delta_summary.get("baseline_metrics"), "paper", "captured_at")
-    observed_state = _metric_state(delta_summary.get("observed_metrics"), record.get("deployment_stage"), "observed_at")
+    expected_ref = str(record.get("expected_ref") or record.get("expected_reference") or record.get("baseline_ref") or "paper")
+    baseline_stage = expected_ref.removesuffix("_baseline") if expected_ref.endswith("_baseline") else expected_ref
+    baseline_ts = record.get("baseline_captured_at") or delta_summary.get("baseline_captured_at")
+    paper_baseline = _metric_state(delta_summary.get("baseline_metrics"), baseline_stage, baseline_ts, "captured_at")
+    observed_state = _metric_state(delta_summary.get("observed_metrics"), record.get("deployment_stage"), record.get("observed_at") or gen_at, "observed_at")
 
     drift_groups = None
     threshold_evaluation = None
@@ -58,12 +62,15 @@ def map_reconciliation_record_to_drift_report(
                     breached_ids.append(mid)
             elif mapped_status == "watch":
                 has_watch = True
+            b_val, o_val, rel = c.get("baseline"), c.get("observed"), c.get("relative_delta")
+            delta_val = (-abs(rel) if o_val < b_val else abs(rel)) if rel is not None and isinstance(b_val, (int, float)) and isinstance(o_val, (int, float)) else rel
             metrics.append({
                 "metric_id": mid,
                 "label": mid.replace("_", " ").title() if mid else "",
-                "baseline_value": c.get("baseline"),
-                "observed_value": c.get("observed"),
-                "delta": c.get("relative_delta"),
+                "baseline_value": b_val,
+                "observed_value": o_val,
+                "delta": delta_val,
+                "unit": c.get("unit") or "relative_delta",
                 "status": mapped_status,
             })
         if metrics:
@@ -111,20 +118,28 @@ class ReconciliationDriftReadsPort:
         records_provider: Optional[Callable[..., List[Dict[str, Any]]]] = None,
         default_tenant_id: Optional[str] = None,
     ) -> None:
-        self._base_url = (base_url or os.getenv("RECONCILIATION_DRIFT_URL") or os.getenv("PANTHEON_RECONCILIATION_DRIFT_URL") or "").rstrip("/")
-        self._auth_token = auth_token or os.getenv("RECONCILIATION_DRIFT_AUTH_TOKEN") or os.getenv("PANTHEON_RECONCILIATION_DRIFT_AUTH_TOKEN") or ""
+        url_env = os.getenv("PANTHEON_RECONCILIATION_DRIFT_API_URL") or os.getenv("RECONCILIATION_DRIFT_URL")
+        self._base_url = (base_url or url_env or os.getenv("PANTHEON_RECONCILIATION_DRIFT_URL") or "").rstrip("/")
+        tok_env = os.getenv("RECONCILIATION_DRIFT_AUTH_TOKEN") or os.getenv("PANTHEON_RECONCILIATION_DRIFT_AUTH_TOKEN")
+        self._auth_token = auth_token or tok_env or ""
         self._records_provider = records_provider
         self._default_tenant_id = default_tenant_id
+        self._last_status: Optional[str] = None
 
     def _resolve_tenant_id(self) -> str:
+        from ..command_adapters.base import ActionUnavailableError, bound_tenant
+        from ..core.owner_reads import authorization, selected_tenant
+
+        auth = authorization.get()
+        token = auth.removeprefix("Bearer ").strip() if auth else None
+        req_tenant = selected_tenant.get()
+        if not auth and not req_tenant:
+            return self._default_tenant_id or "default"
         try:
-            from ..core.owner_reads import selected_tenant
-            current = selected_tenant.get()
-            if current:
-                return current
-        except Exception:
-            pass
-        return self._default_tenant_id or os.getenv("PANTHEON_BFF_TENANT_ID") or "default"
+            return bound_tenant({}, tenant_id=req_tenant, auth_token=token)
+        except ActionUnavailableError as exc:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=exc.downstream_status or 403, detail=str(exc)) from exc
 
     def _fetch_records(
         self,
@@ -132,8 +147,12 @@ class ReconciliationDriftReadsPort:
         binding_id: Optional[str] = None,
         runtime_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        tenant_id = self._resolve_tenant_id()
         if self._records_provider is not None:
-            records = self._records_provider(binding_id=binding_id, runtime_id=runtime_id)
+            try:
+                records = self._records_provider(binding_id=binding_id, runtime_id=runtime_id, tenant_id=tenant_id)
+            except TypeError:
+                records = self._records_provider(binding_id=binding_id, runtime_id=runtime_id)
             if not isinstance(records, list):
                 raise ValueError("records_provider must return a list")
             return records
@@ -149,30 +168,42 @@ class ReconciliationDriftReadsPort:
 
         query_str = f"?{urllib.parse.urlencode(params)}" if params else ""
         url = f"{self._base_url}/api/reconciliation-drift/reconciliation-records{query_str}"
-        headers = {
-            "Accept": "application/json",
-            "X-Tenant-Id": self._resolve_tenant_id(),
-        }
+        headers = {"Accept": "application/json", "X-Tenant-Id": tenant_id}
         if self._auth_token:
             headers["Authorization"] = f"Bearer {self._auth_token}"
 
         req = urllib.request.Request(url, headers=headers, method="GET")
-        with urllib.request.urlopen(req, timeout=_DEFAULT_RECONCILIATION_TIMEOUT) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            if not isinstance(data, list):
-                raise ValueError("Expected list from reconciliation-records")
-            return data
+        try:
+            with urllib.request.urlopen(req, timeout=_DEFAULT_RECONCILIATION_TIMEOUT) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                if not isinstance(data, list):
+                    raise ValueError("Expected list from reconciliation-records")
+                self._last_status = "service"
+                return data
+        except Exception as exc:
+            self._last_status = "unavailable"
+            if getattr(exc, "code", None) == 401:
+                log.warning("Reconciliation drift read unauthorized (HTTP 401): %s", exc)
+                from fastapi import HTTPException
+                raise HTTPException(status_code=401, detail="Reconciliation owner authentication failed") from exc
+            raise
 
     def get_surface_status(self) -> str:
-        """Report availability of the reconciliation owner."""
-        if self._records_provider is None and not self._base_url:
-            return "unavailable"
-        try:
-            self._fetch_records()
+        """Report availability of the reconciliation owner without downloading tenant records."""
+        if self._records_provider is not None:
             return "service"
+        if not self._base_url:
+            return "unavailable"
+        if self._last_status is not None:
+            return self._last_status
+        try:
+            req = urllib.request.Request(f"{self._base_url}/health", headers={"Accept": "application/json"}, method="GET")
+            with urllib.request.urlopen(req, timeout=_DEFAULT_RECONCILIATION_TIMEOUT) as resp:
+                self._last_status = "service" if 200 <= resp.status < 300 else "unavailable"
         except Exception as exc:
             log.warning("Reconciliation drift read surface unavailable: %s", exc)
-            return "unavailable"
+            self._last_status = "unavailable"
+        return self._last_status
 
     def get_paper_live_drift_report(
         self,
@@ -180,10 +211,12 @@ class ReconciliationDriftReadsPort:
         binding_id: Optional[str] = None,
         runtime_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Return the mapped paper/live comparison for the specified binding or runtime."""
+        """Return the mapped paper/live/canary comparison for the specified binding or runtime."""
         try:
             records = self._fetch_records(binding_id=binding_id, runtime_id=runtime_id)
         except Exception as exc:
+            if getattr(exc, "status_code", None) in {401, 403}:
+                raise
             log.warning("Failed to fetch reconciliation records for %s/%s: %s", binding_id, runtime_id, exc)
             return None
 
@@ -192,7 +225,7 @@ class ReconciliationDriftReadsPort:
             if not isinstance(r, dict):
                 continue
             stage = str(r.get("deployment_stage") or r.get("recon_type") or "").lower()
-            if stage not in {"live", "live_run"}:
+            if stage not in {"live", "live_run", "canary", "canary_run"}:
                 continue
             r_rid = str(r.get("runtime_id") or "").strip()
             r_bid = str(r.get("binding_id") or r.get("runtime_binding_id") or r.get("scope_ref") or "").strip()
@@ -208,17 +241,19 @@ class ReconciliationDriftReadsPort:
         return map_reconciliation_record_to_drift_report(latest)
 
     def list_paper_live_drift_reports(self) -> List[Dict[str, Any]]:
-        """List all mapped live drift reports across visible records."""
+        """List all mapped live and canary drift reports across visible records."""
         try:
             records = self._fetch_records()
-        except Exception:
+        except Exception as exc:
+            if getattr(exc, "status_code", None) in {401, 403}:
+                raise
             return []
 
         by_key: Dict[str, Dict[str, Any]] = {}
         for r in records:
             if not isinstance(r, dict):
                 continue
-            if str(r.get("deployment_stage") or r.get("recon_type") or "").lower() not in {"live", "live_run"}:
+            if str(r.get("deployment_stage") or r.get("recon_type") or "").lower() not in {"live", "live_run", "canary", "canary_run"}:
                 continue
             key = str(r.get("runtime_id") or r.get("binding_id") or "")
             if key and (key not in by_key or str(r.get("generated_at") or "") > str(by_key[key].get("generated_at") or "")):

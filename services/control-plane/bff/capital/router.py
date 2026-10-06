@@ -7,8 +7,10 @@ Manager client, auth guards, and response helpers when it mounts the router.
 """
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
+import re
 import urllib.error
 from datetime import datetime, timezone
 from enum import Enum
@@ -167,6 +169,42 @@ def _error_for_capital_exception(exc: Exception, bff_error: Callable[..., Except
     if isinstance(exc, RuntimeError):  # owner answered, but not with the record that was requested
         return bff_error(502, ErrorCode.UPSTREAM_ERROR, "Capital owner returned an unexpected result", str(exc))
     return exc
+
+
+def stable_capital_resource_id(
+    prefix: str,
+    *,
+    operator_id: str,
+    idempotency_key: str,
+    requested_id: Any = None,
+) -> str:
+    """Return the caller's id, or one derived from the key so a retry reaches the same owner record."""
+    explicit = str(requested_id or "").strip()
+    if explicit:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{2,127}", explicit):
+            from ..auth.policy import bff_error
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                f"Invalid {prefix} identity",
+                "Stable resource ids must be 3-128 URL-safe characters",
+                precondition_failed=f"{prefix}_id",
+            )
+        return explicit
+    digest = hashlib.sha256(f"{operator_id}\x00{idempotency_key}\x00{prefix}".encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}-{digest}"
+
+
+def capital_owner_role(identity: Any) -> str:
+    return next((role for role in ("admin", "approver", "operator", "reviewer") if role in identity.roles), "operator")
+
+
+def raise_capital_owner_error(exc: Exception, *, operation: str) -> None:
+    """Raise the BFF error for a Capital owner failure; return for exceptions it does not map."""
+    from ..auth.policy import bff_error
+    mapped = _error_for_capital_exception(exc, bff_error)
+    if mapped is not exc:
+        raise mapped from exc
 
 
 def _surface_meta(

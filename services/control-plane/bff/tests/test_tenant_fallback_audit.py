@@ -294,7 +294,6 @@ def _owner_writes(owner) -> int:
 
 
 @pytest.mark.parametrize("command, target, params", [
-    ("CreateDeployment", {"type": "Deployment", "id": "plan-a"}, {}),
     ("EvolutionProgramAction", {"type": "EvolutionProgram", "id": "program-a"},
      {"action_id": "pause_program", "program_id": "program-a"}),
 ])
@@ -2026,8 +2025,9 @@ def test_tenantless_structured_caller_never_dispatches(mounted, monkeypatch, par
     response = client.post(
         "/bff/v1/commands",
         headers={"Authorization": "Bearer reviewer:operator:mfa", "Idempotency-Key": f"reviewer-missing-tenant-{len(params)}"},
-        json={"command": "CreateDeployment", "target": {"type": "Deployment", "id": "plan-a"},
-              "params": params, "audit_context": {"reason": "missing tenant reviewer regression"}},
+        json={"command": "EvolutionProgramAction", "target": {"type": "EvolutionProgram", "id": "program-a"},
+              "action": "pause_program", "params": {"action_id": "pause_program", "program_id": "program-a", **params},
+              "audit_context": {"reason": "missing tenant reviewer regression"}},
     )
     assert seen == [], f"Missing trusted tenant must fail before downstream calls, got {seen}"
 

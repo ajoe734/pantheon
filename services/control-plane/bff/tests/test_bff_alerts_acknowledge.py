@@ -111,7 +111,6 @@ class _StubReadStore:
 @pytest.fixture()
 def harness(tmp_path):
     command_store = CommandStore(str(tmp_path / f"commands-{uuid.uuid4().hex[:8]}.jsonl"))
-    idempotency_ledger: Dict[str, Any] = {}
     alerts_payload = _AlertsPayloadHolder()
     read_store = _StubReadStore()
 
@@ -121,7 +120,6 @@ def harness(tmp_path):
             read_surface=read_store,
             command_store=command_store,
             build_operator_alerts_payload=alerts_payload,
-            idempotency_ledger=idempotency_ledger,
             extract_identity=auth_policy.extract_identity,
             require_read_role=auth_policy.require_read_role,
             require_operator_role=auth_policy.require_operator_role,

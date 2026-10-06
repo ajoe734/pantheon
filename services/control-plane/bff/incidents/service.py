@@ -18,6 +18,8 @@ import logging
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 import uuid
 
+from fastapi import HTTPException
+
 from services.control_plane.bff.models import (
     CommandStatus,
     CommandType,
@@ -440,7 +442,6 @@ class IncidentService:
         durable_writer: Optional[Any] = None,
         incident_overlay: Optional[Dict[str, Dict[str, Any]]] = None,
         acknowledged_alerts: Optional[Dict[str, Dict[str, Any]]] = None,
-        idempotency_ledger: Optional[Dict[str, Dict[str, Any]]] = None,
         incident_events: Optional[deque] = None,
         incident_subscribers: Optional[List[asyncio.Queue]] = None,
         utc_now: Optional[Callable[[], str]] = None,
@@ -457,9 +458,6 @@ class IncidentService:
         else:
             self._get_command_store = get_command_store or (lambda: None)
         self._durable_writer = durable_writer
-        self._idempotency_ledger: Dict[str, Dict[str, Any]] = (
-            idempotency_ledger if idempotency_ledger is not None else {}
-        )
         self._incident_events: deque = (
             incident_events if incident_events is not None else deque(maxlen=500)
         )
@@ -639,28 +637,22 @@ class IncidentService:
         operator_id: str,
         idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
-        incident_id = str(payload.get("incident_id") or payload.get("id") or uuid.uuid4())
+        client_incident_id = str(payload.get("incident_id") or payload.get("id") or "").strip()
+        # The owner enforces incident_id uniqueness durably, so a key-derived id makes
+        # a retry of the same Idempotency-Key land on the same owner record.
+        incident_id = client_incident_id or (
+            f"inc-{hashlib.sha256(idempotency_key.encode('utf-8')).hexdigest()[:24]}"
+            if idempotency_key
+            else str(uuid.uuid4())
+        )
         submitted_at = self.now()
         req_body = {
             **payload,
+            "id": incident_id,
             "incident_id": incident_id,
             "status": payload.get("status") or "open",
             "title": payload.get("title") or "Untitled Incident",
             "severity": payload.get("severity") or "medium",
-        }
-        writer = self._resolve_durable_writer()
-        if writer is None or not hasattr(writer, "create_incident"):
-            from fastapi import HTTPException
-            raise HTTPException(
-                status_code=503,
-                detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": "Incident creation unavailable: durable writer is not configured", "status_code": 503}},
-            )
-        created = writer.create_incident(req_body)
-        if created and isinstance(created, dict):
-            req_body.update(created)
-        return _project_bff_incident_case({
-            **req_body,
-            "id": incident_id,
             "submitted_at": submitted_at,
             "submitted_by": operator_id,
             "audit_ref": {
@@ -669,7 +661,31 @@ class IncidentService:
                 "href": f"/bff/audit/entities/Incident/{incident_id}",
             },
             "meta": {"idempotency_key": idempotency_key} if idempotency_key else {},
-        })
+        }
+        writer = self._resolve_durable_writer()
+        if writer is None or not hasattr(writer, "create_incident"):
+            raise HTTPException(
+                status_code=503,
+                detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": "Incident creation unavailable: durable writer is not configured", "status_code": 503}},
+            )
+        try:
+            created = writer.create_incident(req_body)
+        except HTTPException as exc:
+            existing = self.get_incident(incident_id) if exc.status_code == 409 else None
+            if not existing:
+                raise
+            if any(
+                str(existing.get(field) or "") != str(req_body.get(field) or "")
+                for field in ("title", "severity")
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail={"error": {"code": "IDEMPOTENCY_CONFLICT", "message": "Idempotency key already used with a different payload", "status_code": 409}},
+                ) from exc
+            return _project_bff_incident_case(existing)
+        if created and isinstance(created, dict):
+            req_body.update(created)
+        return _project_bff_incident_case(req_body)
 
     def update_incident_status(
         self,

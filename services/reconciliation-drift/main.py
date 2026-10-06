@@ -27,6 +27,7 @@ from services.trade_journey.correlation_envelope import (
     validate_envelope,
 )
 from store import build_reconciliation_drift_store
+from telemetry_client import TelemetryAuthError, TelemetryError, fetch_runtime_summaries
 
 
 DEFAULT_WARNING_RELATIVE_DELTA = 0.2
@@ -1517,7 +1518,10 @@ def list_reconciliation_records(
 ) -> List[Dict[str, Any]]:
     records = _tenant_scoped(store.list_reconciliation_records())
     if binding_id:
-        records = [item for item in records if item.get("binding_id") == binding_id or item.get("runtime_binding_id") == binding_id or item.get("scope_ref") == binding_id]
+        records = [
+            item for item in records
+            if binding_id in (item.get("binding_id"), item.get("runtime_binding_id"), item.get("scope_ref"))
+        ]
     if runtime_id:
         records = [item for item in records if item.get("runtime_id") == runtime_id]
     return records
@@ -1648,25 +1652,6 @@ class IncidentTriggerBody(BaseModel):
     baseline_metrics: Dict[str, Any] = Field(default_factory=dict)
     thresholds: Dict[str, Any] = Field(default_factory=dict)
     generated_at: Optional[str] = None
-
-
-def _fetch_telemetry_runtime_summaries(telemetry_url: str) -> List[Dict[str, Any]] | None:
-    if not telemetry_url:
-        return None
-    url = telemetry_url.rstrip("/") + "/api/telemetry/runtime-summaries"
-    try:
-        request = urllib.request.Request(url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
-            body = response.read().decode("utf-8")
-        payload = json.loads(body) if body else []
-        if isinstance(payload, list):
-            return payload
-        if isinstance(payload, dict):
-            res = payload.get("summaries") or payload.get("items")
-            return res if isinstance(res, list) else []
-        return []
-    except (urllib.error.URLError, OSError, json.JSONDecodeError):
-        return None
 
 
 def _tick_evaluation_id(tick_id: str, binding_id: str) -> str:
@@ -2731,11 +2716,16 @@ def _execute_scheduled_reconcile(
     create duplicate ReconciliationRecords.
     """
     telemetry_url = os.getenv("PANTHEON_TELEMETRY_API_URL", "").rstrip("/")
-    summaries = _fetch_telemetry_runtime_summaries(telemetry_url)
-
-    if summaries is None:
+    try:
+        summaries = fetch_runtime_summaries(telemetry_url, tenant_id=tenant_id)
+    except TelemetryError as exc:
         return {
             "status": "failure",
+            "failure_code": (
+                "telemetry_auth_failed"
+                if isinstance(exc, TelemetryAuthError)
+                else "telemetry_unavailable"
+            ),
             "tick_id": tick_id,
             "trigger": "scheduled",
             "evaluated_binding_count": 0,
@@ -2744,7 +2734,7 @@ def _execute_scheduled_reconcile(
             "skipped_binding_ids": [],
             "telemetry_summaries_fetched": 0,
             "triggered_at": timestamp,
-            "detail": "telemetry service unavailable",
+            "detail": str(exc),
         }
 
     scoped_summaries: List[Dict[str, Any]] = []
