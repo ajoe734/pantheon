@@ -993,12 +993,16 @@ class DomainTelemetryPort:
         telemetry_performance: Optional[Dict[str, Dict[str, Any]]] = None,
         paper_live_drift_reports: Optional[Union[Dict[str, Dict[str, Any]], List[Dict[str, Any]]]] = None,
         telemetry_events_source: str = "telemetry_events",
+        telemetry_summaries_reader: Optional[Any] = None,
     ) -> None:
         self._telemetry_events = list(telemetry_events or [])
-        if isinstance(telemetry_summaries, dict):
-            self._telemetry_summaries = list(telemetry_summaries.values())
-        else:
-            self._telemetry_summaries = list(telemetry_summaries or [])
+        self._telemetry_summaries = None
+        if telemetry_summaries is not None:
+            if isinstance(telemetry_summaries, dict):
+                self._telemetry_summaries = list(telemetry_summaries.values())
+            else:
+                self._telemetry_summaries = list(telemetry_summaries)
+        self._telemetry_summaries_reader = telemetry_summaries_reader
         self._telemetry_performance = dict(telemetry_performance or {})
         if isinstance(paper_live_drift_reports, dict):
             self._paper_live_drift_reports = list(paper_live_drift_reports.values())
@@ -1075,7 +1079,7 @@ class DomainTelemetryPort:
 
     def _telemetry_summary_projection_events(self) -> List[Dict[str, Any]]:
         events: List[Dict[str, Any]] = []
-        for summary in self._telemetry_summaries:
+        for summary in self.list_telemetry_summaries():
             runtime_id = summary.get("runtime_id") or summary.get("id")
             if not runtime_id:
                 continue
@@ -1139,13 +1143,37 @@ class DomainTelemetryPort:
         return events
 
     def get_telemetry_summary(self, runtime_id: str) -> Optional[Dict[str, Any]]:
-        for summary in self._telemetry_summaries:
+        for summary in self.list_telemetry_summaries():
             if summary.get("runtime_id") == runtime_id or summary.get("id") == runtime_id:
                 return summary
         return None
 
+    def dataset_source(self) -> str:
+        if self._telemetry_summaries is not None:
+            return "typed_store"
+        if self._telemetry_summaries_reader is None:
+            return "missing"
+        try:
+            from ..command_adapters.base import get_base_url
+            get_base_url("PANTHEON_TELEMETRY_API_URL", "PANTHEON_TELEMETRY_URL")
+        except RuntimeError:
+            return "missing"
+        try:
+            self.list_telemetry_summaries()
+            return "service"
+        except Exception:
+            return "unavailable"
+
     def list_telemetry_summaries(self) -> List[Dict[str, Any]]:
-        return [json.loads(json.dumps(s)) for s in self._telemetry_summaries]
+        if self._telemetry_summaries is not None:
+            summaries = self._telemetry_summaries
+        elif self._telemetry_summaries_reader is not None:
+            summaries = self._telemetry_summaries_reader()
+            if not isinstance(summaries, list) or any(not isinstance(item, dict) for item in summaries):
+                raise RuntimeError("Invalid Telemetry owner summaries collection")
+        else:
+            return []
+        return [json.loads(json.dumps(s)) for s in summaries]
 
     def get_telemetry_performance(self, artifact_id: str) -> Optional[Dict[str, Any]]:
         return self._telemetry_performance.get(artifact_id)
