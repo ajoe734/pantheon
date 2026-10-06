@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MATRIX_PATH = ROOT / ".github" / "pantheon-stage0-matrix.json"
 DEFAULT_DOC_PATH = ROOT / "Pantheon_GCP_GitHub_Docker_正式部署與環境設計_v2.md"
 DEFAULT_COMPOSE_PATH = ROOT / "docker-compose.yml"
+EXTRA_COMPOSE_PATHS = [ROOT / "docker-compose.control.yml"]  # builds feedback from an image docker-compose.yml does not
 WAVE1_HEADING = "### 4.3 Wave 1 core service inventory"
 
 
@@ -70,12 +71,19 @@ def parse_wave1_inventory_ids(doc_path: Path = DEFAULT_DOC_PATH) -> list[str]:
     return ids
 
 
+def compose_placeholders(compose_path: Path) -> dict[str, str]:
+    """Placeholder values for variables the compose file requires (``${VAR:?msg}``) so ``config`` resolves without deploy secrets."""
+    required = re.findall(r"\$\{(\w+):?\?", compose_path.read_text(encoding="utf-8")) if compose_path.is_file() else []
+    return {name: "import-smoke-placeholder" for name in required if not os.environ.get(name)}
+
+
 def parse_compose_services_details(compose_path: Path = DEFAULT_COMPOSE_PATH) -> dict[str, dict[str, Any]]:
     """Compose services built from project code; ``docker compose config`` resolves profiles and ${VAR:-default}."""
     result = subprocess.run(
         ["docker", "compose", "--file", str(compose_path), "--profile", "*", "config", "--format", "json"],
         capture_output=True,
         text=True,
+        env={**os.environ, **compose_placeholders(compose_path)},
     )
     if result.returncode != 0:
         raise Stage0ConfigError(f"docker compose config failed for {compose_path}: {result.stderr.strip()}")
@@ -152,23 +160,30 @@ def resolve_import_check(argv: list[str]) -> list[str] | None:
 
 
 def compose_images(compose_path: Path = DEFAULT_COMPOSE_PATH) -> dict[str, dict[str, Any]]:
-    """Group compose services by the image they build: {image_id: {dockerfile, context, args, services}}."""
+    """Group compose services by the image they build: {image_id: {dockerfile, context, args, services, compose}}."""
     images: dict[str, dict[str, Any]] = {}
-    for name, details in parse_compose_services_details(compose_path).items():
-        image_id = re.sub(r"[^A-Za-z0-9._-]+", "-", details["dockerfile"])
-        image = images.setdefault(image_id, {**details, "services": {}})
-        image["services"][name] = details
+    for path in [compose_path, *(EXTRA_COMPOSE_PATHS if compose_path == DEFAULT_COMPOSE_PATH else [])]:
+        for name, details in parse_compose_services_details(path).items():
+            image_id = re.sub(r"[^A-Za-z0-9._-]+", "-", details["dockerfile"])
+            image = images.setdefault(image_id, {**details, "services": {}, "compose": path})
+            if image["compose"] == path:
+                image["services"][name] = details
     return images
 
 
 def image_affected(image: dict[str, Any], changed_files: list[str], root: Path = ROOT) -> bool:
-    """True when the diff touches the Dockerfile, a file the Dockerfile names (locks, requirements), or Python source in its context."""
+    """True when the diff touches the Dockerfile, the compose file, .dockerignore, a file the Dockerfile or a command names, or context source."""
     dockerfile_text = (root / image["dockerfile"]).read_text(encoding="utf-8")
+    run_text = " ".join(str((d.get("entrypoint"), d.get("command"))) for d in image.get("services", {}).values())
+    compose = image.get("compose")
+    compose_name = Path(compose).name if compose else "docker-compose.yml"
     context = posixpath.normpath(image["context"])
     for path in map(normalize_path, changed_files):
         relative = path if context == "." else path.removeprefix(context + "/")
         is_source = path.endswith(".py") and not PurePosixPath(path).name.startswith("test_")
-        if path == image["dockerfile"] or ((context == "." or relative != path) and (relative in dockerfile_text or is_source)):
+        in_context = context == "." or relative != path
+        names_file = relative in dockerfile_text or relative in run_text or relative == ".dockerignore"
+        if path in (image["dockerfile"], compose_name) or (in_context and (names_file or is_source)):
             return True
     return False
 
@@ -186,11 +201,13 @@ def run_import_smoke(image_id: str, image: dict[str, Any], tag_suffix: str, comp
     project = f"pantheon-import-smoke-{image_id.lower()}"
     needs_postgres = any("@postgres:" in str(v) for d in image["services"].values() for v in d["environment"].values())
     network = ["--network", f"{project}_default"] if needs_postgres else []
-    compose = ["docker", "compose", "--file", str(compose_path), "--project-name", project, "--profile", "core"]
+    compose_file = Path(image.get("compose", compose_path))
+    compose_env = {**os.environ, **compose_placeholders(compose_file)}
+    compose = ["docker", "compose", "--file", str(compose_file), "--project-name", project, "--profile", "core"]
     results = {}
     try:
         if needs_postgres:
-            run_shell_command("POSTGRES_PORT=0 " + shlex.join(compose + ["up", "--detach", "--wait", "postgres"]))  # no fixed host port
+            run_shell_command(shlex.join(compose + ["up", "--detach", "--wait", "postgres"]), env={**compose_env, "POSTGRES_PORT": "0"})  # no fixed host port
         for service, details in image["services"].items():
             check = resolve_import_check(effective_argv(details, dockerfile_text))
             if check is None:
@@ -204,7 +221,7 @@ def run_import_smoke(image_id: str, image: dict[str, Any], tag_suffix: str, comp
                 results[service] = f"failed: exit {exc.returncode}"
     finally:
         if needs_postgres:
-            subprocess.run(compose + ["down", "--volumes"], check=False)
+            subprocess.run(compose + ["down", "--volumes"], check=False, env=compose_env)
     return results
 
 
@@ -371,7 +388,7 @@ def write_output(output_path: Path, key: str, value: str) -> None:
         handle.write(f"{key}<<{delimiter}\n{value}\n{delimiter}\n")
 
 
-def run_shell_command(command: str) -> None:
+def run_shell_command(command: str, env: dict[str, str] | None = None) -> None:
     stripped = command.strip()
     if stripped.startswith("python3 -m pip") and importlib.util.find_spec("pip") is None:
         raise Stage0ConfigError(
@@ -382,7 +399,7 @@ def run_shell_command(command: str) -> None:
             "docker is required for stage-0 build dry runs."
         )
     print(f"$ {command}", flush=True)
-    subprocess.run(command, cwd=str(ROOT), shell=True, check=True)
+    subprocess.run(command, cwd=str(ROOT), shell=True, check=True, env=env)
 
 
 def run_steps(steps: list[str]) -> None:

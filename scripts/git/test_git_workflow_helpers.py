@@ -1178,6 +1178,16 @@ class PublishPromoteTests(unittest.TestCase):
         self.assertEqual((supported, error), (True, None))
         self.assertIn("?ref=" + "d" * 40, api.call_args.args[0])
 
+    def test_dispatch_promote_ci_also_dispatches_stage0_without_blocking_promotion(self) -> None:
+        with mock.patch.object(publish_promote.subprocess, "run") as run:
+            publish_promote.dispatch_promote_ci("promote/v2026.20.0", "e" * 40, 42)
+        branch_ci, stage0 = run.call_args_list
+        self.assertIn("branch-ci.yml", branch_ci.args[0])
+        self.assertTrue(branch_ci.kwargs["check"])
+        self.assertIn("stage-0-ci.yml", stage0.args[0])
+        self.assertIn("expected_head_sha=" + "e" * 40, stage0.args[0])
+        self.assertFalse(stage0.kwargs["check"])
+
     def test_verified_auto_merge_fails_when_rest_cannot_observe_it(self) -> None:
         completed = subprocess.CompletedProcess(
             ["gh", "pr", "merge"], returncode=0, stdout="", stderr=""

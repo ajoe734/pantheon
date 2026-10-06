@@ -53,24 +53,24 @@
   ],
   "shared_module_locks_check": {
     "script": "scripts/check_service_lock_shared_deps.py",
-    "method": "ast import and literal import_module/__import__ detection; shared module = any services/<dir> with requirements.txt, including ones with their own Dockerfile",
-    "known_gaps_listed_in_script": 20,
-    "unlisted_gaps": 0,
-    "known_gap_reason": "Every importing image passes the in-image import smoke below; remove an entry when its lock is recompiled with the module's requirements.",
-    "tests": "scripts/test_check_service_lock_shared_deps.py (10 tests)"
+    "method": "For every Dockerfile that installs a dependencies/locks file, ast-parse the module-level imports reachable from its ENTRYPOINT/CMD (through package __init__ files, relative imports and sys.path-inserted repo directories; function-level, TYPE_CHECKING and ImportError-guarded imports are optional) and require every third-party import to be pinned in that lock. Nested packages with their own requirements or Dockerfile are followed like any other module.",
+    "known_gaps": "none: KNOWN_GAPS and --fix were removed (--fix appended bare ranges to hash-locked files and would break --require-hashes)",
+    "gap_found_and_fixed": "services-learning-imitation.txt lacked jsonschema although services/research/imitation/preference_models.py imports it at module level; services/learning/imitation/requirements.txt now lists jsonschema and the lock was recompiled with uv (adds jsonschema, jsonschema-specifications, referencing, rpds-py).",
+    "lineage_read_simulation": "With services/telemetry/__init__.py eagerly importing ingest_svc the check fails on services-lineage-read.txt missing jsonschema; the lazy __getattr__ tree passes. Both cases are unit tests and were also run against the real tree.",
+    "tests": "scripts/test_check_service_lock_shared_deps.py (8 tests)"
   },
   "validation_summary": {
-    "ci_stage0_unit_tests": "scripts/test_ci_stage0.py passed (20 tests)",
-    "check_service_lock_shared_deps_unit_tests": "scripts/test_check_service_lock_shared_deps.py passed (10 tests)",
+    "ci_stage0_unit_tests": "scripts/test_ci_stage0.py passed (22 tests)",
+    "check_service_lock_shared_deps_unit_tests": "scripts/test_check_service_lock_shared_deps.py passed (8 tests)",
     "bff_data_sources_contract_tests": "test_bff_management_data_sources_contract.py passed (6 tests); the fallback test fails when the permissive fallback is restored",
     "telemetry": "test_infrastructure_health_ingest.py 54 passed; smoke_test_ingest.py passed; two test_lineage_write_path.py full-stack cases fail identically without this change",
     "diff_budget": "diff_budget.py --change-class corrective --budget 120: net production +120"
   },
   "corrections_to_original_evidence": {
     "import_check_coverage": "The original claim of tracking all 64 compose services covered only the 9 services whose Dockerfile matched a stage-0 matrix build target; the matrix compose_services mirror is removed and scripts/ci_stage0.py now derives every service from docker compose config.",
-    "lock_check_coverage": "The original check inspected only services/loop-control by substring match and skipped any shared package that ships its own Dockerfile; it now parses imports with ast (import statements and literal importlib.import_module/__import__ calls) over every services/*/requirements.txt module and reports 20 pre-existing gaps, recorded as KNOWN_GAPS in scripts/check_service_lock_shared_deps.py.",
+    "lock_check_coverage": "The original check inspected only services/loop-control by substring match, skipped packages that ship their own Dockerfile, and a first rewrite hid 20 gaps in KNOWN_GAPS (one of which masked the lineage-read telemetry regression). It now checks the module-level imports each image entrypoint actually reaches against that image's lock, with no known-gap list.",
     "datasources_test": "The original test exec'd a copy of the fallback source; it now re-imports the real module with the policy modules unavailable and was verified to fail when the permissive fallback is restored.",
-    "telemetry_ingest_missing_schema": "Before this task TelemetryIngestService._validate_event returned valid when the configured schema file was missing; it now rejects every event when a schema_path is configured but the schema did not load (test: TestMissingSchemaFileFailsClosed). With no schema_path configured it stays pass-through, as in unit fixtures."
+    "telemetry_ingest_missing_schema": "Out of scope here and the earlier claim is withdrawn. TelemetryIngestService._validate_event rejects only when a schema_path is configured but fails to load, but services/telemetry/main.py (~587) passes schema_path=None when the file is missing, so the deployed service still accepts events without a schema. Fixing main.py is split into a separate task."
   },
   "validators_left_as_is": [
     {
@@ -81,7 +81,7 @@
   ],
   "image_import_smoke": {
     "how": "python3 scripts/ci_stage0.py import-smoke --image-id <id>: docker build, then docker run --entrypoint python with the compose environment (and the compose postgres service for images that open stores at import) importing the effective ENTRYPOINT+CMD or compose command; uvicorn app attributes are checked, scripts run under runpy with a non-__main__ name so dataclasses resolve, shell commands get bash -n.",
-    "triggers": "pull_request to dev (images whose Dockerfile, named lock/requirements or Python source changed), schedule 17 3 * * *, and workflow_dispatch (all images)",
+    "triggers": "pull_request to dev (images whose Dockerfile, named lock/requirements, Python source, compose file, .dockerignore or compose-command script changed), schedule 17 3 * * *, workflow_dispatch (all images), and the promote-head dispatch (all images); docker-compose.control.yml images (feedback) are included",
     "full_run": "https://github.com/ajoe734/pantheon/actions/runs/37455665861",
     "full_run_head": "b1eaa1445efde137272fc58afbadb8b3ee07ebac",
     "full_run_import_jobs": "41 of 41 succeeded; 64 of 64 services passed",
@@ -343,11 +343,12 @@
         "image": "services-channels-web-Dockerfile",
         "result": "passed"
       }
-    }
+    },
+    "services_results_note": "services below are the results recorded at full_run_head; Stage 0 must be re-run on the head that carries this change (push/PR run, then workflow_dispatch for the full sweep) and its run links recorded in the handoff."
   },
   "stage0_zero_job_runs": {
-    "finding": "The 99 earlier zero-job Stage 0 failures were pull_request runs on promote/* heads opened by github-actions[bot]; every other pull_request workflow on those heads (Regression Tests, Syntax Tests, Research Regression Tests, Build & Test Lean, BFF Route Diff, Canonical Review Gate) failed the same way, so the cause is the bot-opened PR event, not a line in stage-0-ci.yml (actionlint is clean and the run name resolves to the workflow title). The workflow had never run on a dev pull request; with the dev trigger it now schedules jobs (run 37455671830).",
-    "not_fixed": "Promote PRs opened with GITHUB_TOKEN still do not get Stage 0 jobs; Branch CI Gate already covers them through an explicit workflow_dispatch."
+    "finding": "The 99 earlier zero-job Stage 0 runs were bot-triggered pull_request runs on promote/* heads: runs created for a PR opened with GITHUB_TOKEN do not start workflows. It was not a workflow file error (actionlint is clean).",
+    "fix": "publish_promote.dispatch_promote_ci now also dispatches stage-0-ci.yml on the promote ref with expected_head_sha/promote_pr_number (validated in the import-smoke-plan job), best-effort so a promote ref predating the inputs cannot block promotion. The stage-0 dispatch inputs approval_race_id/two_man_race_id are no longer required."
   },
-  "residual_stage0_failures_not_in_scope": "Verify changed services (persona, bff, cron, governance-api) fail because pytest is not installed for their unittest discovery, and Docker build dry run (research-base) fails; these targets had not run since the workflow stopped triggering and are outside this task."
+  "residual_stage0_failures_not_in_scope": "Verify changed services (persona, bff, cron, governance-api) and Docker build dry run (research-base) were long broken (missing bff/read_store.py in py_compile, missing pytest/pydantic, stale smoke tests that need PYTHONPATH or a terminal execution receipt, research-base build context). Pull requests to dev and promote dispatches therefore run only the baseline and the import smoke; those per-target jobs keep running for other base branches and are left to a follow-up task."
 }

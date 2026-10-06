@@ -277,7 +277,7 @@ class EntrypointResolutionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             script = Path(tmpdir) / "worker.py"
             script.write_text(
-                "from dataclasses import dataclass\n\n@dataclass\nclass Job:\n    name: str = 'x'\n\n"
+                "from __future__ import annotations\nfrom dataclasses import dataclass\n\n@dataclass\nclass Job:\n    name: str = 'x'\n\n"
                 "if __name__ == '__main__':\n    raise SystemExit('main must not run')\n",
                 encoding="utf-8",
             )
@@ -313,6 +313,31 @@ class ImportSmokeTests(unittest.TestCase):
         scoped = {"context": "services/research/mlflow", "dockerfile": "services/research/mlflow/Dockerfile"}
         self.assertTrue(ci_stage0.image_affected(scoped, ["services/research/mlflow/requirements.txt"]))
         self.assertFalse(ci_stage0.image_affected(scoped, ["services/telemetry/module.py"]))
+
+    def test_image_affected_by_compose_file_dockerignore_and_service_command_scripts(self) -> None:
+        image = {
+            "context": ".",
+            "dockerfile": "services/telemetry/Dockerfile",
+            "compose": ci_stage0.ROOT / "docker-compose.control.yml",
+            "services": {"api": {"entrypoint": None, "command": ["bash", "scripts/db_migrate.sh"]}},
+        }
+        affected = lambda *files: ci_stage0.image_affected(image, list(files))  # noqa: E731
+        self.assertTrue(affected("docker-compose.control.yml"))
+        self.assertTrue(affected(".dockerignore"))
+        self.assertTrue(affected("scripts/db_migrate.sh"))
+        self.assertFalse(affected("docker-compose.yml", "scripts/other.sh"))
+        self.assertTrue(ci_stage0.image_affected({**image, "context": "services/telemetry"}, ["services/telemetry/.dockerignore"]))
+
+    def test_compose_images_include_control_compose_images_and_record_their_compose_file(self) -> None:
+        def fake_details(path: Path) -> dict[str, dict[str, Any]]:
+            name = "feedback" if path.name == "docker-compose.control.yml" else "api"
+            dockerfile = "services/feedback/Dockerfile" if name == "feedback" else "services/api/Dockerfile"
+            return {name: {"context": ".", "dockerfile": dockerfile, "args": [], "environment": {}, "entrypoint": None, "command": None}}
+
+        with mock.patch("ci_stage0.parse_compose_services_details", side_effect=fake_details):
+            images = ci_stage0.compose_images()
+        self.assertEqual(images["services-feedback-Dockerfile"]["compose"].name, "docker-compose.control.yml")
+        self.assertEqual(images["services-api-Dockerfile"]["compose"].name, "docker-compose.yml")
 
     def test_run_import_smoke_reports_each_service_and_failures(self) -> None:
         image = {

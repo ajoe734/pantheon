@@ -52,7 +52,7 @@ def module_level_imports(source: str, package: tuple[str, ...] | None) -> set[st
                 if not guarded:
                     visit([stmt for handler in node.handlers for stmt in handler.body])
             elif isinstance(node, ast.If):
-                if not (isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING" or isinstance(node.test, ast.Attribute) and node.test.attr == "TYPE_CHECKING"):
+                if "TYPE_CHECKING" not in ast.unparse(node.test):
                     visit(node.body)
                 visit(node.orelse)
             elif isinstance(node, (ast.With, ast.ClassDef, ast.For, ast.While)):
@@ -100,8 +100,11 @@ def entry_files(dockerfile: Path, root: Path) -> list[Path]:
 def inserted_dirs(source: str, root: Path) -> set[Path]:
     """Directories a module puts on sys.path: repo directories whose trailing parts equal the string parts of the inserted path expression."""
     tree = ast.parse(source)
-    literals = {t.id: [c.value for c in sorted((c for c in ast.walk(n.value) if isinstance(c, ast.Constant) and isinstance(c.value, str)), key=lambda c: c.col_offset)]
-                for n in ast.walk(tree) if isinstance(n, ast.Assign) for t in n.targets if isinstance(t, ast.Name)}
+    def strings(expr: ast.expr) -> list[str]:
+        constants = [c for c in ast.walk(expr) if isinstance(c, ast.Constant) and isinstance(c.value, str)]
+        return [c.value for c in sorted(constants, key=lambda c: c.col_offset)]
+
+    literals = {t.id: strings(n.value) for n in ast.walk(tree) if isinstance(n, ast.Assign) for t in n.targets if isinstance(t, ast.Name)}
     found: set[Path] = set()
     for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("insert", "append")):
         names = [n.id for arg in call.args for n in ast.walk(arg) if isinstance(n, ast.Name)]

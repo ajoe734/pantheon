@@ -49,12 +49,24 @@ on:
         default: false
         type: boolean
       approval_race_id:
-        description: "Expendable approval id for the two-operator race proof"
-        required: true
+        description: "Expendable approval id for the two-operator race proof (live-evidence only)"
+        required: false
+        default: ""
         type: string
       two_man_race_id:
-        description: "Expendable intervention id for the two-operator two-man-sign race proof"
-        required: true
+        description: "Expendable intervention id for the two-operator two-man-sign race proof (live-evidence only)"
+        required: false
+        default: ""
+        type: string
+      expected_head_sha:
+        description: "Promote PR head to prove: publish-promote dispatches Stage 0 here because its bot-created PR starts no pull_request run"
+        required: false
+        default: ""
+        type: string
+      promote_pr_number:
+        description: "Promote PR number for audit output"
+        required: false
+        default: ""
         type: string
       soak_seconds:
         description: "SSE reconnect soak duration; strict evidence requires at least 75"
@@ -132,8 +144,8 @@ jobs:
     needs:
       - discover
       - baseline
-    # dev pull requests only run the baseline and the import smoke: these per-target jobs predate the dev trigger and are not green on dev yet.
-    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.mode == 'stage0') && github.base_ref != 'dev' && needs.discover.outputs.verify_count != '0' }}
+    # dev pull requests and promote dispatches only run the baseline and the import smoke: these per-target jobs predate the dev trigger and are not green on dev yet.
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.mode == 'stage0') && github.base_ref != 'dev' && inputs.expected_head_sha == '' && needs.discover.outputs.verify_count != '0' }}
     strategy:
       fail-fast: false
       matrix:
@@ -158,7 +170,7 @@ jobs:
     needs:
       - discover
       - baseline
-    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.mode == 'stage0') && github.base_ref != 'dev' && needs.discover.outputs.build_count != '0' }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.mode == 'stage0') && github.base_ref != 'dev' && inputs.expected_head_sha == '' && needs.discover.outputs.build_count != '0' }}
     strategy:
       fail-fast: false
       matrix:
@@ -179,6 +191,20 @@ jobs:
     outputs:
       image_ids: ${{ steps.plan.outputs.image_ids }}
     steps:
+      - name: Validate explicit promote dispatch
+        if: github.event_name == 'workflow_dispatch' && inputs.expected_head_sha != ''
+        env:
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          HEAD_SHA: ${{ github.sha }}
+          PROMOTE_PR_NUMBER: ${{ inputs.promote_pr_number }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ || "$REF_NAME" != promote/* || "$HEAD_SHA" != "$EXPECTED_HEAD_SHA" ]]; then
+            echo "Stage 0 promote dispatch needs a promote/* ref whose head is ${EXPECTED_HEAD_SHA} (got ${REF_NAME} at ${HEAD_SHA})" >&2
+            exit 1
+          fi
+          echo "Validated promote PR #${PROMOTE_PR_NUMBER} head ${HEAD_SHA}"
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
