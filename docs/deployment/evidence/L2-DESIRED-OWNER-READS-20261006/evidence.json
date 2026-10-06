@@ -24,10 +24,10 @@
     ]
   },
   "read_only_hosted_observation": {
-    "source": "/tmp/pantheon-l2-recovery-20261006/source-owner-inventory.json",
-    "observed_at": "2026-10-06T23:25:31.637728+00:00",
-    "finding": "112 normalized source_record rows were summarized with tenant_id=null; running distillation configuration had no explicit evidence backend, while source-ingest used postgres.",
-    "handling": "No data was relabeled, rewritten, replayed, or probed live by this source task. The scoped reader and claim path will not adopt these unowned records; establishing any migration/public-scope policy is outside this implementation."
+    "source": "/tmp/pantheon-l2-recovery-20261006/source-owner-inventory-corrected.json",
+    "observed_at": "2026-10-06T23:41:27.714084+00:00",
+    "finding": "The corrected inventory reports TWO normalized source_record rows with metadata.tenant_id=tenant-dev and 110 normalized source_record rows with metadata.tenant_id=null. This supersedes and explicitly withdraws the earlier inference that all 112 normalized records were unowned, which came from reading the wrong top-level field; the earlier statement is retained only as superseded history, not a current finding. The running distillation configuration had no explicit evidence backend, while source-ingest used postgres.",
+    "handling": "No data was relabeled, rewritten, replayed, or probed live by this source task. The scoped reader and claim path will not perform unscoped adoption of unowned records; establishing any migration/public-scope policy is outside this implementation."
   },
   "review": {
     "status": "pending",
