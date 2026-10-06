@@ -3,9 +3,12 @@ name: Pantheon Stage 0 CI
 on:
   pull_request:
     branches:
+      - dev
       - backend-dev-publish-20260429
       - master
       - main
+  schedule:
+    - cron: "17 3 * * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -166,6 +169,39 @@ jobs:
 
       - name: Build changed image target
         run: python3 scripts/ci_stage0.py run-target --target-id "${{ matrix.target_id }}" --mode build --tag-suffix "${{ github.sha }}"
+
+  import-smoke-plan:
+    name: Plan in-image import smoke
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'stage0' }}
+    runs-on: ubuntu-latest
+    outputs:
+      image_ids: ${{ steps.plan.outputs.image_ids }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      # Pull requests check the images the diff can affect; scheduled and dispatched runs check every image.
+      - name: Select images to import-check
+        id: plan
+        env:
+          STAGE0_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+          STAGE0_HEAD_SHA: ${{ github.sha }}
+        run: python3 scripts/ci_stage0.py import-smoke-plan --github-output "$GITHUB_OUTPUT"
+
+  image-import-smoke:
+    name: Import smoke ${{ matrix.image_id }}
+    runs-on: ubuntu-latest
+    needs:
+      - import-smoke-plan
+    if: ${{ needs.import-smoke-plan.outputs.image_ids != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image_id: ${{ fromJson(needs.import-smoke-plan.outputs.image_ids) }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build image and import every service entrypoint inside it
+        run: python3 scripts/ci_stage0.py import-smoke --image-id "${{ matrix.image_id }}" --tag-suffix "${{ github.sha }}"
 
   dependency-review:
     name: Dependency review

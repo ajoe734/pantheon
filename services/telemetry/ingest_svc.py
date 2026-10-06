@@ -983,7 +983,8 @@ class TelemetryIngestService:
             )
         schema = self._trade_journal_schema if event_type in TRADE_JOURNAL_EVENT_TYPES else self._schema
         if not schema:
-            return True, None
+            # A configured schema that failed to load (missing/unreadable file) must reject, not admit, events.
+            return (False, "Telemetry schema is unavailable") if self._schema_path else (True, None)
         try:
             jsonschema.validate(instance=event, schema=schema)
             return True, None

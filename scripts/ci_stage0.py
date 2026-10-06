@@ -6,6 +6,7 @@ import fnmatch
 import importlib.util
 import json
 import os
+import posixpath
 import re
 import secrets
 import shlex
@@ -47,110 +48,164 @@ def parse_wave1_inventory_ids(doc_path: Path = DEFAULT_DOC_PATH) -> list[str]:
     except ValueError as exc:
         raise Stage0ConfigError(f"Missing heading in deployment doc: {WAVE1_HEADING}") from exc
 
-    ids, seen, in_table = [], set(), False
+    ids: list[str] = []
+    seen: set[str] = set()
+    in_table = False
     for line in text[start:].splitlines()[1:]:
         if line.startswith("### ") and in_table:
             break
-        if not line.startswith("|") or set(line.replace("|", "").strip()) == {"-"}:
+        if not line.startswith("|"):
             continue
         in_table = True
+        if set(line.replace("|", "").strip()) == {"-"}:
+            continue
         cells = line.split("|")
-        if len(cells) >= 3:
-            for service_id in re.findall(r"`([^`]+)`", cells[1]):
-                if service_id not in seen:
-                    ids.append(service_id)
-                    seen.add(service_id)
+        if len(cells) < 3:
+            continue
+        first_cell = cells[1]
+        for service_id in re.findall(r"`([^`]+)`", first_cell):
+            if service_id not in seen:
+                ids.append(service_id)
+                seen.add(service_id)
     return ids
 
 
-def norm_df(context: str, dockerfile: str) -> str:
-    return dockerfile if (dockerfile.startswith(context) and context != ".") else f"{context}/{dockerfile}".replace("./", "")
-
-
 def parse_compose_services_details(compose_path: Path = DEFAULT_COMPOSE_PATH) -> dict[str, dict[str, Any]]:
-    text = compose_path.read_text(encoding="utf-8")
-    services, current_svc, in_services, svc_lines = {}, None, False, {}
-    for line in text.splitlines():
-        if line.startswith("services:"):
-            in_services = True
-        elif in_services and line and not line.startswith(" ") and not line.startswith("#"):
-            break
-        elif in_services and line.startswith("  ") and not line.startswith("    "):
-            m = re.match(r"^  ([a-zA-Z0-9_\-]+):", line)
-            current_svc = m.group(1) if m else None
-            if current_svc:
-                svc_lines[current_svc] = []
-        elif in_services and current_svc:
-            svc_lines[current_svc].append(line)
-
-    for svc, lines in svc_lines.items():
-        block = "\n".join(lines)
-        if "build:" not in block or svc == "openclaw-gateway":
+    """Compose services built from project code; ``docker compose config`` resolves profiles and ${VAR:-default}."""
+    result = subprocess.run(
+        ["docker", "compose", "--file", str(compose_path), "--profile", "*", "config", "--format", "json"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise Stage0ConfigError(f"docker compose config failed for {compose_path}: {result.stderr.strip()}")
+    details: dict[str, dict[str, Any]] = {}
+    for name, service in json.loads(result.stdout)["services"].items():
+        build = service.get("build")
+        if not build or name == "openclaw-gateway":  # upstream node gateway, not project code
             continue
-        m_ctx = re.search(r"context:\s*([^\s#]+)", block)
-        m_df = re.search(r"dockerfile:\s*([^\s#]+)", block)
-        m_cmd = re.search(r"command:\s*(?:\[(.*?)\]|(.*))", block)
-        cmd = re.findall(r"['\"]([^'\"]+)['\"]", m_cmd.group(1)) if (m_cmd and m_cmd.group(1)) else (m_cmd.group(2).strip() if (m_cmd and m_cmd.group(2)) else None)
-        services[svc] = {
-            "context": m_ctx.group(1).strip() if m_ctx else ".",
-            "dockerfile": m_df.group(1).strip() if m_df else "Dockerfile",
-            "command": cmd,
+        context = os.path.relpath(build["context"], compose_path.parent)
+        details[name] = {
+            "context": context,
+            "dockerfile": posixpath.normpath(posixpath.join(context, build.get("dockerfile", "Dockerfile"))),
+            "args": [f"{key}={value}" for key, value in (build.get("args") or {}).items()],
+            "environment": service.get("environment") or {},
+            "entrypoint": service.get("entrypoint"),
+            "command": service.get("command"),
         }
-    return services
+    return details
 
 
-def parse_compose_project_services(compose_path: Path = DEFAULT_COMPOSE_PATH) -> list[str]:
-    return list(parse_compose_services_details(compose_path).keys())
-
-
-def resolve_compose_entrypoint_import_code(
-    cmd_or_entrypoint: list[str] | str | None,
-    dockerfile_path: Path | None = None,
-) -> str | None:
-    line = " ".join(cmd_or_entrypoint) if isinstance(cmd_or_entrypoint, list) else str(cmd_or_entrypoint or "")
-    if not line and dockerfile_path and dockerfile_path.exists():
-        match = re.search(r"^(?:CMD|ENTRYPOINT)\s+(.*)", dockerfile_path.read_text(encoding="utf-8"), re.MULTILINE)
-        if match:
-            raw = match.group(1).strip()
-            line = " ".join(json.loads(raw)) if raw.startswith("[") else raw
-
-    if not line:
-        return None
-
-    m_uv = re.search(r"uvicorn\s+([a-zA-Z0-9_\.]+):[a-zA-Z0-9_]+(?:\s+.*--app-dir\s+([^\s]+))?", line)
-    if m_uv:
-        mod, app_dir = m_uv.groups()
-        return f"import sys, importlib; sys.path.insert(0, {app_dir!r}); importlib.import_module({mod!r})" if app_dir else f"import importlib; importlib.import_module({mod!r})"
-
-    m_pym = re.search(r"python[0-9.]*\s+-m\s+([a-zA-Z0-9_\.]+)", line)
-    if m_pym:
-        return f"import importlib; importlib.import_module({m_pym.group(1)!r})"
-
-    m_py = re.search(r"python[0-9.]*\s+([a-zA-Z0-9_\-/\.]+\.py)", line)
-    if m_py:
-        return f"import importlib.util; s = importlib.util.spec_from_file_location('__entry__', {m_py.group(1)!r}); m = importlib.util.module_from_spec(s); s.loader.exec_module(m)"
-
-    return None
-
-
-def get_target_entrypoint_import_commands(
-    target: dict[str, Any],
-    docker_tag: str,
-    root: Path = ROOT,
-    compose_path: Path = DEFAULT_COMPOSE_PATH,
-) -> list[str]:
-    build = target.get("build")
-    if not build or not compose_path.exists():
+def dockerfile_instruction(dockerfile_text: str, name: str) -> list[str]:
+    """Argv of the last ENTRYPOINT/CMD instruction; shell form is wrapped as ``sh -c``."""
+    joined = re.sub(r"\\\n", " ", dockerfile_text)
+    found = re.findall(rf"^{name}\s+(.*)$", joined, re.MULTILINE)
+    if not found:
         return []
-    target_df = norm_df(build.get("context", "."), build.get("dockerfile", "Dockerfile"))
-    commands: list[str] = []
-    for details in parse_compose_services_details(compose_path).values():
-        if norm_df(details["context"], details["dockerfile"]) == target_df:
-            code = resolve_compose_entrypoint_import_code(details["command"], root / target_df)
-            cmd = f"docker run --rm {shlex.quote(docker_tag)} python3 -c {shlex.quote(code)}" if code else None
-            if cmd and cmd not in commands:
-                commands.append(cmd)
-    return commands
+    raw = found[-1].strip()
+    return json.loads(raw) if raw.startswith("[") else ["sh", "-c", raw]
+
+
+def effective_argv(details: dict[str, Any], dockerfile_text: str) -> list[str]:
+    """What the container runs: compose entrypoint/command layered over the Dockerfile ENTRYPOINT/CMD."""
+    entrypoint = dockerfile_instruction(dockerfile_text, "ENTRYPOINT")
+    command = dockerfile_instruction(dockerfile_text, "CMD")
+    if details.get("entrypoint") is not None:
+        entrypoint, command = details["entrypoint"], []  # compose clears the image CMD with an entrypoint
+    if details.get("command") is not None:
+        command = details["command"]
+    return entrypoint + command
+
+
+MODULE_CHECK = "import importlib, sys\nsys.path.insert(0, {path!r})\nmodule = importlib.import_module({module!r})\n"
+APP_CHECK = "if not hasattr(module, {attr!r}):\n    raise SystemExit('{module}:{attr} is missing')\n"
+# run_name is not __main__, so main guards stay quiet; runpy registers the module so dataclasses resolve.
+SCRIPT_CHECK = (
+    "import os, runpy, sys\nsys.path.insert(0, os.path.dirname(os.path.abspath({script!r})))\n"
+    "runpy.run_path({script!r}, run_name='__import_check__')\n"
+)
+
+
+def resolve_import_check(argv: list[str]) -> list[str] | None:
+    """Container command that imports the real entrypoint, or None when it has nothing to import (python -c)."""
+    if argv[:1] and posixpath.basename(argv[0]) in ("sh", "bash") and argv[1:2] in (["-c"], ["-ec"]) and len(argv) > 2:
+        argv = shlex.split(argv[2])
+    while argv[:1] == ["exec"]:
+        argv = argv[1:]
+    program = posixpath.basename(argv[0]) if argv else ""
+    if program in ("sh", "bash") and len(argv) > 1 and not argv[1].startswith("-"):
+        return [program, "-n", argv[1]]
+    if program.startswith("python") and len(argv) > 1:
+        if argv[1] == "-c":
+            return None
+        if argv[1] == "-m" and argv[2] != "uvicorn":
+            return ["python", "-c", MODULE_CHECK.format(path="", module=argv[2])]
+        if argv[1] != "-m":
+            return ["python", "-c", SCRIPT_CHECK.format(script=argv[1])]
+        argv = argv[2:]
+    if not argv or posixpath.basename(argv[0]) != "uvicorn":
+        raise Stage0ConfigError(f"cannot derive an import check for entrypoint: {shlex.join(argv)}")
+    spec = next(arg for arg in argv[1:] if ":" in arg and not arg.startswith("-"))
+    app_dir = next((argv[i + 1] for i, arg in enumerate(argv) if arg == "--app-dir"), "")
+    module, attr = spec.split(":", 1)
+    return ["python", "-c", MODULE_CHECK.format(path=app_dir, module=module) + APP_CHECK.format(module=module, attr=attr)]
+
+
+def compose_images(compose_path: Path = DEFAULT_COMPOSE_PATH) -> dict[str, dict[str, Any]]:
+    """Group compose services by the image they build: {image_id: {dockerfile, context, args, services}}."""
+    images: dict[str, dict[str, Any]] = {}
+    for name, details in parse_compose_services_details(compose_path).items():
+        image_id = re.sub(r"[^A-Za-z0-9._-]+", "-", details["dockerfile"])
+        image = images.setdefault(image_id, {**details, "services": {}})
+        image["services"][name] = details
+    return images
+
+
+def image_affected(image: dict[str, Any], changed_files: list[str], root: Path = ROOT) -> bool:
+    """True when the diff touches the Dockerfile, a file the Dockerfile names (locks, requirements), or Python source in its context."""
+    dockerfile_text = (root / image["dockerfile"]).read_text(encoding="utf-8")
+    context = posixpath.normpath(image["context"])
+    for path in map(normalize_path, changed_files):
+        relative = path if context == "." else path.removeprefix(context + "/")
+        is_source = path.endswith(".py") and not PurePosixPath(path).name.startswith("test_")
+        if path == image["dockerfile"] or ((context == "." or relative != path) and (relative in dockerfile_text or is_source)):
+            return True
+    return False
+
+
+def run_import_smoke(image_id: str, image: dict[str, Any], tag_suffix: str, compose_path: Path = DEFAULT_COMPOSE_PATH) -> dict[str, str]:
+    """Build one image and import-check every compose service that runs it; returns {service: result}."""
+    dockerfile_text = (ROOT / image["dockerfile"]).read_text(encoding="utf-8")
+    tag = f"pantheon-import-smoke/{image_id.lower()}:{tag_suffix}"
+    build = ["docker", "build", "--file", image["dockerfile"]]
+    for build_arg in image["args"]:
+        build += ["--build-arg", build_arg]
+    run_shell_command(shlex.join(build + ["--tag", tag, image["context"]]))
+
+    # Some services open their Postgres stores while importing, so give them the compose postgres service.
+    project = f"pantheon-import-smoke-{image_id.lower()}"
+    needs_postgres = any("@postgres:" in str(v) for d in image["services"].values() for v in d["environment"].values())
+    network = ["--network", f"{project}_default"] if needs_postgres else []
+    compose = ["docker", "compose", "--file", str(compose_path), "--project-name", project, "--profile", "core"]
+    results = {}
+    try:
+        if needs_postgres:
+            run_shell_command("POSTGRES_PORT=0 " + shlex.join(compose + ["up", "--detach", "--wait", "postgres"]))  # no fixed host port
+        for service, details in image["services"].items():
+            check = resolve_import_check(effective_argv(details, dockerfile_text))
+            if check is None:
+                results[service] = "skipped: python -c entrypoint has nothing to import"
+                continue
+            env = [part for key, value in details["environment"].items() if value is not None for part in ("--env", f"{key}={value}")]
+            try:
+                run_shell_command(shlex.join(["docker", "run", "--rm", *network, *env, "--entrypoint", check[0], tag, *check[1:]]))
+                results[service] = "passed"
+            except subprocess.CalledProcessError as exc:
+                results[service] = f"failed: exit {exc.returncode}"
+    finally:
+        if needs_postgres:
+            subprocess.run(compose + ["down", "--volumes"], check=False)
+    return results
 
 
 def ensure_sequence(name: str, value: Any) -> list[Any]:
@@ -167,7 +222,8 @@ def ensure_string(name: str, value: Any) -> str:
 
 def validate_paths_exist(label: str, paths: list[str], root: Path) -> None:
     for rel_path in paths:
-        if not (root / rel_path).exists():
+        path = root / rel_path
+        if not path.exists():
             raise Stage0ConfigError(f"{label} path does not exist: {rel_path}")
 
 
@@ -175,37 +231,37 @@ def validate_target(target: dict[str, Any], root: Path) -> None:
     target_id = ensure_string("target.id", target.get("id"))
     ensure_string(f"{target_id}.family", target.get("family"))
     ensure_string(f"{target_id}.profile", target.get("profile"))
+
     repo_paths = [ensure_string(f"{target_id}.repo_paths[]", item) for item in ensure_sequence(f"{target_id}.repo_paths", target.get("repo_paths", []))]
     changed_paths = [ensure_string(f"{target_id}.changed_paths[]", item) for item in ensure_sequence(f"{target_id}.changed_paths", target.get("changed_paths", []))]
     if not changed_paths:
         raise Stage0ConfigError(f"{target_id} must declare at least one changed_paths rule")
     validate_paths_exist(f"{target_id}.repo_paths", repo_paths, root)
 
-    verify, build = target.get("verify"), target.get("build")
+    verify = target.get("verify")
     if verify is not None:
-        if not isinstance(verify, dict) or not verify.get("commands"):
-            raise Stage0ConfigError(f"{target_id}.verify must be an object with non-empty commands")
+        if not isinstance(verify, dict):
+            raise Stage0ConfigError(f"{target_id}.verify must be an object")
         for command in ensure_sequence(f"{target_id}.verify.commands", verify.get("commands", [])):
             ensure_string(f"{target_id}.verify.commands[]", command)
         for setup_command in ensure_sequence(f"{target_id}.verify.setup", verify.get("setup", [])):
             ensure_string(f"{target_id}.verify.setup[]", setup_command)
+        if not verify.get("commands"):
+            raise Stage0ConfigError(f"{target_id}.verify.commands must not be empty when verify exists")
 
+    build = target.get("build")
     if build is not None:
         if not isinstance(build, dict):
             raise Stage0ConfigError(f"{target_id}.build must be an object")
-        ctx = ensure_string(f"{target_id}.build.context", build.get("context"))
-        df = ensure_string(f"{target_id}.build.dockerfile", build.get("dockerfile"))
+        context = ensure_string(f"{target_id}.build.context", build.get("context"))
+        dockerfile = ensure_string(f"{target_id}.build.dockerfile", build.get("dockerfile"))
         ensure_string(f"{target_id}.build.tag", build.get("tag"))
         for build_arg in ensure_sequence(f"{target_id}.build.args", build.get("args", [])):
             ensure_string(f"{target_id}.build.args[]", build_arg)
-        validate_paths_exist(f"{target_id}.build", [ctx, df], root)
+        validate_paths_exist(f"{target_id}.build", [context, dockerfile], root)
 
 
-def load_config(
-    matrix_path: Path = DEFAULT_MATRIX_PATH,
-    doc_path: Path = DEFAULT_DOC_PATH,
-    compose_path: Path = DEFAULT_COMPOSE_PATH,
-) -> dict[str, Any]:
+def load_config(matrix_path: Path = DEFAULT_MATRIX_PATH, doc_path: Path = DEFAULT_DOC_PATH) -> dict[str, Any]:
     config = load_json(matrix_path)
 
     schema_version = config.get("schema_version")
@@ -257,17 +313,6 @@ def load_config(
             f"Deployment doc must reference the machine-readable stage-0 matrix: {matrix_reference}"
         )
 
-    if compose_path.exists():
-        compose_services = set(ensure_sequence("compose_services", config.get("compose_services", [])))
-        for s in compose_services:
-            ensure_string("compose_services[]", s)
-        expected_compose = parse_compose_project_services(compose_path)
-        missing_compose = [s for s in expected_compose if s not in compose_services]
-        if missing_compose:
-            raise Stage0ConfigError(
-                "Compose project services missing from stage-0 matrix: " + ", ".join(missing_compose)
-            )
-
     return config
 
 
@@ -280,15 +325,24 @@ def compute_changed_targets(config: dict[str, Any], changed_files: list[str]) ->
     normalized_files = [normalize_path(path) for path in changed_files]
     global_changed = any(matches_any(path, config["global_paths"]) for path in normalized_files)
     targets = config["targets"]
-    matched = list(targets) if global_changed else [
-        t for t in targets if any(matches_any(path, t["changed_paths"]) for path in normalized_files)
-    ]
+    if global_changed:
+        matched = list(targets)
+    else:
+        matched = [
+            target
+            for target in targets
+            if any(matches_any(path, target["changed_paths"]) for path in normalized_files)
+        ]
+
+    target_ids = [target["id"] for target in matched]
+    verify_ids = [target["id"] for target in matched if target.get("verify")]
+    build_ids = [target["id"] for target in matched if target.get("build")]
     return {
         "global_changed": global_changed,
         "changed_files": normalized_files,
-        "target_ids": [t["id"] for t in matched],
-        "verify_ids": [t["id"] for t in matched if t.get("verify")],
-        "build_ids": [t["id"] for t in matched if t.get("build")],
+        "target_ids": target_ids,
+        "verify_ids": verify_ids,
+        "build_ids": build_ids,
     }
 
 
@@ -323,7 +377,7 @@ def run_shell_command(command: str) -> None:
         raise Stage0ConfigError(
             "python3 -m pip is unavailable in this environment; provision pip or run the stage-0 baseline inside CI/container."
         )
-    if stripped.startswith("docker ") and shutil.which("docker") is None:
+    if stripped.startswith("docker build") and shutil.which("docker") is None:
         raise Stage0ConfigError(
             "docker is required for stage-0 build dry runs."
         )
@@ -344,13 +398,11 @@ def find_target(config: dict[str, Any], target_id: str) -> dict[str, Any]:
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    compose = getattr(args, "compose", DEFAULT_COMPOSE_PATH)
-    config = load_config(args.matrix, args.doc, compose)
+    config = load_config(args.matrix, args.doc)
     report = {
         "schema_version": config["schema_version"],
         "global_path_rules": len(config["global_paths"]),
         "target_count": len(config["targets"]),
-        "compose_service_count": len(config.get("compose_services", [])),
         "documented_wave1_service_ids": parse_wave1_inventory_ids(args.doc),
     }
     print(json.dumps(report, indent=2, ensure_ascii=False))
@@ -358,8 +410,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_detect_changes(args: argparse.Namespace) -> int:
-    compose = getattr(args, "compose", DEFAULT_COMPOSE_PATH)
-    config = load_config(args.matrix, args.doc, compose)
+    config = load_config(args.matrix, args.doc)
     changed_files, fallback_full_sweep = diff_changed_files(args.base, args.head)
     report = compute_changed_targets(config, changed_files)
     if fallback_full_sweep:
@@ -371,23 +422,19 @@ def cmd_detect_changes(args: argparse.Namespace) -> int:
     print(json.dumps(report, indent=2, ensure_ascii=False))
 
     if args.github_output:
-        for k, v in (
-            ("target_ids", json.dumps(report["target_ids"])),
-            ("verify_ids", json.dumps(report["verify_ids"])),
-            ("build_ids", json.dumps(report["build_ids"])),
-            ("changed_files", json.dumps(report["changed_files"])),
-            ("global_changed", str(report["global_changed"]).lower()),
-            ("target_count", str(len(report["target_ids"]))),
-            ("verify_count", str(len(report["verify_ids"]))),
-            ("build_count", str(len(report["build_ids"]))),
-        ):
-            write_output(args.github_output, k, v)
+        write_output(args.github_output, "target_ids", json.dumps(report["target_ids"]))
+        write_output(args.github_output, "verify_ids", json.dumps(report["verify_ids"]))
+        write_output(args.github_output, "build_ids", json.dumps(report["build_ids"]))
+        write_output(args.github_output, "changed_files", json.dumps(report["changed_files"]))
+        write_output(args.github_output, "global_changed", str(report["global_changed"]).lower())
+        write_output(args.github_output, "target_count", str(len(report["target_ids"])))
+        write_output(args.github_output, "verify_count", str(len(report["verify_ids"])))
+        write_output(args.github_output, "build_count", str(len(report["build_ids"])))
     return 0
 
 
 def cmd_run_baseline(args: argparse.Namespace) -> int:
-    compose = getattr(args, "compose", DEFAULT_COMPOSE_PATH)
-    config = load_config(args.matrix, args.doc, compose)
+    config = load_config(args.matrix, args.doc)
     baseline = config["baseline"]
     run_steps(baseline.get("setup", []))
     run_steps(baseline["commands"])
@@ -395,8 +442,7 @@ def cmd_run_baseline(args: argparse.Namespace) -> int:
 
 
 def cmd_run_target(args: argparse.Namespace) -> int:
-    compose = getattr(args, "compose", DEFAULT_COMPOSE_PATH)
-    config = load_config(args.matrix, args.doc, compose)
+    config = load_config(args.matrix, args.doc)
     target = find_target(config, args.target_id)
 
     if args.mode == "verify":
@@ -422,11 +468,29 @@ def cmd_run_target(args: argparse.Namespace) -> int:
         command_parts.extend(["--tag", docker_tag, build["context"]])
         command = " ".join(shlex.quote(part) for part in command_parts)
         run_shell_command(command)
-        for import_cmd in get_target_entrypoint_import_commands(target, docker_tag, ROOT, compose):
-            run_shell_command(import_cmd)
         return 0
 
     raise Stage0ConfigError(f"Unsupported mode: {args.mode}")
+
+
+def cmd_import_smoke_plan(args: argparse.Namespace) -> int:
+    """Emit the image ids to import-check: the ones the diff can affect, or every image when there is no base to diff."""
+    changed_files, full_sweep = diff_changed_files(args.base, args.head)
+    selected = [image_id for image_id, image in compose_images(args.compose).items() if full_sweep or image_affected(image, changed_files)]
+    print(json.dumps(selected))
+    if args.github_output:
+        write_output(args.github_output, "image_ids", json.dumps(selected))
+    return 0
+
+
+def cmd_import_smoke_run(args: argparse.Namespace) -> int:
+    images = compose_images(args.compose)
+    if args.image_id not in images:
+        raise Stage0ConfigError(f"Unknown image id: {args.image_id}")
+    results = run_import_smoke(args.image_id, images[args.image_id], args.tag_suffix, args.compose)
+    for service, result in results.items():
+        print(f"import-smoke {args.image_id} {service}: {result}")
+    return 1 if any(result.startswith("failed") for result in results.values()) else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -443,12 +507,8 @@ def build_parser() -> argparse.ArgumentParser:
       default=DEFAULT_DOC_PATH,
       help="Path to the deployment design document.",
     )
-    parser.add_argument(
-      "--compose",
-      type=Path,
-      default=DEFAULT_COMPOSE_PATH,
-      help="Path to docker-compose.yml file.",
-    )
+
+    parser.add_argument("--compose", type=Path, default=DEFAULT_COMPOSE_PATH, help="Path to docker-compose.yml file.")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -469,6 +529,17 @@ def build_parser() -> argparse.ArgumentParser:
     run_target.add_argument("--mode", choices=("verify", "build"), required=True)
     run_target.add_argument("--tag-suffix", default=os.environ.get("GITHUB_SHA", "local"))
     run_target.set_defaults(func=cmd_run_target)
+
+    plan = subparsers.add_parser("import-smoke-plan", help="List compose images whose in-image import check must run.")
+    plan.add_argument("--base", default=os.environ.get("STAGE0_BASE_SHA"))
+    plan.add_argument("--head", default=os.environ.get("STAGE0_HEAD_SHA"))
+    plan.add_argument("--github-output", type=Path, default=None)
+    plan.set_defaults(func=cmd_import_smoke_plan)
+
+    smoke = subparsers.add_parser("import-smoke", help="Build one compose image and import-check its services' entrypoints.")
+    smoke.add_argument("--image-id", required=True)
+    smoke.add_argument("--tag-suffix", default=os.environ.get("GITHUB_SHA", "local"))
+    smoke.set_defaults(func=cmd_import_smoke_run)
 
     return parser
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -111,7 +113,6 @@ class ValidateConfigTests(unittest.TestCase):
                         "schema_version": 1,
                         "baseline": {"setup": [], "commands": ["python3 -m py_compile scripts/ci_stage0.py"]},
                         "global_paths": ["scripts/ci_stage0.py"],
-                        "compose_services": ["router"],
                         "targets": [
                             {
                                 "id": "router",
@@ -137,41 +138,6 @@ class ValidateConfigTests(unittest.TestCase):
                 ci_stage0.ROOT = root
                 with self.assertRaises(ci_stage0.Stage0ConfigError):
                     ci_stage0.load_config(matrix_path, doc_path)
-            finally:
-                ci_stage0.ROOT = original_root
-
-    def test_load_config_requires_compose_services_coverage(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            matrix_path = root / ".github" / "pantheon-stage0-matrix.json"
-            matrix_path.parent.mkdir(parents=True, exist_ok=True)
-            doc_path = root / "deploy.md"
-            doc_path.write_text(
-                "### 4.3 Wave 1 core service inventory\n| `router` | `services/router/` |\n.github/pantheon-stage0-matrix.json\n",
-                encoding="utf-8",
-            )
-            compose_path = root / "docker-compose.yml"
-            compose_path.write_text(
-                "services:\n  router:\n    build:\n      context: services/router\n",
-                encoding="utf-8",
-            )
-            matrix_path.write_text(
-                json.dumps({
-                    "schema_version": 1,
-                    "baseline": {"setup": [], "commands": ["echo 1"]},
-                    "global_paths": ["a"],
-                    "targets": [{"id": "router", "family": "f", "profile": "p", "repo_paths": ["services/router"], "changed_paths": ["services/router/**"]}],
-                    "compose_services": [],
-                }),
-                encoding="utf-8",
-            )
-            (root / "services" / "router").mkdir(parents=True, exist_ok=True)
-            original_root = ci_stage0.ROOT
-            try:
-                ci_stage0.ROOT = root
-                with self.assertRaises(ci_stage0.Stage0ConfigError) as ctx:
-                    ci_stage0.load_config(matrix_path, doc_path, compose_path)
-                self.assertIn("Compose project services missing from stage-0 matrix: router", str(ctx.exception))
             finally:
                 ci_stage0.ROOT = original_root
 
@@ -228,40 +194,164 @@ class RunTargetTests(unittest.TestCase):
             "--tag pantheon-stage0/research-qlib:sha123 ."
         )
 
-    def test_build_mode_runs_compose_entrypoint_import_check(self) -> None:
-        config = {
-            "targets": [
-                {
-                    "id": "router",
-                    "build": {
-                        "context": "services/control-plane/router",
-                        "dockerfile": "services/control-plane/router/Dockerfile",
-                        "tag": "pantheon-stage0/router",
-                    },
-                }
-            ]
+
+class ComposeParsingTests(unittest.TestCase):
+    CONFIG = {
+        "services": {
+            "worker": {
+                "build": {"context": "/repo", "dockerfile": "services/x/Dockerfile", "args": {"A": "b"}},
+                "command": ["python", "-m", "services.x.worker"],
+                "environment": {"DSN": "postgresql://u:p@postgres:5432/db", "UNSET": None},
+            },
+            "router": {"build": {"context": "/repo/services/router"}, "entrypoint": ["python", "/app/run.py"]},
+            "openclaw-gateway": {"build": {"context": "/repo", "dockerfile": "integrations/openclaw/gateway/Dockerfile"}},
+            "redis": {"image": "redis"},
         }
-        args = SimpleNamespace(
-            matrix=Path("unused"),
-            doc=Path("unused"),
-            compose=Path("docker-compose.yml"),
-            target_id="router",
-            mode="build",
-            tag_suffix="sha123",
-        )
+    }
 
-        with (
-            mock.patch("ci_stage0.load_config", return_value=config),
-            mock.patch("ci_stage0.run_shell_command") as run_shell_command,
-            mock.patch("ci_stage0.get_target_entrypoint_import_commands", return_value=["docker run --rm pantheon-stage0/router:sha123 python3 -c 'import main'"]),
-        ):
-            self.assertEqual(ci_stage0.cmd_run_target(args), 0)
+    def _parse(self) -> dict[str, dict]:
+        completed = subprocess.CompletedProcess([], 0, stdout=json.dumps(self.CONFIG), stderr="")
+        with mock.patch("ci_stage0.subprocess.run", return_value=completed) as run:
+            details = ci_stage0.parse_compose_services_details(Path("/repo/docker-compose.yml"))
+        self.assertIn("--profile", run.call_args.args[0])
+        return details
 
-        self.assertEqual(run_shell_command.call_count, 2)
-        run_shell_command.assert_has_calls([
-            mock.call("docker build --file services/control-plane/router/Dockerfile --tag pantheon-stage0/router:sha123 services/control-plane/router"),
-            mock.call("docker run --rm pantheon-stage0/router:sha123 python3 -c 'import main'"),
-        ])
+    def test_parses_resolved_compose_config_for_services_built_from_project_code(self) -> None:
+        details = self._parse()
+        self.assertEqual(list(details), ["worker", "router"])
+        self.assertEqual(details["worker"]["command"], ["python", "-m", "services.x.worker"])
+        self.assertEqual(details["worker"]["args"], ["A=b"])
+        self.assertEqual(details["worker"]["dockerfile"], "services/x/Dockerfile")
+        self.assertEqual(details["router"]["dockerfile"], "services/router/Dockerfile")
+        self.assertEqual(details["router"]["entrypoint"], ["python", "/app/run.py"])
+
+    def test_compose_failure_is_a_config_error(self) -> None:
+        failed = subprocess.CompletedProcess([], 1, stdout="", stderr="bad compose")
+        with mock.patch("ci_stage0.subprocess.run", return_value=failed):
+            with self.assertRaises(ci_stage0.Stage0ConfigError):
+                ci_stage0.parse_compose_services_details(Path("/repo/docker-compose.yml"))
+
+    def test_images_group_services_sharing_a_dockerfile(self) -> None:
+        details = {
+            "a": {"context": ".", "dockerfile": "services/x/Dockerfile"},
+            "b": {"context": ".", "dockerfile": "services/x/Dockerfile"},
+        }
+        with mock.patch("ci_stage0.parse_compose_services_details", return_value=details):
+            images = ci_stage0.compose_images()
+        self.assertEqual(list(images), ["services-x-Dockerfile"])
+        self.assertEqual(list(images["services-x-Dockerfile"]["services"]), ["a", "b"])
+
+
+class EntrypointResolutionTests(unittest.TestCase):
+    def test_entrypoint_and_cmd_combine_and_compose_command_overrides_cmd(self) -> None:
+        dockerfile = 'FROM x\nENTRYPOINT ["python", "/issuer/run.py"]\nCMD ["--serve"]\n'
+        self.assertEqual(ci_stage0.effective_argv({}, dockerfile), ["python", "/issuer/run.py", "--serve"])
+        self.assertEqual(ci_stage0.effective_argv({"command": ["--once"]}, dockerfile), ["python", "/issuer/run.py", "--once"])
+        self.assertEqual(ci_stage0.effective_argv({"entrypoint": ["python", "other.py"]}, dockerfile), ["python", "other.py"])
+
+    def test_shell_form_cmd_and_continuations_are_read(self) -> None:
+        dockerfile = "FROM x\nCMD uvicorn main:app \\\n  --app-dir svc\n"
+        argv = ci_stage0.effective_argv({}, dockerfile)
+        self.assertEqual(argv[:2], ["sh", "-c"])
+        self.assertIn("--app-dir svc", argv[2])
+
+    def test_uvicorn_checks_module_and_app_attribute_in_app_dir(self) -> None:
+        check = ci_stage0.resolve_import_check(["sh", "-c", "uvicorn main:app --app-dir svc/dir --port ${PORT:-8000}"])
+        self.assertEqual(check[0], "python")
+        self.assertIn("'svc/dir'", check[2])
+        self.assertIn("importlib.import_module('main')", check[2])
+        self.assertIn("'app'", check[2])
+        python_m = ci_stage0.resolve_import_check(["python", "-m", "uvicorn", "pkg.mod:api"])
+        self.assertIn("importlib.import_module('pkg.mod')", python_m[2])
+
+    def test_module_script_shell_and_inline_entrypoints(self) -> None:
+        self.assertIn("import_module('services.x.worker')", ci_stage0.resolve_import_check(["python", "-m", "services.x.worker", "--flag"])[2])
+        self.assertIn("run_path('scripts/run.py'", ci_stage0.resolve_import_check(["python", "scripts/run.py"])[2])
+        self.assertEqual(ci_stage0.resolve_import_check(["bash", "scripts/db_migrate.sh"]), ["bash", "-n", "scripts/db_migrate.sh"])
+        self.assertIsNone(ci_stage0.resolve_import_check(["python", "-c", "print('deferred')"]))
+        for unknown in (["node", "dist/index.js"], []):
+            with self.assertRaises(ci_stage0.Stage0ConfigError):
+                ci_stage0.resolve_import_check(unknown)
+
+    def test_script_check_runs_dataclass_scripts_without_running_main(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = Path(tmpdir) / "worker.py"
+            script.write_text(
+                "from dataclasses import dataclass\n\n@dataclass\nclass Job:\n    name: str = 'x'\n\n"
+                "if __name__ == '__main__':\n    raise SystemExit('main must not run')\n",
+                encoding="utf-8",
+            )
+            check = ci_stage0.resolve_import_check(["python", str(script)])
+            result = subprocess.run([sys.executable, *check[1:]], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_script_check_fails_when_the_script_cannot_import(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = Path(tmpdir) / "broken.py"
+            script.write_text("import module_that_is_not_installed\n", encoding="utf-8")
+            check = ci_stage0.resolve_import_check(["python", str(script)])
+            self.assertNotEqual(subprocess.run([sys.executable, *check[1:]], capture_output=True).returncode, 0)
+
+
+class ImportSmokeTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("docker"), "docker compose config is needed to read docker-compose.yml")
+    def test_every_compose_service_resolves_or_is_explicitly_inline(self) -> None:
+        for image_id, image in ci_stage0.compose_images().items():
+            dockerfile_text = (ci_stage0.ROOT / image["dockerfile"]).read_text(encoding="utf-8")
+            for service, details in image["services"].items():
+                with self.subTest(image=image_id, service=service):
+                    argv = ci_stage0.effective_argv(details, dockerfile_text)
+                    ci_stage0.resolve_import_check(argv)  # raises when the entrypoint shape is unknown
+
+    def test_image_affected_by_dockerfile_lock_and_source_but_not_docs_or_tests(self) -> None:
+        image = {"context": ".", "dockerfile": "services/telemetry/Dockerfile"}
+        affected = lambda *files: ci_stage0.image_affected(image, list(files))  # noqa: E731
+        self.assertTrue(affected("services/telemetry/Dockerfile"))
+        self.assertTrue(affected("dependencies/locks/services-telemetry.txt"))
+        self.assertTrue(affected("services/anything/module.py"))
+        self.assertFalse(affected("docs/readme.md", "services/anything/test_module.py", "dependencies/locks/services-other.txt"))
+        scoped = {"context": "services/research/mlflow", "dockerfile": "services/research/mlflow/Dockerfile"}
+        self.assertTrue(ci_stage0.image_affected(scoped, ["services/research/mlflow/requirements.txt"]))
+        self.assertFalse(ci_stage0.image_affected(scoped, ["services/telemetry/module.py"]))
+
+    def test_run_import_smoke_reports_each_service_and_failures(self) -> None:
+        image = {
+            "dockerfile": "services/telemetry/Dockerfile",
+            "context": ".",
+            "args": ["A=b"],
+            "services": {
+                "api": {"command": None, "environment": {}},
+                "worker": {"command": ["python", "-m", "services.telemetry.worker"], "environment": {"MODE": "dev"}},
+                "inline": {"command": ["python", "-c", "print(1)"], "environment": {}},
+            },
+        }
+
+        def fake_run(command: str) -> None:
+            if "services.telemetry.worker" in command:
+                raise subprocess.CalledProcessError(3, command)
+
+        with mock.patch("ci_stage0.run_shell_command", side_effect=fake_run) as run:
+            results = ci_stage0.run_import_smoke("services-telemetry-Dockerfile", image, "sha1")
+        self.assertEqual(results["api"], "passed")
+        self.assertEqual(results["worker"], "failed: exit 3")
+        self.assertTrue(results["inline"].startswith("skipped"))
+        self.assertIn("--build-arg A=b", run.call_args_list[0].args[0])
+        self.assertIn("--entrypoint python pantheon-import-smoke/services-telemetry-dockerfile:sha1", run.call_args_list[1].args[0])
+        self.assertIn("--env MODE=dev", run.call_args_list[2].args[0])
+
+    def test_run_import_smoke_starts_compose_postgres_for_services_that_connect_on_import(self) -> None:
+        image = {
+            "dockerfile": "services/telemetry/Dockerfile",
+            "context": ".",
+            "args": [],
+            "services": {"api": {"command": None, "environment": {"DSN": "postgresql://u:p@postgres:5432/db"}}},
+        }
+        with mock.patch("ci_stage0.run_shell_command") as run, mock.patch("ci_stage0.subprocess.run") as down:
+            ci_stage0.run_import_smoke("img", image, "sha1")
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertTrue(any("up --detach --wait postgres" in command for command in commands))
+        self.assertIn("--network pantheon-import-smoke-img_default", commands[-1])
+        self.assertIn("down", down.call_args.args[0])
 
 
 if __name__ == "__main__":
