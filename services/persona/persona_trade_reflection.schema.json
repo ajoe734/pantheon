@@ -49,6 +49,11 @@
       "type": "string",
       "enum": ["fill_review", "episode_closed", "scheduled_pattern", "manual_retry"]
     },
+    "covered_episode_ids": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "description": "Episode ids a scheduled_pattern reflection covers; later pattern reviews exclude them."
+    },
     "facts_snapshot_ref": {
       "type": "string"
     },

@@ -23,7 +23,6 @@ from ..service import (
     _PM12_QUARTERLY_FORMULA_DOC_REF,
     _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER,
     _PROMOTION_REVIEW_ACTION_IDS,
-    _PROMOTION_REVIEW_DECISIONS,
     _aggregate_group_surface,
     _bff_me_tenant_payload,
     _composed_surface_status,
@@ -52,13 +51,8 @@ from ..service import (
     _pm12_quarterly_ranking_items,
     _pm12_quarterly_recommendations,
     _promotion_review_clean_id,
-    _promotion_review_find,
     _promotion_review_items,
-    _promotion_review_rationale,
-    _promotion_review_revision_recommendation_id,
     _promotion_review_surfaces,
-    _promotion_review_target_id,
-    _raise_if_promotion_review_direct_mutation_requested,
     _resolve_param,
     _sem_command_response,
 )
@@ -66,8 +60,6 @@ from ...command_adapters.retired import reject_retired_command
 from .common import PersonaRouteContext, make_context_dependency
 
 log = logging.getLogger(__name__)
-
-_HUMAN_INBOX_PROMOTION_PRODUCER = "management_quarterly_ranking_recommendation_submit"
 
 
 def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
@@ -84,7 +76,6 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
     _dataset_surface_status = ctx.dataset_surface_status
     _read_surface_meta = ctx.read_surface_meta
     _raise_if_read_surface_unavailable = ctx.raise_if_read_surface_unavailable
-    _reject_body_idempotency_key = ctx.reject_body_idempotency_key
     _resolve_final_idempotency_key = ctx.resolve_final_idempotency_key
 
     @router.post("/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit", status_code=202)
@@ -152,31 +143,11 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
     @router.post("/bff/management/promotion-reviews/{review_id}/decisions", status_code=202)
     async def bff_management_promotion_review_decision(
         review_id: str,
-        payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
-        """BFF: accept a human-gated promotion review decision without live mutation."""
-        identity = _extract_identity(authorization)
-        if not {"approver", "admin"}.intersection(identity.roles):
-            raise _bff_error(
-                403,
-                ErrorCode.FORBIDDEN,
-                "Promotion review decision requires 'approver' or 'admin' role",
-                "Operator does not hold the required role",
-                precondition_failed="role_check",
-                suggestion="Escalate to a user with approver or admin role",
-            )
-        _reject_body_idempotency_key(payload)
-        _raise_if_promotion_review_direct_mutation_requested(payload)
-        return _service.decide_promotion_review(
-            review_id=review_id,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-        )
+        """Retired: the Governance ApprovalDecision is decided through /bff/approvals/{id}/decide."""
+        _extract_identity(authorization)
+        reject_retired_command("PromotionReviewDecision")
 
 
     @router.get("/bff/management/persona-league")

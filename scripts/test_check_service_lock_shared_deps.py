@@ -8,73 +8,82 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import check_service_lock_shared_deps as checker
 
 
+def build_tree(root: Path, files: dict[str, str], lock: str = "fastapi==0.1\n") -> None:
+    for name, text in files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text, encoding="utf-8")
+    (root / "dependencies" / "locks").mkdir(parents=True, exist_ok=True)
+    (root / "dependencies" / "locks" / "services-lineage-read.txt").write_text(lock, encoding="utf-8")
+
+
+LINEAGE_IMAGE = {
+    "services/lineage-read/Dockerfile": "COPY dependencies/locks/services-lineage-read.txt /tmp/r.txt\nCMD [\"python\", \"/workspace/services/lineage-read/main.py\"]\n",
+    "services/lineage-read/main.py": "import fastapi\nfrom services.telemetry.lineage_read.service import read\n",
+    "services/__init__.py": "",
+    "services/telemetry/lineage_read/__init__.py": "",
+    "services/telemetry/lineage_read/service.py": "def read():\n    return 1\n",
+    "services/telemetry/ingest_svc.py": "import jsonschema\n",
+}
+
+
 class CheckServiceLockSharedDepsTests(unittest.TestCase):
-    def test_detects_missing_dependency(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            shared_dir = root / "services" / "loop-control"
-            shared_dir.mkdir(parents=True)
-            (shared_dir / "requirements.txt").write_text("asyncpg\njsonschema\n", encoding="utf-8")
+    def check(self, files: dict[str, str], lock: str = "fastapi==0.1\n") -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            build_tree(Path(tmp), files, lock)
+            return checker.check_locks(Path(tmp))
 
-            svc_dir = root / "services" / "consultation"
-            svc_dir.mkdir(parents=True)
-            (svc_dir / "workflow.py").write_text("import services.loop-control\n", encoding="utf-8")
+    def test_lineage_read_lazy_telemetry_package_passes(self) -> None:
+        files = {**LINEAGE_IMAGE, "services/telemetry/__init__.py": "def ingest():\n    from .ingest_svc import x\n"}
+        self.assertEqual(self.check(files), [])
 
-            locks_dir = root / "dependencies" / "locks"
-            locks_dir.mkdir(parents=True)
-            (locks_dir / "services-consultation.txt").write_text("asyncpg==0.31.0\n", encoding="utf-8")
+    def test_lineage_read_eager_telemetry_package_is_caught(self) -> None:
+        files = {**LINEAGE_IMAGE, "services/telemetry/__init__.py": "from .ingest_svc import x\n"}
+        errors = self.check(files)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("services-lineage-read.txt missing 'jsonschema'", errors[0])
+        self.assertIn("services/telemetry/__init__.py", errors[0])
 
-            count, errors = checker.check_and_fix_locks(root=root, fix=False)
-            self.assertEqual(count, 1)
-            self.assertIn("services-consultation.txt missing shared dependency 'jsonschema' from services/loop-control", errors[0])
+    def test_eager_import_passes_once_the_lock_has_the_package(self) -> None:
+        files = {**LINEAGE_IMAGE, "services/telemetry/__init__.py": "from .ingest_svc import x\n"}
+        self.assertEqual(self.check(files, "fastapi==0.1\njsonschema==4.0\n"), [])
 
-    def test_fixes_missing_dependency_from_constraints(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            shared_dir = root / "services" / "loop-control"
-            shared_dir.mkdir(parents=True)
-            (shared_dir / "requirements.txt").write_text("asyncpg\njsonschema\n", encoding="utf-8")
+    def test_import_error_guarded_and_type_checking_imports_are_optional(self) -> None:
+        files = {
+            **LINEAGE_IMAGE,
+            "services/telemetry/__init__.py": (
+                "try:\n    import numpy\nexcept ImportError:\n    numpy = None\n"
+                "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import pandas\n"
+            ),
+        }
+        self.assertEqual(self.check(files), [])
 
-            svc_dir = root / "services" / "consultation"
-            svc_dir.mkdir(parents=True)
-            (svc_dir / "workflow.py").write_text("import services.loop-control\n", encoding="utf-8")
+    def test_package_with_its_own_dockerfile_is_checked_through_importers(self) -> None:
+        files = {
+            **LINEAGE_IMAGE,
+            "services/telemetry/__init__.py": "from .ingest_svc import x\n",
+            "services/telemetry/Dockerfile": "COPY dependencies/locks/services-telemetry.txt /tmp/r.txt\n",
+        }
+        self.assertEqual(len(self.check(files)), 1)
 
-            locks_dir = root / "dependencies" / "locks"
-            locks_dir.mkdir(parents=True)
-            lock_file = locks_dir / "services-consultation.txt"
-            lock_file.write_text("asyncpg==0.31.0\n", encoding="utf-8")
+    def test_sys_path_sibling_directory_is_followed(self) -> None:
+        files = {
+            "services/capital/Dockerfile": "COPY dependencies/locks/services-lineage-read.txt /tmp/r.txt\nCMD [\"python\", \"services/capital/main.py\"]\n",
+            "services/capital/main.py": (
+                "import sys\nfrom pathlib import Path\n_GOV = Path(__file__).resolve().parent.parent / \"control-plane\" / \"governance\"\n"
+                "sys.path.insert(0, str(_GOV))\nfrom capital_pool import Pool\n"
+            ),
+            "services/control-plane/governance/capital_pool.py": "import pydantic\n",
+        }
+        errors = self.check(files)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("missing 'pydantic'", errors[0])
 
-            constraints_dir = root / "dependencies"
-            (constraints_dir / "constraints-core.txt").write_text("jsonschema==4.26.0\n", encoding="utf-8")
+    def test_distribution_alias_and_hash_lock_lines(self) -> None:
+        files = {**LINEAGE_IMAGE, "services/telemetry/__init__.py": "import yaml\n", "services/lineage-read/main.py": "import services.telemetry\n"}
+        self.assertEqual(self.check(files, "pyyaml==6.0 \\\n    --hash=sha256:abc\n"), [])
 
-            count, _ = checker.check_and_fix_locks(root=root, fix=True)
-            self.assertEqual(count, 0)
-            updated_content = lock_file.read_text(encoding="utf-8")
-            self.assertIn("jsonschema==4.26.0", updated_content)
-
-            # Re-check should pass now
-            count_after, errors_after = checker.check_and_fix_locks(root=root, fix=False)
-            self.assertEqual(count_after, 0)
-            self.assertEqual(errors_after, [])
-
-    def test_passes_when_all_dependencies_present(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            shared_dir = root / "services" / "loop-control"
-            shared_dir.mkdir(parents=True)
-            (shared_dir / "requirements.txt").write_text("asyncpg\njsonschema\n", encoding="utf-8")
-
-            svc_dir = root / "services" / "consultation"
-            svc_dir.mkdir(parents=True)
-            (svc_dir / "workflow.py").write_text("import services.loop-control\n", encoding="utf-8")
-
-            locks_dir = root / "dependencies" / "locks"
-            locks_dir.mkdir(parents=True)
-            (locks_dir / "services-consultation.txt").write_text("asyncpg==0.31.0\njsonschema==4.26.0\n", encoding="utf-8")
-
-            count, errors = checker.check_and_fix_locks(root=root, fix=False)
-            self.assertEqual(count, 0)
-            self.assertEqual(errors, [])
+    def test_repository_locks_cover_their_reachable_imports(self) -> None:
+        self.assertEqual(checker.check_locks(checker.ROOT), [])
 
 
 if __name__ == "__main__":

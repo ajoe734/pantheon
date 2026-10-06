@@ -1,0 +1,64 @@
+{
+  "task_id": "BFF-HUMAN-GATE-TESTS-POLICY-20261006",
+  "title": "Re-point human gate security tests to the live revoke command and document the current approval policy scope",
+  "owner": "Antigravity2",
+  "reviewer": "PiAstra",
+  "change_class": "corrective",
+  "net_prod_line_budget": 0,
+  "summary": "Converted retired HumanGate tests in test_bff_b5_001_security_hardening.py to test the live HumanGateRevoke command and assert 410 ACTION_RETIRED for retired commands; documented the current governance approval policy scope and known revoke gaps in services/governance/contract.md without modifying production code.",
+  "live_guarantees_tested": {
+    "target_mismatch": "test_human_gate_item_id_params_must_match_target_id verifies that HumanGateRevoke with mismatched human_gate_item_id is rejected with 422 HUMAN_GATE_TARGET_MISMATCH",
+    "anti_self_approval": "test_human_gate_revoke_forbids_requester_self_decision verifies that HumanGateRevoke requested by the item requester is rejected with 403 HUMAN_GATE_SELF_APPROVAL_FORBIDDEN",
+    "two_man_authorization": "test_high_risk_human_gate_requires_two_man_and_records_evidence verifies that high-risk HumanGateRevoke rejects missing signature with 409 TWO_MAN_SIGNATURE_MISSING, rejects signatures bound to other commands with 409 TWO_MAN_SIGNATURE_BINDING_MISMATCH, and accepts signatures bound to HumanGateRevoke with 202 recording two_man_signature_id in audit precondition_evidence and params",
+    "downstream_execution": "test_human_gate_revoke_fails_closed_after_downstream_execution verifies that HumanGateRevoke fails closed with 409 HUMAN_GATE_REVOKE_DOWNSTREAM_EXECUTED when the effect was already executed",
+    "action_catalog": "test_human_gate_catalog_requires_two_man_evidence verifies that HumanGateRevoke is HIGH risk and requires two-man evidence, and that retired commands (HumanGateApprove, HumanGateReject, HumanGateRequestMoreEvidence, HumanGateExtendTtl) have no catalog entry"
+  },
+  "retired_commands_tested": {
+    "asserted_status": 410,
+    "asserted_code": "ACTION_RETIRED",
+    "commands": [
+      {
+        "command": "HumanGateApprove",
+        "replacement": "/bff/approvals/{decision_id}/decide",
+        "stored_command": false
+      },
+      {
+        "command": "HumanGateReject",
+        "replacement": "/bff/approvals/{decision_id}/decide",
+        "stored_command": false
+      },
+      {
+        "command": "HumanGateRequestMoreEvidence",
+        "replacement": "GET /bff/approvals/{decision_id}",
+        "stored_command": false
+      },
+      {
+        "command": "HumanGateExtendTtl",
+        "replacement": "GET /bff/approvals/{decision_id}",
+        "stored_command": false
+      }
+    ]
+  },
+  "governance_policy_scope_documented": {
+    "file": "services/governance/contract.md",
+    "proposer_self_decision": "Blocked only for the 5 listed action targets in approval_targets.py SUBJECT_FIELDS (rebalance_apply, capital_pool_activation, capital_binding_activation, persona_lifecycle_transition, evolution_execute)",
+    "multi_decider_requirement": "Two distinct deciders required only for capital/rebalance action targets with risk_direction == increase",
+    "ttl_policy": "expires_at is decider-supplied via DecideRequest body; generic governance does not enforce a TTL cap (only dev paper approvals are capped at 24h via paper_approval_scope.py)"
+  },
+  "known_revoke_gaps_documented": {
+    "file": "services/governance/contract.md",
+    "requester_field_mismatch": "BFF command_adapters/preconditions.py reads _HUMAN_GATE_REQUESTER_FIELDS which lacks owner_user_id from governance records, causing proposer revoke of governance approvals to return 202 instead of 403",
+    "endpoint_namespace_mismatch": "BFF command_adapters/governance_adapter.py dispatches revoke to /api/governance/human-gates/{id}/revoke instead of canonical /api/governance/approvals/{id}/revoke"
+  },
+  "verification": {
+    "services/control-plane/bff/tests/test_bff_b5_001_security_hardening.py": "9 passed, 0 failed, 3 warnings in 7.39s"
+  },
+  "production_code_changes": {
+    "net_prod_lines": 0,
+    "files_changed": [
+      "services/control-plane/bff/tests/test_bff_b5_001_security_hardening.py",
+      "services/governance/contract.md",
+      "docs/deployment/evidence/BFF-HUMAN-GATE-TESTS-POLICY-20261006/evidence.json"
+    ]
+  }
+}
