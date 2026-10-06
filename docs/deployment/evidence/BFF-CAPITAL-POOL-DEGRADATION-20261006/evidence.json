@@ -44,16 +44,24 @@
       "case": "test_bff_capital_pool_detail_with_seed_data proves owner bindings read",
       "before": "Seed pool had bindings=[] matching empty owner mock, allowing an echo of seeded field to falsely pass.",
       "after": "Seed pool has dummy echoed binding while owner read returns real owner_bindings; test asserts body['data']['bindings'] == owner_bindings."
+    },
+    "router_no_id_prefix_branch_and_surface_status_resolution": {
+      "case": "GET /bff/capital-pools/{id} does not branch on id string format; router resolves pool surface availability from read store correctly",
+      "before": "capital/router.py ~387 checked if pool_surface.get('status') == 'unavailable' and pool_id.startswith('pool_') returning 200, which branched on ID string format and contradicted AC1 (unavailable owner source must return 503 retryable for all pools).",
+      "after": "Removed pool_ prefix branch from router.py so all unavailable reads return 503. Identified test that triggered the hack: test_execute_plans_final_stub_auth_smoke_avoids_server_errors in test_execute_plans_final_live_wiring_contract.py (probing GET /bff/capital-pools/pool-main). The root cause was router._status calling ReadSurfacePorts.dataset_surface_status which only delegates to research_knowledge_source. Fixed router._status to check store.dataset_surface_status for custom test stores and store.dataset_source for ReadSurfacePorts, properly reporting ok status when pools exist and allowing missing pool IDs to return 404 (avoiding 5xx errors) without modifying test_execute_plans_final_live_wiring_contract.py outside artifact contract."
     }
   },
   "scope": {
     "owned": [
       "services/control-plane/bff/capital/router.py",
-      "services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py"
+      "services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py",
+      "services/control-plane/bff/tests/management_projection_test_doubles.py",
+      "docs/deployment/evidence/BFF-CAPITAL-POOL-DEGRADATION-20261006/evidence.json"
     ],
     "not_changing": [
       "Ranking formula endpoints and 7 out-of-scope ranking tests (deferred to ranking formula task)",
       "services/control-plane/bff/capital/service.py",
+      "services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py (outside task artifact contract, unchanged from origin/dev)",
       "BFF composition root main.py"
     ],
     "composes_with": [
@@ -72,16 +80,20 @@
         "result": "12 passed, 0 failed"
       },
       {
-        "command": "$PANTHEON_DEPENDENCY_PYTHON -m py_compile services/control-plane/bff/capital/router.py services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py",
-        "result": "passed without errors"
+        "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -k test_execute_plans_final_stub_auth_smoke_avoids_server_errors",
+        "result": "1 passed, 0 failed (smoke test avoids 5xx and succeeds against available capital pool fixture)"
       },
       {
-        "command": "python3 scripts/git/diff_budget.py",
-        "result": "production net added lines <= 60 (net 51 lines)"
+        "command": "$PANTHEON_DEPENDENCY_PYTHON -m py_compile services/control-plane/bff/capital/router.py services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py services/control-plane/bff/tests/management_projection_test_doubles.py",
+        "result": "passed without errors"
       },
       {
         "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py -k test_migrated_suites_do_not_mutate_sys_path",
         "result": "1 passed, 0 failed"
+      },
+      {
+        "command": "python3 scripts/git/diff_budget.py --base origin/dev --change-class corrective --budget 60",
+        "result": "production net added lines <= 60 (net +46 production lines)"
       }
     ]
   },

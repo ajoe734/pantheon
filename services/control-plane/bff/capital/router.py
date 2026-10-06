@@ -273,7 +273,16 @@ def create_capital_router(
 
     def _status(dataset: str, snapshot_at: Optional[str] = None, **kwargs: Any) -> Dict[str, Any]:
         st = resolved_get_read_store()
-        fn = getattr(st, "dataset_surface_status", None) or dataset_surface_status
+        fn = getattr(st, "dataset_surface_status", None)
+        if fn is not None and type(st).__name__ != "ReadSurfacePorts":
+            return fn(dataset, snapshot_at=snapshot_at or utc_now(), **kwargs)
+        if hasattr(st, "dataset_source") and callable(st.dataset_source):
+            src = st.dataset_source(dataset)
+            if src in ("missing", "unavailable"):
+                return {"status": "unavailable", "source": src, "snapshot_at": snapshot_at or utc_now(), "message": f"{dataset} source unavailable"}
+            if src:
+                return {"status": "ok", "source": src, "snapshot_at": snapshot_at or utc_now()}
+        fn = fn or dataset_surface_status
         return fn(dataset, snapshot_at=snapshot_at or utc_now(), **kwargs)
 
     def _raise_if_unavailable(surface: Dict[str, Any], label: str) -> None:
@@ -384,11 +393,6 @@ def create_capital_router(
         _require_read(authorization)
         snapshot_at = utc_now()
         pool_surface = _status("capital_pools", snapshot_at)
-        if pool_surface.get("status") == "unavailable" and pool_id.startswith("pool_"):
-            return {
-                "data": {"id": pool_id, "pool_id": pool_id, "status": "unavailable"},
-                "meta": _surface_meta(snapshot_at=snapshot_at, dataset="capital_pools", surface_key="capital_pool_detail", dataset_surface_status=_status, snapshot_meta=snapshot_meta),
-            }
         pool = _pool_or_error(pool_id, snapshot_at)
         st = resolved_get_read_store()
         bindings = st.get_bindings_for_pool(pool_id) if hasattr(st, "get_bindings_for_pool") else []
