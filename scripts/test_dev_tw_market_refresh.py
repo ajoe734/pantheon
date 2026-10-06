@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
+import threading
 from datetime import datetime, time, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch, MagicMock
@@ -96,25 +99,291 @@ def test_deploy_script_refresh_only_argument_parsing():
     assert 'execute_bounded_source_refresh_entrypoint "${FORCE_REFRESH:-false}"' in content
 
 
-def test_deploy_script_contract_egress_and_cleanup_trap():
-    content = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    assert "restore_bounded_source_refresh()" in content
-    assert "PANTHEON_EXTERNAL_EGRESS=deny" in content
-    assert "SOURCE_INGEST_CONTROLLER_MODE=reconcile_only" in content
-    assert "trap restore_bounded_source_refresh EXIT INT TERM" in content
-    assert "source-ingest-scheduler source-ingest-agora-projector" in content, (
-        "Cleanup trap must remove one-off refresh containers"
+class _MockSourceIngestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.startswith("/api/source-ingest/snapshots/latest"):
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b'{"error": "not found"}')
+        elif self.path.startswith("/api/source-ingest/receipts"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "receipts": [{
+                    "connector_id": "tw-twse-tpex-official-market",
+                    "status": "completed",
+                    "typed_failure": None,
+                    "source_timestamp": "2026-10-06T12:00:00Z",
+                    "source_timestamp_status": "valid",
+                    "created_at": "2030-01-01T00:00:00Z",
+                    "finished_at": "2030-01-01T00:00:00Z",
+                    "ingest_run_id": "run-1"
+                }]
+            }).encode("utf-8"))
+        elif self.path.startswith("/api/source-ingest/controller/readback"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "connectors": [{
+                    "connector_id": "tw-twse-tpex-official-market",
+                    "freshness": {
+                        "latest_receipt": {"ingest_run_id": "run-1"},
+                        "source_timestamp_status": "valid"
+                    },
+                    "latest_source_record": {
+                        "provenance": {"source_ingest_run_id": "run-1"},
+                        "source_id": "src-1"
+                    }
+                }]
+            }).encode("utf-8"))
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        pass
+
+
+def _setup_refresh_stub_docker(tmp_path: Path, initial_state: dict[str, Any]) -> tuple[Path, Path, Path, Path, int]:
+    server = HTTPServer(("127.0.0.1", 0), _MockSourceIngestHandler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    state_file = tmp_path / "docker_state.json"
+    events_file = tmp_path / "docker_events.jsonl"
+    output_file = tmp_path / "refresh_output.json"
+
+    state_file.write_text(json.dumps(initial_state))
+
+    docker_script = f"""#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+
+state_file = Path({repr(str(state_file))})
+events_file = Path({repr(str(events_file))})
+
+def log_event(name, **kwargs):
+    with events_file.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({{"event": name, **kwargs}}) + "\\n")
+
+args = sys.argv[1:]
+if not args:
+    sys.exit(0)
+
+state = json.loads(state_file.read_text(encoding="utf-8"))
+
+if args[0] == "compose":
+    sub = args[5:] if len(args) > 5 else []
+    if not sub:
+        sys.exit(0)
+    if sub[0] == "run":
+        print("")
+        sys.exit(0)
+    elif sub[0] == "ps":
+        target = sub[-1]
+        print(f"cid-{{target}}")
+        sys.exit(0)
+    elif sub[0] == "images":
+        print(state["compose_image_id"])
+        sys.exit(0)
+    elif sub[0] == "up":
+        services = sub[4:]
+        log_event("compose_up", services=services, env={{k: os.environ[k] for k in os.environ if k.startswith("PANTHEON_") or k.startswith("SOURCE_INGEST_")}})
+        if "source-ingest" in services:
+            if state.get("mutate_image_on_up"):
+                state["image_id"] = state["mutate_image_on_up"]
+            if os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "deny" and "mutate_env_on_restore" in state:
+                state["container_env"] = state["mutate_env_on_restore"]
+            state_file.write_text(json.dumps(state))
+        sys.exit(0)
+    elif sub[0] == "rm":
+        services = sub[4:]
+        log_event("compose_rm", services=services)
+        sys.exit(0)
+
+elif args[0] == "inspect":
+    fmt = args[2] if len(args) > 2 and args[1] == "--format" else ""
+    target = args[-1]
+    if "{{.Image}}" in fmt:
+        print(state["image_id"])
+        sys.exit(0)
+    elif "Config.Env" in fmt:
+        print(json.dumps(state["container_env"]))
+        sys.exit(0)
+    elif "State.Status" in fmt:
+        print("exited")
+        sys.exit(0)
+    elif "State.ExitCode" in fmt:
+        print("0")
+        sys.exit(0)
+
+elif args[0] == "cp":
+    dest = Path(args[2])
+    dest.write_text(json.dumps({{
+        "row1": {{
+            "connectorId": "tw-twse-tpex-official-market",
+            "ingestRunId": "run-1",
+            "sourceId": "src-1",
+            "asOf": "2026-10-06T12:00:00Z",
+            "freshness": {{
+                "sourceTimestamp": "2026-10-06T12:00:00Z",
+                "sourceTimeStatus": "valid",
+                "status": "fresh",
+                "stale": False
+            }}
+        }}
+    }}))
+    sys.exit(0)
+
+sys.exit(0)
+"""
+    (bin_dir / "docker").write_text(docker_script)
+    (bin_dir / "docker").chmod(0o755)
+
+    return bin_dir, state_file, events_file, output_file, port
+
+
+def test_refresh_entrypoint_restores_egress_deny_and_preserves_env(tmp_path: Path):
+    initial_env = [
+        "PANTHEON_EXTERNAL_EGRESS=deny",
+        "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=",
+        "PORT=8097",
+        "DATABASE_URL=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon",
+        "CUSTOM_SECRET=foo$bar",
+    ]
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "a" * 64,  # bare 64-hex to verify Compose images -q normalization
+        "container_env": initial_env,
+    }
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+
+    proc = subprocess.run(
+        ["bash", str(DEPLOY_SCRIPT), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode == 0, f"Refresh failed: {proc.stderr}\n{proc.stdout}"
+    assert output_file.exists()
+    out_data = json.loads(output_file.read_text(encoding="utf-8"))
+    assert out_data.get("status") == "completed"
+
+    events = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines() if line]
+    bounded_up = next(
+        e for e in events
+        if e.get("event") == "compose_up"
+        and "source-ingest" in e.get("services", [])
+        and e["env"].get("PANTHEON_EXTERNAL_EGRESS") == "allowlist"
+    )
+    assert bounded_up["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw"
+
+    restore_up = next(
+        e for e in events
+        if e.get("event") == "compose_up"
+        and "source-ingest" in e.get("services", [])
+        and e["env"].get("PANTHEON_EXTERNAL_EGRESS") == "deny"
+    )
+    assert restore_up["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == ""
+    assert "SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS" not in restore_up["env"]
+    assert "SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS" not in restore_up["env"]
+    assert "SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS" not in restore_up["env"]
+
+    rm_events = [e for e in events if e.get("event") == "compose_rm"]
+    assert any(
+        "source-ingest-scheduler" in e.get("services", []) or "source-ingest-agora-projector" in e.get("services", [])
+        for e in rm_events
     )
 
 
-def test_deploy_script_preserves_running_image_and_env():
-    content = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    assert "docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}'" in content, (
-        "Refresh entrypoint must extract running environment to preserve release secrets/config"
+def test_refresh_entrypoint_image_id_guard_pre_recreate_mismatch(tmp_path: Path):
+    initial_state = {
+        "image_id": "sha256:" + "1" * 64,
+        "compose_image_id": "sha256:" + "2" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+    }
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+
+    proc = subprocess.run(
+        ["bash", str(DEPLOY_SCRIPT), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
     )
-    assert "--no-deps --no-build" in content, (
-        "Refresh entrypoint must not rebuild images or recreate dependencies"
+    assert proc.returncode != 0
+    assert "running image ID" in proc.stderr
+    assert "!= compose image ID" in proc.stderr
+    assert not events_file.exists() or not any(
+        e.get("event") == "compose_up"
+        for e in [json.loads(line) for line in events_file.read_text().splitlines() if line]
     )
+
+
+def test_refresh_entrypoint_image_id_guard_post_recreate_mismatch(tmp_path: Path):
+    initial_state = {
+        "image_id": "sha256:" + "1" * 64,
+        "compose_image_id": "sha256:" + "1" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "mutate_image_on_up": "sha256:" + "3" * 64,
+    }
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+
+    proc = subprocess.run(
+        ["bash", str(DEPLOY_SCRIPT), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode != 0
+    assert "source-ingest container image ID" in proc.stderr
+    assert "!= expected" in proc.stderr
+
+
+def test_refresh_entrypoint_env_equality_fails_closed_on_mismatch(tmp_path: Path):
+    initial_state = {
+        "image_id": "sha256:" + "1" * 64,
+        "compose_image_id": "sha256:" + "1" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny", "PORT=8097"],
+        "mutate_env_on_restore": ["PANTHEON_EXTERNAL_EGRESS=deny", "PORT=8097", "LEAKED_VAR=leaked"],
+    }
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+
+    proc = subprocess.run(
+        ["bash", str(DEPLOY_SCRIPT), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode != 0
+    assert "restored container env mismatch" in proc.stderr
 
 
 def _run_preflight_script(force: bool, now_dt: datetime, snapshot_json: dict[str, Any] | None, http_status: int = 200) -> dict[str, Any]:

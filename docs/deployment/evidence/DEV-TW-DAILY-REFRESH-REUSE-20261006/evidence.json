@@ -1,8 +1,8 @@
 {
   "schema_version": "pantheon.deployment.tw_daily_refresh_evidence.v1",
   "task_id": "DEV-TW-DAILY-REFRESH-REUSE-20261006",
-  "actor": "Antigravity2",
-  "observed_at": "2026-10-06T09:51:00Z",
+  "actor": "Antigravity",
+  "observed_at": "2026-10-06T10:58:00Z",
   "change_class": "corrective",
   "implementation": {
     "workflow": {
@@ -25,7 +25,7 @@
       "flag": "--refresh-only",
       "options": ["--force", "--output <path>"],
       "second_script_rejected": true,
-      "release_image_preservation": "docker inspect --format + --env-file + --no-deps --no-build",
+      "release_image_preservation": "image-ID guard (container vs compose images -q) before recreate and after both bounded run and restore; env equality proof comparing pre-run and post-restore inspect envs; disarmed controller overrides and PANTHEON_EXTERNAL_EGRESS=deny on restore",
       "egress_restore_trap": "PANTHEON_EXTERNAL_EGRESS=deny, SOURCE_INGEST_CONTROLLER_MODE=reconcile_only, rm one-off containers",
       "preflight_checks": {
         "weekend_skip": "weekday >= 5 -> skipped (weekend)",
@@ -38,12 +38,12 @@
     }
   },
   "verification": {
-    "total_tests": 162,
-    "passed": 158,
+    "total_tests": 164,
+    "passed": 160,
     "skipped": 4,
     "failed": 0,
     "test_suites": [
-      "scripts/test_dev_tw_market_refresh.py (15 passed)",
+      "scripts/test_dev_tw_market_refresh.py (17 passed)",
       "scripts/test_deploy_nonprod_vm.py (45 passed, 2 skipped)",
       "scripts/test_deploy_nonprod_bootstrap_contract.py (81 passed, 2 skipped)",
       "scripts/test_source_ingest_deploy_diagnostics_contract.py (14 passed)",

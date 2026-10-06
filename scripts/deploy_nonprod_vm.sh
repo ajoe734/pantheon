@@ -290,6 +290,7 @@ validate_target_selection() {
 
   case "${DEPLOY_ENV}" in
     dev)
+      [[ "${COMPONENT:-}" == "refresh-only" ]] && return 0
       [[ -n "${PROJECT_ID:-}" ]] || error "dev deployment requires --project-id or PROJECT_ID to be set"
       [[ -n "${REMOTE_USER:-}" ]] || error "dev deployment requires REMOTE_USER to be set"
       local required_dev_vars=(
@@ -580,22 +581,18 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "${REFRESH_ONLY:-false}" == "true" ]]; then
-  execute_bounded_source_refresh_entrypoint "${FORCE_REFRESH:-false}" "${REFRESH_OUTPUT_PATH:-}"
-  exit $?
-fi
+if [[ "${REFRESH_ONLY:-false}" != "true" ]]; then
+  [[ "$DEV_DEPLOY_DEADLINE_SECONDS" =~ ^[0-9]+$ && "$DEV_DEPLOY_DEADLINE_SECONDS" -ge 1 ]] \
+    || error "DEV_DEPLOY_DEADLINE_SECONDS must be a positive integer"
 
-[[ "$DEV_DEPLOY_DEADLINE_SECONDS" =~ ^[0-9]+$ && "$DEV_DEPLOY_DEADLINE_SECONDS" -ge 1 ]] \
-  || error "DEV_DEPLOY_DEADLINE_SECONDS must be a positive integer"
-
-[[ -n "$DEPLOY_ENV" ]] || error "--environment is required"
-[[ -n "$DEPLOY_SHA" ]] || error "--sha is required unless GITHUB_SHA is set"
+  [[ -n "$DEPLOY_ENV" ]] || error "--environment is required"
+  [[ -n "$DEPLOY_SHA" ]] || error "--sha is required unless GITHUB_SHA is set"
 
 case "$DEPLOY_ENV" in
   dev)
     [[ "$COMPONENT" == "auto" ]] && COMPONENT="root"
     case "$COMPONENT" in
-      root|bff) ;;
+      root|bff|refresh-only) ;;
       *) error "dev supports only --component root or --component bff" ;;
     esac
     # Documented dev defaults apply only when unset. If explicitly empty,
@@ -835,17 +832,19 @@ try: os.fsync(fd)
 finally: os.close(fd)
 CONTEXT_PY
 }
+fi
 
 ssh_bash() {
   local vm="$1"
   local zone="$2"
   local remote_dir="$3"
   local remote_component="$4"
-  local command_prefix
-  command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
-  command_prefix+=" PANTHEON_DEPLOY_COMPONENT=$(shell_quote "$remote_component")"
-  command_prefix+=" PANTHEON_DEPLOY_SHA=$(shell_quote "$DEPLOY_SHA")"
-  command_prefix+=" PANTHEON_DEPLOY_PROJECT_ID=$(shell_quote "$PROJECT_ID")"
+  local command_prefix="" deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-7200}" remote_command=()
+  if [[ "${remote_component}" != "refresh-only" ]]; then
+    command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
+    command_prefix+=" PANTHEON_DEPLOY_COMPONENT=$(shell_quote "$remote_component")"
+    command_prefix+=" PANTHEON_DEPLOY_SHA=$(shell_quote "$DEPLOY_SHA")"
+    command_prefix+=" PANTHEON_DEPLOY_PROJECT_ID=$(shell_quote "$PROJECT_ID")"
   command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "$remote_dir")"
   command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
   command_prefix+=" PANTHEON_DEPLOY_RECEIPT_ROOT=$(shell_quote "${PANTHEON_DEPLOY_RECEIPT_ROOT:-}")"
@@ -950,9 +949,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_STAGING_BFF_CORS_ORIGINS=$(shell_quote "${STAGING_BFF_CORS_ORIGINS:-}")"
   command_prefix+=" bash -s"
 
-  local deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-7200}"
-  local -a remote_command
-  if [[ "$DEPLOY_ENV" == "dev" ]]; then
+  if [[ "${DEPLOY_ENV:-}" == "dev" ]]; then
     info "direct ssh ${REMOTE_USER}@${DEV_DEPLOY_SSH_HOST} component=${remote_component} sha=${DEPLOY_SHA} (deadline=${deadline_seconds}s)"
     export DEV_DEPLOY_SSH_HOST REMOTE_USER
     remote_command=("$SCRIPT_DIR/dev_vm_ssh.sh" exec "$command_prefix")
@@ -966,8 +963,16 @@ ssh_bash() {
       --command="${command_prefix}"
     )
   fi
+  fi
 
   run_remote_payload() {
+    if [[ "${remote_component}" == "refresh-only" ]]; then
+      PANTHEON_DEPLOY_COMPONENT=refresh-only \
+      FORCE_REFRESH="${FORCE_REFRESH:-false}" \
+      REFRESH_OUTPUT_PATH="${REFRESH_OUTPUT_PATH:-}" \
+      bash -s
+      return $?
+    fi
     if [[ "${DEPLOY_ENV}" == dev ]]; then
       [[ "${PROJECT_ID}" == pantheon-dev-20260902 && "${vm}" == pantheon-dev-deploy && \
          "${zone}" == asia-east1-b && "${DEV_DEPLOY_SSH_HOST}" == 34.81.52.222 && \
@@ -1449,10 +1454,10 @@ verify_bounded_source_refresh_readback() {
   evidence_dir="$(mktemp -d)"
   curl -fsS --get \
     --data-urlencode "connector_id=${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
-    http://127.0.0.1:18097/api/source-ingest/receipts \
+    "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/api/source-ingest/receipts" \
     -o "${evidence_dir}/receipts.json" \
     || { rm -rf "${evidence_dir}"; return 1; }
-  curl -fsS http://127.0.0.1:18097/api/source-ingest/controller/readback \
+  curl -fsS "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/api/source-ingest/controller/readback" \
     -o "${evidence_dir}/readback.json" \
     || { rm -rf "${evidence_dir}"; return 1; }
   docker cp \
@@ -1731,7 +1736,8 @@ if not force and now_t.time() < time(13, 30):
 from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness, validate_taiwan_calendar_evidence
 snap = None
 try:
-    req = urllib.request.Request("http://127.0.0.1:18097/api/source-ingest/snapshots/latest?symbol=0050.TW", headers={"Accept": "application/json"})
+    url = f"{__import__('os').environ.get('SOURCE_INGEST_API_URL', 'http://127.0.0.1:18097')}/api/source-ingest/snapshots/latest?symbol=0050.TW"
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=3) as resp:
         snap = json.loads(resp.read().decode("utf-8"))
 except urllib.error.HTTPError as exc:
@@ -1767,6 +1773,40 @@ emit("proceed")
 PREFLIGHT_PY
 }
 
+manage_source_ingest_refresh_runtime() {
+  local env_path="$1" action="$2" img_id="$3" arg="${4:-}"
+  python3 - "${env_path}" "${action}" "${img_id}" "${arg}" <<'PY'
+import json, os, subprocess, sys
+path, action, expected_img, arg = sys.argv[1:5]
+with open(path, "r", encoding="utf-8") as f:
+    pre_list = json.load(f)
+env = dict(x.split("=", 1) for x in pre_list if "=" in x)
+for k in ("PATH", "HOME", "USER", "DOCKER_HOST", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY"):
+    if k in os.environ and k not in env:
+        env[k] = os.environ[k]
+for k in ("SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS", "SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS", "SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS"):
+    env.pop(k, None)
+cmd = ["docker", "compose", "-p", "pantheon", "-f", "docker-compose.yml"]
+if action == "bounded":
+    env.update({"PANTHEON_EXTERNAL_EGRESS": "allowlist", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw", "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_and_pull"})
+    if arg:
+        env["SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS"] = arg
+elif action == "restore":
+    env.update({"PANTHEON_EXTERNAL_EGRESS": "deny", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": "", "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only"})
+subprocess.run(cmd + ["up", "-d", "--no-deps", "--no-build", "source-ingest"], env=env, check=True)
+cid = subprocess.check_output(cmd + ["ps", "-q", "source-ingest"], text=True).strip()
+if not cid:
+    raise SystemExit("source-ingest container not found")
+current_img = subprocess.check_output(["docker", "inspect", "--format", "{{.Image}}", cid], text=True).strip()
+if current_img != expected_img:
+    raise SystemExit(f"source-ingest container image ID {current_img} != expected {expected_img}")
+if action == "restore":
+    post_list = json.loads(subprocess.check_output(["docker", "inspect", "--format", "{{json .Config.Env}}", cid], text=True).strip())
+    if set(pre_list) != set(post_list):
+        raise SystemExit(f"restored container env mismatch: added={sorted(set(post_list) - set(pre_list))}, removed={sorted(set(pre_list) - set(post_list))}")
+PY
+}
+
 execute_bounded_source_refresh_entrypoint() {
   local force="${1:-false}" output_path="${2:-}" preflight_output preflight_status
   preflight_output="$(check_taiwan_refresh_preflight "${force}")" || error "preflight execution failed: ${preflight_output}"
@@ -1794,15 +1834,24 @@ execute_bounded_source_refresh_entrypoint() {
   validate_source_refresh_profile
   resolve_bounded_source_refresh_active_symbols
 
-  local cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
-  [[ -n "$cid" ]] && docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$cid" > "${steady_env}"
+  local cid running_image_id compose_image_id
+  cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
+  [[ -n "$cid" ]] || error "running source-ingest container not found"
+  running_image_id="$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true)"
+  compose_image_id="$(docker compose -p pantheon -f docker-compose.yml images -q source-ingest 2>/dev/null || true)"
+  [[ "$compose_image_id" =~ ^[0-9a-f]{64}$ ]] && compose_image_id="sha256:${compose_image_id}"
+  [[ "$running_image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || error "invalid running container image ID: ${running_image_id:-missing}"
+  [[ "$compose_image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || error "invalid compose image ID: ${compose_image_id:-missing}"
+  [[ "$running_image_id" == "$compose_image_id" ]] || error "running image ID ${running_image_id} != compose image ID ${compose_image_id}"
+  docker inspect --format '{{json .Config.Env}}' "$cid" > "${steady_env}"
 
   restore_bounded_source_refresh() {
     local rc=$?
     trap - EXIT INT TERM
     info "restoring external egress to deny and source controller to reconcile_only"
-    if [[ -s "${steady_env}" ]]; then
-      docker compose --env-file "${steady_env}" -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest >/dev/null 2>&1 || true
+    unset SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS || true
+    if [[ -n "${steady_env:-}" && -s "${steady_env}" ]]; then
+      manage_source_ingest_refresh_runtime "${steady_env}" "restore" "${running_image_id:-}" || rc=$?
     else
       PANTHEON_EXTERNAL_EGRESS=deny PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="" \
       SOURCE_INGEST_CONTROLLER_MODE=reconcile_only SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick \
@@ -1811,18 +1860,12 @@ execute_bounded_source_refresh_entrypoint() {
     fi
     COMPOSE_PROFILES="source-ingest-scheduler,workers" \
       docker compose -p pantheon -f docker-compose.yml rm -f -s source-ingest-scheduler source-ingest-agora-projector >/dev/null 2>&1 || true
-    rm -f "${steady_env}"
+    rm -f "${steady_env:-}"
     return "${rc}"
   }
   trap restore_bounded_source_refresh EXIT INT TERM
 
-  local env_opts=()
-  [[ -s "${steady_env}" ]] && env_opts=(--env-file "${steady_env}")
-  PANTHEON_EXTERNAL_EGRESS=allowlist \
-  PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw" \
-  SOURCE_INGEST_CONTROLLER_MODE=reconcile_and_pull \
-  SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
-    docker compose "${env_opts[@]}" -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest
+  manage_source_ingest_refresh_runtime "${steady_env}" "bounded" "${running_image_id}" "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}"
 
   COMPOSE_PROFILES="source-ingest-scheduler,workers" \
   SOURCE_INGEST_CONTROLLER_MODE=reconcile_and_pull SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=reconciled_live_proof \
@@ -1831,14 +1874,12 @@ execute_bounded_source_refresh_entrypoint() {
   SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
   SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=1 SOURCE_INGEST_MAX_RECORDS=100 \
   SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
-    docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest-scheduler
+    docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest-scheduler source-ingest-agora-projector
   wait_for_bounded_source_refresh_service source-ingest-scheduler
-
-  COMPOSE_PROFILES="source-ingest-scheduler,workers" \
-    docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest-agora-projector
   wait_for_bounded_source_refresh_service source-ingest-agora-projector
 
   verify_bounded_source_refresh_readback "${refresh_started_at}"
+  restore_bounded_source_refresh
   [[ -n "${output_path}" ]] && python3 -c "import json; print(json.dumps({'status': 'completed', 'refreshed_at': '${refresh_started_at}'}))" > "${output_path}"
 }
 
@@ -2475,6 +2516,20 @@ bootstrap_dev_lifecycle_projection() {
     -m scripts.lifecycle_projector_migrate --bootstrap-only --compose-config-stdin --reconcile-runtime-role
 }
 
+wait_for_dev_postgres() {
+  local db="$1" i
+  COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}" \
+    docker compose -p pantheon -f docker-compose.yml up -d postgres
+  for ((i = 1; i <= 30; i++)); do
+    if docker compose -p pantheon -f docker-compose.yml exec -T postgres \
+      pg_isready -U "${POSTGRES_USER:-postgres}" -d "${db}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
 ensure_dev_management_ai_postgres_role() {
   if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" ]]; then
     return
@@ -2491,17 +2546,7 @@ ensure_dev_management_ai_postgres_role() {
   local app_user="${PANTHEON_MANAGEMENT_AI_APP_DB_USER:-${PANTHEON_APP_DB_USER:-pantheon_app}}"
 
   info "ensuring Management AI postgres owner role/schema: user=${mgmt_user} schema=${mgmt_schema} app_user=${app_user}"
-  COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}" \
-    docker compose -p pantheon -f docker-compose.yml up -d postgres
-
-  local i
-  for ((i = 1; i <= 30; i++)); do
-    if docker compose -p pantheon -f docker-compose.yml exec -T postgres \
-      pg_isready -U "${POSTGRES_USER:-postgres}" -d "${mgmt_db}" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 2
-  done
+  wait_for_dev_postgres "${mgmt_db}"
 
   docker compose -p pantheon -f docker-compose.yml exec -T \
     -e MGMT_AI_DB_USER="${mgmt_user}" \
@@ -2613,17 +2658,7 @@ prune_dev_management_ai_telemetry_for_disk() {
   fi
 
   info "pruning dev Postgres telemetry_events before root deploy: db=${mgmt_db} schema=${mgmt_schema}"
-  COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}" \
-    docker compose -p pantheon -f docker-compose.yml up -d postgres
-
-  local i
-  for ((i = 1; i <= 30; i++)); do
-    if docker compose -p pantheon -f docker-compose.yml exec -T postgres \
-      pg_isready -U "${POSTGRES_USER:-postgres}" -d "${mgmt_db}" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 2
-  done
+  wait_for_dev_postgres "${mgmt_db}"
 
   # The expensive canonical-preservation sentinel is meaningful only when
   # there is an allow-listed derived telemetry table to truncate.  On the
@@ -3854,7 +3889,7 @@ if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIF
   exit 0
 fi
 
-cd "${PANTHEON_REMOTE_DIR}"
+cd "${PANTHEON_REMOTE_DIR:-$(pwd)}"
 git rev-parse --is-inside-work-tree >/dev/null
 
 case "${PANTHEON_DEPLOY_COMPONENT}" in
@@ -4053,6 +4088,11 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     curl_with_retry "${PANTHEON_STAGING_EXEC_HEALTH_URL%/}/__health__"
     ;;
 
+  refresh-only)
+    execute_bounded_source_refresh_entrypoint "${FORCE_REFRESH:-false}" "${REFRESH_OUTPUT_PATH:-}"
+    exit $?
+    ;;
+
   *)
     error "unsupported remote component: ${PANTHEON_DEPLOY_COMPONENT}"
     ;;
@@ -4061,6 +4101,11 @@ esac
 info "component ${PANTHEON_DEPLOY_COMPONENT} deployed"
 REMOTE
 }
+
+if [[ "${REFRESH_ONLY:-false}" == "true" ]]; then
+  ssh_bash "" "" "" refresh-only
+  exit $?
+fi
 
 deploy_dev_root() {
   ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" root
@@ -4079,6 +4124,10 @@ deploy_staging_control() {
 }
 
 case "${DEPLOY_ENV}:${COMPONENT}" in
+  dev:refresh-only)
+    ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" refresh-only
+    exit $?
+    ;;
   dev:root)
     deploy_dev_root
     ;;
