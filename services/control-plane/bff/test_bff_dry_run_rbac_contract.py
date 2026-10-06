@@ -508,20 +508,6 @@ def _build_test_app() -> FastAPI:
         _check_auth(request, is_write=False)
         return JSONResponse(status_code=200, content={"items": bff_state.read_store.list_agora_signals(), "data": bff_state.read_store.list_agora_signals()})
 
-    # Deployments
-    @app.post("/bff/deployments")
-    async def post_deployments(request: Request) -> JSONResponse:
-        _check_auth(request, is_write=True)
-        payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
-        idem_key = request.headers.get("Idempotency-Key")
-        if _is_dry_run(request):
-            return _dry_run_success_response(
-                {"command": "CreateDeployment", "id": payload.get("id", "deployment-dry")},
-                idempotency_key=idem_key,
-                evidence_kind="deployment.preview",
-            )
-        return JSONResponse(status_code=201, content={"data": {"id": "deploy-live"}})
-
     # Rebalances
     @app.post("/bff/rebalances")
     async def post_rebalances(request: Request) -> JSONResponse:
@@ -733,13 +719,6 @@ def test_dry_run_create_routes_do_not_persist_to_read_surfaces_or_caches() -> No
 
 def test_dry_run_command_routes_do_not_write_command_store_or_sse() -> None:
     with _isolated_bff() as client:
-        deployment = _assert_dry_run(client.post(
-            "/bff/deployments",
-            headers=_dry_headers("dry-deploy-001"),
-            json={"id": "deployment-dry", "name": "deployment preview"},
-        ))
-        assert deployment["data"]["command"] == "CreateDeployment"
-
         rebalance = _assert_dry_run(client.post(
             "/bff/rebalances",
             headers=_dry_headers("dry-rebalance-001"),

@@ -128,56 +128,26 @@ def _append_submitted_promotion_review(command_store: CommandStore, *, recommend
     )
 
 
-def test_durable_promotion_review_submission_is_not_dropped_from_human_inbox(tmp_path) -> None:
-    """Defect 1 regression: a durable QuarterlyRankingRecommendationSubmit
-    command must appear as a `promotion_review` item on the real
-    `/bff/management/human-inbox` route, not be silently discarded by the
-    (fixed) "fetch records, never emit items" promotion-reviews contributor
-    block in management_read_models/service.py::get_human_inbox."""
+def test_command_log_promotion_review_rows_are_not_projected_into_human_inbox(tmp_path) -> None:
+    """The promotion_review inbox contributor is retired: live proposals are
+    approval items, and legacy command-log rows are no longer projected."""
     with _isolated_bff(tmp_path) as (client, _store):
-        recommendation_id = "pm12-2026-q3-persona-regression-promote_to_canary_candidate"
         _append_submitted_promotion_review(
             bff_main.command_store,
-            recommendation_id=recommendation_id,
+            recommendation_id="pm12-2026-q3-persona-regression-promote_to_canary_candidate",
             persona_id="persona-regression",
         )
 
         response = client.get(
             "/bff/management/human-inbox",
             headers=HEADERS,
-            params={"source_type": "promotion_review", "page_size": 10},
+            params={"page_size": 10},
         )
 
         assert response.status_code == 200, response.text
         body = response.json()
-        items = body["data"]["items"]
-        assert len(items) == 1, f"expected the durable submission to appear, got {items!r}"
-        item = items[0]
-        assert item["promotion_review_id"] == recommendation_id
-        assert item["persona_id"] == "persona-regression"
-        assert item["source_type"] == "promotion_review"
-
-        surfaces = body["meta"]["surfaces"]
-        assert surfaces["promotion_reviews"]["status"] == "ok"
-        assert surfaces["promotion_reviews"]["source"] == "command_store"
-
-
-def test_human_inbox_with_no_submissions_reports_unavailable_not_a_silent_empty_ok() -> None:
-    """A read_store that never implements list_promotion_review(s) and an
-    empty command log must report `unavailable`, matching every sibling
-    contributor block's convention -- not silently claim `status: "ok"` for
-    zero items (the original defect: `status: "ok" if records else
-    "unavailable"` computed *before* records were ever populated)."""
-    from services.control_plane.bff.management_read_models.service import ManagementService
-
-    store = create_read_surface_ports()
-    assert not hasattr(store, "list_promotion_reviews")
-    assert not hasattr(store, "list_promotion_review_records")
-
-    svc = ManagementService(get_read_store=lambda: store, utc_now=lambda: "2026-01-01T00:00:00Z")
-    result = svc.get_human_inbox(source_type="promotion_review", page_size=10)
-    assert result["data"]["items"] == []
-    assert result["meta"]["surfaces"]["promotion_reviews"]["status"] == "unavailable"
+        assert all(item["source_type"] != "promotion_review" for item in body["data"]["items"])
+        assert "promotion_reviews" not in body["meta"]["surfaces"]
 
 
 def test_run_management_read_is_bounded_not_the_raw_unbounded_helper() -> None:

@@ -2613,7 +2613,11 @@ def build_request(
     logical_agent = agent_config_for(config, event["target_agent"])
     agent = agent_config_for(config, agent_id_override or event["target_agent"])
     metadata = dict(event.get("metadata", {}) or {})
+    # Planner events carry the task at the top level; durable queue intents
+    # (``_queue_delivery_event_locked``) keep it under ``metadata.task``.
     event_task = event.get("task")
+    if not isinstance(event_task, Mapping):
+        event_task = metadata.get("task")
     if isinstance(event_task, Mapping):
         # The admission planner already owns resource validation and capacity
         # reservation.  Carry that exact declaration to the spawned worker so

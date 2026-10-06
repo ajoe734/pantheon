@@ -5791,7 +5791,6 @@ def _promotion_review_item_from_recommendation(
         "submitted": bool(owner_state.get("submitted")),
         "submit_status": owner_state.get("submit_status"),
         "human_inbox_id": inbox_id,
-        "allowed_decisions": sorted(_PROMOTION_REVIEW_DECISIONS),
         "owner_decision": owner_state.get("owner_decision"),
         "allowedActions": {
             "canSubmit": False,
@@ -5817,7 +5816,6 @@ def _promotion_review_item_from_recommendation(
             "persona": f"/bff/personas/{recommendation.get('persona_id')}",
             "recommendation": "/bff/management/quarterly-ranking/recommendations",
             "detail": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}",
-            "decisions": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}/decisions",
             "human_inbox": f"/bff/management/human-inbox/{quote(inbox_id, safe=':')}" if inbox_id else None,
             "owner_decision": owner_href,
         },
@@ -5964,17 +5962,6 @@ def _promotion_review_find(
                     evidence_dataset_available,
                 )
     return None, quarter_window, redacted_count, evidence_dataset_available
-
-
-# --- _promotion_review_rationale ---
-def _promotion_review_rationale(payload: Dict[str, Any]) -> str:
-    return str(
-        payload.get("rationale")
-        or payload.get("reason")
-        or payload.get("memo")
-        or payload.get("rejection_reason")
-        or ""
-    ).strip()
 
 
 # --- _project_persona_league_row ---
@@ -9086,281 +9073,6 @@ def _pm12_recommendation_snapshot_record(snapshot_id: str) -> Dict[str, Any]:
             precondition_failed="ranking_snapshot_id",
         )
     return record
-
-
-# --- _pm12_resolve_quarterly_recommendation_submit_params ---
-def _pm12_resolve_quarterly_recommendation_submit_params(
-    params: Dict[str, Any],
-) -> Dict[str, Any]:
-    recommendation_id = str(
-        params.get("recommendation_id") or params.get("recommendationId") or ""
-    ).strip()
-    snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
-    quarter = str(params.get("quarter") or "").strip().upper()
-    if not recommendation_id or not snapshot_id or not quarter:
-        return dict(params)
-    snapshot = _pm12_recommendation_snapshot_record(snapshot_id)
-    snapshot_quarter = str(snapshot.get("period") or "").strip().upper()
-    if snapshot_quarter != quarter:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "quarter does not match the admitted ranking snapshot",
-            "The submitted quarter must be the immutable snapshot period.",
-            precondition_failed="quarter",
-        )
-
-    saved = evaluator_results.saved_recommendation(quarter, snapshot_id, recommendation_id)
-    matched_item = next(
-        (
-            i for i in snapshot.get("items") or []
-            if isinstance(i, dict) and str(i.get("persona_id") or "").strip() == (saved or {}).get("persona_id")
-        ),
-        None,
-    )
-    if saved is None or saved.get("ranking_snapshot_id") != snapshot_id or matched_item is None:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "recommendation is not in the admitted ranking snapshot",
-            "The recommendation was not saved by the persona evaluator for this snapshot.",
-            precondition_failed="recommendation_id",
-        )
-    matched_action_id = saved["action_id"]
-    review_revision_id = _promotion_review_revision_id(
-        recommendation_id,
-        snapshot_id,
-    )
-    for field in ("review_id", "promotion_review_id"):
-        asserted_review_id = str(params.get(field) or "").strip()
-        if (
-            asserted_review_id
-            and _promotion_review_clean_id(asserted_review_id)
-            != review_revision_id
-        ):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "promotion review revision assertion mismatch",
-                f"{field} does not match the admitted recommendation snapshot.",
-                precondition_failed=field,
-            )
-
-    asserted_action_id = str(
-        params.get("recommendation_action_id")
-        or params.get("recommendationActionId")
-        or ""
-    ).strip()
-    if asserted_action_id and asserted_action_id != matched_action_id:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "recommendation action does not match the admitted snapshot",
-            "The caller-supplied recommendation action is not authoritative.",
-            precondition_failed="recommendation_action_id",
-        )
-
-    item = {
-        **json.loads(json.dumps(matched_item)),
-        "ranking_snapshot_id": snapshot_id,
-        "evidence_refs": [],
-    }
-    quarter_window = _pm12_quarter_window(quarter, utc_now())
-    source_recommendation = _pm12_quarterly_recommendation_item(
-        item,
-        action_id=matched_action_id,
-        quarter_window=quarter_window,
-        evidence_refs=[],
-        saved=saved,
-    )
-    source_recommendation["human_review_state"] = {
-        "status": "recommended_not_submitted",
-        "decision_status": "pending",
-        "submitted": False,
-        "submit_status": "not_submitted",
-        "decision": None,
-        "decided_at": None,
-        "decided_by": None,
-    }
-    stored_source = _promotion_review_stored_source(source_recommendation)
-    stage_path = _promotion_review_stage_path(source_recommendation)
-    canonical_assertions = {
-        "persona_id": item.get("persona_id"),
-        "stage": item.get("stage"),
-        "deployment_stage": item.get("deployment_stage"),
-        "stage_from": stage_path.get("from_stage"),
-        "stage_to": stage_path.get("target_stage"),
-        "review_kind": stage_path.get("review_kind"),
-        "current_weight": item.get("current_weight"),
-        "target_weight": item.get("target_weight"),
-        "delta": item.get("delta"),
-        "capital_scope": item.get("capital_scope"),
-        "capital_pool_id": item.get("capital_pool_id"),
-        "capital_sleeve_id": item.get("capital_sleeve_id"),
-        "evidence_ref_ids": sorted(item.get("evidence_ref_ids") or []),
-    }
-    for field, authoritative_value in canonical_assertions.items():
-        if field not in params:
-            continue
-        asserted_value = params.get(field)
-        if field == "evidence_ref_ids":
-            asserted_value = sorted(asserted_value or [])
-        if not _pm12_semantic_values_match(asserted_value, authoritative_value):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "quarterly recommendation assertion mismatch",
-                f"{field} does not match the admitted ranking snapshot.",
-                precondition_failed=field,
-            )
-    if params.get("evidence_refs") not in (None, []):
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "caller evidence is not admissible",
-            "Quarterly recommendation evidence is materialized server-side.",
-            precondition_failed="evidence_refs",
-        )
-    asserted_source = params.get("source_recommendation")
-    if asserted_source is not None:
-        if not isinstance(asserted_source, dict):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "source recommendation assertion mismatch",
-                "source_recommendation must be an object when supplied.",
-                precondition_failed="source_recommendation",
-            )
-        nested_assertions = {
-            "id": recommendation_id,
-            "recommendation_id": recommendation_id,
-            "review_id": review_revision_id,
-            "promotion_review_id": review_revision_id,
-            "ranking_snapshot_id": snapshot_id,
-            "quarter": quarter,
-            "persona_id": item.get("persona_id"),
-            "action_id": matched_action_id,
-            "recommendation_action_id": matched_action_id,
-            "stage": item.get("stage"),
-            "deployment_stage": item.get("deployment_stage"),
-            "stage_from": stage_path.get("from_stage"),
-            "stage_to": stage_path.get("target_stage"),
-            "review_kind": stage_path.get("review_kind"),
-            "current_weight": item.get("current_weight"),
-            "target_weight": item.get("target_weight"),
-            "delta": item.get("delta"),
-            "capital_scope": item.get("capital_scope"),
-            "capital_pool_id": item.get("capital_pool_id"),
-            "capital_sleeve_id": item.get("capital_sleeve_id"),
-            "evidence_ref_ids": sorted(item.get("evidence_ref_ids") or []),
-        }
-        for field, authoritative_value in nested_assertions.items():
-            if field not in asserted_source:
-                continue
-            asserted_value = asserted_source.get(field)
-            if field == "evidence_ref_ids":
-                asserted_value = sorted(asserted_value or [])
-            if not _pm12_semantic_values_match(asserted_value, authoritative_value):
-                raise _bff_error(
-                    422,
-                    ErrorCode.VALIDATION_FAILED,
-                    "source recommendation assertion mismatch",
-                    f"source_recommendation.{field} does not match the admitted ranking snapshot.",
-                    precondition_failed=field,
-                )
-        if asserted_source.get("evidence_refs") not in (None, []):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "caller evidence is not admissible",
-                "source_recommendation evidence is materialized server-side.",
-                precondition_failed="evidence_refs",
-            )
-
-    canonical: Dict[str, Any] = {
-        "quarter": quarter,
-        "recommendation_id": recommendation_id,
-        "recommendationId": recommendation_id,
-        "review_id": review_revision_id,
-        "promotion_review_id": review_revision_id,
-        "recommendation_action_id": matched_action_id,
-        "recommendationActionId": matched_action_id,
-        "ranking_snapshot_id": snapshot_id,
-        "ranking_snapshot_content_digest": snapshot.get("content_digest"),
-        "ranking_item_digest": _stable_json_hash(matched_item),
-        "ranking_evidence_ref_ids": sorted(item.get("evidence_ref_ids") or []),
-        "persona_id": item.get("persona_id"),
-        "stage": item.get("stage"),
-        "deployment_stage": item.get("deployment_stage"),
-        "current_weight": item.get("current_weight"),
-        "target_weight": item.get("target_weight"),
-        "capital_scope": item.get("capital_scope"),
-        "capital_pool_id": item.get("capital_pool_id"),
-        "capital_sleeve_id": item.get("capital_sleeve_id"),
-        "stage_from": stage_path.get("from_stage"),
-        "stage_to": stage_path.get("target_stage"),
-        "review_kind": stage_path.get("review_kind"),
-        "requires_human_gate_decision": True,
-        "live_capital_mutation": False,
-        "liveCapitalMutation": False,
-        "direct_live_capital_mutation": False,
-        "runtime_mutation": False,
-        "source_type": "quarterly_ranking_recommendation",
-        "source_record_id": recommendation_id,
-        "source_recommendation": stored_source,
-        "audit_event": "quarterly_ranking.recommendation_submitted",
-        "policy": "promotion_governance_human_gate_no_direct_live_capital",
-    }
-    for field in ("reason", "note", "memo", "rationale"):
-        value = str(params.get(field) or "").strip()
-        if value:
-            canonical[field] = value
-    return canonical
-
-
-# --- _validate_quarterly_ranking_recommendation_submit ---
-def _validate_quarterly_ranking_recommendation_submit(
-    params: Dict[str, Any],
-    identity: OperatorIdentity,
-) -> None:
-    if not {"operator", "approver", "admin"}.intersection(identity.roles):
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Quarterly ranking recommendation submission requires operator-level role",
-            "Operator does not hold the required role",
-            precondition_failed="role_check",
-            suggestion="Escalate to a user with operator, approver, or admin role",
-        )
-
-    _raise_if_promotion_review_direct_mutation_requested(params)
-    resolved = _pm12_resolve_quarterly_recommendation_submit_params(params)
-    params.clear()
-    params.update(resolved)
-
-    required = {"quarter", "recommendation_id", "ranking_snapshot_id"}
-    missing = required - {key for key, value in params.items() if value not in (None, "")}
-    if missing:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required params for QuarterlyRankingRecommendationSubmit",
-            f"Missing fields: {sorted(missing)}",
-            precondition_failed="quarterly_ranking_recommendation",
-        )
-    action_id = str(
-        params.get("recommendation_action_id")
-        or params.get("recommendationActionId")
-        or ""
-    ).strip()
-    if action_id and action_id not in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid quarterly ranking recommendation action",
-            f"recommendation_action_id must be one of {list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER)}",
-            precondition_failed="recommendation_action_id",
-        )
 
 
 # --- _role_and_me_payload_helpers ---
@@ -14376,94 +14088,6 @@ class PersonaService:
             return True
         return False
 
-    def decide_promotion_review(
-        self,
-        *,
-        review_id: str,
-        payload: Dict[str, Any],
-        identity: Any,
-        idempotency_key: Optional[str] = None,
-        x_idempotency_key: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        raw_decision = str(payload.get("decision") or "").strip().lower()
-        if raw_decision not in _PROMOTION_REVIEW_DECISIONS:
-            raise self._bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "decision is invalid",
-                f"decision must be one of {sorted(_PROMOTION_REVIEW_DECISIONS)}",
-                precondition_failed="decision",
-            )
-        rationale = _promotion_review_rationale(payload)
-        if raw_decision == "reject" and not rationale:
-            raise self._bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "reject decision requires a non-empty rationale",
-                "rationale must be a non-empty string when decision=reject",
-                precondition_failed="rationale",
-            )
-
-        snapshot_at = self._utc_now()
-        clean_review_id = _promotion_review_clean_id(review_id)
-        exact_revision_requested = (
-            clean_review_id
-            != _promotion_review_revision_recommendation_id(clean_review_id)
-        )
-        review, _quarter_window, _redacted_count, _evidence_dataset_available = _promotion_review_find(
-            identity,
-            review_id,
-            snapshot_at=snapshot_at,
-            quarter=str(payload.get("quarter") or "").strip() or None,
-            include_historical=exact_revision_requested,
-        )
-        if review is None:
-            raise self._bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Promotion review not found",
-                f"Promotion review {review_id} does not exist",
-                precondition_failed="review_id",
-            )
-        if exact_revision_requested and str(
-            review.get("decision_status") or "pending"
-        ).strip().lower() != "pending":
-            current_review, _, _, _ = _promotion_review_find(
-                identity,
-                _promotion_review_revision_recommendation_id(clean_review_id),
-                snapshot_at=snapshot_at,
-                quarter=str(payload.get("quarter") or "").strip() or None,
-                include_historical=False,
-            )
-            current_revision_id = str(
-                (current_review or {}).get("promotion_review_id")
-                or (current_review or {}).get("review_id")
-                or ""
-            ).strip()
-            if clean_review_id != current_revision_id:
-                raise self._bff_error(
-                    404,
-                    ErrorCode.RESOURCE_NOT_FOUND,
-                    "Promotion review not found",
-                    f"Promotion review {review_id} does not exist",
-                    precondition_failed="review_id",
-                )
-        if not bool(review.get("submitted")):
-            raise self._bff_error(
-                409,
-                ErrorCode.HUMAN_GATE_PENDING,
-                "Promotion review has not been submitted",
-                "Submit the quarterly ranking recommendation before recording a Human Gate decision.",
-                precondition_failed="recommendation_submission",
-                suggestion="POST the recommendation submit route and then retry the decision.",
-                details_extra={
-                    "recommendationId": review.get("recommendation_id"),
-                    "submitHref": (review.get("links") or {}).get("submit"),
-                },
-            )
-
-        reject_retired_command("HumanGateReject" if raw_decision == "reject" else "HumanGateApprove")
-
     def _compose_quarterly_ranking_context(
         self,
         *,
@@ -14561,8 +14185,7 @@ class PersonaService:
             "decision_accepted_count": len([item for item in reviews if item.get("decision_status") == "accepted"]),
             "live_capital_mutation_count": 0,
             "requires_human_gate_decision": True,
-            "allowed_decisions": sorted(_PROMOTION_REVIEW_DECISIONS),
-            "policy": "promotion_governance_human_gate_no_direct_live_capital",
+                "policy": "promotion_governance_human_gate_no_direct_live_capital",
         }
         return {
             "data": {
@@ -14589,8 +14212,7 @@ class PersonaService:
                 "requires_human_gate_decision": True,
                 "live_capital_mutation": False,
                 "direct_live_capital_mutation": False,
-                "allowed_decisions": sorted(_PROMOTION_REVIEW_DECISIONS),
-                "policy": "promotion_governance_human_gate_no_direct_live_capital",
+                        "policy": "promotion_governance_human_gate_no_direct_live_capital",
             },
         }
 

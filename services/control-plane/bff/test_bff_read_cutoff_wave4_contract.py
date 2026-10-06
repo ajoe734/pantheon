@@ -185,7 +185,6 @@ def _make_client(store: ReadSurfacePorts) -> TestClient:
         resolve_final_idempotency_key=lambda r, h: r or h or "key",
         reject_body_idempotency_key=lambda p: None,
         request_dry_run_requested=lambda *a, **kw: False,
-        gov_bff_idempotency={},
         publish_event=lambda *a, **kw: "event-id",
         sse_buffers={},
         sse_subscribers={},

@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import base64
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -74,7 +76,37 @@ REQUIRED_COMPOSE_SERVICES = [
     "evolution",
     "operator-bff",
 ]
+STIMULUS_GATE_SUITE = "tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py"
+# The stimulus gate itself launches the research, human-learning and runtime
+# domain suites, so their extra owners must be part of the same isolated stack.
+STIMULUS_COMPOSE_SERVICES = [
+    "consultation-svc",
+    "source-ingest-scheduler",
+    "strategy-distillation-worker",
+    "alpha-replication-worker",
+    "search-svc",
+    "training-session-svc",
+    "training-session-preview-worker",
+    "policy-learning-svc",
+    "policy-learning-shadow-eval-scheduler",
+    "research-orchestrator-svc",
+    "research-worker-gateway-svc",
+    "agora-interaction-worker",
+    "loop-run-projector-scheduler",
+    "persona",
+]
+# One-shot batch job (restart: no): never part of the `up --wait` set. It runs
+# explicitly after the stack is up and the scheduler has seeded market data.
+STIMULUS_PROJECTOR_SERVICE = "source-ingest-agora-projector"
+STIMULUS_SERVICES: dict[str, dict[str, Any]] = {
+    "consultation": {"port_var": "CONSULTATION_PORT", "default_port": 18096, "health": "/readyz"},
+    "policy_learning": {"port_var": "POLICY_LEARNING_PORT", "default_port": 18100, "health": "/readyz"},
+    "research": {"port_var": "RESEARCH_ORCHESTRATOR_PORT", "default_port": 18101, "health": "/readyz"},
+    "training": {"port_var": "TRAINING_SESSION_PORT", "default_port": 18099, "health": "/readyz"},
+}
 DB_MIGRATION_SERVICE = "source-ingest-controller-migrate"
+PROJECTION_BOOTSTRAP_SERVICE = "loop-run-projector-scheduler"
+COMPOSE_ALL_PROFILES = ("--profile", "*")
 ISOLATED_SAFE_CONTROLS = {
     "BROKER_PAPER_ENABLED": "true",
     "BROKER_SHIOAJI_SANDBOX_ENABLED": "false",
@@ -180,6 +212,26 @@ def _post_json(url: str, body: Mapping[str, Any], headers: Mapping[str, str] | N
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _mint_projector_service_jwt(
+    secret: str,
+    *,
+    tenant_id: str,
+    issuer: str | None = None,
+    audience: str | None = None,
+) -> str:
+    header = {"alg": "HS256", "typ": "JWT"}
+    claims: dict[str, Any] = {"sub": "agora-market-projector", "roles": ["source_ingest_reader"], "tenant_id": tenant_id}
+    if issuer:
+        claims["iss"] = issuer
+    if audience:
+        claims["aud"] = audience
+    b64 = lambda d: base64.urlsafe_b64encode(d).rstrip(b"=").decode("ascii")
+    h = b64(json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    c = b64(json.dumps(claims, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    sig = hmac.new(secret.encode("utf-8"), f"{h}.{c}".encode("ascii"), hashlib.sha256).digest()
+    return f"{h}.{c}.{b64(sig)}"
+
+
 def _compose_command(
     project: str,
     compose_files: list[str],
@@ -206,14 +258,76 @@ def _project_container_ids(project: str) -> list[str]:
     return sorted(line.strip() for line in output.splitlines() if line.strip())
 
 
+def _projector_run_command(project: str, compose_files: list[str]) -> list[str]:
+    # `up --build` rebuilds only the services it starts; the projector is run
+    # separately, so build it here or a stale image from an earlier run is used.
+    return _compose_command(
+        project, compose_files, "run", "--rm", "--build", STIMULUS_PROJECTOR_SERVICE
+    )
+
+
+def _bootstrap_trade_journey_projection(
+    project: str,
+    compose_files: list[str],
+    compose_env: Mapping[str, str],
+) -> dict[str, Any]:
+    """Create the relational Trade Journey projection schema and grants.
+
+    Mirrors ``bootstrap_dev_lifecycle_projection`` in deploy_nonprod_vm.sh:
+    the hosted deploy runs this one-shot migration before starting its
+    runtime, and without it loop-run-projector-scheduler never becomes healthy.
+    """
+    config = subprocess.run(
+        _compose_command(
+            project, compose_files, "--profile", "core",
+            "config", "--format", "json", "postgres",
+        ),
+        env=dict(compose_env),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    command = _compose_command(
+        project,
+        compose_files,
+        "run",
+        "--rm",
+        "--build",
+        "--no-deps",
+        "-T",
+        "--entrypoint",
+        "python",
+        PROJECTION_BOOTSTRAP_SERVICE,
+        "-m",
+        "scripts.lifecycle_projector_migrate",
+        "--bootstrap-only",
+        "--compose-config-stdin",
+        "--reconcile-runtime-role",
+    )
+    process = subprocess.run(
+        command,
+        input=config.stdout,
+        env=dict(compose_env),
+        text=True,
+        check=False,
+    )
+    result = {"command": command, "returncode": process.returncode}
+    if process.returncode != 0:
+        raise RuntimeError(f"trade journey projection bootstrap failed: {result!r}")
+    return result
+
+
 def _teardown_project(
     project: str,
     compose_files: list[str],
     compose_env: Mapping[str, str],
 ) -> dict[str, Any]:
+    # Most services sit under compose `profiles:`; `down` skips them unless the
+    # profiles are active, so activate all of them.
     command = _compose_command(
         project,
         compose_files,
+        *COMPOSE_ALL_PROFILES,
         "down",
         "--volumes",
         "--remove-orphans",
@@ -233,6 +347,49 @@ def _teardown_project(
         "remaining_container_ids": remaining,
         "zero_project_containers": process.returncode == 0 and not remaining,
     }
+
+
+def _capture_failure_diagnostics(
+    project: str,
+    compose_files: list[str],
+    compose_env: Mapping[str, str],
+    out_dir: Path,
+) -> dict[str, Any]:
+    """Persist `ps -a` and per-service log tails before any teardown."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def _capture(name: str, *args: str) -> subprocess.CompletedProcess[str]:
+        proc = subprocess.run(
+            _compose_command(project, compose_files, *COMPOSE_ALL_PROFILES, *args),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=dict(compose_env),
+        )
+        (out_dir / name).write_text(
+            f"# exit={proc.returncode}\n{proc.stdout}\n{proc.stderr}", encoding="utf-8"
+        )
+        return proc
+
+    ps = _capture("compose-ps.txt", "ps", "-a", "--format", "json")
+    unhealthy: list[str] = []
+    for line in ps.stdout.splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        for item in row if isinstance(row, list) else [row]:
+            if not isinstance(item, Mapping):
+                continue
+            health = str(item.get("Health") or "")
+            if str(item.get("State")) != "running" or health not in ("", "healthy"):
+                unhealthy.append(str(item.get("Service")))
+    unhealthy = sorted({name for name in unhealthy if name and name != "None"})
+    for service in unhealthy:
+        _capture(
+            f"logs-{service}.txt", "logs", "--no-color", "--tail", "200", service
+        )
+    return {"diagnostics_dir": str(out_dir), "captured_services": unhealthy}
 
 
 def _supervised_execution_resources(
@@ -599,6 +756,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Automatically provision and start required isolated Compose services before test execution",
     )
     parser.add_argument(
+        "--stimulus-gate",
+        action="store_true",
+        help=(
+            "Run the stimulus-driven twelve-loop closure gate, which starts the "
+            "research, human-learning and runtime suites from one fresh stimulus "
+            "against this single stack"
+        ),
+    )
+    parser.add_argument(
         "--down",
         action="store_true",
         help="Stop and tear down the isolated Compose stack",
@@ -716,8 +882,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if teardown["zero_project_containers"] else 1
 
     # Build URLs mapping
+    services = {**SERVICES, **(STIMULUS_SERVICES if args.stimulus_gate else {})}
+    required_services = REQUIRED_COMPOSE_SERVICES + (
+        STIMULUS_COMPOSE_SERVICES if args.stimulus_gate else []
+    )
     urls: dict[str, str] = {}
-    for name, spec in SERVICES.items():
+    for name, spec in services.items():
         env_var = f"PANTHEON_L12_{name.upper()}_URL"
         if name == "source_ingest":
             env_val = os.getenv("PANTHEON_L12_SOURCE_INGEST_URL") or os.getenv("PANTHEON_L12_SOURCE_URL")
@@ -751,12 +921,20 @@ def main(argv: list[str] | None = None) -> int:
         f"[*] Running deployed integration suite against {args.compose_project} "
         f"using {python_bin}..."
     )
+    if args.stimulus_gate:
+        test_env["PANTHEON_L12_STIMULUS_CROSS_LOOP_E2E"] = "1"
+        test_env["PANTHEON_L12_STIMULUS_EXPECTED_SHA"] = expected_sha
+        test_env["PANTHEON_L12_STIMULUS_EVIDENCE_OUTPUT"] = str(
+            args.evidence_output.resolve()
+        )
     pytest_cmd = [
         python_bin,
         "-m",
         "pytest",
         "-q",
-        "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py",
+        STIMULUS_GATE_SUITE
+        if args.stimulus_gate
+        else "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py",
         "-vv",
     ]
     result_code = 0
@@ -817,6 +995,12 @@ def main(argv: list[str] | None = None) -> int:
                     "canonical database migration failed: "
                     f"{database_migration!r}"
                 )
+            print("[*] Bootstrapping the Trade Journey projection schema...")
+            _bootstrap_trade_journey_projection(
+                args.compose_project,
+                compose_files,
+                compose_env,
+            )
             command = _compose_command(
                 args.compose_project,
                 compose_files,
@@ -826,13 +1010,53 @@ def main(argv: list[str] | None = None) -> int:
                 "--wait",
                 "--wait-timeout",
                 str(max(1, int(args.ready_timeout))),
-                *REQUIRED_COMPOSE_SERVICES,
+                *required_services,
             )
             print(
                 "[*] Provisioning isolated Compose services "
                 f"(offset +{args.port_offset}): {' '.join(command)}"
             )
             subprocess.run(command, env=compose_env, check=True)
+            if args.stimulus_gate:
+                projector_command = _projector_run_command(
+                    args.compose_project, compose_files
+                )
+                print(
+                    "[*] Running one-shot Agora projector after market seeding: "
+                    f"{' '.join(projector_command)}"
+                )
+                projector_secret = compose_env.get("PANTHEON_RUNTIME_JWT_SECRET") or compose_env.get("PANTHEON_BFF_JWT_SECRET") or ""
+                projector_tenant = compose_env.get("PANTHEON_TENANT_ID") or compose_env.get("PANTHEON_BFF_TENANT_ID") or "default"
+                projector_token = _mint_projector_service_jwt(
+                    projector_secret,
+                    tenant_id=projector_tenant,
+                    issuer=compose_env.get("PANTHEON_RUNTIME_JWT_ISSUER") or compose_env.get("PANTHEON_BFF_JWT_ISSUER"),
+                    audience=compose_env.get("PANTHEON_RUNTIME_JWT_AUDIENCE") or compose_env.get("PANTHEON_BFF_JWT_AUDIENCE"),
+                )
+                projector_process = subprocess.run(
+                    projector_command,
+                    env={
+                        **compose_env,
+                        "AGORA_PROJECTOR_SERVICE_JWT": projector_token,
+                        "PANTHEON_TENANT_ID": projector_tenant,
+                    },
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                diagnostics_dir = args.evidence_output.resolve().parent / "diagnostics"
+                diagnostics_dir.mkdir(parents=True, exist_ok=True)
+                raw_out = f"{projector_process.stdout}\n{projector_process.stderr}"
+                sanitized_out = raw_out.replace(projector_token, "[REDACTED]") if projector_token else raw_out
+                (diagnostics_dir / f"{STIMULUS_PROJECTOR_SERVICE}.txt").write_text(
+                    f"# exit={projector_process.returncode}\n{sanitized_out}",
+                    encoding="utf-8",
+                )
+                if projector_process.returncode != 0:
+                    raise RuntimeError(
+                        f"{STIMULUS_PROJECTOR_SERVICE} exited "
+                        f"{projector_process.returncode}: {sanitized_out[-2000:]}"
+                    )
 
         print("[*] Verifying service readiness across HTTP boundaries...")
         deadline = time.time() + (
@@ -843,7 +1067,7 @@ def main(argv: list[str] | None = None) -> int:
         while time.time() < deadline:
             unready.clear()
             for name, url in urls.items():
-                spec = SERVICES[name]
+                spec = services[name]
                 ready_url = f"{url}{spec['health']}"
                 health = _get_json(ready_url)
                 if not isinstance(health, Mapping) or "error" in health:
@@ -874,6 +1098,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[-] Harness failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         result_code = result_code or 1
     finally:
+        if args.provision_services and (result_code != 0 or not pytest_invoked):
+            try:
+                diagnostics = _capture_failure_diagnostics(
+                    args.compose_project,
+                    compose_files,
+                    compose_env,
+                    args.evidence_output.resolve().parent / "diagnostics",
+                )
+                print(f"[*] Failure diagnostics captured: {diagnostics!r}")
+            except OSError as exc:
+                print(f"[-] Could not capture diagnostics: {exc}", file=sys.stderr)
         if args.provision_services and not args.preserve_provisioned_stack:
             print(f"[*] Tearing down task-scoped project {args.compose_project}...")
             teardown = _teardown_project(

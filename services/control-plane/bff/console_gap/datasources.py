@@ -12,7 +12,7 @@ except ImportError:  # pragma: no cover
         from connector_definitions import calculate_source_allowed_actions  # type: ignore[no-redef]
     except ImportError:  # pragma: no cover
         def calculate_source_allowed_actions(*args: Any, **kwargs: Any) -> Dict[str, Any]:  # type: ignore[misc]
-            return {"canValidate": True, "canCanary": True, "canEnable": True, "canDisable": True, "canDegrade": True, "canResume": True, "canChangeSchedule": True, "canReplace": True, "canRetire": True, "blockedReasons": []}
+            raise RuntimeError("Source action policy is unavailable")
 
 from services.control_plane.bff.source_management_client import SourceManagementClient, SourceManagementClientError
 from .contracts import (

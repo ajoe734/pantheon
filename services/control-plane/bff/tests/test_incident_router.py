@@ -86,6 +86,8 @@ class MockReadStore:
 
     def create_incident(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         inc_id = payload.get("incident_id") or payload.get("id") or "inc-test"
+        if inc_id in self.incidents:  # the incident owner rejects a duplicate id with 409
+            raise HTTPException(status_code=409, detail=f"IncidentCase '{inc_id}' already exists")
         self.incidents[inc_id] = payload
         return payload
 
@@ -192,6 +194,13 @@ class MockCommandStore:
     def submit_terminal_command(self, **kwargs: Any) -> Dict[str, Any]:
         self.commands.append(kwargs)
         return {"command_id": kwargs.get("command_id"), "status": "executed"}
+
+    def get_command_by_idempotency_key(self, idempotency_key: str, *, operator_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        for cmd in self.commands:
+            record = (cmd.get("foundation_context") or {}).get("idempotency_record") or {}
+            if record.get("idempotency_key") == idempotency_key and (cmd.get("audit_context") or {}).get("operator_id") == operator_id:
+                return {"command_id": cmd["command_id"], "foundation": cmd["foundation_context"], "audit": cmd["audit_context"]}
+        return None
 
 
 def _build_test_client(
@@ -495,19 +504,29 @@ def test_bff_incidents_crud_and_idempotency() -> None:
     assert replay.status_code == 201
     assert replay.json()["incident_id"] == "inc-created-1"
 
-    # 3. Replay with same key but different payload -> 409 conflict
+    # 3. A key-derived incident id makes the owner's durable id uniqueness the idempotency record
+    keyed = {"title": "Keyed Alert", "severity": "high", "status": "open"}
+    first_keyed = client.post("/bff/incidents", json=keyed, headers={"Idempotency-Key": "idem-key-2"})
+    assert first_keyed.status_code == 201
+    replay_keyed = client.post("/bff/incidents", json=keyed, headers={"Idempotency-Key": "idem-key-2"})
+    assert replay_keyed.status_code == 201
+    assert replay_keyed.json()["incident_id"] == first_keyed.json()["incident_id"]
+
+    # 4. Replay with same key but different payload -> 409 conflict
     conflicting = client.post(
         "/bff/incidents",
         json={"title": "Different Title"},
-        headers={"Idempotency-Key": "idem-key-1"},
+        headers={"Idempotency-Key": "idem-key-2"},
     )
     assert conflicting.status_code == 409
 
-    # 4. List incidents includes the created overlay incident
+    # 5. List incidents holds exactly one owner record per key / stable id
     listed = client.get("/bff/incidents")
     assert listed.status_code == 200
-    assert len(listed.json()["items"]) == 1
-    assert listed.json()["items"][0]["incident_id"] == "inc-created-1"
+    assert {i["incident_id"] for i in listed.json()["items"]} == {
+        "inc-created-1",
+        first_keyed.json()["incident_id"],
+    }
 
 
 def test_bff_alert_acknowledge() -> None:

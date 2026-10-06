@@ -1,0 +1,64 @@
+{
+  "task_id": "PAPER-LIVE-RECON-READ-FIX-20261006",
+  "base_sha": "5f5c418c8d68c2edb5933692d7a34c79706daf67",
+  "change_class": "corrective",
+  "net_prod_line_budget": 60,
+  "summary": "Close tenant hole and contract gaps in reconciliation-backed paper and live read.",
+  "scope": [
+    "services/control-plane/bff/ports/reconciliation_drift_reads.py: derive tenant via bound_tenant failing closed 403 on mismatch/unresolvable, HTTP /health availability probe without downloading whole tenant records, propagate 401/403, canary support, baseline stage derivation from expected_ref, strip helper keys _latest/_sample_count, signed delta with unit",
+    "services/control-plane/bff/runtime/router.py: degrade report_surface for live/canary runtime without report, paper_live_drift_surface preserves degraded status when report is absent",
+    "services/control-plane/bff/management_read_models/service.py: exclude paper-only runtimes from baseline_comparisons, preserve row baseline_comparison, keep trading pulse surface healthy when every live/canary runtime has comparison while paper runtimes are present",
+    "services/reconciliation-drift/main.py: split over-long line cleanly in binding_id filter",
+    "docker-compose.yml & scripts/deploy_nonprod_vm.sh: configure PANTHEON_RECONCILIATION_DRIFT_API_URL setting name matching staging-full topology and downstream health monitor",
+    "services/control-plane/bff/tests/test_owner_read_wiring.py: add unit tests covering AC 1, 3, 4, 6, 7, 8, 9 and updated AC 5 assertions",
+    "services/control-plane/bff/tests/test_read_surface_caller_migration.py: fix setUp with reconciliation_records_provider, getattr for _GOV_BFF_IDEMPOTENCY, and bff_main.read_store fixture wiring"
+  ],
+  "acceptance_criteria_verification": {
+    "ac1": "Tenant derivation uses bound_tenant, failing closed with 403 on unresolvable or mismatched tenant. Tested in test_reconciliation_drift_tenant_derivation_uses_bound_tenant_and_fails_closed_403.",
+    "ac2": "test_read_surface_caller_migration passes (29/29 tests) on merged tree asserting owner-backed contract. No other tests regress.",
+    "ac3": "Trading pulse surface stays healthy (status ok) when every live/canary runtime has comparison while paper runtimes are present. Canary records mapped and compared against stated baseline. Tested in test_reconciliation_drift_contract_composition_and_trading_pulse and test_canary_record_reading_and_mapping_against_stated_baseline.",
+    "ac4": "Mapped comparisons carry only owner facts: baseline stage from expected_ref, no captured_at invented from generated_at, _sample_count and _latest filtered out, signed delta with unit. Tested in test_reconciliation_drift_records_mapping_and_paper_filtering and test_reconciliation_record_mapping_missing_values_stay_missing.",
+    "ac5": "Paper-only runtimes produce no comparison object ([]) in baseline_comparisons rather than unavailable comparison row. Tested in test_paper_only_bindings_trading_pulse_healthy_empty and test_reconciliation_drift_records_mapping_and_paper_filtering.",
+    "ac6": "Operator paper-live-drift endpoint does not force aggregate status to ok over degraded supporting surfaces and agrees with trading pulse for live runtime without record. Tested in test_operator_paper_live_drift_endpoint_degraded_for_live_without_record_and_preserves_degraded.",
+    "ac7": "Contract fixtures recorded from real reconciliation owner output. Tests cover HTTP client URL, bearer token, X-Tenant-Id header, 401 handling, and runtime_id query filter. Tested in test_reconciliation_drift_http_client_url_bearer_headers_and_401.",
+    "ac8": "Availability check uses HTTP GET /health probe without downloading whole tenant records, and operator endpoint makes at most one fetch. Tested in test_availability_check_health_probe_without_downloading_records.",
+    "ac9": "Setting name matches PANTHEON_RECONCILIATION_DRIFT_API_URL used in docker-compose.yml, scripts/deploy_nonprod_vm.sh, and reconciliation_drift_reads.py fallback chain. Tested in test_reconciliation_drift_owner_url_setting_name.",
+    "ac10": "Over-long production line in services/reconciliation-drift/main.py split cleanly without compressed code, staying strictly within the 60-line net budget."
+  },
+  "validation": [
+    {
+      "suite": "services/control-plane/bff/tests/test_owner_read_wiring.py",
+      "command": "$PYTHON -m pytest -v services/control-plane/bff/tests/test_owner_read_wiring.py",
+      "result": "27 passed"
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+      "command": "$PYTHON -m pytest -v services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+      "result": "29 passed"
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+      "command": "$PYTHON -m pytest -v services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+      "result": "5 passed"
+    },
+    {
+      "suite": "services/reconciliation-drift/tests/test_stage_reconciliation.py",
+      "command": "$PYTHON -m pytest -v services/reconciliation-drift/tests/test_stage_reconciliation.py",
+      "result": "6 passed"
+    },
+    {
+      "suite": "services/reconciliation-drift/tests/",
+      "command": "$PYTHON -m pytest -v services/reconciliation-drift/tests/",
+      "result": "107 passed"
+    },
+    {
+      "check": "diff_budget",
+      "command": "python3 scripts/git/diff_budget.py --base dev --change-class corrective --budget 60",
+      "result": "passed (net production lines <= 60, evidence file <= 400 lines)"
+    }
+  ],
+  "hosted_track": {
+    "status": "external_wait",
+    "detail": "Hosted verification will confirm healthy-empty comparison for paper-only fleets and verified tenant derivation against live reconciliation service."
+  }
+}

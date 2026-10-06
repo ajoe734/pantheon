@@ -1232,6 +1232,7 @@ def test_assistant_admission_uses_injected_service_and_returns_stored_command_id
     from types import SimpleNamespace
     from unittest.mock import MagicMock
     from services.control_plane.bff.assistant import routes
+    from services.control_plane.bff.tests.bff_compose_stand_ins import resolve_with_stand_ins
     from services.control_plane.bff.core.app_factory import mount_bff_routers
 
     class _Captured(Exception):
@@ -1253,7 +1254,7 @@ def test_assistant_admission_uses_injected_service_and_returns_stored_command_id
         routes.create_assistant_router = capture
         try:
             with pytest.raises(_Captured):
-                mount_bff_routers(FastAPI(), app_deps=deps, _command_adapter_service=svc, _extract_identity=lambda *a, **k: identity)
+                mount_bff_routers(FastAPI(), dependency_resolver=resolve_with_stand_ins, app_deps=deps, _command_adapter_service=svc, _extract_identity=lambda *a, **k: identity)
         finally:
             routes.create_assistant_router = original
         assert captured["submit"].__self__ is svc

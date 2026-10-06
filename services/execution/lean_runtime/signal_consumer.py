@@ -43,11 +43,7 @@ from .executor import execute, ExecutionError, _signal_context_metadata, _signal
 from .pending_signal_store import ExecutionFence
 from .symbol_parser import SymbolParseError
 
-try:
-    import jsonschema
-    _HAS_JSONSCHEMA = True
-except ImportError:
-    _HAS_JSONSCHEMA = False
+import jsonschema
 
 log = logging.getLogger(__name__)
 
@@ -300,15 +296,15 @@ class SignalConsumer:
         if version_str != f"{_SUPPORTED_SCHEMA_MAJOR}.0":
             log.warning("[%s] Minor version drift: %s", signal_id, version_str)
 
-        # JSON Schema validation (if jsonschema available)
-        if _HAS_JSONSCHEMA and self._schema:
+        # JSON Schema validation is mandatory when a schema is configured.
+        if self._schema:
             try:
                 jsonschema.validate(raw, self._schema)
             except jsonschema.ValidationError as exc:
                 log.error("[%s] Schema validation failed: %s — discarding", signal_id, exc.message)
                 return None
 
-        # Required fields (defensive fallback if jsonschema not installed)
+        # Required-field checks remain defense in depth.
         required = ("signal_id", "version", "strategy_id", "timestamp",
                     "symbol", "action", "direction", "quantity", "quantity_type")
         for field in required:
@@ -321,11 +317,7 @@ class SignalConsumer:
             return None
 
         limit_price = raw.get("limit_price")
-        if limit_price is not None and not _is_finite_number(
-            limit_price,
-            minimum=0.0,
-            exclusive=True,
-        ):
+        if limit_price is not None and not _is_finite_number(limit_price, minimum=0.0, exclusive=True):
             log.error("[%s] limit_price must be a finite positive number — discarding", signal_id)
             return None
 
@@ -334,11 +326,7 @@ class SignalConsumer:
             log.error("[%s] metadata must be an object — discarding", signal_id)
             return None
         confidence_score = (metadata or {}).get("confidence_score")
-        if confidence_score is not None and not _is_finite_number(
-            confidence_score,
-            minimum=0.0,
-            maximum=1.0,
-        ):
+        if confidence_score is not None and not _is_finite_number(confidence_score, minimum=0.0, maximum=1.0):
             log.error("[%s] confidence_score must be finite and within [0, 1] — discarding", signal_id)
             return None
 
@@ -439,64 +427,32 @@ class SignalConsumer:
         if remember_processed:
             self._remember_processed(sid)
 
+    def _is_governed_identity_mismatched(self, signal: dict, expected: Optional[str], actual: Any, label: str) -> bool:
+        if not expected:
+            return False
+        val = str(actual or "").strip()
+        sid = signal.get("signal_id", "<unknown>")
+        if not val:
+            log.warning("[%s] Fail closed: signal has missing/empty %s — discarding", sid, label)
+            return True
+        if val != expected:
+            log.warning("[%s] %s mismatch: expected %s, got %s — discarding", sid, label, expected, val)
+            return True
+        return False
+
     def _is_wrong_binding(self, signal: dict) -> bool:
         """Fail closed in governed paper mode when binding_id is missing or mismatched."""
-        if not self._binding_id:
-            return False
-        signal_binding = str(signal.get("binding_id") or "").strip()
-        if not signal_binding:
-            log.warning(
-                "[%s] Fail closed: signal has missing/empty binding_id — discarding",
-                signal.get("signal_id", "<unknown>"),
-            )
-            return True
-        if signal_binding == self._binding_id:
-            return False
-        log.warning(
-            "[%s] Binding mismatch: expected %s, got %s — discarding",
-            signal.get("signal_id", "<unknown>"), self._binding_id, signal_binding,
-        )
-        return True
+        return self._is_governed_identity_mismatched(signal, self._binding_id, signal.get("binding_id"), "binding_id")
 
     def _is_wrong_runtime(self, signal: dict) -> bool:
         """Fail closed in governed paper mode when runtime_id is missing or mismatched."""
-        if not self._runtime_id:
-            return False
-        signal_runtime = str(signal.get("runtime_id") or "").strip()
-        if not signal_runtime:
-            log.warning(
-                "[%s] Fail closed: signal has missing/empty runtime_id — discarding",
-                signal.get("signal_id", "<unknown>"),
-            )
-            return True
-        if signal_runtime == self._runtime_id:
-            return False
-        log.warning(
-            "[%s] Runtime mismatch: expected %s, got %s — discarding",
-            signal.get("signal_id", "<unknown>"), self._runtime_id, signal_runtime,
-        )
-        return True
+        return self._is_governed_identity_mismatched(signal, self._runtime_id, signal.get("runtime_id"), "runtime_id")
 
     def _is_wrong_capital_pool(self, signal: dict) -> bool:
         """Fail closed in governed paper mode when capital_pool_id is missing or mismatched."""
-        if not self._capital_pool_id:
-            return False
-        signal_pool = str(
-            (signal.get("metadata") or {}).get("capital_pool_id") or ""
-        ).strip()
-        if not signal_pool:
-            log.warning(
-                "[%s] Fail closed: signal has missing/empty capital_pool_id — discarding",
-                signal.get("signal_id", "<unknown>"),
-            )
-            return True
-        if signal_pool == self._capital_pool_id:
-            return False
-        log.warning(
-            "[%s] Capital pool mismatch: expected %s, got %s — discarding",
-            signal.get("signal_id", "<unknown>"), self._capital_pool_id, signal_pool,
+        return self._is_governed_identity_mismatched(
+            signal, self._capital_pool_id, (signal.get("metadata") or {}).get("capital_pool_id"), "capital_pool_id"
         )
-        return True
 
     def _enqueue_dlq(self, signal: dict, reason: str) -> bool:
         """Send a rejected or failed signal to the store's DLQ."""

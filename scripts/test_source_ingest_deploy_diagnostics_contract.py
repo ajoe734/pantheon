@@ -133,7 +133,7 @@ def test_nonprod_workflow_exposes_only_fixed_bounded_source_refresh() -> None:
     assert "Bounded source refresh requires an isolated clean dev/root deploy with strict auth." in workflow
     assert (
         "PANTHEON_DEV_COMPOSE_PROFILES: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' "
-        "&& 'openclaw,source-ingest-scheduler' || 'openclaw' }}"
+        "&& 'root,source-ingest-scheduler' || 'root' }}"
     ) in workflow
     assert (
         "PANTHEON_EXTERNAL_EGRESS: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' "
@@ -221,15 +221,18 @@ def test_bounded_source_refresh_deploy_waits_and_gates_readback() -> None:
     root_start = deploy.index("  root)\n")
     root_end = deploy.index("\n  bff)\n", root_start)
     root_case = deploy[root_start:root_end]
-    assert root_case.index("docker compose -p pantheon -f docker-compose.yml up -d") < root_case.index(
+    compose_up_pos = (
+        root_case.index("run_dev_candidate_compose up -d")
+        if "run_dev_candidate_compose up -d" in root_case
+        else root_case.index("docker compose -p pantheon -f docker-compose.yml up -d")
+    )
+    assert compose_up_pos < root_case.index(
         "verify_bounded_source_refresh_readback"
     )
     assert root_case.index("docker compose -p pantheon -f docker-compose.yml build") < root_case.index(
         "resolve_bounded_source_refresh_active_symbols"
     )
-    assert root_case.index("resolve_bounded_source_refresh_active_symbols") < root_case.index(
-        "docker compose -p pantheon -f docker-compose.yml up -d"
-    )
+    assert root_case.index("resolve_bounded_source_refresh_active_symbols") < compose_up_pos
     assert root_case.index("verify_bounded_source_refresh_readback") < root_case.index(
         "openclaw-configure-shared-model-pool.sh"
     )

@@ -800,7 +800,6 @@ def _human_inbox_promotion_review_from_projection(
         "submitted": True,
         "submit_status": submission.get("submit_status"),
         "human_inbox_id": _promotion_review_target_id(review_id),
-        "allowed_decisions": sorted(_PROMOTION_REVIEW_DECISIONS),
         "allowedActions": {
             "canSubmit": False,
             "canApprove": not bool(decision),
@@ -826,7 +825,6 @@ def _human_inbox_promotion_review_from_projection(
             "persona": f"/bff/personas/{recommendation.get('persona_id')}",
             "recommendation": "/bff/management/quarterly-ranking/recommendations",
             "detail": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}",
-            "decisions": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}/decisions",
             "human_inbox": f"/bff/management/human-inbox/{quote(_promotion_review_target_id(review_id), safe='')}",
         },
     }
@@ -905,86 +903,6 @@ def _submitted_promotion_review_records(
     return records
 
 
-def _human_inbox_promotion_review_item(review: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    review_id = str(review.get("review_id") or review.get("promotion_review_id") or "").strip()
-    if not review_id:
-        return None
-    decision_status = str(review.get("decision_status") or "pending").strip().lower() or "pending"
-    status = "accepted" if decision_status == "accepted" else "pending"
-    risk_level = str(review.get("risk_level") or "high").strip().lower() or "high"
-    priority = _human_inbox_priority(review.get("priority") or risk_level, fallback="high")
-    submission = review.get("submission") if isinstance(review.get("submission"), dict) else {}
-    created_at = submission.get("submitted_at") or review.get("created_at")
-    updated_at = (review.get("decision") or {}).get("decided_at") if isinstance(review.get("decision"), dict) else None
-    updated_at = updated_at or created_at
-    inbox_id = _promotion_review_target_id(review_id)
-    route = f"/management/human-inbox/{quote(inbox_id, safe='')}"
-    action_state = "pending" if status == "pending" else "resolved"
-    stage_path = review.get("promotion_path") if isinstance(review.get("promotion_path"), dict) else {}
-    projected = {
-        "id": inbox_id,
-        "inbox_id": inbox_id,
-        "item_id": inbox_id,
-        "human_inbox_id": inbox_id,
-        "category": "promotion_review",
-        "action_kind": "promotion_review",
-        "inboxType": "promotion_review",
-        "source_type": "promotion_review",
-        "source_id": review_id,
-        "review_id": review_id,
-        "promotion_review_id": review_id,
-        "recommendation_id": review.get("recommendation_id"),
-        "persona_id": review.get("persona_id"),
-        "quarter": review.get("quarter"),
-        "ranking_snapshot_id": review.get("ranking_snapshot_id"),
-        "data": review,
-        "title": f"Persona governance review: {review.get('name') or review.get('persona_id')}",
-        "summary": review.get("rationale") or "Persona ranking recommendation requires Human Gate approval.",
-        "priority": priority,
-        "risk_level": risk_level,
-        "status": status,
-        "decision_status": decision_status,
-        "action_state": action_state,
-        "created_at": created_at,
-        "updated_at": updated_at,
-        "submitted_by": submission.get("submitted_by"),
-        "target": {
-            "type": "persona",
-            "id": review.get("persona_id"),
-        },
-        "route": route,
-        "bff_detail_path": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}",
-        "decisionHref": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}/decisions",
-        "detailHref": route,
-        "promotion_review": _management_json_clone(review),
-        "promotion_context": {
-            "from_stage": stage_path.get("from_stage"),
-            "target_stage": stage_path.get("target_stage"),
-            "review_kind": review.get("review_kind") or stage_path.get("review_kind"),
-            "action_id": review.get("action_id"),
-            "ranking_snapshot_id": review.get("ranking_snapshot_id"),
-            "live_capital_mutation": False,
-        },
-        "allowedActions": _management_json_clone(review.get("allowedActions") or {
-            "canApprove": action_state == "pending",
-            "canApproveWithConditions": action_state == "pending",
-            "canReject": action_state == "pending",
-        }),
-        "requires_human_gate_decision": True,
-        "live_capital_mutation": False,
-    }
-    return _human_inbox_attach_common_fields(
-        projected,
-        inbox_type="promotion_review",
-        source_dataset="promotion_reviews",
-        risk_level=risk_level,
-        created_at=created_at,
-        updated_at=updated_at,
-        href=route,
-        source_record=review,
-    )
-
-
 def _human_inbox_project_items(
     *,
     snapshot_at: str,
@@ -992,7 +910,6 @@ def _human_inbox_project_items(
     approval_records: Sequence[Dict[str, Any]],
     incident_records: Sequence[Dict[str, Any]],
     persona_rows: Sequence[Dict[str, Any]],
-    promotion_review_records: Sequence[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """Project already-loaded contributors into the canonical inbox rows."""
     items: List[Dict[str, Any]] = []
@@ -1004,7 +921,6 @@ def _human_inbox_project_items(
             persona_rows,
             lambda row: _human_inbox_persona_readiness_item(row, snapshot_at=snapshot_at),
         ),
-        (promotion_review_records, _human_inbox_promotion_review_item),
     )
     for records, projector in projectors:
         for record in records:
@@ -1246,22 +1162,6 @@ def _human_inbox_persona_contributor(
     return rows, surface
 
 
-def _human_inbox_promotion_contributor(
-    identity: Any,
-    snapshot_at: str,
-    *,
-    command_store: Any = None,
-) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    records = _submitted_promotion_review_records(identity, snapshot_at=snapshot_at, command_store=command_store)
-    try:
-        from ..main import _surface_status
-        surface = dict(_surface_status())
-    except (ImportError, AttributeError):
-        surface = {"status": "ok"}
-    surface["source"] = "command_store"
-    return records, surface
-
-
 def _human_inbox_all_items(
     snapshot_at: Optional[str] = None,
     *,
@@ -1281,7 +1181,6 @@ def _human_inbox_all_items(
     incident_available = False
     incident_records: List[Dict[str, Any]] = []
     persona_rows: List[Dict[str, Any]] = []
-    promotion_review_records: List[Dict[str, Any]] = []
     surfaces: Dict[str, Dict[str, Any]] = {}
     if include_all or "governance_review" in source_types:
         review_records, surfaces["governance_review_queue"] = _human_inbox_governance_contributor(snapshot_at)
@@ -1292,18 +1191,12 @@ def _human_inbox_all_items(
         incident_available, incident_records = incident_result
     if include_all or "readiness_blocker" in source_types:
         persona_rows, surfaces["persona_readiness"] = _human_inbox_persona_contributor(snapshot_at)
-    if identity is not None and (include_all or "promotion_review" in source_types):
-        promotion_review_records, surfaces["promotion_reviews"] = _human_inbox_promotion_contributor(
-            identity,
-            snapshot_at,
-        )
     items = _human_inbox_project_items(
         snapshot_at=snapshot_at,
         review_records=review_records,
         approval_records=approval_records,
         incident_records=incident_records,
         persona_rows=persona_rows,
-        promotion_review_records=promotion_review_records,
     )
     return items, {
         "governance_review_records": review_records,
@@ -1311,7 +1204,6 @@ def _human_inbox_all_items(
         "incident_available": incident_available,
         "incident_records": incident_records,
         "persona_rows": persona_rows,
-        "promotion_review_records": promotion_review_records,
         "surfaces": surfaces,
     }
 
@@ -1407,7 +1299,6 @@ def _human_inbox_surfaces(
     incident_available: bool,
     incident_records: List[Dict[str, Any]],
     persona_rows: List[Dict[str, Any]],
-    promotion_review_records: List[Dict[str, Any]],
     source_types: Optional[set[str]] = None,
     surface_failures: Optional[Dict[str, Dict[str, Any]]] = None,
     loaded_surfaces: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -1454,14 +1345,6 @@ def _human_inbox_surfaces(
             snapshot_at=snapshot_at,
             source="bff_composed",
             has_data=bool(persona_rows),
-        )
-    if include_all or "promotion_review" in source_types:
-        contributor_surfaces["promotion_reviews"] = failures.get(
-            "promotion_reviews"
-        ) or provenance.get("promotion_reviews") or _human_inbox_loaded_surface(
-            snapshot_at=snapshot_at,
-            source="command_store",
-            has_data=bool(promotion_review_records),
         )
 
     try:
@@ -1517,7 +1400,6 @@ def _human_inbox_payload_from_loaded(
         incident_available=bool(sources["incident_available"]),
         incident_records=sources["incident_records"],
         persona_rows=sources["persona_rows"],
-        promotion_review_records=sources["promotion_review_records"],
         source_types=source_types,
         surface_failures=surface_failures,
         loaded_surfaces=sources.get("surfaces"),

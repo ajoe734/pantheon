@@ -495,6 +495,15 @@ class RuntimePort:
         """
         _, raw = self._get_raw_bindings()
         items = [_deep_copy(r) for r in raw if self._runtime_id(r)]
+        for item in items:
+            # Runtime Manager owns these identities in binding metadata.
+            # Expose the same identities to legacy read DTOs without treating
+            # the binding's id as a strategy id or mutating the owner record.
+            metadata = item.get("metadata")
+            if isinstance(metadata, Mapping):
+                for key in ("strategy_id", "persona_id"):
+                    if not item.get(key) and metadata.get(key):
+                        item[key] = metadata[key]
         if deployment_mode:
             items = [r for r in items if str(r.get("deployment_mode") or "") == deployment_mode]
         if version:

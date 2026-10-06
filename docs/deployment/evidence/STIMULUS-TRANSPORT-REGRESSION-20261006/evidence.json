@@ -1,0 +1,23 @@
+{
+  "task_id": "STIMULUS-TRANSPORT-REGRESSION-20261006",
+  "local_verification": {
+    "command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); $PANTHEON_PY -m pytest -q services/trade_journey/test_hosted_lifecycle_stimulus.py",
+    "result": "19 passed"
+  },
+  "coverage": [
+    "Default GET and POST transport against local HTTP server: object JSON success, non-object rejection, HTTP 401 and 403 redaction",
+    "Default trigger_reconciliation transport against the token-authenticated reconciliation owner app: tenant+credentials accepted; missing credentials or tenant rejected with exact HTTP status",
+    "Malformed committed telemetry JSON produces telemetry_committed_payload_invalid without exposing payload or DSN"
+  ],
+  "production_delta": {
+    "added": 11,
+    "deleted": 2,
+    "net": 9,
+    "change_class": "corrective",
+    "declared_budget": 10
+  },
+  "hosted_track": {
+    "status": "external_wait",
+    "detail": "The next automatic dev pair release must run the stimulus past its first runtime-manager call or name the next failing gate."
+  }
+}

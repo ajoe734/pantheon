@@ -31,6 +31,7 @@ Pantheon Lupin GCP projects and uses GitHub Actions for pinned VM deployment:
 | Pantheon Nonprod Deploy | `.github/workflows/nonprod-deploy.yml` | hourly paired dev dispatch or manual dev; `master` or manual staging | exact FE/BFF admission, VM checkout-to-commit, compensated FE/BFF switch, health/CORS smoke |
 | Pantheon FE-BFF Integration Gate | `execute-plans:.github/workflows/pantheon-integration-gate.yml` | controller dispatch only for deployable artifacts; PR/push CI remains non-deploying | rebuild and smoke the exact FE SHA against the exact hosted BFF SHA |
 | Pantheon Dev FE Deploy | `execute-plans:.github/workflows/pantheon-dev-fe-deploy.yml` | controller dispatch only | authenticate the exact gate artifact, probe the candidate, then atomically switch the hosted FE |
+| Dev Taiwan Market Daily Refresh | `.github/workflows/dev-tw-market-refresh.yml` | daily `0 7 * * 1-5` (15:00 Asia/Taipei) or manual dispatch | execute bounded TWSE/TPEx market snapshot refresh on dev VM via `deploy_nonprod_vm.sh --refresh-only` |
 
 ## OpenClaw acceptance after deployment
 
@@ -100,6 +101,9 @@ scripts/deploy_nonprod_vm.sh \
   --environment staging-live \
   --component all \
   --sha <commit-sha>
+
+# Dev bounded Taiwan market refresh without redeploying
+scripts/deploy_nonprod_vm.sh --refresh-only [--force] [--output <path>]
 ```
 
 Emergency flags:
@@ -122,7 +126,9 @@ A pair whose latest completed Nonprod Deploy attempt failed or timed out is not
 dispatched again; the tick reports `failed_pair_not_retried` with that run URL.
 Attempts are matched by the exact `Dev release <backend> + <frontend>` run name,
 so a later merge on either `dev` tip is a new pair and deploys normally. A
-cancelled attempt does not block the pair. To retry the same pair after fixing
+cancelled attempt does not block the pair, and neither does one whose
+`Acquire shared dev environment lease` step failed: without the lease no later
+step touches the VM, so the next tick retries that pair. To retry the same pair after fixing
 the environment, dispatch Nonprod Deploy for it; a successful attempt makes the
 pair `up_to_date`.
 

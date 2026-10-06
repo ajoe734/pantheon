@@ -358,10 +358,22 @@ def test_openclaw_claude_oauth_token_reaches_the_deploy_export() -> None:
     docker-compose.yml already reads with a PANTHEON_ prefix."""
 
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    env_func = script[
+        script.index("with_dev_bff_runtime_env() {") : script.index("run_dev_artifact_driver()")
+    ]
     export_line = (
         'PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}" \\'
     )
-    assert script.count(export_line) >= 2
+    assert export_line in env_func
+
+    root_case = script.split("  root)\n", 1)[1].split("  bff)\n", 1)[0]
+    bff_case = script.split("  bff)\n", 1)[1].split("  exec)\n", 1)[0]
+    artifact_driver = script[
+        script.index("run_dev_artifact_driver() {") : script.index("validate_dev_candidate_override()")
+    ]
+    assert "with_dev_bff_runtime_env" in root_case
+    assert "with_dev_bff_runtime_env" in bff_case
+    assert "with_dev_bff_runtime_env" in artifact_driver
 
     compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     assert (
@@ -440,13 +452,25 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
         workflow.index("- name: Upload sealed prior artifact metadata before candidate mutation")
     ]
 
+    env_func = script[
+        script.index("with_dev_bff_runtime_env() {") : script.index("run_dev_artifact_driver()")
+    ]
+    root_case = script.split("  root)\n", 1)[1].split("  bff)\n", 1)[0]
+    bff_case = script.split("  bff)\n", 1)[1].split("  exec)\n", 1)[0]
+    artifact_driver = script[
+        script.index("run_dev_artifact_driver() {") : script.index("validate_dev_candidate_override()")
+    ]
+    assert "with_dev_bff_runtime_env" in root_case
+    assert "with_dev_bff_runtime_env" in bff_case
+    assert "with_dev_bff_runtime_env" in artifact_driver
+
     for identity in ("VIEWER", "APPROVER", "RISK_OWNER", "OPERATOR_A", "OPERATOR_B"):
         client_id = f"DEV_BFF_DEV_LOGIN_{identity}_CLIENT_ID"
         client_secret = f"DEV_BFF_DEV_LOGIN_{identity}_CLIENT_SECRET"
         compose_client_id = f"PANTHEON_{client_id.removeprefix('DEV_')}"
         assert f'{client_secret}="${{{client_secret}:-}}"' in script
         assert f"PANTHEON_{client_id}" in script
-        assert script.count(f"{compose_client_id}=") >= 2
+        assert f'{compose_client_id}="${{PANTHEON_{client_id}}}"' in env_func
         secret_ref = f"secrets.{client_secret}"
         assert auth_floor.count(secret_ref) == 1
         assert deploy_step.count(secret_ref) == 1

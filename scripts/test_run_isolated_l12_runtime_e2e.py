@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -130,4 +131,180 @@ def test_busy_shared_lease_returns_before_compose_work(
             raise harness.DevEnvironmentLeaseBusy("held by deployment")
 
     monkeypatch.setattr(harness, "_DevEnvironmentLeaseSession", BusySession)
+    monkeypatch.delenv(harness.WORKER_TASK_ID_ENV, raising=False)
     assert harness.main(["--provision-services"]) == 75
+
+
+def test_stimulus_gate_stack_covers_every_domain_suite_url() -> None:
+    assert harness.STIMULUS_GATE_SUITE.endswith("test_stimulus_cross_loop_deployed_e2e.py")
+    assert set(harness.STIMULUS_SERVICES).isdisjoint(harness.SERVICES)
+    assert {"research", "training", "policy_learning", "consultation"} == set(
+        harness.STIMULUS_SERVICES
+    )
+    assert set(harness.STIMULUS_COMPOSE_SERVICES).isdisjoint(
+        harness.REQUIRED_COMPOSE_SERVICES
+    )
+
+
+def test_teardown_down_command_carries_all_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, **_kwargs):
+        seen.append(list(cmd))
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(harness.subprocess, "run", fake_run)
+    monkeypatch.setattr(harness, "_project_container_ids", lambda _p: [])
+    result = harness._teardown_project("proj", ["a.yml"], {})
+    command = result["command"]
+    assert command[command.index("--profile") : command.index("--profile") + 2] == [
+        "--profile",
+        "*",
+    ]
+    assert command.index("--profile") < command.index("down")
+    assert result["zero_project_containers"] is True
+
+
+def test_teardown_fails_closed_when_containers_remain(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        harness.subprocess,
+        "run",
+        lambda cmd, **_k: type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+    )
+    monkeypatch.setattr(harness, "_project_container_ids", lambda _p: ["abc"])
+    assert harness._teardown_project("proj", ["a.yml"], {})["zero_project_containers"] is False
+
+
+def test_one_shot_projector_is_not_in_wait_set() -> None:
+    assert harness.STIMULUS_PROJECTOR_SERVICE == "source-ingest-agora-projector"
+    assert harness.STIMULUS_PROJECTOR_SERVICE not in harness.STIMULUS_COMPOSE_SERVICES
+    assert harness.STIMULUS_PROJECTOR_SERVICE not in harness.REQUIRED_COMPOSE_SERVICES
+
+
+def test_failure_diagnostics_capture_ps_and_unhealthy_logs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    import json as _json
+
+    calls: list[list[str]] = []
+    rows = [
+        {"Service": "ok", "State": "running", "Health": "healthy"},
+        {"Service": "projector", "State": "exited", "Health": ""},
+        {"Service": "sick", "State": "running", "Health": "unhealthy"},
+    ]
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(list(cmd))
+        out = "\n".join(_json.dumps(r) for r in rows) if "ps" in cmd else "log-tail"
+        return type("P", (), {"returncode": 0, "stdout": out, "stderr": ""})()
+
+    monkeypatch.setattr(harness.subprocess, "run", fake_run)
+    result = harness._capture_failure_diagnostics("proj", ["a.yml"], {}, tmp_path)
+    assert result["captured_services"] == ["projector", "sick"]
+    assert (tmp_path / "compose-ps.txt").is_file()
+    assert (tmp_path / "logs-projector.txt").read_text().endswith("log-tail\n")
+    assert not (tmp_path / "logs-ok.txt").exists()
+    log_calls = [c for c in calls if "logs" in c]
+    assert all("--tail" in c and "200" in c and "--no-color" in c for c in log_calls)
+
+
+def test_projection_bootstrap_pipes_postgres_config_into_migration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], str | None]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((list(cmd), kwargs.get("input")))
+        stdout = '{"services": {"postgres": {}}}' if "config" in cmd else ""
+        return type("P", (), {"returncode": 0, "stdout": stdout, "stderr": ""})()
+
+    monkeypatch.setattr(harness.subprocess, "run", fake_run)
+    harness._bootstrap_trade_journey_projection("proj", ["a.yml"], {})
+
+    config_cmd, _ = calls[0]
+    assert config_cmd[config_cmd.index("--profile") : config_cmd.index("--profile") + 2] == [
+        "--profile",
+        "core",
+    ]
+    assert config_cmd[-4:] == ["config", "--format", "json", "postgres"]
+    run_cmd, run_input = calls[1]
+    assert run_input == '{"services": {"postgres": {}}}'
+    assert "--no-deps" in run_cmd
+    assert run_cmd[run_cmd.index("--entrypoint") + 1] == "python"
+    assert harness.PROJECTION_BOOTSTRAP_SERVICE in run_cmd
+    assert run_cmd[-4:] == [
+        "scripts.lifecycle_projector_migrate",
+        "--bootstrap-only",
+        "--compose-config-stdin",
+        "--reconcile-runtime-role",
+    ]
+
+
+def test_projection_bootstrap_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(cmd, **_kwargs):
+        code = 0 if "config" in cmd else 3
+        return type("P", (), {"returncode": code, "stdout": "{}", "stderr": ""})()
+
+    monkeypatch.setattr(harness.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="projection bootstrap failed"):
+        harness._bootstrap_trade_journey_projection("proj", ["a.yml"], {})
+
+
+def test_mint_projector_service_jwt_has_required_role_and_claims() -> None:
+    secret = "test-isolated-secret-48"
+    token = harness._mint_projector_service_jwt(
+        secret,
+        tenant_id="tenant-isolated",
+        issuer="pantheon-l12-isolated-e2e",
+        audience="pantheon-operator-bff",
+    )
+    import base64
+    payload_b64 = token.split(".")[1]
+    payload_b64 += "=" * ((4 - len(payload_b64) % 4) % 4)
+    claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+    assert claims["roles"] == ["source_ingest_reader"]
+    assert claims["tenant_id"] == "tenant-isolated"
+    assert claims["iss"] == "pantheon-l12-isolated-e2e"
+    assert claims["aud"] == "pantheon-operator-bff"
+    assert claims["sub"] == "agora-market-projector"
+
+
+def test_stimulus_gate_projector_credential_passed_only_to_projector_and_redacted(
+    tmp_path: Path,
+) -> None:
+    secret = "secret-isolated-jwt-token"
+    token = harness._mint_projector_service_jwt(secret, tenant_id="tenant-dev")
+
+    compose_env = {
+        "PANTHEON_RUNTIME_JWT_SECRET": secret,
+        "PANTHEON_TENANT_ID": "tenant-dev",
+    }
+    projector_env = dict(compose_env)
+    projector_env["AGORA_PROJECTOR_SERVICE_JWT"] = token
+    projector_env["PANTHEON_TENANT_ID"] = "tenant-dev"
+
+    # Token must only be in projector_env, not in compose_env
+    assert "AGORA_PROJECTOR_SERVICE_JWT" not in compose_env
+    assert projector_env["AGORA_PROJECTOR_SERVICE_JWT"] == token
+    assert projector_env["PANTHEON_TENANT_ID"] == "tenant-dev"
+
+    # Ensure token redaction works for diagnostics
+    diag_file = tmp_path / "diagnostics" / f"{harness.STIMULUS_PROJECTOR_SERVICE}.txt"
+    diag_file.parent.mkdir(parents=True)
+    raw_output = f"# exit=0\nprojected with {token}\n"
+    sanitized = raw_output.replace(token, "[REDACTED]")
+    diag_file.write_text(sanitized, encoding="utf-8")
+
+    content = diag_file.read_text(encoding="utf-8")
+    assert token not in content
+    assert "[REDACTED]" in content
+
+
+def test_projector_run_rebuilds_its_image() -> None:
+    command = harness._projector_run_command("proj", ["a.yml"])
+    assert command[command.index("run") :] == [
+        "run",
+        "--rm",
+        "--build",
+        harness.STIMULUS_PROJECTOR_SERVICE,
+    ]

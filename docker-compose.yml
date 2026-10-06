@@ -111,6 +111,8 @@ services:
       PORT: "8096"
       CONSULTATION_DATA_DIR: /data/consultation
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      GIT_SHA: ${GIT_SHA:-local-dev}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
       # Dev rollback defaults to JSONL; staging/prod select postgres via env.
       CONSULTATION_STORE_BACKEND: ${CONSULTATION_STORE_BACKEND:-jsonl}
@@ -293,6 +295,8 @@ services:
       SOURCE_INGEST_URL: http://source-ingest:8097
       OUT_DIR: /data/bff
       AGORA_MARKET_STALE_THRESHOLD_SECONDS: ${AGORA_MARKET_STALE_THRESHOLD_SECONDS:-86400}
+      AGORA_PROJECTOR_SERVICE_JWT: ${AGORA_PROJECTOR_SERVICE_JWT:-${PANTHEON_AGORA_PROJECTOR_SERVICE_JWT:-}}
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-}}
     volumes:
       - bff-data:/data/bff
     depends_on:
@@ -550,6 +554,9 @@ services:
     stop_grace_period: 30s
     environment:
       TRAINING_SESSION_API_URL: http://training-session-svc:8099
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      GIT_SHA: ${GIT_SHA:-local-dev}
       TRAINING_SESSION_PREVIEW_WORKER_INTERVAL_SECONDS: ${TRAINING_SESSION_PREVIEW_WORKER_INTERVAL_SECONDS:-30}
       TRAINING_SESSION_PREVIEW_WORKER_MAX_TICKS: ${TRAINING_SESSION_PREVIEW_WORKER_MAX_TICKS:-0}
       TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT: ${TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT:-10}
@@ -647,6 +654,7 @@ services:
       # candidate rows.
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      GIT_SHA: ${GIT_SHA:-local-dev}
       SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS: ${SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS:-3600}
       SHADOW_EVAL_SCHEDULER_MAX_TICKS: ${SHADOW_EVAL_SCHEDULER_MAX_TICKS:-0}
       SHADOW_EVAL_TYPE: ${SHADOW_EVAL_TYPE:-shadow}
@@ -1417,6 +1425,9 @@ services:
       PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_STORE_PATH: ${PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_STORE_PATH:-/data/bff/assistant-command-idempotency.json}
       PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS: ${PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS:-300}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
+      PANTHEON_RECONCILIATION_DRIFT_API_URL: ${PANTHEON_RECONCILIATION_DRIFT_API_URL:-http://reconciliation-drift-svc:8102}
+      RECONCILIATION_DRIFT_URL: ${RECONCILIATION_DRIFT_URL:-http://reconciliation-drift-svc:8102}
+      RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
     volumes:
       - bff-data:/data/bff
       - dev-paper-bff-tokens:/run/pantheon-principals:ro
@@ -1482,6 +1493,9 @@ services:
         condition: service_healthy
       nats:
         condition: service_healthy
+      reconciliation-drift-svc:
+        condition: service_healthy
+        required: false
     ports:
       - "${OPERATOR_BFF_PORT:-${BFF_PORT:-18001}}:8001"
     healthcheck:
@@ -1671,6 +1685,7 @@ services:
       PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}
       PANTHEON_PERSONA_SERVICE_ACTOR_ID: operator-bff
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       PANTHEON_REGISTRY_URL: http://registry:8087
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
@@ -2315,6 +2330,8 @@ services:
       TELEMETRY_DB_DSN: ${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
+      RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
       # CurrentArtifactStrategy only accepts the Source-owned persisted
       # snapshot contract.  The default remains paper-only and fails closed
       # when a binding lacks an executable artifact or a valid snapshot.
@@ -2356,6 +2373,7 @@ services:
       RECONCILIATION_DRIFT_STORE_BACKEND: ${RECONCILIATION_DRIFT_STORE_BACKEND:-json}
       RECONCILIATION_DRIFT_STORE_DSN: ${RECONCILIATION_DRIFT_STORE_DSN:-}
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
       PANTHEON_LINEAGE_READ_URL: http://lineage-read:8094
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_EVOLUTION_API_URL: http://evolution:8093
@@ -2401,6 +2419,8 @@ services:
     environment:
       RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       RECONCILIATION_DRIFT_CONSUMER_WORKER_STATE_PATH: /data/reconciliation-drift/consumer-worker-state.json
       RECONCILIATION_DRIFT_CONSUMER_INTERVAL_SECONDS: ${RECONCILIATION_DRIFT_CONSUMER_INTERVAL_SECONDS:-60}
       RECONCILIATION_DRIFT_CONSUMER_MAX_TICKS: ${RECONCILIATION_DRIFT_CONSUMER_MAX_TICKS:-0}
@@ -2436,6 +2456,10 @@ services:
     stop_grace_period: 30s
     environment:
       RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      GIT_SHA: ${GIT_SHA:-local-dev}
       RECONCILIATION_DRIFT_SCHEDULER_INTERVAL_SECONDS: ${RECONCILIATION_DRIFT_SCHEDULER_INTERVAL_SECONDS:-300}
       RECONCILIATION_DRIFT_SCHEDULER_MAX_TICKS: ${RECONCILIATION_DRIFT_SCHEDULER_MAX_TICKS:-0}
       RECONCILIATION_DRIFT_SCHEDULER_MAX_ATTEMPTS: ${RECONCILIATION_DRIFT_SCHEDULER_MAX_ATTEMPTS:-3}
@@ -2933,6 +2957,9 @@ services:
       PERSONA_EVALUATOR_GOVERNANCE_TOKEN: ${PERSONA_EVALUATOR_GOVERNANCE_TOKEN:-}
       PERSONA_EVALUATOR_GOVERNANCE_TOKEN_FILE: ${PERSONA_EVALUATOR_GOVERNANCE_TOKEN_FILE:-}
       PERSONA_EVALUATOR_READ_TOKEN: ${PERSONA_EVALUATOR_READ_TOKEN:-persona-evaluator-read-internal}
+      PERSONA_EVALUATOR_PERSONA_URL: http://persona:8002
+      PERSONA_EVALUATOR_PERSONA_TOKEN: ${PERSONA_EVALUATOR_PERSONA_TOKEN:-${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}}
+      PERSONA_EVALUATOR_PERSONA_TOKEN_FILE: ${PERSONA_EVALUATOR_PERSONA_TOKEN_FILE:-}
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}

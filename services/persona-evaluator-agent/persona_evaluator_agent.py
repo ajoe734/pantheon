@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import parse_qs, urlparse, urlencode
+from urllib.parse import parse_qs, quote, urlparse, urlencode
 
 from services.rankings.snapshots import snapshot_record, admit_snapshot
 from services.rankings.store import build_rankings_store
@@ -30,6 +30,7 @@ MAX_PER_RUN = 5
 MAX_PER_HOUR = 20
 MAX_PERSONAS = 60  # keeps the prompt bounded
 MAX_SNAPSHOTS_KEPT = 20
+MAX_PATTERN_PERSONAS = 200
 DEDUPE_TTL_SECONDS = 7 * 86400
 ACTIONS = (
     "promote_to_canary_candidate",
@@ -396,6 +397,38 @@ def run_once(
     return record
 
 
+def pattern_review_once(
+    *, persona_url: str, token: str, tenant: str, fetch: Callable[..., Any] = _http,
+) -> dict[str, Any]:
+    """Ask the Persona owner for each persona's scheduled_pattern reflection.
+
+    The owner reads closed episodes from telemetry, reviews them only when at
+    least two qualify, and persists with its own CAS; this host only schedules.
+    A missing credential or tenant fails closed before any call.
+    """
+    if not token or not tenant or not persona_url:
+        return {"status": "degraded", "reason": "persona service credential or tenant missing", "reviewed": 0}
+    headers = {"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant}
+    counts = {"reviewed": 0, "unchanged": 0, "no_op": 0, "failed": 0}
+    try:
+        personas = fetch(f"{persona_url}/api/personas", headers=headers)
+    except Exception as exc:
+        return {"status": "degraded", "reason": f"persona list unavailable: {exc}", **counts}
+    for persona in (personas if isinstance(personas, list) else [])[:MAX_PATTERN_PERSONAS]:
+        persona_id = str(persona.get("persona_id") or persona.get("id") or "")
+        if not persona_id or persona.get("tenant_id") != tenant:
+            continue
+        try:
+            data = fetch(
+                f"{persona_url}/api/personas/{quote(persona_id, safe='')}/trade-reflections:pattern-review",
+                data={"tenant_id": tenant}, headers=headers, timeout=float(os.getenv("PERSONA_EVALUATOR_TIMEOUT_SECONDS", "180")),
+            )["data"]
+            counts[data["status"]] += 1
+        except Exception:
+            counts["failed"] += 1  # same episode set is retried on the next run
+    return {"status": "degraded" if counts["failed"] else "ok", **counts}
+
+
 def serve(store: Store, token: str, port: int) -> ThreadingHTTPServer:
     """Read-only view of the saved results; the BFF and Human Inbox project from it."""
 
@@ -472,6 +505,16 @@ def main() -> None:
             actor=env("PERSONA_EVALUATOR_ACTOR_ID", "persona-evaluator-agent"),
         )
         print(json.dumps(record), flush=True)
+        try:
+            persona_token = read_token("PERSONA_EVALUATOR_PERSONA_TOKEN")
+        except Degraded:
+            persona_token = ""
+        pattern = pattern_review_once(
+            persona_url=env("PERSONA_EVALUATOR_PERSONA_URL", "http://persona:8002").rstrip("/"),
+            token=persona_token, tenant=env("PANTHEON_TENANT_ID", ""),
+        )
+        store.update(lambda s: s.update(last_pattern_review={**pattern, "at": datetime.now(timezone.utc).isoformat()}))
+        print(json.dumps({"pattern_review": pattern}), flush=True)
         if env("PERSONA_EVALUATOR_ONCE"):
             return
         time.sleep(interval)

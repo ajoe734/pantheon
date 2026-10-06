@@ -19,19 +19,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import os
 import sqlite3
-import threading
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 from services.knowledge.evidence.models import EvidenceBundle, EvidenceItem
 from services.source_ingestion.connectors.base import SourceRecord, SourceRecordStatus
@@ -326,9 +324,6 @@ class DistillationJobQueue:
     ``.jsonl``.
     """
 
-    _recovery_locks_guard = threading.Lock()
-    _recovery_locks: ClassVar[dict[Path, threading.Lock]] = {}
-
     def __init__(
         self,
         path: str | Path | None = None,
@@ -342,185 +337,43 @@ class DistillationJobQueue:
                 "data/distillation/job_queue.sqlite3",
             )
         )
-        # Preserve an existing legacy JSONL file as immutable migration input.
-        # New state is written to a SQLite sidecar instead of corrupting it.
-        if resolved.exists():
-            with resolved.open("rb") as handle:
-                if handle.read(16) != b"SQLite format 3\x00":
-                    resolved = Path(f"{resolved}.sqlite3")
+        # Never inspect SQLite with a separate open()/close(): on POSIX,
+        # closing ANY descriptor for this inode drops this process's SQLite
+        # locks. Non-SQLite legacy input must be migrated offline, not silently
+        # redirected to an empty sidecar queue.
         resolved.parent.mkdir(parents=True, exist_ok=True)
         self._path = resolved
         self._now = now
         self._default_max_attempts = max(1, int(default_max_attempts))
-        self._bootstrap_with_corruption_recovery()
+        self._bootstrap()
 
     @property
     def path(self) -> Path:
         return self._path
 
-    def _bootstrap_with_corruption_recovery(self) -> None:
-        """Bootstrap the schema, self-healing once if the sqlite file itself
-        is corrupt ("database disk image is malformed").
-
-        Without this, a corrupted queue file wedges the controller
-        permanently: every restart re-opens the same corrupt bytes and
-        crash-loops forever on every tick (confirmed live in the dev stack —
-        strategy-distillation-worker failed continuously with this exact
-        error until manually recovered). This queue is a durable *outbox* for
-        already-observed source versions, not their source of truth (that's
-        upstream in source-ingest), so quarantining an unreadable file and
-        starting a fresh empty queue is a safe, bounded recovery: at worst it
-        re-enqueues already-seen sources, and idempotency_key's UNIQUE
-        constraint plus distillation_controller's own idempotency handling
-        already guard against reprocessing duplicates.
-        """
-        try:
-            self._bootstrap()
-        except sqlite3.DatabaseError as exc:
-            # sqlite3 raises DatabaseError for corruption, but the message
-            # varies with exactly how the file broke: "database disk image
-            # is malformed" (the live bug this recovers from) for structural
-            # corruption past a valid header, "file is not a database" when
-            # the header itself is garbled. Neither substring appears in
-            # DatabaseError for unrelated causes (locked, permissions,
-            # missing directory), so this stays narrow to genuine corruption.
-            message = str(exc).lower()
-            if "malformed" not in message and "not a database" not in message:
-                raise
-            with self._recovery_lock():
-                # Another queue instance in this process may have completed
-                # recovery while this instance waited for the lock.
-                try:
-                    self._bootstrap()
-                    return
-                except sqlite3.DatabaseError as retry_exc:
-                    retry_message = str(retry_exc).lower()
-                    if (
-                        "malformed" not in retry_message
-                        and "not a database" not in retry_message
-                    ):
-                        raise
-                recovery_id, moved = self._quarantine_database_family()
-                self._fsync_parent_directory()
-                self._bootstrap()
-                self._write_read_probe()
-                receipt = self._write_recovery_receipt(recovery_id, moved)
-            logging.getLogger(__name__).error(
-                "DistillationJobQueue at %s was corrupt; quarantined family "
-                "under recovery %s and recorded receipt %s.",
-                self._path,
-                recovery_id,
-                receipt,
-            )
-
     @contextmanager
-    def _recovery_lock(self):
-        with self._recovery_locks_guard:
-            lock = self._recovery_locks.setdefault(self._path.resolve(), threading.Lock())
-        with lock:
-            yield
-
-    def _new_recovery_id(self) -> str:
-        timestamp = datetime.fromtimestamp(self._now(), tz=timezone.utc).strftime(
-            "%Y%m%dT%H%M%S%fZ"
-        )
-        return f"{timestamp}-{uuid.uuid4().hex[:12]}"
-
-    def _quarantine_database_family(self) -> tuple[str, list[tuple[Path, Path]]]:
-        family = [
-            self._path,
-            Path(f"{self._path}-wal"),
-            Path(f"{self._path}-shm"),
-        ]
-        existing = [member for member in family if member.exists()]
-        recovery_id = self._new_recovery_id()
-        destinations = [
-            member.with_name(f"{member.name}.corrupt-{recovery_id}") for member in existing
-        ]
-        if any(destination.exists() for destination in destinations):
-            raise FileExistsError(f"recovery quarantine already exists for {recovery_id}")
-
-        moved: list[tuple[Path, Path]] = []
-        for member, destination in zip(existing, destinations):
-            member.replace(destination)
-            moved.append((member, destination))
-        return recovery_id, moved
-
-    def _fsync_parent_directory(self) -> None:
-        try:
-            descriptor = os.open(self._path.parent, os.O_RDONLY)
-        except OSError:
-            return
-        try:
-            os.fsync(descriptor)
-        except OSError:
-            # Some filesystems do not support directory fsync.
-            pass
-        finally:
-            os.close(descriptor)
-
-    def _write_read_probe(self) -> None:
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS distillation_recovery_probe "
-                "(probe_id TEXT PRIMARY KEY)"
-            )
-            probe_id = uuid.uuid4().hex
-            connection.execute(
-                "INSERT INTO distillation_recovery_probe(probe_id) VALUES (?)", (probe_id,)
-            )
-            found = connection.execute(
-                "SELECT probe_id FROM distillation_recovery_probe WHERE probe_id = ?", (probe_id,)
-            ).fetchone()
-            if found is None or found[0] != probe_id:
-                raise sqlite3.DatabaseError("fresh queue recovery probe failed")
-            connection.execute(
-                "DELETE FROM distillation_recovery_probe WHERE probe_id = ?", (probe_id,)
-            )
-            connection.commit()
-
-    def _write_recovery_receipt(
-        self, recovery_id: str, moved: Sequence[tuple[Path, Path]]
-    ) -> Path:
-        receipt = self._path.with_name(
-            f"{self._path.name}.corrupt-{recovery_id}.receipt.json"
-        )
-        payload = {
-            "schema_version": "distillation_queue_recovery.v1",
-            "recovery_id": recovery_id,
-            "queue_name": self._path.name,
-            "members": [
-                {
-                    "kind": source.name.removeprefix(self._path.name) or "main",
-                    "quarantine_name": target.name,
-                }
-                for source, target in moved
-            ],
-            "probe": "passed",
-        }
-        with receipt.open("x", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=True, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        self._fsync_parent_directory()
-        return receipt
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(
-            self._path,
-            timeout=30.0,
-            isolation_level=None,
-        )
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = 30000")
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA synchronous = FULL")
-        return connection
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        # Connection.__exit__ commits/rolls back but does NOT close. Closing
+        # must also run after PRAGMA setup failures, independently of GC.
+        with closing(sqlite3.connect(
+            self._path, timeout=30.0, isolation_level=None,
+        )) as connection:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA busy_timeout = 30000")
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA synchronous = FULL")
+            with connection:
+                yield connection
 
     def _bootstrap(self) -> None:
         with self._connect() as connection:
+            # Never rename a live SQLite family or silently discard its outbox,
+            # inbox, leases and DLQ. Recovery requires all users to be quiesced.
+            checks = connection.execute("PRAGMA quick_check").fetchall()
+            if len(checks) != 1 or checks[0][0] != "ok":
+                raise sqlite3.DatabaseError(
+                    "distillation queue integrity check failed; offline recovery required"
+                )
             connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(
                 """
@@ -1796,6 +1649,7 @@ class DistillationWorker:
 def make_distillation_worker(
     *,
     queue_path: str | Path | None = None,
+    job_queue: DistillationJobQueue | None = None,
     seed_store_path: str | Path | None = None,
     created_by: str = "distillation_worker",
     worker_id: str | None = None,
@@ -1805,7 +1659,7 @@ def make_distillation_worker(
     registry_sync: Callable[[RegistrySyncRequest], RegistrySyncResult] | None = None,
 ) -> DistillationWorker:
     """Factory for a default-configured DistillationWorker."""
-    queue = DistillationJobQueue(
+    queue = job_queue if job_queue is not None else DistillationJobQueue(
         queue_path,
         default_max_attempts=max_attempts,
     )

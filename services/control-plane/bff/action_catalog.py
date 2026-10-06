@@ -628,19 +628,6 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
     # Execute-plans semantic command bridge (BFF-LUV-SEM-002)
     # ------------------------------------------------------------------ #
     BffActionCatalogEntry(
-        action_id="CreateDeployment",
-        entity_type="Deployment",
-        endpoint="/bff/deployments",
-        risk_level=RiskLevel.HIGH,
-        requires_approval=False,
-        requires_confirm_token=False,
-        requires_two_man=False,
-        cooldown_seconds=30,
-        idempotency_required=True,
-        required_roles=["operator", "approver"],
-        description="Create a deployment command receipt through the BFF command store without enabling live broker side effects.",
-    ),
-    BffActionCatalogEntry(
         action_id="PatchDeployment",
         entity_type="Deployment",
         endpoint="/bff/deployments/{deployment_id}",
