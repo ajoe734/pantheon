@@ -703,44 +703,8 @@ def _ppl_alloc_009_wait_for_telemetry_readback(
     )
 
 
-# --- _PERSONA_OPERATIONAL_LIFECYCLE_STATES ---
-_PERSONA_OPERATIONAL_LIFECYCLE_STATES = frozenset({
-    "active",
-    "deployed",
-    "ready",
-    "running",
-    "paper",
-    "paper_running",
-    "canary",
-    "canary_running",
-    "live",
-    "live_running",
-})
-
-
-# --- _is_persona_lifecycle_operational ---
-def _is_persona_lifecycle_operational(value: Any) -> bool:
-    return str(value or "").strip().lower() in _PERSONA_OPERATIONAL_LIFECYCLE_STATES
-
-
-# --- _STRATEGY_PERSONA_BFF_IDEMPOTENCY ---
-_STRATEGY_PERSONA_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-
-
-# --- _PERSONA_PROVISIONING_STORE ---
-_PERSONA_PROVISIONING_STORE = None
-
-
-# --- _PERSONA_PROVISIONING_STORE_LOCK ---
-_PERSONA_PROVISIONING_STORE_LOCK = threading.Lock()
-
-
 # --- _PERSONA_PROVISIONING_RECONCILER_TASK ---
 _PERSONA_PROVISIONING_RECONCILER_TASK: Optional[asyncio.Task[Any]] = None
-
-
-# --- _PERSONA_FIRST_EVALUATION_WORKFLOW_ID ---
-_PERSONA_FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
 
 
 # --- _persona_provisioning_store ---
@@ -1255,6 +1219,27 @@ def _append_persona_reconcile_diagnostic(
         diagnostics.append(dependency)
 
 
+def _persist_persona_provisioning_terminal_transition(
+    persona_id: str,
+    *,
+    lifecycle_state: str,
+    metadata: Mapping[str, Any],
+) -> Any:
+    """Persist terminal lifecycle state through the active Persona write owner."""
+    active_writer = _get_active_write_owner()
+    updater = getattr(active_writer, "update_persona", None) if active_writer else None
+    if updater is None:
+        raise RuntimeError(
+            f"Persona write owner unavailable for lifecycle update of {persona_id!r}; "
+            "no fallback writer is permitted."
+        )
+    return updater(
+        persona_id,
+        lifecycle_state=lifecycle_state,
+        metadata=metadata,
+    )
+
+
 # --- _materialize_terminal_persona_provisioning_ledger ---
 def _materialize_terminal_persona_provisioning_ledger(
     persona_id: str,
@@ -1376,14 +1361,7 @@ def _materialize_terminal_persona_provisioning_ledger(
         _append_persona_reconcile_diagnostic(diagnostics, "provisioning_ledger")
         return "provisioning"
 
-    _active_writer = _get_active_write_owner()
-    _updater = getattr(_active_writer, "update_persona", None) if _active_writer else None
-    if _updater is None:
-        raise RuntimeError(
-            f"Persona write owner unavailable for lifecycle update of {persona_id!r}; "
-            "no fallback writer is permitted."
-        )
-    _updater(
+    _persist_persona_provisioning_terminal_transition(
         persona_id,
         lifecycle_state=new_state,
         metadata=metadata_updates,
