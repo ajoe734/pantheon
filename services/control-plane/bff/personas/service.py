@@ -1233,7 +1233,12 @@ def _persist_persona_provisioning_terminal_transition(
             f"Persona write owner unavailable for lifecycle update of {persona_id!r}; "
             "no fallback writer is permitted."
         )
-    return updater(
+    from .reconciliation import PersonaProvisioningReconciliationMutationPort
+
+    mutation_port = PersonaProvisioningReconciliationMutationPort(
+        persona_mutation_port=active_writer,
+    )
+    return mutation_port.persist_terminal_transition(
         persona_id,
         lifecycle_state=lifecycle_state,
         metadata=metadata,
