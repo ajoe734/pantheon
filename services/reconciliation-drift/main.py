@@ -1511,10 +1511,15 @@ def get_evaluation(evaluation_id: str) -> Dict[str, Any]:
 
 
 @app.get("/api/reconciliation-drift/reconciliation-records")
-def list_reconciliation_records(binding_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+def list_reconciliation_records(
+    binding_id: Optional[str] = Query(default=None),
+    runtime_id: Optional[str] = Query(default=None),
+) -> List[Dict[str, Any]]:
     records = _tenant_scoped(store.list_reconciliation_records())
     if binding_id:
-        records = [item for item in records if item.get("binding_id") == binding_id]
+        records = [item for item in records if item.get("binding_id") == binding_id or item.get("runtime_binding_id") == binding_id or item.get("scope_ref") == binding_id]
+    if runtime_id:
+        records = [item for item in records if item.get("runtime_id") == runtime_id]
     return records
 
 

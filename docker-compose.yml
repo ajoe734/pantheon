@@ -1423,6 +1423,8 @@ services:
       PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_STORE_PATH: ${PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_STORE_PATH:-/data/bff/assistant-command-idempotency.json}
       PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS: ${PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS:-300}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
+      RECONCILIATION_DRIFT_URL: ${RECONCILIATION_DRIFT_URL:-http://reconciliation-drift-svc:8102}
+      RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
     volumes:
       - bff-data:/data/bff
       - dev-paper-bff-tokens:/run/pantheon-principals:ro
@@ -1488,6 +1490,9 @@ services:
         condition: service_healthy
       nats:
         condition: service_healthy
+      reconciliation-drift-svc:
+        condition: service_healthy
+        required: false
     ports:
       - "${OPERATOR_BFF_PORT:-${BFF_PORT:-18001}}:8001"
     healthcheck:
