@@ -1,0 +1,37 @@
+{
+  "task_id": "BFF-PROMOTION-REVIEW-RETIRE-20261006",
+  "decision": "Retire the promotion review decision route and the command-log promotion_review inbox contributor; the Governance ApprovalDecision is decided only through /bff/approvals/{decision_id}/decide.",
+  "retired_routes": [
+    {"route": "POST /bff/management/promotion-reviews/{id}/decisions", "result": "410 ACTION_RETIRED via RETIRED_COMMANDS[PromotionReviewDecision], replacement /bff/approvals/{decision_id}/decide, no stored command", "test": "services/control-plane/bff/test_bff_promotion_review_governance.py::test_promotion_review_decision_route_is_retired_without_stored_command"},
+    {"route": "POST /bff/management/quarterly-ranking/recommendations/{id}/submit", "result": "already 410 ACTION_RETIRED (04a5a9c3c); now asserted once with no stored command", "test": "services/control-plane/bff/test_bff_promotion_review_governance.py::test_quarterly_recommendation_submit_route_is_retired_without_stored_command"},
+    {"route": "human inbox promotion_review contributor", "result": "removed from both inbox aggregators; legacy command-log rows are not projected", "test": "services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_has_no_promotion_review_contributor_for_command_log_rows and services/control-plane/bff/tests/test_management_read_timeout_and_capacity.py::test_command_log_promotion_review_rows_are_not_projected_into_human_inbox"}
+  ],
+  "removed_dead_code": [
+    "PersonaService.decide_promotion_review",
+    "personas/service.py::_validate_quarterly_ranking_recommendation_submit, _pm12_resolve_quarterly_recommendation_submit_params (duplicate), _promotion_review_rationale",
+    "personas/routes/ranking.py::_HUMAN_INBOX_PROMOTION_PRODUCER and decision-only imports",
+    "main.py pm12 resolver import and inbox promotion contributor imports",
+    "governance/human_inbox.py::_human_inbox_promotion_review_item, _human_inbox_promotion_contributor, promotion_review_records plumbing, links.decisions, allowed_decisions, decisionHref",
+    "management_read_models: promotion reviews inbox block and get_promotion_review_command_log injection"
+  ],
+  "advertised_links_removed": "Review items no longer carry links.decisions or allowed_decisions.",
+  "guarantees_moved_to_live_path": {
+    "conditions_preserved": "test_bff_approvals_decide_contract.py::test_conditional_approval_single_entrypoints and test_conditional_approval_batch_decide",
+    "replay": "test_bff_approvals_decide_contract.py::test_first_vote_is_pending_second_decides_stale_conflicts_and_replay_is_stable",
+    "role_from_verified_identity": "test_bff_approvals_decide_contract.py::test_vote_requires_version_and_owner_decides_authority and test_non_governance_role_remains_derived_from_verified_identity",
+    "empty_rationale_rejected_for_every_vote": "test_bff_approvals_decide_contract.py::test_empty_rationale_is_rejected_for_every_vote_without_owner_call (new)"
+  },
+  "removed_assertions": {
+    "test_management_read_timeout_and_capacity.py": [
+      {"removed": "test_durable_promotion_review_submission_is_not_dropped_from_human_inbox: one item with source_type promotion_review, promotion_review_id and persona_id; surfaces.promotion_reviews status ok and source command_store", "why": "asserted only the retired command-log promotion_review contributor emitting items; replaced by test_command_log_promotion_review_rows_are_not_projected_into_human_inbox, which asserts the same seeded row yields no promotion_review item and no promotion_reviews surface"},
+      {"removed": "test_human_inbox_with_no_submissions_reports_unavailable_not_a_silent_empty_ok: promotion_reviews surface status unavailable and empty items for source_type promotion_review", "why": "guarded the status computation of the removed promotion_reviews surface block; that surface no longer exists, which the replacement test asserts"}
+    ],
+    "test_main_composition_seam_extraction_002.py": [
+      {"removed": "test_promotion_review_submission_and_decision_explicit_command_store step 4: _human_inbox_promotion_review_item(reviews[0]) category promotion_review and status accepted", "why": "exercised only the removed _human_inbox_promotion_review_item; steps 1-3 (review_id and decision_status accepted via the command store) are kept"},
+      {"removed": "test_human_inbox_governance_seam_delegation: bff_main._human_inbox_promotion_review_item is the human_inbox implementation, plus its import", "why": "re-export identity of the removed function; _human_inbox_payload and _human_inbox_priority identity assertions are kept"}
+    ]
+  },
+  "advisory_report_contract": "test_promotion_reviews_list_and_detail_are_readable_by_operator asserts status advisory_report, no decision links, and keeps governance, promotion_path and detail assertions.",
+  "registry_and_manifest": "ownership registry command renamed retired_promotion_review_decision; route manifest generator override and snapshot mark the decisions route superseded (covered_by /bff/approvals/{decision_id}/decide). Symbol disposition inventory left unchanged because check_product_ownership.py pins 208 groups.",
+  "notes": "tests/test_management_read_timeout_and_capacity.py::test_human_inbox_capacity_saturation_yields_immediate_degraded_response_and_recovers fails identically on origin/dev (approval_queue contributor_read_error in this environment), so it is not a regression. scripts/bff_route_manifest_backend.py --check reports pre-existing removed routes POST /bff/rebalances/{param}/approve and /two-man-sign, unrelated to this task."
+}
