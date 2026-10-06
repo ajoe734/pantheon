@@ -657,7 +657,6 @@ def _create_app() -> FastAPI:
         resolve_final_idempotency_key=lambda ik, xik: str(ik or xik or ""),
         reject_body_idempotency_key=lambda p: None,
         request_dry_run_requested=lambda: False,
-        gov_bff_idempotency={},
         publish_event=lambda *a, **kw: "ev-1",
         sse_buffers={},
         sse_subscribers={},

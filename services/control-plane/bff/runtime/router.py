@@ -5,6 +5,8 @@ existing RuntimeBinding, deployment, and SSE behavior without importing it.
 """
 from __future__ import annotations
 
+import hashlib
+import inspect
 import json
 import uuid
 from typing import Any, Callable, Dict, List, Mapping, Optional
@@ -22,6 +24,16 @@ except (ImportError, ValueError):
 from .service import RuntimeRouterService
 
 
+def _accepts_idempotency_key(owner_call: Optional[Callable[..., Any]]) -> bool:
+    if not callable(owner_call):
+        return False
+    try:
+        params = inspect.signature(owner_call).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(p.name == "idempotency_key" or p.kind is inspect.Parameter.VAR_KEYWORD for p in params)
+
+
 def create_runtime_router(
     *,
     read_surface: Optional[Any] = None,
@@ -37,13 +49,10 @@ def create_runtime_router(
     )
     read_store = service.read_store
     _GOVERNANCE_APPROVAL_QUEUE_ROUTE = service.dependency('_GOVERNANCE_APPROVAL_QUEUE_ROUTE')
-    _GOV_BFF_IDEMPOTENCY = service.dependency('_GOV_BFF_IDEMPOTENCY')
     _aggregate_group_surface = service.dependency('_aggregate_group_surface')
     _alert_target_ref = service.dependency('_alert_target_ref')
     _bff_error = service.dependency('_bff_error')
     _build_persona_health_items = service.dependency('_build_persona_health_items')
-    _capital_bff_idempotency_check = service.dependency('_capital_bff_idempotency_check')
-    _capital_bff_idempotency_store = service.dependency('_capital_bff_idempotency_store')
     _capital_owner_role = service.dependency('_capital_owner_role')
     _composed_dataset_surface_status = service.dependency('_composed_dataset_surface_status')
     _composed_surface_status = service.dependency('_composed_surface_status')
@@ -267,8 +276,11 @@ def create_runtime_router(
         )
 
         base_report_surface = _dataset_surface_status("paper_live_drift_reports", snapshot_at=snapshot_at)
+        stage = str((runtime_binding or {}).get("deployment_stage") or (runtime_binding or {}).get("deployment_mode") or "").strip().lower()
         if report is not None:
             report_surface = base_report_surface
+        elif stage in {"live", "canary"}:
+            report_surface = {**base_report_surface, "status": "degraded", "message": "Paper/live drift report missing for live runtime."}
         elif base_report_surface.get("status") == "ok":
             report_surface = {
                 **base_report_surface,
@@ -358,7 +370,7 @@ def create_runtime_router(
             unavailable_message="Paper/live drift view unavailable.",
             degraded_message="Paper/live drift view is available, but one or more supporting surfaces are degraded.",
         )
-        if report is None:
+        if report is None and paper_live_drift_surface.get("status") != "degraded":
             if report_surface.get("status") == "ok":
                 paper_live_drift_surface["status"] = "ok"
                 paper_live_drift_surface["message"] = "No paper/live telemetry metrics available."
@@ -498,24 +510,13 @@ def create_runtime_router(
         request_hash = _stable_json_hash(
             {"route": "POST /api/v1/bindings", "tenant_id": tenant_id, "payload": payload}
         )
-        cache_actor = f"{identity.operator_id}\x00{tenant_id or ''}"
-        try:
-            cached = _capital_bff_idempotency_check(cache_actor, resolved_key, request_hash)
-        except TypeError:
-            cached = _capital_bff_idempotency_check(identity.operator_id, resolved_key, request_hash)
-        if cached is not None:
-            return cached
-
         persona_id = str(payload.get("persona_id") or "").strip()
         capital_pool_id = str(payload.get("capital_pool_id") or "").strip()
         if not persona_id or not capital_pool_id:
             missing = "persona_id" if not persona_id else "capital_pool_id"
             raise _bff_error(422, ErrorCode.VALIDATION_FAILED, f"{missing} is required", f"Persona capital binding requires a non-empty {missing}", precondition_failed=missing)
         req_id = payload.get("binding_id") or payload.get("id")
-        try:
-            binding_id = _stable_capital_resource_id("binding", operator_id=f"{identity.operator_id}:{tenant_id or ''}", idempotency_key=resolved_key, requested_id=req_id)
-        except TypeError:
-            binding_id = _stable_capital_resource_id("binding", operator_id=identity.operator_id, idempotency_key=resolved_key, requested_id=req_id)
+        binding_id = _stable_capital_resource_id("binding", operator_id=f"{identity.operator_id}:{tenant_id or ''}", idempotency_key=resolved_key, requested_id=req_id)
         role = str(payload.get("role") or "live_owner").strip()
         allowed_scope = str(payload.get("allowed_deployment_scope") or "live").strip()
         raw_sleeve = payload.get("capital_sleeve_id") if "capital_sleeve_id" in payload else payload.get("sleeve_id")
@@ -564,10 +565,6 @@ def create_runtime_router(
             raise
         sleeve = result.get("capital_sleeve_id") or (result.get("metadata") or {}).get("capital_sleeve_id") or capital_sleeve_id
         result = {**result, "capital_sleeve_id": sleeve, "status": result.get("status") or "pending"}
-        try:
-            _capital_bff_idempotency_store(cache_actor, resolved_key, request_hash, result)
-        except TypeError:
-            _capital_bff_idempotency_store(identity.operator_id, resolved_key, request_hash, result)
         return result
 
     @router.get("/api/v1/runtime-bindings")
@@ -965,13 +962,13 @@ def create_runtime_router(
         }
         return binding_id in candidate_ids
 
-    def _raise_if_runtime_binding_conflict(binding_id: str) -> None:
-        existing = next(
+    def _existing_runtime_binding(binding_id: str) -> Optional[Dict[str, Any]]:
+        return next(
             (binding for binding in read_store.list_runtime_bindings() if _runtime_binding_matches_create(binding, binding_id)),
             None,
         )
-        if existing is None:
-            return
+
+    def _raise_runtime_binding_conflict(existing: Dict[str, Any], binding_id: str) -> None:
         runtime_id = existing.get("runtime_id") or existing.get("id") or binding_id
         raise _bff_error(
             409,
@@ -1006,21 +1003,7 @@ def create_runtime_router(
         _require_operator_role(identity)
         _reject_body_idempotency_key(payload)
         resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        request_hash = _stable_json_hash({"route": "POST /bff/runtimes", "payload": payload})
         dry_run = _request_dry_run_requested()
-        if not dry_run:
-            existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
-            if existing is not None:
-                if existing.get("request_hash") != request_hash:
-                    raise _bff_error(
-                        409,
-                        ErrorCode.IDEMPOTENCY_CONFLICT,
-                        "Idempotency key already used with a different payload",
-                        f"Key {resolved_key!r} is bound to a different request hash",
-                        precondition_failed="idempotency_conflict",
-                        suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-                    )
-                return existing["result"]
 
         fields = {
             field: _runtime_create_required_string(payload, field)
@@ -1036,11 +1019,15 @@ def create_runtime_router(
                 precondition_failed="runtime_kind",
             )
 
-        _raise_if_runtime_binding_conflict(fields["binding_id"])
+        # Idempotency lives with the owner: a binding already recorded under this key is a replay.
+        existing = _existing_runtime_binding(fields["binding_id"])
+        replayed = existing if existing is not None and existing.get("idempotency_key") == resolved_key else None
+        if existing is not None and replayed is None:
+            _raise_runtime_binding_conflict(existing, fields["binding_id"])
 
         snapshot_at = utc_now()
         client_runtime_id = str(payload.get("runtime_id") or payload.get("id") or "").strip()
-        runtime_id = client_runtime_id or f"runtime-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+        runtime_id = client_runtime_id or f"runtime-{hashlib.sha256(resolved_key.encode('utf-8')).hexdigest()[:16]}"
         record = {
             "id": runtime_id,
             "runtime_id": runtime_id,
@@ -1053,33 +1040,30 @@ def create_runtime_router(
             "runtime_kind": runtime_kind,
             "created_at": snapshot_at,
         }
-        if not dry_run:
-            if hasattr(read_store, "create_runtime_binding"):
-                record = read_store.create_runtime_binding(
-                    runtime_id=runtime_id,
-                    name=fields["name"],
-                    persona_id=fields["persona_id"],
-                    binding_id=fields["binding_id"],
-                    deployment_plan_id=fields["deployment_plan_id"],
-                    runtime_kind=runtime_kind,
-                    actor_id=identity.operator_id,
-                    created_at=snapshot_at,
-                    params=payload.get("params") if isinstance(payload.get("params"), dict) else {},
+        create_owner_binding = getattr(read_store, "create_runtime_binding", None)
+        if not dry_run and replayed is not None:
+            record = replayed
+        elif not dry_run:
+            if not _accepts_idempotency_key(create_owner_binding):
+                raise _bff_error(
+                    503,
+                    ErrorCode.DEPENDENCY_UNAVAILABLE,
+                    "Runtime owner cannot honor Idempotency-Key",
+                    "The runtime owner does not accept the client idempotency key; refusing to create a runtime without durable idempotency.",
+                    precondition_failed="owner_idempotency_unsupported",
                 )
-            else:
-                from services.runtime_manager.runtime_manager_client import RuntimeManagerClient
-                client = RuntimeManagerClient(allow_local=True)
-                deploy_req = {
-                    "deployment_plan_id": fields["deployment_plan_id"],
-                    "binding_id": fields["binding_id"],
-                    "runtime_id": runtime_id,
-                    "name": fields["name"],
-                    "persona_id": fields["persona_id"],
-                    "deployment_mode": runtime_kind,
-                    "actor_id": identity.operator_id,
-                    **(payload.get("params") if isinstance(payload.get("params"), dict) else {}),
-                }
-                record = client.deploy(deploy_req)
+            record = create_owner_binding(
+                idempotency_key=resolved_key,
+                runtime_id=runtime_id,
+                name=fields["name"],
+                persona_id=fields["persona_id"],
+                binding_id=fields["binding_id"],
+                deployment_plan_id=fields["deployment_plan_id"],
+                runtime_kind=runtime_kind,
+                actor_id=identity.operator_id,
+                created_at=snapshot_at,
+                params=payload.get("params") if isinstance(payload.get("params"), dict) else {},
+            )
         data = _project_runtime_create_response(record)
         surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
         meta = _snapshot_meta(snapshot_at)
@@ -1094,6 +1078,8 @@ def create_runtime_router(
                 evidence_kind="runtime.create",
                 extra_meta={"surfaces": {"runtimes": surface}},
             )
+        if replayed is not None:
+            return {"data": data, "meta": meta}
         event_payload = {
             "runtime_id": data["id"],
             "binding_id": data["binding_id"],
@@ -1116,9 +1102,7 @@ def create_runtime_router(
             event_payload,
         )
 
-        result = {"data": data, "meta": meta}
-        _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-        return result
+        return {"data": data, "meta": meta}
 
     @router.get("/bff/runtimes")
     async def bff_list_runtimes(

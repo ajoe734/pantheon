@@ -1,0 +1,111 @@
+{
+  "schema_version": "pantheon.corrective-source-evidence.v1",
+  "task_id": "BFF-COMPOSE-FAIL-CLOSED-20261006",
+  "base_sha": "355b1d10c",
+  "scope": "BFF composition resolver fails closed; POST /api/v1/bindings helpers restored; runtime/incident/alert idempotency moved off BFF process memory",
+  "author": "Antigravity",
+  "review_status": "pending independent Claude review; no approval claimed",
+  "design_choices": [
+    {
+      "choice": "Production resolver ends in raise UnresolvedBffDependency(name)",
+      "why": "The old catch-all lambda returned None and the stub branches returned {}, [], {'status': 'dry_run'}, a ready-True ProviderReadinessCache and fresh dicts, so a missing dependency became a silent no-op or fake success at request time. Resolution order is unchanged: explicit kwarg, loaded main attribute, explicit fallback factory, then the resolver. Real-implementation branches (auth policy, models, assistant service, personas, capital helpers, page-slice, dataset surface status, constants, owner-backed stores) are kept."
+    },
+    {
+      "choice": "Stand-ins live in tests/bff_compose_stand_ins.py and are injected through an explicit dependency_resolver argument of compose_bff_app / mount_bff_routers / get_canonical_bff_route_set",
+      "why": "A per-call explicit argument cannot be selected by any production path; no module outside tests imports the stand-ins (asserted by test_no_production_module_imports_the_test_stand_ins). The stand-in resolver tries the production resolver first, so tests still get real implementations where they exist."
+    },
+    {
+      "choice": "Capital helpers restored in capital/router.py (stable_capital_resource_id, capital_owner_role, raise_capital_owner_error), raise_capital_owner_error delegates to the existing _error_for_capital_exception",
+      "why": "No second error-mapping copy. The ids derive from operator+tenant+key so a retry reaches the same owner record; the owner (services/capital create_binding) replays durably by binding_id and create_capital_binding already GET-reconciles ambiguous POSTs. The BFF-local check/store cache is deleted, so the owner is the single idempotency layer. The three names are added to the runtime router dependency tuple, which is why they were previously unresolvable."
+    },
+    {
+      "choice": "POST /bff/runtimes forwards idempotency_key to the owner's create_runtime_binding and fails closed (503 owner_idempotency_unsupported) when the owner does not accept it",
+      "why": "The only production fallback was RuntimeManagerClient.deploy, whose HTTP route has no idempotency support and a different required payload; it is removed rather than left as an un-keyed write. A binding already recorded under the same key is replayed without a second write or SSE event; any other occupied binding stays a 409. Honest consequence: until a runtime owner exposing create_runtime_binding(idempotency_key=...) is wired, this route returns 503 in production instead of writing without durable idempotency."
+    },
+    {
+      "choice": "POST /bff/incidents derives incident_id from the key when the caller sends none, and treats an owner 409 for a matching record as a replay (mismatched title/severity -> 409 IDEMPOTENCY_CONFLICT)",
+      "why": "services/incidents rejects duplicate incident_id durably, so the owner's uniqueness is the idempotency record. The BFF ledger dict is deleted."
+    },
+    {
+      "choice": "POST /bff/alerts/{id}/acknowledge records the key + request hash + response in the durable CommandStore (foundation idempotency_record) and replays/409s from get_command_by_idempotency_key; it fails closed (503) when no durable command ledger is wired",
+      "why": "The same durable pattern command_adapters already uses. The owner write itself (status=investigating) is a set, hence naturally idempotent. Previously a command-store write failure was swallowed; it now propagates because the idempotency record is part of that write."
+    },
+    {
+      "choice": "Deployment router gov_bff_idempotency parameter removed; incident router/service idempotency_ledger removed; ranking router capital_bff_idempotency_check/store parameters removed",
+      "why": "All were accepted and never read (the incident action ledger was write-only). Removing them deletes the literal {} at composition and the separate per-router dicts."
+    }
+  ],
+  "native_probe": {
+    "method": "Import production main in a fresh process with a recording wrapper over the production resolver",
+    "before": "Fell through to stubs: _GOV_BFF_IDEMPOTENCY, _capital_bff_idempotency_check, _capital_bff_idempotency_store (plus the three capital helpers resolving to nothing inside runtime/router)",
+    "after": "Only real implementations reach the resolver; any unresolved name raises at import. Asserted by test_native_main_composition_has_zero_stand_in_fall_through"
+  },
+  "pruned_name_audit": {
+    "source": "git show c1894c3b0 -- services/control-plane/bff/main.py (1254 removed defs, 293 removed top-level assignments)",
+    "method": "Intersect removed names with every name looked up by string: app_factory _dep(...) names, the runtime router dependency tuple, and getattr/hasattr(main, ...) in production code; then check each against the natively imported main and the production resolver",
+    "dispositions": [
+      {"name": "_stable_capital_resource_id", "disposition": "restored as real implementation (capital/router.py stable_capital_resource_id)"},
+      {"name": "_capital_owner_role", "disposition": "restored as real implementation (capital/router.py capital_owner_role)"},
+      {"name": "_raise_capital_owner_error", "disposition": "restored as real implementation (capital/router.py raise_capital_owner_error, reuses _error_for_capital_exception)"},
+      {"name": "_capital_bff_idempotency_check", "disposition": "string reference removed (runtime router + ranking router); owner idempotency replaces it"},
+      {"name": "_capital_bff_idempotency_store", "disposition": "string reference removed (runtime router + ranking router); owner idempotency replaces it"},
+      {"name": "_GOV_BFF_IDEMPOTENCY", "disposition": "string reference removed (runtime router, incident router, deployment router, ledger writes)"},
+      {"name": "_project_operator_runtime_state_row", "disposition": "already real in main via BFF-READ-WIRING-20261006 (#6178)"},
+      {"name": "_human_inbox_surface_timeout_seconds", "disposition": "resolves: main re-imports governance.service.human_inbox_surface_timeout_seconds under that name; management_read_models/router.py also falls back to the governance.service function directly"},
+      {"name": "_management_cockpit_read_timeout_seconds, _management_read_timeout_seconds, _ops_read_model_entry_for_persona, _process_command_stub, _bounded_human_inbox_persona_readiness", "disposition": "resolve to real implementations present on the natively imported main"},
+      {"name": "_build_persona_health_items", "disposition": "resolves through the explicit app_factory fallback to PersonaService.build_persona_health_items"},
+      {"name": "remaining string-referenced composition names (auth, management NL, assistant provider, sem_bff_*, bff_management_readiness_*, SSE stores, dry-run helpers, command helpers)", "disposition": "present on the natively imported main or served by a real production resolver branch; the audit table printed 65 of 69 audited names present on main, the other four being the three restored capital helpers and _build_persona_health_items above"}
+    ]
+  },
+  "ownership_registry": {
+    "route": "POST /api/v1/bindings",
+    "before": "runtime_application / runtime_manager_store / runtime_bindings / runtime.binding.v1",
+    "after": "capital_application / capital_store / persona_capital_bindings / capital.allocation.v1, idempotency_scope binding_id, readback management_capital_projection (services/capital pg_store capital.persona_capital_bindings)",
+    "check": "scripts/check_product_ownership.py PASS"
+  },
+  "validation": [
+    {
+      "command": "pytest tests/test_bff_main_composition.py (includes the native zero-fall-through test, the fail-closed resolver cases, the no-production-import guard and the native POST /api/v1/bindings regression against a recorded Capital owner)",
+      "result": "54 passed"
+    },
+    {
+      "command": "pytest tests/test_incident_router.py tests/test_bff_alerts_acknowledge.py tests/test_incidents_real_source.py",
+      "result": "71 passed"
+    },
+    {
+      "command": "pytest test_bff_write_gap_2026_05_28.py -k runtimes (adds the owner-cannot-honor-key fail-closed case)",
+      "result": "4 passed"
+    },
+    {
+      "command": "pytest tests/test_bff_test_architecture.py test_architecture_boundaries.py scripts/test_check_product_ownership.py; scripts/check_product_ownership.py",
+      "result": "39 + 22 passed; ownership check PASS"
+    },
+    {
+      "command": "Same-file runs on the exact base (git archive of 218a55e7a, shared dependency python) vs this head for composition, command-adapter, runtime/incident/deployment/capital/rebalance and write-gap selections",
+      "result": "No new failure. Identical pre-existing failures on both: tests/test_command_adapters_router.py (84), tests/test_bff_path_dedupe.py (2), tests/test_owner_reads_capital_routes.py (2), the tests using CapitalBffAuthorityHarness (CommandAdapterService unexpected keyword final_contract_idempotency, 25 failures in the capital/rebalance selection), tests/test_main_composition_seam_extraction_003.py (17 setup errors: monkeypatch of main attributes absent since the 2026-09-01 prune), and further failures in the write-gap/dry-run/read-cutoff selection (24 failed + 40 errors on head vs 25 failed + 40 errors on base). This head fixes two base failures in tests/test_read_surface_caller_migration.py (test_endpoint_deployment_review_detail, test_endpoint_persona_consult_policy) by no longer passing a removed kwarg."
+    }
+  ],
+  "assertion_changes": [
+    {
+      "test": "tests/test_incident_router.py::test_bff_incidents_crud_and_idempotency",
+      "change": "The BFF-local ledger cannot exist (acceptance 5). The same-key/different-payload 409 and same-key replay assertions are kept but now run against the key-derived incident id and the owner's duplicate-id 409 (MockReadStore.create_incident now rejects duplicates like services/incidents). The old step that expected 409 for a different payload with no incident_id after an explicit-id create under the same key is replaced by the keyed flow; a key is no longer linked to an explicit client id because the incident owner has no idempotency-key field.",
+      "no_assertion_deleted_without_replacement": true
+    },
+    {
+      "test": "tests/test_bff_alerts_acknowledge.py",
+      "change": "None. Replay and 409 assertions pass unchanged against the durable command ledger."
+    }
+  ],
+  "test_boundaries": [
+    "Native main import in a fresh process with only AppDependencies replaced by in-memory owner fakes",
+    "Recorded Capital owner replaces command_executor._post_json: one owner write per idempotency key, identical body on retry, owner 409 mapped through the Capital error mapping",
+    "No auth, approval, paper/live or capital guard changes"
+  ],
+  "hosted_acceptance": "not run; no deployment or product-closure claim",
+  "remaining_obligations": [
+    "POST /bff/runtimes returns 503 owner_idempotency_unsupported in production until a runtime owner with create_runtime_binding(idempotency_key=...) is wired",
+    "Out of scope and untouched: main-defined in-memory idempotency dicts for strategy/agora adapters, lifecycle/telemetry/governance read ports, L12 monitor lifespan",
+    "Pre-existing failures listed under validation remain on base and are not claimed fixed",
+    "Independent exact-head review and required CI before merge"
+  ]
+}

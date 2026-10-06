@@ -60,7 +60,6 @@ def create_deployment_router(
     resolve_final_idempotency_key: Callable[[Optional[str], Optional[str]], str],
     reject_body_idempotency_key: Callable[[Dict[str, Any]], None],
     request_dry_run_requested: Callable[..., bool],
-    gov_bff_idempotency: Dict[str, Dict[str, Any]],
     publish_event: Callable[..., str],
     sse_buffers: Dict[str, Any],
     sse_subscribers: Dict[str, Any],

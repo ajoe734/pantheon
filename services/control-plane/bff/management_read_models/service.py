@@ -2853,7 +2853,7 @@ class ManagementService:
                 )
             )
 
-        baseline_comparisons = [
+        all_comparisons = [
             _build_trading_pulse_baseline_comparison(
                 store,
                 row,
@@ -2863,9 +2863,13 @@ class ManagementService:
             for row in runtime_rows
         ]
         baseline_by_runtime_id = {
-            str(comparison.get("runtimeId") or comparison.get("runtime_id") or ""): comparison
-            for comparison in baseline_comparisons
+            str(c.get("runtimeId") or c.get("runtime_id") or ""): c
+            for c in all_comparisons
         }
+        baseline_comparisons = [
+            c for row, c in zip(runtime_rows, all_comparisons)
+            if _trading_pulse_stage(row) in {"live", "canary"} or (c.get("paper_live_drift") or {}).get("available")
+        ]
         for row in runtime_rows:
             comparison = baseline_by_runtime_id.get(str(row.get("runtime_id") or ""))
             row["baseline_comparison"] = comparison
@@ -3018,14 +3022,18 @@ class ManagementService:
 
         paper_live_drift_surface = _make_dataset_surface("paper_live_drift_reports")
         live_rows = [row for row in runtime_rows if _trading_pulse_stage(row) in {"live", "canary"}]
+        paper_available_count = sum(
+            1 for row in runtime_rows
+            if _trading_pulse_stage(row) not in {"live", "canary"}
+            and ((row.get("baseline_comparison") or {}).get("paper_live_drift") or {}).get("available")
+        )
         if not live_rows and baseline_available_count == 0:
             if paper_live_drift_surface.get("status") == "ok":
                 paper_live_drift_surface["message"] = "No live runtimes require paper/live baseline comparison."
         elif (
-            runtime_rows
-            and (
-                (live_rows and baseline_available_count < len(live_rows))
-                or (baseline_available_count > 0 and baseline_available_count < len(runtime_rows))
+            (
+                (live_rows and (baseline_available_count - paper_available_count) < len(live_rows))
+                or (paper_available_count > 0 and paper_available_count < (len(runtime_rows) - len(live_rows)))
             )
             and paper_live_drift_surface.get("status") == "ok"
         ):

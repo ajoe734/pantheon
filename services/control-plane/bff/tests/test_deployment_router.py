@@ -39,7 +39,6 @@ def _build_router():
         resolve_final_idempotency_key=lambda resolved, header: resolved or header or "key",
         reject_body_idempotency_key=lambda _payload: None,
         request_dry_run_requested=lambda *_args, **_kwargs: False,
-        gov_bff_idempotency={},
         publish_event=lambda *_args, **_kwargs: "event-id",
         sse_buffers={},
         sse_subscribers={},
