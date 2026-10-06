@@ -469,17 +469,14 @@ class TestReadSurfacePortsRetainedCallerContracts(unittest.TestCase):
                     }
                 ],
             },
-            lifecycle_telemetry_governance_kwargs={
-                "paper_live_drift_reports": [
-                    {
-                        "session_id": "sess-drift-1",
-                        "id": "sess-drift-1",
-                        "runtime_id": "rt-100",
-                        "binding_id": "b-100",
-                        "active": True,
-                    }
-                ],
-            },
+            reconciliation_records_provider=lambda **kw: [
+                {
+                    "runtime_id": "rt-100",
+                    "binding_id": "b-100",
+                    "deployment_stage": "live",
+                    "generated_at": "2026-08-28T00:00:00Z",
+                }
+            ],
             paper_runtime_monitoring_sessions_provider=lambda: [
                 {
                     "session_id": "sess-drift-1",
@@ -807,11 +804,15 @@ class TestEndpointLevelRetainedCallers(unittest.TestCase):
                 publish_event=lambda e_type, data: None,
             )
         )
+        self.original_read_store = getattr(bff_main, "read_store", None)
+        bff_main.read_store = self.ports
         self.client = TestClient(test_app, raise_server_exceptions=False)
         self.auth_headers = {"Authorization": "Bearer admin:admin"}
 
     def tearDown(self) -> None:
-        pass
+        if getattr(self, "original_read_store", None) is not None:
+            from services.control_plane.bff import main as bff_main
+            bff_main.read_store = self.original_read_store
 
 
     def test_endpoint_deployment_plans_list(self) -> None:
