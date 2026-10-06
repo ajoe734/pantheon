@@ -153,7 +153,7 @@ def test_two_scheduler_requests_cannot_execute_one_window_concurrently() -> None
         release_fetch = threading.Event()
         fetch_count = 0
 
-        def fetch(_url):
+        def fetch(_url, **_kwargs):
             nonlocal fetch_count
             fetch_count += 1
             fetch_started.set()
@@ -170,7 +170,7 @@ def test_two_scheduler_requests_cannot_execute_one_window_concurrently() -> None
             mock.patch.dict("os.environ", {"PANTHEON_TENANT_ID": "tenant-a"}),
             mock.patch.object(
                 service,
-                "_fetch_telemetry_runtime_summaries",
+                "fetch_runtime_summaries",
                 side_effect=fetch,
             ),
             ThreadPoolExecutor(max_workers=2) as pool,
@@ -534,7 +534,7 @@ def test_scheduled_response_measures_configured_sla_and_persists_worker_state() 
             mock.patch.dict("os.environ", {"PANTHEON_TENANT_ID": "tenant-a"}),
             mock.patch.object(
                 service,
-                "_fetch_telemetry_runtime_summaries",
+                "fetch_runtime_summaries",
                 return_value=[_summary()],
             ),
             mock.patch.object(service, "_monotonic", side_effect=[10.0, 10.25]),
