@@ -204,3 +204,45 @@ def test_failure_diagnostics_capture_ps_and_unhealthy_logs(
     assert not (tmp_path / "logs-ok.txt").exists()
     log_calls = [c for c in calls if "logs" in c]
     assert all("--tail" in c and "200" in c and "--no-color" in c for c in log_calls)
+
+
+def test_projection_bootstrap_pipes_postgres_config_into_migration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], str | None]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((list(cmd), kwargs.get("input")))
+        stdout = '{"services": {"postgres": {}}}' if "config" in cmd else ""
+        return type("P", (), {"returncode": 0, "stdout": stdout, "stderr": ""})()
+
+    monkeypatch.setattr(harness.subprocess, "run", fake_run)
+    harness._bootstrap_trade_journey_projection("proj", ["a.yml"], {})
+
+    config_cmd, _ = calls[0]
+    assert config_cmd[config_cmd.index("--profile") : config_cmd.index("--profile") + 2] == [
+        "--profile",
+        "core",
+    ]
+    assert config_cmd[-4:] == ["config", "--format", "json", "postgres"]
+    run_cmd, run_input = calls[1]
+    assert run_input == '{"services": {"postgres": {}}}'
+    assert "--no-deps" in run_cmd
+    assert run_cmd[run_cmd.index("--entrypoint") + 1] == "python"
+    assert harness.PROJECTION_BOOTSTRAP_SERVICE in run_cmd
+    assert run_cmd[-4:] == [
+        "scripts.lifecycle_projector_migrate",
+        "--bootstrap-only",
+        "--compose-config-stdin",
+        "--reconcile-runtime-role",
+    ]
+
+
+def test_projection_bootstrap_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(cmd, **_kwargs):
+        code = 0 if "config" in cmd else 3
+        return type("P", (), {"returncode": code, "stdout": "{}", "stderr": ""})()
+
+    monkeypatch.setattr(harness.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="projection bootstrap failed"):
+        harness._bootstrap_trade_journey_projection("proj", ["a.yml"], {})

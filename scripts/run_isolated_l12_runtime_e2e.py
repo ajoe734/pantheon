@@ -103,6 +103,7 @@ STIMULUS_SERVICES: dict[str, dict[str, Any]] = {
     "training": {"port_var": "TRAINING_SESSION_PORT", "default_port": 18099, "health": "/readyz"},
 }
 DB_MIGRATION_SERVICE = "source-ingest-controller-migrate"
+PROJECTION_BOOTSTRAP_SERVICE = "loop-run-projector-scheduler"
 COMPOSE_ALL_PROFILES = ("--profile", "*")
 ISOLATED_SAFE_CONTROLS = {
     "BROKER_PAPER_ENABLED": "true",
@@ -233,6 +234,57 @@ def _project_container_ids(project: str) -> list[str]:
         check=False,
     )
     return sorted(line.strip() for line in output.splitlines() if line.strip())
+
+
+def _bootstrap_trade_journey_projection(
+    project: str,
+    compose_files: list[str],
+    compose_env: Mapping[str, str],
+) -> dict[str, Any]:
+    """Create the relational Trade Journey projection schema and grants.
+
+    Mirrors ``bootstrap_dev_lifecycle_projection`` in deploy_nonprod_vm.sh:
+    the hosted deploy runs this one-shot migration before starting its
+    runtime, and without it loop-run-projector-scheduler never becomes healthy.
+    """
+    config = subprocess.run(
+        _compose_command(
+            project, compose_files, "--profile", "core",
+            "config", "--format", "json", "postgres",
+        ),
+        env=dict(compose_env),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    command = _compose_command(
+        project,
+        compose_files,
+        "run",
+        "--rm",
+        "--build",
+        "--no-deps",
+        "-T",
+        "--entrypoint",
+        "python",
+        PROJECTION_BOOTSTRAP_SERVICE,
+        "-m",
+        "scripts.lifecycle_projector_migrate",
+        "--bootstrap-only",
+        "--compose-config-stdin",
+        "--reconcile-runtime-role",
+    )
+    process = subprocess.run(
+        command,
+        input=config.stdout,
+        env=dict(compose_env),
+        text=True,
+        check=False,
+    )
+    result = {"command": command, "returncode": process.returncode}
+    if process.returncode != 0:
+        raise RuntimeError(f"trade journey projection bootstrap failed: {result!r}")
+    return result
 
 
 def _teardown_project(
@@ -913,6 +965,12 @@ def main(argv: list[str] | None = None) -> int:
                     "canonical database migration failed: "
                     f"{database_migration!r}"
                 )
+            print("[*] Bootstrapping the Trade Journey projection schema...")
+            _bootstrap_trade_journey_projection(
+                args.compose_project,
+                compose_files,
+                compose_env,
+            )
             command = _compose_command(
                 args.compose_project,
                 compose_files,
