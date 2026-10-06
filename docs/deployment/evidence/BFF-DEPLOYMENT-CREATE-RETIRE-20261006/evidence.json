@@ -26,15 +26,12 @@
   },
   "validation": {
     "write_gap": "python -m pytest -q services/control-plane/bff/test_bff_write_gap_2026_05_28.py — 28 passed",
-    "command_bridge": "python -m pytest -q services/control-plane/bff/test_final_command_execution_bridge.py — 6 passed",
-    "dry_run_rbac": "python -m pytest -q services/control-plane/bff/test_bff_dry_run_rbac_contract.py — 4 passed",
-    "tenant_fallback": "python -m pytest -q services/control-plane/bff/tests/test_tenant_fallback_audit.py — 124 passed, 1 skipped",
-    "receipt_owner_routes": "python -m pytest -q services/control-plane/bff/tests/test_receipt_owner_routes.py — 16 passed",
+    "command_bridge_and_dry_run": "python -m pytest -q services/control-plane/bff/test_final_command_execution_bridge.py services/control-plane/bff/test_bff_dry_run_rbac_contract.py — 10 passed",
+    "tenant_fallback_and_receipt_owner": "python -m pytest -q services/control-plane/bff/tests/test_receipt_owner_routes.py services/control-plane/bff/tests/test_tenant_fallback_audit.py — 140 passed, 1 skipped",
     "management_domain_actions": "python -m pytest -q services/control-plane/bff/tests/test_management_domain_actions.py — 22 passed",
-    "product_ownership": "python scripts/check_product_ownership.py — PASS"
+    "read_surface_caller_migration": "python -m pytest -q services/control-plane/bff/tests/test_read_surface_caller_migration.py — 29 passed",
+    "product_ownership": "python scripts/check_product_ownership.py — PASS",
+    "diff_hygiene": "git diff --check — PASS"
   },
-  "observed_suite_gaps": [
-    "services/control-plane/bff/tests/test_read_surface_caller_migration.py: two failures remain in unrelated reconciliation-drift and deployment-list fixture expectations (RECONCILIATION_DRIFT_URL unset; deployment list fixture empty).",
-    "scripts/test_bff_route_diff.py::test_route_diff_baseline_matches_current_failure_surface reports existing backend/frontend route-baseline drift outside these deployment create routes."
-  ]
+  "known_check_gap": "scripts/test_bff_route_diff.py::test_route_diff_baseline_matches_current_failure_surface fails because the frozen route-diff baseline reports 529 failures while current backend/frontend inventory reports 481; the diff shows unrelated route inventory drift across API, Agora, and management surfaces. Product ownership validation passes."
 }
