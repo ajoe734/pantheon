@@ -1,0 +1,21 @@
+{
+  "task_id": "DISTILL-CONTROLLER-TRUTH-20261006",
+  "base_sha": "ddc431ba5624c307e798470d4dad2164f4430f00",
+  "scope": [
+    "Reject persisted tenant/environment mismatch before mutating or saving the checkpoint, consistent with the existing source-ingestion controller contract.",
+    "On a same-scope restart refresh process/controller/deployment/start identity while preserving durable business progress and historical success/failure data.",
+    "Use the existing LoopControllerWriter.record_failure with scheduled_tick truth, rather than record_tick with reconciled_live_proof, on a failed distillation tick. Preserve the original exception and durable local failure if shared publication is unavailable."
+  ],
+  "validation": [
+    {"selection": "test_distillation_controller.py; test_l12_dist_001_transactional_distillation.py; test_l12_mfc_r4_distill_001.py; test_product_v2_source_distillation_r3.py", "result": "40 passed, 5 failed. Tests with a local Registry server explicitly selected REGISTRY_STORE_BACKEND=memory, not durable hosted acceptance."},
+    {"selection": "the five failing local Registry integration cases on immutable exact base ddc431ba5624c307e798470d4dad2164f4430f00", "result": "same five cases failed with degraded Registry delivery; not caused by this change and not silently skipped"},
+    {"selection": "remaining focused cases, including all new restart/failure regressions and the updated durable Registry-outage test", "result": "40 passed, 5 explicitly deselected after baseline reproduction"}
+  ],
+  "not_completed": [
+    "Initial SQLite corruption mechanism, source replayability and coordinated DB/WAL/SHM recovery remain unresolved.",
+    "Rejecting a foreign checkpoint is not a replacement/reset/replay procedure. No checkpoint or queue file on a shared service was changed.",
+    "The five existing local Registry integration failures remain open; no hosted PostgreSQL publication or terminal L2 closure is claimed.",
+    "Canonical review, merge, exact-version deployment and hosted acceptance are pending."
+  ],
+  "operational_actions": "None. No shared worker restart, queue replay, data replacement or deployment."
+}
