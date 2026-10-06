@@ -850,6 +850,10 @@ WHOLE_APP_ALLOWLIST = {
     # missing seam. Operator-authorized single new allowlist entry; do not
     # add another allowlist entry without a separate governed authorization.
     "tests/test_management_read_timeout_and_capacity.py",
+    # BFF-MAIN-PERSONA-RESIDUE-20261006: verifies production composition resolves
+    # the extracted Persona owner definitions and shared store identity through
+    # the real app factory, so importing main is the composition behavior under test.
+    "tests/test_persona_main_residue.py",
     # RESOLVED (BFF-TEST-FULL-MIGRATION-CORRECTIVE-001, P1 AC1/AC2): this file
     # is the composition-root smoke test extracted out of auth/test_policy.py
     # this generation. Its whole purpose is to prove main.py's default wiring

@@ -4,10 +4,12 @@ import tempfile
 from contextlib import contextmanager
 from typing import Iterator
 
+import pytest
 from fastapi.testclient import TestClient
 
 from services.control_plane.bff.action_catalog import get_catalog_entry
 from services.control_plane.bff.auth.policy import bff_error
+from services.control_plane.bff.command_adapters.retired import RETIRED_COMMANDS
 from services.control_plane.bff.command_executor import execute_command_with_status
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.models import CommandStatus, CommandType, ErrorCode, RiskLevel, OperatorIdentity
@@ -136,11 +138,7 @@ def _validate_human_gate_decision(params: dict, identity: OperatorIdentity) -> N
 
 _B5_COMMAND_VALIDATORS = {
     CommandType.HUMAN_GATE_REVOKE: _validate_human_gate_decision,
-    "HumanGateApprove": _validate_human_gate_decision,
-    "HumanGateReject": _validate_human_gate_decision,
-    "HumanGateRequestMoreEvidence": _validate_human_gate_decision,
     "HumanGateRevoke": _validate_human_gate_decision,
-    "HumanGateExtendTtl": _validate_human_gate_decision,
 }
 
 
@@ -232,7 +230,13 @@ def _error_details(response) -> dict:
     return response.json()["error"]["details"]
 
 
-def _create_human_gate_two_man_signature(client: TestClient, signature_id: str, *, target_id: str) -> None:
+def _create_human_gate_two_man_signature(
+    client: TestClient,
+    signature_id: str,
+    *,
+    target_id: str,
+    command: str = "HumanGateRevoke",
+) -> None:
     for operator_id, authorization in (
         ("op-b5-human", HEADERS["Authorization"]),
         ("op-b5-secondary", "Bearer op-b5-secondary:operator:mfa"),
@@ -246,7 +250,7 @@ def _create_human_gate_two_man_signature(client: TestClient, signature_id: str, 
             },
             json={
                 "twoManSignatureId": signature_id,
-                "command": "HumanGateApprove",
+                "command": command,
                 "target": {"type": "HumanGateItem", "id": target_id},
                 "reason": "operator signed the high-risk HumanGate action",
             },
@@ -263,7 +267,7 @@ def test_human_gate_item_id_params_must_match_target_id() -> None:
     with _isolated_b5_security_client() as client:
         response = _submit_human_gate(
             client,
-            command="HumanGateApprove",
+            command="HumanGateRevoke",
             target_id="approval:b5-sec-target",
             params={"human_gate_item_id": "approval:other"},
             idempotency_key="bff-b5-sec-target-mismatch",
@@ -273,20 +277,19 @@ def test_human_gate_item_id_params_must_match_target_id() -> None:
         assert _error_details(response)["reason"] == "HUMAN_GATE_TARGET_MISMATCH"
 
 
-def test_human_gate_approve_reject_revoke_forbid_requester_self_decision() -> None:
+def test_human_gate_revoke_forbids_requester_self_decision() -> None:
     with _isolated_b5_security_client() as client:
         _seed_approval("b5-sec-self", requester_id="op-b5-human")
 
-        for command in ("HumanGateApprove", "HumanGateReject", "HumanGateRevoke"):
-            response = _submit_human_gate(
-                client,
-                command=command,
-                target_id="approval:b5-sec-self",
-                idempotency_key=f"bff-b5-sec-self-{command}",
-            )
+        response = _submit_human_gate(
+            client,
+            command="HumanGateRevoke",
+            target_id="approval:b5-sec-self",
+            idempotency_key="bff-b5-sec-self-HumanGateRevoke",
+        )
 
-            assert response.status_code == 403, response.text
-            assert _error_details(response)["reason"] == "HUMAN_GATE_SELF_APPROVAL_FORBIDDEN"
+        assert response.status_code == 403, response.text
+        assert _error_details(response)["reason"] == "HUMAN_GATE_SELF_APPROVAL_FORBIDDEN"
 
 
 def test_high_risk_human_gate_requires_two_man_and_records_evidence() -> None:
@@ -295,21 +298,40 @@ def test_high_risk_human_gate_requires_two_man_and_records_evidence() -> None:
 
         missing_signature = _submit_human_gate(
             client,
-            command="HumanGateApprove",
+            command="HumanGateRevoke",
             target_id="approval:b5-sec-high",
             idempotency_key="bff-b5-sec-high-missing-two-man",
         )
         assert missing_signature.status_code == 409, missing_signature.text
         assert _error_details(missing_signature)["reason"] == "TWO_MAN_SIGNATURE_MISSING"
 
+        # A signature bound to a different command (e.g. retired HumanGateApprove) is refused
+        _create_human_gate_two_man_signature(
+            client,
+            "tms-b5-sec-wrong-cmd",
+            target_id="approval:b5-sec-high",
+            command="HumanGateApprove",
+        )
+        mismatched_command = _submit_human_gate(
+            client,
+            command="HumanGateRevoke",
+            target_id="approval:b5-sec-high",
+            idempotency_key="bff-b5-sec-high-mismatched-cmd",
+            extra_payload={"twoManSignatureId": "tms-b5-sec-wrong-cmd"},
+        )
+        assert mismatched_command.status_code == 409, mismatched_command.text
+        assert _error_details(mismatched_command)["reason"] == "TWO_MAN_SIGNATURE_BINDING_MISMATCH"
+
+        # A signature bound to HumanGateRevoke is accepted and records precondition evidence
         _create_human_gate_two_man_signature(
             client,
             "tms-b5-sec-high",
             target_id="approval:b5-sec-high",
+            command="HumanGateRevoke",
         )
         accepted = _submit_human_gate(
             client,
-            command="HumanGateApprove",
+            command="HumanGateRevoke",
             target_id="approval:b5-sec-high",
             idempotency_key="bff-b5-sec-high-with-two-man",
             extra_payload={"twoManSignatureId": "tms-b5-sec-high"},
@@ -323,23 +345,33 @@ def test_high_risk_human_gate_requires_two_man_and_records_evidence() -> None:
         assert record["params"]["two_man_signature_id"] == "tms-b5-sec-high"
 
 
-def test_human_gate_extend_ttl_is_capped_by_env(monkeypatch) -> None:
-    monkeypatch.setenv("PANTHEON_HUMAN_GATE_MAX_TTL_SECONDS", "3600")
-    with _isolated_b5_security_client() as client:
-        _seed_approval("b5-sec-ttl", requester_id="risk-owner", risk_level="low")
+RETIRED_HUMAN_GATE_COMMANDS = {
+    "HumanGateApprove": "/bff/approvals/{decision_id}/decide",
+    "HumanGateReject": "/bff/approvals/{decision_id}/decide",
+    "HumanGateRequestMoreEvidence": "GET /bff/approvals/{decision_id}",
+    "HumanGateExtendTtl": "GET /bff/approvals/{decision_id}",
+}
 
+
+@pytest.mark.parametrize("command,expected_replacement", list(RETIRED_HUMAN_GATE_COMMANDS.items()))
+def test_retired_human_gate_commands_fail_410_with_replacement_and_no_stored_command(
+    command: str, expected_replacement: str
+) -> None:
+    with _isolated_b5_security_client() as client:
+        idempotency_key = f"bff-b5-sec-retired-{command}"
         response = _submit_human_gate(
             client,
-            command="HumanGateExtendTtl",
-            target_id="approval:b5-sec-ttl",
-            params={"ttlSeconds": 3601},
-            idempotency_key="bff-b5-sec-ttl-cap",
+            command=command,
+            target_id="approval:b5-sec-retired",
+            idempotency_key=idempotency_key,
         )
-
-        assert response.status_code == 422, response.text
+        assert response.status_code == 410, response.text
         details = _error_details(response)
-        assert details["reason"] == "HUMAN_GATE_TTL_EXCEEDS_CAP"
-        assert details["maxTtlSeconds"] == 3600
+        assert details["replacement"] == expected_replacement
+        assert response.json()["error"]["code"] == "ACTION_RETIRED"
+        assert expected_replacement in response.text
+        assert _state.command_store.get_command_by_idempotency_key(idempotency_key, operator_id="op-b5-human") is None
+        assert _state.command_store._get_all_commands() == []
 
 
 def test_human_gate_revoke_fails_closed_after_downstream_execution() -> None:
@@ -365,8 +397,15 @@ def test_human_gate_revoke_fails_closed_after_downstream_execution() -> None:
 
 
 def test_human_gate_catalog_requires_two_man_evidence() -> None:
-    for command in ("HumanGateApprove", "HumanGateReject", "HumanGateRevoke"):
-        entry = get_catalog_entry(command)
-        assert entry is not None
-        assert entry.risk_level == RiskLevel.HIGH
-        assert entry.requires_two_man is True
+    revoke_entry = get_catalog_entry("HumanGateRevoke")
+    assert revoke_entry is not None
+    assert revoke_entry.risk_level == RiskLevel.HIGH
+    assert revoke_entry.requires_two_man is True
+
+    for retired_cmd in (
+        "HumanGateApprove",
+        "HumanGateReject",
+        "HumanGateRequestMoreEvidence",
+        "HumanGateExtendTtl",
+    ):
+        assert get_catalog_entry(retired_cmd) is None

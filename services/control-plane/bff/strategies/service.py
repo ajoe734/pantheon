@@ -50,6 +50,11 @@ except (ImportError, ValueError):
 log = logging.getLogger(__name__)
 
 
+def list_strategy_summaries(read_store: Any) -> List[Dict[str, Any]]:
+    """Return canonical strategy specs from the strategy read owner."""
+    return list(read_store.list_strategy_specs() or [])
+
+
 class StrategiesService:
     def __init__(
         self,

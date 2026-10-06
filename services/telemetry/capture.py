@@ -18,7 +18,7 @@ from enum import Enum
 
 try:
     import jsonschema
-except ImportError:
+except ImportError:  # images that only import this package (lineage-read) do not ship it; validate_event fails closed
     jsonschema = None
 
 log = logging.getLogger(__name__)
@@ -153,10 +153,13 @@ class TelemetryCapture:
         Returns
         -------
         bool
-            True if valid or schema not loaded, False if invalid
+            True if valid or no schema is configured, False if invalid or the schema itself is broken
         """
-        if not self.schema or not jsonschema:
+        if not self.schema:
             return True
+        if jsonschema is None:
+            log.error("jsonschema is unavailable; rejecting event instead of skipping validation")
+            return False
 
         try:
             jsonschema.validate(instance=event, schema=self.schema)
@@ -166,7 +169,7 @@ class TelemetryCapture:
             return False
         except jsonschema.SchemaError as e:
             log.error(f"Schema error: {e.message}")
-            return True
+            return False
 
     def capture_pnl(
         self,

@@ -155,8 +155,8 @@ class QueryResponse(BaseModel):
 
 
 def validate_against_schema(event: dict[str, Any]) -> None:
-    if TRADER_FEEDBACK_VALIDATOR is None:  # pragma: no cover - exercised when dependency missing
-        return
+    if TRADER_FEEDBACK_VALIDATOR is None:
+        raise RuntimeError("jsonschema is required to validate trader feedback")
     TRADER_FEEDBACK_VALIDATOR.validate(event)
 
 

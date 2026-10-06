@@ -105,7 +105,13 @@ def test_main_py_reuses_shared_instance_for_overlay_and_builder_call_sites() -> 
     """The remaining main.py call sites must go through persona_service, not a
     bare module function."""
     text = _main_py_source()
-    assert "persona_service.overlay_source_health_truth(" in text
+    service_text = (BFF_DIR / "personas" / "service.py").read_text(encoding="utf-8")
+    projection_start = service_text.index("def _project_persona_dto(")
+    projection_end = service_text.index("\ndef ", projection_start + 1)
+    projection = service_text[projection_start:projection_end]
+    assert "_overlay_source_health_truth(" in projection
+    assert "_active_persona_service().overlay_source_health_truth(" in service_text
+    assert "overlay_source_health_truth(" not in text
     assert "persona_service.build_persona_health_items(" in text
     # No bare-function call sites of the retired names remain.
     for name in ("_overlay_source_health_truth(", "_build_persona_health_items("):
