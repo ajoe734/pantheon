@@ -55,8 +55,14 @@
     "_composed_dataset_surface_status", "_composed_surface_status", "_dataset_source_after_read", "_dataset_surface_status", "_decode_page_token", "_deprecated_bff_path_response", "_foundation_audit_for_command_record", "_incident_home_severity", "_latest_promotion_review_command", "_list_governance_audit_events", "_list_persona_records", "_loop_run_controller_is_formal", "_loop_run_projection_metadata", "_loop_run_surface_status", "_loop_run_truth_source", "_management_avg", "_management_count_by", "_management_number", "_meta_staleness", "_page_slice", "_parse_rfc3339", "_performance_ranking_source_surface", "_project_final_command_response", "_promotion_review_decision_projection", "_promotion_review_submission_projection", "_raise_if_read_surface_unavailable", "_read_store_fixture_records", "_read_surface_meta", "_read_surface_state", "_sem_command_response", "_surface_status"
   ],
   "validation": [
-    {"command": "cd services/control-plane/bff && /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q tests/test_persona_main_residue.py", "result": "2 passed in 44.59s after merging origin/dev at 64cdd49c220fb44f6180d37744adc489d447e533; 2 jsonschema.RefResolver deprecation warnings", "exit_status": 0}
+    {"command": "cd services/control-plane/bff && /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q tests/test_persona_main_residue.py", "result": "2 passed in 44.59s after merging origin/dev at 64cdd49c220fb44f6180d37744adc489d447e533; 2 jsonschema.RefResolver deprecation warnings", "exit_status": 0},
+    {"command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); $PANTHEON_PY -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py::test_non_whitelisted_main_importers_is_live_scanned_and_bounded services/control-plane/bff/tests/test_persona_main_residue.py", "result": "3 passed in 96.57s; 2 jsonschema.RefResolver deprecation warnings", "exit_status": 0},
+    {"command": "cd services/control-plane/bff && $PWD/.venv-pantheon/bin/python -m pytest -q", "result": "Initial collection found missing psycopg; installed psycopg[binary] only in this checkout's .venv-pantheon and retried. Retry was killed by the 1200-second foreground timeout after reaching 10%; no terminal pytest summary, so this is not a pass and provides no base/head full-suite comparison.", "exit_status": "timeout after 1200 seconds"}
   ],
+  "review_follow_up": {
+    "scanner_regression": "Fixed: tests/test_persona_main_residue.py is now an explicit composition_allowlist / WHOLE_APP_ALLOWLIST entry because it verifies production composition behavior; inventory total_test_files incremented to 388. The live scan now reports no non-whitelisted importer.",
+    "full_bff_suite_comparison": "Unresolved. A full head run exceeded the 1200-second bound at 10%; a detached base worktree could not be created because the shared Git metadata directory is read-only. Do not treat the partial run as passing or claim base/head parity."
+  },
   "implementation_constraints": {
     "production_code_net_line_budget": 0,
     "new_production_code": false,

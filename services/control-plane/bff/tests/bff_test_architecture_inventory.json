@@ -2,7 +2,7 @@
   "task_id": "BFF-TEST-ARCH-001",
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
-  "total_test_files": 387,
+  "total_test_files": 388,
   "migrated_in_task_count": 33,
   "composition_allowlist": [
     "auth/test_composition_root_smoke.py",
@@ -21,6 +21,7 @@
     "tests/test_bff_rebalance_proposals.py",
     "tests/test_bff_test_architecture.py",
     "tests/test_http_auth_composition_owner.py",
+    "tests/test_persona_main_residue.py",
     "tests/test_main_composition_seam_extraction_002.py",
     "tests/test_main_composition_seam_extraction_003.py",
     "tests/test_management_read_timeout_and_capacity.py",
