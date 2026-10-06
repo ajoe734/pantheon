@@ -86,7 +86,10 @@ def _headers(token: str | None = None, tenant_id: str | None = None) -> dict[str
 def _urlopen_json(request: urllib.request.Request, timeout: float) -> Mapping[str, Any]:
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-            return _read_response_json(response)
+            payload = json.loads(response.read())
+            if not isinstance(payload, Mapping):
+                raise ValueError("HTTP JSON response must be an object")
+            return payload
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):
             raise StimulusError(
@@ -360,7 +363,13 @@ def fetch_committed_lifecycle_identity(
             ) from exc
         if row is None:
             return None
-        identity = _committed_lifecycle_identity_from_row(dict(row))
+        try:
+            identity = _committed_lifecycle_identity_from_row(dict(row))
+        except ValueError as exc:
+            raise StimulusError(
+                "telemetry_committed_payload_invalid",
+                "committed telemetry lifecycle payload could not be decoded",
+            ) from exc
         if _identity_is_target_position(
             identity,
             binding=binding,
