@@ -14540,10 +14540,10 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
             )
             self.assertEqual(terminal_targets, [])
 
-    def test_process_queue_preserves_existing_last_wait_reason_when_health_refresh_required(
+    def test_process_queue_updates_last_wait_reason_and_tracks_last_blocking_reason(
         self,
     ) -> None:
-        """When health refresh is required, preserve prior blocker like skipped_dirty_worktree."""
+        """last_wait_reason reflects most recent reason; last_blocking_reason tracks last non-refresh blocker."""
         self.config.setdefault("agents", {})["claude"] = {
             "id": "claude",
             "display_name": "Claude",
@@ -14552,14 +14552,22 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
             "max_parallel": 2,
         }
         self.config.setdefault("providers", {})["claude"] = {
-            "account": "claude-account",
+            "account": "claude_account",
             "delivery_mode": "claude_cli",
         }
+        self.config.setdefault("ready_dispatcher", {}).setdefault(
+            "max_concurrent_per_account", {}
+        )["claude_account"] = 2
+        future_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
         expired_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
         self.state["delivery_health"] = healthy_delivery_health(self.config)
+        self.state["delivery_health"]["accounts"]["claude_account"] = {
+            "state": "healthy",
+            "valid_until": future_at,
+        }
         self.state["delivery_health"]["endpoints"]["claude"] = {
-            "state": "expired",
-            "valid_until": expired_at,
+            "state": "healthy",
+            "valid_until": future_at,
         }
         event = {
             "event_id": "evt-pending-recon",
@@ -14569,13 +14577,29 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
             "target_agent": "claude",
             "delivery_endpoint_id": "claude",
             "reason": "owned_in_progress_dispatch",
+            "message": "wake",
         }
         task = task_fixture("RECON-CONSUMER-TIMEOUT-20261006", status="in_progress", owner="Claude")
-        prior_blocker = "Cannot lease isolated worker worktree /tmp/... (skipped_dirty_worktree)"
         runtime_state.store_queue_event(self.state, event)
-        self.state["queue"]["events"]["evt-pending-recon"]["status"] = "pending"
-        self.state["queue"]["events"]["evt-pending-recon"]["last_wait_reason"] = prior_blocker
 
+        # 1. Blocker A: e.g. dirty worktree guard fails
+        blocker_a = "Cannot lease isolated worker worktree /tmp/... (skipped_dirty_worktree)"
+        with mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}), \
+             mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, "ok")), \
+             mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(False, blocker_a)):
+            supervisor.process_queue(self.config, self.state)
+
+        record = self.state["queue"]["events"]["evt-pending-recon"]
+        self.assertEqual(record["status"], "pending")
+        self.assertEqual(record["last_wait_reason"], blocker_a)
+        self.assertEqual(record["last_blocking_reason"], blocker_a)
+        self.assertTrue(record.get("last_blocking_reason_at"))
+
+        # 2. Then refresh-required: delivery health expires
+        self.state["delivery_health"]["endpoints"]["claude"] = {
+            "state": "expired",
+            "valid_until": expired_at,
+        }
         health_demands: list[dict[str, str]] = []
         with mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}):
             supervisor.process_queue(
@@ -14584,19 +14608,37 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
                 health_refresh_demand=health_demands,
             )
 
-        record = self.state["queue"]["events"]["evt-pending-recon"]
         self.assertEqual(record["status"], "pending")
-        self.assertEqual(record["last_wait_reason"], prior_blocker)
+        # last_wait_reason reflects the MOST RECENT reason (health_refresh_required)
+        self.assertEqual(record["last_wait_reason"], "health_refresh_required")
+        # last_blocking_reason retains the prior non-refresh blocker
+        self.assertEqual(record["last_blocking_reason"], blocker_a)
         self.assertIn({"scope": "endpoint", "id": "claude"}, health_demands)
 
-        # If last_wait_reason was None, health_refresh_required is recorded
-        record["last_wait_reason"] = None
+        # 3. Then A fixed and still refresh-required: worktree is clean, but health still needs refresh
         with mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}):
-            supervisor.process_queue(
-                self.config,
-                self.state,
-            )
+            supervisor.process_queue(self.config, self.state)
+
+        self.assertEqual(record["status"], "pending")
+        # last_wait_reason remains health_refresh_required (not showing the fixed blocker A!)
         self.assertEqual(record["last_wait_reason"], "health_refresh_required")
+        self.assertEqual(record["last_blocking_reason"], blocker_a)
+
+        # 4. When started: health refreshed and worker launches, clearing wait/blocking reasons
+        self.state["delivery_health"]["endpoints"]["claude"] = {
+            "state": "healthy",
+            "valid_until": future_at,
+        }
+        with mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}), \
+             mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, "ok")), \
+             mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, "clean")), \
+             mock.patch.object(supervisor, "start_worker_for_request", return_value=(True, "run-123", {})):
+            supervisor.process_queue(self.config, self.state)
+
+        self.assertEqual(record["status"], "started")
+        self.assertNotIn("last_wait_reason", record)
+        self.assertNotIn("last_blocking_reason", record)
+        self.assertNotIn("last_blocking_reason_at", record)
 
     def test_probe_targets_prioritizes_queued_demand_over_idle_targets(self) -> None:
         """Queued demand targets are ordered before idle refresh targets to prevent probe starvation."""

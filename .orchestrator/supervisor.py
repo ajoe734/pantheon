@@ -3749,6 +3749,14 @@ def review_pr_merge_state_is_conflicted(merge_state: str | None) -> bool:
     return str(merge_state or "").strip().upper() == "DIRTY"
 
 
+def _set_pending_wait_reason(record: dict[str, Any], reason: str) -> None:
+    record["status"] = "pending"
+    record["last_wait_reason"] = reason
+    if reason != "health_refresh_required":
+        record["last_blocking_reason"] = reason
+        record["last_blocking_reason_at"] = utc_now()
+
+
 def process_queue(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -3948,9 +3956,7 @@ def process_queue(
                 record["processed_at"] = utc_now()
                 record["skip_reason"] = reason_code
             else:
-                record["status"] = "pending"
-                if reason_code != "health_refresh_required" or not record.get("last_wait_reason"):
-                    record["last_wait_reason"] = reason_code
+                _set_pending_wait_reason(record, reason_code)
                 if decision.needs_health_refresh:
                     record["last_health_refresh_requested_at"] = utc_now()
                     if health_refresh_demand is not None:
@@ -3970,8 +3976,9 @@ def process_queue(
             if review_pr_merge_state_is_conflicted(merge_state):
                 reference = review_bound_pr_reference(config, review_task)
                 pr_label = f"{reference[0]}#{reference[1]}" if reference else task_id
-                record["status"] = "pending"
-                record["last_wait_reason"] = f"review_pr_dirty:{pr_label}:{merge_state}"
+                _set_pending_wait_reason(
+                    record, f"review_pr_dirty:{pr_label}:{merge_state}"
+                )
                 record["review_pr_dirty_hold_at"] = utc_now()
                 changed = True
                 continue
@@ -3985,8 +3992,7 @@ def process_queue(
             worker_base_snapshots=worker_base_snapshots,
         )
         if not workspace_ok:
-            record["status"] = "pending"
-            record["last_wait_reason"] = workspace_message
+            _set_pending_wait_reason(record, workspace_message)
             record["worktree_lease_blocked_at"] = utc_now()
             changed = True
             continue
@@ -4001,8 +4007,7 @@ def process_queue(
             cwd=Path(str(workspace_path)) if workspace_path else None,
         )
         if not guard_ok:
-            record["status"] = "pending"
-            record["last_wait_reason"] = guard_message
+            _set_pending_wait_reason(record, guard_message)
             record["dirty_tree_guard_at"] = utc_now()
             changed = True
             continue
@@ -4063,8 +4068,7 @@ def process_queue(
                     "account_id": agent_account_id(config, request.agent_id),
                     "probe": auth_probe,
                 }])
-                record["status"] = "pending"
-                record["last_wait_reason"] = "endpoint_retry_after"
+                _set_pending_wait_reason(record, "endpoint_retry_after")
                 record["error"] = auth_probe.get("error")
                 changed = True
                 continue
@@ -4179,7 +4183,8 @@ def process_queue(
         record["lease_acquired_at"] = _isoformat_utc(queue_started_at)
         record["lease_expires_at"] = queue_lease_expiry(config, queue_started_at)
         record["processed_at"] = _isoformat_utc(queue_started_at)
-        record.pop("last_wait_reason", None)
+        for key in ("last_wait_reason", "last_blocking_reason", "last_blocking_reason_at"):
+            record.pop(key, None)
         sync_dispatched_task_status(
             config,
             event,
@@ -13121,6 +13126,8 @@ def _reset_queue_record_for_redispatch(record: dict[str, Any], *, reason: str) -
         "lease_expires_at",
         "lease_released_at",
         "last_wait_reason",
+        "last_blocking_reason",
+        "last_blocking_reason_at",
         "run_id",
     ):
         record.pop(key, None)
@@ -16258,12 +16265,24 @@ def build_dispatch_plan(
     for target_list in (
         queued_intent_health_refresh_targets(config, scratch, queue_snapshot),
         unavailable_assignment_fallback_refresh_targets(config, scratch, status_snapshot),
+        # With zero active workers, nothing else will ever touch a fallback
+        # candidate's lane again on its own -- see
+        # ``zero_fleet_assignment_refresh_targets`` for the self-lock this
+        # closes. A running fleet (live_total > 0) gets nothing extra here.
         zero_fleet_assignment_refresh_targets(
             config, scratch, status_snapshot, live_total=live_total
         ),
+        # A startup or otherwise idle supervisor still needs to repair due
+        # evidence.  Keep these targets after task/fallback demand so bounded
+        # probing spends the current cycle on an immediately blocked task first.
         idle_delivery_health_refresh_targets(
             config, scratch, status_snapshot=status_snapshot
         ),
+        # Startup, a config-topology change, or an explicit Human/Ops request may
+        # authorize probing a lane whose cached retry_at has not yet elapsed.
+        # This bypass is bounded to those exact triggers (see
+        # ``authorized_delivery_health_refresh_targets``); it is not a
+        # every-cycle probe path.
         authorized_delivery_health_refresh_targets(config, scratch),
     ):
         for target in target_list:
