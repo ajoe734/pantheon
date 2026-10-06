@@ -119,14 +119,77 @@
   "acceptance": {
     "1_authorization": "explicit operator authorization recorded above; coordinator-only; no worker access",
     "2_inventory": "every MinIO volume and bucket recorded with counts and bytes; configured consumers (compose at the deployed SHA) and hosted effective consumers (printenv across all 54 running containers) recorded, plus a live connection sample; GCS attachment configuration in the running BFF and the project bucket list recorded; no content or secrets",
-    "3_preserve_and_restore": "PARTIAL: MinIO holds 0 objects and 0 versions, so no application-object backup, restore or migration is needed for the observed store; GCS tenant/session and identity contracts could not be verified (no bucket exists) and are carried as open_obligations, not claimed satisfied",
-    "4_no_destructive_change": "no volume, object, credential, bucket policy or hosting change; one read-only alpine image was pulled on the VM to run find against the volume"
+    "3_preserve_and_restore": "MET per the operator decision of 2026-10-05: no populated store exists (MinIO empty in every round, no GCS bucket, no local attachment files), so no backup, restore or old-reference readback is required. GCS generation/metageneration/custom-checksum and tenant/session verification is NOT APPLICABLE on hosted dev and is not claimed as passed; source-level GCS semantics are carried by OSS-OBJECT-STORE-CUTOVER-002 acceptance 2.",
+    "4_no_destructive_change": "no volume, object, credential, bucket, IAM, scope or hosting change in any round; the first round pulled one read-only alpine image on the VM to run find against the volume"
   },
-  "conclusion": "At observation time the dev MinIO store holds no application object and no GCS attachment bucket is configured or exists in the project. OSS-OBJECT-STORE-CUTOVER-002 may retire the MinIO setup without an object migration, but must remove the configured S3 settings from the 18 services, keep the unverified GCS tenant/session and identity contracts as open obligations for any future bucket, and obtain its own per-operation authorization for any hosted change.",
+  "conclusion": "The dev object stores hold no application data: MinIO pantheon-artifacts is empty, no GCS bucket exists in pantheon-dev-20260902, and the local attachment fallback is absent. The operator accepted this inventory on 2026-10-05 as complete for MinIO retirement. OSS-OBJECT-STORE-CUTOVER-002 may retire MinIO without an object migration; it must remove the S3 settings from every configured consumer, prove source-level GCS semantics (its acceptance 2) and obtain its own per-operation authorization for any hosted change.",
   "open_obligations": [
-    "GCS attachment store: generation/metageneration/custom checksum contracts and tenant/session access are NOT verified because no bucket is configured or exists; any future GCS attachment bucket must be verified with authorized non-destructive evidence before object-store cutover relies on it",
-    "MinIO consumer coverage is limited to the configured settings, the running stack's resolved settings and one connection sample; OSS-OBJECT-STORE-CUTOVER-002 must remove the S3 settings from the 18 services and confirm no service fails without them",
-    "Any hosted change made by OSS-OBJECT-STORE-CUTOVER-002 (stopping MinIO, removing the volume) needs its own per-operation authorization; this inventory authorizes nothing"
+    "Handed to OSS-OBJECT-STORE-CUTOVER-002: remove the S3 settings from every configured consumer (18 to 20 containers depending on the round) and confirm no service fails without them; configuration is not traffic evidence",
+    "Handed to OSS-OBJECT-STORE-CUTOVER-002 acceptance 2: source-level GCS generation/metageneration/custom-checksum and tenant/session semantics; any future hosted GCS attachment bucket needs its own authorized non-destructive verification",
+    "Any hosted change (stopping MinIO, removing the volume, provisioning a bucket, changing scopes) needs its own per-operation authorization; this inventory authorizes nothing"
   ],
-  "status": "inventory complete; acceptance 3 GCS contract verification pending (open_obligations)"
+  "status": "inventory complete; accepted by the operator on 2026-10-05 for MinIO retirement; GCS hosted verification not applicable",
+  "supplementary_rounds": [
+    {
+      "observed_at": "2026-10-03T02:17:13Z",
+      "by": "coordinator, operator-authorized, metadata only",
+      "source": "PR #6105 comment 2026-10-03T02:20:29Z",
+      "findings": [
+        "MinIO pantheon-artifacts: 0 live objects, 0 bytes, 0 versions, 0 delete markers; listings complete",
+        "pantheon_minio-data: 0 non-system files; 30 .minio.sys files, 32761 bytes (stat only)",
+        "18 containers configure the S3 endpoint (configuration, not traffic)",
+        "no GCS bucket binding in container environments; a local gcloud bucket list returned 403, so this round did not confirm the project bucket count"
+      ]
+    },
+    {
+      "observed_at": "2026-10-03T23:55:59Z to 23:58:22Z",
+      "by": "coordinator, operator-authorized, metadata only",
+      "source": "PR #6105 comment 2026-10-04T00:03:54Z",
+      "findings": [
+        "GCE metadata identity asserted first; the VM application identity enumerated project GCS buckets: 0 buckets",
+        "MinIO pantheon-artifacts: 0 live objects, versions, delete markers and bytes; complete enumerations",
+        "volume: 0 non-system files; 36 system files, 37401 bytes (stat only)",
+        "20 configured container consumers in total (configuration, not traffic)",
+        "no GCS bucket binding in container environments"
+      ]
+    },
+    {
+      "observed_at": "2026-10-04T05:05:18Z",
+      "by": "coordinator, operator-authorized, metadata only",
+      "source": "PR #6105 comment 2026-10-04T05:07:43Z",
+      "findings": [
+        "identity pantheon-dev-20260902 / pantheon-dev-deploy / asia-east1-b asserted from GCE metadata",
+        "operator-bff uses Compute Engine ADC; GOOGLE_APPLICATION_CREDENTIALS unset",
+        "VM OAuth storage scope is devstorage.read_only",
+        "no configured attachment bucket; the local fallback /data/bff/management-ai-attachments is absent, so 0 files and 0 bytes",
+        "source scan at dev 0e520cb: MinIO bindings are Compose/posture-only; no boto3/botocore/MinIO/S3 client construction in non-test source"
+      ]
+    }
+  ],
+  "supplementary_rounds_note": "The three rounds are summarised from the coordinator's PR comments; their raw files were written to the coordinator host's /tmp and are not part of this repository. System-file counts in the MinIO volume differ between rounds because MinIO rewrites its own metadata; no application file appeared in any round.",
+  "operator_decision": {
+    "decided_at": "2026-10-05",
+    "decision": "The hosted inventory is accepted as complete for MinIO retirement.",
+    "basis": "No populated store exists: 0 GCS buckets visible to the VM identity, MinIO pantheon-artifacts empty (0 live objects, versions, delete markers and bytes), 0 non-system volume files, no configured attachment bucket, local attachment fallback directory absent. Therefore no backup/restore or old-reference readback is required.",
+    "gcs_contract_verification": "NOT APPLICABLE on hosted dev: no bucket exists, the VM storage scope is devstorage.read_only and provisioning is excluded by acceptance 4. It is not claimed as passed. Source-level GCS semantics remain required by OSS-OBJECT-STORE-CUTOVER-002 acceptance 2.",
+    "not_done": "Coordinator attestation (from the operator chat, not machine-verifiable here): a bucket provisioning plan the operator authorized in chat on 2026-10-02 was never executed, because no available account could manage project pantheon-dev-20260902; the 2026-10-05 decision supersedes it. Machine-checkable in the rounds above: no deletion, IAM, bucket, scope or credential change was made.",
+    "source": "canonical task record OSS-STORAGE-INVENTORY-20261002, next field written by the Human/Ops coordinator at 2026-10-05T12:36:47Z ('Operator decision 2026-10-05: ...'); the hosted completion track was set to done at the same time"
+  },
+  "independent_review": {
+    "2026-10-02_to_03": {
+      "reviewer": "Codex2 (codex-cli 0.153.0, read-only, run by the coordinator)",
+      "rounds": [
+        "REJECT (5 findings, fixed)",
+        "REJECT (3 findings, fixed)",
+        "ACCEPT with acceptance 3 GCS verification pending"
+      ]
+    },
+    "2026-10-06": {
+      "reviewer": "Antigravity2 (agy, gemini-3.8-flash-high, --mode plan --sandbox, no tools, run by the coordinator; canonical reviewer reassigned from Codex2 because Codex/Codex2 are stopped)",
+      "rounds": [
+        "REJECT (4 findings: the decision was not visible because the reassignment had overwritten the task next field; the 2026-10-02 sentence lacked a source)",
+        "ACCEPT after the original next text was restored and the attestation was labelled"
+      ]
+    }
+  }
 }
