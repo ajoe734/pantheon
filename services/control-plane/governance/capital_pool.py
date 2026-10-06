@@ -147,12 +147,11 @@ def atomic_save_json(path: Path, records: Any) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp_name, path)
+        dfd = os.open(str(path.parent), os.O_RDONLY)
         try:
-            dfd = os.open(str(path.parent), os.O_RDONLY)
             os.fsync(dfd)
+        finally:
             os.close(dfd)
-        except OSError:
-            pass
     finally:
         if os.path.exists(temp_name):
             os.unlink(temp_name)
