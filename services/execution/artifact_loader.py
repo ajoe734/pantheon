@@ -7,10 +7,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping
 
-try:
-    import jsonschema
-except ImportError:  # pragma: no cover - jsonschema is expected in local validation flows
-    jsonschema = None
+import jsonschema
 
 
 class ArtifactLoadError(ValueError):
@@ -237,11 +234,7 @@ class ArtifactLoader:
         self._store = LeanObjectStoreAdapter.from_runtime(object_store)
         self._schema_path = Path(schema_path or self.default_schema_path()).resolve()
         self._schema = _load_schema(self._schema_path)
-        self._validator = (
-            jsonschema.Draft7Validator(self._schema)
-            if jsonschema is not None
-            else None
-        )
+        self._validator = jsonschema.Draft7Validator(self._schema)
 
     @staticmethod
     def default_schema_path() -> Path:
@@ -376,12 +369,11 @@ class ArtifactLoader:
             for field in ("parent_registry_ids", "source_run_ids", "source_dataset_refs", "source_strategy_spec_id"):
                 if lineage.get(field) is None:
                     lineage.pop(field, None)
-        if self._validator is not None:
-            errors = sorted(self._validator.iter_errors(metadata), key=lambda error: list(error.path))
-            if errors:
-                first = errors[0]
-                path = ".".join(str(part) for part in first.path) or "<root>"
-                raise ArtifactLoadError(f"Metadata schema validation failed at {path}: {first.message}")
+        errors = sorted(self._validator.iter_errors(metadata), key=lambda error: list(error.path))
+        if errors:
+            first = errors[0]
+            path = ".".join(str(part) for part in first.path) or "<root>"
+            raise ArtifactLoadError(f"Metadata schema validation failed at {path}: {first.message}")
 
         if metadata.get("strategy_id") != strategy_id:
             raise ArtifactLoadError(

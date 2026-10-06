@@ -19,6 +19,7 @@ from services.control_plane.bff.auth import policy as auth_policy
 from services.control_plane.bff.capital.router import create_capital_router
 from services.control_plane.bff.command_adapters.router import create_command_adapters_router
 from services.control_plane.bff.command_adapters.service import CommandAdapterService
+from services.control_plane.bff.command_adapters.retired import RETIRED_COMMANDS
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.core.app_factory import create_core_router
 from services.control_plane.bff.core.errors import register_error_handlers
@@ -35,9 +36,6 @@ from services.control_plane.bff.personas.routes.common import (
     run_management_read as _real_run_management_read,
 )
 from services.control_plane.bff.personas.service import (
-    _human_inbox_decision_projection_from_record,
-    _human_inbox_decision_recommendation_id,
-    _human_inbox_trusted_promotion_submission,
     create_persona_registry_write_owner,
 )
 from services.control_plane.bff.ports import ReadSurfacePorts
@@ -604,14 +602,14 @@ def test_promotion_reviews_list_and_detail_are_readable_by_operator() -> None:
         review = list_body["data"]["items"][0]
         assert review["requires_human_gate_decision"] is True
         assert review["live_capital_mutation"] is False
-        assert review["status"] == "recommended_not_submitted"
+        assert review["status"] == "advisory_report"
         assert review["submitted"] is False
-        assert review["allowedActions"]["canSubmit"] is True
+        assert review["allowedActions"]["canSubmit"] is False
         assert review["allowedActions"]["canApprove"] is False
         assert review["promotion_path"]["from_stage"] == "paper"
         assert review["promotion_path"]["target_stage"] == "canary_candidate"
-        assert review["links"]["decisions"].endswith("/decisions")
-        assert review["links"]["submit"].endswith("/submit")
+        assert "decisions" not in review["links"]
+        assert "allowed_decisions" not in review
 
         detail_response = client.get(
             f"/bff/management/promotion-reviews/{review['review_id']}",
@@ -623,424 +621,61 @@ def test_promotion_reviews_list_and_detail_are_readable_by_operator() -> None:
         assert detail_body["meta"]["live_capital_mutation"] is False
 
 
-def test_quarterly_recommendation_submit_creates_promotion_review_inbox_item(monkeypatch) -> None:
+def test_promotion_review_decision_route_is_retired_without_stored_command() -> None:
     with _isolated_client() as (client, store, command_store):
         review = _first_review(client)
-        submit = _submit_review(client, review["review_id"], idem=_idem())
-        assert submit.status_code == 202, submit.text
-        body = submit.json()
-        assert body["data"]["submitted"] is True
-        assert body["data"]["review_id"] == review["review_id"]
-        assert body["data"]["human_inbox_id"].startswith("promotion_review:")
-        assert body["data"]["live_capital_mutation"] is False
-
-        records = command_store._get_all_commands()
-        assert len(records) == 1
-        assert records[0]["type"] == "QuarterlyRankingRecommendationSubmit"
-        assert records[0]["target"]["type"] == ObjectType.RANKING.value
-        assert records[0]["params"]["recommendation_id"] == review["recommendation_id"]
-        assert records[0]["params"]["live_capital_mutation"] is False
-
-        detail = client.get(
-            f"/bff/management/promotion-reviews/{review['review_id']}",
-            headers=OPERATOR_HEADERS,
-        )
-        assert detail.status_code == 200, detail.text
-        detail_data = detail.json()["data"]
-        assert detail_data["submitted"] is True
-        assert detail_data["status"] == "pending_human_gate"
-        assert detail_data["allowedActions"]["canApprove"] is True
-
-        def fail_if_ranking_is_rebuilt(*_args, **_kwargs):
-            raise AssertionError("Human Inbox must project the durable submission without rebuilding PM12")
-
-        monkeypatch.setattr(
-            "services.control_plane.bff.personas.service._promotion_review_find",
-            fail_if_ranking_is_rebuilt,
-        )
-        monkeypatch.setattr(
-            "services.control_plane.bff.governance.human_inbox._build_persona_readiness_items",
-            fail_if_ranking_is_rebuilt,
-        )
-        for method_name in (
-            "list_governance_review_queue_items",
-            "list_approval_queue_items",
-        ):
-            monkeypatch.setattr(store, method_name, fail_if_ranking_is_rebuilt)
-
-        inbox = client.get(
-            "/bff/management/human-inbox",
-            headers=OPERATOR_HEADERS,
-            params={"source_type": "promotion_review", "page_size": 10},
-        )
-        assert inbox.status_code == 200, inbox.text
-        inbox_items = inbox.json()["data"]["items"]
-        assert any(item["promotion_review_id"] == review["review_id"] for item in inbox_items)
-        assert inbox.json()["meta"]["surfaces"]["promotion_reviews"]["source"] == "command_store"
-
-        inbox_detail = client.get(
-            f"/bff/management/human-inbox/{detail_data['human_inbox_id']}",
-            headers=OPERATOR_HEADERS,
-        )
-        assert inbox_detail.status_code == 200, inbox_detail.text
-        assert inbox_detail.json()["data"]["source_type"] == "promotion_review"
-
-
-def test_quarterly_recommendation_submit_rejects_caller_source_snapshot_tampering() -> None:
-    with _isolated_client() as (client, store, command_store):
-        review = _first_review(client)
-        authoritative = review["source_recommendation"]
-        forged = {
-            **authoritative,
-            "name": "FORGED VIEWER TITLE",
-            "rationale": "FORGED VIEWER RATIONALE",
-            "priority": "critical",
-            "evidence_refs": [
-                {
-                    "ref_id": "private-evidence",
-                    "source_document": "FORGED PRIVATE EVIDENCE",
-                }
-            ],
-            "evidence_ref_ids": ["private-evidence"],
-        }
-        submit = client.post(
-            f"/bff/management/quarterly-ranking/recommendations/{review['review_id']}/submit",
-            headers={**OPERATOR_HEADERS, "Idempotency-Key": _idem()},
-            json={"quarter": "2026-Q1", "source_recommendation": forged},
-        )
-
-        assert submit.status_code == 422, submit.text
+        for headers in (OPERATOR_HEADERS, APPROVER_HEADERS, ADMIN_HEADERS):
+            response = _post_decision(
+                client,
+                review["review_id"],
+                {"decision": "approve", "rationale": "Decide through the Governance proposal."},
+                headers=headers,
+                idem=_idem(),
+            )
+            assert response.status_code == 410, response.text
+            error = response.json()["error"]
+            assert error["code"] == "ACTION_RETIRED"
+            assert error["details"]["replacement"] == RETIRED_COMMANDS["PromotionReviewDecision"]
+            assert error["details"]["replacement"] == "/bff/approvals/{decision_id}/decide"
         assert command_store._get_all_commands() == []
 
-        clean_submit = _submit_review(client, review["review_id"], idem=_idem())
-        assert clean_submit.status_code == 202, clean_submit.text
-        records = command_store._get_all_commands()
-        stored = records[0]["params"]["source_recommendation"]
-        assert stored["evidence_refs"] == []
-        assert stored["evidence_ref_ids"] == []
 
-        inbox = client.get(
-            "/bff/management/human-inbox",
-            headers={"Authorization": "Bearer promotion-viewer:viewer"},
-            params={"source_type": "promotion_review", "page_size": 10},
-        )
-
-        assert inbox.status_code == 200, inbox.text
-        item = next(
-            item
-            for item in inbox.json()["data"]["items"]
-            if item["promotion_review_id"] == review["review_id"]
-        )
-        serialized = json.dumps(item, sort_keys=True)
-        assert "FORGED VIEWER TITLE" not in serialized
-        assert "FORGED VIEWER RATIONALE" not in serialized
-        assert "FORGED PRIVATE EVIDENCE" not in serialized
-
-
-def test_quarterly_recommendation_submit_rejects_tuple_tampering_before_and_on_replay() -> None:
-    tamper_cases = {
-        "review_id": "forged-review-revision",
-        "promotion_review_id": "forged-review-revision",
-        "stage": "forged_stage",
-        "stage_from": "forged_stage",
-        "current_weight": 0.99,
-        "target_weight": 0.99,
-        "delta": 0.99,
-        "evidence_ref_ids": ["forged-evidence"],
-        "evidence_refs": [{"ref_id": "forged-evidence"}],
-    }
+def test_quarterly_recommendation_submit_route_is_retired_without_stored_command() -> None:
     with _isolated_client() as (client, store, command_store):
         review = _first_review(client)
-        route = (
-            "/bff/management/quarterly-ranking/recommendations/"
-            f"{review['review_id']}/submit"
-        )
-        for field, forged_value in tamper_cases.items():
-            rejected = client.post(
-                route,
-                headers={**OPERATOR_HEADERS, "Idempotency-Key": _idem()},
-                json={
-                    "quarter": review["quarter"],
-                    "ranking_snapshot_id": review["ranking_snapshot_id"],
-                    field: forged_value,
-                },
-            )
-            assert rejected.status_code == 422, (field, rejected.text)
+        response = _submit_review(client, review["review_id"], idem=_idem())
+        assert response.status_code == 410, response.text
+        error = response.json()["error"]
+        assert error["code"] == "ACTION_RETIRED"
+        assert error["details"]["replacement"] == RETIRED_COMMANDS["QuarterlyRankingRecommendationSubmit"]
         assert command_store._get_all_commands() == []
 
-        accepted = _submit_review(client, review["review_id"], idem=_idem())
-        assert accepted.status_code == 202, accepted.text
-        for field, forged_value in tamper_cases.items():
-            rejected_replay = client.post(
-                route,
-                headers={**OPERATOR_HEADERS, "Idempotency-Key": _idem()},
-                json={
-                    "quarter": review["quarter"],
-                    "ranking_snapshot_id": review["ranking_snapshot_id"],
-                    field: forged_value,
-                },
-            )
-            assert rejected_replay.status_code == 422, (
-                field,
-                rejected_replay.text,
-            )
 
-
-def test_generic_quarterly_submit_paths_reject_unadmitted_or_tampered_tuple() -> None:
+def test_human_inbox_has_no_promotion_review_contributor_for_command_log_rows() -> None:
     with _isolated_client() as (client, store, command_store):
-        review = _first_review(client)
-        tamper_cases = (
-            ("ranking_snapshot_id", "ranking-quarterly-forged"),
-            ("recommendation_id", "pm12-2026-q1-forged"),
-            ("stage", "forged_stage"),
-            ("stage_from", "forged_stage"),
-            ("current_weight", 0.99),
-            ("target_weight", 0.99),
-            ("delta", 0.99),
-            ("evidence_ref_ids", ["forged-evidence"]),
-            ("evidence_refs", [{"ref_id": "forged-evidence"}]),
+        recommendation_id = "pm12-2026-q3-persona-legacy-promote_to_canary_candidate"
+        _append_command(
+            command_store,
+            command_id="cmd-promotion-legacy",
+            command_type="QuarterlyRankingRecommendationSubmit",
+            target_type=ObjectType.RANKING,
+            target_id=recommendation_id,
+            params=_legacy_promotion_submission_params(
+                recommendation_id,
+                persona_id="persona-legacy",
+            ),
         )
-        for route, idempotency_header in (
-            ("/bff/v1/commands", "Idempotency-Key"),
-            ("/bff/v1/commands", "X-Idempotency-Key"),
-        ):
-            for field, forged_value in tamper_cases:
-                params = {
-                    "quarter": review["quarter"],
-                    "recommendation_id": review["recommendation_id"],
-                    "ranking_snapshot_id": review["ranking_snapshot_id"],
-                    field: forged_value,
-                }
-                rejected = client.post(
-                    route,
-                    headers={
-                        **OPERATOR_HEADERS,
-                        idempotency_header: _idem(),
-                    },
-                    json={
-                        "command": "QuarterlyRankingRecommendationSubmit",
-                        "target": {
-                            "type": "Ranking",
-                            "id": review["recommendation_id"],
-                        },
-                        "params": params,
-                        "audit_context": {
-                            "reason": "Reject untrusted ranking lineage"
-                        },
-                    },
-                )
-                assert rejected.status_code == 422, (
-                    route,
-                    field,
-                    rejected.text,
-                )
 
-
-def test_generic_command_does_not_block_trusted_semantic_submission() -> None:
-    with _isolated_client() as (client, store, command_store):
-        review = _first_review(client)
-        generic = client.post(
-            "/bff/v1/commands",
-            headers={**OPERATOR_HEADERS, "Idempotency-Key": _idem()},
-            json={
-                "command": "QuarterlyRankingRecommendationSubmit",
-                "target": {"type": "Ranking", "id": review["recommendation_id"]},
-                "params": {
-                    "quarter": review["quarter"],
-                    "recommendation_id": review["recommendation_id"],
-                    "ranking_snapshot_id": review["ranking_snapshot_id"],
-                    "recommendation_action_id": review["action_id"],
-                    "persona_id": review["persona_id"],
-                    "stage_from": review["promotion_path"]["from_stage"],
-                    "stage_to": review["promotion_path"]["target_stage"],
-                    "review_kind": review["review_kind"],
-                    "requires_human_gate_decision": True,
-                    "live_capital_mutation": False,
-                    "direct_live_capital_mutation": False,
-                    "runtime_mutation": False,
-                },
-                "audit_context": {
-                    "reason": "Regression: generic command cannot impersonate semantic submit"
-                },
-            },
-        )
-        assert generic.status_code == 202, generic.text
-
-        before_detail = client.get(
-            f"/bff/management/promotion-reviews/{review['review_id']}",
-            headers=OPERATOR_HEADERS,
-        )
-        assert before_detail.status_code == 200, before_detail.text
-        assert before_detail.json()["data"]["submitted"] is False
-        before_inbox = client.get(
-            "/bff/management/human-inbox",
-            headers=OPERATOR_HEADERS,
-            params={"source_type": "promotion_review", "page_size": 10},
-        )
-        assert before_inbox.status_code == 200, before_inbox.text
-        assert before_inbox.json()["data"]["items"] == []
-
-        semantic = _submit_review(client, review["review_id"], idem=_idem())
-        assert semantic.status_code == 202, semantic.text
-        records = command_store._get_all_commands()
-        assert len(records) == 2
-        assert not _human_inbox_trusted_promotion_submission(records[0])
-        assert _human_inbox_trusted_promotion_submission(records[1])
-
-        after_detail = client.get(
-            f"/bff/management/promotion-reviews/{review['review_id']}",
-            headers=OPERATOR_HEADERS,
-        )
-        assert after_detail.status_code == 200, after_detail.text
-        assert after_detail.json()["data"]["submitted"] is True
-        after_inbox = client.get(
-            "/bff/management/human-inbox",
-            headers=OPERATOR_HEADERS,
-            params={"source_type": "promotion_review", "page_size": 10},
-        )
-        assert after_inbox.status_code == 200, after_inbox.text
-        items = after_inbox.json()["data"]["items"]
-        assert [item["promotion_review_id"] for item in items] == [review["review_id"]]
-
-
-def test_human_inbox_ignores_decision_with_mismatched_target_aliases() -> None:
-    with _isolated_client() as (client, store, command_store):
-        # This test needs two independent reviews to exercise alias mismatch.
-        # Seed both through the paper-fleet lifecycle owner so the fixture does
-        # not depend on the deprecated persona-session fallback.
-        store.list_authoritative_paper_runtime_monitoring_sessions = (  # type: ignore[method-assign]
-            lambda: [
-                {
-                    "session_id": f"monitoring-{runtime_id}",
-                    "session_type": "paper_runtime_monitoring",
-                    "status": "running",
-                    "deployment_stage": "paper",
-                    "runtime_id": runtime_id,
-                }
-                for runtime_id in (
-                    "runtime-us-equity-paper",
-                    "runtime-crypto-paper",
-                )
-            ]
-        )
         response = client.get(
-            "/bff/management/promotion-reviews",
-            headers=OPERATOR_HEADERS,
-            params={
-                "quarter": "2026-Q1",
-                "page_size": 10,
-                "action_id": "promote_to_canary_candidate",
-            },
-        )
-        assert response.status_code == 200, response.text
-        reviews = response.json()["data"]["items"]
-        assert len(reviews) >= 2
-        target_review, aliased_review = reviews[:2]
-        for review in (target_review, aliased_review):
-            submit = _submit_review(client, review["review_id"], idem=_idem())
-            assert submit.status_code == 202, submit.text
-
-        target_id = f"promotion_review:{target_review['review_id']}"
-        mismatch = client.post(
-            "/bff/v1/commands",
-            headers={**APPROVER_HEADERS, "Idempotency-Key": _idem()},
-            json={
-                "command": "HumanGateApprove",
-                "target": {"type": "HumanGateItem", "id": target_id},
-                "params": {
-                    "human_gate_item_id": target_id,
-                    "decision": "approve",
-                    "review_id": aliased_review["review_id"],
-                    "promotion_review_id": aliased_review["review_id"],
-                    "recommendation_id": aliased_review["recommendation_id"],
-                    "rationale": "Mismatched aliases must not move either review.",
-                },
-                "audit_context": {
-                    "reason": "Regression: Human Gate target and aliases must agree"
-                },
-            },
-        )
-        assert mismatch.status_code == 202, mismatch.text
-        record = command_store._get_all_commands()[-1]
-        assert _human_inbox_decision_recommendation_id(record) == ""
-        assert _human_inbox_decision_projection_from_record(record) is None
-
-        for review in (target_review, aliased_review):
-            detail = client.get(
-                f"/bff/management/promotion-reviews/{review['review_id']}",
-                headers=OPERATOR_HEADERS,
-            )
-            assert detail.status_code == 200, detail.text
-            assert detail.json()["data"]["decision_status"] == "pending"
-
-        inbox = client.get(
-            "/bff/management/human-inbox",
-            headers=OPERATOR_HEADERS,
-            params={"source_type": "promotion_review", "page_size": 10},
-        )
-        assert inbox.status_code == 200, inbox.text
-        projected = {
-            item["promotion_review_id"]: item["status"]
-            for item in inbox.json()["data"]["items"]
-        }
-        assert projected[target_review["review_id"]] == "pending"
-        assert projected[aliased_review["review_id"]] == "pending"
-
-
-def test_human_inbox_keeps_durable_promotion_review_visible_despite_persona_readiness_timeout(
-    monkeypatch,
-) -> None:
-    """``ManagementService.get_human_inbox`` is wrapped by the real
-    per-surface timeout machinery ``_bounded_get_human_inbox``
-    (``management_read_models/router.py``): when a contributor read raises
-    with a message indicating it exceeded the Human Inbox surface budget,
-    ``get_human_inbox`` (``management_read_models/service.py``) already
-    catches that failure locally and keeps composing the remaining
-    surfaces -- including the durable, already-submitted promotion-review
-    item -- and ``_bounded_get_human_inbox`` then relabels that one surface
-    ``degraded``/``read_timeout`` and marks the envelope ``meta.partial``,
-    confirmed by direct read of both functions and independent reproduction.
-    This is real extracted production behavior, not a fake: a genuinely
-    blocked (rather than raising) ``store.list_personas`` call is not
-    individually timed here -- only
-    ``list_governance_review_queue_items``/``list_approval_queue_items``/
-    ``list_approval_records`` are wrapped by ``_StoreTimeoutProxy`` -- so a
-    merely slow persona-readiness read stalls the whole synchronous
-    aggregate and is instead caught by the coarse, whole-call
-    ``run_management_read`` budget, which discards the entire in-flight
-    result (see
-    ``test_human_inbox_degrades_cleanly_when_persona_readiness_blocks``
-    below); that path cannot preserve a durable item and is a confirmed,
-    out-of-scope architecture gap versus the pre-extraction per-surface
-    granularity, not something this test-only migration can restore.
-    """
-    with _isolated_client() as (client, store, command_store):
-        review = _first_review(client)
-        submit = _submit_review(client, review["review_id"], idem=_idem())
-        assert submit.status_code == 202, submit.text
-
-        def timed_out_list_personas(*_args, **_kwargs):
-            raise TimeoutError(
-                "persona_readiness_items exceeded the Human Inbox surface budget"
-            )
-
-        monkeypatch.setattr(store, "list_personas", timed_out_list_personas)
-        inbox = client.get(
             "/bff/management/human-inbox",
             headers=OPERATOR_HEADERS,
             params={"page_size": 20},
         )
 
-        assert inbox.status_code == 200, inbox.text
-        body = inbox.json()
-        assert body["meta"]["partial"] is True
-        assert body["meta"]["surfaces"]["persona_readiness"]["status"] == "degraded"
-        assert body["meta"]["surfaces"]["persona_readiness"]["reason"] == "read_timeout"
-        assert any(
-            item["promotion_review_id"] == review["review_id"]
-            for item in body["data"]["items"]
-            if item["source_type"] == "promotion_review"
-        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert all(item["source_type"] != "promotion_review" for item in body["data"]["items"])
+        assert "promotion_reviews" not in body["meta"]["surfaces"]
 
 
 def test_human_inbox_degrades_cleanly_when_persona_readiness_blocks(monkeypatch) -> None:
@@ -1438,332 +1073,6 @@ def test_hiq_backlog_remains_available_after_human_inbox_surface_extension(monke
         assert response.json()["data"]["id"] == "management-hiq-backlog"
 
 
-def test_human_inbox_promotion_projection_reads_command_log_once(monkeypatch) -> None:
-    with _isolated_client() as (client, store, command_store):
-        recommendation_ids = [
-            "pm12-2026-q3-persona-alpha-promote_to_canary_candidate",
-            "pm12-2026-q3-persona-beta-promote_to_canary_candidate",
-        ]
-        for index, recommendation_id in enumerate(recommendation_ids, start=1):
-            _append_command(
-                command_store,
-                command_id=f"cmd-promotion-submit-{index}",
-                command_type="QuarterlyRankingRecommendationSubmit",
-                target_type=ObjectType.RANKING,
-                target_id=recommendation_id,
-                params=_legacy_promotion_submission_params(
-                    recommendation_id,
-                    persona_id=f"persona-{'alpha' if index == 1 else 'beta'}",
-                ),
-            )
-        _append_command(
-            command_store,
-            command_id="cmd-promotion-decision-1",
-            command_type="HumanGateApprove",
-            target_type=ObjectType.HUMAN_GATE_ITEM,
-            target_id=f"promotion_review:{recommendation_ids[0]}",
-            params={
-                "review_id": recommendation_ids[0],
-                "recommendation_id": recommendation_ids[0],
-                "decision": "approve",
-                "rationale": "Single-pass projection fixture.",
-            },
-            status=CommandStatus.EXECUTED,
-        )
-
-        original_get_all_commands = command_store._get_all_commands
-        command_log_reads = 0
-
-        def counted_get_all_commands():
-            nonlocal command_log_reads
-            command_log_reads += 1
-            return original_get_all_commands()
-
-        monkeypatch.setattr(
-            command_store,
-            "_get_all_commands",
-            counted_get_all_commands,
-        )
-
-        response = client.get(
-            "/bff/management/human-inbox",
-            headers=OPERATOR_HEADERS,
-            params={"source_type": "promotion_review", "page_size": 10},
-        )
-
-        assert response.status_code == 200, response.text
-        assert {
-            item["promotion_review_id"] for item in response.json()["data"]["items"]
-        } == set(recommendation_ids)
-        assert command_log_reads == 1
-
-
-def test_human_inbox_omits_inconsistent_generic_snapshot_and_private_evidence() -> None:
-    with _isolated_client() as (client, store, command_store):
-        recommendation_id = "pm12-2026-q3-persona-forged-promote_to_canary_candidate"
-        params = _legacy_promotion_submission_params(
-            recommendation_id,
-            persona_id="persona-forged",
-        )
-        params.update(
-            {
-                "ranking_snapshot_id": "ranking-quarter-authoritative",
-                "source_recommendation": {
-                    "id": recommendation_id,
-                    "recommendation_id": recommendation_id,
-                    "ranking_snapshot_id": "ranking-quarter-attacker-controlled",
-                    "quarter": "2026-Q3",
-                    "persona_id": "persona-forged",
-                    "name": "Forged Persona",
-                    "action_id": "promote_to_canary_candidate",
-                    "state": "paper",
-                    "evidence_refs": [
-                        {
-                            "ref_id": "private-evidence",
-                            "source_document": "viewer-only-secret",
-                        }
-                    ],
-                },
-            }
-        )
-        _append_command(
-            command_store,
-            command_id="cmd-promotion-forged-snapshot",
-            command_type="QuarterlyRankingRecommendationSubmit",
-            target_type=ObjectType.RANKING,
-            target_id=recommendation_id,
-            params=params,
-        )
-
-        response = client.get(
-            "/bff/management/human-inbox",
-            headers={"Authorization": "Bearer promotion-viewer:viewer"},
-            params={"source_type": "promotion_review", "page_size": 10},
-        )
-
-        assert response.status_code == 200, response.text
-        assert response.json()["data"]["items"] == []
-        assert "viewer-only-secret" not in response.text
-
-
-def test_human_inbox_legacy_snapshotless_submission_is_safe_and_minimal() -> None:
-    with _isolated_client() as (client, store, command_store):
-        recommendation_id = "pm12-2026-q3-persona-legacy-promote_to_canary_candidate"
-        params = _legacy_promotion_submission_params(
-            recommendation_id,
-            persona_id="persona-legacy",
-        )
-        params["source_document"] = "must-not-be-projected"
-        _append_command(
-            command_store,
-            command_id="cmd-promotion-legacy",
-            command_type="QuarterlyRankingRecommendationSubmit",
-            target_type=ObjectType.RANKING,
-            target_id=recommendation_id,
-            params=params,
-        )
-
-        response = client.get(
-            "/bff/management/human-inbox",
-            headers={"Authorization": "Bearer promotion-viewer:viewer"},
-            params={"source_type": "promotion_review", "page_size": 10},
-        )
-
-        assert response.status_code == 200, response.text
-        items = response.json()["data"]["items"]
-        assert len(items) == 1
-        item = items[0]
-        assert item["promotion_review_id"] == recommendation_id
-        assert item["persona_id"] == "persona-legacy"
-        assert item["promotion_review"]["evidence_refs"] == []
-        assert item["promotion_review"]["source_recommendation"]["recommendation_id"] == (
-            recommendation_id
-        )
-        assert "must-not-be-projected" not in json.dumps(item, sort_keys=True)
-
-
-def test_human_inbox_omits_failed_promotion_submission() -> None:
-    with _isolated_client() as (client, store, command_store):
-        recommendation_id = "pm12-2026-q3-persona-failed-promote_to_canary_candidate"
-        _append_command(
-            command_store,
-            command_id="cmd-promotion-failed",
-            command_type="QuarterlyRankingRecommendationSubmit",
-            target_type=ObjectType.RANKING,
-            target_id=recommendation_id,
-            params=_legacy_promotion_submission_params(
-                recommendation_id,
-                persona_id="persona-failed",
-            ),
-            status=CommandStatus.FAILED,
-        )
-
-        response = client.get(
-            "/bff/management/human-inbox",
-            headers=OPERATOR_HEADERS,
-            params={"source_type": "promotion_review", "page_size": 10},
-        )
-
-        assert response.status_code == 200, response.text
-        assert response.json()["data"]["items"] == []
-
-
-def test_promotion_review_decision_requires_prior_submit() -> None:
-    with _isolated_client() as (client, store, command_store):
-        review = _first_review(client)
-        response = _post_decision(
-            client,
-            review["review_id"],
-            {"decision": "approve", "rationale": "Cannot approve before submit."},
-            headers=APPROVER_HEADERS,
-            idem=_idem(),
-        )
-        assert response.status_code == 409, response.text
-        assert response.json()["error"]["code"] == "HUMAN_GATE_PENDING"
-        assert command_store._get_all_commands() == []
-
-
-def test_promotion_review_approve_submits_human_gate_command() -> None:
-    with _isolated_client() as (client, store, command_store):
-        review = _first_review(client)
-        submit = _submit_review(client, review["review_id"], idem=_idem())
-        assert submit.status_code == 202, submit.text
-        response = _post_decision(
-            client,
-            review["review_id"],
-            {"decision": "approve", "rationale": "Paper evidence supports canary admission."},
-            headers=APPROVER_HEADERS,
-            idem=_idem(),
-        )
-        assert response.status_code == 202, response.text
-        body = response.json()
-        assert body["data"]["decision"] == "approve"
-        assert body["data"]["decision_status"] == "accepted"
-        assert body["meta"]["live_capital_mutation"] is False
-        assert body["meta"]["requires_human_gate_decision"] is True
-
-        records = command_store._get_all_commands()
-        assert len(records) == 2
-        record = records[1]
-        assert record["type"] == "HumanGateApprove"
-        assert record["target"]["type"] == ObjectType.HUMAN_GATE_ITEM.value
-        assert record["params"]["review_id"] == review["review_id"]
-        assert record["params"]["live_capital_mutation"] is False
-        assert record["audit"]["live_capital_side_effects"] is False
-
-
-def test_promotion_review_approve_with_conditions_preserves_conditions_and_rationale() -> None:
-    with _isolated_client() as (client, store, command_store):
-        review = _first_review(client)
-        submit = _submit_review(client, review["review_id"], idem=_idem())
-        assert submit.status_code == 202, submit.text
-        conditions = [
-            "Run canary with paper-sized notional for one full market week.",
-            {"metric": "slippage_bps", "max": 8},
-        ]
-        rationale = "Canary is acceptable only with explicit execution drift guardrails."
-        response = _post_decision(
-            client,
-            review["review_id"],
-            {
-                "decision": "approve_with_conditions",
-                "conditions": conditions,
-                "rationale": rationale,
-            },
-            headers=ADMIN_HEADERS,
-            idem=_idem(),
-        )
-        assert response.status_code == 202, response.text
-        body = response.json()
-        assert body["data"]["decision"] == "approve_with_conditions"
-        assert body["data"]["conditions"] == conditions
-        assert body["data"]["rationale"] == rationale
-
-        record = command_store._get_all_commands()[1]
-        assert record["type"] == "HumanGateApprove"
-        assert record["params"]["decision"] == "approve_with_conditions"
-        assert record["params"]["conditions"] == conditions
-        assert record["params"]["rationale"] == rationale
-
-
-def test_promotion_review_reject_requires_non_empty_rationale() -> None:
-    with _isolated_client() as (client, store, command_store):
-        review = _first_review(client)
-        submit = _submit_review(client, review["review_id"], idem=_idem())
-        assert submit.status_code == 202, submit.text
-        response = _post_decision(
-            client,
-            review["review_id"],
-            {"decision": "reject", "rationale": "  "},
-            headers=APPROVER_HEADERS,
-            idem=_idem(),
-        )
-        assert response.status_code == 422, response.text
-        error = response.json()["error"]
-        assert error["code"] == "VALIDATION_FAILED"
-        assert error["details"]["precondition_failed"] == "rationale"
-        assert [record["type"] for record in command_store._get_all_commands()] == [
-            "QuarterlyRankingRecommendationSubmit"
-        ]
-
-
-def test_promotion_review_decision_requires_approver_or_admin_role() -> None:
-    with _isolated_client() as (client, store, command_store):
-        review = _first_review(client)
-        submit = _submit_review(client, review["review_id"], idem=_idem())
-        assert submit.status_code == 202, submit.text
-        response = _post_decision(
-            client,
-            review["review_id"],
-            {"decision": "approve", "rationale": "Operator can read but cannot approve."},
-            headers=OPERATOR_HEADERS,
-            idem=_idem(),
-        )
-        assert response.status_code == 403, response.text
-        assert response.json()["error"]["code"] == "FORBIDDEN"
-        assert [record["type"] for record in command_store._get_all_commands()] == [
-            "QuarterlyRankingRecommendationSubmit"
-        ]
-
-
-def test_promotion_review_idempotency_replay_has_no_direct_live_mutation() -> None:
-    with _isolated_client() as (client, store, command_store):
-        review = _first_review(client)
-        submit = _submit_review(client, review["review_id"], idem=_idem())
-        assert submit.status_code == 202, submit.text
-        idem_key = _idem()
-        payload = {"decision": "approve", "rationale": "Replay should return the same receipt."}
-        first = _post_decision(
-            client,
-            review["review_id"],
-            payload,
-            headers=APPROVER_HEADERS,
-            idem=idem_key,
-        )
-        second = _post_decision(
-            client,
-            review["review_id"],
-            payload,
-            headers=APPROVER_HEADERS,
-            idem=idem_key,
-        )
-        assert first.status_code == 202, first.text
-        assert second.status_code == 202, second.text
-        first_body = first.json()
-        second_body = second.json()
-        assert first_body["data"]["command_id"] == second_body["data"]["command_id"]
-        assert second_body["meta"]["idempotency"]["replayed"] is True
-        assert second_body["meta"]["idempotency"]["idempotencyKey"] == idem_key
-        assert second_body["meta"]["live_capital_mutation"] is False
-        assert second_body["data"]["live_capital_mutation"] is False
-
-        records = command_store._get_all_commands()
-        assert len(records) == 2
-        assert records[1]["target"]["type"] != ObjectType.RUNTIME.value
-        assert records[1]["params"]["live_capital_mutation"] is False
-        assert records[1]["params"]["runtime_mutation"] is False
-
-
 def test_command_store_caching(tmp_path) -> None:
     """Production behavior (services/control-plane/bff/command_queue.py lines 27-34, 80-84):
     CommandStore lazily populates _cache on first read and re-reads from disk on every
@@ -1812,4 +1121,3 @@ def test_command_store_caching(tmp_path) -> None:
     cmds_missing = store._get_all_commands()
     assert cmds_missing == []
     assert store._cache == []
-

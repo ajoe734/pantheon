@@ -3706,7 +3706,8 @@
       "method": "POST",
       "path": "/bff/management/promotion-reviews/{param}/decisions",
       "family": "unknown",
-      "status": "implemented"
+      "status": "superseded",
+      "covered_by": "POST /bff/approvals/{decision_id}/decide"
     },
     {
       "method": "POST",

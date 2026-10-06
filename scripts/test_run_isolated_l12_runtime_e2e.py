@@ -299,3 +299,12 @@ def test_stimulus_gate_projector_credential_passed_only_to_projector_and_redacte
     assert token not in content
     assert "[REDACTED]" in content
 
+
+def test_projector_run_rebuilds_its_image() -> None:
+    command = harness._projector_run_command("proj", ["a.yml"])
+    assert command[command.index("run") :] == [
+        "run",
+        "--rm",
+        "--build",
+        harness.STIMULUS_PROJECTOR_SERVICE,
+    ]

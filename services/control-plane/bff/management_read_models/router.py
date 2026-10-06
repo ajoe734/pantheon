@@ -1545,7 +1545,6 @@ def create_management_router(
         get_read_store=_store_getter,
         utc_now=_now,
         ops_read_model_entry_fn=ops_read_model_entry_fn,
-        get_promotion_review_command_log=get_command_store,
     )
 
     # -----------------------------------------------------------------------

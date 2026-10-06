@@ -8,6 +8,7 @@ RETIRED_COMMANDS = {
     "RankingAction": "GET /bff/rankings",
     "RankingFormulaAction": "GET /bff/ranking-formulas",
     "QuarterlyRankingRecommendationSubmit": "GET /bff/rankings",
+    "PromotionReviewDecision": "/bff/approvals/{decision_id}/decide",
     "AuditExport": "GET /bff/audit",
     "ToolAction": "GET /bff/tools",
     "McpServerAction": "GET /bff/mcp-servers",
