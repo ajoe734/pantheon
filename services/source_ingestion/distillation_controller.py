@@ -40,7 +40,7 @@ from services.source_ingestion.distillation_worker import (
     make_distillation_worker,
     source_version_digest,
 )
-from services.source_ingestion.pg_store import build_source_evidence_repository
+from services.source_ingestion.pg_store import read_source_records_for_tenant
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -448,8 +448,10 @@ def run_controller_tick(
     try:
         # 1. Read desired state: normalized SourceRecords
         try:
-            evidence_repo = build_source_evidence_repository(config.evidence_store_path)
-            source_records = evidence_repo.list_source_records()
+            source_records = read_source_records_for_tenant(
+                jsonl_path=config.evidence_store_path,
+                tenant_id=state.tenant_id,
+            )
         except Exception as exc:
             raise DistillationControllerError("desired_read", f"Failed to read source evidence repo: {exc}")
             
