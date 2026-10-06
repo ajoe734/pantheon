@@ -1,15 +1,6 @@
-"""Real read-port shapes and fresh-process production router composition.
-
-Only owner I/O is replaced. In particular, the runtime projector itself is
-never injected by the test: main must wire the correct callable before mount.
-"""
+"""Real read-port shapes; native composition is tested in its owning suite."""
 from __future__ import annotations
 
-import json
-import os
-from pathlib import Path
-import subprocess
-import sys
 from types import SimpleNamespace
 
 import pytest
@@ -87,42 +78,3 @@ def test_unconfigured_monitoring_owner_is_missing(monkeypatch):
     store._paper_fleet_reconciler_url = None
     monkeypatch.delenv("PANTHEON_PAPER_FLEET_RECONCILER_URL", raising=False)
     assert store.dataset_source("paper_runtime_monitoring_sessions") == "missing"
-
-
-def test_native_main_captures_context_projector_before_facade_install(tmp_path):
-    root = Path(__file__).resolve().parents[4]
-    code = r'''
-import inspect, json, os
-from unittest.mock import MagicMock, patch
-from services.control_plane.bff.bootstrap.dependencies import AppDependencies
-from services.control_plane.bff.ports import create_in_memory_read_surface_ports
-from services.control_plane.bff.command_queue import CommandStore
-from services.control_plane.bff.settings_store import SettingsStore
-root = os.environ['BFF_DATA_DIR']
-deps = AppDependencies(
-    deployment_queries=MagicMock(), deployment_commands=MagicMock(),
-    read_surface=create_in_memory_read_surface_ports(),
-    command_store=CommandStore(root + '/commands.jsonl'),
-    persona_write_owner=MagicMock(), ranking_write_owner=MagicMock(),
-    strategy_write_owner=MagicMock(), settings_store=SettingsStore(root + '/settings.json'),
-    decision_journal_write_owner=MagicMock(),
-)
-with patch.object(AppDependencies, 'create_default', return_value=deps):
-    from services.control_plane.bff import main
-route = next(r for r in main.app.routes if getattr(r, 'path', '') == '/api/v1/operator/runtime-state')
-project = inspect.getclosurevars(route.endpoint).nonlocals['_project_operator_runtime_state_row']
-row = project({'binding_id': 'b', 'runtime_id': 'r', 'strategy_id': 's', 'deployment_mode': 'paper'})
-assert row['runtime_id'] == 'r'
-assert row['strategy_id'] == 's'
-assert 'telemetry_observation' in row
-assert 'monitoring_observation' in row
-assert 'rollback_observation' in row
-assert project.__module__ == 'services.control_plane.bff.assistant.management_service'
-print('native-runtime-projector-ok')
-'''
-    run = subprocess.run(
-        [sys.executable, "-c", code], cwd=root, text=True, capture_output=True,
-        env={**os.environ, "PYTHONPATH": str(root), "BFF_DATA_DIR": str(tmp_path)}, timeout=60,
-    )
-    assert run.returncode == 0, run.stdout + run.stderr
-    assert "native-runtime-projector-ok" in run.stdout
