@@ -139,34 +139,16 @@ class PersonaMemoryEntry:
     tenant_id: Optional[str] = None
 
     def __post_init__(self) -> None:
-        try:
-            PersonaMemoryType(self.memory_type)
-        except ValueError as exc:
-            raise PersonaMemoryError(
-                f"Invalid memory_type: {self.memory_type!r}. "
-                f"Must be one of {[e.value for e in PersonaMemoryType]}."
-            ) from exc
-        try:
-            PersonaSourceEventType(self.source_event_type)
-        except ValueError as exc:
-            raise PersonaMemoryError(
-                f"Invalid source_event_type: {self.source_event_type!r}. "
-                f"Must be one of {[e.value for e in PersonaSourceEventType]}."
-            ) from exc
-        try:
-            PersonaWriteAuthority(self.write_authority)
-        except ValueError as exc:
-            raise PersonaMemoryError(
-                f"Invalid write_authority: {self.write_authority!r}. "
-                f"Must be one of {[e.value for e in PersonaWriteAuthority]}."
-            ) from exc
-        try:
-            PersonaRelevanceScope(self.relevance_scope)
-        except ValueError as exc:
-            raise PersonaMemoryError(
-                f"Invalid relevance_scope: {self.relevance_scope!r}. "
-                f"Must be one of {[e.value for e in PersonaRelevanceScope]}."
-            ) from exc
+        for enum_cls, val, label in (
+            (PersonaMemoryType, self.memory_type, "memory_type"),
+            (PersonaSourceEventType, self.source_event_type, "source_event_type"),
+            (PersonaWriteAuthority, self.write_authority, "write_authority"),
+            (PersonaRelevanceScope, self.relevance_scope, "relevance_scope"),
+        ):
+            try:
+                enum_cls(val)
+            except ValueError as exc:
+                raise PersonaMemoryError(f"Invalid {label}: {val!r}. Must be one of {[e.value for e in enum_cls]}.") from exc
         if self.reuse_count < 0:
             raise PersonaMemoryError("reuse_count must be >= 0")
         if not isinstance(self.content, dict):
@@ -228,8 +210,8 @@ def validate_persona_memory_json(data: Dict[str, Any]) -> List[str]:
     """Validate raw dict against the canonical PersonaMemory JSON schema."""
     try:
         import jsonschema  # type: ignore
-    except ImportError:
-        return []
+    except ImportError as exc:
+        raise RuntimeError("jsonschema is required for persona memory validation") from exc
 
     schema_path = Path(__file__).parent / "persona_memory.schema.json"
     if not schema_path.exists():

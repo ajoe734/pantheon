@@ -10,7 +10,6 @@ Public API
 PersonaCapitalBinding      — immutable dataclass
 PersonaCapitalBindingStore — in-memory store with optional JSON persistence
 validate_binding()         — semantic validation helper
-validate_binding_json()    — structural JSON-schema validation helper
 
 Ownership rule
 --------------
@@ -37,7 +36,6 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -156,27 +154,15 @@ class PersonaCapitalBinding:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        try:
-            BindingRole(self.role)
-        except ValueError:
-            raise PersonaCapitalBindingError(
-                f"Invalid role: {self.role!r}. "
-                f"Must be one of {[e.value for e in BindingRole]}."
-            )
-        try:
-            DeploymentScope(self.allowed_deployment_scope)
-        except ValueError:
-            raise PersonaCapitalBindingError(
-                f"Invalid allowed_deployment_scope: {self.allowed_deployment_scope!r}. "
-                f"Must be one of {[e.value for e in DeploymentScope]}."
-            )
-        try:
-            BindingStatus(self.status)
-        except ValueError:
-            raise PersonaCapitalBindingError(
-                f"Invalid status: {self.status!r}. "
-                f"Must be one of {[e.value for e in BindingStatus]}."
-            )
+        for enum_cls, val, label in (
+            (BindingRole, self.role, "role"),
+            (DeploymentScope, self.allowed_deployment_scope, "allowed_deployment_scope"),
+            (BindingStatus, self.status, "status"),
+        ):
+            try:
+                enum_cls(val)
+            except ValueError:
+                raise PersonaCapitalBindingError(f"Invalid {label}: {val!r}. Must be one of {[e.value for e in enum_cls]}.")
         if self.budget is not None and self.budget < 0:
             raise PersonaCapitalBindingError("budget must be >= 0")
 
@@ -272,31 +258,6 @@ def validate_binding(binding: PersonaCapitalBinding) -> List[str]:
             errors.append(f"Invalid effective_to timestamp: {exc}")
     if effective_from is not None and effective_to is not None and effective_to <= effective_from:
         errors.append("effective_to must be later than effective_from")
-    return errors
-
-
-def validate_binding_json(data: Dict[str, Any]) -> List[str]:
-    """
-    Validate raw dict against the JSON schema.
-    Returns list of error messages; empty list means valid.
-    Requires `jsonschema` to be installed; silently skips if not available.
-    """
-    try:
-        import jsonschema  # type: ignore
-    except ImportError:
-        return []
-
-    schema_path = Path(__file__).parent / "persona_capital_binding.schema.json"
-    if not schema_path.exists():
-        return [f"Schema file not found: {schema_path}"]
-
-    with schema_path.open() as f:
-        schema = json.load(f)
-
-    errors = []
-    validator = jsonschema.Draft7Validator(schema)
-    for err in sorted(validator.iter_errors(data), key=lambda e: list(e.path)):
-        errors.append(f"{list(err.path)}: {err.message}")
     return errors
 
 
@@ -502,32 +463,11 @@ class PersonaCapitalBindingStore:
 
     def _save(self) -> None:
         if self._path:
-            records = [b.to_dict() for b in self._bindings.values()]
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            fd, temp_name = tempfile.mkstemp(
-                dir=str(self._path.parent),
-                prefix=f".{self._path.name}.",
-                suffix=".tmp",
-            )
             try:
-                with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                    json.dump(records, handle, indent=2, ensure_ascii=True)
-                    handle.write("\n")
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.replace(temp_name, self._path)
-                try:
-                    directory_fd = os.open(str(self._path.parent), os.O_RDONLY)
-                except OSError:
-                    directory_fd = None
-                if directory_fd is not None:
-                    try:
-                        os.fsync(directory_fd)
-                    finally:
-                        os.close(directory_fd)
-            finally:
-                if os.path.exists(temp_name):
-                    os.unlink(temp_name)
+                from .capital_pool import atomic_save_json
+            except ImportError:
+                from capital_pool import atomic_save_json
+            atomic_save_json(self._path, [b.to_dict() for b in self._bindings.values()])
 
     def _load(self, path: Path) -> None:
         with self._lock:

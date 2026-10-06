@@ -95,10 +95,7 @@ TRADE_JOURNAL_EVENT_TYPES = frozenset({
     "trade_lesson.quarantined",
 })
 
-try:
-    import jsonschema
-except ImportError:
-    jsonschema = None
+import jsonschema
 
 log = logging.getLogger(__name__)
 
@@ -939,25 +936,18 @@ class TelemetryIngestService:
 
     def _load_schema(self) -> None:
         """Load JSON schemas from file."""
-        if self._schema_path:
-            try:
-                import json
-                with open(self._schema_path, "r") as f:
-                    self._schema = json.load(f)
-                log.info(f"Loaded telemetry schema from {self._schema_path}")
-            except Exception as e:
-                log.warning(f"Failed to load telemetry schema: {e}")
-                self._schema = None
-
-        if self._trade_journal_schema_path and Path(self._trade_journal_schema_path).exists():
-            try:
-                import json
-                with open(self._trade_journal_schema_path, "r") as f:
-                    self._trade_journal_schema = json.load(f)
-                log.info(f"Loaded trade journal schema from {self._trade_journal_schema_path}")
-            except Exception as e:
-                log.warning(f"Failed to load trade journal schema: {e}")
-                self._trade_journal_schema = None
+        for path_val, attr, name in (
+            (self._schema_path, "_schema", "telemetry"),
+            (self._trade_journal_schema_path, "_trade_journal_schema", "trade journal"),
+        ):
+            if path_val and Path(path_val).exists():
+                try:
+                    with open(path_val, "r", encoding="utf-8") as f:
+                        setattr(self, attr, json.load(f))
+                    log.info("Loaded %s schema from %s", name, path_val)
+                except Exception as e:
+                    log.warning("Failed to load %s schema: %s", name, e)
+                    setattr(self, attr, None)
 
     def _extract_infrastructure_health_schema(self) -> Optional[dict[str, Any]]:
         """Return the standalone non-trading infrastructure health schema."""
@@ -991,22 +981,11 @@ class TelemetryIngestService:
                 "infrastructure_health events must be admitted through the "
                 "infrastructure health authority, not the trading telemetry path"
             )
-        if event_type in TRADE_JOURNAL_EVENT_TYPES:
-            if not self._trade_journal_schema or not jsonschema:
-                return True, None
-            try:
-                jsonschema.validate(instance=event, schema=self._trade_journal_schema)
-                return True, None
-            except jsonschema.ValidationError as e:
-                return False, e.message
-            except jsonschema.SchemaError as e:
-                return False, f"Schema error: {e.message}"
-
-        if not self._schema or not jsonschema:
+        schema = self._trade_journal_schema if event_type in TRADE_JOURNAL_EVENT_TYPES else self._schema
+        if not schema:
             return True, None
-
         try:
-            jsonschema.validate(instance=event, schema=self._schema)
+            jsonschema.validate(instance=event, schema=schema)
             return True, None
         except jsonschema.ValidationError as e:
             return False, e.message
@@ -1487,7 +1466,7 @@ class TelemetryIngestService:
                 tag=TAG_BINDING_MISMATCH,
             )
 
-        if self._infrastructure_health_schema is None or jsonschema is None:
+        if self._infrastructure_health_schema is None:
             return self._reject_infrastructure_health(
                 event,
                 "INFRA_SCHEMA_UNAVAILABLE",

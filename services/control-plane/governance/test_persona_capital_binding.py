@@ -16,7 +16,6 @@ from persona_capital_binding import (
     PersonaCapitalBindingStore,
     DeploymentScope,
     validate_binding,
-    validate_binding_json,
 )
 
 
@@ -151,11 +150,6 @@ class TestValidateBinding:
     def test_only_the_paper_owner_paper_binding_is_exempt_from_the_approval_decision(self, role, scope):
         errors = validate_binding(make_binding(status="active", role=role, allowed_deployment_scope=scope))
         assert any("approval_decision_id" in e for e in errors)
-
-    def test_schema_accepts_a_null_decision_id(self):
-        paper = make_binding(status="active", role="paper_owner", allowed_deployment_scope="paper")
-        for record in (paper.to_dict(), {**paper.to_dict(), "approval_decision_id": None}):
-            assert validate_binding_json(record) == []
 
     def test_advisor_role_cannot_claim_deployment_scope(self):
         b = make_binding(allowed_deployment_scope="paper")
