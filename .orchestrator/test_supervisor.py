@@ -14464,6 +14464,220 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
         )
         self.assertEqual(pair, ("Codex2", "Claude"))
 
+    def test_queued_intent_health_refresh_targets_demands_refresh_for_pending_intent(
+        self,
+    ) -> None:
+        """A pending queue intent whose provider is expired gets demanded even while workers run."""
+        self.config.setdefault("agents", {})["claude"] = {
+            "id": "claude",
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "claude",
+            "max_parallel": 2,
+        }
+        self.config.setdefault("providers", {})["claude"] = {
+            "account": "claude-account",
+            "delivery_mode": "claude_cli",
+        }
+        expired_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        self.state["delivery_health"] = healthy_delivery_health(self.config)
+        self.state["delivery_health"]["endpoints"]["claude"] = {
+            "state": "expired",
+            "valid_until": expired_at,
+        }
+        event = {
+            "event_id": "evt-pending-recon",
+            "task_id": "RECON-CONSUMER-TIMEOUT-20261006",
+            "task_generation": 1,
+            "target_agent": "Claude",
+            "delivery_endpoint_id": "claude",
+            "reason": "owned_in_progress_dispatch",
+        }
+        self.state.setdefault("queue", {})["events"] = {
+            "evt-pending-recon": {
+                "status": "pending",
+                "last_wait_reason": "health_refresh_required",
+            }
+        }
+        targets = supervisor.queued_intent_health_refresh_targets(
+            self.config, self.state, [event]
+        )
+        self.assertEqual(targets, [{"scope": "endpoint", "id": "claude"}])
+
+        # build_dispatch_plan includes it in health_refresh_targets even with active workers
+        status_snapshot = {
+            "tasks": [task_fixture("RECON-CONSUMER-TIMEOUT-20261006", status="in_progress", owner="Claude")]
+        }
+        plan = supervisor.build_dispatch_plan(
+            self.config,
+            self.state,
+            status_snapshot,
+            queue_snapshot=[event],
+            live_total=2,
+        )
+        plan_target_ids = {t["id"] for t in plan.get("health_refresh_targets", [])}
+        self.assertIn("claude", plan_target_ids)
+
+        # Fresh provider is not probed again
+        self.state["delivery_health"]["endpoints"]["claude"] = {
+            "state": "healthy",
+            "valid_until": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        }
+        no_targets = supervisor.queued_intent_health_refresh_targets(
+            self.config, self.state, [event]
+        )
+        self.assertEqual(no_targets, [])
+
+        # Completed or started event adds nothing
+        self.state["delivery_health"]["endpoints"]["claude"] = {
+            "state": "expired",
+            "valid_until": expired_at,
+        }
+        for terminal_status in ("completed", "failed", "started", "waiting_approval"):
+            self.state["queue"]["events"]["evt-pending-recon"]["status"] = terminal_status
+            terminal_targets = supervisor.queued_intent_health_refresh_targets(
+                self.config, self.state, [event]
+            )
+            self.assertEqual(terminal_targets, [])
+
+    def test_process_queue_preserves_existing_last_wait_reason_when_health_refresh_required(
+        self,
+    ) -> None:
+        """When health refresh is required, preserve prior blocker like skipped_dirty_worktree."""
+        self.config.setdefault("agents", {})["claude"] = {
+            "id": "claude",
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "claude",
+            "max_parallel": 2,
+        }
+        self.config.setdefault("providers", {})["claude"] = {
+            "account": "claude-account",
+            "delivery_mode": "claude_cli",
+        }
+        expired_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        self.state["delivery_health"] = healthy_delivery_health(self.config)
+        self.state["delivery_health"]["endpoints"]["claude"] = {
+            "state": "expired",
+            "valid_until": expired_at,
+        }
+        event = {
+            "event_id": "evt-pending-recon",
+            "created_at": "2026-10-06T16:00:00Z",
+            "task_id": "RECON-CONSUMER-TIMEOUT-20261006",
+            "task_generation": 1,
+            "target_agent": "claude",
+            "delivery_endpoint_id": "claude",
+            "reason": "owned_in_progress_dispatch",
+        }
+        task = task_fixture("RECON-CONSUMER-TIMEOUT-20261006", status="in_progress", owner="Claude")
+        prior_blocker = "Cannot lease isolated worker worktree /tmp/... (skipped_dirty_worktree)"
+        runtime_state.store_queue_event(self.state, event)
+        self.state["queue"]["events"]["evt-pending-recon"]["status"] = "pending"
+        self.state["queue"]["events"]["evt-pending-recon"]["last_wait_reason"] = prior_blocker
+
+        health_demands: list[dict[str, str]] = []
+        with mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}):
+            supervisor.process_queue(
+                self.config,
+                self.state,
+                health_refresh_demand=health_demands,
+            )
+
+        record = self.state["queue"]["events"]["evt-pending-recon"]
+        self.assertEqual(record["status"], "pending")
+        self.assertEqual(record["last_wait_reason"], prior_blocker)
+        self.assertIn({"scope": "endpoint", "id": "claude"}, health_demands)
+
+        # If last_wait_reason was None, health_refresh_required is recorded
+        record["last_wait_reason"] = None
+        with mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}):
+            supervisor.process_queue(
+                self.config,
+                self.state,
+            )
+        self.assertEqual(record["last_wait_reason"], "health_refresh_required")
+
+    def test_probe_targets_prioritizes_queued_demand_over_idle_targets(self) -> None:
+        """Queued demand targets are ordered before idle refresh targets to prevent probe starvation."""
+        self.config.setdefault("agents", {})["claude"] = {
+            "id": "claude",
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "claude",
+            "max_parallel": 2,
+        }
+        self.config.setdefault("providers", {})["claude"] = {
+            "account": "claude-account",
+            "delivery_mode": "claude_cli",
+        }
+        queued_demand = [{"scope": "endpoint", "id": "claude"}]
+        idle_targets = [
+            {"scope": "endpoint", "id": "antigravity"},
+            {"scope": "endpoint", "id": "antigravity2"},
+            {"scope": "endpoint", "id": "codex"},
+            {"scope": "endpoint", "id": "piastra"},
+        ]
+        probe_targets = list(queued_demand)
+        for target in idle_targets:
+            if target not in probe_targets:
+                probe_targets.append(target)
+        self.assertEqual(probe_targets[0], {"scope": "endpoint", "id": "claude"})
+
+        probed_providers: list[str] = []
+        with mock.patch.object(
+            supervisor,
+            "probe_provider_auth",
+            side_effect=lambda cfg, prov, **kwargs: probed_providers.append(prov) or {"ready": True, "status": "ok"},
+        ):
+            supervisor.probe_demanded_delivery_health(
+                self.config,
+                probe_targets,
+                quiet=True,
+                state=self.state,
+            )
+        self.assertIn("claude", probed_providers)
+
+    def test_ignored_build_artifacts_do_not_dirty_worktree(self) -> None:
+        """Untracked *.egg-info/ and /uv.lock are ignored and do not count as dirty worktree."""
+        with tempfile.TemporaryDirectory() as td:
+            repo_dir = Path(td)
+            subprocess.run(["git", "init"], cwd=repo_dir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo_dir, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_dir, check=True)
+            shutil.copy2(Path(".gitignore"), repo_dir / ".gitignore")
+            subprocess.run(["git", "add", ".gitignore"], cwd=repo_dir, check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=repo_dir, check=True, capture_output=True)
+
+            # Untracked egg-info and uv.lock must be ignored by git status
+            egg_info_dir = repo_dir / "pantheon_repo.egg-info"
+            egg_info_dir.mkdir()
+            (egg_info_dir / "PKG-INFO").write_text("metadata", encoding="utf-8")
+            (repo_dir / "uv.lock").write_text("lock", encoding="utf-8")
+
+            status_proc = subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=all"],
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            classification, paths = supervisor._classify_worktree_dirt(status_proc.stdout)
+            self.assertEqual(classification, "clean")
+            self.assertEqual(paths, [])
+
+            # Real untracked source file still dirties the worktree
+            (repo_dir / "service.py").write_text("code", encoding="utf-8")
+            status_proc_dirty = subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=all"],
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            classification_dirty, _ = supervisor._classify_worktree_dirt(status_proc_dirty.stdout)
+            self.assertEqual(classification_dirty, "real")
+
     def test_large_queue_records_reconciliation_is_bounded(self) -> None:
         """Reconciliation and queue scanning remain bounded with 1600+ historic records."""
         events: dict[str, dict[str, Any]] = {}

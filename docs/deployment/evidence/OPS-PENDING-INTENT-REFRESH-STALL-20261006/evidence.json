@@ -1,0 +1,76 @@
+{
+  "schema_version": "pantheon.ops-pending-intent-refresh-stall.v1",
+  "task": {
+    "id": "OPS-PENDING-INTENT-REFRESH-STALL-20261006",
+    "title": "Keep build artifacts out of worker worktrees and make pending intents that need a health refresh get it while workers run",
+    "owner": "Antigravity2",
+    "reviewer": "Claude",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-PENDING-INTENT-REFRESH-STALL-20261006"
+  },
+  "incident_reconstruction": {
+    "target_task": "RECON-CONSUMER-TIMEOUT-20261006",
+    "queue_event_id": "evt-20261006T160011Z-723fd0c4",
+    "timeline_utc": {
+      "16:00:11Z": "Task RECON-CONSUMER-TIMEOUT-20261006 reopened; queue event registered.",
+      "16:00:30Z": "Worker workspace lease failed with skipped_dirty_worktree due to untracked pantheon_repo.egg-info/ and root /uv.lock created during test install.",
+      "16:05:30Z": "Claude provider delivery health observation reached TTL (300s) and expired.",
+      "16:05:30Z-17:25:00Z": "process_queue evaluated admission, saw expired delivery health, and unconditionally set last_wait_reason to health_refresh_required, masking the skipped_dirty_worktree blocker. Because other workers were running (live_total > 0), zero-worker refresh did not trigger. Pending queue intents (TASK_PENDING) were skipped by build_dispatch_plan, and queued_health_refresh_demand was placed after idle targets in supervisor_tick, starving Claude's endpoint from health refresh.",
+      "17:25:00Z": "Manual operator intervention executed supervisor.py --request-delivery-health-refresh, forcing health refresh and finally surfacing the skipped_dirty_worktree blocker."
+    }
+  },
+  "root_causes": [
+    "Untracked build artifacts (*.egg-info/ and /uv.lock) were not ignored by .gitignore, causing _classify_worktree_dirt to treat worktrees as dirty.",
+    "process_queue overwrote existing last_wait_reason even when the new reason was generic health_refresh_required, hiding earlier actionable blockers.",
+    "build_dispatch_plan only examined runnable/schedulable tasks and ignored pending intents, while probe_targets in supervisor_tick appended queued refresh demand after idle targets, starving pending intents of health probes when active workers ran."
+  ],
+  "changes": [
+    ".gitignore: added *.egg-info/ and /uv.lock to prevent build artifacts from marking worker worktrees dirty.",
+    ".orchestrator/supervisor.py: in process_queue, preserve existing last_wait_reason when reason_code == 'health_refresh_required' so underlying blockers remain visible.",
+    ".orchestrator/supervisor.py: added queued_intent_health_refresh_targets() to demand delivery health refresh for unstarted non-terminal queue intents even when workers are active.",
+    ".orchestrator/supervisor.py: included queued_intent_health_refresh_targets in build_dispatch_plan, refactored redundant target loops into a unified demand_sources iteration (-23 lines), and prioritized queued_health_refresh_demand in probe_targets before idle targets.",
+    ".orchestrator/test_supervisor.py: added regression tests covering queued intent refresh while workers run, blocker preservation in last_wait_reason, probe target prioritization, and worktree cleanliness with ignored build artifacts."
+  ],
+  "verification": {
+    "status": "passed",
+    "diff_budget": {
+      "change_class": "corrective",
+      "limit": 40,
+      "net_production_lines": 19,
+      "breakdown": {
+        ".gitignore": {"added": 2, "deleted": 0, "net": 2},
+        ".orchestrator/supervisor.py": {"added": 49, "deleted": 32, "net": 17},
+        ".orchestrator/test_supervisor.py": {"added": 214, "deleted": 0, "class": "test"}
+      }
+    },
+    "regression_tests": [
+      {
+        "test": "test_queued_intent_health_refresh_targets_demands_refresh_for_pending_intent",
+        "description": "Verifies pending unstarted queue intents demand health refresh while active workers run without re-probing fresh endpoints."
+      },
+      {
+        "test": "test_process_queue_preserves_existing_last_wait_reason_when_health_refresh_required",
+        "description": "Verifies process_queue retains prior actionable blockers (such as skipped_dirty_worktree) rather than overwriting with generic health_refresh_required."
+      },
+      {
+        "test": "test_probe_targets_prioritizes_queued_demand_over_idle_targets",
+        "description": "Verifies queued intent refresh targets are placed before idle targets in probe_targets to prevent probe starvation."
+      },
+      {
+        "test": "test_ignored_build_artifacts_do_not_dirty_worktree",
+        "description": "Verifies *.egg-info/ and /uv.lock are ignored by git and classified as clean by _classify_worktree_dirt."
+      }
+    ],
+    "test_suite_results": {
+      "test_supervisor_SupervisorCycleLatencyRecoveryTests": "22 passed in 3.7s",
+      "test_supervisor_full": "403 passed in 84.8s"
+    },
+    "unmodified_dev_baseline_failures": [
+      {
+        "command": "python3 -m unittest ... scripts.test_check_config_drift",
+        "failure": "ImportError: Failed to import test module: test_check_config_drift (ModuleNotFoundError: No module named 'pytest')",
+        "explanation": "scripts/test_check_config_drift.py unconditionally imports pytest at top level and defines pytest test functions rather than unittest.TestCase, failing when executed by unittest with system python3."
+      }
+    ]
+  }
+}
