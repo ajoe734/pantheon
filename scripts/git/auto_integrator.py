@@ -769,6 +769,32 @@ def is_ignorable_diagnostic(
     return workflow_name in IGNORABLE_DIAGNOSTIC_WORKFLOWS
 
 
+def check_start_time(item: Mapping[str, Any]) -> str:
+    """ISO start time of a run, or "" when absent or the zero placeholder."""
+
+    raw = str(item.get("startedAt") or item.get("createdAt") or "")
+    return "" if raw.startswith("0001") else raw
+
+
+def latest_check_runs(rollup: Sequence[Any]) -> list[Any]:
+    """Keep only the newest run per check identity; undatable or tied runs stay."""
+
+    groups: dict[tuple[str, ...], list[Any]] = {}
+    for index, item in enumerate(rollup):
+        key = (f"malformed-{index}",)
+        if isinstance(item, Mapping):
+            key = (str(item.get("__typename")), str(item.get("workflowName")), check_name(item))
+        groups.setdefault(key, []).append(item)
+    latest: list[Any] = []
+    for runs in groups.values():
+        times = [check_start_time(run) for run in runs]
+        if "" in times or times.count(max(times)) > 1:
+            latest.extend(runs)
+        else:
+            latest.append(runs[times.index(max(times))])
+    return latest
+
+
 def summarize_status_rollup(
     rollup: Any,
     *,
@@ -785,7 +811,7 @@ def summarize_status_rollup(
     ignored_diagnostic: list[str] = []
     successful_contexts: set[str] = set()
 
-    for item in rollup:
+    for item in latest_check_runs(rollup):
         if not isinstance(item, Mapping):
             pending.append("malformed-check")
             continue
@@ -839,7 +865,7 @@ def summarize_status_rollup(
 def is_canonical_review_gate_green(rollup: Any) -> bool:
     if not isinstance(rollup, list) or not rollup:
         return False
-    for item in rollup:
+    for item in latest_check_runs(rollup):
         if not isinstance(item, Mapping):
             continue
         name = check_name(item)
