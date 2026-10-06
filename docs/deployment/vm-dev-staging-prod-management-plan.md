@@ -108,6 +108,7 @@ GitHub API `repos/ajoe734/pantheon/actions/variables/{name}` 唯讀取得以下
 gate-before-switch、served identity 與 exact prior artifacts rollback。是否實際發布成功，
 必須看當次 workflow、hosted `deployment.json` 與 BFF `/bff/version` 的一致證據，不能由變數或
 本文件宣告成功。開發工具 cleanup 不會自動恢復被 operator 停止的產品部署。
+日常台灣市場收盤資料更新（bounded Taiwan market refresh）不重跑完整發布流程，而是透過 `.github/workflows/dev-tw-market-refresh.yml` 在每個交易日 15:00 Asia/Taipei (07:00 UTC) 呼叫 `scripts/deploy_nonprod_vm.sh --refresh-only`。該入口使用 VM 既有運行中容器之 release image 與 rendered env，包含週末、未收盤、例假日及當日已更新之 idempotency 前置檢查，並在結束後透過 EXIT trap 將 egress 嚴格恢復為 `deny`、controller 恢復為 `reconcile_only`，且清理 temporary scheduler/projector 容器。
 
 `pantheon-lupin-dev-20260719`、`pantheon-benjamin-20260528` 及其舊 IP／sslip.io hostname
 只准作歷史證據，不是可連線、可部署的目標。`scripts/gcp_dev_vm_migrate.sh` 和
