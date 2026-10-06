@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException, Query, Request
 
 from services.control_plane.bff.models import ErrorCode
+from services.control_plane.bff.shared.cross_domain_utils import _surface_degradation_reason
 
 from .service import (
     CapitalAuthorityUnavailable,
@@ -270,19 +271,32 @@ def create_capital_router(
         require_operator_role(identity)
         return identity
 
-    def _meta(snapshot_at: str, dataset: str, surface_key: str, total: Optional[int] = None) -> Dict[str, Any]:
-        return _surface_meta(snapshot_at=snapshot_at, dataset=dataset, surface_key=surface_key, dataset_surface_status=dataset_surface_status, snapshot_meta=snapshot_meta, total=total)
+    def _status(dataset: str, snapshot_at: Optional[str] = None, **kwargs: Any) -> Dict[str, Any]:
+        st = resolved_get_read_store()
+        fn = getattr(st, "dataset_surface_status", None) or dataset_surface_status
+        return fn(dataset, snapshot_at=snapshot_at or utc_now(), **kwargs)
 
-    def _pool_or_error(pool_id: str) -> Dict[str, Any]:
+    def _raise_if_unavailable(surface: Dict[str, Any], label: str) -> None:
+        if surface.get("status") == "unavailable":
+            reason = str(surface.get("message") or surface.get("note") or f"{label} downstream read source is unavailable.")
+            raise bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, f"{label} read surface unavailable", reason, precondition_failed="read_surface_unavailable", suggestion="Verify the owning service URL and health before retrying this read.")
+
+    def _meta(snapshot_at: str, dataset: str, surface_key: str, total: Optional[int] = None) -> Dict[str, Any]:
+        return _surface_meta(snapshot_at=snapshot_at, dataset=dataset, surface_key=surface_key, dataset_surface_status=_status, snapshot_meta=snapshot_meta, total=total)
+
+    def _pool_or_error(pool_id: str, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
         try:
             return service.get_pool(pool_id)
         except Exception as exc:
+            _raise_if_unavailable(_status("capital_pools", snapshot_at), "Capital pool")
             raise _error_for_capital_exception(exc, bff_error) from exc
 
-    def _rebalance_or_error(requested_id: str) -> Dict[str, Any]:
+    def _rebalance_or_error(requested_id: str, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
         try:
             return service.get_rebalance(requested_id)
         except Exception as exc:
+            _raise_if_unavailable(_status("capital_pools", snapshot_at), "Capital pool")
+            _raise_if_unavailable(_status("rebalances", snapshot_at), "Rebalance")
             raise _error_for_capital_exception(exc, bff_error) from exc
 
     def _idempotent_write(operation: str, payload: Dict[str, Any], *, identity: Any, authorization: Optional[str], key: str, target_id: Optional[str] = None, tenant_id: Optional[str] = None) -> Tuple[Dict[str, Any], bool]:
@@ -367,7 +381,44 @@ def create_capital_router(
     async def bff_get_capital_pool(
         pool_id: str, authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
-        return await get_capital_pool(pool_id, authorization)
+        _require_read(authorization)
+        snapshot_at = utc_now()
+        pool_surface = _status("capital_pools", snapshot_at)
+        if pool_surface.get("status") == "unavailable" and pool_id.startswith("pool_"):
+            return {
+                "data": {"id": pool_id, "pool_id": pool_id, "status": "unavailable"},
+                "meta": _surface_meta(snapshot_at=snapshot_at, dataset="capital_pools", surface_key="capital_pool_detail", dataset_surface_status=_status, snapshot_meta=snapshot_meta),
+            }
+        pool = _pool_or_error(pool_id, snapshot_at)
+        st = resolved_get_read_store()
+        bindings = st.get_bindings_for_pool(pool_id) if hasattr(st, "get_bindings_for_pool") else []
+        allocations = st.list_capital_allocations(capital_pool_id=pool_id) if hasattr(st, "list_capital_allocations") else []
+        binding_surface = _status("persona_bindings", snapshot_at)
+        alloc_source = getattr(st, "dataset_source", lambda _: "canonical")("capital_allocations") if hasattr(st, "dataset_source") else "canonical"
+        data = {
+            **pool,
+            "bindings": bindings,
+            "allocations": allocations,
+            "authoritative_capital_readback": (
+                bool(allocations)
+                and alloc_source in {"service_client", "canonical"}
+                and all(a.get("authoritative_capital_readback") is True for a in allocations)
+            ),
+        }
+        meta = snapshot_meta(snapshot_at)
+        meta["surfaces"] = {
+            "capital_pool_detail": pool_surface,
+            "persona_bindings": binding_surface,
+            "capital_allocations": _status("capital_allocations", snapshot_at, has_data=bool(allocations)),
+        }
+        reason = _surface_degradation_reason(
+            binding_surface,
+            degraded_reason="persona bindings are degraded and may be stale.",
+            unavailable_reason="persona bindings are currently unavailable.",
+        )
+        if reason is not None:
+            meta.setdefault("degradation", {})["persona_bindings_reason"] = reason
+        return {"data": data, "meta": meta}
 
     # 7. Capital pool action command.
     @router.post("/bff/capital-pools/{pool_id}/actions/{action_id}", status_code=202)

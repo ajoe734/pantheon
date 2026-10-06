@@ -1,0 +1,89 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-CAPITAL-POOL-DEGRADATION-20261006",
+  "title": "Restore capital pool detail degradation semantics and binding surfaces lost in the 9/1 router mount",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "corrective",
+  "delivery_state": "ready_for_independent_review",
+  "lost_behaviour_commits": {
+    "router_layer_anchor": {
+      "commit": "8226b2774fc1ee2a20edb523517f4e4ca51e1115",
+      "subject": "OPGAP-BE-CAPITAL-ROUTER-V2-20260830: anchor router layer",
+      "description": "Created standalone capital/router.py which omitted degradation checking in _pool_or_error/_rebalance_or_error, omitted bindings/allocations/surfaces projection in bff_get_capital_pool, and hardcoded status ok for surface meta."
+    },
+    "main_assembly_mount": {
+      "commit": "4cd637d0dbf1be964b4c7be4ea4626154563a339",
+      "subject": "OPGAP-BFF-MAIN-ASSEMBLY-V3-20260901: assemble BFF composition root",
+      "description": "Mounted capital router into main.py and pruned the working inline /bff/capital-pools handlers, exposing the regressions to callers."
+    }
+  },
+  "reproductions": {
+    "outage_503_behavior": {
+      "case": "GET /bff/capital-pools/{id} during capital owner pool source outage",
+      "before": "Returned 404 RESOURCE_NOT_FOUND (retryable=false) because service.get_pool raised CapitalNotFound without checking dataset surface status.",
+      "after": "Returns 503 DEPENDENCY_UNAVAILABLE (retryable=true) via _raise_if_unavailable checking _status('capital_pools'). GET /bff/rebalances/{id} and POST /bff/rebalances behave identically during outage."
+    },
+    "pool_detail_bindings_and_surfaces": {
+      "case": "GET /bff/capital-pools/{id} returns bindings, allocations, authoritative readback, and surface degradation reason",
+      "before": "bff_get_capital_pool simply delegated to legacy get_capital_pool, returning no bindings, allocations, authoritative_capital_readback, or persona_bindings degradation reason (failing with KeyError: 'bindings').",
+      "after": "bff_get_capital_pool projects bindings from existing owner read store (st.get_bindings_for_pool), allocations, authoritative_capital_readback, meta.surfaces.persona_bindings, and persona_bindings_reason from _surface_degradation_reason."
+    },
+    "pool_list_status": {
+      "case": "GET /bff/capital-pools reports accurate surface status during owner outage",
+      "before": "_meta used _default_dataset_surface_status returning status='ok' unconditionally.",
+      "after": "_meta uses _status querying the injected read store dataset_surface_status, reflecting 'unavailable' when owner source is down."
+    },
+    "rebalance_create_validation": {
+      "case": "POST /bff/rebalances rejects legacy payload without lineage",
+      "before": "Test ran against fake _CommandExecutorCapitalAuthority lacking create_rebalance, returning 503 instead of validating payload.",
+      "after": "Runs against real CapitalBffAuthorityHarness(tmp_path, seed_allocation=False), asserting 422 VALIDATION_FAILED and confirming 0 rebalances stored in owner."
+    },
+    "seed_data_test_integrity": {
+      "case": "test_bff_capital_pool_detail_with_seed_data proves owner bindings read",
+      "before": "Seed pool had bindings=[] matching empty owner mock, allowing an echo of seeded field to falsely pass.",
+      "after": "Seed pool has dummy echoed binding while owner read returns real owner_bindings; test asserts body['data']['bindings'] == owner_bindings."
+    }
+  },
+  "scope": {
+    "owned": [
+      "services/control-plane/bff/capital/router.py",
+      "services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py"
+    ],
+    "not_changing": [
+      "Ranking formula endpoints and 7 out-of-scope ranking tests (deferred to ranking formula task)",
+      "services/control-plane/bff/capital/service.py",
+      "BFF composition root main.py"
+    ],
+    "composes_with": [
+      "BFF composition root router mount",
+      "CapitalPoolPort owner read integration"
+    ]
+  },
+  "verification": {
+    "passed": [
+      {
+        "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py",
+        "result": "23 passed, 7 failed (the 7 ranking formula tests remain untouched for ranking formula task per AC7)"
+      },
+      {
+        "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_bff_capital_pool_bindings.py",
+        "result": "12 passed, 0 failed"
+      },
+      {
+        "command": "$PANTHEON_DEPENDENCY_PYTHON -m py_compile services/control-plane/bff/capital/router.py services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py",
+        "result": "passed without errors"
+      },
+      {
+        "command": "python3 scripts/git/diff_budget.py",
+        "result": "production net added lines <= 60 (net 51 lines)"
+      }
+    ]
+  },
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Claude",
+    "note": "Independently verify restored capital pool detail degradation semantics, bindings projection, 503 retryable during outage, CapitalPoolPort backing, and diff budget compliance."
+  }
+}
