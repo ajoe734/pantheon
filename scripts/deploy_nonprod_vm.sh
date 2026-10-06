@@ -362,6 +362,9 @@ Options:
                          Deploy command deadline in seconds. Default: 7200.
   --deploy-timeout-seconds <seconds>
                          Alias for --deadline-seconds.
+  --refresh-only         dev only: run bounded Taiwan market refresh without redeploying.
+  --force                With --refresh-only: force refresh even outside session or if fresh.
+  --output <path>        With --refresh-only: write JSON execution outcome to path.
   --help                 Show this message.
 
 Environment overrides:
@@ -560,6 +563,9 @@ while [[ $# -gt 0 ]]; do
       [[ "${ARTIFACT_READBACK_OUT}" == /* ]] || error "artifact readback output must be absolute"
       shift 2
       ;;
+    --refresh-only) REFRESH_ONLY=true; shift ;;
+    --force) FORCE_REFRESH=true; shift ;;
+    --output) REFRESH_OUTPUT_PATH="${2:-}"; shift 2 ;;
     --dry-run)
       DRY_RUN=true
       shift
@@ -573,6 +579,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "${REFRESH_ONLY:-false}" == "true" ]]; then
+  execute_bounded_source_refresh_entrypoint "${FORCE_REFRESH:-false}" "${REFRESH_OUTPUT_PATH:-}"
+  exit $?
+fi
 
 [[ "$DEV_DEPLOY_DEADLINE_SECONDS" =~ ^[0-9]+$ && "$DEV_DEPLOY_DEADLINE_SECONDS" -ge 1 ]] \
   || error "DEV_DEPLOY_DEADLINE_SECONDS must be a positive integer"
@@ -1698,6 +1709,138 @@ ensure_dev_caddy_ingress() (
     || error "dev BFF HTTPS ingress did not become healthy: ${bff_host}"
   info "dev Caddy HTTPS ingress verified: ${bff_host}"
 )
+
+check_taiwan_refresh_preflight() {
+  local force="${1:-false}"
+  python3 - "${force}" <<'PREFLIGHT_PY'
+import json, sys, urllib.error, urllib.request
+from datetime import datetime, time, timedelta, timezone
+
+tz = timezone(timedelta(hours=8))
+force = str(sys.argv[1]).lower() == "true"
+now_u, now_t = datetime.now(timezone.utc), datetime.now(tz)
+d_str = str(now_t.date())
+def emit(status, **kw):
+    sys.exit(print(json.dumps({"status": status, "taipei_date": d_str, **kw}, sort_keys=True)))
+
+if not force and now_t.weekday() >= 5:
+    emit("skipped", reason="weekend", checked_at=now_u.isoformat())
+if not force and now_t.time() < time(13, 30):
+    emit("skipped", reason="session_not_closed", checked_at=now_u.isoformat())
+
+from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness, validate_taiwan_calendar_evidence
+snap = None
+try:
+    req = urllib.request.Request("http://127.0.0.1:18097/api/source-ingest/snapshots/latest?symbol=0050.TW", headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=3) as resp:
+        snap = json.loads(resp.read().decode("utf-8"))
+except urllib.error.HTTPError as exc:
+    if exc.code != 404:
+        emit("error", reason="snapshot_lookup_failed", detail=f"HTTP {exc.code}: {exc.reason}")
+except urllib.error.URLError as exc:
+    emit("error", reason="source_ingest_unreachable", detail=str(exc.reason))
+except Exception as exc:
+    emit("error", reason="preflight_failed", detail=str(exc))
+
+if snap is not None:
+    cal = snap.get("calendar_evidence") or (snap.get("lineage") or {}).get("calendar_evidence")
+    if not cal:
+        emit("error", reason="market_input_calendar_unverifiable", detail="snapshot missing required calendar evidence and pins")
+    c_ok, c_err, c_norm = validate_taiwan_calendar_evidence(cal, now_dt=now_u)
+    if not c_ok:
+        emit("error", reason="market_input_calendar_unverifiable", detail=c_err)
+    if d_str in (c_norm.get("holidays") or {}):
+        emit("skipped", reason="holiday", checked_at=now_u.isoformat())
+    ev_dt = datetime.fromisoformat(snap["event_time"].replace("Z", "+00:00"))
+    obs = snap.get("observed_at")
+    obs_dt = datetime.fromisoformat(obs.replace("Z", "+00:00")) if obs else None
+    close_t = datetime(now_t.year, now_t.month, now_t.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
+    if not force and ev_dt.astimezone(tz).date() == now_t.date() and obs_dt and obs_dt >= close_t:
+        ok, reason, detail = evaluate_taiwan_market_freshness(
+            event_time_dt=ev_dt, now_dt=now_u, refresh_receipt_dt=obs_dt,
+            lineage=snap.get("lineage") or {}, max_refresh_age_seconds=86400, calendar_evidence=cal)
+        if ok:
+            emit("noop", reason="already_fresh", snapshot_id=snap.get("snapshot_id"), checked_at=now_u.isoformat())
+        emit("error", reason="existing_snapshot_admission_failed", detail=f"{reason}: {detail}")
+
+emit("proceed")
+PREFLIGHT_PY
+}
+
+execute_bounded_source_refresh_entrypoint() {
+  local force="${1:-false}" output_path="${2:-}" preflight_output preflight_status
+  preflight_output="$(check_taiwan_refresh_preflight "${force}")" || error "preflight execution failed: ${preflight_output}"
+  preflight_status="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("status") or "")' "${preflight_output}")"
+
+  case "${preflight_status}" in
+    skipped|noop)
+      [[ -n "${output_path}" ]] && printf '%s\n' "${preflight_output}" > "${output_path}"
+      info "bounded source refresh preflight: ${preflight_output}"; return 0 ;;
+    error)
+      [[ -n "${output_path}" ]] && printf '%s\n' "${preflight_output}" > "${output_path}"
+      info "bounded source refresh preflight error: ${preflight_output}" >&2; return 1 ;;
+    proceed) info "bounded source refresh preflight passed; proceeding with refresh" ;;
+    *) error "unexpected preflight status: ${preflight_output}" ;;
+  esac
+
+  local refresh_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" steady_env="$(mktemp)"
+  PANTHEON_DEV_COMPOSE_PROFILES="root,source-ingest-scheduler" PANTHEON_EXTERNAL_EGRESS="allowlist" \
+  PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw" \
+  SOURCE_INGEST_BOUNDED_CONNECTOR_ID="tw-twse-tpex-official-market" \
+  SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-1800}" \
+  SOURCE_INGEST_CONTROLLER_MODE="reconcile_and_pull" SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL="reconciled_live_proof" \
+  SOURCE_INGEST_CONTROLLER_RESTART_POLICY="no" SOURCE_INGEST_CONTROLLER_MAX_TICKS="1" \
+  SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="1" SOURCE_INGEST_MAX_RECORDS="100"
+  validate_source_refresh_profile
+  resolve_bounded_source_refresh_active_symbols
+
+  local cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
+  [[ -n "$cid" ]] && docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$cid" > "${steady_env}"
+
+  restore_bounded_source_refresh() {
+    local rc=$?
+    trap - EXIT INT TERM
+    info "restoring external egress to deny and source controller to reconcile_only"
+    if [[ -s "${steady_env}" ]]; then
+      docker compose --env-file "${steady_env}" -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest >/dev/null 2>&1 || true
+    else
+      PANTHEON_EXTERNAL_EGRESS=deny PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="" \
+      SOURCE_INGEST_CONTROLLER_MODE=reconcile_only SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick \
+      SOURCE_INGEST_CONTROLLER_MAX_TICKS=0 SOURCE_INGEST_CONTROLLER_RESTART_POLICY=unless-stopped \
+        docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest >/dev/null 2>&1 || true
+    fi
+    COMPOSE_PROFILES="source-ingest-scheduler,workers" \
+      docker compose -p pantheon -f docker-compose.yml rm -f -s source-ingest-scheduler source-ingest-agora-projector >/dev/null 2>&1 || true
+    rm -f "${steady_env}"
+    return "${rc}"
+  }
+  trap restore_bounded_source_refresh EXIT INT TERM
+
+  local env_opts=()
+  [[ -s "${steady_env}" ]] && env_opts=(--env-file "${steady_env}")
+  PANTHEON_EXTERNAL_EGRESS=allowlist \
+  PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw" \
+  SOURCE_INGEST_CONTROLLER_MODE=reconcile_and_pull \
+  SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
+    docker compose "${env_opts[@]}" -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest
+
+  COMPOSE_PROFILES="source-ingest-scheduler,workers" \
+  SOURCE_INGEST_CONTROLLER_MODE=reconcile_and_pull SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=reconciled_live_proof \
+  SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 SOURCE_INGEST_CONTROLLER_RESTART_POLICY=no \
+  SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
+  SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
+  SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=1 SOURCE_INGEST_MAX_RECORDS=100 \
+  SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
+    docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest-scheduler
+  wait_for_bounded_source_refresh_service source-ingest-scheduler
+
+  COMPOSE_PROFILES="source-ingest-scheduler,workers" \
+    docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest-agora-projector
+  wait_for_bounded_source_refresh_service source-ingest-agora-projector
+
+  verify_bounded_source_refresh_readback "${refresh_started_at}"
+  [[ -n "${output_path}" ]] && python3 -c "import json; print(json.dumps({'status': 'completed', 'refreshed_at': '${refresh_started_at}'}))" > "${output_path}"
+}
 
 assert_bff_source_sha() {
   local url="$1"
@@ -3268,78 +3411,38 @@ cleanup_stale_compose_replacement_containers() {
 with_dev_bff_runtime_env() {
   local target_sha="$1" proof_flag="$2"
   shift 2
-  COMPOSE_BAKE=false \
-  COMPOSE_PROFILES="" \
-  GIT_SHA="${target_sha}" \
-  BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  PANTHEON_ENV=dev \
-  LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
-  PANTHEON_CANARY_EXECUTION_ENABLED=false \
-  PANTHEON_LIVE_BROKER_ENABLED=false \
-  BROKER_PAPER_ENABLED=true \
-  AGORA_WORKSHOP_STORE_BACKEND=postgres \
-  AGORA_WORKSHOP_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
-  AGORA_WORKSHOP_STORE_SCHEMA=agora \
-  AGORA_GOVERNANCE_STORE_BACKEND=postgres \
-  AGORA_GOVERNANCE_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
-  AGORA_GOVERNANCE_STORE_SCHEMA=agora \
-  AGORA_RESEARCH_STORE_BACKEND=postgres \
-  AGORA_RESEARCH_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
-  AGORA_RESEARCH_STORE_SCHEMA=agora_research \
-  AGORA_TRADING_ROOM_STORE_BACKEND=postgres \
-  AGORA_TRADING_ROOM_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
-  AGORA_TRADING_ROOM_STORE_SCHEMA=agora \
-  PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
-  PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
-  PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
-  PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${proof_flag}" \
-  PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
-  CAPITAL_JWT_SECRET="${PANTHEON_DEV_CAPITAL_JWT_SECRET}" \
-  PANTHEON_REGISTRY_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
-  PANTHEON_GOVERNANCE_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
-  PANTHEON_GOVERNANCE_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
-  PANTHEON_GOVERNANCE_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
-  PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
-  PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
-  PANTHEON_BFF_JWKS_URI="${PANTHEON_DEV_BFF_JWKS_URI}" \
-  PANTHEON_BFF_OIDC_DISCOVERY_URL="${PANTHEON_DEV_BFF_OIDC_DISCOVERY_URL}" \
-  PANTHEON_BFF_OIDC_ISSUER="${PANTHEON_DEV_BFF_OIDC_ISSUER}" \
-  PANTHEON_BFF_OIDC_AUDIENCE="${PANTHEON_DEV_BFF_OIDC_AUDIENCE}" \
-  PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \
-  PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
-  PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID}" \
-  PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET}" \
-  PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID}" \
-  PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET}" \
-  PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID}" \
-  PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET}" \
-  PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID}" \
-  PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET}" \
-  PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID}" \
-  PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET}" \
-  PANTHEON_BFF_MFA_REQUIRED="${PANTHEON_DEV_BFF_MFA_REQUIRED}" \
-  PANTHEON_BFF_MFA_CLAIMS="${PANTHEON_DEV_BFF_MFA_CLAIMS}" \
-  PANTHEON_BFF_MFA_VALUES="${PANTHEON_DEV_BFF_MFA_VALUES}" \
-  PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED="${PANTHEON_DEV_BFF_REQUIRE_EMAIL_VERIFIED}" \
-  PANTHEON_BFF_ROLE_CLAIMS="${PANTHEON_DEV_BFF_ROLE_CLAIMS}" \
-  PANTHEON_BFF_ROLE_MAP="${PANTHEON_DEV_BFF_ROLE_MAP}" \
-  PANTHEON_BFF_ROLE_MAP_MODE="${PANTHEON_DEV_BFF_ROLE_MAP_MODE}" \
-  PANTHEON_BFF_DEFAULT_ROLE="${PANTHEON_DEV_BFF_DEFAULT_ROLE}" \
-  PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
-  PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
-  PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
-  PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH}" \
-  PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH}" \
-  PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}" \
+  COMPOSE_BAKE=false COMPOSE_PROFILES="" GIT_SHA="${target_sha}" BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  PANTHEON_ENV=dev LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
+  PANTHEON_CANARY_EXECUTION_ENABLED=false PANTHEON_LIVE_BROKER_ENABLED=false BROKER_PAPER_ENABLED=true \
+  AGORA_WORKSHOP_STORE_BACKEND=postgres AGORA_WORKSHOP_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon AGORA_WORKSHOP_STORE_SCHEMA=agora \
+  AGORA_GOVERNANCE_STORE_BACKEND=postgres AGORA_GOVERNANCE_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon AGORA_GOVERNANCE_STORE_SCHEMA=agora \
+  AGORA_RESEARCH_STORE_BACKEND=postgres AGORA_RESEARCH_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon AGORA_RESEARCH_STORE_SCHEMA=agora_research \
+  AGORA_TRADING_ROOM_STORE_BACKEND=postgres AGORA_TRADING_ROOM_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon AGORA_TRADING_ROOM_STORE_SCHEMA=agora \
+  PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
+  PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${proof_flag}" PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" CAPITAL_JWT_SECRET="${PANTHEON_DEV_CAPITAL_JWT_SECRET}" \
+  PANTHEON_REGISTRY_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" PANTHEON_GOVERNANCE_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+  PANTHEON_GOVERNANCE_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" PANTHEON_GOVERNANCE_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
+  PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
+  PANTHEON_BFF_JWKS_URI="${PANTHEON_DEV_BFF_JWKS_URI}" PANTHEON_BFF_OIDC_DISCOVERY_URL="${PANTHEON_DEV_BFF_OIDC_DISCOVERY_URL}" \
+  PANTHEON_BFF_OIDC_ISSUER="${PANTHEON_DEV_BFF_OIDC_ISSUER}" PANTHEON_BFF_OIDC_AUDIENCE="${PANTHEON_DEV_BFF_OIDC_AUDIENCE}" \
+  PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
+  PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID}" PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET}" \
+  PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID}" PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET}" \
+  PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID}" PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET}" \
+  PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID}" PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET}" \
+  PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID}" PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET}" \
+  PANTHEON_BFF_MFA_REQUIRED="${PANTHEON_DEV_BFF_MFA_REQUIRED}" PANTHEON_BFF_MFA_CLAIMS="${PANTHEON_DEV_BFF_MFA_CLAIMS}" PANTHEON_BFF_MFA_VALUES="${PANTHEON_DEV_BFF_MFA_VALUES}" \
+  PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED="${PANTHEON_DEV_BFF_REQUIRE_EMAIL_VERIFIED}" PANTHEON_BFF_ROLE_CLAIMS="${PANTHEON_DEV_BFF_ROLE_CLAIMS}" \
+  PANTHEON_BFF_ROLE_MAP="${PANTHEON_DEV_BFF_ROLE_MAP}" PANTHEON_BFF_ROLE_MAP_MODE="${PANTHEON_DEV_BFF_ROLE_MAP_MODE}" PANTHEON_BFF_DEFAULT_ROLE="${PANTHEON_DEV_BFF_DEFAULT_ROLE}" \
+  PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
+  PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH}" \
+  PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH}" PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}" \
   PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES}" \
   PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" \
   PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \
   PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}" \
-  MANAGEMENT_AI_STORE_BACKEND="${MANAGEMENT_AI_STORE_BACKEND}" \
-  MANAGEMENT_AI_STORE_SCHEMA="${MANAGEMENT_AI_STORE_SCHEMA}" \
-  MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
-  PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET}" \
-  PANTHEON_MGMT_AI_ATTACH_LOCATION="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}" \
+  MANAGEMENT_AI_STORE_BACKEND="${MANAGEMENT_AI_STORE_BACKEND}" MANAGEMENT_AI_STORE_SCHEMA="${MANAGEMENT_AI_STORE_SCHEMA}" MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
+  PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET}" PANTHEON_MGMT_AI_ATTACH_LOCATION="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}" \
   PANTHEON_RECONCILIATION_DRIFT_API_URL="${PANTHEON_RECONCILIATION_DRIFT_API_URL:-${RECONCILIATION_DRIFT_URL:-http://reconciliation-drift-svc:8102}}" \
   RECONCILIATION_DRIFT_URL="${RECONCILIATION_DRIFT_URL:-http://reconciliation-drift-svc:8102}" \
   RECONCILIATION_DRIFT_AUTH_TOKEN="${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}" \
@@ -3811,11 +3914,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Rollout persistent root runtime.
     cleanup_stale_compose_replacement_containers
-    COMPOSE_BAKE=false \
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
-    BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    PANTHEON_ENV=dev \
-    LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
     PANTHEON_EXTERNAL_EGRESS="${PANTHEON_EXTERNAL_EGRESS:-deny}" \
     PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" \
     SOURCE_INGEST_CONTROLLER_MODE="${SOURCE_INGEST_CONTROLLER_MODE}" \
@@ -3826,68 +3925,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS:-}" \
     SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}" \
     SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}" \
-    PANTHEON_CANARY_EXECUTION_ENABLED=false \
-    PANTHEON_LIVE_BROKER_ENABLED=false \
-    BROKER_PAPER_ENABLED=true \
-    PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED=true \
-    AGORA_WORKSHOP_STORE_BACKEND=postgres \
-    AGORA_WORKSHOP_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
-    AGORA_WORKSHOP_STORE_SCHEMA=agora \
-    AGORA_GOVERNANCE_STORE_BACKEND=postgres \
-    AGORA_GOVERNANCE_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
-    AGORA_GOVERNANCE_STORE_SCHEMA=agora \
-    AGORA_RESEARCH_STORE_BACKEND=postgres \
-    AGORA_RESEARCH_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
-    AGORA_RESEARCH_STORE_SCHEMA=agora_research \
-    AGORA_TRADING_ROOM_STORE_BACKEND=postgres \
-    AGORA_TRADING_ROOM_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
-    AGORA_TRADING_ROOM_STORE_SCHEMA=agora \
-    PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
-    PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
-    PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
-    PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
-    PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
-    CAPITAL_JWT_SECRET="${PANTHEON_DEV_CAPITAL_JWT_SECRET}" \
-    PANTHEON_REGISTRY_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
-    PANTHEON_GOVERNANCE_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
-    PANTHEON_GOVERNANCE_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
-    PANTHEON_GOVERNANCE_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
-    PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
-    PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
-    PANTHEON_BFF_JWKS_URI="${PANTHEON_DEV_BFF_JWKS_URI}" \
-    PANTHEON_BFF_OIDC_DISCOVERY_URL="${PANTHEON_DEV_BFF_OIDC_DISCOVERY_URL}" \
-    PANTHEON_BFF_OIDC_ISSUER="${PANTHEON_DEV_BFF_OIDC_ISSUER}" \
-    PANTHEON_BFF_OIDC_AUDIENCE="${PANTHEON_DEV_BFF_OIDC_AUDIENCE}" \
-    PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \
-    PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
-    PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID}" \
-    PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET}" \
-    PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID}" \
-    PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET}" \
-    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID}" \
-    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET}" \
-    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID}" \
-    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET}" \
-    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID}" \
-    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET}" \
-    PANTHEON_BFF_MFA_REQUIRED="${PANTHEON_DEV_BFF_MFA_REQUIRED}" \
-    PANTHEON_BFF_MFA_CLAIMS="${PANTHEON_DEV_BFF_MFA_CLAIMS}" \
-    PANTHEON_BFF_MFA_VALUES="${PANTHEON_DEV_BFF_MFA_VALUES}" \
-    PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED="${PANTHEON_DEV_BFF_REQUIRE_EMAIL_VERIFIED}" \
-    PANTHEON_BFF_ROLE_CLAIMS="${PANTHEON_DEV_BFF_ROLE_CLAIMS}" \
-    PANTHEON_BFF_ROLE_MAP="${PANTHEON_DEV_BFF_ROLE_MAP}" \
-    PANTHEON_BFF_ROLE_MAP_MODE="${PANTHEON_DEV_BFF_ROLE_MAP_MODE}" \
-    PANTHEON_BFF_DEFAULT_ROLE="${PANTHEON_DEV_BFF_DEFAULT_ROLE}" \
-    PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
-    PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
-    PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
-    PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH}" \
-    PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH}" \
-    PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}" \
-    PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES}" \
-    PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" \
-    PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \
-    PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}" \
+    SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
+    with_dev_bff_runtime_env "${PANTHEON_DEPLOY_SHA}" "${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
       run_dev_candidate_compose up -d \
       || rollback_dev_bff_on_failure "docker_compose_up"
     # `up -d --build` only recreates a container Compose judges to need it.
