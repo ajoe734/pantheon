@@ -3466,8 +3466,10 @@ with_dev_bff_runtime_env() {
   local target_sha="$1"
   local proof_flag="$2"
   shift 2
+  # Preserve the caller's selection: root rollout supplies root profiles,
+  # while the explicit BFF-only branch deliberately supplies an empty value.
   COMPOSE_BAKE=false \
-  COMPOSE_PROFILES="" \
+  COMPOSE_PROFILES="${COMPOSE_PROFILES:-}" \
   GIT_SHA="${target_sha}" \
   BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   PANTHEON_ENV=dev \
