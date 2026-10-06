@@ -1,0 +1,98 @@
+{
+  "task_id": "BFF-MAIN-PERSONA-RESIDUE-20261006",
+  "head": "84f3beb57",
+  "base": "81841f55b",
+  "scope": "Remove the duplicate Persona lifecycle, provisioning, transport, projection, and idempotency definitions from bff/main.py; keep their owning service implementations.",
+  "composition_before_change": {
+    "trace": "core/app_factory.py mount_bff_routers._dep checks the production main module attribute before fallback_factory and _resolve_default_dependency. On the recorded base, every name below was defined in main.py; where requested through _dep, the main.py object therefore won over the owner-module resolver. This is runtime composition precedence, not AST reference counting.",
+    "resolved_definitions": [
+      {"name": "_STRATEGY_BFF_LIFECYCLE_MAP", "resolved_module": "services.control_plane.bff.main", "owner_module": "services.control_plane.bff.personas.service"},
+      {"name": "_PERSONA_OPERATIONAL_LIFECYCLE_STATES", "resolved_module": "services.control_plane.bff.main", "owner_module": "services.control_plane.bff.personas.service"},
+      {"name": "_STRATEGY_BFF_RISK_MAP", "resolved_module": "services.control_plane.bff.main", "owner_module": "services.control_plane.bff.personas.service"},
+      {"name": "_STRATEGY_PERSONA_BFF_IDEMPOTENCY", "resolved_module": "services.control_plane.bff.main", "owner_module": "services.control_plane.bff.personas.service"},
+      {"name": "_STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY", "resolved_module": "services.control_plane.bff.main", "owner_module": "services.control_plane.bff.personas.service"},
+      {"name": "_STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY", "resolved_module": "services.control_plane.bff.main", "owner_module": "services.control_plane.bff.personas.service"},
+      {"name": "_PERSONA_PROVISIONING_STORE", "resolved_module": "services.control_plane.bff.main", "owner_module": "services.control_plane.bff.personas.service"},
+      {"name": "_PERSONA_PROVISIONING_STORE_LOCK", "resolved_module": "services.control_plane.bff.main", "owner_module": "services.control_plane.bff.personas.service"},
+      {"name": "_PERSONA_FIRST_EVALUATION_WORKFLOW_ID", "resolved_module": "services.control_plane.bff.main", "owner_module": "services.control_plane.bff.personas.service"},
+      {"name": "_PersonaOwnerHttpTransport", "resolved_module": "services.control_plane.bff.main", "owner_module": "services.control_plane.bff.personas.service"},
+      {"name": "_strategy_persona_idempotency_check", "resolved_module": "services.control_plane.bff.main", "owner_module": "services.control_plane.bff.personas.service"},
+      {"name": "_persist_persona_provisioning_terminal_transition", "resolved_module": "services.control_plane.bff.main", "owner_module": "services.control_plane.bff.personas.service"},
+      {"name": "_materialize_terminal_persona_provisioning_ledger", "resolved_module": "services.control_plane.bff.main", "owner_module": "services.control_plane.bff.personas.service"},
+      {"name": "_project_persona_dto", "resolved_module": "services.control_plane.bff.main", "owner_module": "services.control_plane.bff.personas.service"},
+      {"name": "_list_strategy_summaries", "resolved_module": "services.control_plane.bff.main", "owner_module": "services.control_plane.bff.strategies.service", "owner_definition": "list_strategy_summaries"}
+    ]
+  },
+  "composition_after_change": {
+    "test": "services/control-plane/bff/tests/test_persona_main_residue.py::test_persona_dependencies_resolve_to_their_single_owner_after_composition",
+    "assertions": [
+      "All 15 in-scope names are absent from main.py and present in the owning module (list_strategy_summaries is the owner name for the removed main alias).",
+      "The test wraps _resolve_default_dependency while calling compose_bff_app, proving that production _dep falls through the missing main.py names to the resolver. The resolver returns the exact persona service objects for the strategy idempotency function and all three idempotency stores; _list_strategy_summaries resolves to a callable backed by strategies.service.list_strategy_summaries.",
+      "The freshly composed app's mounted router endpoints and app.state.persona_service.get_provisioning_store resolve to the identical persona service provisioning store instance."
+    ],
+    "state_singletons": ["_PERSONA_PROVISIONING_STORE", "_PERSONA_PROVISIONING_STORE_LOCK", "_STRATEGY_PERSONA_BFF_IDEMPOTENCY", "_STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY", "_STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY"]
+  },
+  "behavior_and_regressions": {
+    "coordinator_review": "Coordinator reviewed implementation commits 60600da35 and 84f3beb57 and reported that the single definitions in the owning modules look correct.",
+    "observed_duplicate_behavior_difference": "At base, the duplicate _PersonaOwnerHttpTransport in main.py lacked the owner implementation's tenant-bound service identity and scoped Governance service-token handling (including tenant-dev restriction). The surviving personas/service.py owner retains those stricter owner-auth behaviors. This behavior difference is documented for reviewer confirmation; implementation commits were coordinator-reviewed.",
+    "related_24_file_comparison": {
+      "base": {"commit": "81841f55b", "passed": 362, "failed": 30, "errors": 1},
+      "head": {"commit": "84f3beb57", "passed": 362, "failed": 30, "errors": 1},
+      "failure_identity": "The same 31 failing test ids were reported on base and head; no additional head failures.",
+      "coordinator_logs": [
+        "/tmp/claude-1802994780/-home-chloe_ong_dev_cctech_support_com-code-pantheon/8ee01167-cc9b-4180-b1c7-dc819af1885c/scratchpad/task-c-base.log",
+        "/tmp/claude-1802994780/-home-chloe_ong_dev_cctech_support_com-code-pantheon/8ee01167-cc9b-4180-b1c7-dc819af1885c/scratchpad/task-c-head.log"
+      ],
+      "limitation": "The coordinator log files are not present in this worker environment, so individual test ids cannot be transcribed here; the coordinator's side-by-side totals and identical-failure-set result are recorded from the task-scoped handoff."
+    },
+    "full_bff_suite": {
+      "status": "coordinator comparison complete; deterministic regression corrected; focused verification pending",
+      "coordinator_summary": "/tmp/pantheon-bff-main-persona-residue-fullsuite-20261006/summary.md",
+      "failure_id_lists": {
+        "base": "/tmp/pantheon-bff-main-persona-residue-fullsuite-20261006/base-failure-ids.txt",
+        "head": "/tmp/pantheon-bff-main-persona-residue-fullsuite-20261006/head-failure-ids.txt"
+      },
+      "method": "Coordinator ran all 412 BFF test files on base 81841f55b and head 84f3beb57 with /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python, pytest -q -p no:cacheprovider -o addopts= --continue-on-collection-errors, using the same two shards on both sides.",
+      "shards": {
+        "base": [
+          {"shard": "00", "failed": 161, "passed": 2204, "skipped": 25, "errors": 42},
+          {"shard": "01", "failed": 224, "passed": 3253, "skipped": 39, "errors": 20}
+        ],
+        "head": [
+          {"shard": "00", "failed": 162, "passed": 2203, "skipped": 25, "errors": 42},
+          {"shard": "01", "failed": 228, "passed": 3249, "skipped": 39, "errors": 20}
+        ]
+      },
+      "deterministic_regression_fixed": "services/control-plane/bff/tests/test_persona_health_single_owner.py::test_main_py_reuses_shared_instance_for_overlay_and_builder_call_sites asserted the removed main.py projection copy's overlay call. Updated it to assert the owning personas/service.py _project_persona_dto delegates through _overlay_source_health_truth and _active_persona_service().overlay_source_health_truth, while main.py has no overlay_source_health_truth call. All other assertions in the test remain unchanged.",
+      "timing_flaky_not_regressions": [
+        "test_bff_promotion_review_governance.py::test_cockpit_composition_completes_after_slow_contributor_read (head-only in full run)",
+        "test_bff_promotion_review_governance.py::test_human_inbox_degrades_cleanly_when_persona_readiness_blocks (base-only in full run)",
+        "test_mgmt_load_005_read_concurrency.py::test_alerts_timeout_returns_degraded_envelope_without_hanging",
+        "test_mgmt_load_005_read_concurrency.py::test_jobs_router_returns_narrow_port_records_without_legacy_reader (failed on base run 2 and head run 1)",
+        "tests/test_bff_auth_facade.py::test_auth_readiness_stays_below_50ms_while_provider_probe_is_slow",
+        "tests/test_bff_auth_facade.py::test_lifespan_schedules_first_probe_without_blocking_startup"
+      ],
+      "comparison_conclusion": "The six listed one-sided differences pass and fail on both sides when rerun in isolation and are timing-flaky, not regressions. The deterministic assertion above accounts for the remaining difference; all other failure identities are identical between base and head. tests/test_persona_main_residue.py was not present at comparison head 84f3beb57 and is outside this 412-file result.",
+      "next": "Run only tests/test_persona_health_single_owner.py, tests/test_persona_main_residue.py, tests/test_bff_test_architecture.py, and tests/test_persona_provisioning_read_surface_mutation.py on final head. Do not rerun the full BFF suite."
+    }
+  },
+  "follow_up_duplicate_top_level_definitions_not_changed": [
+    "_composed_dataset_surface_status", "_composed_surface_status", "_dataset_source_after_read", "_dataset_surface_status", "_decode_page_token", "_deprecated_bff_path_response", "_foundation_audit_for_command_record", "_incident_home_severity", "_latest_promotion_review_command", "_list_governance_audit_events", "_list_persona_records", "_loop_run_controller_is_formal", "_loop_run_projection_metadata", "_loop_run_surface_status", "_loop_run_truth_source", "_management_avg", "_management_count_by", "_management_number", "_meta_staleness", "_page_slice", "_parse_rfc3339", "_performance_ranking_source_surface", "_project_final_command_response", "_promotion_review_decision_projection", "_promotion_review_submission_projection", "_raise_if_read_surface_unavailable", "_read_store_fixture_records", "_read_surface_meta", "_read_surface_state", "_sem_command_response", "_surface_status"
+  ],
+  "validation": [
+    {"command": "cd services/control-plane/bff && /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q tests/test_persona_main_residue.py", "result": "2 passed in 44.59s after merging origin/dev at 64cdd49c220fb44f6180d37744adc489d447e533; 2 jsonschema.RefResolver deprecation warnings", "exit_status": 0},
+    {"command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); $PANTHEON_PY -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py::test_non_whitelisted_main_importers_is_live_scanned_and_bounded services/control-plane/bff/tests/test_persona_main_residue.py", "result": "3 passed in 96.57s; 2 jsonschema.RefResolver deprecation warnings", "exit_status": 0},
+    {"command": "cd services/control-plane/bff && $PWD/.venv-pantheon/bin/python -m pytest -q", "result": "Initial collection found missing psycopg; installed psycopg[binary] only in this checkout's .venv-pantheon and retried. Retry was killed by the 1200-second foreground timeout after reaching 10%; no terminal pytest summary. This historical partial run is not a pass and was superseded by the coordinator's full base/head comparison recorded above.", "exit_status": "timeout after 1200 seconds"},
+    {"command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); cd services/control-plane/bff && $PANTHEON_PY -m pytest -q tests/test_persona_health_single_owner.py tests/test_persona_main_residue.py tests/test_bff_test_architecture.py tests/test_persona_provisioning_read_surface_mutation.py", "result": "54 passed, 3 warnings in 102.69s on the final branch after merging current origin/dev 32186df259ad76fc5ea87462e38c7d966b81be56; 3 warnings", "exit_status": 0}
+  ],
+  "review_follow_up": {
+    "scanner_regression": "Fixed: tests/test_persona_main_residue.py is an explicit composition_allowlist / WHOLE_APP_ALLOWLIST entry because it verifies production composition behavior; inventory total_test_files incremented to 388. The live scan reports no non-whitelisted importer.",
+    "full_bff_suite_comparison": "Coordinator compared all 412 BFF test files on base and head; the deterministic obsolete source assertion is corrected. Six one-sided differences are documented as timing-flaky; all other failure identities match. The earlier local 1200-second partial run remains non-passing historical evidence and was superseded by the coordinator comparison."
+  },
+  "implementation_constraints": {
+    "production_code_net_line_budget": 0,
+    "new_production_code": false,
+    "compatibility_shim_or_new_client": false,
+    "main_definitions_outside_scope_changed": false
+  }
+}
