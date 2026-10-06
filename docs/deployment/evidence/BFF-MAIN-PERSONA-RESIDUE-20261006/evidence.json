@@ -55,7 +55,7 @@
     "_composed_dataset_surface_status", "_composed_surface_status", "_dataset_source_after_read", "_dataset_surface_status", "_decode_page_token", "_deprecated_bff_path_response", "_foundation_audit_for_command_record", "_incident_home_severity", "_latest_promotion_review_command", "_list_governance_audit_events", "_list_persona_records", "_loop_run_controller_is_formal", "_loop_run_projection_metadata", "_loop_run_surface_status", "_loop_run_truth_source", "_management_avg", "_management_count_by", "_management_number", "_meta_staleness", "_page_slice", "_parse_rfc3339", "_performance_ranking_source_surface", "_project_final_command_response", "_promotion_review_decision_projection", "_promotion_review_submission_projection", "_raise_if_read_surface_unavailable", "_read_store_fixture_records", "_read_surface_meta", "_read_surface_state", "_sem_command_response", "_surface_status"
   ],
   "validation": [
-    {"command": "cd services/control-plane/bff && /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q tests/test_persona_main_residue.py", "result": "2 passed in 17.57s; 2 jsonschema.RefResolver deprecation warnings", "exit_status": 0}
+    {"command": "cd services/control-plane/bff && /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q tests/test_persona_main_residue.py", "result": "2 passed in 44.59s after merging origin/dev at 64cdd49c220fb44f6180d37744adc489d447e533; 2 jsonschema.RefResolver deprecation warnings", "exit_status": 0}
   ],
   "implementation_constraints": {
     "production_code_net_line_budget": 0,
