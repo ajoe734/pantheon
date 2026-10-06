@@ -43,11 +43,7 @@ from .executor import execute, ExecutionError, _signal_context_metadata, _signal
 from .pending_signal_store import ExecutionFence
 from .symbol_parser import SymbolParseError
 
-try:
-    import jsonschema
-    _HAS_JSONSCHEMA = True
-except ImportError:
-    _HAS_JSONSCHEMA = False
+import jsonschema
 
 log = logging.getLogger(__name__)
 
@@ -300,15 +296,15 @@ class SignalConsumer:
         if version_str != f"{_SUPPORTED_SCHEMA_MAJOR}.0":
             log.warning("[%s] Minor version drift: %s", signal_id, version_str)
 
-        # JSON Schema validation (if jsonschema available)
-        if _HAS_JSONSCHEMA and self._schema:
+        # JSON Schema validation is mandatory when a schema is configured.
+        if self._schema:
             try:
                 jsonschema.validate(raw, self._schema)
             except jsonschema.ValidationError as exc:
                 log.error("[%s] Schema validation failed: %s — discarding", signal_id, exc.message)
                 return None
 
-        # Required fields (defensive fallback if jsonschema not installed)
+        # Required-field checks remain defense in depth.
         required = ("signal_id", "version", "strategy_id", "timestamp",
                     "symbol", "action", "direction", "quantity", "quantity_type")
         for field in required:

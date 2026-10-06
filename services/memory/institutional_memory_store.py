@@ -210,8 +210,8 @@ def validate_institutional_memory_json(data: Dict[str, Any]) -> List[str]:
     """Validate raw dict against the canonical JSON schema."""
     try:
         import jsonschema  # type: ignore
-    except ImportError:
-        return []
+    except ImportError as exc:
+        raise RuntimeError("jsonschema is required for institutional memory validation") from exc
 
     schema_path = Path(__file__).parent / "institutional_memory_entry.schema.json"
     if not schema_path.exists():

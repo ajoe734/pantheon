@@ -228,8 +228,8 @@ def validate_persona_memory_json(data: Dict[str, Any]) -> List[str]:
     """Validate raw dict against the canonical PersonaMemory JSON schema."""
     try:
         import jsonschema  # type: ignore
-    except ImportError:
-        return []
+    except ImportError as exc:
+        raise RuntimeError("jsonschema is required for persona memory validation") from exc
 
     schema_path = Path(__file__).parent / "persona_memory.schema.json"
     if not schema_path.exists():

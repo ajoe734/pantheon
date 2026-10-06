@@ -275,31 +275,6 @@ def validate_binding(binding: PersonaCapitalBinding) -> List[str]:
     return errors
 
 
-def validate_binding_json(data: Dict[str, Any]) -> List[str]:
-    """
-    Validate raw dict against the JSON schema.
-    Returns list of error messages; empty list means valid.
-    Requires `jsonschema` to be installed; silently skips if not available.
-    """
-    try:
-        import jsonschema  # type: ignore
-    except ImportError:
-        return []
-
-    schema_path = Path(__file__).parent / "persona_capital_binding.schema.json"
-    if not schema_path.exists():
-        return [f"Schema file not found: {schema_path}"]
-
-    with schema_path.open() as f:
-        schema = json.load(f)
-
-    errors = []
-    validator = jsonschema.Draft7Validator(schema)
-    for err in sorted(validator.iter_errors(data), key=lambda e: list(e.path)):
-        errors.append(f"{list(err.path)}: {err.message}")
-    return errors
-
-
 # ---------------------------------------------------------------------------
 # PersonaCapitalBindingStore
 # ---------------------------------------------------------------------------

@@ -95,10 +95,7 @@ TRADE_JOURNAL_EVENT_TYPES = frozenset({
     "trade_lesson.quarantined",
 })
 
-try:
-    import jsonschema
-except ImportError:
-    jsonschema = None
+import jsonschema
 
 log = logging.getLogger(__name__)
 
@@ -992,7 +989,7 @@ class TelemetryIngestService:
                 "infrastructure health authority, not the trading telemetry path"
             )
         if event_type in TRADE_JOURNAL_EVENT_TYPES:
-            if not self._trade_journal_schema or not jsonschema:
+            if not self._trade_journal_schema:
                 return True, None
             try:
                 jsonschema.validate(instance=event, schema=self._trade_journal_schema)
@@ -1002,7 +999,7 @@ class TelemetryIngestService:
             except jsonschema.SchemaError as e:
                 return False, f"Schema error: {e.message}"
 
-        if not self._schema or not jsonschema:
+        if not self._schema:
             return True, None
 
         try:
@@ -1487,7 +1484,7 @@ class TelemetryIngestService:
                 tag=TAG_BINDING_MISMATCH,
             )
 
-        if self._infrastructure_health_schema is None or jsonschema is None:
+        if self._infrastructure_health_schema is None:
             return self._reject_infrastructure_health(
                 event,
                 "INFRA_SCHEMA_UNAVAILABLE",
