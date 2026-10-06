@@ -46,9 +46,34 @@
       "limitation": "The coordinator log files are not present in this worker environment, so individual test ids cannot be transcribed here; the coordinator's side-by-side totals and identical-failure-set result are recorded from the task-scoped handoff."
     },
     "full_bff_suite": {
-      "status": "pending coordinator comparison",
-      "expected_summary": "/tmp/claude-1802994780/-home-chloe_ong_dev_cctech_support_com-code-pantheon/8ee01167-cc9b-4180-b1c7-dc819af1885c/scratchpad/fullsuite/summary.txt",
-      "note": "The summary was not present when this evidence was prepared. The coordinator must check it before approval; this worker did not rerun the full BFF suite."
+      "status": "coordinator comparison complete; deterministic regression corrected; focused verification pending",
+      "coordinator_summary": "/tmp/pantheon-bff-main-persona-residue-fullsuite-20261006/summary.md",
+      "failure_id_lists": {
+        "base": "/tmp/pantheon-bff-main-persona-residue-fullsuite-20261006/base-failure-ids.txt",
+        "head": "/tmp/pantheon-bff-main-persona-residue-fullsuite-20261006/head-failure-ids.txt"
+      },
+      "method": "Coordinator ran all 412 BFF test files on base 81841f55b and head 84f3beb57 with /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python, pytest -q -p no:cacheprovider -o addopts= --continue-on-collection-errors, using the same two shards on both sides.",
+      "shards": {
+        "base": [
+          {"shard": "00", "failed": 161, "passed": 2204, "skipped": 25, "errors": 42},
+          {"shard": "01", "failed": 224, "passed": 3253, "skipped": 39, "errors": 20}
+        ],
+        "head": [
+          {"shard": "00", "failed": 162, "passed": 2203, "skipped": 25, "errors": 42},
+          {"shard": "01", "failed": 228, "passed": 3249, "skipped": 39, "errors": 20}
+        ]
+      },
+      "deterministic_regression_fixed": "services/control-plane/bff/tests/test_persona_health_single_owner.py::test_main_py_reuses_shared_instance_for_overlay_and_builder_call_sites asserted the removed main.py projection copy's overlay call. Updated it to assert the owning personas/service.py _project_persona_dto delegates through _overlay_source_health_truth and _active_persona_service().overlay_source_health_truth, while main.py has no overlay_source_health_truth call. All other assertions in the test remain unchanged.",
+      "timing_flaky_not_regressions": [
+        "test_bff_promotion_review_governance.py::test_cockpit_composition_completes_after_slow_contributor_read (head-only in full run)",
+        "test_bff_promotion_review_governance.py::test_human_inbox_degrades_cleanly_when_persona_readiness_blocks (base-only in full run)",
+        "test_mgmt_load_005_read_concurrency.py::test_alerts_timeout_returns_degraded_envelope_without_hanging",
+        "test_mgmt_load_005_read_concurrency.py::test_jobs_router_returns_narrow_port_records_without_legacy_reader (failed on base run 2 and head run 1)",
+        "tests/test_bff_auth_facade.py::test_auth_readiness_stays_below_50ms_while_provider_probe_is_slow",
+        "tests/test_bff_auth_facade.py::test_lifespan_schedules_first_probe_without_blocking_startup"
+      ],
+      "comparison_conclusion": "The six listed one-sided differences pass and fail on both sides when rerun in isolation and are timing-flaky, not regressions. The deterministic assertion above accounts for the remaining difference; all other failure identities are identical between base and head. tests/test_persona_main_residue.py was not present at comparison head 84f3beb57 and is outside this 412-file result.",
+      "next": "Run only tests/test_persona_health_single_owner.py, tests/test_persona_main_residue.py, tests/test_bff_test_architecture.py, and tests/test_persona_provisioning_read_surface_mutation.py on final head. Do not rerun the full BFF suite."
     }
   },
   "follow_up_duplicate_top_level_definitions_not_changed": [
@@ -57,11 +82,12 @@
   "validation": [
     {"command": "cd services/control-plane/bff && /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q tests/test_persona_main_residue.py", "result": "2 passed in 44.59s after merging origin/dev at 64cdd49c220fb44f6180d37744adc489d447e533; 2 jsonschema.RefResolver deprecation warnings", "exit_status": 0},
     {"command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); $PANTHEON_PY -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py::test_non_whitelisted_main_importers_is_live_scanned_and_bounded services/control-plane/bff/tests/test_persona_main_residue.py", "result": "3 passed in 96.57s; 2 jsonschema.RefResolver deprecation warnings", "exit_status": 0},
-    {"command": "cd services/control-plane/bff && $PWD/.venv-pantheon/bin/python -m pytest -q", "result": "Initial collection found missing psycopg; installed psycopg[binary] only in this checkout's .venv-pantheon and retried. Retry was killed by the 1200-second foreground timeout after reaching 10%; no terminal pytest summary, so this is not a pass and provides no base/head full-suite comparison.", "exit_status": "timeout after 1200 seconds"}
+    {"command": "cd services/control-plane/bff && $PWD/.venv-pantheon/bin/python -m pytest -q", "result": "Initial collection found missing psycopg; installed psycopg[binary] only in this checkout's .venv-pantheon and retried. Retry was killed by the 1200-second foreground timeout after reaching 10%; no terminal pytest summary. This historical partial run is not a pass and was superseded by the coordinator's full base/head comparison recorded above.", "exit_status": "timeout after 1200 seconds"},
+    {"command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); cd services/control-plane/bff && $PANTHEON_PY -m pytest -q tests/test_persona_health_single_owner.py tests/test_persona_main_residue.py tests/test_bff_test_architecture.py tests/test_persona_provisioning_read_surface_mutation.py", "result": "54 passed, 3 warnings in 160.85s", "exit_status": 0}
   ],
   "review_follow_up": {
-    "scanner_regression": "Fixed: tests/test_persona_main_residue.py is now an explicit composition_allowlist / WHOLE_APP_ALLOWLIST entry because it verifies production composition behavior; inventory total_test_files incremented to 388. The live scan now reports no non-whitelisted importer.",
-    "full_bff_suite_comparison": "Unresolved. A full head run exceeded the 1200-second bound at 10%; a detached base worktree could not be created because the shared Git metadata directory is read-only. Do not treat the partial run as passing or claim base/head parity."
+    "scanner_regression": "Fixed: tests/test_persona_main_residue.py is an explicit composition_allowlist / WHOLE_APP_ALLOWLIST entry because it verifies production composition behavior; inventory total_test_files incremented to 388. The live scan reports no non-whitelisted importer.",
+    "full_bff_suite_comparison": "Coordinator compared all 412 BFF test files on base and head; the deterministic obsolete source assertion is corrected. Six one-sided differences are documented as timing-flaky; all other failure identities match. The earlier local 1200-second partial run remains non-passing historical evidence and was superseded by the coordinator comparison."
   },
   "implementation_constraints": {
     "production_code_net_line_budget": 0,
