@@ -1,0 +1,35 @@
+{
+  "task_id": "LOOP-PROD-TEL-002-PROBE-JSONB-20261006",
+  "base_sha": "ddc431ba5624c307e798470d4dad2164f4430f00",
+  "root_cause": {
+    "summary": "fetch_committed_lifecycle_identity reads telemetry_events.payload through asyncpg, which returns jsonb as JSON text by default; _committed_lifecycle_identity_from_row treated any non-Mapping payload as empty, so the committed position_snapshot never matched and the hosted probe always ended in lifecycle_signal_timeout.",
+    "introduced_by": "2e70f959a (2026-07-18, LOOP-PROD-TEL-002)",
+    "why_unnoticed": "The unit test substitutes committed_identity_getter, and manual dev releases ran with run_loop_prod_tel_002_probe=false; only automatic paired releases enable the probe.",
+    "failed_deploy_runs": ["37326049995", "37378585654"],
+    "hosted_readonly_verification": {
+      "observed_at": "2026-10-06",
+      "run_id": "run-rb-3ad0b19e0c964f89b822d6207c47f053-2026-10-05T22:14:45Z-1",
+      "position_snapshot_committed_at": "2026-10-05T22:14:53Z",
+      "probe_deadline": "2026-10-05T22:17:45Z",
+      "payload_python_type_from_asyncpg": "str",
+      "unfixed_result": "fetch_committed_lifecycle_identity returned None",
+      "after_json_decode": "_identity_is_target_position returned True for the same row",
+      "method": "read-only SELECT inside the hosted paper-signal-producer container using its TELEMETRY_DB_DSN; no writes"
+    }
+  },
+  "validation": {
+    "command": "python -m pytest -q services/trade_journey/test_hosted_lifecycle_stimulus.py",
+    "head": "13 passed",
+    "base_with_new_test": "1 failed (jsonb-text case), 12 passed",
+    "adjacent_suite": "python -m pytest -q services/trade_journey/: 39 failures/errors on head, identical node set on base; caused by the local interpreter lacking psycopg and database fixtures"
+  },
+  "production_delta": {
+    "added": 2,
+    "deleted": 0,
+    "net": 2,
+    "change_class": "corrective",
+    "declared_budget": 2
+  },
+  "delivery_scope": "source correction only; hosted acceptance is the next automatic dev pair release",
+  "review_status": "Author validation only; no independent reviewer attestation claimed"
+}

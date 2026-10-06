@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
+
+import pytest
 
 from services.trade_journey import hosted_lifecycle_stimulus as stimulus
 
@@ -282,6 +286,60 @@ def test_stimulus_uses_committed_telemetry_when_latest_summary_has_advanced(tmp_
     assert artifact["stimulus"]["lifecycle_confirmation_source"] == "telemetry_events"
     assert len(store.enqueued) == 1
     assert len(posts) == 1
+
+
+class _FakeAsyncpgConnection:
+    def __init__(self, row: dict) -> None:
+        self.row = row
+        self.args: tuple = ()
+
+    async def fetchrow(self, _query: str, *args):
+        self.args = args
+        return self.row
+
+    async def close(self) -> None:
+        return None
+
+
+@pytest.mark.parametrize("encode", [json.dumps, dict], ids=["jsonb-text", "mapping"])
+def test_committed_identity_reads_the_stored_position_snapshot_row(monkeypatch, encode):
+    binding = _binding()
+    run_id = f"run-{binding['binding_id']}-2026-10-05T22:14:45Z-1"
+    event = {
+        "event_id": "event-committed-position-loop-prod-tel-002",
+        "event_type": "position_snapshot",
+        "binding_id": binding["binding_id"],
+        "runtime_id": binding["runtime_id"],
+        "run_id": run_id,
+        "environment": "paper",
+        "execution_mode": "paper",
+        "deployment_stage": "paper",
+        "source_mode": "live",
+        "metadata": {"run_id": run_id, "sequence_no": 7},
+    }
+    # asyncpg decodes jsonb columns to JSON text unless a codec is registered.
+    connection = _FakeAsyncpgConnection(
+        {
+            "event_id": event["event_id"],
+            "event_type": "position_snapshot",
+            "created_at": "2026-10-05T22:14:51Z",
+            "payload": encode(event),
+        }
+    )
+
+    async def connect(_dsn: str):
+        return connection
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+
+    identity = stimulus.fetch_committed_lifecycle_identity(
+        "postgresql://unit-test-redacted", binding=binding, run_id=run_id
+    )
+
+    assert connection.args == (run_id, binding["binding_id"], binding["runtime_id"])
+    assert identity is not None
+    assert identity["event_id"] == event["event_id"]
+    assert identity["sequence_no"] == 7
 
 
 def test_stimulus_fails_before_enqueue_when_worker_heartbeat_is_not_fresh(tmp_path):

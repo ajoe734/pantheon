@@ -235,6 +235,8 @@ def _row_time(value: Any) -> str:
 
 def _committed_lifecycle_identity_from_row(row: Mapping[str, Any]) -> dict[str, Any]:
     payload = row.get("payload")
+    if isinstance(payload, str):  # asyncpg returns jsonb as JSON text by default
+        payload = json.loads(payload)
     event = dict(payload) if isinstance(payload, Mapping) else {}
     metadata = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else {}
     return {
