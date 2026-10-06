@@ -10,9 +10,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Gaps the AST check found in existing locks: (lock, shared module imported without all of its requirements). Each importing image
-# still passes the in-image import smoke (the imports are lazy or reach pure-python submodules). Remove an entry once the lock is
-# recompiled with the module's requirements; any gap not listed fails.
+# Gaps the AST check found in existing locks: (lock, shared module imported without all of its requirements). Every importing image
+# still passes the in-image import smoke (lazy or pure-python imports). Remove an entry once its lock is recompiled; unlisted gaps fail.
 KNOWN_GAPS = {
     ("services-broker.txt", "governance"), ("services-capital.txt", "governance"), ("services-memory.txt", "governance"),
     ("services-evolution.txt", "governance"), ("services-registry.txt", "governance"), ("services-deployment.txt", "governance"),
