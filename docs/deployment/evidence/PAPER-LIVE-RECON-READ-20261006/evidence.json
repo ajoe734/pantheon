@@ -17,7 +17,7 @@
     {
       "suite": "services/control-plane/bff/tests/test_owner_read_wiring.py",
       "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/control-plane/bff/tests/test_owner_read_wiring.py",
-      "result": "21 passed"
+      "result": "22 passed"
     },
     {
       "suite": "services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
@@ -35,6 +35,13 @@
       "result": "passed (net production lines <= 120, evidence file <= 400 lines)"
     }
   ],
+  "acceptance_reopen_resolution": {
+    "ac1": "Removed fallback to lifecycle_telemetry_governance.list_paper_live_drift_reports() in read_surface_ports.py; reconciliation owner is now the sole source.",
+    "ac2": "In reconciliation_drift_reads.py, missing values stay missing. If drift_checks is absent or empty, drift_groups and threshold_evaluation are None; no fabricated overall_status='ok'.",
+    "ac5": "With only paper bindings, management trading pulse and operator endpoints return no comparison with healthy-empty status rather than fabricated or zero values.",
+    "ac6": "Contract tests in test_owner_read_wiring.py feed recorded reconciliation owner response records (both live and paper-only shapes from reconciliation-drift) through native BFF composition, runtime router, and management router DTO builders without stubbing get_paper_live_drift_report.",
+    "compose_activation_test_justification": "Commit eb75a1ad7e added profiles: ['root', 'workers'] to reconciliation-drift-consumer/scheduler/incident-listener in docker-compose.yml but omitted updating services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py. Aligning test assertions with docker-compose.yml profiles fixes the broken dev test tip."
+  },
   "hosted_track": {
     "status": "external_wait",
     "detail": "After the next root deployment an authenticated management read in dev shows the honest comparison state (healthy-empty when paper only); recorded as external_wait until then."

@@ -66,18 +66,19 @@ def map_reconciliation_record_to_drift_report(
                 "delta": c.get("relative_delta"),
                 "status": mapped_status,
             })
-        overall = "breached" if has_breach else ("watch" if has_watch else "ok")
-        drift_groups = [{
-            "group_id": "reconciliation_drift",
-            "label": "Reconciliation Drift",
-            "status": overall,
-            "metrics": metrics,
-        }]
-        threshold_evaluation = {
-            "overall_status": overall,
-            "summary": f"Observed metrics evaluation: {overall}.",
-            "breached_metric_ids": breached_ids,
-        }
+        if metrics:
+            overall = "breached" if has_breach else ("watch" if has_watch else "ok")
+            drift_groups = [{
+                "group_id": "reconciliation_drift",
+                "label": "Reconciliation Drift",
+                "status": overall,
+                "metrics": metrics,
+            }]
+            threshold_evaluation = {
+                "overall_status": overall,
+                "summary": f"Observed metrics evaluation: {overall}.",
+                "breached_metric_ids": breached_ids,
+            }
 
     report: Dict[str, Any] = {
         "runtime_id": record.get("runtime_id"),
@@ -86,12 +87,8 @@ def map_reconciliation_record_to_drift_report(
         "generated_at": gen_at,
         "paper_baseline": paper_baseline,
         "observed_state": observed_state,
-        "drift_groups": drift_groups or [],
-        "threshold_evaluation": threshold_evaluation or {
-            "overall_status": "ok" if record.get("status") == "resolved" else "unavailable",
-            "summary": "No drift checks evaluated.",
-            "breached_metric_ids": [],
-        },
+        "drift_groups": drift_groups,
+        "threshold_evaluation": threshold_evaluation,
     }
     for key in ("artifact_id", "artifact_version", "evidence_refs", "recommended_actions"):
         if record.get(key) is not None:

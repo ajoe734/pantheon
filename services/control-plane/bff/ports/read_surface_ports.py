@@ -808,10 +808,8 @@ class ReadSurfacePorts:
 
     def list_paper_live_drift_reports(self) -> List[Dict[str, Any]]:
         if self.reconciliation_drift_reads is not None:
-            reports = self.reconciliation_drift_reads.list_paper_live_drift_reports()
-            if reports:
-                return reports
-        return self.lifecycle_telemetry_governance.list_paper_live_drift_reports()
+            return self.reconciliation_drift_reads.list_paper_live_drift_reports()
+        return []
 
     def artifact_exists(self, artifact_id: str) -> bool:
         return self.lifecycle_telemetry_governance.artifact_exists(artifact_id)
@@ -1209,15 +1207,10 @@ class ReadSurfacePorts:
                     binding_id = binding.get("binding_id") or binding.get("id")
             except Exception:
                 pass
-            report = self.reconciliation_drift_reads.get_paper_live_drift_report(
+            return self.reconciliation_drift_reads.get_paper_live_drift_report(
                 binding_id=binding_id,
                 runtime_id=rid_str,
             )
-            if report is not None:
-                return report
-        for r in self.lifecycle_telemetry_governance.list_paper_live_drift_reports():
-            if str(r.get("runtime_id") or r.get("id") or "").strip() == rid_str:
-                return r
         return None
 
     def get_latest_run(
