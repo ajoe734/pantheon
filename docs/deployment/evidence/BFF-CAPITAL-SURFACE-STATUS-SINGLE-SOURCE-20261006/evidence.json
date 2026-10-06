@@ -1,0 +1,15 @@
+{
+  "task_id": "BFF-CAPITAL-SURFACE-STATUS-SINGLE-SOURCE-20261006",
+  "introduced_by": "ed2951d76 (BFF-CAPITAL-POOL-DEGRADATION-20261006)",
+  "change": "capital/router.py _status: removed type(st).__name__ != 'ReadSurfacePorts' branch; availability now comes from the resolved store's dataset_source, falling back to the store's dataset_surface_status then the injected one only when the store has no dataset_source.",
+  "results_base_vs_head": {
+    "tests/test_bff_b2_list_detail_facade.py": {"base": "2 failed (test_bff_capital_pool_detail_not_found, test_bff_rebalance_detail_not_found), 38 passed", "head": "40 passed"},
+    "tests/test_capital_router.py": {"base": "12 passed + new test_delegating_store_gets_the_answer_of_its_own_dataset_source fails", "head": "13 passed"},
+    "test_bff_capital_ranking_rebalance_contract.py": {"head": "30 passed"},
+    "tests/test_bff_capital_pool_bindings.py": {"head": "3 passed"},
+    "tests/test_bff_rebalance_proposals.py": {"head": "27 passed"},
+    "tests/test_owner_reads_capital_routes.py": {"head": "5 passed"},
+    "tests/test_capital_owner_forwarding.py": {"head": "15 passed"},
+    "tests/test_management_read_models_router.py": {"base": "6 failed", "head": "same 6 failed (pre-existing, unchanged)"}
+  }
+}
