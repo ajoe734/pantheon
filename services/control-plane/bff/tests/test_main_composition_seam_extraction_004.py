@@ -35,6 +35,7 @@ from services.control_plane.bff.assistant.management_service import (
     set_openclaw_ops_client_error,
     set_read_store,
 )
+from services.control_plane.bff.tests.bff_compose_stand_ins import resolve_with_stand_ins
 from services.control_plane.bff.core.app_factory import (
     compose_bff_app,
     create_version_handler,
@@ -178,7 +179,7 @@ def _extract_routes(app: FastAPI) -> set[tuple[str, str]]:
 
 def test_compose_bff_app_mounts_version_endpoint():
     """Verify compose_bff_app exposes /bff/version."""
-    app = compose_bff_app()
+    app = compose_bff_app(dependency_resolver=resolve_with_stand_ins)
     routes = _extract_routes(app)
     assert ("GET", "/bff/version") in routes
 

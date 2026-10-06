@@ -171,7 +171,7 @@ def mounted(owner, tmp_path):
         meta_staleness=lambda: None, stable_json_hash=lambda body: "unused",
         resolve_final_idempotency_key=lambda key, other: key or other,
         reject_body_idempotency_key=lambda payload: None, request_dry_run_requested=lambda *args: False,
-        gov_bff_idempotency={}, publish_event=lambda *args: None, sse_buffers={}, sse_subscribers={},
+        publish_event=lambda *args: None, sse_buffers={}, sse_subscribers={},
         gov_bff_action_command=svc.submit_resource_action,
         deprecated_bff_path_response=lambda **kwargs: (_ for _ in ()).throw(HTTPException(410)),
         sem_command_response=svc.sem_command_response, stream_generic_events=lambda *args: None,
@@ -264,9 +264,10 @@ def test_same_operator_cannot_replay_another_tenant_receipt(owner, tmp_path):
 
 def test_default_composition_forwards_validated_browser_session(owner, tmp_path):
     from services.control_plane.bff.bootstrap.dependencies import AppDependencies
+    from services.control_plane.bff.tests.bff_compose_stand_ins import resolve_with_stand_ins
     from services.control_plane.bff.core.app_factory import compose_bff_app
     deps = AppDependencies.create_default(command_store=CommandStore(str(tmp_path / "cookie-commands.jsonl")))
-    app = compose_bff_app(app_deps=deps, _extract_identity=identity, dev_login_enabled=lambda: True,
+    app = compose_bff_app(dependency_resolver=resolve_with_stand_ins, app_deps=deps, _extract_identity=identity, dev_login_enabled=lambda: True,
                           validate_session=lambda token: identity("Bearer " + token), origin_allowed=lambda origin: False)
     client = TestClient(app)
     client.cookies.set("pantheon_session", _tok("tenant-a").removeprefix("Bearer "))

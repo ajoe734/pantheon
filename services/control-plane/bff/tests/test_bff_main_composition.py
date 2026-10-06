@@ -9,6 +9,7 @@ Asserts:
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -598,3 +599,170 @@ print('native-runtime-projector-ok')
     )
     assert run.returncode == 0, run.stdout + run.stderr
     assert "native-runtime-projector-ok" in run.stdout
+
+
+_NATIVE_MAIN_PRELUDE = r'''
+import json, os, sys
+from unittest.mock import MagicMock, patch
+from services.control_plane.bff.bootstrap.dependencies import AppDependencies
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.settings_store import SettingsStore
+from services.control_plane.bff.core import app_factory
+
+root = os.environ['BFF_DATA_DIR']
+deps = AppDependencies(
+    deployment_queries=MagicMock(), deployment_commands=MagicMock(),
+    read_surface=create_in_memory_read_surface_ports(),
+    command_store=CommandStore(root + '/commands.jsonl'),
+    persona_write_owner=MagicMock(), ranking_write_owner=MagicMock(),
+    strategy_write_owner=MagicMock(), settings_store=SettingsStore(root + '/settings.json'),
+    decision_journal_write_owner=MagicMock(),
+)
+resolved = []
+production_resolver = app_factory._resolve_default_dependency
+def recording_resolver(name, app_deps):
+    value = production_resolver(name, app_deps)  # raises UnresolvedBffDependency on fall-through
+    resolved.append(name)
+    return value
+app_factory._resolve_default_dependency = recording_resolver
+with patch.object(AppDependencies, 'create_default', return_value=deps):
+    from services.control_plane.bff import main
+'''
+
+
+def _run_native_main(body: str, tmp_path) -> "subprocess.CompletedProcess[str]":
+    import os
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[4]
+    return subprocess.run(
+        [sys.executable, "-c", _NATIVE_MAIN_PRELUDE + body], cwd=root, text=True, capture_output=True,
+        env={
+            **os.environ,
+            "PYTHONPATH": str(root),
+            "BFF_DATA_DIR": str(tmp_path),
+            "PANTHEON_BFF_AUTH_STUB": "true",
+            "PANTHEON_BFF_AUTH_MODE": "permissive",
+        },
+        timeout=120,
+    )
+
+
+def test_native_main_composition_has_zero_stand_in_fall_through(tmp_path):
+    """Importing the production main mounts every router without a single stand-in.
+
+    The production resolver raises ``UnresolvedBffDependency`` for any name that no explicit
+    port, loaded ``main`` attribute or real owner supplies, so a clean import proves zero
+    fall-through; the recorded names prove what did reach the resolver.
+    """
+    run = _run_native_main(
+        r'''
+assert 'services.control_plane.bff.tests.bff_compose_stand_ins' not in sys.modules
+mounted = set()
+for route in main.app.routes:
+    mounted.update(getattr(sub, 'path', None) for sub in getattr(getattr(route, 'original_router', route), 'routes', [route]))
+for path in ('/api/v1/bindings', '/bff/runtimes', '/bff/incidents', '/bff/alerts/{alert_id}/acknowledge'):
+    assert path in mounted, path
+print('RESOLVED', json.dumps(sorted(set(resolved))))
+''',
+        tmp_path,
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    resolved = set(json.loads(run.stdout.split("RESOLVED", 1)[1]))
+    assert {"_stable_capital_resource_id", "_capital_owner_role", "_raise_capital_owner_error"} <= resolved
+    assert not resolved & {
+        "_GOV_BFF_IDEMPOTENCY",
+        "_capital_bff_idempotency_check",
+        "_capital_bff_idempotency_store",
+    }
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "_GOV_BFF_IDEMPOTENCY",
+        "_capital_bff_idempotency_check",
+        "_capital_bff_idempotency_store",
+        "_project_operator_runtime_state_row",
+        "_stable_json_hash",
+        "_resolve_final_idempotency_key",
+        "_publish_event",
+        "_sse_buffers",
+        "provider_readiness_cache",
+        "not_a_real_dependency_name",
+    ],
+)
+def test_production_resolver_fails_closed_for_stand_in_names(name):
+    from services.control_plane.bff.core.app_factory import (
+        UnresolvedBffDependency,
+        _resolve_default_dependency,
+    )
+
+    with pytest.raises(UnresolvedBffDependency, match=name):
+        _resolve_default_dependency(name, SimpleNamespace())
+
+
+def test_no_production_module_imports_the_test_stand_ins():
+    offenders = [
+        str(path.relative_to(BFF_DIR))
+        for path in BFF_DIR.rglob("*.py")
+        if "bff_compose_stand_ins" in path.read_text(encoding="utf-8")
+        and "tests" not in path.relative_to(BFF_DIR).parts
+        and not path.name.startswith("test_")
+    ]
+    assert offenders == []
+
+
+def test_native_main_binding_create_reaches_capital_owner_once_per_key(tmp_path):
+    """POST /api/v1/bindings through the native composition against a recorded Capital owner."""
+    run = _run_native_main(
+        r'''
+import urllib.error
+from fastapi.testclient import TestClient
+from services.control_plane.bff import command_executor
+
+owner_records = {}
+owner_writes = []
+
+def recorded_capital_owner(url, payload, auth_token=None, mfa_token=None, tenant_id=None):
+    assert url.endswith('/api/bindings'), url
+    binding_id = payload['binding_id']
+    existing = owner_records.get(binding_id)
+    if existing is not None:
+        if existing['request_hash'] != payload['request_hash']:
+            raise urllib.error.HTTPError(url, 409, 'conflict', {}, None)
+        return {**existing['body'], 'idempotent_replay': True}
+    owner_writes.append(dict(payload))
+    body = {**payload, 'status': 'pending', 'id': binding_id}
+    owner_records[binding_id] = {'request_hash': payload['request_hash'], 'body': body}
+    return body
+
+headers = {'Authorization': 'Bearer op-1:operator', 'Idempotency-Key': 'bind-key-1'}
+body = {'persona_id': 'persona-1', 'capital_pool_id': 'pool-1'}
+with patch.object(command_executor, '_post_json', recorded_capital_owner), \
+     patch.object(command_executor, '_capital_url', lambda path: 'http://capital.test' + path):
+    client = TestClient(main.app, raise_server_exceptions=False)
+    first = client.post('/api/v1/bindings', json=body, headers=headers)
+    retry = client.post('/api/v1/bindings', json=body, headers=headers)
+    other = client.post('/api/v1/bindings', json=body, headers={**headers, 'Idempotency-Key': 'bind-key-2'})
+    conflict = client.post('/api/v1/bindings', json={**body, 'capital_pool_id': 'pool-2'}, headers=headers)
+
+assert first.status_code == 201, first.text
+assert retry.status_code == 201, retry.text
+binding_id = first.json()['binding_id']
+assert binding_id.startswith('binding-') and binding_id == retry.json()['binding_id']
+assert first.json()['status'] == 'pending'
+assert retry.json()['idempotent_replay'] is True
+assert {k: v for k, v in retry.json().items() if k != 'idempotent_replay'} == first.json()
+assert owner_writes[0]['actor_role'] == 'operator' and owner_writes[0]['idempotency_key'] == 'bind-key-1'
+assert other.status_code == 201 and other.json()['binding_id'] != binding_id
+assert len(owner_writes) == 2, owner_writes  # one owner write per idempotency key
+assert conflict.status_code == 409, conflict.text  # owner conflict mapped by the Capital error mapping
+print('native-binding-ok')
+''',
+        tmp_path,
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "native-binding-ok" in run.stdout

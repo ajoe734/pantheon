@@ -631,18 +631,11 @@ def _build_authority_harness_app(
     )
 
     from services.control_plane.bff.runtime.router import create_runtime_router
-    def _owner_error(exc, **_):
-        raise HTTPException(status_code=getattr(exc, "code", 500), detail=getattr(exc, "reason", str(exc)))
-    _cap_idempotency: Dict[str, Dict[str, Any]] = {}
-    def _cap_check(op_id: str, key: str, req_hash: str, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        entry = _cap_idempotency.get(f"{op_id}\x00{tenant_id or ''}\x00{key}")
-        if entry is None:
-            return None
-        if entry.get("request_hash") != req_hash:
-            raise bff_error(409, ErrorCode.IDEMPOTENCY_CONFLICT, "Idempotency conflict")
-        return entry.get("result")
-    def _cap_store(op_id: str, key: str, req_hash: str, result: Any, tenant_id: Optional[str] = None) -> None:
-        _cap_idempotency[f"{op_id}\x00{tenant_id or ''}\x00{key}"] = {"request_hash": req_hash, "result": result}
+    from services.control_plane.bff.capital.router import (
+        capital_owner_role,
+        raise_capital_owner_error,
+        stable_capital_resource_id,
+    )
 
     app.include_router(
         create_runtime_router(
@@ -654,12 +647,10 @@ def _build_authority_harness_app(
                 '_reject_body_idempotency_key': lambda p: None,
                 '_resolve_final_idempotency_key': lambda a, b: a or b,
                 '_stable_json_hash': _stable_json_hash,
-                '_capital_bff_idempotency_check': _cap_check,
-                '_capital_bff_idempotency_store': _cap_store,
-                '_stable_capital_resource_id': lambda *a, **kw: kw.get('requested_id') or "b-auto",
-                '_capital_owner_role': lambda identity: "operator",
+                '_stable_capital_resource_id': stable_capital_resource_id,
+                '_capital_owner_role': capital_owner_role,
                 '_bff_error': bff_error,
-                '_raise_capital_owner_error': _owner_error,
+                '_raise_capital_owner_error': raise_capital_owner_error,
                 'create_capital_binding': command_executor.create_capital_binding,
                 'utc_now': utc_now,
                 '_read_surface_meta': lambda *a, **kw: {},
@@ -1256,6 +1247,7 @@ def get_management_nl_app() -> FastAPI:
     composition, not a stand-in."""
     global _SEAM_APP
     if _SEAM_APP is None:
+        from services.control_plane.bff.tests.bff_compose_stand_ins import resolve_with_stand_ins
         from services.control_plane.bff.core.app_factory import compose_bff_app
         from services.control_plane.bff.assistant.management_service import (
             get_management_ai_conversation_store,
@@ -1270,6 +1262,7 @@ def get_management_nl_app() -> FastAPI:
         # keyword override before falling back to that stub, so pass the real
         # seam through explicitly rather than accepting the stub.
         _SEAM_APP = compose_bff_app(
+        dependency_resolver=resolve_with_stand_ins,
             _management_ai_conversation_store=get_management_ai_conversation_store,
             bff_management_ai_conversations=_seam_bff_management_ai_conversations,
             bff_management_ai_conversation=_seam_bff_management_ai_conversation,

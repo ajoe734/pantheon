@@ -750,7 +750,6 @@ class TestEndpointLevelRetainedCallers(unittest.TestCase):
                 resolve_final_idempotency_key=bff_main._resolve_final_idempotency_key,
                 reject_body_idempotency_key=bff_main._reject_body_idempotency_key,
                 request_dry_run_requested=bff_main._request_dry_run_requested,
-                gov_bff_idempotency=bff_main._GOV_BFF_IDEMPOTENCY,
                 publish_event=bff_main._publish_event,
                 sse_buffers=bff_main._sse_buffers,
                 sse_subscribers=bff_main._sse_subscribers,
