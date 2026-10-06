@@ -159,6 +159,38 @@ def test_read_source_records_for_tenant_uses_read_only_scoped_postgres_query(mon
     assert "tenant-a" not in statements[1][0]
 
 
+def test_read_source_records_for_tenant_rejects_mis_scoped_owner_result(monkeypatch, tmp_path):
+    from services.source_ingestion.pg_store import read_source_records_for_tenant
+
+    foreign_payload = {
+        "source_id": "src-foreign",
+        "connector_id": "conn",
+        "source_type": "paper",
+        "title": "Foreign persisted source",
+        "content_ref": "https://example.test/foreign",
+        "status": "normalized",
+        "metadata": {"tenant_id": "tenant-b"},
+    }
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, sql, _params=()):
+            return _FakeCursor([(foreign_payload,)]) if sql.startswith("SELECT") else _FakeCursor([])
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=lambda _dsn: Connection()))
+    monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_BACKEND", "postgres")
+    monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_DSN", "postgresql://readonly/test")
+
+    from services.knowledge.evidence.models import EvidenceValidationError
+    with pytest.raises(EvidenceValidationError, match="outside the requested tenant"):
+        read_source_records_for_tenant(jsonl_path=tmp_path / "absent.jsonl", tenant_id="tenant-a")
+
+
 def test_read_source_records_for_tenant_rejects_unscoped_and_foreign(monkeypatch, tmp_path):
     from services.source_ingestion.pg_store import read_source_records_for_tenant
 

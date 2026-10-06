@@ -13,7 +13,7 @@
   },
   "validation": {
     "command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); $PANTHEON_PY -m pytest -q services/source_ingestion/test_postgres_store.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/test_compose_activation.py scripts/test_worker_tenant_compose_contract.py",
-    "result": "73 passed, 2 skipped",
+    "result": "74 passed, 2 skipped",
     "additional_command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); $PANTHEON_PY -m pytest -q scripts/test_worker_tenant_compose_contract.py services/source_ingestion/test_compose_activation.py",
     "additional_result": "7 passed",
     "notes": [
@@ -22,6 +22,12 @@
       "Compose and tenant contract checks prove backend wiring and explicit worker tenant resolution.",
       "Two skips are the existing optional Postgres integration cases; no live Postgres or hosted environment was exercised."
     ]
+  },
+  "read_only_hosted_observation": {
+    "source": "/tmp/pantheon-l2-recovery-20261006/source-owner-inventory.json",
+    "observed_at": "2026-10-06T23:25:31.637728+00:00",
+    "finding": "112 normalized source_record rows were summarized with tenant_id=null; running distillation configuration had no explicit evidence backend, while source-ingest used postgres.",
+    "handling": "No data was relabeled, rewritten, replayed, or probed live by this source task. The scoped reader and claim path will not adopt these unowned records; establishing any migration/public-scope policy is outside this implementation."
   },
   "review": {
     "status": "pending",
