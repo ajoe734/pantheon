@@ -1517,7 +1517,10 @@ def list_reconciliation_records(
 ) -> List[Dict[str, Any]]:
     records = _tenant_scoped(store.list_reconciliation_records())
     if binding_id:
-        records = [item for item in records if item.get("binding_id") == binding_id or item.get("runtime_binding_id") == binding_id or item.get("scope_ref") == binding_id]
+        records = [
+            item for item in records
+            if binding_id in (item.get("binding_id"), item.get("runtime_binding_id"), item.get("scope_ref"))
+        ]
     if runtime_id:
         records = [item for item in records if item.get("runtime_id") == runtime_id]
     return records
