@@ -1,0 +1,18 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-RANKING-FORMULA-READER-20261006",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "task_class": "corrective",
+  "delivery_state": "ready_for_independent_review",
+  "change": {
+    "owner_reads.py": "create_owner_domain_ports passes ranking_formulas_reader that returns the single existing _pm12_quarter_formula_payload(); no second definition or store",
+    "ranking_router.py": "GET /bff/ranking-formulas and /{formula_id} return 503 DEPENDENCY_UNAVAILABLE when dataset_source('ranking_formulas') is missing/unavailable; unknown id stays 404"
+  },
+  "tests": {
+    "command": "pytest services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py",
+    "result": "30 passed",
+    "regression_check": "test_bff_performance_ranking_read_model_contract.py, tests/test_bff_b2_003_capabilities.py, tests/test_console_data_rankings_projection.py: 36 passed before and after"
+  },
+  "test_changes": "Retired ranking write tests collapsed into one 410 ACTION_RETIRED test (REST + /bff/v1/commands, replacement from RETIRED_COMMANDS, no stored command); live reads kept against the wired source without the create seed; added 503 and production composition tests. No assertion weakened."
+}

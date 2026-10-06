@@ -682,7 +682,20 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
         from ..shared.cross_domain_utils import _surface_degradation_reason
         return _surface_degradation_reason
 
-    # 7. Personas
+    # 7. Personas and strategies
+    if name == "_strategy_persona_idempotency_check":
+        from ..personas.service import _strategy_persona_idempotency_check
+        return _strategy_persona_idempotency_check
+    if name in {
+        "_STRATEGY_PERSONA_BFF_IDEMPOTENCY",
+        "_STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY",
+        "_STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY",
+    }:
+        from ..personas import service as persona_service
+        return getattr(persona_service, name)
+    if name == "_list_strategy_summaries":
+        from ..strategies.service import list_strategy_summaries
+        return lambda: list_strategy_summaries(app_deps.read_surface)
     if name == "_normalize_lifecycle_state":
         from ..personas.service import _normalize_lifecycle_state
         return _normalize_lifecycle_state

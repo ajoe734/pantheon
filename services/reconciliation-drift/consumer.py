@@ -7,6 +7,7 @@ import fcntl
 import hashlib
 import importlib
 import json
+import logging
 import os
 import re
 import socket
@@ -27,6 +28,8 @@ from services.background_worker_health import (
 from services.trade_journey.correlation_envelope import propagate_envelope
 from telemetry_client import fetch_runtime_summaries
 
+
+logger = logging.getLogger(__name__)
 
 LOOP_ID = os.getenv("PANTHEON_LOOP_ID") or "telemetry_reconciliation"
 
@@ -436,6 +439,11 @@ def build_drift_report_from_event(
     return result
 
 
+def _consume_timeout_seconds() -> float:
+    """The consume handler synchronously calls the incidents API (up to 90s); wait slightly longer, never unbounded."""
+    return float(os.getenv("RECONCILIATION_DRIFT_CONSUMER_POST_TIMEOUT_SECONDS", "100"))
+
+
 def post_events(service_url: str, events: list[dict[str, Any]]) -> dict[str, Any]:
     url = service_url.rstrip("/") + "/api/reconciliation-drift/telemetry-events/consume"
     tenant_ids = {
@@ -477,7 +485,7 @@ def post_events(service_url: str, events: list[dict[str, Any]]) -> dict[str, Any
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310 - dev service URL is operator configured.
+        with urllib.request.urlopen(request, timeout=_consume_timeout_seconds()) as response:  # noqa: S310 - dev service URL is operator configured.
             body = response.read().decode("utf-8")
             decoded = json.loads(body) if body else {}
             if isinstance(decoded, dict) and decoded.get("status") == "deferred":
@@ -488,6 +496,8 @@ def post_events(service_url: str, events: list[dict[str, Any]]) -> dict[str, Any
         raise RuntimeError(f"reconciliation-drift consume failed: {exc.code} {detail}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"reconciliation-drift service unavailable: {exc.reason}") from exc
+    except OSError as exc:  # read timeouts/resets raise bare TimeoutError/OSError, not URLError
+        raise RuntimeError(f"reconciliation-drift service unavailable: {exc!r}") from exc
 
 
 def runtime_summary_to_event(summary: dict[str, Any]) -> dict[str, Any]:
@@ -936,6 +946,7 @@ def run_runtime_summary_consumer_once(
     replay_dead_letters: bool = False,
     worker_id: str = "reconciliation-consumer",
     lease_seconds: float = 120.0,
+    tick_budget_seconds: float = 120.0,
     sleep_fn: Callable[[float], None] = time.sleep,
     now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
 ) -> dict[str, Any]:
@@ -1009,18 +1020,26 @@ def run_runtime_summary_consumer_once(
     drift_report_count = 0
     incident_case_count = 0
     terminal_incident_ids: list[str] = []
+    # Stop starting attempts once the budget is spent so a slow downstream cannot
+    # outlast the health max age; leftover events stay pending for the next tick.
+    tick_deadline = time.monotonic() + tick_budget_seconds
     for key, record in list(state.pending.items()):
         while int(record.get("attempt_count") or 0) < max_attempts:
+            if time.monotonic() >= tick_deadline:
+                break
             record["attempt_count"] = int(record.get("attempt_count") or 0) + 1
             record["last_attempt_at"] = observed_at
             state.save()
+            post_started = time.monotonic()
             try:
                 response = post_events(service_url, [record["event"]])
             except RuntimeError as exc:
+                logger.warning("consume post failed after %.2fs", time.monotonic() - post_started)
                 record["last_error"] = str(exc)
                 if int(record["attempt_count"]) < max_attempts and retry_backoff_seconds > 0:
                     sleep_fn(retry_backoff_seconds)
                 continue
+            logger.info("consume post ok in %.2fs", time.monotonic() - post_started)
             delivered_count += 1
             drift_report_count += int(response.get("drift_report_count") or 0)
             incident_case_count += int(response.get("incident_case_count") or 0)

@@ -42,7 +42,6 @@ class CommandType(str, Enum):
     PERSONA_ACTION = "PersonaAction"
     REVIEW_ACTION = "ReviewAction"
     DEPLOYMENT_ACTION = "DeploymentAction"
-    DEPLOYMENT_CREATE = "CreateDeployment"
     DEPLOYMENT_PATCH = "PatchDeployment"
     RUNTIME_ACTION = "RuntimeAction"
     RISK_ALERT_ACTION = "RiskAlertAction"
