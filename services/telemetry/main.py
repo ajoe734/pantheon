@@ -530,6 +530,8 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
         )
 
     schema_path = os.getenv("TELEMETRY_SCHEMA_PATH", _DEFAULT_SCHEMA_PATH)
+    if not Path(schema_path).is_file():
+        raise FileNotFoundError(f"Configured telemetry schema file does not exist: {schema_path}")
     storage_dir = os.getenv("TELEMETRY_STORAGE_DIR", _DEFAULT_STORAGE_DIR)
     buffer_backend = os.getenv("TELEMETRY_BUFFER_BACKEND", "jetstream")
     redis_url = os.getenv("TELEMETRY_BUFFER_REDIS_URL", "redis://localhost:6379/0")
@@ -584,7 +586,7 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
     )
 
     return TelemetryIngestService(
-        schema_path=schema_path if Path(schema_path).exists() else None,
+        schema_path=schema_path,
         storage_dir=storage_dir,
         buffer_backend=buffer_backend,
         buffer_redis_url=redis_url,

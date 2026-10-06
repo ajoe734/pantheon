@@ -2,6 +2,7 @@ fastapi==0.142.2
 uvicorn==0.54.0
 pydantic==2.13.5
 psycopg[binary]==3.3.6
+asyncpg==0.31.0
 jsonschema==4.26.0
 vectorbt==1.1.1
 pandas==3.0.6

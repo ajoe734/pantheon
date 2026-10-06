@@ -322,6 +322,13 @@ class TestInstitutionalMemoryStore(unittest.TestCase):
 
             self.skipTest("jsonschema is not installed in this environment")
 
+    def test_validate_institutional_memory_json_fails_closed_without_jsonschema(self) -> None:
+        import unittest.mock
+        with unittest.mock.patch.dict("sys.modules", {"jsonschema": None}):
+            with self.assertRaises(RuntimeError) as ctx:
+                validate_institutional_memory_json(make_entry().to_dict())
+            self.assertIn("jsonschema is required", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

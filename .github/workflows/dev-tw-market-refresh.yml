@@ -1,0 +1,40 @@
+name: Dev Taiwan Market Daily Refresh
+
+on:
+  schedule:
+    - cron: '0 7 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force refresh even outside market session or if already fresh'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  refresh:
+    name: Taiwan Market Daily Refresh
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Execute bounded Taiwan market refresh
+        shell: bash
+        env:
+          DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
+          DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
+          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR }}
+          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
+          DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
+          FORCE_REFRESH: ${{ inputs.force || false }}
+        run: |
+          for var in DEV_DEPLOY_SSH_HOST DEV_DEPLOY_SSH_USER DEV_REMOTE_DIR DEV_DEPLOY_SSH_KNOWN_HOSTS DEV_DEPLOY_SSH_PRIVATE_KEY; do
+            [[ -n "${!var:-}" ]] || { echo "::error::Required variable or secret ${var} is missing" >&2; exit 1; }
+          done
+          cred_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          scripts/dev_vm_ssh.sh prepare "${cred_dir}" >/dev/null
+          force_arg=""
+          [[ "${FORCE_REFRESH}" == "true" ]] && force_arg="--force"
+          scripts/dev_vm_ssh.sh exec "set -euo pipefail; cd '${DEV_REMOTE_DIR}'; ./scripts/deploy_nonprod_vm.sh --refresh-only ${force_arg}"

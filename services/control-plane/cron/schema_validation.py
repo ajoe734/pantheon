@@ -46,24 +46,7 @@ def build_workflow_handoff_validator():
 
 def validate_workflow_handoff(payload: dict[str, Any]) -> None:
     validator = build_workflow_handoff_validator()
-    if validator is None:  # pragma: no cover - optional dependency fallback
-        required = {
-            "handoff_version",
-            "handoff_id",
-            "handoff_type",
-            "from_stage",
-            "to_stage",
-            "created_at",
-            "strategy_spec",
-            "registry_hints",
-            "governance_context",
-            "provenance",
-        }
-        missing = sorted(required - payload.keys())
-        if missing:
-            raise ValueError(f"WorkflowHandoff missing required fields: {missing}")
-        if _parse_rfc3339(payload["created_at"]) is None:
-            raise ValueError("WorkflowHandoff created_at must be RFC3339")
-        return
+    if validator is None:
+        raise RuntimeError("WorkflowHandoff validation unavailable: jsonschema is required")
 
     validator.validate(payload)

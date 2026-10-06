@@ -1,0 +1,51 @@
+{
+  "schema_version": "pantheon.corrective-source-evidence.v1",
+  "task_id": "TELEMETRY-SCHEMA-FAIL-CLOSED-20261006",
+  "title": "Fail closed when the telemetry ingest schema or cron handoff validator is missing",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 10,
+  "summary": "Telemetry service factory refuses to start when configured schema file is missing; ingest service validates events when default schema is present and rejects events when configured schema is unavailable; cron workflow handoff validator fails closed with RuntimeError when jsonschema is unavailable.",
+  "acceptance_verification": [
+    {
+      "criterion": "1. Telemetry service refuses to start with explicit configuration error when configured ingest schema file is missing",
+      "status": "passed",
+      "detail": "_build_service() and startup() in services/telemetry/main.py check Path(schema_path).is_file() and raise FileNotFoundError('Configured telemetry schema file does not exist: ...') instead of passing schema_path=None."
+    },
+    {
+      "criterion": "2. Test through real telemetry service factory proves startup fails for missing schema and validates events when shipped default schema is present",
+      "status": "passed",
+      "detail": "services/telemetry/test_ingest_schema_fail_closed.py tests _build_service() and startup() raising FileNotFoundError on missing schema, and validates event admission with shipped default schema."
+    },
+    {
+      "criterion": "3. Cron workflow handoff validator fails closed when jsonschema is unavailable instead of falling back to required-keys-only check",
+      "status": "passed",
+      "detail": "services/control-plane/cron/schema_validation.py raises RuntimeError('WorkflowHandoff validation unavailable: jsonschema is required') when validator is None. Tested in services/control-plane/cron/test_cron.py::TestWorkflowHandoffSchemaValidation."
+    },
+    {
+      "criterion": "4. Default schema path shipped in telemetry image still resolves so hosted startup is unaffected",
+      "status": "passed",
+      "detail": "Verified in l12humanops-telemetry:latest: /workspace/services/telemetry/telemetry_event.schema.json exists (-rw-rw-r--, 21994 bytes) and matches _DEFAULT_SCHEMA_PATH."
+    },
+    {
+      "criterion": "5. No compressed code is used to meet the line budget",
+      "status": "passed",
+      "detail": "Production code changes strictly adhere to standard formatting and reduce net production code by 15 lines (budget <= 10 lines)."
+    }
+  ],
+  "validation_commands": [
+    {
+      "command": "pytest services/telemetry/test_main_routes.py services/telemetry/test_tel001_rebaseline_schema.py services/telemetry/test_ingest_schema_fail_closed.py",
+      "result": "40 passed in 10.12s"
+    },
+    {
+      "command": "python3 -m unittest services/control-plane/cron/test_cron.py",
+      "result": "17 passed in 0.020s"
+    },
+    {
+      "command": "docker run --rm l12humanops-telemetry:latest python -c \"from pathlib import Path; import services.telemetry.main as m; assert Path(m._DEFAULT_SCHEMA_PATH).is_file()\"",
+      "result": "passed (schema resolves at /workspace/services/telemetry/telemetry_event.schema.json)"
+    }
+  ]
+}

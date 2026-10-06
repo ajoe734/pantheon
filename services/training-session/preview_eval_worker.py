@@ -195,7 +195,7 @@ def complete_and_read_terminal_session(
 
 
 def build_loop_writer() -> Any | None:
-    """Best-effort GAP-F05 observation writer; the worker still runs without it.
+    """Optional when unconfigured; a configured writer requires its image driver.
 
     ``services/loop-control`` is the shared owner-observation store for all
     twelve canonical loops -- this must reuse it, not add a second Teaching
@@ -205,10 +205,7 @@ def build_loop_writer() -> Any | None:
     dsn = str(os.getenv("DATABASE_URL") or "").strip()
     if not dsn:
         return None
-    try:
-        module = importlib.import_module("services.loop-control")
-    except ModuleNotFoundError:
-        return None
+    module = importlib.import_module("services.loop-control")
     return module.LoopControllerWriter(
         dsn,
         tenant_id=str(os.getenv("TRAINING_SESSION_TENANT_ID") or os.getenv("PANTHEON_TENANT_ID") or "default"),

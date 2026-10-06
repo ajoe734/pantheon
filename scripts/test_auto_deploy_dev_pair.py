@@ -15,6 +15,7 @@ class Client:
         self.ci = "success"
         self.active = False
         self.deploys = []
+        self.failed_steps = {}
         self.dispatches = []
         self.move_on_read = False
         self.reads = 0
@@ -25,6 +26,11 @@ class Client:
 
     def request(self, method, path):
         query = parse_qs(urlparse(path).query)
+        if "/jobs" in path:
+            run_id = int(urlparse(path).path.split("/")[-2])
+            step = self.failed_steps.get(run_id, "Deploy dev VM stack under lease")
+            return {"jobs": [{"name": "Deploy dev under shared environment lease",
+                "steps": [{"name": step, "conclusion": "failure"}]}]}
         if "status" in query:
             return {"workflow_runs": [{"html_url": "https://github.test/active"}] if self.active else []}
         if "branch-ci.yml" in path:
@@ -119,6 +125,16 @@ def test_failed_pair_is_reported_and_not_redispatched(conclusion):
         assert result["state"] == "failed_pair_not_retried"
         assert result["run_url"] == "https://github.test/10"
     assert not backend.dispatches
+
+
+def test_attempt_that_never_acquired_the_dev_lease_does_not_fail_the_pair():
+    backend, _, _, _, run = setup_pair()
+    backend.deploys = [deploy_run(10, "failure")]
+    backend.failed_steps[10] = "Acquire shared dev environment lease"
+    assert run(apply=True)["state"] == "dispatched"
+    backend.failed_steps[10] = "Start identity-bound lease heartbeat"
+    backend.dispatches.clear()
+    assert run(apply=True)["state"] == "failed_pair_not_retried"
 
 
 @pytest.mark.parametrize("failed_backend,failed_frontend", [(OLD, F), (B, OLD)])

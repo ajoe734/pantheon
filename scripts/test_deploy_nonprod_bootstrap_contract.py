@@ -11,7 +11,18 @@ from pathlib import Path
 
 import pytest
 
-from services.trade_journey.test_projection_migration import fresh_bootstrap_database
+@pytest.fixture
+def fresh_bootstrap_database():
+    try:
+        import psycopg
+    except ModuleNotFoundError:
+        pytest.skip("psycopg is not installed in the test environment")
+    if not os.getenv("TEST_DATABASE_ADMIN_URL"):
+        pytest.skip("TEST_DATABASE_ADMIN_URL is not set")
+    from services.trade_journey.test_projection_migration import (
+        fresh_bootstrap_database as _upstream,
+    )
+    yield from _upstream()
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"

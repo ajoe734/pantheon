@@ -207,3 +207,25 @@ def test_bff_management_data_sources_requires_auth() -> None:
     client = _client_with_connectors()
     response = client.get("/bff/management/data-sources")
     assert response.status_code == 401
+
+
+def test_calculate_source_allowed_actions_fails_closed_when_import_unavailable() -> None:
+    import pytest
+    import unittest.mock
+    scope: dict[str, Any] = {}
+    code = (
+        "try:\n"
+        "    from services.source_ingestion.connector_definitions import calculate_source_allowed_actions\n"
+        "except ImportError:\n"
+        "    try:\n"
+        "        from connector_definitions import calculate_source_allowed_actions\n"
+        "    except ImportError:\n"
+        "        def calculate_source_allowed_actions(*args, **kwargs):\n"
+        "            raise RuntimeError('Source action policy is unavailable')\n"
+    )
+    with unittest.mock.patch.dict("sys.modules", {"services.source_ingestion.connector_definitions": None, "connector_definitions": None}):
+        exec(code, scope)
+        fn = scope["calculate_source_allowed_actions"]
+        with pytest.raises(RuntimeError, match="Source action policy is unavailable"):
+            fn()
+

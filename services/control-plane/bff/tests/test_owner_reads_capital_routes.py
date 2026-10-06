@@ -51,8 +51,9 @@ def bff(capital_test_env, monkeypatch):  # noqa: F811
 
 def _fresh_bff():
     """A newly composed BFF instance (the supported composition seam) models a BFF restart."""
+    from services.control_plane.bff.tests.bff_compose_stand_ins import resolve_with_stand_ins
     from services.control_plane.bff.core.app_factory import compose_bff_app
-    return TestClient(compose_bff_app())
+    return TestClient(compose_bff_app(dependency_resolver=resolve_with_stand_ins))
 
 
 def _onboard(capital, tenant):

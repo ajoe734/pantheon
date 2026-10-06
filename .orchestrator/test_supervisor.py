@@ -2204,12 +2204,15 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex"), 0)
 
     def test_repo_codex_slots_inherit_logical_lane_capacity(self) -> None:
+        # The operator stopped the Codex lanes on 2026-10-06: zero lane
+        # capacity must reach every slot, so none of them can be dispatched.
         config = json.loads(Path(__file__).with_name("config.json").read_text())
         for agent_id in ("codex", "codex2"):
             with self.subTest(agent_id=agent_id):
                 lane = supervisor.delivery_lane_for_agent(config, agent_id)
+                self.assertEqual(lane.max_parallel, 0)
                 self.assertTrue(lane.endpoints)
-                self.assertTrue(all(endpoint.enabled for endpoint in lane.endpoints))
+                self.assertFalse(any(endpoint.enabled for endpoint in lane.endpoints))
                 self.assertTrue(
                     all(endpoint.account_id for endpoint in lane.endpoints)
                 )
@@ -13467,6 +13470,45 @@ class ExecutionResourceAdmissionTests(unittest.TestCase):
         self.assertEqual(dispatched[0]["task_id"], "HOSTED-1")
         self.assertEqual(dispatched[0]["target_agent"], "Codex")
 
+    def test_queued_dispatch_carries_declared_resources_to_worker_env(self) -> None:
+        task = task_fixture(
+            "HOSTED-1",
+            status="todo",
+            owner="Codex",
+            execution_resources=["pantheon-dev"],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".orchestrator").mkdir()
+            config = config_fixture(root)
+            state = runtime_state.default_state()
+            state["delivery_health"] = healthy_delivery_health(config)
+            planned: list[dict[str, Any]] = []
+            supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                status_snapshot={"tasks": [task]},
+                event_sink=lambda _config, event: planned.append(event) or True,
+                live_total_snapshot=0,
+            )
+            self.assertEqual(len(planned), 1)
+            with mock.patch("watch_events.write_activity_log"):
+                self.assertTrue(
+                    supervisor._queue_delivery_event_locked(config, state, planned[0])
+                )
+            (event_id,) = state["queue"]["events"]
+            # The worker is launched from the durable queue intent, not the planner event.
+            event = runtime_state.queue_event_by_id(state, event_id)
+            self.assertNotIn("task", event)
+
+            request = supervisor.build_request(config, event)
+
+            self.assertEqual(request.metadata["execution_resources"], ["pantheon-dev"])
+            # The command-root binding has its own tests; only resources matter here.
+            with mock.patch("common.status_command_runtime_env", return_value={}):
+                env = common.delivery_runtime_env(config, request.metadata)
+            self.assertEqual(env[common.WORKER_EXECUTION_RESOURCES_ENV], '["pantheon-dev"]')
+
     def test_dispatch_ready_tasks_blocks_second_pantheon_dev_task_when_active(self) -> None:
         hosted_1 = task_fixture(
             "HOSTED-1",
@@ -21091,17 +21133,17 @@ class ShippedReviewerFallbackPolicyTests(unittest.TestCase):
                     "a Codex quota exhaustion would stop all dispatch",
                 )
 
-    def test_codex_lanes_keep_first_refusal_for_non_codex_owners(self) -> None:
-        # Widening the chain must not quietly re-route review away from Codex
-        # while Codex is healthy: the added lanes are a degradation path.
+    def test_stopped_codex_lanes_are_not_reviewer_fallbacks(self) -> None:
+        # The operator stopped the Codex lanes on 2026-10-06. A zero-capacity
+        # reviewer in a chain is only reassigned away again, so no other lane
+        # may list them.
         for lane, chain in self.fallbacks.items():
             if self.account_of.get(lane) in self.CODEX_ACCOUNTS:
                 continue
             with self.subTest(lane=lane):
-                self.assertEqual(
-                    chain[:2],
-                    ["Codex", "Codex2"],
-                    f"lane {lane} no longer prefers the Codex reviewers first",
+                self.assertFalse(
+                    {"Codex", "Codex2"} & set(chain),
+                    f"lane {lane} still falls back to a stopped Codex reviewer",
                 )
 
     def test_no_lane_falls_back_to_a_reviewer_on_its_own_account(self) -> None:

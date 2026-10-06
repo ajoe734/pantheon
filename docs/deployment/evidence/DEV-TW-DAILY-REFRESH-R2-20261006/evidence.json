@@ -1,0 +1,53 @@
+{
+  "schema_version": "pantheon.deployment.tw_daily_refresh_evidence.v1",
+  "task_id": "DEV-TW-DAILY-REFRESH-R2-20261006",
+  "actor": "Antigravity",
+  "observed_at": "2026-10-06T15:00:00Z",
+  "change_class": "corrective",
+  "implementation": {
+    "workflow": {
+      "path": ".github/workflows/dev-tw-market-refresh.yml",
+      "cron": "0 7 * * 1-5",
+      "dispatch_input": "force",
+      "variables_validated": [
+        "DEV_DEPLOY_SSH_HOST",
+        "NONPROD_REMOTE_USER",
+        "DEV_REMOTE_DIR",
+        "DEV_DEPLOY_SSH_KNOWN_HOSTS",
+        "DEV_DEPLOY_SSH_PRIVATE_KEY"
+      ],
+      "hardcoded_ip_check": "passed",
+      "directory_fallback_check": "passed",
+      "remote_command": "set -euo pipefail; cd '${DEV_REMOTE_DIR}'; ./scripts/deploy_nonprod_vm.sh --refresh-only ${force_arg}"
+    },
+    "entrypoint": {
+      "script": "scripts/deploy_nonprod_vm.sh",
+      "flag": "--refresh-only",
+      "options": ["--force", "--output <path>"],
+      "second_script_rejected": true,
+      "release_image_preservation": "image-ID guard (container vs compose images -q) before recreate and after both bounded run and restore; env equality proof comparing pre-run and post-restore inspect envs; disarmed controller overrides and PANTHEON_EXTERNAL_EGRESS=deny on restore",
+      "egress_restore_trap": "PANTHEON_EXTERNAL_EGRESS=deny, SOURCE_INGEST_CONTROLLER_MODE=reconcile_only, rm one-off containers",
+      "preflight_checks": {
+        "weekend_skip": "weekday >= 5 -> skipped (weekend)",
+        "session_close_skip": "time < 13:30 Asia/Taipei -> skipped (session_not_closed)",
+        "holiday_skip": "date in calendar holidays -> skipped (holiday)",
+        "idempotency_noop": "same-day snapshot observed >= 13:30 Asia/Taipei and fresh -> noop (already_fresh)",
+        "calendar_fail_closed": "missing/unverifiable calendar evidence -> error (market_input_calendar_unverifiable)",
+        "force_override": "bypasses weekend, session_close, and already_fresh"
+      }
+    }
+  },
+  "verification": {
+    "total_tests": 193,
+    "passed": 189,
+    "skipped": 4,
+    "failed": 0,
+    "test_suites": [
+      "scripts/test_dev_tw_market_refresh.py (17 passed)",
+      "scripts/test_deploy_nonprod_vm.py (45 passed, 2 skipped)",
+      "scripts/test_deploy_nonprod_bootstrap_contract.py (81 passed, 2 skipped)",
+      "scripts/test_source_ingest_deploy_diagnostics_contract.py (14 passed)",
+      "scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py (32 passed)"
+    ]
+  }
+}

@@ -78,16 +78,13 @@ def _build_loop_writer(*, dsn: str, tenant_id: str) -> Any:
 
     ``services.loop-control`` is a hyphenated package name, so it can only be
     reached through ``importlib`` rather than a normal dotted import. Returns
-    ``None`` when no durable store is configured or the module is absent, so
-    callers degrade to local health only instead of failing the tick loop.
+    ``None`` only when no durable store is configured. A missing module/driver
+    in a configured image is a packaging failure, not local-only success.
     """
 
     if not dsn:
         return None
-    try:
-        module = importlib.import_module("services.loop-control")
-    except ModuleNotFoundError:
-        return None
+    module = importlib.import_module("services.loop-control")
     deployment_sha = str(os.getenv("PANTHEON_DEPLOYMENT_SHA") or os.getenv("GIT_SHA") or "unknown")
     return module.LoopControllerWriter(
         dsn,

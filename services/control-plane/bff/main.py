@@ -1652,9 +1652,6 @@ from .command_adapters.service import stored_command_params as _stored_command_p
 from .governance.service import human_inbox_surface_timeout_seconds as _human_inbox_surface_timeout_seconds
 
 from .command_adapters.service import _resolve_execution_params_for_record
-from .pm12.service import (
-    _pm12_resolve_quarterly_recommendation_submit_params,
-)
 from .command_adapters.preconditions import (
     _validate_approve_deployment,
     _validate_approve_decision,
@@ -4229,10 +4226,8 @@ from .governance.human_inbox import (
     _human_inbox_persona_readiness_item,
     _human_inbox_priority,
     _human_inbox_project_items,
-    _human_inbox_promotion_contributor,
     _human_inbox_promotion_recommendation_id,
     _human_inbox_promotion_review_from_projection,
-    _human_inbox_promotion_review_item,
     _human_inbox_sanitize_promotion_snapshot,
     _human_inbox_submission_projection_from_record,
     _human_inbox_summary,
@@ -5701,6 +5696,7 @@ _ASSISTANT_CONTROL_MODE_STORE: Any = None
 def _assistant_ask_enabled() -> bool:
     return os.getenv("PANTHEON_ASSISTANT_ENABLED", "").strip().lower() in {"1", "true", "yes"}
 from .assistant.management_service import (
+    _project_operator_runtime_state_row,
     _assistant_provider_readiness,
     _assistant_provider_list,
     _assistant_provider_register,
@@ -5752,6 +5748,9 @@ from .core.app_factory import compose_bff_app
 app = compose_bff_app(
     app=app,
     app_deps=app_deps,
+    # Capture the real context-aware projector before mounting the router;
+    # the module compatibility facade is installed only after composition.
+    _project_operator_runtime_state_row=_project_operator_runtime_state_row,
 )
 _events_router = app.state.events_router
 _deployment_router = app.state.deployment_router

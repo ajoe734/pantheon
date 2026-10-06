@@ -1259,6 +1259,7 @@ def _project_operator_runtime_state_row(
     return {
         "runtime_id": runtime_id,
         "runtime_binding_id": runtime_binding_id,
+        **{key: binding[key] for key in ("strategy_id", "persona_id") if binding.get(key)},
         "deployment_stage": binding.get("deployment_stage") or binding.get("deployment_mode"),
         "status": binding.get("status"),
         "capital_pool_id": binding.get("capital_pool_id"),
@@ -1385,6 +1386,8 @@ def _build_trading_pulse_baseline_comparison(
     return {
         "runtimeId": runtime_id or None,
         "runtime_id": runtime_id or None,
+        **({"strategyId": row["strategy_id"], "strategy_id": row["strategy_id"]}
+           if row.get("strategy_id") else {}),
         "runtimeBindingId": row.get("runtime_binding_id"),
         "runtime_binding_id": row.get("runtime_binding_id"),
         "deploymentStage": row.get("deployment_stage"),
@@ -1747,38 +1750,15 @@ class ManagementService:
         utc_now: Optional[Callable[[], str]] = None,
         ops_read_model_entry_fn: Optional[Callable[..., Any]] = None,
         read_store: Optional[Any] = None,
-        get_promotion_review_command_log: Optional[Callable[[], Any]] = None,
     ) -> None:
         self._get_read_store = get_read_store or ((lambda: read_store) if read_store is not None else None)
         self._utc_now = utc_now or _utc_now_rfc3339
         self._ops_read_model_entry_fn = ops_read_model_entry_fn
-        # Optional explicit injection point for the durable command log that
-        # backs the promotion-review projection: when absent, every
-        # governance/human_inbox.py contributor this service calls (e.g.
-        # _submitted_promotion_review_records) falls back to the production
-        # ``main`` module singleton on its own, so production behavior is
-        # unchanged either way. Tests that compose a standalone app from the
-        # router factories (rather than mutating main.py's module globals)
-        # need this to make the command-log-backed promotion-review surface
-        # observable without reaching into main.py. Named to avoid the
-        # literal substring forbidden by
-        # test_management_read_models_router.py::test_service_has_no_shadow_command_authority --
-        # this is a read-only log accessor, not command submission/execution
-        # authority (which this service still never holds).
-        self._get_promotion_review_command_log = get_promotion_review_command_log
 
     def _resolve_store(self) -> Optional[Any]:
         if self._get_read_store is not None:
             try:
                 return self._get_read_store()
-            except Exception:
-                return None
-        return None
-
-    def _resolve_promotion_review_command_log(self) -> Optional[Any]:
-        if self._get_promotion_review_command_log is not None:
-            try:
-                return self._get_promotion_review_command_log()
             except Exception:
                 return None
         return None
@@ -2850,7 +2830,7 @@ class ManagementService:
                 )
             )
 
-        baseline_comparisons = [
+        all_comparisons = [
             _build_trading_pulse_baseline_comparison(
                 store,
                 row,
@@ -2860,9 +2840,13 @@ class ManagementService:
             for row in runtime_rows
         ]
         baseline_by_runtime_id = {
-            str(comparison.get("runtimeId") or comparison.get("runtime_id") or ""): comparison
-            for comparison in baseline_comparisons
+            str(c.get("runtimeId") or c.get("runtime_id") or ""): c
+            for c in all_comparisons
         }
+        baseline_comparisons = [
+            c for row, c in zip(runtime_rows, all_comparisons)
+            if _trading_pulse_stage(row) in {"live", "canary"} or (c.get("paper_live_drift") or {}).get("available")
+        ]
         for row in runtime_rows:
             comparison = baseline_by_runtime_id.get(str(row.get("runtime_id") or ""))
             row["baseline_comparison"] = comparison
@@ -2972,8 +2956,8 @@ class ManagementService:
 
         def _make_dataset_surface(ds: str) -> Dict[str, Any]:
             src = _get_dataset_source(ds)
-            surf: Dict[str, Any] = {"status": "ok" if src != "missing" else "unavailable", "source": src}
-            if src == "missing":
+            surf: Dict[str, Any] = {"status": "ok" if src not in {"missing", "unavailable"} else "unavailable", "source": src}
+            if src in {"missing", "unavailable"}:
                 surf.setdefault("staleness", {"served_from": "unverifiable", "last_known_at": snap})
             elif src == "local_snapshot":
                 surf["status"] = "degraded"
@@ -3014,9 +2998,20 @@ class ManagementService:
             )
 
         paper_live_drift_surface = _make_dataset_surface("paper_live_drift_reports")
-        if (
-            runtime_rows
-            and baseline_available_count < len(runtime_rows)
+        live_rows = [row for row in runtime_rows if _trading_pulse_stage(row) in {"live", "canary"}]
+        paper_available_count = sum(
+            1 for row in runtime_rows
+            if _trading_pulse_stage(row) not in {"live", "canary"}
+            and ((row.get("baseline_comparison") or {}).get("paper_live_drift") or {}).get("available")
+        )
+        if not live_rows and baseline_available_count == 0:
+            if paper_live_drift_surface.get("status") == "ok":
+                paper_live_drift_surface["message"] = "No live runtimes require paper/live baseline comparison."
+        elif (
+            (
+                (live_rows and (baseline_available_count - paper_available_count) < len(live_rows))
+                or (paper_available_count > 0 and paper_available_count < (len(runtime_rows) - len(live_rows)))
+            )
             and paper_live_drift_surface.get("status") == "ok"
         ):
             paper_live_drift_surface["status"] = "degraded"
@@ -3565,102 +3560,6 @@ class ManagementService:
                         "snapshot_at": snap,
                     }
                     surfaces["persona_readiness"] = failures["persona_readiness"]
-
-            # 6. Promotion Reviews
-            try:
-                has_store_surface = hasattr(store, "list_promotion_reviews") or hasattr(
-                    store, "list_promotion_review_records"
-                )
-                records: List[Dict[str, Any]] = []
-                if has_store_surface:
-                    fn = getattr(store, "list_promotion_reviews", None) or getattr(
-                        store, "list_promotion_review_records", None
-                    )
-                    records = list(fn() or [])
-                if not records:
-                    # No ReadSurfacePorts implementation (production or
-                    # test) provides list_promotion_review(s); promotion
-                    # review submissions are durable command-log records,
-                    # not local-overlay read-surface rows. Reuse the same
-                    # canonical command-log projection the Management NL
-                    # assistant human-inbox surface already uses
-                    # (governance/human_inbox.py::_submitted_promotion_review_records,
-                    # wired in via assistant/management_service.py's
-                    # _human_inbox_payload) instead of fabricating a second
-                    # promotion-review projection here.
-                    from services.control_plane.bff.governance.human_inbox import (
-                        _PROMOTION_REVIEW_COMMAND_LOG_SOURCE,
-                        _submitted_promotion_review_records,
-                    )
-                    # Passed via **kwargs (rather than the literal keyword
-                    # governance/human_inbox.py's function actually takes)
-                    # so this read-only log accessor call does not trip
-                    # test_service_has_no_shadow_command_authority's
-                    # substring guard on this module's source text -- the
-                    # guard exists to catch this service acquiring command
-                    # submission/execution authority, not a durable-log read.
-                    _command_log_kwarg = "command" + "_store"
-                    records = _submitted_promotion_review_records(
-                        identity,
-                        snapshot_at=snap,
-                        **{_command_log_kwarg: self._resolve_promotion_review_command_log()},
-                    )
-                surfaces["promotion_reviews"] = {
-                    "status": "ok" if records else "unavailable",
-                    "source": "read_store" if has_store_surface else _PROMOTION_REVIEW_COMMAND_LOG_SOURCE,
-                    "snapshot_at": snap,
-                }
-                if records:
-                    from services.control_plane.bff.governance.human_inbox import (
-                        _human_inbox_promotion_review_item,
-                    )
-                    for r in records:
-                        if not isinstance(r, dict):
-                            continue
-                        projected = _human_inbox_promotion_review_item(r) or {}
-                        item_id_val = str(projected.get("item_id") or projected.get("id") or "")
-                        if not item_id_val:
-                            continue
-                        st = str(projected.get("status") or "pending")
-                        # Start from the full projection (persona_id, quarter,
-                        # recommendation_id, ranking_snapshot_id, the nested
-                        # "promotion_review" / "data" evidence payloads, etc.)
-                        # and layer on the same normalized key set every
-                        # sibling contributor block above uses, so this
-                        # surface is a strict superset rather than a
-                        # narrower re-derivation.
-                        item_out: Dict[str, Any] = dict(projected)
-                        item_out.update({
-                            "id": str(projected.get("id") or f"promotion_review:{item_id_val}"),
-                            "item_id": item_id_val,
-                            "inbox_id": str(projected.get("inbox_id") or f"promotion_review:{item_id_val}"),
-                            "source_id": str(projected.get("source_id") or projected.get("review_id") or item_id_val),
-                            "review_id": projected.get("review_id"),
-                            "promotion_review_id": projected.get("promotion_review_id"),
-                            "source_type": "promotion_review",
-                            "inboxType": "promotion_review",
-                            "status": st,
-                            "action_state": str(projected.get("action_state") or ("pending" if st == "pending" else "resolved")),
-                            "priority": str(projected.get("priority") or "high"),
-                            "title": str(projected.get("title") or "Persona governance review"),
-                            "summary": str(
-                                projected.get("summary")
-                                or "Persona ranking recommendation requires Human Gate approval."
-                            ),
-                            "created_at": str(projected.get("created_at") or snap),
-                            "updated_at": str(projected.get("updated_at") or projected.get("created_at") or snap),
-                            "details": r,
-                        })
-                        all_items.append(item_out)
-            except Exception as exc:
-                failures["promotion_reviews"] = {
-                    "status": "degraded",
-                    "source": "read_store",
-                    "reason": "contributor_read_error",
-                    "message": str(exc),
-                    "snapshot_at": snap,
-                }
-                surfaces["promotion_reviews"] = failures["promotion_reviews"]
 
             surfaces["human_inbox"] = _aggregate_group_surface("human_inbox", list(surfaces.values()), snapshot_at=snap)
 

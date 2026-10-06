@@ -33,7 +33,7 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
     assert drift["healthcheck"]["start_period"] == "30s"
 
     consumer = services["reconciliation-drift-consumer"]
-    assert "profiles" not in consumer
+    assert consumer["profiles"] == ["root", "workers"]
     assert consumer["build"]["dockerfile"] == "services/reconciliation-drift/Dockerfile"
     assert consumer["command"] == ["python", "services/reconciliation-drift/consumer.py"]
     assert consumer["restart"] == "unless-stopped"
@@ -71,7 +71,7 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
     assert consumer["healthcheck"]["start_period"] == "300s"
 
     scheduler = services["reconciliation-drift-scheduler"]
-    assert "profiles" not in scheduler
+    assert scheduler["profiles"] == ["root", "workers"]
     assert scheduler["build"]["dockerfile"] == "services/reconciliation-drift/Dockerfile"
     assert scheduler["command"] == ["python", "services/reconciliation-drift/scheduler_worker.py"]
     assert scheduler["restart"] == "unless-stopped"
@@ -105,7 +105,7 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
     assert scheduler["healthcheck"]["start_period"] == "300s"
 
     listener = services["reconciliation-drift-incident-listener"]
-    assert "profiles" not in listener
+    assert listener["profiles"] == ["root", "workers"]
     assert listener["build"]["dockerfile"] == "services/reconciliation-drift/Dockerfile"
     assert listener["command"] == ["python", "services/reconciliation-drift/incident_listener.py"]
     assert listener["restart"] == "unless-stopped"

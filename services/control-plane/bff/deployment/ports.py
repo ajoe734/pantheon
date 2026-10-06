@@ -31,7 +31,5 @@ class DeploymentQueries(Protocol):
 class DeploymentCommands(Protocol):
     """Command interface for deployment mutations."""
 
-    def create_deployment_plan(self, **kwargs: Any) -> Dict[str, Any]: ...
-
 
 __all__ = ["DeploymentQueries", "DeploymentCommands"]

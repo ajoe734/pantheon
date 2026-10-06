@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 # of that response (`personas.service._deprecated_bff_path_response`) is
 # passed directly here instead, so this file needs no main.py reference at
 # all -- dynamic or static.
+from services.control_plane.bff.tests.bff_compose_stand_ins import resolve_with_stand_ins
 from services.control_plane.bff.core.app_factory import compose_bff_app
 from services.control_plane.bff.personas.service import (
     _deprecated_bff_path_response,
@@ -33,7 +34,7 @@ from services.control_plane.bff.personas.service import (
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-path-dedupe:operator,admin"}
 
-_APP = compose_bff_app(_deprecated_bff_path_response=_deprecated_bff_path_response)
+_APP = compose_bff_app(dependency_resolver=resolve_with_stand_ins, _deprecated_bff_path_response=_deprecated_bff_path_response)
 
 
 def _client() -> TestClient:

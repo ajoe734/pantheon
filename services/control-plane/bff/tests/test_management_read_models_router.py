@@ -24,6 +24,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.responses import JSONResponse
 
+from services.control_plane.bff.tests.bff_compose_stand_ins import resolve_with_stand_ins
 from services.control_plane.bff.core.app_factory import compose_bff_app
 from services.control_plane.bff.management_read_models.router import (
     create_management_read_models_router,
@@ -1716,7 +1717,7 @@ def test_main_management_routes_have_zero_duplicate_registrations():
     in test_main_composition_seam_extraction_003.py independently proves this produces
     an identical route set to main.py's assembled app.
     """
-    composed_app = compose_bff_app()
+    composed_app = compose_bff_app(dependency_resolver=resolve_with_stand_ins)
     from collections import Counter
     from test_normalized_route_uniqueness import scan_fastapi_routes
 
@@ -1760,7 +1761,7 @@ def test_main_preserves_management_evolution_journal_once():
     than importing main.py directly (see docstring on the sibling
     ``test_main_management_routes_have_zero_duplicate_registrations`` above).
     """
-    composed_app = compose_bff_app()
+    composed_app = compose_bff_app(dependency_resolver=resolve_with_stand_ins)
     from test_normalized_route_uniqueness import scan_fastapi_routes
 
     matching = [

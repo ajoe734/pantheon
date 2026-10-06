@@ -1,0 +1,38 @@
+{
+  "scope": "Source delivery of the scheduled_pattern trade reflection producer; not hosted closure",
+  "producer_inventory_before_code": {
+    "method": "git grep over the whole tree (services, scripts, agent/openclaw/cron/compose config) for scheduled_pattern, pattern_review, pattern review",
+    "result": "No existing producer. scheduled_pattern appeared only in TradeReflectionPipeline (accepts it), the reflection JSON schema, the BFF trade-patterns reader and tests that seed rows. The only production caller of the pipeline was the Persona owner manual retry route (trigger manual_retry, one episode). due_pattern_requests() in the pipeline is an unused helper. No compose service, cron or OpenClaw agent definition produced pattern reflections.",
+    "decision": "Add the producer; nothing existed to wire to."
+  },
+  "design": {
+    "single_production_caller": "services/persona-evaluator-agent persona_evaluator_agent.pattern_review_once, called from main() after each run_once in the existing PERSONA_EVALUATOR_INTERVAL_SECONDS loop",
+    "host_justification": "The evaluator agent is the only existing periodic process that already holds service credentials, a tenant, an OpenClaw structured-extraction path and a per-persona loop; its role (read-only agent output, owner-persisted) matches reflection. The Persona HTTP service starts no loop; no new service, container, queue, store or scheduler is added. The host only asks the Persona owner; it reads and writes nothing else.",
+    "owner_route": "POST /api/personas/{persona_id}/trade-reflections:pattern-review in services/persona/write_owner.py (service or tenant-scoped token; body tenant_id required and must equal the persona tenant)",
+    "episode_source": "telemetry GET /api/telemetry/trade-episodes?persona_id=... with Bearer PANTHEON_TELEMETRY_SERVICE_TOKEN and X-Tenant-Id (trade_pattern_review.telemetry_episode_lister); rows are re-filtered by persona_id, tenant_id and closed/reflected/force_closed status",
+    "threshold": "Window rule (docs/04/persona_trade_journal_gap_2026-07-11/PERSONA_TRADE_JOURNAL_GAP.md section 7C): review only closed episodes not covered by any existing scheduled_pattern reflection; start only when at least MIN_EPISODES=2 such episodes exist; one review takes at most MAX_REVIEW_EPISODES=50, oldest first (opened_at, then id). Otherwise no provider call and no write (no_op, or unchanged when earlier coverage exists).",
+    "identity": "Each pattern reflection records covered_episode_ids (schema property added); trade_episode_id = uuid5 over that sorted set. Later runs exclude covered ids, so patterns never overlap and re-running is a no-op. Idempotency keys on covered ids only; status, updated_at or fact changes on covered episodes cause no provider call. Manual retry still removes only rows with its own episode id.",
+    "persistence": "Persona owner try_metadata_cas with a guard that re-checks identity+hash on the committed snapshot; provider or telemetry failure returns 503 before any write and the next interval retries the same set",
+    "provider": "existing OpenClawReflectionProvider in production; stand-in providers in tests",
+    "bff_reader": "unchanged; manual retry route unchanged"
+  },
+  "tests": {
+    "end_to_end": "services/control-plane/bff/test_trade_journal_owner_reads.py::test_pattern_review_producer_end_to_end_reads_through_mounted_bff (real producer entry pattern_review_once -> mounted Persona owner -> real telemetry app/projection store with service auth -> default mounted BFF trade-patterns; no seeded reflection)",
+    "unit": "services/persona/test_trade_pattern_review.py (qualification, dedupe, no second provider call, provider/telemetry failure, no-op, tenant/credential fail-closed with zero work, coexistence with manual retry, agent host fail-closed); window tests: third episode after a reviewed pair does not re-review or overlap, history above the cap yields bounded batches, status-only projection change makes no provider call",
+    "regression": "persona pattern/owner/pipeline/contracts, evaluator agent, PTJ-004 and owner-reads: 99 passed after window change"
+  },
+  "remaining_gaps_out_of_scope": [
+    "fill_review reflection producer",
+    "episode_closed reflection producer (telemetry already projects trade_episode.closed but nothing triggers a per-episode reflection)",
+    "due_pattern_requests sample-threshold trigger is not used; the producer runs every interval and relies on content-addressed no-op"
+  ],
+  "hosted_prerequisites_missing_for_natural_run": [
+    "dev resident paper fleet has no closed trade episodes yet (market/symbol work in other tasks)",
+    "persona-evaluator-agent needs a Persona service credential: compose defaults PERSONA_EVALUATOR_PERSONA_TOKEN to PANTHEON_PERSONA_SERVICE_TOKEN; a dedicated issued principal would require scripts/issue_dev_paper_principals.py, outside this task's artifact contract",
+    "persona service needs PANTHEON_TELEMETRY_SERVICE_TOKEN matching telemetry and PANTHEON_TELEMETRY_SERVICE_TENANTS to include the evaluator tenant",
+    "persona service needs a reachable OpenClaw adapter and token for structured reflection",
+    "deployment of the changed persona and persona-evaluator-agent images"
+  ],
+  "hosted_calls_made": "none; no VM access, no deployment",
+  "milestones": "after merge: milestone functional done; hosted external_wait"
+}

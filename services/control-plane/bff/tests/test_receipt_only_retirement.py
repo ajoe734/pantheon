@@ -74,10 +74,11 @@ def test_execution_verification_requires_owner_response(tmp_path, monkeypatch, o
 @pytest.fixture
 def default_app(tmp_path):
     from services.control_plane.bff.bootstrap.dependencies import AppDependencies
+    from services.control_plane.bff.tests.bff_compose_stand_ins import resolve_with_stand_ins
     from services.control_plane.bff.core.app_factory import compose_bff_app
     from services.control_plane.bff.tests.test_receipt_owner_routes import identity
     deps = AppDependencies.create_default(command_store=CommandStore(str(tmp_path / "default.jsonl")))
-    return TestClient(compose_bff_app(app_deps=deps, _extract_identity=identity)), deps
+    return TestClient(compose_bff_app(dependency_resolver=resolve_with_stand_ins, app_deps=deps, _extract_identity=identity)), deps
 
 
 @pytest.mark.parametrize("method,path", [
