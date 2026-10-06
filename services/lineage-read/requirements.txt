@@ -2,4 +2,3 @@ fastapi
 uvicorn
 pydantic
 httpx
-jsonschema>=4.0,<5.0

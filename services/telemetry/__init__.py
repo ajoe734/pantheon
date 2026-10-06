@@ -19,7 +19,6 @@ from .buffer import DurableBuffer, InMemoryBuffer, RedisStreamBuffer, create_buf
 from .batch_writer import AsyncBatchWriter, WriteResult
 from .backpressure import BackpressureController, PressureLevel, CRITICAL_EVENT_TYPES, DELAYABLE_EVENT_TYPES
 from .dead_letter import DeadLetterQueue, DeadLetterEntry
-from .ingest_svc import TelemetryIngestService
 
 __all__ = [
     # TEL-001: Capture
@@ -40,3 +39,11 @@ __all__ = [
     "DeadLetterEntry",
     "TelemetryIngestService",
 ]
+
+
+def __getattr__(name: str):
+    if name == "TelemetryIngestService":
+        from .ingest_svc import TelemetryIngestService
+
+        return TelemetryIngestService
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

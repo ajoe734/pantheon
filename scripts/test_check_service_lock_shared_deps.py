@@ -57,38 +57,6 @@ class CheckServiceLockSharedDepsTests(unittest.TestCase):
             self.assertEqual(count_after, 0)
             self.assertEqual(errors_after, [])
 
-    def test_detects_missing_dependency_for_docker_image_importer(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            shared_dir = root / "services" / "telemetry"
-            shared_dir.mkdir(parents=True)
-            (shared_dir / "requirements.txt").write_text("jsonschema>=4,<5\n", encoding="utf-8")
-            (shared_dir / "Dockerfile").write_text("FROM python:3.12\n", encoding="utf-8")
-
-            service_dir = root / "services" / "lineage-read"
-            service_dir.mkdir(parents=True)
-            (service_dir / "requirements.txt").write_text("fastapi\n", encoding="utf-8")
-            (service_dir / "Dockerfile").write_text("FROM python:3.12\n", encoding="utf-8")
-            (service_dir / "main.py").write_text(
-                "from services.telemetry.lineage_read import LineageReadService\n",
-                encoding="utf-8",
-            )
-
-            locks_dir = root / "dependencies" / "locks"
-            locks_dir.mkdir(parents=True)
-            (locks_dir / "services-lineage-read.txt").write_text("fastapi==0.1\n", encoding="utf-8")
-
-            count, errors = checker.check_and_fix_locks(root=root, fix=False)
-            self.assertEqual(count, 1)
-            self.assertIn("services-lineage-read.txt missing shared dependency 'jsonschema>=4,<5'", errors[0])
-
-            (locks_dir / "services-lineage-read.txt").write_text(
-                "fastapi==0.1\njsonschema==4.26.0\n", encoding="utf-8"
-            )
-            count, errors = checker.check_and_fix_locks(root=root, fix=False)
-            self.assertEqual(count, 0)
-            self.assertEqual(errors, [])
-
     def test_passes_when_all_dependencies_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

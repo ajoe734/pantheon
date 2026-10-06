@@ -26,13 +26,9 @@ def check_and_fix_locks(root: Path = ROOT, fix: bool = False) -> tuple[int, list
     errors: list[str] = []
     for mod_dir in (root / "services").iterdir():
         req_path = mod_dir / "requirements.txt"
-        if not req_path.exists():
+        if not req_path.exists() or (mod_dir / "Dockerfile").exists():
             continue
         deps = [l.strip() for l in req_path.read_text(encoding="utf-8").splitlines() if l.strip() and not l.startswith("#")]
-        if (mod_dir / "Dockerfile").exists():
-            if mod_dir.name != "telemetry":
-                continue
-            deps = [dep for dep in deps if normalize_name(dep) == "jsonschema"]
         pattern = f"services.{mod_dir.name}"
 
         importing_locks: dict[str, Path] = {}
