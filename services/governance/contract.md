@@ -400,3 +400,37 @@ as a string version, session ID, candidate digest and proof digest;
 `approval_decision_ref` is the exact decision ID. This contract enables the
 existing Overlay owner to connect after accepted delivery; it is not hosted or
 provider/MFA authorization.
+
+## Current Approval Policy Scope and Known Integration Gaps (BFF-HUMAN-GATE-TESTS-POLICY-20261006)
+
+By local operator decision (2026-10-06), existing governance approval semantics remain unchanged. The current policy scope, live guarantees, and known BFF integration gaps are recorded here for contractual truth:
+
+### 1. Current Approval Policy Scope
+
+- **Proposer self-decision blocking**:
+  Proposer self-decision (`decider must not be the proposer`, verified by comparing the effective actor ID against `owner_user_id` in `approval_decision.py` ~406-408) is enforced **only** for the 5 listed action targets in `services/governance/approval_targets.py` (`SUBJECT_FIELDS`):
+  1. `rebalance_apply`
+  2. `capital_pool_activation`
+  3. `capital_binding_activation`
+  4. `persona_lifecycle_transition`
+  5. `evolution_execute`
+  Non-action target types (such as general artifacts, registry entries, or review objects) do not enforce proposer self-decision blocking at the governance decision layer.
+
+- **Multi-decider requirements**:
+  Two distinct deciders (`required_deciders` in `approval_targets.py` ~60-65 and `approval_decision.py` ~421) are required **only** for capital or rebalance action targets where `subject.risk_direction == "increase"`:
+  - `capital_pool_activation` (with `risk_direction == "increase"`)
+  - `capital_binding_activation` (with `risk_direction == "increase"`)
+  - `rebalance_apply` (with `risk_direction == "increase"`)
+  All other approval targets and risk directions require only a single authorized decider.
+
+- **Decision Expiration (`expires_at`)**:
+  In the generic governance decision API (`approval_decision.py` ~441), `expires_at` is supplied directly by the decider in `DecideRequest`. Generic governance does not enforce a server-side cap on `expires_at`; only dev paper approvals are capped at 24 hours (`PAPER_APPROVAL_MAX_TTL = timedelta(hours=24)` in `services/governance/paper_approval_scope.py` ~319).
+
+### 2. Known BFF Integration Gaps (Revoke)
+
+- **Self-revoke check field mismatch**:
+  BFF's precondition check for human gate anti-self-approval (`services/control_plane/bff/command_adapters/preconditions.py` ~149-159) reads requester identifiers only from `_HUMAN_GATE_REQUESTER_FIELDS` (`requester_id`, `requesterId`, `requested_by`, `requestedBy`, `submitted_by`, `submittedBy`, `created_by`, `createdBy`, `created_by_id`). However, governance approval records carry the proposer identity in `owner_user_id`. Because `owner_user_id` is omitted from `_HUMAN_GATE_REQUESTER_FIELDS`, a proposer submitting a revoke command for their own governance approval in BFF bypasses the BFF self-revoke check and receives HTTP 202 instead of HTTP 403 `HUMAN_GATE_SELF_APPROVAL_FORBIDDEN`.
+
+- **Revoke route namespace mismatch**:
+  BFF's governance command adapter (`services/control_plane/bff/command_adapters/governance_adapter.py` ~167) forwards revoke commands by sending `POST` to `/api/governance/human-gates/{target_gate_id}/revoke` (under the deprecated `human-gates` namespace). The canonical governance approval revoke route hosted by the Governance service is `POST /api/governance/approvals/{decision_id}/revoke` (`services/governance/main.py` ~1588).
+
