@@ -27,6 +27,7 @@ from services.service_token_file import configured_service_token
 from services.source_ingestion.connectors.base import SourceRecord, SourceRecordStatus
 from services.source_ingestion.controller_state import (
     ControllerState,
+    ControllerStateError,
     ControllerStateStore,
     read_controller_state,
     utc_now,
@@ -577,9 +578,10 @@ def run_controller_tick(
         # Write failure to DB
         try:
             asyncio.run(
-                writer.record_tick(
+                writer.record_failure(
                     loop_id=loop_id,
-                    truth_level="reconciled_live_proof",
+                    reason=f"{stage}: {reason}",
+                    truth_level="scheduled_tick",
                     payload={
                         "error_stage": stage,
                         "error_reason": reason,
@@ -625,7 +627,16 @@ def _new_state() -> ControllerState:
 
 
 def refresh_runtime_identity(state: ControllerState) -> ControllerState:
-    state.controller_id = f"distill-controller-{uuid.uuid4().hex[:8]}"
+    """Refresh this process, never adopt another scope's business checkpoint."""
+    runtime = _new_state()
+    if state.tenant_id != runtime.tenant_id or state.environment != runtime.environment:
+        raise ControllerStateError(
+            "persisted controller state tenant/environment does not match this runtime"
+        )
+    state.controller_id = runtime.controller_id
+    state.controller_name = runtime.controller_name
+    state.deployment = runtime.deployment
+    state.started_at = runtime.started_at
     state.heartbeat_at = utc_now()
     return state
 

@@ -9,9 +9,11 @@ from typing import Any
 import pytest
 
 from services.source_ingestion.connectors.base import SourceRecord, SourceRecordStatus
-from services.source_ingestion.controller_state import ControllerState, ControllerStateStore
+from services.source_ingestion.controller_state import ControllerState, ControllerStateError, ControllerStateStore
 from services.source_ingestion.distillation_controller import (
     DistillationControllerConfig,
+    DistillationControllerError,
+    refresh_runtime_identity,
     run_controller_tick,
 )
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
@@ -25,12 +27,16 @@ class DummyLoopWriter:
     def __init__(self) -> None:
         self.successes = []
         self.ticks = []
+        self.failures = []
 
     async def record_success(self, **kwargs: Any) -> None:
         self.successes.append(kwargs)
 
     async def record_tick(self, **kwargs: Any) -> None:
         self.ticks.append(kwargs)
+
+    async def record_failure(self, **kwargs: Any) -> None:
+        self.failures.append(kwargs)
 
 
 def _normalized_source(
@@ -402,3 +408,80 @@ def test_distillation_registry_http_client_missing_blank_and_file_error(tmp_path
         _register_strategy_spec_if_absent("http://registry:8087", {"registry_id": "test-id"})
     assert "Configured service credential unavailable" in str(exc_info_post.value)
     assert "secret-value" not in str(exc_info_post.value)
+
+
+def test_restart_refreshes_identity_but_preserves_same_scope_progress(monkeypatch):
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("GIT_SHA", "new-sha")
+    monkeypatch.setenv("IMAGE_DIGEST", "sha256:new-image")
+    monkeypatch.setenv("BUILD_TIME", "new-build")
+    monkeypatch.setenv("PANTHEON_CONTROLLER_NAME", "new-controller-name")
+    state = ControllerState(
+        controller_id="old-process", controller_name="old-name", environment="dev",
+        tenant_id="tenant-dev", deployment={"git_sha": "old-sha"}, started_at="old-start",
+    )
+    state.record_success(desired_state={"cursor": 4}, reconcile={}, schedule={}, actual_readback={"done": 3})
+    before = state.to_dict()
+    assert refresh_runtime_identity(state) is state
+    after = state.to_dict()
+    assert after["deployment"] == {"git_sha": "new-sha", "image_digest": "sha256:new-image", "build_time": "new-build"}
+    assert after["controller_id"] != before["controller_id"]
+    assert after["controller_name"] == "new-controller-name"
+    assert after["started_at"] != "old-start"
+    for key in before.keys() - {"controller_id", "controller_name", "deployment", "started_at", "heartbeat_at"}:
+        assert after[key] == before[key], key
+
+
+@pytest.mark.parametrize("tenant,environment", [("other", "dev"), ("tenant-dev", "prod"), ("other", "prod")])
+def test_restart_rejects_foreign_checkpoint_without_mutating_it(monkeypatch, tenant, environment):
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    state = ControllerState(controller_id="old", controller_name="distill", environment=environment, tenant_id=tenant, deployment={"git_sha": "old"})
+    before = state.to_dict()
+    with pytest.raises(ControllerStateError, match="tenant/environment"):
+        refresh_runtime_identity(state)
+    assert state.to_dict() == before
+
+
+@pytest.mark.parametrize("writer_unavailable", [False, True])
+def test_failed_tick_publishes_failure_not_reconciled_proof(tmp_path, monkeypatch, writer_unavailable):
+    config = DistillationControllerConfig(
+        database_url="unused", registry_url="http://unused.invalid", interval_seconds=60, max_ticks=1,
+        state_path=tmp_path / "state.json", alive_path=tmp_path / "alive",
+        job_queue_path=tmp_path / "queue.sqlite", seed_store_path=tmp_path / "seeds.jsonl",
+        evidence_store_path=tmp_path / "evidence.jsonl", source_dirs=[],
+    )
+    state = ControllerState(controller_id="process", controller_name="distill", environment="dev", tenant_id="tenant-dev", deployment={"git_sha": "current"})
+    state.record_success(desired_state={}, reconcile={}, schedule={}, actual_readback={})
+    last_success = state.last_success_at
+    store = ControllerStateStore(config.state_path)
+    writer = DummyLoopWriter()
+    monkeypatch.setenv("PANTHEON_LOOP_ID", "L2")
+
+    def fail_read(*args, **kwargs):
+        raise ValueError("source repository failed")
+
+    monkeypatch.setattr("services.source_ingestion.distillation_controller.build_source_evidence_repository", fail_read)
+    if writer_unavailable:
+        async def fail_write(**kwargs):
+            raise OSError("shared writer unavailable")
+        monkeypatch.setattr(writer, "record_failure", fail_write)
+    with pytest.raises(DistillationControllerError, match="source repository failed") as failure:
+        run_controller_tick(config=config, state=state, store=store, writer=writer)
+    assert failure.value.stage == "desired_read"
+    persisted = store.load()
+    assert persisted.last_success_at == last_success
+    assert persisted.last_failure_at is not None
+    assert persisted.last_failure_stage == "desired_read"
+    assert persisted.consecutive_failures == 1
+    assert not writer.successes and not writer.ticks
+    assert config.alive_path.exists()  # liveness is deliberately not business success
+    assert not config.job_queue_path.exists()  # no recovery or replay
+    if not writer_unavailable:
+        assert len(writer.failures) == 1
+        report = writer.failures[0]
+        assert report["loop_id"] == "L2"
+        assert report["truth_level"] == "scheduled_tick"
+        assert report["reason"].startswith("desired_read:")
+        assert report["payload"]["error_stage"] == "desired_read"
