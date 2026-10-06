@@ -24,6 +24,7 @@ from services.control_plane.bff.command_adapters.preconditions import (
     reject_body_idempotency_key,
 )
 from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.command_adapters.retired import reject_retired_command
 from services.control_plane.bff.core.errors import register_error_handlers
 from services.control_plane.bff.models import (
     CommandType,
@@ -75,6 +76,7 @@ def _test_sem_command_response(
     trusted_evidence_producer: Optional[str] = None,
     terminal_on_persist: bool = False,
 ) -> JSONResponse:
+    reject_retired_command(command_type.value)
     payload = dict(payload or {})
     reject_body_idempotency_key(payload)
     clean_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
@@ -270,58 +272,34 @@ def _receipt_id(payload: dict) -> str:
     return payload["data"]["receipt_id"]
 
 
-def test_deployment_create_writes_command_store_and_replays_from_durable_idempotency() -> None:
+def test_deployment_create_routes_are_retired_before_command_admission() -> None:
     with _isolated_command_bridge() as client:
         headers = {**HEADERS, "Idempotency-Key": "sem-002-deploy-create"}
-        body = {"deployment_id": "dep-sem-002", "stage": "paper"}
+        response = client.post(
+            "/bff/deployments", headers=headers,
+            json={"deployment_id": "dep-sem-002", "stage": "paper"},
+        )
 
-        first = client.post("/bff/deployments", headers=headers, json=body)
-        second = client.post("/bff/deployments", headers=headers, json=body)
-        conflict = client.post("/bff/deployments", headers=headers, json={**body, "stage": "live"})
-
-        assert first.status_code == 201, first.text
-        assert second.status_code == 201, second.text
-        assert conflict.status_code == 409, conflict.text
-        command_id = _receipt_id(first.json())
-        assert _receipt_id(second.json()) == command_id
-        assert second.json()["meta"]["idempotency"]["replayed"] is True
-
-        records = command_store._get_all_commands()
-        assert len(records) == 1
-        assert records[0]["command_id"] == command_id
-        assert records[0]["type"] == "CreateDeployment"
-        assert records[0]["target"] == {"type": "Deployment", "id": "dep-sem-002"}
-        assert records[0]["foundation"]["idempotency_record"]["status"] == "succeeded"
-        assert records[0]["audit"]["live_capital_side_effects"] is False
-
-        status = client.get(f"/api/v1/operator/commands/{command_id}", headers=HEADERS)
-        assert status.status_code == 200, status.text
-        assert status.json()["type"] == "CreateDeployment"
+        assert response.status_code == 410, response.text
+        assert response.json()["detail"]["error"]["code"] == "ACTION_RETIRED"
+        assert not command_store._get_all_commands()
 
 
-def test_command_routes_require_header_idempotency_and_reject_body_key() -> None:
+def test_create_deployment_command_is_retired_without_receipt() -> None:
     with _isolated_command_bridge() as client:
-        body = {"deployment_id": "dep-sem-002-idempotency", "stage": "paper"}
-
-        missing = client.post("/bff/deployments", headers=HEADERS, json=body)
-        body_key = client.post(
-            "/bff/deployments",
-            headers=HEADERS,
-            json={**body, "idempotencyKey": "body-key-is-invalid"},
-        )
-        alias = client.post(
-            "/bff/deployments",
-            headers={**HEADERS, "X-Idempotency-Key": "sem-002-deploy-alias"},
-            json=body,
+        response = client.post(
+            "/bff/v1/commands",
+            headers={**HEADERS, "Idempotency-Key": "sem-002-create-command"},
+            json={
+                "command": "CreateDeployment",
+                "target": {"type": "Deployment", "id": "dep-sem-002"},
+                "params": {"deployment_id": "dep-sem-002", "stage": "paper"},
+            },
         )
 
-        assert missing.status_code == 400, missing.text
-        assert missing.json()["error"]["code"] == "VALIDATION_FAILED"
-        assert body_key.status_code == 400, body_key.text
-        assert body_key.json()["error"]["code"] == "VALIDATION_FAILED"
-        assert alias.status_code == 201, alias.text
-        assert alias.json()["meta"]["idempotency"]["idempotencyKey"] == "sem-002-deploy-alias"
-        assert len(command_store._get_all_commands()) == 1
+        assert response.status_code == 410, response.text
+        assert response.json()["detail"]["error"]["code"] == "ACTION_RETIRED"
+        assert not command_store._get_all_commands()
 
 
 def test_canonical_action_replay_uses_command_store_not_generic_memory_receipt() -> None:
@@ -392,54 +370,33 @@ def test_confirm_token_create_read_redeem_delete_are_command_store_backed() -> N
         ]
 
 
-def test_deployment_create_server_generated_id_replays_on_retry() -> None:
-    """Regression: POST /bff/deployments with no client id must replay on same Idempotency-Key."""
-    with _isolated_command_bridge() as client:
-        headers = {**HEADERS, "Idempotency-Key": "edge-no-id"}
-        body = {"stage": "paper"}  # no deployment_id — server will generate it
-
-        first = client.post("/bff/deployments", headers=headers, json=body)
-        second = client.post("/bff/deployments", headers=headers, json=body)
-
-        assert first.status_code == 201, first.text
-        assert second.status_code == 201, second.text  # must NOT be 409
-        assert _receipt_id(second.json()) == _receipt_id(first.json())
-        assert second.json()["meta"]["idempotency"]["replayed"] is True
-        # Only one command record created
-        assert len(command_store._get_all_commands()) == 1
-
-
-def test_deployment_create_server_generated_id_conflicts_on_different_payload() -> None:
-    """Different payload with same Idempotency-Key must still 409 even with server-generated id."""
-    with _isolated_command_bridge() as client:
-        headers = {**HEADERS, "Idempotency-Key": "edge-no-id-conflict"}
-        first = client.post("/bff/deployments", headers=headers, json={"stage": "paper"})
-        conflict = client.post("/bff/deployments", headers=headers, json={"stage": "live"})
-
-        assert first.status_code == 201, first.text
-        assert conflict.status_code == 409, conflict.text
-
-
 def test_durable_idempotency_conflict_detected_after_memory_clear() -> None:
     """Regression: after _FINAL_CONTRACT_IDEMPOTENCY is cleared, a retry with a different
     payload must still return 409 — the command_store existing_record path must compare
     stored request_hash and not blindly replay."""
     with _isolated_command_bridge() as client:
         headers = {**HEADERS, "Idempotency-Key": "sem-002-durable-conflict"}
-        first = client.post("/bff/deployments", headers=headers, json={"stage": "paper"})
-        assert first.status_code == 201, first.text
+        payload = {
+            "command": "StrategyAction",
+            "target": {"type": "Strategy", "id": "stg-durable-conflict"},
+            "action": "submit",
+            "params": {"action_id": "submit", "entity_type": "strategy", "entity_id": "stg-durable-conflict"},
+            "audit_context": {"reason": "durable idempotency regression"},
+        }
+        first = client.post("/bff/v1/commands", headers=headers, json=payload)
+        assert first.status_code == 202, first.text
 
         # Simulate process restart / memory eviction
         _FINAL_CONTRACT_IDEMPOTENCY.clear()
 
         # Same key, different payload — must conflict even after memory clear
-        conflict = client.post("/bff/deployments", headers=headers, json={"stage": "live"})
+        conflict = client.post("/bff/v1/commands", headers=headers, json={**payload, "params": {**payload["params"], "reason": "changed"}})
         assert conflict.status_code == 409, conflict.text
         assert conflict.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
 
         # Same key, same payload — must replay even after memory clear
-        replay = client.post("/bff/deployments", headers=headers, json={"stage": "paper"})
-        assert replay.status_code == 201, replay.text
+        replay = client.post("/bff/v1/commands", headers=headers, json=payload)
+        assert replay.status_code == 202, replay.text
         assert replay.json()["meta"]["idempotency"]["replayed"] is True
         assert _receipt_id(replay.json()) == _receipt_id(first.json())
 

@@ -4,7 +4,8 @@ Design unit:
 - OPGAP-DEPLOY-RELIABILITY-V2-20260830: Full domain router extraction handling 12
   deployment domain routes:
   1. GET /api/v1/deployment-plans: Deployment plan list (DP-01)
-  2. POST /api/v1/deployment-plans: Create a deployment plan (persona onboarding wizard step 3)
+  2. POST /api/v1/deployment-plans: Retired (410 ACTION_RETIRED); use the governed deployment owner
+     approval -> /api/deployment/plans/validate -> /api/deployment/plans flow
   3. GET /api/v1/deployment-plans/{plan_id}: Deployment plan detail with stage truth
   4. GET /api/v1/operator/deployment-plans: PKT-001 operator deployment-plan review console list
   5. GET /api/v1/operator/deployment-review/{plan_id}: Deployment review detail composition
@@ -14,7 +15,7 @@ Design unit:
   9. GET /bff/deployments/{deployment_id}: BFF deployment-plan detail
   10. POST /bff/deployments/{deployment_id}/actions/{action_id}: BFF deployment action (deprecated
       passthrough to /bff/v1/commands)
-  11. POST /bff/deployments: SEM deployment create command
+  11. POST /bff/deployments: Retired (410 ACTION_RETIRED); use the governed deployment owner path above
   12. PATCH /bff/deployments/{deployment_id}: SEM deployment patch command
 
   Note: POST /bff/incidents/{id}/rollback-deployment is intentionally NOT extracted here.
@@ -82,85 +83,6 @@ def create_deployment_router(
         snapshot_meta=snapshot_meta,
         surface_degradation_reason=surface_degradation_reason,
     )
-
-    _DEPLOYMENT_PLAN_CREATE_REQUIRED_FIELDS = ("binding_id", "artifact_id", "capital_pool_id")
-    _VALID_DEPLOYMENT_MODES = {"paper", "live"}
-    _DEPLOYMENT_PLAN_APPROVED_ARTIFACT_STATES = {
-        "approved",
-        "promoted",
-        "published",
-        "active",
-        "registered",
-    }
-
-    def _deployment_plan_create_required_string(payload: Dict[str, Any], field: str) -> str:
-        value = str(payload.get(field) or "").strip()
-        if value:
-            return value
-        raise bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            f"{field} is required",
-            f"Deployment plan create requires a non-empty {field}.",
-            precondition_failed=field,
-        )
-
-    def _deployment_plan_registry_entry(artifact_id: str) -> Optional[Dict[str, Any]]:
-        for entry in service.queries.list_registry_entries():
-            if not isinstance(entry, dict):
-                continue
-            candidates = {
-                str(entry.get("artifact_id") or "").strip(),
-                str(entry.get("id") or "").strip(),
-                str(entry.get("artifact_ref") or "").strip(),
-            }
-            if artifact_id in candidates:
-                return entry
-        return None
-
-    def _raise_if_deployment_artifact_not_approved(artifact_id: str) -> None:
-        """Block plan creation when a known artifact is not in an approved state.
-
-        The canonical registry can be unavailable in the BFF local dev store, so an
-        unknown artifact is treated as permissive rather than a hard failure.
-        """
-        entry = _deployment_plan_registry_entry(artifact_id)
-        if entry is None:
-            return
-        state = str(
-            entry.get("status")
-            or entry.get("approval_status")
-            or entry.get("admission_status")
-            or ""
-        ).strip().lower()
-        if state and state not in _DEPLOYMENT_PLAN_APPROVED_ARTIFACT_STATES:
-            raise bff_error(
-                409,
-                ErrorCode.RESOURCE_CONFLICT,
-                "Artifact is not approved for deployment",
-                f"Artifact {artifact_id} is in state {state!r}; an approved artifact is required.",
-                precondition_failed="artifact_id",
-                suggestion="Promote the artifact to an approved state before creating a deployment plan.",
-            )
-
-    def _deployment_plan_persona_id(binding_id: str) -> Optional[str]:
-        binding = service.queries.get_binding(binding_id)
-        if isinstance(binding, dict):
-            persona_id = str(binding.get("persona_id") or "").strip()
-            return persona_id or None
-        return None
-
-    def _project_deployment_plan_create_response(record: Dict[str, Any]) -> Dict[str, Any]:
-        return {
-            "id": record.get("plan_id") or record.get("id"),
-            "binding_id": record.get("binding_id"),
-            "artifact_id": record.get("artifact_id"),
-            "deployment_mode": record.get("deployment_mode") or record.get("deployment_stage"),
-            "status": record.get("status") or "pending_approval",
-            "capital_pool_id": record.get("capital_pool_id") or record.get("target_pool_id"),
-            "locked": bool(record.get("locked", False)),
-            "created_at": record.get("created_at"),
-        }
 
     @router.get("/api/v1/deployment-plans")
     async def list_deployment_plans(

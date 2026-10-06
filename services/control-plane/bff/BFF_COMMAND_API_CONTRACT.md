@@ -225,7 +225,7 @@ confirmation, and audit gates.
 
 | Class | Commands | Minimum Admission Contract |
 |---|---|---|
-| Deployment | `ApproveDeployment`, `EscalateDiff` | approver/admin or governance operator role; deployment target; audit reason; idempotency key. |
+| Deployment | `ApproveDeployment`, `EscalateDiff`; `CreateDeployment` is retired (410) | approver/admin or governance operator role; deployment target; audit reason; idempotency key. Create plans only through governance approval followed by deployment owner `POST /api/deployment/plans/validate` and `POST /api/deployment/plans`. |
 | Approval | `ApproveDecision`, `RejectDecision` (`RequestApprovalRevision`, `ApproveRollback`, `RejectRollback` are retired: 410, not CommandType values) | approver/admin role; approval or rollback target; policy decision and audit action. |
 | Runtime | `PauseRuntime`, `PauseExecution`, `ExecuteRollback`, `HardRollback` | operator/admin/approver role per action; runtime or runtime-binding target; live broker scope fail-closed when disabled. |
 | Incident / kill switch | `IssueRiskOff`, `LiquidateAll`, `IssueSafeMode`, `ActivateKillSwitch` | operator/admin role per action; admin+MFA for destructive commands; audit reason and command receipt. |

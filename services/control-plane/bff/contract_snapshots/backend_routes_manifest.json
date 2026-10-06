@@ -1360,7 +1360,7 @@
       "method": "POST",
       "path": "/api/v1/deployment-plans",
       "family": "api-v1",
-      "status": "implemented"
+      "status": "retired"
     },
     {
       "method": "POST",
@@ -2052,7 +2052,7 @@
       "method": "POST",
       "path": "/bff/deployments",
       "family": "governance-runtime-risk-audit",
-      "status": "implemented"
+      "status": "retired"
     },
     {
       "method": "POST",

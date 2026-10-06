@@ -340,9 +340,12 @@ Degraded access policy: When a surface is in degraded mode, the RBAC check still
 
 **Canonical source**: BINDING_AND_DEPLOYMENT_SEMANTICS.md
 
+Deployment-plan creation through `POST /api/v1/deployment-plans` and `POST /bff/deployments` is retired and returns `410 ACTION_RETIRED`. The governed replacement is approval, then the deployment owner `POST /api/deployment/plans/validate` and `POST /api/deployment/plans` endpoints. BFF does not create or validate deployment plans.
+
 | Route | Method | Surface | Response | Filterable Fields |
 |---|---|---|---|---|
 | `/api/v1/deployment-plans` | GET | DP-01 | `{ data: [DeploymentPlan], meta }` | `status`, `capital_pool_id` |
+| `/api/v1/deployment-plans` | POST | Retired | `410 ACTION_RETIRED`; use approval then deployment owner validate/create | — |
 | `/api/v1/deployment-plans/{plan_id}` | GET | DP-02 | `{ data: DeploymentPlan + ApprovalDecision, meta }` | — |
 | `/api/v1/approval-decisions` | GET | DP-03 | `{ data: [ApprovalDecision], meta }` | `outcome`, `state` |
 | `/api/v1/approval-decisions/{decision_id}` | GET | DP-04 | `{ data: ApprovalDecision, meta }` | — |

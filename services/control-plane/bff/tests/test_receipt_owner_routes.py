@@ -253,8 +253,9 @@ def test_same_operator_cannot_replay_another_tenant_receipt(owner, tmp_path):
         command_store=store, extract_identity=shared_operator,
     )))
     client = TestClient(app)
-    payload = {"command": "CreateDeployment", "target": {"type": "Deployment", "id": "plan-a"},
-               "params": {}, "audit_context": {"reason": "tenant scoped admission"}}
+    payload = {"command": "StrategyAction", "target": {"type": "Strategy", "id": "strategy-a"},
+               "action": "submit", "params": {"action_id": "submit", "entity_type": "strategy", "entity_id": "strategy-a"},
+               "audit_context": {"reason": "tenant scoped admission"}}
     headers = {"Authorization": _tok("tenant-a"), "Idempotency-Key": "shared-key"}
     assert client.post("/bff/v1/commands", json=payload, headers=headers).status_code == 202
     other = client.post("/bff/v1/commands", json=payload, headers={**headers, "Authorization": _tok("tenant-b")})
