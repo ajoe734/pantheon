@@ -1445,7 +1445,7 @@ mutation_routes:
   legacy_path: null
   legacy_removal_wave: null
 - route: POST /bff/management/promotion-reviews/{param}/decisions
-  command: bff_management_promotion_review_decision
+  command: retired_promotion_review_decision
   router: personas
   application_owner: persona_application
   store_owner: persona_registry

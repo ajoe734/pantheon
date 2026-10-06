@@ -855,3 +855,17 @@ def test_incompatible_target_command_combination_rejected(command_client, owner,
     assert not owner.calls, (response.status_code, owner.calls)
     assert owner.rows["a1"]["version"] == 1
     assert owner.rows["a1"].get("votes") is None or len(owner.rows["a1"].get("votes", [])) == 0
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+@pytest.mark.parametrize("decision", ["approve", "approved_with_conditions", "reject"])
+def test_empty_rationale_is_rejected_for_every_vote_without_owner_call(client, owner, decision, blank):
+    calls = len(owner.calls)
+    response = client.post(
+        "/bff/approvals/a1/decide",
+        headers=headers(key=f"blank-{decision}"),
+        json=vote(decision=decision, memo=blank, conditions=["extra monitoring"]),
+    )
+    assert response.status_code == 422, response.text
+    assert owner.rows["a1"]["version"] == 1
+    assert len(owner.calls) == calls
