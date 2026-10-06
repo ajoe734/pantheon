@@ -42,9 +42,11 @@ persisted `metadata.tenant_id` exactly matches the requested tenant, under a
 read-only transaction. It does not bootstrap the source table, use the JSONL
 fallback, materialize foreign rows, or adopt records without tenant metadata.
 Missing/invalid tenant scope and owner-store errors fail the desired read; they
-must not be reported as an empty healthy tick. JSONL remains supported for
-local/test use, but its repository lookup is tenant-indexed by the same
-explicit scope.
+must not be reported as an empty healthy tick. Queue claims are also constrained
+to the requested tenant using each committed source-version snapshot, so
+pre-admitted foreign or unowned jobs remain pending rather than being processed
+by this controller. JSONL remains supported for local/test use, but its
+repository lookup is tenant-indexed by the same explicit scope.
 
 `strategy-distillation-worker` now receives the same configurable evidence
 backend, DSN and table as source-ingest. Its existing queue and controller

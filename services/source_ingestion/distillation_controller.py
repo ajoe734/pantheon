@@ -480,7 +480,11 @@ def run_controller_tick(
                 max_attempts=config.max_attempts,
                 registry_sync=_make_registry_sync(config),
             )
-            run_result = worker.catch_up(source_records, limit=100)
+            run_result = worker.catch_up(
+                source_records,
+                limit=100,
+                tenant_id=state.tenant_id,
+            )
             reconcile_meta = {
                 "processed": run_result.processed,
                 "created": run_result.created,

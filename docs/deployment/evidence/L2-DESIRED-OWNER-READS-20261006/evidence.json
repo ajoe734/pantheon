@@ -12,13 +12,13 @@
     "hosted_actions": "None. No hosted stop, restart, deploy, replay, token rotation or shared queue/checkpoint mutation."
   },
   "validation": {
-    "command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); $PANTHEON_PY -m pytest -q services/source_ingestion/test_postgres_store.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/test_compose_activation.py",
-    "result": "24 passed, 2 skipped",
+    "command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); $PANTHEON_PY -m pytest -q services/source_ingestion/test_postgres_store.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/test_compose_activation.py scripts/test_worker_tenant_compose_contract.py",
+    "result": "73 passed, 2 skipped",
     "additional_command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); $PANTHEON_PY -m pytest -q scripts/test_worker_tenant_compose_contract.py services/source_ingestion/test_compose_activation.py",
     "additional_result": "7 passed",
     "notes": [
       "Postgres reader fake asserts read-only transaction and tenant predicate; source fixture is persisted normalized data.",
-      "Controller regressions verify queue admission/claim and terminal Registry readback for explicit tenant scope.",
+      "Controller regressions verify queue admission/claim and terminal Registry readback for explicit tenant scope; shared-queue regression confirms foreign and unowned jobs remain unclaimed.",
       "Compose and tenant contract checks prove backend wiring and explicit worker tenant resolution.",
       "Two skips are the existing optional Postgres integration cases; no live Postgres or hosted environment was exercised."
     ]
