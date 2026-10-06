@@ -67,14 +67,31 @@ def test_reviews_once_and_rerun_makes_no_second_provider_call(stack):
     assert rows[0]["review_state"] == "proposed"
 
 
-def test_changed_facts_replace_only_the_same_pattern_row(stack):
+def test_status_or_fact_change_on_covered_episodes_makes_no_provider_call(stack):
     stack["client"].post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE)
-    stack["rows"] = [_episode("ep-1", realized_pnl=9.0), _episode("ep-2")]
+    stack["rows"] = [_episode("ep-1", status="reflected", updated_at="later", realized_pnl=9.0), _episode("ep-2")]
+    again = stack["client"].post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE).json()["data"]
+    assert again["status"] == "unchanged" and stack["provider"].calls == 1
+
+
+def test_third_episode_does_not_rereview_the_pair_or_overlap(stack):
     stack["client"].post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE)
-    assert stack["provider"].calls == 2 and len(_stored(stack)) == 1
     stack["rows"].append(_episode("ep-3"))
-    stack["client"].post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE)
-    assert len(_stored(stack)) == 2  # a different episode set is a different pattern
+    assert stack["client"].post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE).json()["data"]["status"] == "unchanged"
+    stack["rows"].append(_episode("ep-4"))
+    assert stack["client"].post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE).json()["data"]["status"] == "reviewed"
+    rows = _stored(stack)
+    covered = [set(r["covered_episode_ids"]) for r in rows]
+    assert covered == [{"ep-1", "ep-2"}, {"ep-3", "ep-4"}] and stack["provider"].calls == 2
+
+
+def test_history_larger_than_cap_is_reviewed_in_bounded_batches(stack, monkeypatch):
+    monkeypatch.setattr("services.persona.trade_pattern_review.MAX_REVIEW_EPISODES", 3)
+    stack["rows"] = [_episode(f"ep-{i}", opened_at=f"2026-01-0{i}") for i in range(1, 8)]
+    for _ in range(4):
+        stack["client"].post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE)
+    sizes = [len(r["covered_episode_ids"]) for r in _stored(stack)]
+    assert sizes == [3, 3] and stack["provider"].calls == 2  # ep-7 alone stays pending
 
 
 def test_fewer_than_two_episodes_is_a_no_op_without_provider_or_write(stack):
@@ -117,7 +134,7 @@ def test_pattern_and_manual_retry_never_clobber_each_other(stack):
     assert retry.status_code == 202
     assert sorted(r["trigger"] for r in _stored(stack)) == ["manual_retry", "scheduled_pattern"]
     stack["client"].post("/api/personas/p-alpha/trade-journal/ep-1/reflection:retry", headers={**auth, "Idempotency-Key": "k2"}, json={"reason": "third"})
-    stack["rows"].append(_episode("ep-3"))
+    stack["rows"] += [_episode("ep-3"), _episode("ep-4")]
     stack["client"].post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE)
     assert sorted(r["trigger"] for r in _stored(stack)) == ["manual_retry", "scheduled_pattern", "scheduled_pattern"]
 

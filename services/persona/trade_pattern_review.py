@@ -3,8 +3,13 @@
 Closed episodes for one persona and tenant are read from the telemetry owner
 with service authentication.  Only a set of at least two distinct closed
 episodes is reviewed, through the existing :class:`TradeReflectionPipeline`.
-The reflection is identified by the full episode set, so it can never collide
-with a per-episode reflection, and it carries no mutation authority.
+Window rule (PERSONA_TRADE_JOURNAL_GAP.md section 7C): a review covers only
+closed episodes no earlier scheduled_pattern reflection covers, needs at least
+MIN_EPISODES of them, and takes at most MAX_REVIEW_EPISODES (oldest first).
+Each reflection records ``covered_episode_ids`` so patterns never overlap and
+idempotency keys on covered ids, not on volatile projection fields.  The
+reflection is identified by its episode set, so it can never collide with a
+per-episode reflection, and it carries no mutation authority.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ from services.persona.trade_reflection_pipeline import (
 
 CLOSED_STATUSES = frozenset({"closed", "reflected", "force_closed"})
 MIN_EPISODES = 2
+MAX_REVIEW_EPISODES = 50
 MAX_PAGES = 20
 PAGE_SIZE = 100
 PATTERN_NAMESPACE = uuid.UUID("5d1c0a0e-6b0f-5c53-9a62-7f0c3b0f6d11")
@@ -96,23 +102,32 @@ def review_pattern(
     Returns ``{"status": "no_op" | "unchanged", ...}`` without any provider call,
     or ``{"status": "reviewed", "artifact": ...}`` for the caller to persist.
     """
-    episodes = qualifying_episodes(list_episodes(persona_id, tenant_id), persona_id, tenant_id)
-    if len(episodes) < MIN_EPISODES:
-        return {"status": "no_op", "reason": "insufficient_closed_episodes", "qualifying_episodes": len(episodes)}
-    episode_ids = tuple(row["trade_episode_id"] for row in episodes)
+    covered = {
+        episode_id for row in existing if row.get("trigger") == "scheduled_pattern"
+        for episode_id in row.get("covered_episode_ids") or ()
+    }
+    pending = [
+        row for row in qualifying_episodes(list_episodes(persona_id, tenant_id), persona_id, tenant_id)
+        if row["trade_episode_id"] not in covered
+    ]
+    if len(pending) < MIN_EPISODES:
+        return {
+            "status": "unchanged" if covered else "no_op",
+            "reason": "insufficient_closed_episodes",
+            "qualifying_episodes": len(pending),
+        }
+    pending.sort(key=lambda row: (str(row.get("opened_at") or ""), row["trade_episode_id"]))
+    episodes = pending[:MAX_REVIEW_EPISODES]
+    episode_ids = tuple(sorted(row["trade_episode_id"] for row in episodes))
     identity = pattern_identity(episode_ids)
     facts = {"persona_id": persona_id, "tenant_id": tenant_id, "episodes": episodes}
     snapshot_ref, snapshot_hash, _ = facts_snapshot(facts)
     base = {"pattern_id": identity, "qualifying_episodes": len(episodes), "facts_snapshot_ref": snapshot_ref}
-    if any(
-        row.get("trade_episode_id") == identity and row.get("facts_snapshot_hash") == snapshot_hash
-        for row in existing
-    ):
-        return {"status": "unchanged", **base}
     missing = tuple(ref for row in episodes for ref in row.get("missing_refs") or ())
     artifact = pipeline.process(ReflectionRequest(
         request_id=f"pattern-{identity}-{snapshot_hash[-12:]}", persona_id=persona_id,
         trade_episode_ids=episode_ids, trigger="scheduled_pattern", facts=facts, missing_refs=missing,
     ))
     artifact["trade_episode_id"] = identity
+    artifact["covered_episode_ids"] = list(episode_ids)
     return {"status": "reviewed", "artifact": artifact, **base}
