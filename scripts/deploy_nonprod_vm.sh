@@ -255,29 +255,12 @@ validate_target_selection() {
   esac
 
   local check_vars=(
-    PROJECT_ID
-    REMOTE_USER
-    DEV_VM
-    DEV_ZONE
-    DEV_REMOTE_DIR
-    DEV_DEPLOY_SSH_HOST
-    DEV_DEPLOY_SSH_USER
-    DEV_BFF_PUBLIC_HOST
-    DEV_FE_PUBLIC_HOST
-    DEV_FE_STATIC_ROOT
-    DEV_BFF_CORS_ORIGINS
-    DEV_BFF_CANONICAL_CORS_ORIGIN
-    DEV_BFF_REQUIRED_CORS_ORIGINS
-    PANTHEON_DEPLOY_WORKTREE_ROOT
-    STAGING_CONTROL_VM
-    STAGING_CONTROL_ZONE
-    STAGING_CONTROL_REMOTE_DIR
-    STAGING_EXEC_VM
-    STAGING_EXEC_ZONE
-    STAGING_EXEC_REMOTE_DIR
-    STAGING_EXEC_HEALTH_URL
-    STAGING_BFF_CORS_ORIGINS
-    STAGING_BFF_CANONICAL_CORS_ORIGIN
+    PROJECT_ID REMOTE_USER DEV_VM DEV_ZONE DEV_REMOTE_DIR DEV_DEPLOY_SSH_HOST
+    DEV_DEPLOY_SSH_USER DEV_BFF_PUBLIC_HOST DEV_FE_PUBLIC_HOST DEV_FE_STATIC_ROOT
+    DEV_BFF_CORS_ORIGINS DEV_BFF_CANONICAL_CORS_ORIGIN DEV_BFF_REQUIRED_CORS_ORIGINS
+    PANTHEON_DEPLOY_WORKTREE_ROOT STAGING_CONTROL_VM STAGING_CONTROL_ZONE
+    STAGING_CONTROL_REMOTE_DIR STAGING_EXEC_VM STAGING_EXEC_ZONE STAGING_EXEC_REMOTE_DIR
+    STAGING_EXEC_HEALTH_URL STAGING_BFF_CORS_ORIGINS STAGING_BFF_CANONICAL_CORS_ORIGIN
   )
   local var_name val
   local retired_pattern='sslip\.io|104\.155\.223\.192|35\.201\.204\.12|35\.201\.239\.38|34\.81\.75\.241|35\.236\.178\.81|pantheon-benjamin-20260528|pantheon-lupin-dev-20260719|pantheon-lupin-dev|/home/lupin|^lupin$'
@@ -292,16 +275,7 @@ validate_target_selection() {
     dev)
       [[ -n "${PROJECT_ID:-}" ]] || error "dev deployment requires --project-id or PROJECT_ID to be set"
       [[ -n "${REMOTE_USER:-}" ]] || error "dev deployment requires REMOTE_USER to be set"
-      local required_dev_vars=(
-        DEV_VM
-        DEV_ZONE
-        DEV_REMOTE_DIR
-        DEV_DEPLOY_SSH_HOST
-        DEV_BFF_PUBLIC_HOST
-        DEV_FE_PUBLIC_HOST
-        DEV_FE_STATIC_ROOT
-        DEV_BFF_CORS_ORIGINS
-      )
+      local required_dev_vars=(DEV_VM DEV_ZONE DEV_REMOTE_DIR DEV_DEPLOY_SSH_HOST DEV_BFF_PUBLIC_HOST DEV_FE_PUBLIC_HOST DEV_FE_STATIC_ROOT DEV_BFF_CORS_ORIGINS)
       for var_name in "${required_dev_vars[@]}"; do
         if [[ -z "${!var_name:-}" ]]; then
           error "dev deployment requires ${var_name} to be set; refusing to deploy with missing target identity"
@@ -313,15 +287,9 @@ validate_target_selection() {
       [[ -n "${REMOTE_USER:-}" ]] || error "staging-live deployment requires REMOTE_USER to be set"
       local required_staging_vars=()
       case "${COMPONENT}" in
-        control)
-          required_staging_vars=(STAGING_CONTROL_VM STAGING_CONTROL_ZONE STAGING_CONTROL_REMOTE_DIR STAGING_BFF_CORS_ORIGINS)
-          ;;
-        exec)
-          required_staging_vars=(STAGING_EXEC_VM STAGING_EXEC_ZONE STAGING_EXEC_REMOTE_DIR STAGING_EXEC_HEALTH_URL)
-          ;;
-        all)
-          required_staging_vars=(STAGING_CONTROL_VM STAGING_CONTROL_ZONE STAGING_CONTROL_REMOTE_DIR STAGING_EXEC_VM STAGING_EXEC_ZONE STAGING_EXEC_REMOTE_DIR STAGING_EXEC_HEALTH_URL STAGING_BFF_CORS_ORIGINS)
-          ;;
+        control) required_staging_vars=(STAGING_CONTROL_VM STAGING_CONTROL_ZONE STAGING_CONTROL_REMOTE_DIR STAGING_BFF_CORS_ORIGINS) ;;
+        exec) required_staging_vars=(STAGING_EXEC_VM STAGING_EXEC_ZONE STAGING_EXEC_REMOTE_DIR STAGING_EXEC_HEALTH_URL) ;;
+        all) required_staging_vars=(STAGING_CONTROL_VM STAGING_CONTROL_ZONE STAGING_CONTROL_REMOTE_DIR STAGING_EXEC_VM STAGING_EXEC_ZONE STAGING_EXEC_REMOTE_DIR STAGING_EXEC_HEALTH_URL STAGING_BFF_CORS_ORIGINS) ;;
       esac
       for var_name in "${required_staging_vars[@]}"; do
         if [[ -z "${!var_name:-}" ]]; then
@@ -365,86 +333,21 @@ Options:
   --help                 Show this message.
 
 Environment overrides:
-  REMOTE_USER
-  DEV_ROLLBACK_BACKEND_SHA PANTHEON_DEV_ROLLBACK_BACKEND_SHA
-  PANTHEON_DEV_ARTIFACT_MANIFEST_PATH PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256
-  PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH
-  PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256
-  PANTHEON_DEV_ARTIFACT_RUNNER_EVIDENCE_DIR
-  PANTHEON_DEV_ARTIFACT_DRIVER_PATH PANTHEON_DEV_ARTIFACT_DRIVER_SHA256
-  PANTHEON_DEV_ARTIFACT_LIBRARY_SHA256 PANTHEON_DEV_ARTIFACT_COMPOSE_FILE
-  PANTHEON_DEV_ARTIFACT_CANDIDATE_ID PANTHEON_DEV_ARTIFACT_RUN_ID
-  PANTHEON_DEV_ARTIFACT_ATTEMPT PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA
-  PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA
-  PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA
-  PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA
-  PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD (created by the VM transport watchdog)
-  DEV_DEPLOY_DEADLINE_SECONDS DEV_DEPLOY_TIMEOUT_SECONDS
-  PANTHEON_DEPLOY_WORKTREE_ROOT
-  GITHUB_TOKEN
-  DEV_VM DEV_ZONE DEV_REMOTE_DIR
-  DEV_DEPLOY_SSH_HOST DEV_DEPLOY_SSH_USER DEV_DEPLOY_SSH_PORT
-  DEV_DEPLOY_SSH_KEY_FILE DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE
-  DEV_BFF_PUBLIC_HOST DEV_FE_PUBLIC_HOST DEV_FE_STATIC_ROOT
-  DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS
-  DEV_BFF_CANONICAL_CORS_ORIGIN DEV_BFF_CORS_ORIGINS
-  DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB DEV_BFF_AUTH_MODE
-  DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED
-  DEV_BFF_JWT_SECRET DEV_BFF_JWT_ISSUER DEV_BFF_JWT_AUDIENCE
-  DEV_PAPER_PRINCIPALS_AUTHORIZED
-  DEV_BFF_JWKS_URI DEV_BFF_OIDC_DISCOVERY_URL
-  DEV_BFF_OIDC_ISSUER DEV_BFF_OIDC_AUDIENCE
-  DEV_BFF_OIDC_CLIENT_ID DEV_BFF_OIDC_CLIENT_SECRET
-  DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET
-  DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET
-  DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET
-  DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET
-  DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET
-  DEV_BFF_MFA_REQUIRED DEV_BFF_MFA_CLAIMS DEV_BFF_MFA_VALUES
-  DEV_BFF_REQUIRE_EMAIL_VERIFIED
-  DEV_BFF_ROLE_CLAIMS DEV_BFF_ROLE_MAP DEV_BFF_ROLE_MAP_MODE DEV_BFF_DEFAULT_ROLE
-  DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED
-  DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN
-  DEV_BFF_TENANT_ID DEV_BFF_ALLOWED_TENANTS
-  DEV_ASSISTANT_KERNEL_ENABLED DEV_ASSISTANT_CONTROL_MODE_STORE_PATH
-  DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH
-  DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS
-  DEV_BFF_STUB_CAPABILITIES
-  DEV_MANAGEMENT_AI_STORE_BACKEND DEV_MANAGEMENT_AI_STORE_SCHEMA
-  DEV_MANAGEMENT_AI_DB_USER DEV_MANAGEMENT_AI_DB_PASSWORD DEV_MANAGEMENT_AI_DB_NAME
-  DEV_MANAGEMENT_AI_DATABASE_URL
-  DEV_AGORA_PRIVATE_CONTENT_DEV_KEK
-  DEV_MANAGEMENT_AI_ATTACH_BUCKET DEV_MANAGEMENT_AI_ATTACH_LOCATION
-  DEV_APP_DB_USER PANTHEON_APP_DB_USER
-  STAGING_CONTROL_VM STAGING_CONTROL_ZONE STAGING_CONTROL_REMOTE_DIR
-  STAGING_EXEC_VM STAGING_EXEC_ZONE STAGING_EXEC_REMOTE_DIR
-  STAGING_EXEC_HEALTH_URL
-  STAGING_BFF_CANONICAL_CORS_ORIGIN STAGING_BFF_CORS_ORIGINS
+  See docs/deployment/nonprod-ci-cd.md for supported environment variable overrides.
 EOF
 }
 
-info() {
-  echo "[nonprod-deploy] $*"
-}
-
-error() {
-  echo "[nonprod-deploy] ERROR: $*" >&2
-  exit 1
-}
+info() { echo "[nonprod-deploy] $*"; }
+error() { echo "[nonprod-deploy] ERROR: $*" >&2; exit 1; }
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || error "$1 is required"
 }
 
 is_placeholder_credential() {
-  local normalized="${1,,}"
-  case "$normalized" in
-    replace-me*|changeme*|change-me*|example*|dummy*|placeholder*)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
+  case "${1,,}" in
+    replace-me*|changeme*|change-me*|example*|dummy*|placeholder*) return 0 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -474,9 +377,7 @@ append_csv_unique() {
 }
 
 configure_management_ai_dev_env() {
-  if [[ "$DEPLOY_ENV" != "dev" ]]; then
-    return
-  fi
+  [[ "$DEPLOY_ENV" == "dev" ]] || return 0
 
   if [[ -z "$DEV_MANAGEMENT_AI_DATABASE_URL" ]]; then
     DEV_MANAGEMENT_AI_DATABASE_URL="postgresql://${DEV_MANAGEMENT_AI_DB_USER}:${DEV_MANAGEMENT_AI_DB_PASSWORD}@postgres:5432/${DEV_MANAGEMENT_AI_DB_NAME}"
@@ -499,9 +400,7 @@ configure_management_ai_dev_env() {
 }
 
 configure_management_ai_dev_kernel_env() {
-  if [[ "$DEPLOY_ENV" != "dev" ]]; then
-    return
-  fi
+  [[ "$DEPLOY_ENV" == "dev" ]] || return 0
 
   PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED:-$DEV_ASSISTANT_KERNEL_ENABLED}"
   PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-$DEV_ASSISTANT_CONTROL_MODE_STORE_PATH}"
@@ -515,62 +414,23 @@ configure_management_ai_dev_kernel_env() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --environment)
-      DEPLOY_ENV="${2:-}"
-      shift 2
-      ;;
-    --component)
-      COMPONENT="${2:-}"
-      shift 2
-      ;;
-    --sha)
-      DEPLOY_SHA="${2:-}"
-      shift 2
-      ;;
-    --project-id)
-      PROJECT_ID="${2:-}"
-      shift 2
-      ;;
-    --allow-dirty)
-      ALLOW_DIRTY=true
-      shift
-      ;;
-    --allow-example-env)
-      ALLOW_EXAMPLE_ENV=true
-      shift
-      ;;
-    --deadline-seconds|--deploy-timeout-seconds)
-      DEV_DEPLOY_DEADLINE_SECONDS="${2:-}"
-      shift 2
-      ;;
-    --rollback-sha)
-      DEV_ROLLBACK_BACKEND_SHA="${2:-}"
-      shift 2
-      ;;
-    --artifact-restore)
-      ARTIFACT_RESTORE=true
-      shift
-      ;;
-    --artifact-verify)
-      ARTIFACT_VERIFY=true
-      shift
-      ;;
+    --environment) DEPLOY_ENV="${2:-}"; shift 2 ;;
+    --component) COMPONENT="${2:-}"; shift 2 ;;
+    --sha) DEPLOY_SHA="${2:-}"; shift 2 ;;
+    --project-id) PROJECT_ID="${2:-}"; shift 2 ;;
+    --allow-dirty) ALLOW_DIRTY=true; shift ;;
+    --allow-example-env) ALLOW_EXAMPLE_ENV=true; shift ;;
+    --deadline-seconds|--deploy-timeout-seconds) DEV_DEPLOY_DEADLINE_SECONDS="${2:-}"; shift 2 ;;
+    --rollback-sha) DEV_ROLLBACK_BACKEND_SHA="${2:-}"; shift 2 ;;
+    --artifact-restore) ARTIFACT_RESTORE=true; shift ;;
+    --artifact-verify) ARTIFACT_VERIFY=true; shift ;;
     --artifact-readback-out)
-      ARTIFACT_READBACK_OUT="${2:-}"
+      ARTIFACT_READBACK_OUT="${2:-}"; shift 2
       [[ "${ARTIFACT_READBACK_OUT}" == /* ]] || error "artifact readback output must be absolute"
-      shift 2
       ;;
-    --dry-run)
-      DRY_RUN=true
-      shift
-      ;;
-    --help|-h)
-      usage
-      exit 0
-      ;;
-    *)
-      error "unknown option: $1"
-      ;;
+    --dry-run) DRY_RUN=true; shift ;;
+    --help|-h) usage; exit 0 ;;
+    *) error "unknown option: $1" ;;
   esac
 done
 
@@ -1088,14 +948,8 @@ sys.exit(exit_code)
   run_remote_payload <<'REMOTE'
 set -euo pipefail
 
-info() {
-  echo "[remote-deploy] $*"
-}
-
-error() {
-  echo "[remote-deploy] ERROR: $*" >&2
-  exit 1
-}
+info() { echo "[remote-deploy] $*"; }
+error() { echo "[remote-deploy] ERROR: $*" >&2; exit 1; }
 
 validate_source_refresh_profile() {
   local selected="false"
@@ -1947,12 +1801,7 @@ snapshot_remote_state() {
 }
 
 preserve_known_deploy_runtime_state() {
-  local known_paths=(
-    ".orchestrator/metrics"
-    ".orchestrator/task-briefs"
-    ".orchestrator/watchdog-state.json"
-    "trade_journey_events.json"
-  )
+  local known_paths=(".orchestrator/metrics" ".orchestrator/task-briefs" ".orchestrator/watchdog-state.json" "trade_journey_events.json")
   local planning_pointer_path=".orchestrator/planning-session-pointer.json"
   local planning_session_path=""
   local present_paths=()
@@ -2091,10 +1940,7 @@ git_fetch_origin() {
 }
 
 git_fetch_origin_default_refs() {
-  git_fetch_origin \
-    --prune \
-    '+refs/heads/*:refs/remotes/origin/*' \
-    '+refs/tags/*:refs/tags/*'
+  git_fetch_origin --prune '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
 }
 
 prepare_deploy_worktree() {
@@ -2190,40 +2036,24 @@ PY
 }
 
 real_env_or_example() {
-  local real_file="$1"
-  local example_file="$2"
-
-  if [[ -f "$real_file" ]]; then
-    printf '%s\n' "$real_file"
-    return
-  fi
-
-  if [[ -f "${PANTHEON_REMOTE_DIR}/${real_file}" ]]; then
-    printf '%s\n' "${PANTHEON_REMOTE_DIR}/${real_file}"
-    return
-  fi
-
+  local real_file="$1" example_file="$2"
+  if [[ -f "$real_file" ]]; then printf '%s\n' "$real_file"; return; fi
+  if [[ -f "${PANTHEON_REMOTE_DIR}/${real_file}" ]]; then printf '%s\n' "${PANTHEON_REMOTE_DIR}/${real_file}"; return; fi
   if [[ "${PANTHEON_ALLOW_EXAMPLE_ENV}" == "true" && -f "$example_file" ]]; then
     info "using example env file for rehearsal: ${example_file}" >&2
     printf '%s\n' "$example_file"
     return
   fi
-
   error "missing ${real_file}; pass --allow-example-env only for rehearsal"
 }
 
 use_local_management_ai_attachment_store() {
-  local reason="$1"
-
-  info "Management AI attachment bucket unavailable (${reason}); using local attachment store"
-  PANTHEON_MGMT_AI_ATTACH_BUCKET=""
-  export PANTHEON_MGMT_AI_ATTACH_BUCKET
+  info "Management AI attachment bucket unavailable ($1); using local attachment store"
+  export PANTHEON_MGMT_AI_ATTACH_BUCKET=""
 }
 
 ensure_dev_management_ai_bucket() {
-  if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" ]]; then
-    return
-  fi
+  [[ "${PANTHEON_DEPLOY_ENV}" == "dev" ]] || return 0
 
   local bucket="${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}"
   if [[ -z "$bucket" ]]; then
@@ -2349,16 +2179,7 @@ ensure_dev_management_ai_postgres_role() {
 
   info "ensuring Management AI postgres owner role/schema: user=${mgmt_user} schema=${mgmt_schema} app_user=${app_user}"
   COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}" \
-    docker compose -p pantheon -f docker-compose.yml up -d postgres
-
-  local i
-  for ((i = 1; i <= 30; i++)); do
-    if docker compose -p pantheon -f docker-compose.yml exec -T postgres \
-      pg_isready -U "${POSTGRES_USER:-postgres}" -d "${mgmt_db}" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 2
-  done
+    docker compose -p pantheon -f docker-compose.yml up -d --wait postgres
 
   docker compose -p pantheon -f docker-compose.yml exec -T \
     -e MGMT_AI_DB_USER="${mgmt_user}" \
@@ -2471,16 +2292,7 @@ prune_dev_management_ai_telemetry_for_disk() {
 
   info "pruning dev Postgres telemetry_events before root deploy: db=${mgmt_db} schema=${mgmt_schema}"
   COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}" \
-    docker compose -p pantheon -f docker-compose.yml up -d postgres
-
-  local i
-  for ((i = 1; i <= 30; i++)); do
-    if docker compose -p pantheon -f docker-compose.yml exec -T postgres \
-      pg_isready -U "${POSTGRES_USER:-postgres}" -d "${mgmt_db}" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 2
-  done
+    docker compose -p pantheon -f docker-compose.yml up -d --wait postgres
 
   # The expensive canonical-preservation sentinel is meaningful only when
   # there is an allow-listed derived telemetry table to truncate.  On the
@@ -2742,43 +2554,19 @@ retire_legacy_static_paper_runtime() {
 
 retire_dormant_and_one_off_profile_containers() {
   local active_profiles=",${PANTHEON_DEV_COMPOSE_PROFILES:-},"
-  if [[ "${active_profiles}" != *",dormant-smoke,"* ]]; then
-    info "retiring inactive dormant-smoke profile containers"
-    COMPOSE_PROFILES="dormant-smoke" \
-      docker compose -p pantheon -f docker-compose.yml rm -f -s \
-        mlflow-dormant-smoke \
-        finrl-dormant-smoke \
-        rllib-dormant-smoke \
-        ray-tune-dormant-smoke \
-        qlib-dormant-smoke \
-        trl-dormant-smoke \
-        experiments-dormant-smoke 2>/dev/null || true
-  fi
-  if [[ "${active_profiles}" != *",smoke,"* ]]; then
-    info "retiring inactive smoke profile containers"
-    COMPOSE_PROFILES="smoke" \
-      docker compose -p pantheon -f docker-compose.yml rm -f -s smoke-stack 2>/dev/null || true
-  fi
-  if [[ "${active_profiles}" != *",activation-ready-smoke,"* ]]; then
-    info "retiring inactive activation-ready-smoke profile containers"
-    COMPOSE_PROFILES="activation-ready-smoke" \
-      docker compose -p pantheon -f docker-compose.yml rm -f -s oss-activation-ready-smoke-matrix 2>/dev/null || true
-  fi
-  if [[ "${active_profiles}" != *",openclaw-activation-ready-e2e,"* ]]; then
-    info "retiring inactive openclaw-activation-ready-e2e profile containers"
-    COMPOSE_PROFILES="openclaw-activation-ready-e2e" \
-      docker compose -p pantheon -f docker-compose.yml rm -f -s openclaw-activation-ready-e2e 2>/dev/null || true
-  fi
-  if [[ "${active_profiles}" != *",source-search-bounded,"* ]]; then
-    info "retiring inactive source-search-bounded profile containers"
-    COMPOSE_PROFILES="source-search-bounded" \
-      docker compose -p pantheon -f docker-compose.yml rm -f -s source-search-bounded-smoke 2>/dev/null || true
-  fi
-  if [[ "${active_profiles}" != *",lifecycle-capacity-benchmark,"* ]]; then
-    info "retiring inactive lifecycle-capacity-benchmark profile containers"
-    COMPOSE_PROFILES="lifecycle-capacity-benchmark" \
-      docker compose -p pantheon -f docker-compose.yml rm -f -s lifecycle-projector-capacity-benchmark 2>/dev/null || true
-  fi
+  retire_if_inactive() {
+    local prof="$1"; shift
+    if [[ "${active_profiles}" != *",${prof},"* ]]; then
+      info "retiring inactive ${prof} profile containers"
+      COMPOSE_PROFILES="${prof}" docker compose -p pantheon -f docker-compose.yml rm -f -s "$@" 2>/dev/null || true
+    fi
+  }
+  retire_if_inactive dormant-smoke mlflow-dormant-smoke finrl-dormant-smoke rllib-dormant-smoke ray-tune-dormant-smoke qlib-dormant-smoke trl-dormant-smoke experiments-dormant-smoke
+  retire_if_inactive smoke smoke-stack
+  retire_if_inactive activation-ready-smoke oss-activation-ready-smoke-matrix
+  retire_if_inactive openclaw-activation-ready-e2e openclaw-activation-ready-e2e
+  retire_if_inactive source-search-bounded source-search-bounded-smoke
+  retire_if_inactive lifecycle-capacity-benchmark lifecycle-projector-capacity-benchmark
 }
 
 verify_dev_paper_fleet() {
@@ -4020,42 +3808,18 @@ info "component ${PANTHEON_DEPLOY_COMPONENT} deployed"
 REMOTE
 }
 
-deploy_dev_root() {
-  ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" root
-}
-
-deploy_dev_bff() {
-  ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" bff
-}
-
-deploy_staging_exec() {
-  ssh_bash "$STAGING_EXEC_VM" "$STAGING_EXEC_ZONE" "$STAGING_EXEC_REMOTE_DIR" exec
-}
-
-deploy_staging_control() {
-  ssh_bash "$STAGING_CONTROL_VM" "$STAGING_CONTROL_ZONE" "$STAGING_CONTROL_REMOTE_DIR" control
-}
+deploy_dev_root() { ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" root; }
+deploy_dev_bff() { ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" bff; }
+deploy_staging_exec() { ssh_bash "$STAGING_EXEC_VM" "$STAGING_EXEC_ZONE" "$STAGING_EXEC_REMOTE_DIR" exec; }
+deploy_staging_control() { ssh_bash "$STAGING_CONTROL_VM" "$STAGING_CONTROL_ZONE" "$STAGING_CONTROL_REMOTE_DIR" control; }
 
 case "${DEPLOY_ENV}:${COMPONENT}" in
-  dev:root)
-    deploy_dev_root
-    ;;
-  dev:bff)
-    deploy_dev_bff
-    ;;
-  staging-live:exec)
-    deploy_staging_exec
-    ;;
-  staging-live:control)
-    deploy_staging_control
-    ;;
-  staging-live:all)
-    deploy_staging_exec
-    deploy_staging_control
-    ;;
-  *)
-    error "unsupported deployment target ${DEPLOY_ENV}:${COMPONENT}"
-    ;;
+  dev:root) deploy_dev_root ;;
+  dev:bff) deploy_dev_bff ;;
+  staging-live:exec) deploy_staging_exec ;;
+  staging-live:control) deploy_staging_control ;;
+  staging-live:all) deploy_staging_exec; deploy_staging_control ;;
+  *) error "unsupported deployment target ${DEPLOY_ENV}:${COMPONENT}" ;;
 esac
 
 info "deployment complete: ${DEPLOY_ENV}/${COMPONENT} ${DEPLOY_SHA}"

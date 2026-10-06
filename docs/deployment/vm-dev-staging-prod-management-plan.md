@@ -109,6 +109,13 @@ gate-before-switch、served identity 與 exact prior artifacts rollback。是否
 必須看當次 workflow、hosted `deployment.json` 與 BFF `/bff/version` 的一致證據，不能由變數或
 本文件宣告成功。開發工具 cleanup 不會自動恢復被 operator 停止的產品部署。
 
+Dev 環境台股常駐艦隊每日刷新：
+由 GitHub Actions 排程 `.github/workflows/dev-tw-market-refresh.yml` 於每個交易日 15:00 Asia/Taipei
+（07:00 UTC，收盤後 90 分鐘）透過部署通道（`scripts/dev_vm_ssh.sh`）在 Dev VM 執行
+`scripts/run_dev_bounded_source_refresh.sh`，不重新部署、不更動常駐容器。執行期間僅開放審查許可之
+官方主機（`openapi.twse.com.tw`、`www.twse.com.tw`、`www.tpex.org.tw`）及有限 tick（1 tick），
+結束後立即自動恢復 `reconcile_only` 與出口 `deny`。非交易日與假期自動跳過，重跑具冪等性。
+
 `pantheon-lupin-dev-20260719`、`pantheon-benjamin-20260528` 及其舊 IP／sslip.io hostname
 只准作歷史證據，不是可連線、可部署的目標。`scripts/gcp_dev_vm_migrate.sh` 和
 `scripts/migrate_to_benjamin_cutover.sh` 已刪除；需要追溯時讀 Git 歷史，不保留另一組可執行副本。

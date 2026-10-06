@@ -31,6 +31,30 @@ Pantheon Lupin GCP projects and uses GitHub Actions for pinned VM deployment:
 | Pantheon Nonprod Deploy | `.github/workflows/nonprod-deploy.yml` | hourly paired dev dispatch or manual dev; `master` or manual staging | exact FE/BFF admission, VM checkout-to-commit, compensated FE/BFF switch, health/CORS smoke |
 | Pantheon FE-BFF Integration Gate | `execute-plans:.github/workflows/pantheon-integration-gate.yml` | controller dispatch only for deployable artifacts; PR/push CI remains non-deploying | rebuild and smoke the exact FE SHA against the exact hosted BFF SHA |
 | Pantheon Dev FE Deploy | `execute-plans:.github/workflows/pantheon-dev-fe-deploy.yml` | controller dispatch only | authenticate the exact gate artifact, probe the candidate, then atomically switch the hosted FE |
+| Dev Taiwan Market Daily Refresh | `.github/workflows/dev-tw-market-refresh.yml` | Scheduled (07:00 UTC / 15:00 Asia/Taipei Mon-Fri) or manual | Runs bounded Taiwan official market refresh once per trading day on dev without redeploying |
+
+## Bounded Taiwan Market Daily Refresh
+
+To ensure the dev resident paper fleet has fresh Taiwan market data admitted by
+the Taiwan snapshot admission engine (`services/execution/market_snapshot_admission.py`),
+a daily bounded refresh workflow runs once per trading day after the Taiwan market
+cash session close (13:30 Asia/Taipei).
+
+- **Workflow**: `.github/workflows/dev-tw-market-refresh.yml`
+- **Schedule**: `0 7 * * 1-5` (07:00 UTC / 15:00 Asia/Taipei, Monday through Friday, 90 minutes after session close).
+- **Transport**: Direct SSH transport via `scripts/dev_vm_ssh.sh` using `secrets.DEV_DEPLOY_SSH_PRIVATE_KEY` and existing dev deployment identity. No operator keys or new host schedulers.
+- **Script**: `scripts/run_dev_bounded_source_refresh.sh` executed on the dev host.
+- **Idempotency & Pre-flight**:
+  - Non-trading days (weekends, holidays from trusted calendar evidence) are skipped with an explicit JSON record (`status: skipped`).
+  - Runs prior to 13:30 Asia/Taipei are rejected with `session_not_closed` unless `--force` is specified.
+  - If a fresh snapshot for the current trading day has already been admitted, the run is a no-op (`status: noop, reason: already_fresh`).
+  - If required calendar pins are unverified, the run fails with `market_input_calendar_unverifiable` rather than bypassing admission rules.
+- **Network & Egress Posture**:
+  - Outside the bounded run, `SOURCE_INGEST_CONTROLLER_MODE=reconcile_only` and `PANTHEON_EXTERNAL_EGRESS=deny`.
+  - During the run, egress is temporarily allowed only for the reviewed allowlist:
+    `openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw`.
+  - The bounded scheduler runs with a finite tick budget (`SOURCE_INGEST_CONTROLLER_MAX_TICKS=1`) and `SOURCE_INGEST_CONTROLLER_RESTART_POLICY=no`.
+  - An EXIT/INT/TERM trap guarantees that `source-ingest` is immediately restored to `PANTHEON_EXTERNAL_EGRESS=deny` and `SOURCE_INGEST_CONTROLLER_MODE=reconcile_only`, and one-off containers are pruned.
 
 ## OpenClaw acceptance after deployment
 

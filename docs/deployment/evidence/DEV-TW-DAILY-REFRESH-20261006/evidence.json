@@ -1,0 +1,54 @@
+{
+  "task_id": "DEV-TW-DAILY-REFRESH-20261006",
+  "title": "Run the bounded Taiwan official market refresh once per trading day",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 0,
+  "summary": "Implement a once-per-trading-day trigger after Taiwan market close (13:30 Asia/Taipei) that runs the existing bounded official Taiwan market refresh on the dev host through the existing deploy lane without redeploying. Outside the bounded run, controller stays reconcile_only and egress returns to deny. Exact reviewed allowlist (openapi.twse.com.tw, www.twse.com.tw, www.tpex.org.tw) and finite tick budget (1 tick) are strictly enforced. Pre-flight checks guarantee weekend and holiday skipping, idempotent no-op for already admitted fresh snapshots, and fail-closed error reporting on unverifiable calendar evidence.",
+  "acceptance": {
+    "1_once_per_trading_day_trigger": {
+      "status": "passed",
+      "detail": "Workflow .github/workflows/dev-tw-market-refresh.yml scheduled at '0 7 * * 1-5' (15:00 Asia/Taipei, 90m after 13:30 close). Executes scripts/run_dev_bounded_source_refresh.sh via scripts/dev_vm_ssh.sh without redeploying the host."
+    },
+    "2_bounded_run_guards_and_egress_deny_default": {
+      "status": "passed",
+      "detail": "Default and restored controller mode is reconcile_only, egress is deny. During bounded run, egress allowlist is strictly confined to openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw with SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 and restart policy 'no'. An EXIT/INT/TERM trap guarantees cleanup."
+    },
+    "3_idempotency_and_calendar_skips": {
+      "status": "passed",
+      "detail": "Pre-flight checks evaluate current Taipei time and date: weekends skipped (status: skipped, reason: weekend), times before 13:30 skipped (status: skipped, reason: session_not_closed), calendar holidays skipped (status: skipped, reason: holiday), already fresh admitted same-day snapshots no-op (status: noop, reason: already_fresh)."
+    },
+    "4_taiwan_admission_and_lineage_verification": {
+      "status": "passed",
+      "detail": "Shared evaluate_taiwan_market_freshness and validate_taiwan_calendar_evidence from services.execution.market_snapshot_admission are enforced. Unverifiable calendar pins fail closed with market_input_calendar_unverifiable instead of bypassing."
+    },
+    "5_scheduler_delay_tolerance": {
+      "status": "passed",
+      "detail": "Trigger scheduled at 15:00 Asia/Taipei allows up to 18 hours of GitHub Actions scheduler delay before the next trading day session opens at 09:00 Asia/Taipei."
+    },
+    "6_credentials_and_secrets": {
+      "status": "passed",
+      "detail": "Reuses existing deploy lane direct SSH credentials (DEV_DEPLOY_SSH_PRIVATE_KEY via scripts/dev_vm_ssh.sh). No operator SSH keys or new host schedulers introduced; no secrets emitted."
+    },
+    "7_hosted_track": {
+      "status": "external_wait",
+      "detail": "Two consecutive trading days showing a fresh admitted Taiwan snapshot in dev recorded as external_wait until live hosted cron runs elapse."
+    }
+  },
+  "scoped_artifacts": [
+    ".github/workflows/dev-tw-market-refresh.yml",
+    "scripts/deploy_nonprod_vm.sh",
+    "scripts/run_dev_bounded_source_refresh.sh",
+    "scripts/test_dev_bounded_source_refresh.py",
+    "docs/deployment/nonprod-ci-cd.md",
+    "docs/deployment/vm-dev-staging-prod-management-plan.md",
+    "docs/deployment/evidence/DEV-TW-DAILY-REFRESH-20261006/evidence.json"
+  ],
+  "verification": {
+    "test_command": ".venv-pantheon/bin/python3 -m pytest scripts/test_dev_bounded_source_refresh.py -v",
+    "test_result": "7 passed in 1.52s",
+    "diff_budget_check": "python3 scripts/git/diff_budget.py --base 5f6044d20 --change-class corrective --budget 0",
+    "diff_budget_result": "production net: -5 (additions: 298, deletions: 303), evidence additions: 58 <= 400 cap"
+  }
+}

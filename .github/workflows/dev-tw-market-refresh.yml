@@ -1,0 +1,50 @@
+name: Dev Taiwan Market Daily Refresh
+
+on:
+  schedule:
+    # 07:00 UTC = 15:00 Asia/Taipei (Mon-Fri), 90m after 13:30 cash market close.
+    - cron: '0 7 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Force refresh even if already admitted or outside regular session"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: dev-tw-market-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Run bounded Taiwan market refresh
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare direct SSH transport
+        env:
+          DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '34.81.52.222' }}
+          DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
+          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          scripts/dev_vm_ssh.sh prepare "${credentials_dir}" >/dev/null
+
+      - name: Execute bounded source refresh on dev host
+        env:
+          DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '34.81.52.222' }}
+          DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
+          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/chloe_ong_dev_cctech_support_com/pantheon' }}
+          FORCE_ENABLED: ${{ inputs.force == true && 'true' || 'false' }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          force_arg=""
+          [[ "${FORCE_ENABLED}" == "true" ]] && force_arg="--force"
+          scripts/dev_vm_ssh.sh exec \
+            "set -euo pipefail; cd '${DEV_REMOTE_DIR}'; ./scripts/run_dev_bounded_source_refresh.sh ${force_arg}"
