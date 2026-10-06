@@ -1,8 +1,22 @@
+import http.server
 import json
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from scripts.project_market_data_to_bff_agora_surfaces import PROJECTOR, project, write_projection
+import pytest
+
+from scripts.project_market_data_to_bff_agora_surfaces import (
+    PROJECTOR,
+    _fetch_source_ingest_json,
+    _get_connector_freshness,
+    _get_connector_readback,
+    _get_source_records,
+    project,
+    write_projection,
+)
+from scripts.run_isolated_l12_runtime_e2e import _mint_projector_service_jwt
+from services.source_ingestion.routers.ingest_operations import _source_read_tenant
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -677,3 +691,177 @@ def test_binds_explicit_source_proof_receipt_id() -> None:
     assert market["snapshotId"] == "snap-market-123"
     assert market["freshness"]["source_proof_receipt_id"] == "spr-custom-receipt-999"
     assert market["freshness"]["sourceProofReceiptId"] == "spr-custom-receipt-999"
+
+
+class _MockSourceIngestHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        auth = self.headers.get("Authorization")
+        tenant = self.headers.get("X-Tenant-Id")
+        try:
+            resolved_tenant = _source_read_tenant(auth, tenant)
+        except Exception as exc:
+            status = getattr(exc, "status_code", 401)
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"detail": "auth failed"}')
+            return
+
+        if self.path.startswith("/api/source-ingest/source-records"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "source_records": [
+                            {
+                                "source_id": "tw-official:tw_price_daily:TWSE:2330:auth-test",
+                                "connector_id": "tw-twse-tpex-official-market",
+                                "tenant": resolved_tenant,
+                                "metadata": {
+                                    "source_ingest_run_id": "run-auth-01",
+                                    "normalized_row": {
+                                        "dataset": "tw_price_daily",
+                                        "date": "2026-10-06",
+                                        "available_time": "2026-10-06T06:00:00Z",
+                                        "symbol": "2330",
+                                        "market": "TW",
+                                        "venue": "TWSE",
+                                        "close": 1000.0,
+                                        "change": 10.0,
+                                        "volume": 50000,
+                                    },
+                                },
+                            }
+                        ]
+                    }
+                ).encode("utf-8")
+            )
+        elif self.path.startswith("/api/source-ingest/controller/readback"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "connectors": [
+                            {
+                                "connector_id": "tw-twse-tpex-official-market",
+                                "freshness": {
+                                    "status": "fresh",
+                                    "last_success_at": "2026-10-06T06:00:00Z",
+                                    "stale_threshold_seconds": 86400,
+                                },
+                            }
+                        ]
+                    }
+                ).encode("utf-8")
+            )
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, *args, **kwargs) -> None:
+        pass
+
+
+def test_projector_authorized_read_with_service_jwt(monkeypatch: pytest.MonkeyPatch) -> None:
+    secret = "secret-projector-auth-test"
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_RUNTIME_AUTH_MODE", "strict")
+    server = http.server.HTTPServer(("127.0.0.1", 0), _MockSourceIngestHandler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        token = _mint_projector_service_jwt(secret, tenant_id="tenant-dev")
+        monkeypatch.setenv("AGORA_PROJECTOR_SERVICE_JWT", token)
+        monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+        records = _get_source_records(base_url)
+        assert len(records) == 1
+        assert records[0]["source_id"] == "tw-official:tw_price_daily:TWSE:2330:auth-test"
+        readback = _get_connector_readback(base_url)
+        assert readback["connector_id"] == "tw-twse-tpex-official-market"
+        freshness = _get_connector_freshness(base_url)
+        assert freshness["status"] == "fresh"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_projector_missing_credential_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AGORA_PROJECTOR_SERVICE_JWT", raising=False)
+    monkeypatch.delenv("PANTHEON_AGORA_PROJECTOR_SERVICE_JWT", raising=False)
+    with pytest.raises(RuntimeError, match="AGORA_PROJECTOR_SERVICE_JWT is required"):
+        _get_source_records("http://127.0.0.1:9999")
+    with pytest.raises(RuntimeError, match="AGORA_PROJECTOR_SERVICE_JWT is required"):
+        _get_connector_readback("http://127.0.0.1:9999")
+
+
+def test_projector_missing_tenant_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGORA_PROJECTOR_SERVICE_JWT", "dummy-projector-token")
+    monkeypatch.delenv("PANTHEON_TENANT_ID", raising=False)
+    with pytest.raises(RuntimeError, match="PANTHEON_TENANT_ID is required"):
+        _get_source_records("http://127.0.0.1:9999")
+    with pytest.raises(RuntimeError, match="PANTHEON_TENANT_ID is required"):
+        _get_connector_readback("http://127.0.0.1:9999")
+
+
+def test_projector_wrong_role_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    secret = "secret-projector-wrong-role"
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_RUNTIME_AUTH_MODE", "strict")
+    server = http.server.HTTPServer(("127.0.0.1", 0), _MockSourceIngestHandler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        import base64
+        import hashlib
+        import hmac
+
+        header = {"alg": "HS256", "typ": "JWT"}
+        claims = {"sub": "test", "roles": ["viewer"], "tenant_id": "tenant-dev"}
+
+        def b64url(d: bytes) -> str:
+            return base64.urlsafe_b64encode(d).rstrip(b"=").decode("ascii")
+
+        h = b64url(json.dumps(header).encode("utf-8"))
+        c = b64url(json.dumps(claims).encode("utf-8"))
+        sig = hmac.new(secret.encode("utf-8"), f"{h}.{c}".encode("ascii"), hashlib.sha256).digest()
+        token = f"{h}.{c}.{b64url(sig)}"
+
+        monkeypatch.setenv("AGORA_PROJECTOR_SERVICE_JWT", token)
+        monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+        with pytest.raises(RuntimeError, match=r"AGORA_PROJECTOR_SERVICE_JWT was rejected \(403\)"):
+            _get_source_records(base_url)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_projector_foreign_tenant_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    secret = "secret-projector-foreign-tenant"
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_RUNTIME_AUTH_MODE", "strict")
+    server = http.server.HTTPServer(("127.0.0.1", 0), _MockSourceIngestHandler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        token = _mint_projector_service_jwt(secret, tenant_id="foreign-tenant")
+        monkeypatch.setenv("AGORA_PROJECTOR_SERVICE_JWT", token)
+        monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+        with pytest.raises(RuntimeError, match=r"AGORA_PROJECTOR_SERVICE_JWT was rejected \(403\)"):
+            _get_source_records(base_url)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_projector_never_falls_back_to_unauthenticated_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AGORA_PROJECTOR_SERVICE_JWT", raising=False)
+    monkeypatch.delenv("PANTHEON_AGORA_PROJECTOR_SERVICE_JWT", raising=False)
+    with pytest.raises(RuntimeError, match="AGORA_PROJECTOR_SERVICE_JWT is required"):
+        _fetch_source_ingest_json("http://127.0.0.1:9999")
