@@ -513,6 +513,30 @@ def test_stimulus_fails_when_reconciliation_append_is_not_accepted(tmp_path):
     assert len(store.enqueued) == 1
 
 
+def test_stimulus_reports_owner_status_without_append_results(tmp_path):
+    def post_json(_url: str, _payload: dict, **_kwargs):
+        return {
+            "status": "failure",
+            "failure_code": "telemetry_auth_failed",
+            "detail": "secret detail",
+        }
+
+    code, artifact, _store, _posts = _run(tmp_path, binding=_binding(), post_json=post_json)
+
+    assert code == 1
+    assert artifact["failure"]["code"] == "reconciliation_owner_telemetry_auth_failed"
+    assert "secret detail" not in str(artifact)
+
+
+def test_stimulus_still_rejects_malformed_reconciliation_body(tmp_path):
+    code, artifact, _store, _posts = _run(
+        tmp_path, binding=_binding(), post_json=lambda *_a, **_k: {"unexpected": 1}
+    )
+
+    assert code == 1
+    assert artifact["failure"]["code"] == "reconciliation_response_invalid"
+
+
 def test_stimulus_can_continue_after_ambiguous_reconciliation_receipt(tmp_path):
     binding = _binding()
 

@@ -480,8 +480,8 @@ def test_dataset_surface_status_full_app_parity(state: str, monkeypatch: pytest.
 # exercised through the mounted composition root (this reviewed composition suite).
 
 MUTATION_ROUTES = [
-    ("POST", "/bff/jobs/j1/actions/retry", 410, "VALIDATION_FAILED", {"reason": "operator retry"}),
-    ("POST", "/bff/rankings/r1/actions/publish", 410, "VALIDATION_FAILED", {}),
+    ("POST", "/bff/jobs/j1/actions/retry", 410, "ACTION_RETIRED", {"reason": "operator retry"}),
+    ("POST", "/bff/rankings/r1/actions/publish", 410, "ACTION_RETIRED", {}),
     ("POST", "/api/v1/personas/p1/strategy-discovery", 202, None, {"query": "momentum", "lookback_days": 30}),
     ("POST", "/bff/personas/p1/strategy-discovery", 202, None, {"query": "momentum", "lookback_days": 30}),
     ("POST", "/api/v1/personas/p1/strategy-matches/m1/actions", 202, None, {"action": "promote_seed_candidate", "notes": "operator approved"}),

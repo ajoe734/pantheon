@@ -224,7 +224,7 @@ def test_scheduled_reconcile_empty_telemetry() -> None:
         assert payload["evaluation_ids"] == []
 
         # 2. Telemetry API URL configured but returns empty summaries -> degraded status
-        with mock.patch.object(svc, "_fetch_telemetry_runtime_summaries", return_value=[]):
+        with mock.patch.object(svc, "fetch_runtime_summaries", return_value=[]):
             resp2 = client.post(
                 "/api/reconciliation-drift/scheduled-reconcile",
                 json={"tick_id": "tick-test-002"},
@@ -251,7 +251,7 @@ def test_scheduled_reconcile_never_marks_incomplete_actual_state_green() -> None
             }
         ]
 
-        with mock.patch.object(svc, "_fetch_telemetry_runtime_summaries", return_value=fake_summaries):
+        with mock.patch.object(svc, "fetch_runtime_summaries", return_value=fake_summaries):
             resp = client.post(
                 "/api/reconciliation-drift/scheduled-reconcile",
                 json={"tick_id": "tick-test-002"},
@@ -291,7 +291,7 @@ def test_scheduled_reconcile_uses_authoritative_health_and_lag_for_green() -> No
         client = TestClient(svc.app)
         with mock.patch.object(
             svc,
-            "_fetch_telemetry_runtime_summaries",
+            "fetch_runtime_summaries",
             return_value=[_healthy_runtime_summary()],
         ):
             response = client.post(
@@ -332,7 +332,7 @@ def test_scheduled_reconcile_can_target_one_binding() -> None:
 
         with mock.patch.object(
             svc,
-            "_fetch_telemetry_runtime_summaries",
+            "fetch_runtime_summaries",
             return_value=[other, target],
         ):
             response = client.post(
@@ -381,7 +381,7 @@ def test_scheduled_reconcile_can_skip_incident_dispatch_for_targeted_probe() -> 
         with (
             mock.patch.object(
                 svc,
-                "_fetch_telemetry_runtime_summaries",
+                "fetch_runtime_summaries",
                 return_value=[target],
             ),
             mock.patch.object(
@@ -423,7 +423,7 @@ def test_scheduled_reconcile_lifecycle_only_appends_without_evaluation_store() -
         with (
             mock.patch.object(
                 svc,
-                "_fetch_telemetry_runtime_summaries",
+                "fetch_runtime_summaries",
                 return_value=[summary],
             ),
             mock.patch.object(
@@ -479,7 +479,7 @@ def test_scheduled_lag_breach_creates_deterministic_report_and_dedup_incident() 
         with (
             mock.patch.object(
                 svc,
-                "_fetch_telemetry_runtime_summaries",
+                "fetch_runtime_summaries",
                 return_value=[summary],
             ),
             mock.patch.object(
@@ -522,7 +522,7 @@ def test_scheduled_same_tick_replays_retryable_incident_delivery() -> None:
         with (
             mock.patch.object(
                 svc,
-                "_fetch_telemetry_runtime_summaries",
+                "fetch_runtime_summaries",
                 return_value=[summary],
             ),
             mock.patch.object(
@@ -572,7 +572,7 @@ def test_scheduled_reconcile_idempotent_same_tick_id() -> None:
             }
         ]
 
-        with mock.patch.object(svc, "_fetch_telemetry_runtime_summaries", return_value=fake_summaries):
+        with mock.patch.object(svc, "fetch_runtime_summaries", return_value=fake_summaries):
             first = client.post(
                 "/api/reconciliation-drift/scheduled-reconcile",
                 json={"tick_id": "tick-idem-001"},
@@ -636,7 +636,7 @@ def test_scheduled_reconcile_normalizes_last_event_id_fields() -> None:
             },
         ]
 
-        with mock.patch.object(svc, "_fetch_telemetry_runtime_summaries", return_value=fake_summaries):
+        with mock.patch.object(svc, "fetch_runtime_summaries", return_value=fake_summaries):
             resp = client.post(
                 "/api/reconciliation-drift/scheduled-reconcile",
                 json={"tick_id": "tick-norm-001"},
@@ -674,7 +674,7 @@ def test_scheduled_reconcile_different_tick_ids_create_separate_records() -> Non
              "telemetry_event_ids": [], "observed_metrics": {}, "baseline_metrics": {}}
         ]
 
-        with mock.patch.object(svc, "_fetch_telemetry_runtime_summaries", return_value=fake_summaries):
+        with mock.patch.object(svc, "fetch_runtime_summaries", return_value=fake_summaries):
             r1 = client.post("/api/reconciliation-drift/scheduled-reconcile", json={"tick_id": "tick-A"})
             r2 = client.post("/api/reconciliation-drift/scheduled-reconcile", json={"tick_id": "tick-B"})
 
@@ -731,7 +731,7 @@ def test_scheduled_reconcile_appends_identity_consistent_paper_lifecycle_event()
             ),
             mock.patch.object(
                 svc,
-                "_fetch_telemetry_runtime_summaries",
+                "fetch_runtime_summaries",
                 return_value=[summary],
             ),
             mock.patch.object(
@@ -820,7 +820,7 @@ def test_scheduled_reconcile_retries_same_event_after_ambiguous_delivery() -> No
             ),
             mock.patch.object(
                 svc,
-                "_fetch_telemetry_runtime_summaries",
+                "fetch_runtime_summaries",
                 return_value=[summary],
             ),
             mock.patch.object(
@@ -870,7 +870,7 @@ def test_scheduled_reconcile_waits_for_accepted_append_visibility_without_period
             ),
             mock.patch.object(
                 svc,
-                "_fetch_telemetry_runtime_summaries",
+                "fetch_runtime_summaries",
                 return_value=[stale_summary],
             ) as fetch_summaries,
             mock.patch.object(
@@ -993,7 +993,7 @@ def test_scheduled_reconcile_accepts_receipted_reconciliation_before_new_aggrega
             ),
             mock.patch.object(
                 svc,
-                "_fetch_telemetry_runtime_summaries",
+                "fetch_runtime_summaries",
                 return_value=[first_summary],
             ) as fetch_summaries,
             mock.patch.object(
@@ -1243,7 +1243,7 @@ def test_scheduled_reconcile_emits_failed_event_for_non_ok_evaluation() -> None:
             ),
             mock.patch.object(
                 svc,
-                "_fetch_telemetry_runtime_summaries",
+                "fetch_runtime_summaries",
                 return_value=[summary],
             ),
             mock.patch.object(
@@ -1305,7 +1305,7 @@ def test_scheduled_reconcile_never_appends_incomplete_identity_or_live_capital()
             ),
             mock.patch.object(
                 svc,
-                "_fetch_telemetry_runtime_summaries",
+                "fetch_runtime_summaries",
                 return_value=[missing, live, incomplete, missing_persona],
             ),
             mock.patch.object(svc, "_append_telemetry_lifecycle_event") as append,

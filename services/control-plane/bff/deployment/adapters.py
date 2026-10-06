@@ -1,7 +1,6 @@
 """Consuming-domain-owned adapters implementing Deployment ports."""
 from __future__ import annotations
 
-import uuid
 from typing import Any, Dict, Optional, Sequence
 
 from services.control_plane.bff.command_adapters.deployment_adapter import DeploymentCommandAdapter
@@ -88,25 +87,6 @@ class DefaultDeploymentCommands:
                 f"write_owner must be a DeploymentCommandAdapter, got {type(resolved)}"
             )
         self._write_owner = resolved
-
-    def create_deployment_plan(self, **kwargs: Any) -> Dict[str, Any]:
-        command_id = f"cmd-{uuid.uuid4().hex[:12]}"
-        receipt = self._write_owner.execute(
-            command_id=command_id,
-            command_type="CreateDeployment",
-            params=dict(kwargs),
-        )
-        record = dict(kwargs)
-        if isinstance(receipt, dict):
-            if receipt.get("entity_id"):
-                record["plan_id"] = receipt["entity_id"]
-                record["id"] = receipt["entity_id"]
-            if receipt.get("status"):
-                record["status"] = receipt["status"]
-            receipt_body = receipt.get("domain_receipt")
-            if isinstance(receipt_body, dict):
-                record.update({k: v for k, v in receipt_body.items() if k not in record})
-        return record
 
 
 __all__ = [

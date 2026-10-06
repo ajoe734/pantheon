@@ -862,7 +862,7 @@ mutation_routes:
   legacy_path: null
   legacy_removal_wave: null
 - route: POST /api/v1/deployment-plans
-  command: create_deployment_plan_v1
+  command: retired_deployment_plan_create
   router: deployment
   application_owner: deployment_application
   store_owner: deployment_store
@@ -884,7 +884,7 @@ mutation_routes:
   legacy_path: null
   legacy_removal_wave: null
 - route: POST /bff/deployments
-  command: sem_create_deployment_command
+  command: retired_deployment_create
   router: deployment
   application_owner: deployment_application
   store_owner: deployment_store

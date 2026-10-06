@@ -362,7 +362,6 @@ _WRAPPER_CANONICALS = {
     "DeploymentAction": {
         "ApproveDeployment": ("approve",),
         "EscalateDiff": (),
-        "CreateDeployment": ("create",),
         "PatchDeployment": ("patch", "update"),
     },
     "PersonaAction": {

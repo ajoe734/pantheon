@@ -157,7 +157,7 @@ class TestActionToOwnerMatrix(unittest.TestCase):
         adapter2 = find_adapter("ApproveDeployment", "deploymentplan", "approve")
         self.assertIsInstance(adapter2, DeploymentCommandAdapter)
 
-        adapter3 = find_adapter("CreateDeployment", "deployment", "create")
+        adapter3 = find_adapter("PatchDeployment", "deployment", "patch")
         self.assertIsInstance(adapter3, DeploymentCommandAdapter)
 
     def test_persona_adapter_mapping(self):
