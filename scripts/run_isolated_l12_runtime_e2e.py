@@ -258,6 +258,14 @@ def _project_container_ids(project: str) -> list[str]:
     return sorted(line.strip() for line in output.splitlines() if line.strip())
 
 
+def _projector_run_command(project: str, compose_files: list[str]) -> list[str]:
+    # `up --build` rebuilds only the services it starts; the projector is run
+    # separately, so build it here or a stale image from an earlier run is used.
+    return _compose_command(
+        project, compose_files, "run", "--rm", "--build", STIMULUS_PROJECTOR_SERVICE
+    )
+
+
 def _bootstrap_trade_journey_projection(
     project: str,
     compose_files: list[str],
@@ -1010,12 +1018,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             subprocess.run(command, env=compose_env, check=True)
             if args.stimulus_gate:
-                projector_command = _compose_command(
-                    args.compose_project,
-                    compose_files,
-                    "run",
-                    "--rm",
-                    STIMULUS_PROJECTOR_SERVICE,
+                projector_command = _projector_run_command(
+                    args.compose_project, compose_files
                 )
                 print(
                     "[*] Running one-shot Agora projector after market seeding: "
