@@ -6,20 +6,15 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: 'Force refresh even outside market session or if already fresh'
-        required: false
         default: false
         type: boolean
 
 jobs:
   refresh:
-    name: Taiwan Market Daily Refresh
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Execute bounded Taiwan market refresh
         shell: bash
         env:
