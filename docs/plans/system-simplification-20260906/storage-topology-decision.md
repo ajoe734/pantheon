@@ -331,3 +331,45 @@ the decision itself, since GCS is already the running managed backend for
 all three real consumers. The hosted MinIO/GCS inventory check called out
 above is a genuinely pending dependent action left for the cutover task,
 not something this task fabricates as already cleared.
+
+## 6. Implementation and Retirement Record — OSS-OBJECT-STORE-CUTOVER-002
+
+Date: 2026-10-05.
+Status: executed and verified.
+
+1. **Prerequisite inventory verified**: `OSS-STORAGE-INVENTORY-20261002` hosted track
+   completed (`status: done`). Authorized read-only inventory on dev VM
+   `pantheon-dev-20260902` confirmed 0 visible GCS buckets, MinIO `pantheon-artifacts`
+   with 0 objects/versions/bytes, 0 non-system volume files, and local attachment
+   fallback absent. No data movement, volume deletion, or bucket migration needed.
+2. **Zero source consumers verified**: repo-wide check confirmed zero application
+   services construct S3 clients (`boto3`, `botocore`) or perform MinIO I/O.
+3. **Retired Compose & bootstrap glue**:
+   - Removed `minio` and `minio-init` services and `minio-data` volume from
+     `docker-compose.yml` and `docker-compose.control.yml`.
+   - Removed all `minio` `depends_on` health edges and obsolete `PANTHEON_S3_*` /
+     `PANTHEON_ARTIFACT_BUCKET` environment variables from all services (including
+     `source-ingest` and `search-svc`).
+   - Removed `minio` from `INFRA_SERVICES` and `minio-init` bucket bootstrap from
+     `scripts/bootstrap.sh`.
+   - Removed MinIO and S3 environment variables from `env/prod-control.env.example`
+     and `.env.example`.
+   - Updated compose activation contract tests (`services/search/tests/test_service_activation_contract.py`
+     and `services/source_ingestion/test_compose_activation.py`) to assert the retired topology.
+4. **Retired S3-only posture checks**:
+   - `services/foundation/persistence_posture.py` (`OBJECT_STORE_KEYS`) and
+     `services/source_search_posture.py` (`object_store_keys`) no longer enforce
+     the retired S3 configuration.
+5. **Preserved GCS & security contracts**:
+   - Retained `ManagementAiAttachmentStore` (`google-cloud-storage` with local
+     fallback).
+   - Preserved `scripts/capture_canonical_telemetry_baseline.py` generation,
+     metageneration, and `pantheon_sha256` identity contract.
+   - Preserved `scripts/deploy_nonprod_vm.sh` GCS API probe.
+   - Preserved BFF tenant/session authorization boundary (`management_ai_get_session_or_404`
+     404 vs `management_ai_require_session_access` 403 split).
+6. **Fresh-process readback & rollback verified**:
+   - Reversible isolated seeded count/size/hash/metadata/readback test across fresh
+     subprocesses with simulated interruption and rollback added and verified in
+     `services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py`.
+

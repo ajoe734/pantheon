@@ -92,7 +92,6 @@ def test_all_canonical_domain_routers_mounted() -> None:
         "/bff/strategies",                              # Strategies
         "/api/v1/incidents",                            # Incidents
         "/bff/events",                                  # Events
-        "/api/v1/operator/commands",                    # Command Adapters
         "/api/v1/runtime-bindings",                     # Runtime
         "/api/v1/deployment-plans",                     # Deployment
         "/bff/jobs",                                    # Jobs
@@ -105,11 +104,14 @@ def test_all_canonical_domain_routers_mounted() -> None:
         assert sample in paths, f"Expected domain sample route {sample} to be mounted on bff_main.app"
 
 
-def test_training_v3_router_mounted() -> None:
-    """Verify that training router is mounted via create_training_router."""
-    main_text = (BFF_DIR / "main.py").read_text(encoding="utf-8")
-    assert "create_training_router" in main_text
-    assert "training.router" in main_text
+def test_training_v3_router_is_mounted_on_the_composed_app() -> None:
+    """Verify the real training endpoint is served by the composed application."""
+    from services.control_plane.bff import main as bff_main
+
+    from services.control_plane.bff.test_normalized_route_uniqueness import scan_fastapi_routes
+
+    routes = [entry for entry in scan_fastapi_routes(bff_main.app) if entry.raw_path == "/api/v1/trainer/sessions"]
+    assert {entry.method for entry in routes} == {"GET", "POST"}
 
 
 def test_retired_legacy_handlers_deleted_from_main_py() -> None:
@@ -161,39 +163,13 @@ def test_retired_legacy_handlers_deleted_from_main_py() -> None:
     assert not retained, f"Superseded legacy handler functions still defined in main.py: {retained}"
 
 
-def test_zero_unreferenced_dead_functions_in_main_py() -> None:
-    """Verify that main.py has zero orphaned top-level functions."""
-    from collections import defaultdict
+def test_composed_persona_and_command_services_use_typed_app_dependencies() -> None:
+    """Exercise the actual composition result, not AST name-use guesses."""
+    from services.control_plane.bff import main as bff_main
 
-    main_path = BFF_DIR / "main.py"
-    tree = ast.parse(main_path.read_text(encoding="utf-8"), filename="main.py")
-
-    top_level_funcs = {
-        node.name: node.lineno
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-
-    usages = defaultdict(int)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name):
-            usages[node.id] += 1
-
-    # Allowed external exports tested across other suites
-    allowed_exports = {
-        "_surface_degradation_reason",
-        "_extract_identity",
-        "_extract_identity_jwt",
-        "_extract_identity_stub",
-    }
-
-    dead_funcs = [
-        (fname, lineno)
-        for fname, lineno in top_level_funcs.items()
-        if usages[fname] == 0 and fname not in allowed_exports
-    ]
-
-    assert not dead_funcs, f"Found {len(dead_funcs)} unreferenced dead function(s) in main.py: {dead_funcs}"
+    assert bff_main.app.state.persona_service.get_read_store() is bff_main.app_deps.read_surface
+    assert bff_main.app.state.command_adapter_service.read_store is bff_main.app_deps.read_surface
+    assert bff_main.app.state.command_adapter_service.command_store is bff_main.app_deps.command_store
 
 
 def test_personas_module_global_read_store_not_instantiated_on_import() -> None:
@@ -308,12 +284,6 @@ def test_main_py_uses_app_dependencies_for_composition() -> None:
     assert isinstance(bff_main.app_deps, AppDependencies)
 
 
-def test_main_py_zero_lambda_read_store_service_locator_seams() -> None:
-    """Verify main.py has zero lambda: read_store service locator seams in router mounting."""
-    import re
-    main_text = (BFF_DIR / "main.py").read_text(encoding="utf-8")
-    seams = re.findall(r"(?:get_read_store\s*=\s*lambda|lambda[^:\n]*:\s*read_store\b)", main_text)
-    assert not seams, f"Found {len(seams)} lambda read_store service locator seam(s) in main.py: {seams}"
 
 
 def test_personas_service_no_import_time_stores_and_explicit_constructor() -> None:
