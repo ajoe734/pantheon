@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -21,10 +22,35 @@ DEFAULT_STALE_THRESHOLD_SECONDS = 86_400
 SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS = 300
 
 
+def _fetch_source_ingest_json(url: str) -> Any:
+    cred = str(
+        os.getenv("AGORA_PROJECTOR_SERVICE_JWT")
+        or os.getenv("PANTHEON_AGORA_PROJECTOR_SERVICE_JWT")
+        or ""
+    ).strip()
+    if not cred:
+        raise RuntimeError("AGORA_PROJECTOR_SERVICE_JWT is required")
+    tenant = str(os.getenv("PANTHEON_TENANT_ID") or "").strip()
+    if not tenant:
+        raise RuntimeError("PANTHEON_TENANT_ID is required")
+    headers = {
+        "Authorization": cred if cred.lower().startswith("bearer ") else f"Bearer {cred}",
+        "X-Tenant-Id": tenant,
+    }
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise RuntimeError(
+                f"AGORA_PROJECTOR_SERVICE_JWT was rejected ({exc.code}): {exc.reason}"
+            ) from exc
+        raise
+
+
 def _get_source_records(base_url: str) -> list[dict[str, Any]]:
-    url = f"{base_url.rstrip('/')}/api/source-ingest/source-records"
-    with urllib.request.urlopen(url, timeout=30) as response:
-        payload = json.loads(response.read())
+    payload = _fetch_source_ingest_json(f"{base_url.rstrip('/')}/api/source-ingest/source-records")
     records = payload.get("source_records") if isinstance(payload, dict) else None
     if not isinstance(records, list):
         raise ValueError("source-ingest response has no source_records list")
@@ -32,9 +58,7 @@ def _get_source_records(base_url: str) -> list[dict[str, Any]]:
 
 
 def _get_connector_readback(base_url: str) -> dict[str, Any]:
-    url = f"{base_url.rstrip('/')}/api/source-ingest/controller/readback"
-    with urllib.request.urlopen(url, timeout=30) as response:
-        payload = json.loads(response.read())
+    payload = _fetch_source_ingest_json(f"{base_url.rstrip('/')}/api/source-ingest/controller/readback")
     connectors = payload.get("connectors") if isinstance(payload, dict) else None
     if not isinstance(connectors, list):
         raise ValueError("source-ingest readback has no connectors list")

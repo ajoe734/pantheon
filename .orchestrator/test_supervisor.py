@@ -2204,12 +2204,15 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex"), 0)
 
     def test_repo_codex_slots_inherit_logical_lane_capacity(self) -> None:
+        # The operator stopped the Codex lanes on 2026-10-06: zero lane
+        # capacity must reach every slot, so none of them can be dispatched.
         config = json.loads(Path(__file__).with_name("config.json").read_text())
         for agent_id in ("codex", "codex2"):
             with self.subTest(agent_id=agent_id):
                 lane = supervisor.delivery_lane_for_agent(config, agent_id)
+                self.assertEqual(lane.max_parallel, 0)
                 self.assertTrue(lane.endpoints)
-                self.assertTrue(all(endpoint.enabled for endpoint in lane.endpoints))
+                self.assertFalse(any(endpoint.enabled for endpoint in lane.endpoints))
                 self.assertTrue(
                     all(endpoint.account_id for endpoint in lane.endpoints)
                 )
@@ -21130,17 +21133,17 @@ class ShippedReviewerFallbackPolicyTests(unittest.TestCase):
                     "a Codex quota exhaustion would stop all dispatch",
                 )
 
-    def test_codex_lanes_keep_first_refusal_for_non_codex_owners(self) -> None:
-        # Widening the chain must not quietly re-route review away from Codex
-        # while Codex is healthy: the added lanes are a degradation path.
+    def test_stopped_codex_lanes_are_not_reviewer_fallbacks(self) -> None:
+        # The operator stopped the Codex lanes on 2026-10-06. A zero-capacity
+        # reviewer in a chain is only reassigned away again, so no other lane
+        # may list them.
         for lane, chain in self.fallbacks.items():
             if self.account_of.get(lane) in self.CODEX_ACCOUNTS:
                 continue
             with self.subTest(lane=lane):
-                self.assertEqual(
-                    chain[:2],
-                    ["Codex", "Codex2"],
-                    f"lane {lane} no longer prefers the Codex reviewers first",
+                self.assertFalse(
+                    {"Codex", "Codex2"} & set(chain),
+                    f"lane {lane} still falls back to a stopped Codex reviewer",
                 )
 
     def test_no_lane_falls_back_to_a_reviewer_on_its_own_account(self) -> None:

@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import base64
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -103,6 +105,7 @@ STIMULUS_SERVICES: dict[str, dict[str, Any]] = {
     "training": {"port_var": "TRAINING_SESSION_PORT", "default_port": 18099, "health": "/readyz"},
 }
 DB_MIGRATION_SERVICE = "source-ingest-controller-migrate"
+PROJECTION_BOOTSTRAP_SERVICE = "loop-run-projector-scheduler"
 COMPOSE_ALL_PROFILES = ("--profile", "*")
 ISOLATED_SAFE_CONTROLS = {
     "BROKER_PAPER_ENABLED": "true",
@@ -209,6 +212,26 @@ def _post_json(url: str, body: Mapping[str, Any], headers: Mapping[str, str] | N
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _mint_projector_service_jwt(
+    secret: str,
+    *,
+    tenant_id: str,
+    issuer: str | None = None,
+    audience: str | None = None,
+) -> str:
+    header = {"alg": "HS256", "typ": "JWT"}
+    claims: dict[str, Any] = {"sub": "agora-market-projector", "roles": ["source_ingest_reader"], "tenant_id": tenant_id}
+    if issuer:
+        claims["iss"] = issuer
+    if audience:
+        claims["aud"] = audience
+    b64 = lambda d: base64.urlsafe_b64encode(d).rstrip(b"=").decode("ascii")
+    h = b64(json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    c = b64(json.dumps(claims, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    sig = hmac.new(secret.encode("utf-8"), f"{h}.{c}".encode("ascii"), hashlib.sha256).digest()
+    return f"{h}.{c}.{b64(sig)}"
+
+
 def _compose_command(
     project: str,
     compose_files: list[str],
@@ -233,6 +256,57 @@ def _project_container_ids(project: str) -> list[str]:
         check=False,
     )
     return sorted(line.strip() for line in output.splitlines() if line.strip())
+
+
+def _bootstrap_trade_journey_projection(
+    project: str,
+    compose_files: list[str],
+    compose_env: Mapping[str, str],
+) -> dict[str, Any]:
+    """Create the relational Trade Journey projection schema and grants.
+
+    Mirrors ``bootstrap_dev_lifecycle_projection`` in deploy_nonprod_vm.sh:
+    the hosted deploy runs this one-shot migration before starting its
+    runtime, and without it loop-run-projector-scheduler never becomes healthy.
+    """
+    config = subprocess.run(
+        _compose_command(
+            project, compose_files, "--profile", "core",
+            "config", "--format", "json", "postgres",
+        ),
+        env=dict(compose_env),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    command = _compose_command(
+        project,
+        compose_files,
+        "run",
+        "--rm",
+        "--build",
+        "--no-deps",
+        "-T",
+        "--entrypoint",
+        "python",
+        PROJECTION_BOOTSTRAP_SERVICE,
+        "-m",
+        "scripts.lifecycle_projector_migrate",
+        "--bootstrap-only",
+        "--compose-config-stdin",
+        "--reconcile-runtime-role",
+    )
+    process = subprocess.run(
+        command,
+        input=config.stdout,
+        env=dict(compose_env),
+        text=True,
+        check=False,
+    )
+    result = {"command": command, "returncode": process.returncode}
+    if process.returncode != 0:
+        raise RuntimeError(f"trade journey projection bootstrap failed: {result!r}")
+    return result
 
 
 def _teardown_project(
@@ -913,6 +987,12 @@ def main(argv: list[str] | None = None) -> int:
                     "canonical database migration failed: "
                     f"{database_migration!r}"
                 )
+            print("[*] Bootstrapping the Trade Journey projection schema...")
+            _bootstrap_trade_journey_projection(
+                args.compose_project,
+                compose_files,
+                compose_env,
+            )
             command = _compose_command(
                 args.compose_project,
                 compose_files,
@@ -941,25 +1021,37 @@ def main(argv: list[str] | None = None) -> int:
                     "[*] Running one-shot Agora projector after market seeding: "
                     f"{' '.join(projector_command)}"
                 )
+                projector_secret = compose_env.get("PANTHEON_RUNTIME_JWT_SECRET") or compose_env.get("PANTHEON_BFF_JWT_SECRET") or ""
+                projector_tenant = compose_env.get("PANTHEON_TENANT_ID") or compose_env.get("PANTHEON_BFF_TENANT_ID") or "default"
+                projector_token = _mint_projector_service_jwt(
+                    projector_secret,
+                    tenant_id=projector_tenant,
+                    issuer=compose_env.get("PANTHEON_RUNTIME_JWT_ISSUER") or compose_env.get("PANTHEON_BFF_JWT_ISSUER"),
+                    audience=compose_env.get("PANTHEON_RUNTIME_JWT_AUDIENCE") or compose_env.get("PANTHEON_BFF_JWT_AUDIENCE"),
+                )
                 projector_process = subprocess.run(
                     projector_command,
-                    env=compose_env,
+                    env={
+                        **compose_env,
+                        "AGORA_PROJECTOR_SERVICE_JWT": projector_token,
+                        "PANTHEON_TENANT_ID": projector_tenant,
+                    },
                     capture_output=True,
                     text=True,
                     check=False,
                 )
                 diagnostics_dir = args.evidence_output.resolve().parent / "diagnostics"
                 diagnostics_dir.mkdir(parents=True, exist_ok=True)
+                raw_out = f"{projector_process.stdout}\n{projector_process.stderr}"
+                sanitized_out = raw_out.replace(projector_token, "[REDACTED]") if projector_token else raw_out
                 (diagnostics_dir / f"{STIMULUS_PROJECTOR_SERVICE}.txt").write_text(
-                    f"# exit={projector_process.returncode}\n"
-                    f"{projector_process.stdout}\n{projector_process.stderr}",
+                    f"# exit={projector_process.returncode}\n{sanitized_out}",
                     encoding="utf-8",
                 )
                 if projector_process.returncode != 0:
                     raise RuntimeError(
                         f"{STIMULUS_PROJECTOR_SERVICE} exited "
-                        f"{projector_process.returncode}: "
-                        f"{(projector_process.stderr or projector_process.stdout)[-2000:]}"
+                        f"{projector_process.returncode}: {sanitized_out[-2000:]}"
                     )
 
         print("[*] Verifying service readiness across HTTP boundaries...")

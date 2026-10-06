@@ -122,7 +122,9 @@ A pair whose latest completed Nonprod Deploy attempt failed or timed out is not
 dispatched again; the tick reports `failed_pair_not_retried` with that run URL.
 Attempts are matched by the exact `Dev release <backend> + <frontend>` run name,
 so a later merge on either `dev` tip is a new pair and deploys normally. A
-cancelled attempt does not block the pair. To retry the same pair after fixing
+cancelled attempt does not block the pair, and neither does one whose
+`Acquire shared dev environment lease` step failed: without the lease no later
+step touches the VM, so the next tick retries that pair. To retry the same pair after fixing
 the environment, dispatch Nonprod Deploy for it; a successful attempt makes the
 pair `up_to_date`.
 
