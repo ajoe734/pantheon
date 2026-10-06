@@ -1,0 +1,40 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "SEARCH-DOCKERFILE-CONTRACT-TEST-20261005",
+  "title": "Align search Dockerfile contract test with the locked install",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "task_class": "corrective",
+  "net_prod_line_budget": 0,
+  "summary": "Aligned test_search_dockerfile_exposes_service_port_and_uses_service_requirements in services/search/tests/test_service_activation_contract.py with the actual Dockerfile install (copying and pip-installing requirements.lock instead of requirements.txt) and verified pinned dependencies (fastapi, uvicorn, pydantic). No production code or Dockerfile was modified.",
+  "scoped_artifacts": [
+    "services/search/tests/test_service_activation_contract.py",
+    "docs/deployment/evidence/SEARCH-DOCKERFILE-CONTRACT-TEST-20261005/",
+    "docs/deployment/evidence/SEARCH-DOCKERFILE-CONTRACT-TEST-20261005/evidence.json"
+  ],
+  "verification": {
+    "before_change_on_origin_dev": {
+      "exact_test_command": "pytest services/search/tests/test_service_activation_contract.py",
+      "exact_test_result": "FAILED test_search_dockerfile_exposes_service_port_and_uses_service_requirements (1 failed, 6 passed, 1 warning in 4.12s; AssertionError asserting COPY services/search/requirements.txt /tmp/requirements.txt)",
+      "full_suite_command": "pytest services/search/tests",
+      "full_suite_result": "1 failed, 92 passed, 16 skipped, 1 warning in 62.18s"
+    },
+    "after_change_on_task_head": {
+      "exact_test_command": "pytest services/search/tests/test_service_activation_contract.py",
+      "exact_test_result": "7 passed, 1 warning in 3.93s",
+      "full_suite_command": "pytest services/search/tests",
+      "full_suite_result": "93 passed, 16 skipped, 1 warning in 61.31s"
+    },
+    "diff_budget": {
+      "command": "python3 scripts/git/diff_budget.py --base dev --change-class corrective --budget 0",
+      "status": "PASS (production net: -242 lines <= 0)"
+    }
+  },
+  "acceptance_criteria_validation": {
+    "criterion_1": "test_search_dockerfile_exposes_service_port_and_uses_service_requirements asserts COPY services/search/requirements.lock /tmp/requirements.lock and RUN pip install --no-cache-dir -r /tmp/requirements.lock; port 8098, expose 8098, and uvicorn assertions remain intact: PASSED",
+    "criterion_2": "Asserts locked packages pin fastapi, uvicorn, and pydantic via pinned_packages set: PASSED",
+    "criterion_3": "No production or Dockerfile changes made; only the test assertion is corrected: PASSED",
+    "criterion_4": "Full search test suite passes on task head (93 passed, 16 skipped), exact test failed on origin/dev: PASSED"
+  }
+}

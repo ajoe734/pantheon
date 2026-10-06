@@ -73,44 +73,6 @@ services:
       retries: 10
       start_period: 10s
 
-  minio:
-    profiles: ["core", "root"]
-    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
-    restart: unless-stopped
-    command: ["server", "/data", "--console-address", ":9001"]
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-pantheon}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-pantheonminio}
-    volumes:
-      - minio-data:/data
-    ports:
-      - "${MINIO_API_PORT:-19000}:9000"
-      - "${MINIO_CONSOLE_PORT:-19001}:9001"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
-
-  minio-init:
-    profiles: ["core", "root"]
-    image: minio/mc:RELEASE.2024-01-16T16-06-34Z
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-pantheon}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-pantheonminio}
-      MINIO_DEFAULT_BUCKETS: ${MINIO_DEFAULT_BUCKETS:-pantheon-artifacts}
-    entrypoint: >
-      /bin/sh -c "
-        mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" &&
-        mc mb --ignore-existing \"local/$$MINIO_DEFAULT_BUCKETS\" &&
-        echo 'Bucket ready: '\"$$MINIO_DEFAULT_BUCKETS\"
-      "
-    restart: on-failure
-
   nats:
     profiles: ["core", "root"]
     image: nats:2.11-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00
@@ -150,10 +112,6 @@ services:
       CONSULTATION_DATA_DIR: /data/consultation
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       # Dev rollback defaults to JSONL; staging/prod select postgres via env.
       CONSULTATION_STORE_BACKEND: ${CONSULTATION_STORE_BACKEND:-jsonl}
       CONSULTATION_STORE_DSN: ${CONSULTATION_STORE_DSN:-}
@@ -232,10 +190,6 @@ services:
       PANTHEON_EXTERNAL_EGRESS: ${PANTHEON_EXTERNAL_EGRESS:-deny}
       PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: ${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}
       PANTHEON_SOURCE_SEARCH_POSTURE: ${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       # Product-level default is transactional Postgres; JSONL remains an explicit local rollback mode.
       SOURCE_INGEST_EVIDENCE_BACKEND: ${SOURCE_INGEST_EVIDENCE_BACKEND:-postgres}
       SOURCE_INGEST_EVIDENCE_DSN: ${SOURCE_INGEST_EVIDENCE_DSN:-}
@@ -464,10 +418,6 @@ services:
       SEARCH_DURABLE_INDEX_ONLY: ${SEARCH_DURABLE_INDEX_ONLY:-false}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_SOURCE_SEARCH_POSTURE: ${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       # Read the source owner's transactional evidence table by default.
       SEARCH_INDEX_STORE_BACKEND: ${SEARCH_INDEX_STORE_BACKEND:-jsonl}
       SEARCH_INDEX_STORE_DSN: ${SEARCH_INDEX_STORE_DSN:-}
@@ -543,10 +493,6 @@ services:
       TRAINING_SESSION_DATA_DIR: /data/training-session
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       TRAINING_SESSION_EVENT_STORE_BACKEND: ${TRAINING_SESSION_EVENT_STORE_BACKEND:-jsonl}
       TRAINING_SESSION_EVENT_STORE_DSN: ${TRAINING_SESSION_EVENT_STORE_DSN:-}
       PANTHEON_VECTORBT_BACKEND: ${PANTHEON_VECTORBT_BACKEND:-real}
@@ -644,10 +590,6 @@ services:
       POLICY_LEARNING_ENABLE_PRODUCTION_ADAPTERS: "false"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       POLICY_LEARNING_STORE_BACKEND: ${POLICY_LEARNING_STORE_BACKEND:-json}
       POLICY_LEARNING_STORE_DSN: ${POLICY_LEARNING_STORE_DSN:-}
       # Imitation-loop inbound authority (L12-IMIT-001).  The direct
@@ -752,10 +694,6 @@ services:
       PANTHEON_EXTERNAL_EGRESS: ${PANTHEON_EXTERNAL_EGRESS:-deny}
       PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: ${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       RESEARCH_ORCHESTRATOR_EVENT_STORE_BACKEND: ${RESEARCH_ORCHESTRATOR_EVENT_STORE_BACKEND:-jsonl}
       RESEARCH_ORCHESTRATOR_EVENT_STORE_DSN: ${RESEARCH_ORCHESTRATOR_EVENT_STORE_DSN:-}
       # Keep HTTP admission and the supervised alpha worker on one durable
@@ -1060,17 +998,11 @@ services:
       CONSULTATION_HANDOFF_ALLOWED_SERVICE_ACTOR: consultation-workflow-executor
       CONSULTATION_HANDOFF_ALLOWED_TENANTS: ${CONSULTATION_HANDOFF_ALLOWED_TENANTS:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
     volumes:
       - governance-data:/data/governance
       - dev-paper-governance-tokens:/run/pantheon-principals:ro
     depends_on:
       postgres:
-        condition: service_healthy
-      minio:
         condition: service_healthy
       nats:
         condition: service_healthy
@@ -1142,10 +1074,6 @@ services:
       POSTMORTEMS_URL: http://postmortems:8091
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       # Dev rollback defaults to JSON; staging/prod select postgres via env.
       INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-json}
       INCIDENT_STORE_DSN: ${INCIDENT_STORE_DSN:-}
@@ -1192,10 +1120,6 @@ services:
       EVOLUTION_DEFAULT_TENANT_ID: ${EVOLUTION_DEFAULT_TENANT_ID:-pantheon-default}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       # Shares the incident owner schema; dev rollback remains JSON.
       POSTMORTEM_STORE_BACKEND: ${POSTMORTEM_STORE_BACKEND:-json}
       POSTMORTEM_STORE_DSN: ${POSTMORTEM_STORE_DSN:-}
@@ -1205,8 +1129,6 @@ services:
       incidents:
         condition: service_healthy
       postgres:
-        condition: service_healthy
-      minio:
         condition: service_healthy
     ports:
       - "${POSTMORTEMS_PORT:-18091}:8091"
@@ -1752,7 +1674,6 @@ services:
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       PANTHEON_REGISTRY_URL: http://registry:8087
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
     volumes:
       - dev-paper-persona-tokens:/run/pantheon-principals:ro
     depends_on:
@@ -1761,8 +1682,6 @@ services:
       registry:
         condition: service_healthy
       nats:
-        condition: service_healthy
-      minio:
         condition: service_healthy
     ports:
       - "${PERSONA_PORT:-18002}:8002"
@@ -1830,12 +1749,8 @@ services:
       PORT: "8084"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
     depends_on:
       postgres:
-        condition: service_healthy
-      minio:
         condition: service_healthy
       nats:
         condition: service_healthy
@@ -1887,16 +1802,10 @@ services:
       PANTHEON_MEMORY_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
       PANTHEON_MEMORY_DATA_DIR: /data/memory
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
     volumes:
       - memory-data:/data/memory
     depends_on:
       postgres:
-        condition: service_healthy
-      minio:
         condition: service_healthy
       nats:
         condition: service_healthy
@@ -1935,17 +1844,11 @@ services:
       PANTHEON_REGISTRY_JWT_ISSUER: ${PANTHEON_REGISTRY_JWT_ISSUER:-${CAPITAL_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-pantheon-dev-control-plane}}}
       PANTHEON_REGISTRY_JWT_AUDIENCE: ${PANTHEON_REGISTRY_JWT_AUDIENCE:-${CAPITAL_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-pantheon-dev-owners}}}
       PANTHEON_REGISTRY_ROLE_CLAIMS: ${PANTHEON_REGISTRY_ROLE_CLAIMS:-roles,role}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
       - dev-paper-registry-tokens:/run/pantheon-principals:ro
     depends_on:
       postgres:
-        condition: service_healthy
-      minio:
         condition: service_healthy
       nats:
         condition: service_healthy
@@ -1968,12 +1871,8 @@ services:
       PORT: "8088"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
     depends_on:
       postgres:
-        condition: service_healthy
-      minio:
         condition: service_healthy
       nats:
         condition: service_healthy
@@ -1997,10 +1896,6 @@ services:
       PROMOTION_DATA_DIR: /data/promotion
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       # Dev rollback defaults to JSON; staging/prod select postgres via env.
       PROMOTION_STORE_BACKEND: ${PROMOTION_STORE_BACKEND:-json}
       PROMOTION_STORE_DSN: ${PROMOTION_STORE_DSN:-}
@@ -2035,10 +1930,6 @@ services:
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       # Dev rollback defaults to JSON/JSONL; staging/prod select postgres via env.
       CAPITAL_STORE_BACKEND: ${CAPITAL_STORE_BACKEND:-json}
       CAPITAL_STORE_DSN: ${CAPITAL_STORE_DSN:-}
@@ -2461,10 +2352,6 @@ services:
       RECONCILIATION_DRIFT_DATA_DIR: /data/reconciliation-drift
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       # Dev rollback defaults to JSON; staging/prod select postgres via env.
       RECONCILIATION_DRIFT_STORE_BACKEND: ${RECONCILIATION_DRIFT_STORE_BACKEND:-json}
       RECONCILIATION_DRIFT_STORE_DSN: ${RECONCILIATION_DRIFT_STORE_DSN:-}
@@ -2619,10 +2506,6 @@ services:
       RESEARCH_ORCHESTRATOR_URL: http://research-orchestrator-svc:8101
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
-      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
-      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
-      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
-      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       RESEARCH_WORKER_GATEWAY_EVENT_STORE_BACKEND: ${RESEARCH_WORKER_GATEWAY_EVENT_STORE_BACKEND:-jsonl}
       RESEARCH_WORKER_GATEWAY_EVENT_STORE_DSN: ${RESEARCH_WORKER_GATEWAY_EVENT_STORE_DSN:-}
     volumes:
@@ -3085,7 +2968,6 @@ volumes:
   feedback-data:
   governance-data:
   incident-data:
-  minio-data:
   memory-data:
   monitor-agent-data:
   nats-data:

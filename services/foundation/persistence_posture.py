@@ -1,8 +1,8 @@
 """Shared staging/prod persistence posture checks.
 
 The check is intentionally configuration-only: it validates that a service is
-declared to use Postgres and that shared object-store env is present before the
-service accepts traffic. It does not open database or object-store connections.
+declared to use Postgres before the service accepts traffic. It does not open
+database connections.
 """
 
 from __future__ import annotations
@@ -13,12 +13,7 @@ from typing import Mapping, Sequence
 
 
 ENFORCED_MODES = {"stage", "staging", "staging-live", "prod", "production"}
-OBJECT_STORE_KEYS = (
-    "PANTHEON_S3_ENDPOINT",
-    "PANTHEON_ARTIFACT_BUCKET",
-    "PANTHEON_S3_ACCESS_KEY",
-    "PANTHEON_S3_SECRET_KEY",
-)
+OBJECT_STORE_KEYS: tuple[str, ...] = ()
 
 
 SERVICE_BACKEND_DEFAULTS: Mapping[str, Mapping[str, str]] = {

@@ -26,8 +26,8 @@ def test_compose_wires_search_service_and_bff_normal_path() -> None:
     assert search["environment"]["SEARCH_MATERIALIZE_STORE_PATH"] == "/data/search/search-materialize.jsonl"
     assert search["environment"]["SEARCH_EVIDENCE_STORE_PATH"] == "/data/source-ingest/source_evidence.jsonl"
     assert search["environment"]["PANTHEON_SOURCE_SEARCH_POSTURE"] == "${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}"
-    assert search["environment"]["PANTHEON_S3_ENDPOINT"] == "${PANTHEON_S3_ENDPOINT:-http://minio:9000}"
-    assert search["environment"]["PANTHEON_ARTIFACT_BUCKET"] == "${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}"
+    assert "PANTHEON_S3_ENDPOINT" not in search["environment"]
+    assert "PANTHEON_ARTIFACT_BUCKET" not in search["environment"]
     assert "search-data:/data/search" in search["volumes"]
     assert "source-ingest-data:/data/source-ingest:ro" in search["volumes"]
     assert search["ports"] == ["${SEARCH_PORT:-18098}:8098"]
@@ -77,13 +77,19 @@ def test_honest_stack_smoke_waits_for_and_queries_search_service() -> None:
 
 def test_search_dockerfile_exposes_service_port_and_uses_service_requirements() -> None:
     dockerfile = (ROOT / "services/search/Dockerfile").read_text(encoding="utf-8")
-    requirements = (ROOT / "services/search/requirements.txt").read_text(encoding="utf-8").splitlines()
+    requirements = (ROOT / "services/search/requirements.lock").read_text(encoding="utf-8").splitlines()
 
-    assert "COPY services/search/requirements.txt /tmp/requirements.txt" in dockerfile
+    assert "COPY services/search/requirements.lock /tmp/requirements.lock" in dockerfile
+    assert "RUN pip install --no-cache-dir -r /tmp/requirements.lock" in dockerfile
     assert "ENV PORT=8098" in dockerfile
     assert "EXPOSE 8098" in dockerfile
     assert "uvicorn services.search.main:app" in dockerfile
-    assert {"fastapi", "uvicorn", "pydantic"}.issubset(set(requirements))
+    pinned_packages = {
+        line.split("==")[0].strip()
+        for line in requirements
+        if "==" in line and not line.strip().startswith("#")
+    }
+    assert {"fastapi", "uvicorn", "pydantic"}.issubset(pinned_packages)
 
 
 @pytest.mark.parametrize("dsn_variable", ["PANTHEON_SEARCH_POSTGRES_DSN", "SEARCH_POSTGRES_DSN"])
