@@ -486,5 +486,22 @@ class TestCronOrchestrator(unittest.TestCase):
         self.assertEqual(compatibility["rejection_reasons"], [])
 
 
+class TestWorkflowHandoffSchemaValidation(unittest.TestCase):
+    @patch("services.control_plane.cron.schema_validation.build_workflow_handoff_validator", return_value=None)
+    def test_validate_workflow_handoff_fails_closed_when_validator_unavailable(self, _mock_builder):
+        from services.control_plane.cron.schema_validation import validate_workflow_handoff
+
+        with self.assertRaisesRegex(RuntimeError, "WorkflowHandoff validation unavailable: jsonschema is required"):
+            validate_workflow_handoff({"handoff_version": "1.0"})
+
+    def test_validate_workflow_handoff_rejects_invalid_payload_with_validator(self):
+        import jsonschema
+        from services.control_plane.cron.schema_validation import validate_workflow_handoff
+
+        with self.assertRaises(jsonschema.ValidationError):
+            validate_workflow_handoff({"invalid": "payload"})
+
+
 if __name__ == "__main__":
     unittest.main()
+
