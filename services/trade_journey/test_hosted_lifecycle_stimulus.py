@@ -630,48 +630,134 @@ def _load_reconciliation_drift_module(monkeypatch, tmp_path):
     return module
 
 
-def _reconcile_through(client):
-    """Adapt the stimulus POST helper onto the real reconciliation app."""
+def test_default_http_transport_get_and_post_against_local_server():
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
 
-    seen: list[int] = []
+    class Handler(BaseHTTPRequestHandler):
+        def _respond(self):
+            tail = self.path.rsplit("/", 1)[-1]
+            status = int(tail) if tail in {"401", "403"} else 200
+            body = (
+                b'["not", "an", "object"]'
+                if self.path.endswith("/array")
+                else b'{"ok":true}'
+            )
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
 
-    def post_json(url: str, payload: dict, *, headers=None, timeout=10.0):
-        path = url.split("8102", 1)[1]
-        response = client.post(path, json=payload, headers=dict(headers or {}))
-        seen.append(response.status_code)
-        if response.status_code in (401, 403):
-            raise stimulus.StimulusError("outbound_auth_rejected", "rejected")
-        response.raise_for_status()
-        return response.json()
+        do_GET = _respond
+        do_POST = _respond
 
-    return post_json, seen
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        for method in ("GET", "POST"):
+            if method == "GET":
+                request = stimulus._http_get_json
+            else:
+                request = lambda url, **kw: stimulus._http_post_json(url, {}, **kw)
+            assert request(f"{base}/success") == {"ok": True}
+            with pytest.raises(ValueError, match="must be an object"):
+                request(f"{base}/array")
+            for status in (401, 403):
+                with pytest.raises(stimulus.StimulusError) as excinfo:
+                    request(f"{base}/{status}")
+                assert excinfo.value.code == "outbound_auth_rejected"
+                assert excinfo.value.safe_details == {"http_status": status}
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
 
 
-def test_scheduled_reconciliation_requires_credentials_and_tenant(monkeypatch, tmp_path):
-    from fastapi.testclient import TestClient
+def test_scheduled_reconciliation_uses_default_transport_and_owner_auth(monkeypatch, tmp_path):
+    import socket
+    import threading
+    import time
+    import uvicorn
 
-    client = TestClient(_load_reconciliation_drift_module(monkeypatch, tmp_path).app)
-    path = "/api/reconciliation-drift/scheduled-reconcile"
-    body = {"tick_id": "t-1", "binding_id": "rb-1", "lifecycle_only": True}
-    good = stimulus._headers("owner-token", "tenant-a")
-
-    assert client.post(path, json=body).status_code == 401
-    assert client.post(path, json=body, headers=stimulus._headers(None, "tenant-a")).status_code == 401
-    assert client.post(path, json=body, headers=stimulus._headers("owner-token")).status_code == 400
-    assert client.post(path, json=body, headers=stimulus._headers("wrong", "tenant-a")).status_code == 401
-    accepted = client.post(path, json=body, headers=good)
-    assert accepted.status_code == 201
-
-    post_json, seen = _reconcile_through(client)
-    with pytest.raises(stimulus.StimulusError) as excinfo:
-        stimulus.trigger_reconciliation(
-            reconciliation_url="http://reconciliation-drift-svc:8102",
-            binding_id="rb-1",
-            tick_id="t-2",
-            http_post_json=post_json,
+    module = _load_reconciliation_drift_module(monkeypatch, tmp_path)
+    module._execute_scheduled_reconcile = lambda body, **_kwargs: {
+        "lifecycle_append_results": [
+            {
+                "binding_id": body.binding_id,
+                "event_id": "event-owner-accepted",
+                "status": "accepted",
+            }
+        ]
+    }
+    monkeypatch.setenv("RECONCILIATION_DRIFT_AUTH_TOKEN", "owner-token")
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-a")
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(module.app, log_level="error", lifespan="off"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert server.started
+        url = f"http://127.0.0.1:{port}"
+        accepted = stimulus.trigger_reconciliation(
+            reconciliation_url=url,
+            binding_id="rb-auth-check",
+            tick_id="authorized-tick",
+            timeout_seconds=5,
+            headers=stimulus._headers("owner-token", "tenant-a"),
         )
-    assert excinfo.value.code == "outbound_auth_rejected"
-    assert seen == [400] or seen == [401]
+        assert accepted.get("status") in {"accepted", "completed", "deferred"}
+        for headers, expected, code in (
+            (None, 401, "outbound_auth_rejected"),
+            (stimulus._headers("owner-token"), 400, "reconciliation_http_error"),
+        ):
+            with pytest.raises(stimulus.StimulusError) as excinfo:
+                stimulus.trigger_reconciliation(
+                    reconciliation_url=url,
+                    binding_id="rb-auth-check",
+                    tick_id=f"rejected-{expected}",
+                    timeout_seconds=5,
+                    headers=headers,
+                )
+            assert excinfo.value.code == code
+            if expected == 401:
+                assert excinfo.value.safe_details == {"http_status": expected}
+            else:
+                assert "HTTP 400" in excinfo.value.safe_message
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+        sock.close()
+
+
+def test_malformed_committed_telemetry_payload_has_redacted_decode_error(monkeypatch):
+    binding = _binding()
+    row = {"payload": "not-json"}
+
+    class Connection(_FakeAsyncpgConnection):
+        pass
+
+    connection = Connection(row)
+
+    async def connect(_dsn):
+        return connection
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+    with pytest.raises(stimulus.StimulusError) as excinfo:
+        stimulus.fetch_committed_lifecycle_identity(
+            "postgresql://secret-dsn", binding=binding, run_id="run-id"
+        )
+    assert excinfo.value.code == "telemetry_committed_payload_invalid"
+    assert "not-json" not in excinfo.value.safe_message
 
 
 def test_wait_for_lifecycle_summary_sends_credentials_and_tenant():
