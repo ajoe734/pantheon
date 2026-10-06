@@ -425,3 +425,57 @@ def test_post_events_non_transient_error_still_raises() -> None:
     with mock.patch.object(consumer.urllib.request, "urlopen", side_effect=ValueError("boom")):
         with pytest.raises(ValueError):
             consumer.post_events("http://x", [{"event_id": "e"}])
+
+
+def test_tick_budget_bounds_slow_downstream_and_drains_across_ticks(monkeypatch) -> None:
+    import http.server
+    import threading
+    import time
+
+    consumer = _load_consumer_module()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            time.sleep(0.4)
+            body = b'{"status": "ok", "drift_report_count": 1}'
+            self.send_response(201)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args) -> None:
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setenv("RECONCILIATION_DRIFT_CONSUMER_POST_TIMEOUT_SECONDS", "2")
+    summaries = []
+    for index in range(4):
+        summary = _runtime_summary()
+        summary["runtime_id"] = f"runtime-{index}"
+        summary["last_event_id"] = f"evt-{index}"
+        summaries.append(summary)
+    try:
+        with tempfile.TemporaryDirectory() as data_dir:
+            state = consumer.ConsumerWorkerState(Path(data_dir) / "state.json")
+            ticks = []
+            with mock.patch.object(consumer, "fetch_runtime_summaries", return_value=summaries):
+                for _ in range(6):
+                    started = time.monotonic()
+                    result = consumer.run_runtime_summary_consumer_once(
+                        service_url=f"http://127.0.0.1:{server.server_port}",
+                        telemetry_url="http://telemetry:8083",
+                        state=state,
+                        tick_budget_seconds=0.5,
+                        now_fn=lambda: datetime(2026, 7, 15, 1, 1, tzinfo=timezone.utc),
+                    )
+                    ticks.append((time.monotonic() - started, result))
+                    if not state.pending:
+                        break
+    finally:
+        server.shutdown()
+    assert not state.pending
+    assert len(ticks) >= 2  # backlog drained across ticks, not in one
+    assert all(elapsed < 0.5 + 2 for elapsed, _ in ticks)  # budget plus one post
+    assert not state.dead_letters

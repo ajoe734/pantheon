@@ -3,13 +3,34 @@
   "root_cause": "consume_telemetry_events (main.py) synchronously calls the incidents API per event with PANTHEON_INCIDENTS_API_TIMEOUT_SECONDS=90, while consumer.post_events used a fixed 10s client timeout; a bare TimeoutError from getresponse() was not mapped to RuntimeError so the retry loop missed it and main re-raised. Derived from code reading; no live measurement was possible from the worker (no hosted access).",
   "fix": "post_events maps OSError (covers TimeoutError, resets) to RuntimeError -> existing attempt/backoff/dead-letter path; client timeout is now RECONCILIATION_DRIFT_CONSUMER_POST_TIMEOUT_SECONDS default 100s (bounded, > 90s downstream bound).",
   "call_sites": [
-    {"site": "consumer.py post_events", "handling": "HTTPError/URLError/OSError -> RuntimeError -> retry loop, last_error recorded, dead-letter after max_attempts"},
-    {"site": "telemetry_client.py:46", "handling": "already maps HTTPError, URLError, OSError, JSONDecodeError"},
-    {"site": "scheduler_worker.py:252", "handling": "wrapped by except Exception at :295, recorded as worker state"},
-    {"site": "incident_listener.py:286,335", "handling": "called via _retry_operation which catches Exception and records attempts/errors"},
-    {"site": "main.py _post_json:526", "handling": "unchanged; HTTPError/URLError -> 502"}
+    {
+      "site": "consumer.py post_events",
+      "handling": "HTTPError/URLError/OSError -> RuntimeError -> retry loop, last_error recorded, dead-letter after max_attempts"
+    },
+    {
+      "site": "telemetry_client.py:46",
+      "handling": "already maps HTTPError, URLError, OSError, JSONDecodeError"
+    },
+    {
+      "site": "scheduler_worker.py:252",
+      "handling": "wrapped by except Exception at :295, recorded as worker state"
+    },
+    {
+      "site": "incident_listener.py:286,335",
+      "handling": "called via _retry_operation which catches Exception and records attempts/errors"
+    },
+    {
+      "site": "main.py _post_json:526",
+      "handling": "now also maps OSError/TimeoutError -> HTTPException 502 (previously only HTTPError/URLError; bare TimeoutError would 500); latency logged in finally"
+    },
+    {
+      "site": "main.py:2100 telemetry forward (timeout=5)",
+      "handling": "HTTPError/URLError handled with retryable_error result (pre-existing; not changed)"
+    }
   ],
   "non_transient_errors": "unchanged: only OSError/URLError/HTTPError converted; other exceptions still propagate and fail the tick (test_post_events_non_transient_error_still_raises)",
-  "tests": "tests/test_reconciliation_drift_consumer.py: 12 passed incl. local delayed-server test (first call times out, retried, delivered) ; with worker_resilience/health 22 passed",
-  "hosted_track": "external_wait: next dev pair release must show zero reconciliation-drift worker restarts"
+  "tests": "services/reconciliation-drift/tests: 114 passed (incl. delayed-server retry test and tick-budget drain test)",
+  "hosted_track": "external_wait: next dev pair release must show zero reconciliation-drift worker restarts",
+  "measurement": "The 100s consume bound is derived from PANTHEON_INCIDENTS_API_TIMEOUT_SECONDS=90 (+10s margin) pending measurement. The consumer now logs 'consume post ok/failed in Ns' per request and the service logs 'incidents call took Ns' (no payloads); the next hosted deploy yields measured values to confirm or tighten the bound.",
+  "tick_budget": "run_runtime_summary_consumer_once takes tick_budget_seconds (default 120s): no new attempt starts once spent; remaining events stay pending for the next tick. Worst tick ~120s+100s post+backoff < RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS=300, so a slow downstream cannot make a live consumer unhealthy. Test: test_tick_budget_bounds_slow_downstream_and_drains_across_ticks."
 }
