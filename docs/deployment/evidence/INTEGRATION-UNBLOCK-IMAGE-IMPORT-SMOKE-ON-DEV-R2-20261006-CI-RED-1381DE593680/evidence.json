@@ -1,0 +1,28 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-IMAGE-IMPORT-SMOKE-ON-DEV-R2-20261006-CI-RED-1381DE593680",
+  "recorded_at": "2026-10-06T15:05:00Z",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "repository": "ajoe734/pantheon",
+  "source_task": "IMAGE-IMPORT-SMOKE-ON-DEV-R2-20261006",
+  "source_pr": "https://github.com/ajoe734/pantheon/pull/6203",
+  "source_head": "82188ea209e000098b1d76456f1338d41767d90a",
+  "changed_files": [
+    "docs/deployment/evidence/INTEGRATION-UNBLOCK-IMAGE-IMPORT-SMOKE-ON-DEV-R2-20261006-CI-RED-1381DE593680/evidence.json"
+  ],
+  "root_cause": {
+    "dispatch_reason": "ci-red",
+    "summary": "The failing checks named in the dispatch (Discover changed stage-0 targets, Smoke acceptance, Run baseline stage-0 gate, Dependency review, Verify changed services, Docker build dry run) were CANCELLED runs, not test failures. They were superseded by a newer run on the same PR head via workflow concurrency cancellation; the auto-integrator read the stale CANCELLED rollup entries as red.",
+    "latest_run_state": {
+      "Discover changed stage-0 targets": "pass",
+      "Run baseline stage-0 gate": "pass",
+      "Smoke acceptance": "pass",
+      "Plan in-image import smoke": "pass",
+      "Import smoke (all Dockerfiles)": "pass",
+      "Verify changed services / Docker build dry run / Dependency review": "skipped (not applicable to this diff)"
+    },
+    "remaining_gate": "Pantheon canonical review gate fails only because no review-proof tag exists for head 82188ea20 yet; this is a pending review, not a CI defect.",
+    "mergeable": "MERGEABLE (mergeStateStatus UNSTABLE due to the review gate only)"
+  },
+  "resolution": "No code change required on PR #6203. Original PR is not stranded: it needs Antigravity2-style review approval to publish the review-proof tag, then auto-integrator can retry. Follow-up hardening (scripts/git/auto_integrator.py ignoring CANCELLED entries superseded by a later successful run of the same check) is not applied in this task."
+}

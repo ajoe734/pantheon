@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import base64
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -208,6 +210,26 @@ def _post_json(url: str, body: Mapping[str, Any], headers: Mapping[str, str] | N
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def _mint_projector_service_jwt(
+    secret: str,
+    *,
+    tenant_id: str,
+    issuer: str | None = None,
+    audience: str | None = None,
+) -> str:
+    header = {"alg": "HS256", "typ": "JWT"}
+    claims: dict[str, Any] = {"sub": "agora-market-projector", "roles": ["source_ingest_reader"], "tenant_id": tenant_id}
+    if issuer:
+        claims["iss"] = issuer
+    if audience:
+        claims["aud"] = audience
+    b64 = lambda d: base64.urlsafe_b64encode(d).rstrip(b"=").decode("ascii")
+    h = b64(json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    c = b64(json.dumps(claims, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    sig = hmac.new(secret.encode("utf-8"), f"{h}.{c}".encode("ascii"), hashlib.sha256).digest()
+    return f"{h}.{c}.{b64(sig)}"
 
 
 def _compose_command(
@@ -999,25 +1021,37 @@ def main(argv: list[str] | None = None) -> int:
                     "[*] Running one-shot Agora projector after market seeding: "
                     f"{' '.join(projector_command)}"
                 )
+                projector_secret = compose_env.get("PANTHEON_RUNTIME_JWT_SECRET") or compose_env.get("PANTHEON_BFF_JWT_SECRET") or ""
+                projector_tenant = compose_env.get("PANTHEON_TENANT_ID") or compose_env.get("PANTHEON_BFF_TENANT_ID") or "default"
+                projector_token = _mint_projector_service_jwt(
+                    projector_secret,
+                    tenant_id=projector_tenant,
+                    issuer=compose_env.get("PANTHEON_RUNTIME_JWT_ISSUER") or compose_env.get("PANTHEON_BFF_JWT_ISSUER"),
+                    audience=compose_env.get("PANTHEON_RUNTIME_JWT_AUDIENCE") or compose_env.get("PANTHEON_BFF_JWT_AUDIENCE"),
+                )
                 projector_process = subprocess.run(
                     projector_command,
-                    env=compose_env,
+                    env={
+                        **compose_env,
+                        "AGORA_PROJECTOR_SERVICE_JWT": projector_token,
+                        "PANTHEON_TENANT_ID": projector_tenant,
+                    },
                     capture_output=True,
                     text=True,
                     check=False,
                 )
                 diagnostics_dir = args.evidence_output.resolve().parent / "diagnostics"
                 diagnostics_dir.mkdir(parents=True, exist_ok=True)
+                raw_out = f"{projector_process.stdout}\n{projector_process.stderr}"
+                sanitized_out = raw_out.replace(projector_token, "[REDACTED]") if projector_token else raw_out
                 (diagnostics_dir / f"{STIMULUS_PROJECTOR_SERVICE}.txt").write_text(
-                    f"# exit={projector_process.returncode}\n"
-                    f"{projector_process.stdout}\n{projector_process.stderr}",
+                    f"# exit={projector_process.returncode}\n{sanitized_out}",
                     encoding="utf-8",
                 )
                 if projector_process.returncode != 0:
                     raise RuntimeError(
                         f"{STIMULUS_PROJECTOR_SERVICE} exited "
-                        f"{projector_process.returncode}: "
-                        f"{(projector_process.stderr or projector_process.stdout)[-2000:]}"
+                        f"{projector_process.returncode}: {sanitized_out[-2000:]}"
                     )
 
         print("[*] Verifying service readiness across HTTP boundaries...")
