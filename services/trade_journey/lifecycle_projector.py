@@ -31,6 +31,7 @@ from services.trade_journey.materializer import (
     identity_summary,
     JourneyMaterializer,
 )
+from services.trade_journey.telemetry_rows import decode_event_payload
 from services.trade_journey.projection_store import (
     BatchProjectionMutation,
     EventReceiptRow,
@@ -1314,9 +1315,6 @@ class PostgresLifecycleSource:
                         raise
         result: list[dict[str, Any]] = []
         for row in rows:
-            payload = row["payload"]
-            if isinstance(payload, str):
-                payload = json.loads(payload)
             result.append(
                 {
                     "ingested_seq": int(row["ingested_seq"]),
@@ -1324,7 +1322,7 @@ class PostgresLifecycleSource:
                     "event_id": row["event_id"],
                     "event_type": row["event_type"],
                     "created_at": row["created_at"].astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
-                    "payload": dict(payload),
+                    "payload": decode_event_payload(row["payload"]),
                 }
             )
         return result

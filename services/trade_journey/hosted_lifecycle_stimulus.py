@@ -27,6 +27,7 @@ from services.execution.lean_runtime.pending_signal_store import (
 )
 from services.execution.lean_runtime.signal_producer import DecisionSignalProducer
 from services.trade_journey.hosted_lifecycle_probe import _atomic_write_json
+from services.trade_journey.telemetry_rows import decode_event_payload
 
 
 SCHEMA_VERSION = "pantheon.loop-prod-tel-002-hosted-stimulus.v1"
@@ -73,19 +74,27 @@ def _utc_now() -> str:
     )
 
 
-def _headers(token: str | None = None) -> dict[str, str]:
+def _headers(token: str | None = None, tenant_id: str | None = None) -> dict[str, str]:
     headers = {"Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    if tenant_id:
+        headers["X-Tenant-Id"] = tenant_id
     return headers
 
 
-def _read_response_json(response: Any) -> Mapping[str, Any]:
-    raw = response.read()
-    parsed = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
-    if not isinstance(parsed, Mapping):
-        raise ValueError("response body is not a JSON object")
-    return parsed
+def _urlopen_json(request: urllib.request.Request, timeout: float) -> Mapping[str, Any]:
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+            return _read_response_json(response)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise StimulusError(
+                "outbound_auth_rejected",
+                f"outbound request was rejected with HTTP {int(exc.code)}",
+                details={"http_status": int(exc.code)},
+            ) from exc
+        raise
 
 
 def _http_get_json(
@@ -99,8 +108,7 @@ def _http_get_json(
         headers=dict(headers or {"Accept": "application/json"}),
         method="GET",
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-        return _read_response_json(response)
+    return _urlopen_json(request, timeout)
 
 
 def _http_post_json(
@@ -123,8 +131,7 @@ def _http_post_json(
         headers=request_headers,
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-        return _read_response_json(response)
+    return _urlopen_json(request, timeout)
 
 
 def _http_error(code: str, message: str, exc: BaseException) -> StimulusError:
@@ -234,10 +241,7 @@ def _row_time(value: Any) -> str:
 
 
 def _committed_lifecycle_identity_from_row(row: Mapping[str, Any]) -> dict[str, Any]:
-    payload = row.get("payload")
-    if isinstance(payload, str):  # asyncpg returns jsonb as JSON text by default
-        payload = json.loads(payload)
-    event = dict(payload) if isinstance(payload, Mapping) else {}
+    event = decode_event_payload(row.get("payload"))
     metadata = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else {}
     return {
         "event_id": _clean(row.get("event_id") or event.get("event_id")),
@@ -700,6 +704,7 @@ def wait_for_lifecycle_summary(
     timeout_seconds: float,
     poll_seconds: float,
     telemetry_db_dsn: str | None = None,
+    headers: Mapping[str, str] | None = None,
     http_get_json: JsonGetter = _http_get_json,
     committed_identity_getter: CommittedIdentityGetter = fetch_committed_lifecycle_identity,
     sleeper: Sleeper = time.sleep,
@@ -735,7 +740,9 @@ def wait_for_lifecycle_summary(
             if identity is not None:
                 return {"source": "telemetry_events"}, identity
         try:
-            payload = http_get_json(endpoint, timeout=min(10.0, remaining))
+            payload = http_get_json(
+                endpoint, headers=headers, timeout=min(10.0, remaining)
+            )
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
             if committed_dsn:
                 sleeper(min(max(0.05, poll_seconds), max(0.0, deadline - monotonic())))
@@ -773,6 +780,7 @@ def trigger_reconciliation(
     tick_id: str,
     timeout_seconds: float = 60.0,
     allow_timeout: bool = False,
+    headers: Mapping[str, str] | None = None,
     http_post_json: JsonPoster = _http_post_json,
 ) -> Mapping[str, Any]:
     endpoint = (
@@ -789,6 +797,7 @@ def trigger_reconciliation(
                 "dispatch_incidents": False,
                 "lifecycle_only": True,
             },
+            headers=headers,
             timeout=timeout_seconds,
         )
     except urllib.error.HTTPError as exc:
@@ -861,6 +870,9 @@ def run_stimulus(
     reconciliation_timeout_seconds: float = 60.0,
     allow_ambiguous_reconciliation: bool = False,
     telemetry_db_dsn: str | None = None,
+    telemetry_token: str | None = None,
+    reconciliation_token: str | None = None,
+    tenant_id: str | None = None,
     quantity: float = 7.0,
     symbol: str = "AAPL.US",
     http_get_json: JsonGetter = _http_get_json,
@@ -914,6 +926,7 @@ def run_stimulus(
             timeout_seconds=timeout_seconds,
             poll_seconds=poll_seconds,
             telemetry_db_dsn=telemetry_db_dsn,
+            headers=_headers(telemetry_token, tenant_id),
             http_get_json=http_get_json,
             committed_identity_getter=committed_identity_getter,
             sleeper=sleeper,
@@ -946,6 +959,7 @@ def run_stimulus(
         tick_id=tick_id,
         timeout_seconds=reconciliation_timeout_seconds,
         allow_timeout=allow_ambiguous_reconciliation,
+        headers=_headers(reconciliation_token, tenant_id),
         http_post_json=http_post_json,
     )
     return {
@@ -1095,6 +1109,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         reconciliation_timeout_seconds=args.reconciliation_timeout_seconds,
         allow_ambiguous_reconciliation=args.allow_ambiguous_reconciliation,
         telemetry_db_dsn=args.telemetry_db_dsn.strip() or None,
+        telemetry_token=os.getenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "").strip() or None,
+        reconciliation_token=os.getenv("RECONCILIATION_DRIFT_AUTH_TOKEN", "").strip() or None,
+        tenant_id=os.getenv("PANTHEON_TENANT_ID", "").strip() or None,
         quantity=args.quantity,
         symbol=args.symbol,
     )

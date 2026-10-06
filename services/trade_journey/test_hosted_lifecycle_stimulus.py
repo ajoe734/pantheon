@@ -609,3 +609,104 @@ def test_stimulus_can_continue_after_ambiguous_reconciliation_timeout(tmp_path):
     assert artifact["stimulus"]["reconciliation_status"] == "ambiguous_timeout"
     assert artifact["stimulus"]["reconciliation_ambiguous"] is True
     assert len(store.enqueued) == 1
+
+
+def _load_reconciliation_drift_module(monkeypatch, tmp_path):
+    import importlib.util
+    from pathlib import Path
+
+    service_dir = Path(__file__).resolve().parents[1] / "reconciliation-drift"
+    monkeypatch.setenv("RECONCILIATION_DRIFT_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("RECONCILIATION_DRIFT_AUTH_MODE", "token")
+    monkeypatch.setenv("RECONCILIATION_DRIFT_AUTH_TOKEN", "owner-token")
+    monkeypatch.syspath_prepend(str(service_dir))
+    monkeypatch.delitem(sys.modules, "store", raising=False)
+    spec = importlib.util.spec_from_file_location(
+        "reconciliation_drift_stimulus_auth_main", service_dir / "main.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _reconcile_through(client):
+    """Adapt the stimulus POST helper onto the real reconciliation app."""
+
+    seen: list[int] = []
+
+    def post_json(url: str, payload: dict, *, headers=None, timeout=10.0):
+        path = url.split("8102", 1)[1]
+        response = client.post(path, json=payload, headers=dict(headers or {}))
+        seen.append(response.status_code)
+        if response.status_code in (401, 403):
+            raise stimulus.StimulusError("outbound_auth_rejected", "rejected")
+        response.raise_for_status()
+        return response.json()
+
+    return post_json, seen
+
+
+def test_scheduled_reconciliation_requires_credentials_and_tenant(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    client = TestClient(_load_reconciliation_drift_module(monkeypatch, tmp_path).app)
+    path = "/api/reconciliation-drift/scheduled-reconcile"
+    body = {"tick_id": "t-1", "binding_id": "rb-1", "lifecycle_only": True}
+    good = stimulus._headers("owner-token", "tenant-a")
+
+    assert client.post(path, json=body).status_code == 401
+    assert client.post(path, json=body, headers=stimulus._headers(None, "tenant-a")).status_code == 401
+    assert client.post(path, json=body, headers=stimulus._headers("owner-token")).status_code == 400
+    assert client.post(path, json=body, headers=stimulus._headers("wrong", "tenant-a")).status_code == 401
+    accepted = client.post(path, json=body, headers=good)
+    assert accepted.status_code == 201
+
+    post_json, seen = _reconcile_through(client)
+    with pytest.raises(stimulus.StimulusError) as excinfo:
+        stimulus.trigger_reconciliation(
+            reconciliation_url="http://reconciliation-drift-svc:8102",
+            binding_id="rb-1",
+            tick_id="t-2",
+            http_post_json=post_json,
+        )
+    assert excinfo.value.code == "outbound_auth_rejected"
+    assert seen == [400] or seen == [401]
+
+
+def test_wait_for_lifecycle_summary_sends_credentials_and_tenant():
+    binding = _binding()
+    calls: list[dict] = []
+    getter = _success_getter(binding, now_iso="2026-07-18T14:00:00Z")
+
+    def get_json(url, **kwargs):
+        calls.append(kwargs)
+        return getter(url, **kwargs)
+
+    stimulus.wait_for_lifecycle_summary(
+        telemetry_url="http://telemetry:8083",
+        binding=binding,
+        run_id=f"run-{binding['binding_id']}-2026-07-18T14:00:00Z-1",
+        timeout_seconds=1,
+        poll_seconds=0.001,
+        headers=stimulus._headers("tel-token", "tenant-a"),
+        http_get_json=get_json,
+    )
+    assert calls[0]["headers"]["Authorization"] == "Bearer tel-token"
+    assert calls[0]["headers"]["X-Tenant-Id"] == "tenant-a"
+
+
+@pytest.mark.parametrize("code", [401, 403])
+def test_http_auth_rejection_is_terminal_and_redacted(monkeypatch, code):
+    import io
+    import urllib.error
+
+    def deny(request, timeout=None):
+        raise urllib.error.HTTPError(request.full_url, code, "no", {}, io.BytesIO(b"secret"))
+
+    monkeypatch.setattr(stimulus.urllib.request, "urlopen", deny)
+    with pytest.raises(stimulus.StimulusError) as excinfo:
+        stimulus._http_get_json("http://telemetry:8083/api/telemetry/runtime-summaries")
+    assert excinfo.value.code == "outbound_auth_rejected"
+    assert excinfo.value.safe_details == {"http_status": code}
+    assert "secret" not in excinfo.value.safe_message
