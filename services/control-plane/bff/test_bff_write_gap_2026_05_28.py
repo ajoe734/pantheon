@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Generator, Iterator
 
 import pytest
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from collections import deque
@@ -93,7 +94,6 @@ _sse_subscribers: dict[str, list[Any]] = {
     "approval": [],
 }
 _AGORA_CORE_BFF_IDEMPOTENCY: dict[str, dict[str, Any]] = {}
-_GOV_BFF_IDEMPOTENCY: dict[str, dict[str, Any]] = {}
 _WIZARD_APPROVAL_DECISIONS: dict[str, dict[str, Any]] = {}
 _event_seq = 0
 
@@ -231,11 +231,20 @@ def _create_approval_decisions_router() -> APIRouter:
         is_dry_run = str(x_dry_run or "").strip().lower() in ("1", "true", "yes")
 
         clean_key = idempotency_key.strip() if idempotency_key else None
-        if clean_key and clean_key in _GOV_BFF_IDEMPOTENCY:
-            cached = _GOV_BFF_IDEMPOTENCY[clean_key]
-            return JSONResponse(status_code=cached["status_code"], content=cached["content"])
-
         if plan_id in _WIZARD_APPROVAL_DECISIONS:
+            existing = _WIZARD_APPROVAL_DECISIONS[plan_id]
+            if clean_key and existing.get("idempotency_key") == clean_key:
+                return JSONResponse(
+                    status_code=202,
+                    content={
+                        "data": existing,
+                        "meta": {
+                            "dryRun": False,
+                            "evidenceKind": "approval.decide",
+                            "correlationId": x_correlation_id,
+                        },
+                    },
+                )
             raise HTTPException(
                 status_code=409,
                 detail={"error": {"code": "RESOURCE_CONFLICT", "message": f"Approval decision for {plan_id} already exists"}},
@@ -257,8 +266,6 @@ def _create_approval_decisions_router() -> APIRouter:
                     "correlationId": x_correlation_id,
                 },
             }
-            if clean_key:
-                _GOV_BFF_IDEMPOTENCY[clean_key] = {"status_code": 200, "content": res_content}
             return JSONResponse(status_code=200, content=res_content)
 
         command_id = f"cmd-appr-{uuid.uuid4().hex[:8]}"
@@ -270,6 +277,7 @@ def _create_approval_decisions_router() -> APIRouter:
             "memo": memo,
             "approver_id": identity.operator_id,
             "decided_at": "2026-05-28T00:00:00Z",
+            "idempotency_key": clean_key,
         }
         _WIZARD_APPROVAL_DECISIONS[plan_id] = record
         _publish_event_stream("approval", "approval.decided", record)
@@ -282,8 +290,6 @@ def _create_approval_decisions_router() -> APIRouter:
                 "correlationId": x_correlation_id,
             },
         }
-        if clean_key:
-            _GOV_BFF_IDEMPOTENCY[clean_key] = {"status_code": 202, "content": res_content}
         return JSONResponse(status_code=202, content=res_content)
 
     return router
@@ -645,6 +651,7 @@ class WriteGapTestReadPorts(ReadSurfacePorts):
             "created_at": timestamp,
             "updated_at": timestamp,
             "created_by": actor_id,
+            "idempotency_key": kwargs.get("idempotency_key"),
         }
         self._data.setdefault("runtime_bindings", {})[rid] = record
         self._data.setdefault("runtime_bindings", {})[bid] = record
@@ -807,7 +814,6 @@ def _isolated_runtime_bff(runtime_bindings: list[dict[str, Any]]) -> Iterator[Te
             encoding="utf-8",
         )
         os.environ["PANTHEON_RUNTIME_DATA_DIR"] = str(runtime_dir)
-        _GOV_BFF_IDEMPOTENCY.clear()
         _sse_buffers["runtime"].clear()
         rb_map = {rb.get("binding_id") or rb.get("id"): rb for rb in runtime_bindings if isinstance(rb, dict)}
         store = WriteGapTestReadPorts(
@@ -816,7 +822,6 @@ def _isolated_runtime_bff(runtime_bindings: list[dict[str, Any]]) -> Iterator[Te
         )
         deps = {
             "_GOVERNANCE_APPROVAL_QUEUE_ROUTE": "/api/v1/governance-review-queue",
-            "_GOV_BFF_IDEMPOTENCY": _GOV_BFF_IDEMPOTENCY,
             "_aggregate_group_surface": lambda *a, **kw: {},
             "_alert_target_ref": lambda *a, **kw: "",
             "_bff_error": _bff_error,
@@ -864,7 +869,6 @@ def _isolated_runtime_bff(runtime_bindings: list[dict[str, Any]]) -> Iterator[Te
         try:
             yield TestClient(app)
         finally:
-            _GOV_BFF_IDEMPOTENCY.clear()
             _sse_buffers["runtime"].clear()
             for key, value in original_env.items():
                 if value is None:
@@ -938,17 +942,27 @@ def _runtime_create_payload(binding_id: str = "binding-runtime-create-001") -> d
 
 
 def test_post_bff_runtimes_creates_stopped_runtime_and_replays_idempotently() -> None:
-    with _isolated_runtime_bff([]) as client:
-        response = client.post("/bff/runtimes", json=_runtime_create_payload(), headers=RUNTIME_HEADERS)
-        replay = client.post("/bff/runtimes", json=_runtime_create_payload(), headers=RUNTIME_HEADERS)
-        runtime_id = response.json()["data"]["id"]
-        detail = client.get(
-            f"/bff/runtimes/{runtime_id}",
-            headers={"Authorization": RUNTIME_HEADERS["Authorization"]},
-        )
-        event_types = [event["type"] for _event_id, event in _sse_buffers["runtime"]]
+    recorded_owner_writes: list[dict[str, Any]] = []
+    original_create = WriteGapTestReadPorts.create_runtime_binding
+
+    def recording_create_runtime_binding(self, **kwargs):
+        recorded_owner_writes.append(dict(kwargs))
+        return original_create(self, **kwargs)
+
+    with patch.object(WriteGapTestReadPorts, "create_runtime_binding", recording_create_runtime_binding):
+        with _isolated_runtime_bff([]) as client:
+            response = client.post("/bff/runtimes", json=_runtime_create_payload(), headers=RUNTIME_HEADERS)
+            replay = client.post("/bff/runtimes", json=_runtime_create_payload(), headers=RUNTIME_HEADERS)
+            runtime_id = response.json()["data"]["id"]
+            detail = client.get(
+                f"/bff/runtimes/{runtime_id}",
+                headers={"Authorization": RUNTIME_HEADERS["Authorization"]},
+            )
+            event_types = [event["type"] for _event_id, event in _sse_buffers["runtime"]]
 
     assert response.status_code == 201, response.text
+    assert len(recorded_owner_writes) == 1
+    assert recorded_owner_writes[0]["idempotency_key"] == "bff-write-gap-runtime-create-001"
     payload = response.json()
     assert payload["data"]["name"] == "Paper Runtime 001"
     assert payload["data"]["state"] == "stopped"
@@ -966,6 +980,18 @@ def test_post_bff_runtimes_creates_stopped_runtime_and_replays_idempotently() ->
     assert detail.json()["data"]["status"] == "stopped"
 
     assert event_types == ["runtime.created", "management.runtime-status"]
+
+
+def test_post_bff_runtimes_fails_closed_when_owner_cannot_honor_idempotency_key(monkeypatch) -> None:
+    def owner_without_idempotency(self, *, runtime_id=None, name="", persona_id="", binding_id="", deployment_plan_id="", runtime_kind="paper", actor_id="", created_at=None, params=None):
+        raise AssertionError("an owner that cannot honor the key must not be written")
+
+    monkeypatch.setattr(WriteGapTestReadPorts, "create_runtime_binding", owner_without_idempotency)
+    with _isolated_runtime_bff([]) as client:
+        response = client.post("/bff/runtimes", json=_runtime_create_payload(), headers=RUNTIME_HEADERS)
+
+    assert response.status_code == 503, response.text
+    assert response.json()["error"]["details"]["precondition_failed"] == "owner_idempotency_unsupported"
 
 
 def test_post_bff_runtimes_rejects_binding_that_already_has_runtime() -> None:
@@ -1039,7 +1065,6 @@ def _isolated_deployment_plan_bff(
         seed_data=seed,
         allow_local_snapshot_fallback=True,
     )
-    _GOV_BFF_IDEMPOTENCY.clear()
     _sse_buffers["audit"].clear()
     queries = DeploymentReadSurfaceAdapter(store)
     commands = _TestDeploymentCommands(store)
@@ -1064,7 +1089,6 @@ def _isolated_deployment_plan_bff(
         resolve_final_idempotency_key=resolve_final_idempotency_key,
         reject_body_idempotency_key=reject_body_idempotency_key,
         request_dry_run_requested=lambda h=None: str(h or "").strip().lower() in {"1", "true", "yes"},
-        gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
         publish_event=_publish_event,
         sse_buffers=_sse_buffers,
         sse_subscribers=_sse_subscribers,
@@ -1080,7 +1104,6 @@ def _isolated_deployment_plan_bff(
     try:
         yield TestClient(app)
     finally:
-        _GOV_BFF_IDEMPOTENCY.clear()
         _sse_buffers["audit"].clear()
 
 
@@ -1284,7 +1307,6 @@ def _isolated_confirm_bff() -> Iterator[TestClient]:
         store_path = Path(td) / "commands.jsonl"
         store_path.touch()
         command_store = CommandStore(str(store_path))
-        _GOV_BFF_IDEMPOTENCY.clear()
         _sse_buffers["audit"].clear()
         svc = CommandAdapterService(
             command_store=command_store,
@@ -1298,7 +1320,6 @@ def _isolated_confirm_bff() -> Iterator[TestClient]:
         try:
             yield TestClient(app)
         finally:
-            _GOV_BFF_IDEMPOTENCY.clear()
             _sse_buffers["audit"].clear()
 
 
@@ -1588,7 +1609,6 @@ def test_get_persona_management_deploymentplans_and_approvals_are_lists() -> Non
 @contextmanager
 def _isolated_approval_decisions_bff() -> Iterator[TestClient]:
     _WIZARD_APPROVAL_DECISIONS.clear()
-    _GOV_BFF_IDEMPOTENCY.clear()
     _sse_buffers["approval"].clear()
     router = _create_approval_decisions_router()
     app = FastAPI()
@@ -1598,7 +1618,6 @@ def _isolated_approval_decisions_bff() -> Iterator[TestClient]:
         yield TestClient(app, raise_server_exceptions=False)
     finally:
         _WIZARD_APPROVAL_DECISIONS.clear()
-        _GOV_BFF_IDEMPOTENCY.clear()
         _sse_buffers["approval"].clear()
 
 
@@ -1682,9 +1701,10 @@ def test_post_approval_decisions_idempotent_replay() -> None:
             headers=_approval_headers("approval-idem-001"),
             json=_approval_payload(plan_id="plan-idem-001"),
         )
-    assert first.status_code == 202, first.text
-    assert replay.status_code == 202, replay.text
-    assert first.json()["data"]["commandId"] == replay.json()["data"]["commandId"]
+        assert first.status_code == 202, first.text
+        assert replay.status_code == 202, replay.text
+        assert first.json()["data"]["commandId"] == replay.json()["data"]["commandId"]
+        assert _WIZARD_APPROVAL_DECISIONS["plan-idem-001"]["idempotency_key"] == "approval-idem-001"
 
 
 def test_post_approval_decisions_conflict_same_plan_second_write() -> None:

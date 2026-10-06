@@ -568,6 +568,17 @@ _SSE_CHANNEL_CATALOG_FALLBACK: tuple[str, ...] = (
 )
 
 
+class UnresolvedBffDependency(RuntimeError):
+    """Composition named a dependency that no explicit port or real owner supplies."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(
+            f"BFF composition dependency {name!r} resolves to no explicit dependency "
+            "and no production implementation; refusing to compose a stand-in."
+        )
+        self.dependency_name = name
+
+
 def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
     # 1. Auth policy
     if name == "_extract_identity":
@@ -692,38 +703,13 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
         return "/api/v1/operator/governance/approvals"
     if name == "_PM12_ATTRIBUTION_DIMENSIONS":
         return ("strategy_id", "persona_id", "model_id", "asset_class", "time_horizon")
-    if name == "_REQUEST_DRY_RUN_CONTEXT":
-        from contextvars import ContextVar
-        return ContextVar("request_dry_run_context", default=False)
 
-    # 9. Default Stores
+    # 9. Owner-backed stores and helpers
     if name == "settings_store":
         return app_deps.settings_store
     if name == "session_lifecycle_store":
         from ..session_lifecycle_store import SessionLifecycleStore
         return SessionLifecycleStore(os.path.join(os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff"), "session_lifecycle.json"))
-    if name == "provider_readiness_cache":
-        from ..auth.service import ProviderReadinessCache
-        return ProviderReadinessCache(probe=lambda: {"ready": True}, provider="openclaw")
-    if name in {
-        "_GOV_BFF_IDEMPOTENCY", "gov_bff_idempotency", "_AGORA_CORE_BFF_IDEMPOTENCY",
-        "_STRATEGY_PERSONA_BFF_IDEMPOTENCY", "_STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY",
-        "_STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY",
-        "idempotency_ledger", "capital_bff_idempotency_store", "_capital_bff_idempotency_store",
-    }:
-        return {}
-    if name in {"_incident_events", "incident_events"}:
-        return []
-    if name in {"_incident_subscribers", "incident_subscribers"}:
-        return set()
-    if name in {"_sse_buffers", "sse_buffers"}:
-        from collections import defaultdict
-        return defaultdict(list, {ch: [] for ch in _SSE_CHANNEL_CATALOG_FALLBACK})
-    if name in {"_sse_subscribers", "sse_subscribers"}:
-        from collections import defaultdict
-        return defaultdict(set, {ch: set() for ch in _SSE_CHANNEL_CATALOG_FALLBACK})
-
-    # Safe callables
     if name in {"_page_slice", "page_slice_fn", "page_slice"}:
         from ..research.routes.common import _default_page_slice
         return _default_page_slice
@@ -736,94 +722,30 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
             kwargs.setdefault("source", app_deps.read_surface.dataset_source(dataset))
             return format_dataset_surface_status(dataset, **kwargs)
         return owner_surface
-    if name in {
-        "_composed_surface_status", "composed_surface_status",
-        "_composed_dataset_surface_status", "composed_dataset_surface_status",
-    }:
-        return lambda *a, **kw: "available"
-    if name in {"_read_surface_meta", "read_surface_meta"}:
-        return lambda *a, **kw: {}
-    if name in {
-        "_raise_if_read_surface_unavailable", "raise_if_read_surface_unavailable",
-        "raise_if_read_surface_unavailable_fn", "_raise_if_session_logged_out",
-        "_reject_body_idempotency_key", "reject_body_idempotency_key", "reject_body_idempotency_key_fn",
-        "_require_ooda_packet_routes_enabled", "_require_journal_write_role",
-        "_capital_bff_idempotency_check", "capital_bff_idempotency_check",
-        "_strategy_persona_idempotency_check", "strategy_persona_idempotency_check",
-    }:
-        return lambda *a, **kw: None
-    if name in {"_resolve_final_idempotency_key", "resolve_final_idempotency_key", "resolve_final_idempotency_key_fn"}:
-        return lambda k, d=None: k or d or "default-key"
-    if name in {"_request_dry_run_requested", "request_dry_run_requested", "_truthy_header", "dry_run_resolver"}:
-        return lambda *a, **kw: False
-    if name in {"_dry_run_success_response", "dry_run_success_response"}:
-        return lambda *a, **kw: {"status": "dry_run"}
-    if name in {"_meta_staleness", "meta_staleness"}:
-        return lambda *a, **kw: 0.0
-    if name in {"_stable_json_hash", "stable_json_hash"}:
-        return lambda *a, **kw: "hash"
     if name in {"_split_csv_query", "split_csv_query"}:
         return lambda v: [x.strip() for x in (v or "").split(",") if x.strip()]
-    if name in {
-        "_handle_sse_stream", "handle_sse_stream", "_publish_event", "publish_event",
-        "publish_event_fn", "stream_generic_events",
-    }:
-        return lambda *a, **kw: None
-    if name in {"_build_operator_alerts_payload", "build_operator_alerts_payload"}:
-        return lambda s: {}
-    if name in {
-        "_build_management_cockpit_payload", "build_cockpit_payload",
-        "_build_management_evidence_payload", "build_evidence_payload",
-        "_project_operator_runtime_state_row", "_read_surface_state",
-        "_ooda_packet_list_payload", "ooda_packet_list_payload",
-        "_assistant_build_context_pack", "build_context_pack",
-        "_assistant_provider_readiness", "provider_readiness",
-        "_assistant_provider_register", "provider_register",
-        "_assistant_provider_reauth", "provider_reauth",
-        "_assistant_provider_reauth_status", "provider_reauth_status",
-        "_assistant_provider_reauth_code", "provider_reauth_code",
-        "_ensure_agora_servant_openclaw_agent", "sync_servant_agent",
-        "_resolve_agora_interaction_context_ref", "canonical_context_ref_resolver",
-    }:
-        return lambda *a, **kw: {}
-    if name in {
-        "_read_management_source_connector_registry", "read_source_connector_registry",
-        "_list_governance_audit_events", "list_governance_audit_events",
-        "_list_persona_records", "list_persona_records",
-        "_list_strategy_summaries", "list_strategy_summaries",
-        "_assistant_provider_list", "provider_list",
-    }:
-        return lambda *a, **kw: []
-    if name in {
-        "_gov_bff_action_command", "gov_bff_action_command",
-        "_capital_bff_action_command", "capital_bff_action_command",
-        "_evol_exp_bff_action_command", "submit_job_action",
-        "submit_program_action", "submit_experiment_action",
-        "_submit_final_command_admission", "submit_command", "submit_final_command_admission",
-        "_sem_command_response", "sem_command_response", "submit_sem_command",
-        "_aggregate_group_surface", "aggregate_group_surface",
-    }:
-        return lambda *a, **kw: {}
-    if name in {"_alert_target_ref", "_incident_detail_href", "_deployment_review_href"}:
-        return lambda *a, **kw: ""
     if name in {"_deprecated_bff_path_response", "deprecated_bff_path_response"}:
-        from starlette.responses import JSONResponse
-        return lambda *, route, replacement: JSONResponse(status_code=410, content={
-            "error": {"code": "ACTION_RETIRED", "route": route, "replacement": replacement},
-        })
-    if name in {"_management_ai_conversation_store", "conv_store"}:
-        return lambda: None
-    if name in {"_assistant_ask_enabled", "assistant_ask_enabled"}:
-        return lambda *a, **kw: True
-    if name in {"agora_audit_store", "strategy_write_owner", "loop_truth", "downstream_health_monitor"}:
-        return None
+        from ..personas.service import _deprecated_bff_path_response
+        return _deprecated_bff_path_response
 
-    return lambda *a, **kw: None
+    # 10. Capital owner boundary (POST /api/v1/bindings)
+    if name == "_stable_capital_resource_id":
+        from ..capital.router import stable_capital_resource_id
+        return stable_capital_resource_id
+    if name == "_capital_owner_role":
+        from ..capital.router import capital_owner_role
+        return capital_owner_role
+    if name == "_raise_capital_owner_error":
+        from ..capital.router import raise_capital_owner_error
+        return raise_capital_owner_error
+
+    raise UnresolvedBffDependency(name)
 
 
 def mount_bff_routers(
     app: FastAPI,
     app_deps: Optional[Any] = None,
+    dependency_resolver: Optional[Callable[[str, Any], Any]] = None,
     **dependencies: Any,
 ) -> None:
     """Mount all domain routers onto the given FastAPI application.
@@ -832,6 +754,9 @@ def mount_bff_routers(
     When called from ``main.py``, dependencies resolve from the active
     ``main.py`` module scope unless explicitly passed. When called standalone
     without importing ``main.py``, canonical default services and ports are used.
+    A dependency that none of those supply raises ``UnresolvedBffDependency`` at
+    composition time. ``dependency_resolver`` is the explicit seam through which a
+    caller (tests) supplies stand-ins; production never passes one.
     """
     import sys
 
@@ -851,6 +776,9 @@ def mount_bff_routers(
     # silently degrading to the standalone safe-default stubs below.
     main_mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
 
+    def _resolve(name: str) -> Any:
+        return (dependency_resolver or _resolve_default_dependency)(name, app_deps)
+
     def _dep(name: str, fallback_factory: Optional[Callable[[], Any]] = None) -> Any:
         if name in dependencies and dependencies[name] is not None:
             return dependencies[name]
@@ -860,7 +788,7 @@ def mount_bff_routers(
                 return val
         if fallback_factory is not None:
             return fallback_factory()
-        return _resolve_default_dependency(name, app_deps)
+        return _resolve(name)
 
     # 1-4: Governance subrules
     from ..console_gap.permissions import create_permissions_router
@@ -1209,17 +1137,15 @@ def mount_bff_routers(
                 name,
                 lambda n=name: getattr(persona_service, "build_persona_health_items")
                 if n == "_build_persona_health_items"
-                else _resolve_default_dependency(n, app_deps),
+                else _resolve(n),
             )
             for name in (
                 "_GOVERNANCE_APPROVAL_QUEUE_ROUTE",
-                "_GOV_BFF_IDEMPOTENCY",
                 "_aggregate_group_surface",
                 "_alert_target_ref",
                 "_bff_error",
                 "_build_persona_health_items",
-                "_capital_bff_idempotency_check",
-                "_capital_bff_idempotency_store",
+                "_capital_owner_role",
                 "_composed_dataset_surface_status",
                 "_composed_surface_status",
                 "_dataset_surface_status",
@@ -1235,6 +1161,7 @@ def mount_bff_routers(
                 "_page_slice",
                 "_project_operator_runtime_state_row",
                 "_publish_event",
+                "_raise_capital_owner_error",
                 "_raise_if_read_surface_unavailable",
                 "_read_surface_meta",
                 "_reject_body_idempotency_key",
@@ -1247,6 +1174,7 @@ def mount_bff_routers(
                 "_split_csv_query",
                 "_sse_buffers",
                 "_sse_subscribers",
+                "_stable_capital_resource_id",
                 "_stable_json_hash",
                 "create_capital_binding",
                 "utc_now",
@@ -1278,7 +1206,6 @@ def mount_bff_routers(
         resolve_final_idempotency_key=_dep("_resolve_final_idempotency_key"),
         reject_body_idempotency_key=_dep("_reject_body_idempotency_key"),
         request_dry_run_requested=_dep("_request_dry_run_requested"),
-        gov_bff_idempotency={},
         publish_event=_dep("_publish_event"),
         sse_buffers=sse_buffers,
         sse_subscribers=sse_subscribers,
@@ -1323,8 +1250,6 @@ def mount_bff_routers(
             deprecated_bff_path_response=_dep("_deprecated_bff_path_response"),
             reject_body_idempotency_key=_dep("_reject_body_idempotency_key"),
             resolve_final_idempotency_key=_dep("_resolve_final_idempotency_key"),
-            capital_bff_idempotency_check=_dep("_capital_bff_idempotency_check"),
-            capital_bff_idempotency_store=_dep("_capital_bff_idempotency_store"),
             capital_bff_action_command=_dep("_capital_bff_action_command"),
             object_type=ObjectType,
             command_type=CommandType,
@@ -1405,7 +1330,6 @@ def mount_bff_routers(
             list_governance_audit_events=_dep("_list_governance_audit_events"),
             incident_events=_dep("_incident_events"),
             incident_subscribers=_dep("_incident_subscribers"),
-            idempotency_ledger=_dep("_GOV_BFF_IDEMPOTENCY"),
         )
     )
 
@@ -1692,6 +1616,7 @@ def compose_bff_app(
     validate_session: Optional[Callable[[str], Any]] = None,
     title: str = "Pantheon Operator BFF",
     version: str = "0.2.0",
+    dependency_resolver: Optional[Callable[[str, Any], Any]] = None,
     **dependencies: Any,
 ) -> FastAPI:
     """Compose and return the fully assembled Operator BFF FastAPI application.
@@ -1739,7 +1664,7 @@ def compose_bff_app(
     from starlette.middleware import Middleware
     # Read the bearer header after the browser-session middleware validates cookies.
     app.user_middleware.append(Middleware(OwnerReadContextMiddleware))
-    mount_bff_routers(app, app_deps=app_deps, **dependencies)
+    mount_bff_routers(app, app_deps=app_deps, dependency_resolver=dependency_resolver, **dependencies)
 
     try:
         _ = app.openapi()
@@ -1749,13 +1674,16 @@ def compose_bff_app(
     return app
 
 
-def get_canonical_bff_route_set(app: Optional[FastAPI] = None) -> set[tuple[str, str]]:
+def get_canonical_bff_route_set(
+    app: Optional[FastAPI] = None,
+    dependency_resolver: Optional[Callable[[str, Any], Any]] = None,
+) -> set[tuple[str, str]]:
     """Extract canonical (method, path) route set for Operator BFF.
 
     Enables testing route coverage and parity without importing main.py.
     """
     if app is None:
-        app = compose_bff_app()
+        app = compose_bff_app(dependency_resolver=dependency_resolver)
 
     routes: set[tuple[str, str]] = set()
     for r in app.routes:

@@ -43,6 +43,7 @@ from services.control_plane.bff.command_adapters.service import (
     _process_command_stub,
     process_command,
 )
+from services.control_plane.bff.tests.bff_compose_stand_ins import resolve_with_stand_ins
 from services.control_plane.bff.core.app_factory import (
     assert_main_reexport_parity,
     compose_bff_app,
@@ -167,8 +168,8 @@ def test_overlay_retirement_identity_gap_closed_standalone() -> None:
 
 def test_canonical_route_set_matches_standalone_composition() -> None:
     """compose_bff_app produces the same route set as the canonical route set, no main.py needed."""
-    canonical_routes = get_canonical_bff_route_set()
-    standalone_routes = get_canonical_bff_route_set(compose_bff_app())
+    canonical_routes = get_canonical_bff_route_set(dependency_resolver=resolve_with_stand_ins)
+    standalone_routes = get_canonical_bff_route_set(compose_bff_app(dependency_resolver=resolve_with_stand_ins))
     assert canonical_routes == standalone_routes
     assert len(canonical_routes) > 450
 
