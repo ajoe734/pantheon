@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "task_id": "BFF-RETIRED-ALIAS-TESTS-20261006",
+  "owner": "PiAstra",
+  "reviewer": "Claude",
+  "source_baseline": "64cdd49c220fb44f6180d37744adc489d447e533",
+  "scope": "Retired wrapped aliases and CreateDeployment fail before storage; live alias guarantees remain asserted.",
+  "retired_ranking_coverage": "services/control-plane/bff/tests/test_receipt_only_retirement.py::test_retired_mounted_command_has_no_effect covers direct RankingAction and QuarterlyRankingRecommendationSubmit retirement.",
+  "implementation": {
+    "live_aliases": "All three alias parameterized tests select only canonicals present in the action catalog; original assertions retained.",
+    "retired_aliases": "Every wrapper-table entry whose canonical is retired is tested wrapped and direct for identical 410 ACTION_RETIRED bodies, replacement detail, and empty storage.",
+    "deployment_create": "Removed CreateDeployment from CommandType; both deployment create routes call reject_retired_command and assert the replacement with no receipt.",
+    "related_fixes": "Confirmation degraded-read tests use real stores; assistant admission uses allowlisted EscalateDiff; ranking parity and ranking-only snapshot scaffolding removed."
+  },
+  "validation": [
+    "PANTHEON_PY -m pytest -q services/control-plane/bff/tests/test_command_adapters_router.py: 509 passed, 1 skipped.",
+    "PANTHEON_PY -m pytest -q services/control-plane/bff/tests/test_receipt_only_retirement.py: 30 passed.",
+    "PANTHEON_PY -m pytest -q services/control-plane/bff/test_final_command_execution_bridge.py: 8 passed.",
+    "Focused alias breakdown: accepted-path 44 passed; wrapped parity 132 passed; malformed params 264 passed; retired wrapped/direct aliases 8 cases passed.",
+    "Confirmation, assistant admission, retired mounted commands (including ranking names), CreateDeployment route/exclusion checks: 30 focused cases passed.",
+    "git diff --check: passed; rg confirms no Python references to CommandType.DEPLOYMENT_CREATE or DEPLOYMENT_CREATE."
+  ],
+  "superseded_attempts": "Earlier bounded full-suite batches timed out; each was rerun to completion in later batches listed above.",
+  "status": "implementation and focused BFF suites validated; ready for review"
+}

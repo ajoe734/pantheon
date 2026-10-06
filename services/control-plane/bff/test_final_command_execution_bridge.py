@@ -226,20 +226,7 @@ def _build_test_app() -> FastAPI:
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
-        identity = _test_extract_identity(authorization)
-        client_provided_id = payload.get("deployment_id") or payload.get("deploymentId") or payload.get("id")
-        deployment_id = str(client_provided_id or f"deployment-{uuid.uuid4().hex[:8]}")
-        return _test_sem_command_response(
-            command_type=CommandType.DEPLOYMENT_CREATE,
-            target_type=ObjectType.DEPLOYMENT,
-            target_id=deployment_id,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            status_code=201,
-            server_generated_target=not client_provided_id,
-        )
+        reject_retired_command("CreateDeployment")
 
     return app
 

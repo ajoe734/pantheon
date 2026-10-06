@@ -33,6 +33,7 @@ from fastapi import APIRouter, Body, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
+from ..command_adapters.retired import reject_retired_command
 from ..models import CommandType, ErrorCode, ObjectType
 
 from .ports import DeploymentCommands, DeploymentQueries
@@ -123,15 +124,7 @@ def create_deployment_router(
     ):
         identity = extract_identity(authorization)
         require_operator_role(identity)
-        plan_id = str(payload.get("plan_id") or payload.get("id") or "")
-        return sem_command_response(
-            command_type=CommandType.DEPLOYMENT_CREATE,
-            target_type=ObjectType.DEPLOYMENT, target_id=plan_id,
-            payload=payload, identity=identity, authorization=authorization,
-            idempotency_key=idempotency_key, x_idempotency_key=x_idempotency_key,
-            server_generated_target=not plan_id,
-            dry_run=str(x_dry_run or "").strip().lower() in {"1", "true", "yes"},
-        )
+        reject_retired_command("CreateDeployment")
 
     @router.get("/api/v1/deployment-plans/{plan_id}")
     async def get_deployment_plan(plan_id: str, authorization: Optional[str] = Header(default=None)):
@@ -550,20 +543,7 @@ def create_deployment_router(
     ):
         identity = extract_identity(authorization)
         require_operator_role(identity)
-        client_provided_id = payload.get("deployment_id") or payload.get("deploymentId") or payload.get("id")
-        deployment_id = str(client_provided_id or f"deployment-{uuid.uuid4().hex[:8]}")
-        return sem_command_response(
-            authorization=authorization,
-            command_type=CommandType.DEPLOYMENT_CREATE,
-            target_type=ObjectType.DEPLOYMENT,
-            target_id=deployment_id,
-            payload=payload,
-            identity=identity,
-            idempotency_key=idempotency_key,
-            x_idempotency_key=x_idempotency_key,
-            status_code=201,
-            server_generated_target=not client_provided_id,
-        )
+        reject_retired_command("CreateDeployment")
 
     @router.patch("/bff/deployments/{deployment_id}", status_code=202)
     async def sem_patch_deployment_command(

@@ -33,7 +33,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from read_store_fixtures import make_fixture_record
+try:
+    from read_store_fixtures import make_fixture_record
+except ImportError:
+    from services.control_plane.bff.tests.read_store_fixtures import make_fixture_record
 
 
 class ManagementFixtureBuilder:

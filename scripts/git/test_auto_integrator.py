@@ -2392,6 +2392,67 @@ class IntegrationPlanTests(unittest.TestCase):
         self.assertIn("No open or merged PR found", result.detail)
 
 
+class SupersededCheckRunTests(unittest.TestCase):
+    @staticmethod
+    def run_item(name: str, conclusion: str, started: str, status: str = "COMPLETED") -> dict:
+        return {
+            "__typename": "CheckRun",
+            "name": name,
+            "workflowName": "CI",
+            "status": status,
+            "conclusion": conclusion,
+            "startedAt": started,
+        }
+
+    def test_cancelled_runs_superseded_by_success_are_green(self) -> None:
+        names = ["Smoke acceptance", "Docker build dry run"]
+        rollup = [self.run_item(n, "CANCELLED", "2026-10-06T14:57:00Z") for n in names]
+        rollup += [self.run_item(n, "SUCCESS", "2026-10-06T15:02:00Z") for n in names]
+        self.assertEqual(auto_integrator.summarize_status_rollup(rollup).state, "green")
+        rollup.reverse()
+        self.assertEqual(auto_integrator.summarize_status_rollup(rollup).state, "green")
+
+    def test_latest_failure_after_success_stays_red(self) -> None:
+        rollup = [
+            self.run_item("Smoke acceptance", "FAILURE", "2026-10-06T15:02:00Z"),
+            self.run_item("Smoke acceptance", "SUCCESS", "2026-10-06T14:57:00Z"),
+        ]
+        summary = auto_integrator.summarize_status_rollup(rollup)
+        self.assertEqual(summary.state, "red")
+        self.assertEqual(summary.failing, ("Smoke acceptance",))
+
+    def test_latest_queued_rerun_is_pending(self) -> None:
+        rollup = [
+            self.run_item("Smoke acceptance", "CANCELLED", "2026-10-06T14:57:00Z"),
+            self.run_item("Smoke acceptance", "", "2026-10-06T15:02:00Z", "QUEUED"),
+        ]
+        self.assertEqual(auto_integrator.summarize_status_rollup(rollup).state, "pending")
+
+    def test_all_failed_runs_stay_red_and_undated_fail_closed(self) -> None:
+        failed = [
+            self.run_item("Smoke acceptance", "FAILURE", "2026-10-06T14:57:00Z"),
+            self.run_item("Smoke acceptance", "FAILURE", "2026-10-06T15:02:00Z"),
+        ]
+        self.assertEqual(auto_integrator.summarize_status_rollup(failed).state, "red")
+        undated = [
+            self.run_item("Smoke acceptance", "CANCELLED", "0001-01-01T00:00:00Z"),
+            self.run_item("Smoke acceptance", "SUCCESS", "2026-10-06T15:02:00Z"),
+        ]
+        self.assertEqual(auto_integrator.summarize_status_rollup(undated).state, "red")
+
+    def test_canonical_review_gate_uses_latest_run(self) -> None:
+        name = auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT
+        rollup = [
+            self.run_item(name, "CANCELLED", "2026-10-06T14:57:00Z"),
+            self.run_item(name, "SUCCESS", "2026-10-06T15:02:00Z"),
+        ]
+        self.assertTrue(auto_integrator.is_canonical_review_gate_green(rollup))
+        rollup.reverse()
+        self.assertTrue(auto_integrator.is_canonical_review_gate_green(rollup))
+        rollup[0]["startedAt"], rollup[1]["startedAt"] = "2026-10-06T14:00:00Z", "2026-10-06T16:00:00Z"
+        self.assertFalse(auto_integrator.is_canonical_review_gate_green(rollup))
+
+
 class CheckClassifierTests(unittest.TestCase):
     def test_non_required_diagnostic_failure_ignored_in_summary(self) -> None:
         summary = auto_integrator.summarize_status_rollup(
