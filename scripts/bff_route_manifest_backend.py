@@ -64,9 +64,6 @@ ROUTE_STATUS_OVERRIDES: dict[str, dict] = {
         "status": "superseded",
         "covered_by": "GET /bff/management/fleet",
     },
-    # Retired BFF plan-create aliases remain mounted only to return ACTION_RETIRED.
-    "POST /api/v1/deployment-plans": {"status": "superseded"},
-    "POST /bff/deployments": {"status": "superseded"},
     # Track E OODA read routes are backend-owned first; frontend cards/drawer
     # activate in follow-on MGMT-OODA tasks.
     "GET /bff/strategies/{strategy_id}/ooda": {"family": "ooda-packet-foundation"},

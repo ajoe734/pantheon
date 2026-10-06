@@ -22,7 +22,7 @@
   },
   "route_contracts": {
     "ownership_registry": "Both route ownership records remain present and identify retired create commands.",
-    "backend_routes_manifest": "Both paths remain represented as superseded routes; GET and detail routes remain unchanged."
+    "backend_routes_manifest": "Both POST paths remain represented because the routes are mounted to return 410; their response retirement is recorded in route ownership and contract docs. GET and detail routes remain unchanged."
   },
   "validation": {
     "write_gap": "python -m pytest -q services/control-plane/bff/test_bff_write_gap_2026_05_28.py — 28 passed",
