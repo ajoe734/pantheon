@@ -1,9 +1,10 @@
 from copy import deepcopy
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from scripts.auto_deploy_dev_pair import BACKEND, FRONTEND, ControllerError, reconcile
+from scripts.auto_deploy_dev_pair import BACKEND, FRONTEND, ControllerError, pair_title, reconcile
 
 B, F, OLD = "b" * 40, "f" * 40, "0" * 40
 
@@ -13,6 +14,7 @@ class Client:
         self.repository, self.sha = repo, sha
         self.ci = "success"
         self.active = False
+        self.deploys = []
         self.dispatches = []
         self.move_on_read = False
         self.reads = 0
@@ -28,12 +30,20 @@ class Client:
         if "branch-ci.yml" in path:
             return {"workflow_runs": [{"id": 1, "head_sha": self.sha, "head_branch": "dev",
                 "event": "push", "status": "completed", "conclusion": self.ci}]}
-        return {"workflow_runs": [{"id": 99, "head_sha": self.sha,
+        dispatched = [{"id": 99, "head_sha": self.sha, "status": "queued",
             "display_title": f"Dev release {B} + {F}", "html_url": "https://github.test/99"}]
-            if self.dispatches else []}
+        history = self.deploys + (dispatched if self.dispatches else [])
+        return {"workflow_runs": [run for run in history
+            if query.get("head_sha", [run["head_sha"]])[0] == run["head_sha"]]}
 
     def dispatch(self, workflow, inputs, ref):
         self.dispatches.append((workflow, inputs, ref))
+
+
+def deploy_run(run_id, conclusion, backend=B, frontend=F):
+    return {"id": run_id, "head_sha": backend, "status": "completed", "conclusion": conclusion,
+            "display_title": f"Dev release {backend} + {frontend}",
+            "html_url": f"https://github.test/{run_id}"}
 
 
 def setup_pair(host_b=OLD, host_f=OLD):
@@ -92,12 +102,49 @@ def test_running_backend_or_frontend_is_not_cancelled_or_redispatched(which):
     assert not setup[0].dispatches
 
 
-def test_previous_failure_does_not_suppress_retry_or_require_new_publish_cut():
+def test_inspection_does_not_consume_dispatch_or_require_new_publish_cut():
     backend, _, _, _, run = setup_pair()
     # No remembered publish watermark: both runs independently inspect hosting.
     assert run()["state"] == "ready"
     assert run(apply=True)["state"] == "dispatched"
     assert len(backend.dispatches) == 1
+
+
+@pytest.mark.parametrize("conclusion", ["failure", "timed_out"])
+def test_failed_pair_is_reported_and_not_redispatched(conclusion):
+    backend, _, _, _, run = setup_pair()
+    backend.deploys = [deploy_run(10, conclusion)]
+    for apply in (False, True):
+        result = run(apply=apply)
+        assert result["state"] == "failed_pair_not_retried"
+        assert result["run_url"] == "https://github.test/10"
+    assert not backend.dispatches
+
+
+@pytest.mark.parametrize("failed_backend,failed_frontend", [(OLD, F), (B, OLD)])
+def test_new_merge_on_either_dev_tip_after_failure_dispatches(failed_backend, failed_frontend):
+    backend, _, _, _, run = setup_pair()
+    backend.deploys = [deploy_run(10, "failure", failed_backend, failed_frontend)]
+    assert run(apply=True)["state"] == "dispatched"
+    assert backend.dispatches[0][1]["ref"] == B and backend.dispatches[0][1]["frontend_sha"] == F
+
+
+@pytest.mark.parametrize("history,expected", [
+    (["failure", "cancelled"], "dispatched"),
+    (["cancelled"], "dispatched"),
+    (["failure", "success"], "dispatched"),
+    (["success", "failure"], "failed_pair_not_retried"),
+])
+def test_only_latest_completed_attempt_of_the_pair_decides(history, expected):
+    backend, _, _, _, run = setup_pair()
+    backend.deploys = [deploy_run(10 + index, conclusion) for index, conclusion in enumerate(history)]
+    assert run(apply=True)["state"] == expected
+
+
+def test_pair_title_matches_nonprod_deploy_run_name():
+    workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/nonprod-deploy.yml").read_text()
+    assert "format('Dev release {0} + {1}', inputs.ref || github.sha, inputs.frontend_sha)" in workflow
+    assert pair_title(B, F) == f"Dev release {B} + {F}"
 
 
 def test_new_merge_during_inspection_defers_without_dispatch():
