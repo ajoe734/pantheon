@@ -58,6 +58,10 @@ def create_owner_domain_ports(persona_store=None, ranking_store=None):
         store = ranking_store if ranking_store is not None else build_rankings_store()
         return [record.to_dict() for record in store.list_rankings()]
 
+    def ranking_formulas():
+        from ..personas.service import _pm12_quarter_formula_payload
+        return [_pm12_quarter_formula_payload()]
+
     return PersonaCapitalRuntimeDomainPort(
         persona_port=PersonaFleetPort(store=persona_store),
         capital_port=CapitalPoolPort(
@@ -75,6 +79,7 @@ def create_owner_domain_ports(persona_store=None, ranking_store=None):
         ),
         ranking_port=RankingProjectionPort(
             rankings_reader=rankings,
+            ranking_formulas_reader=ranking_formulas,
             rebalances_reader=lambda: read_records(capital_url, "/api/rebalances"),
             capital_allocations_reader=lambda: read_records(capital_url, "/api/allocations", "items"),
             containments_reader=lambda: read_records(capital_url, "/api/containments"),

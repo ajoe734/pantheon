@@ -26,12 +26,15 @@ from services.control_plane.bff.command_adapters.router import (
     create_action_command_router,
     create_command_adapters_router,
 )
+from services.control_plane.bff.command_adapters.retired import RETIRED_COMMANDS
 from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.core.owner_reads import create_owner_domain_ports
 from services.control_plane.bff.management_read_models.ranking_router import (
     create_ranking_formulas_router,
     create_rankings_long_tail_router,
 )
 from services.control_plane.bff.models import CommandType, ObjectType, utc_now
+from services.control_plane.bff.personas.service import _pm12_quarter_formula_payload
 from services.control_plane.bff.ports import CapitalPoolPort, ReadSurfacePorts, create_in_memory_read_surface_ports
 from services.control_plane.bff.strategies.routes.common import default_read_surface_meta
 from services.control_plane.bff.tests.rebalance_authority_test_support import CapitalBffAuthorityHarness
@@ -595,93 +598,99 @@ def test_bff_ranking_formulas_list_returns_200() -> None:
 
 
 
-def test_bff_ranking_formula_create_returns_201() -> None:
+def _wired_formula_client() -> TestClient:
+    """Router over the production owner composition (no test fake formula store)."""
+    store = ReadSurfacePorts(persona_capital_runtime=create_owner_domain_ports())
+    app = FastAPI()
+    app.include_router(create_ranking_formulas_router(read_surface=store))
+    return TestClient(app)
+
+
+def _assert_retired(resp, command: str) -> None:
+    assert resp.status_code == 410, resp.text
+    error = _error(resp)
+    assert error["code"] == "ACTION_RETIRED"
+    assert error["details"]["replacement"] == RETIRED_COMMANDS[command]
+
+
+def test_ranking_writes_are_retired_without_stored_command() -> None:
     with tempfile.TemporaryDirectory() as td:
-        client = _fresh_client(td)
-        resp = client.post(
-            "/bff/ranking-formulas",
-            json={"name": "Momentum Formula", "description": "Ranks by momentum"},
-            headers={**HEADERS, "Idempotency-Key": "rf-create-001"},
+        store = CapitalRankingTestReadPorts(allow_local_snapshot_fallback=True)
+        command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        client = TestClient(_build_app(store, command_store))
+        idem = {**HEADERS, "Idempotency-Key": "rf-retired-001"}
+
+        _assert_retired(
+            client.post("/bff/ranking-formulas", json={"name": "Momentum"}, headers=idem),
+            "RankingFormulaAction",
         )
-        assert resp.status_code == 201, resp.text
-        body = resp.json()["data"]
-        assert body["name"] == "Momentum Formula"
-        formula_id = body.get("formula_id") or body.get("id")
-        assert formula_id
-        detail = client.get(f"/bff/ranking-formulas/{formula_id}", headers=HEADERS)
-        assert detail.status_code == 200, detail.text
-        assert detail.json()["data"]["name"] == "Momentum Formula"
-
-
-
-def test_bff_ranking_formula_create_idempotency_replay() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client = _fresh_client(td)
-        payload = {"name": "Replay Formula", "description": "same request replay"}
-        headers = {**HEADERS, "Idempotency-Key": "rf-replay-001"}
-        first = client.post("/bff/ranking-formulas", json=payload, headers=headers)
-        second = client.post("/bff/ranking-formulas", json=payload, headers=headers)
-        assert first.status_code == 201, first.text
-        assert second.status_code == 201, second.text
-        assert first.json()["data"]["id"] == second.json()["data"]["id"]
-        assert len(client.get("/bff/ranking-formulas", headers=HEADERS).json()["data"]) == 1
-
-
-
-def test_bff_ranking_formula_create_requires_name() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client = _fresh_client(td)
-        resp = client.post(
-            "/bff/ranking-formulas",
-            json={"description": "Missing name"},
-            headers={**HEADERS, "Idempotency-Key": "rf-no-name-001"},
+        _assert_retired(
+            client.patch("/bff/ranking-formulas/rf-1", json={"status": "inactive"}, headers=idem),
+            "RankingFormulaAction",
         )
-        assert resp.status_code == 422, resp.text
+        _assert_retired(
+            client.post("/bff/rankings/rk-1/actions/refresh", json={}, headers=idem),
+            "RankingAction",
+        )
+        for command, target_type, entity_type in (
+            ("RankingFormulaAction", "RankingFormula", "ranking-formula"),
+            ("RankingAction", "Ranking", "ranking"),
+        ):
+            _assert_retired(
+                client.post(
+                    "/bff/v1/commands",
+                    json={
+                        "command": command,
+                        "target": {"type": target_type, "id": "x-1"},
+                        "action": "activate",
+                        "params": {"action_id": "activate", "entity_type": entity_type, "entity_id": "x-1"},
+                        "audit_context": {"reason": "retired write"},
+                    },
+                    headers=idem,
+                ),
+                command,
+            )
+        assert command_store._get_all_commands() == []
 
+
+def test_bff_ranking_formulas_list_reads_quarterly_formula_source() -> None:
+    resp = _wired_formula_client().get("/bff/ranking-formulas", headers=HEADERS)
+    assert resp.status_code == 200, resp.text
+    items = resp.json()["items"]
+    assert [i["formula_id"] for i in items] == [_pm12_quarter_formula_payload()["formula_id"]]
+    assert items[0]["version"] == _pm12_quarter_formula_payload()["version"]
+    assert items[0]["weights"] == _pm12_quarter_formula_payload()["weights"]
+
+
+def test_bff_ranking_formula_detail_reads_quarterly_formula_source() -> None:
+    formula = _pm12_quarter_formula_payload()
+    resp = _wired_formula_client().get(f"/bff/ranking-formulas/{formula['formula_id']}", headers=HEADERS)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["weights"] == formula["weights"]
+    assert resp.json()["data"]["version"] == formula["version"]
 
 
 def test_bff_ranking_formula_detail_404_unknown() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client = _fresh_client(td)
-        create_resp = client.post(
-            "/bff/ranking-formulas",
-            json={"name": "Existing Formula", "description": "establishes local store"},
-            headers={**HEADERS, "Idempotency-Key": "rf-detail-seed-001"},
-        )
-        assert create_resp.status_code == 201, create_resp.text
-        resp = client.get("/bff/ranking-formulas/nonexistent-formula", headers=HEADERS)
-        assert resp.status_code == 404, resp.text
+    resp = _wired_formula_client().get("/bff/ranking-formulas/nonexistent-formula", headers=HEADERS)
+    assert resp.status_code == 404, resp.text
 
 
+def test_bff_ranking_formulas_503_when_formula_source_unavailable() -> None:
+    store = create_in_memory_read_surface_ports()
+    store.persona_capital_runtime.ranking._ranking_formulas_reader = None
+    app = FastAPI()
+    app.include_router(create_ranking_formulas_router(read_surface=store))
+    client = TestClient(app)
+    for path in ("/bff/ranking-formulas", "/bff/ranking-formulas/pm12-quarterly-ranking-formula"):
+        resp = client.get(path, headers=HEADERS)
+        assert resp.status_code == 503, resp.text
+        assert _error(resp)["code"] == "DEPENDENCY_UNAVAILABLE"
 
-def test_bff_ranking_formula_action_accepted() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client = _fresh_client(td)
-        create_resp = client.post(
-            "/bff/ranking-formulas",
-            json={"name": "Action Test Formula", "description": "for action test"},
-            headers={**HEADERS, "Idempotency-Key": "rf-action-create-001"},
-        )
-        assert create_resp.status_code == 201, create_resp.text
-        formula = create_resp.json()["data"]
-        formula_id = formula.get("formula_id") or formula.get("id")
-        action_resp = client.post(
-            "/bff/v1/commands",
-            json={
-                "command": "RankingFormulaAction",
-                "target": {"type": "RankingFormula", "id": formula_id},
-                "action": "activate",
-                "params": {
-                    "action_id": "activate",
-                    "entity_type": "ranking-formula",
-                    "entity_id": formula_id,
-                },
-                "audit_context": {"reason": "activate ranking formula"},
-            },
-            headers={**HEADERS, "Idempotency-Key": "rf-action-001"},
-        )
-        assert action_resp.status_code == 202, action_resp.text
 
+def test_production_composition_wires_ranking_formula_reader() -> None:
+    ranking = create_owner_domain_ports().ranking
+    assert [f["formula_id"] for f in ranking.list_ranking_formulas()] == ["pm12-quarterly-ranking-formula"]
+    assert ranking.get_surface_status()["surfaces"]["ranking_formulas"]["status"] == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -768,18 +777,6 @@ def test_bff_ranking_detail_404_unknown() -> None:
     with tempfile.TemporaryDirectory() as td:
         client = _fresh_client(td)
         resp = client.get("/bff/rankings/nonexistent-rk", headers=HEADERS)
-        assert resp.status_code == 404, resp.text
-
-
-
-def test_bff_ranking_action_404_for_unknown_entity() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client = _fresh_client(td)
-        resp = client.post(
-            "/bff/rankings/nonexistent-rk/actions/refresh",
-            json={},
-            headers={**HEADERS, "Idempotency-Key": "rk-action-001"},
-        )
         assert resp.status_code == 404, resp.text
 
 
@@ -903,71 +900,17 @@ def test_ranking_router_routes_uniqueness() -> None:
     assert len(router.routes) == 4
 
 
-def test_ranking_router_standalone_crud_and_idempotency() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        store = CapitalRankingTestReadPorts(
-            allow_local_snapshot_fallback=True,
-        )
-        router = create_ranking_formulas_router(get_read_store=lambda: store)
-        app = FastAPI()
-        app.include_router(router)
-        client = TestClient(app)
+def test_ranking_router_standalone_reads_and_unknown_404() -> None:
+    client = _wired_formula_client()
+    formula_id = _pm12_quarter_formula_payload()["formula_id"]
 
-        # 1. Create formula
-        create_payload = {
-            "name": "Alpha Momentum Formula",
-            "description": "Momentum ranking formula",
-            "params": {"window": 20, "factor": "momentum"},
-        }
-        create_headers = {**HEADERS, "Idempotency-Key": "rf-acg-001"}
-        resp = client.post("/bff/ranking-formulas", json=create_payload, headers=create_headers)
-        assert resp.status_code == 201, resp.text
-        created = resp.json()["data"]
-        formula_id = created["formula_id"]
-        assert created["name"] == "Alpha Momentum Formula"
+    get_resp = client.get(f"/bff/ranking-formulas/{formula_id}", headers=HEADERS)
+    assert get_resp.status_code == 200
+    assert get_resp.json()["data"]["formula_id"] == formula_id
 
-        # 2. Replay same request with same idempotency key
-        replay_resp = client.post("/bff/ranking-formulas", json=create_payload, headers=create_headers)
-        assert replay_resp.status_code == 201
-        assert replay_resp.json()["data"]["formula_id"] == formula_id
+    list_resp = client.get("/bff/ranking-formulas", headers=HEADERS)
+    assert list_resp.status_code == 200
+    assert len(list_resp.json()["data"]) == 1
 
-        # 3. Get detail
-        get_resp = client.get(f"/bff/ranking-formulas/{formula_id}", headers=HEADERS)
-        assert get_resp.status_code == 200
-        assert get_resp.json()["data"]["name"] == "Alpha Momentum Formula"
-
-        # 4. List formulas
-        list_resp = client.get("/bff/ranking-formulas", headers=HEADERS)
-        assert list_resp.status_code == 200
-        assert len(list_resp.json()["data"]) == 1
-
-        # 5. Patch formula
-        patch_resp = client.patch(
-            f"/bff/ranking-formulas/{formula_id}",
-            json={"status": "inactive", "description": "Updated description"},
-            headers=HEADERS,
-        )
-        assert patch_resp.status_code == 200
-        assert patch_resp.json()["data"]["status"] == "inactive"
-        assert patch_resp.json()["data"]["description"] == "Updated description"
-
-        # 6. Reject body idempotency key
-        body_key_resp = client.post(
-            "/bff/ranking-formulas",
-            json={"name": "Bad Key Formula", "idempotencyKey": "bad-key"},
-            headers=HEADERS,
-        )
-        assert body_key_resp.status_code == 400
-
-        # 7. Require name
-        no_name_resp = client.post(
-            "/bff/ranking-formulas",
-            json={"description": "No name"},
-            headers={**HEADERS, "Idempotency-Key": "rf-acg-noname"},
-        )
-        assert no_name_resp.status_code == 422
-
-        # 8. 404 on unknown formula id
-        not_found_resp = client.get("/bff/ranking-formulas/rf-unknown-999", headers=HEADERS)
-        assert not_found_resp.status_code == 404
-
+    not_found_resp = client.get("/bff/ranking-formulas/rf-unknown-999", headers=HEADERS)
+    assert not_found_resp.status_code == 404
