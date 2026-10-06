@@ -13,6 +13,10 @@ anyio==4.15.1
     #   -c dependencies/constraints-core.txt
     #   httpx
     #   starlette
+attrs==26.1.0
+    # via
+    #   jsonschema
+    #   referencing
 certifi==2026.7.22
     # via
     #   -c dependencies/constraints-core.txt
@@ -44,6 +48,14 @@ idna==3.20
     #   -c dependencies/constraints-core.txt
     #   anyio
     #   httpx
+jsonschema==4.26.0
+    # via
+    #   -c dependencies/constraints-core.txt
+    #   -r services/lineage-read/requirements.txt
+jsonschema-specifications==2025.9.1
+    # via
+    #   -c dependencies/constraints-core.txt
+    #   jsonschema
 pydantic==2.13.5
     # via
     #   -c dependencies/constraints-core.txt
@@ -53,6 +65,16 @@ pydantic-core==2.46.5
     # via
     #   -c dependencies/constraints-core.txt
     #   pydantic
+referencing==0.37.0
+    # via
+    #   -c dependencies/constraints-core.txt
+    #   jsonschema
+    #   jsonschema-specifications
+rpds-py==2026.6.3
+    # via
+    #   -c dependencies/constraints-core.txt
+    #   jsonschema
+    #   referencing
 starlette==1.6.0
     # via
     #   -c dependencies/constraints-core.txt
@@ -64,6 +86,7 @@ typing-extensions==4.16.0
     #   fastapi
     #   pydantic
     #   pydantic-core
+    #   referencing
     #   starlette
     #   typing-inspection
 typing-inspection==0.4.4
