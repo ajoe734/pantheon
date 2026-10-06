@@ -330,6 +330,57 @@ def test_canonical_action_replay_uses_command_store_not_generic_memory_receipt()
         assert records[0]["type"] == "StrategyAction"
 
 
+def test_command_routes_require_header_idempotency_and_reject_body_key() -> None:
+    with _isolated_command_bridge() as client:
+        body = {"tokenId": "ct-idempotency", "reason": "guarded action"}
+
+        missing = client.post("/bff/confirm-tokens", headers=HEADERS, json=body)
+        assert missing.status_code == 400, missing.text
+        assert missing.json()["error"]["code"] == "VALIDATION_FAILED"
+
+        body_key = client.post(
+            "/bff/confirm-tokens",
+            headers={**HEADERS, "Idempotency-Key": "ct-body-key"},
+            json={**body, "idempotencyKey": "body-key"},
+        )
+        assert body_key.status_code == 400, body_key.text
+        assert body_key.json()["error"]["code"] == "VALIDATION_FAILED"
+
+        alias = client.post(
+            "/bff/confirm-tokens",
+            headers={**HEADERS, "X-Idempotency-Key": "ct-alias-key"},
+            json=body,
+        )
+        assert alias.status_code == 201, alias.text
+        assert alias.json()["meta"]["idempotency"]["idempotencyKey"] == "ct-alias-key"
+        assert len(command_store._get_all_commands()) == 1
+
+
+def test_confirm_token_create_persists_command_record_shape_and_status() -> None:
+    with _isolated_command_bridge() as client:
+        response = client.post(
+            "/bff/confirm-tokens",
+            headers={**HEADERS, "Idempotency-Key": "ct-record-shape"},
+            json={"tokenId": "ct-record-shape", "reason": "guarded action"},
+        )
+        assert response.status_code == 201, response.text
+        record = command_store.get_command_by_idempotency_key(
+            "ct-record-shape", operator_id="op-sem-002"
+        )
+        assert record is not None
+        assert record["command_id"] == response.json()["command_id"]
+        assert record["type"] == "CreateConfirmToken"
+        assert record["target"] == {"type": "ConfirmToken", "id": "ct-record-shape"}
+        assert record["foundation"]["idempotency_record"]["status"] == "succeeded"
+        assert record["audit"]["live_capital_side_effects"] is False
+
+        status = client.get(
+            f"/api/v1/operator/commands/{record['command_id']}", headers=HEADERS
+        )
+        assert status.status_code == 200, status.text
+        assert status.json()["type"] == "CreateConfirmToken"
+
+
 def test_confirm_token_create_read_redeem_delete_are_command_store_backed() -> None:
     with _isolated_command_bridge() as client:
         create = client.post(

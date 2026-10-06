@@ -340,7 +340,7 @@ Degraded access policy: When a surface is in degraded mode, the RBAC check still
 
 **Canonical source**: BINDING_AND_DEPLOYMENT_SEMANTICS.md
 
-Deployment-plan creation through `POST /api/v1/deployment-plans` and `POST /bff/deployments` is retired and returns `410 ACTION_RETIRED`. The governed replacement is approval, then the deployment owner `POST /api/deployment/plans/validate` and `POST /api/deployment/plans` endpoints. BFF does not create or validate deployment plans.
+Deployment-plan creation through `POST /api/v1/deployment-plans` and `POST /bff/deployments` is retired and returns `410 ACTION_RETIRED`. The governed replacement is approval, then the deployment owner `POST /api/deployment/plans/validate` and `POST /api/deployment/plans` endpoints. BFF does not create or validate deployment plans. All requests rejected through the existing retired-command mechanism likewise use the client-visible error code `ACTION_RETIRED` (HTTP 410), not `VALIDATION_FAILED`.
 
 | Route | Method | Surface | Response | Filterable Fields |
 |---|---|---|---|---|

@@ -2,6 +2,13 @@
   "task_id": "BFF-DEPLOYMENT-CREATE-RETIRE-20261006",
   "decision": "Retire both unused BFF deployment-plan create routes and the CreateDeployment command entry using the existing RETIRED_COMMANDS gate.",
   "replacement": "Governance approval, then deployment owner POST /api/deployment/plans/validate and POST /api/deployment/plans.",
+  "retired_command_error_contract": "Every command rejected by RETIRED_COMMANDS is HTTP 410 ACTION_RETIRED; this client-visible code replaces the prior VALIDATION_FAILED fallback without changing the 410 status.",
+  "restored_assertions": {
+    "idempotency_header_missing_body_key_and_alias": "services/control-plane/bff/test_final_command_execution_bridge.py::test_command_routes_require_header_idempotency_and_reject_body_key (live /bff/confirm-tokens)",
+    "server_generated_target_replay_conflict_single_record": "services/control-plane/bff/test_final_command_execution_bridge.py::test_confirm_token_server_generated_id_replays_on_same_key_retry",
+    "persisted_record_shape_status_and_command_readback": "services/control-plane/bff/test_final_command_execution_bridge.py::test_confirm_token_create_persists_command_record_shape_and_status",
+    "deployment_owner_patch_status_tenant_isolation_and_write_count": "services/control-plane/bff/tests/test_receipt_owner_routes.py::test_deployment_owner_patch_effect_and_default_refresh"
+  },
   "retired_routes": [
     {"route": "POST /api/v1/deployment-plans", "prior_location": "services/control-plane/bff/deployment/router.py:create_deployment_plan_v1", "result": "410 ACTION_RETIRED before command admission"},
     {"route": "POST /bff/deployments", "prior_location": "services/control-plane/bff/deployment/router.py:sem_create_deployment_command", "result": "410 ACTION_RETIRED before command admission"},
@@ -13,7 +20,9 @@
     {"item": "DEPLOYMENT_CREATE executor dispatch entry", "prior_location": "services/control-plane/bff/command_executor.py"},
     {"item": "CreateDeployment wrapper verb mapping", "prior_location": "services/control-plane/bff/command_adapters/contracts.py"},
     {"item": "create_deployment_plan port method and default forwarding implementation", "prior_location": "services/control-plane/bff/deployment/ports.py and services/control-plane/bff/deployment/adapters.py"},
-    {"item": "pending-plan stand-in fixture and seven stale create-flow tests", "prior_location": "services/control-plane/bff/test_bff_write_gap_2026_05_28.py"}
+    {"item": "pending-plan stand-in fixture and seven stale create-flow tests", "prior_location": "services/control-plane/bff/test_bff_write_gap_2026_05_28.py"},
+    {"item": "generic command idempotency/header assertions, generated-target retry/conflict assertions, and durable command record shape assertions retained using live confirm-token commands", "prior_location": "services/control-plane/bff/test_final_command_execution_bridge.py (restored as named above)"},
+    {"item": "live deployment owner PATCH effect/default-refresh assertions retained independently of retired create", "prior_location": "services/control-plane/bff/tests/test_receipt_owner_routes.py::test_deployment_owner_patch_effect_and_default_refresh"}
   ],
   "caller_audit": {
     "frontend": "execute-plans dev commit 76d61777 has no POST caller for either route; only GET /bff/deployments is used. The onboarding step-3 translations are orphaned and DeploymentCreateInput has no UI entry.",
@@ -31,7 +40,8 @@
     "management_domain_actions": "python -m pytest -q services/control-plane/bff/tests/test_management_domain_actions.py — 22 passed",
     "read_surface_caller_migration": "python -m pytest -q services/control-plane/bff/tests/test_read_surface_caller_migration.py — 29 passed",
     "product_ownership": "python scripts/check_product_ownership.py — PASS",
-    "diff_hygiene": "git diff --check — PASS"
+    "diff_hygiene": "git diff --check — PASS",
+    "reviewer_requested_recheck": "python -m pytest -q services/control-plane/bff/test_final_command_execution_bridge.py services/control-plane/bff/tests/test_receipt_owner_routes.py services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/test_bff_write_gap_2026_05_28.py — 107 passed; retired-command VALIDATION_FAILED assertion search found no remaining applicable expectations"
   },
   "known_check_gap": "scripts/test_bff_route_diff.py::test_route_diff_baseline_matches_current_failure_surface fails because the frozen route-diff baseline reports 529 failures while current backend/frontend inventory reports 481; the diff shows unrelated route inventory drift across API, Agora, and management surfaces. Product ownership validation passes."
 }

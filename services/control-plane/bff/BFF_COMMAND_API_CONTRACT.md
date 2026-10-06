@@ -178,6 +178,7 @@ codes include:
 | `APPROVAL_REQUIRED` | Required approval evidence is absent. |
 | `TWO_MAN_REQUIRED` | A second authorized operator decision/signature is required. |
 | `IDEMPOTENCY_CONFLICT` | Same idempotency key was reused with a different payload. |
+| `ACTION_RETIRED` | Command or action has been retired; returned with HTTP 410 through the existing retired-command mechanism. This is the client-visible code for all such retirements, not `VALIDATION_FAILED`. |
 | `SSE_REPLAY_UNAVAILABLE` | Requested SSE replay window is no longer available. |
 
 ## 6.1 Assistant-Skill Descriptor Discovery

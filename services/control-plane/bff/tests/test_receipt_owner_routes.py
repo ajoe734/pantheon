@@ -55,7 +55,7 @@ def owner(tmp_path, monkeypatch):
     for key, value in _JWT_ENV.items():
         monkeypatch.setenv(key, value)
     state = tmp_path / "owner.json"
-    state.write_text(json.dumps({"plans": {}, "programs": {
+    state.write_text(json.dumps({"plans": {"plan-a": {"plan_id": "plan-a", "status": "draft", "tenant_id": "tenant-a"}}, "programs": {
         "program-a": {"program_id": "program-a", "status": "active", "tenant_id": "tenant-a"},
     }, "proposals": {"proposal-a": {"decision_id": "proposal-a", "decision_state": "approved", "tenant_id": "tenant-a"}}, "gates": {}, "writes": 0}))
     program_store = JsonProgramStore(tmp_path / "programs.json")
@@ -198,6 +198,18 @@ def test_deployment_plan_create_route_is_retired_without_owner_effect(mounted, o
     assert first.json()["detail"]["error"]["code"] == "ACTION_RETIRED"
     assert store.get_command_by_idempotency_key("create", operator_id="tenant-a") is None
     assert json.loads(owner.read_text())["writes"] == 0
+
+
+def test_deployment_owner_patch_effect_and_default_refresh(mounted, owner):
+    client, store, ports = mounted
+    headers = {"Authorization": _tok("tenant-a"), "Idempotency-Key": "deployment-patch"}
+    response = client.patch("/bff/deployments/plan-a", json={"status": "approved"}, headers=headers)
+    assert response.status_code == 202, response.text
+    record = store.get_command_by_idempotency_key("deployment-patch", operator_id="tenant-a")
+    assert record is not None and record["status"] == "executed", record
+    assert client.get("/bff/deployments/plan-a", headers=headers).json()["data"]["status"] == "approved"
+    assert client.get("/bff/deployments", headers={"Authorization": _tok("tenant-b")}).json()["data"] == []
+    assert json.loads(owner.read_text())["writes"] == 1
 
 
 def test_program_owner_effect_and_default_refresh(mounted, owner):
