@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def test_telemetry_package_defers_schema_dependency_but_keeps_ingest_export():
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[3]
     code = """
 import sys
 import services.telemetry

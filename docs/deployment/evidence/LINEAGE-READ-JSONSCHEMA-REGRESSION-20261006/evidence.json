@@ -1,8 +1,8 @@
 {
   "task_id": "LINEAGE-READ-JSONSCHEMA-REGRESSION-20261006",
   "fix": "services.telemetry keeps TelemetryIngestService public via lazy export; lineage-read no longer imports ingest_svc/jsonschema at package load. Directory fsync errors propagate and descriptors close in finally.",
-  "regression": "services/telemetry/test_lazy_ingest_import.py fails with eager import and passes with lazy export; it also verifies the existing TelemetryIngestService import.",
-  "tests": "Provisioned pytest: services/telemetry/test_lazy_ingest_import.py services/telemetry/test_discovery_imports.py services/control-plane/governance/test_capital_pool.py services/lineage-read — 75 passed, 20 subtests passed, 1 warning.",
+  "regression": "services/telemetry/lineage_read/test_lazy_ingest_import.py fails with eager import and passes with lazy export; it also verifies the existing TelemetryIngestService import.",
+  "tests": "Provisioned pytest: services/telemetry/lineage_read/test_lazy_ingest_import.py services/telemetry/test_discovery_imports.py services/control-plane/governance/test_capital_pool.py services/lineage-read — 75 passed, 20 subtests passed, 1 warning.",
   "image_build": "DOCKER_CONFIG=/tmp/pantheon-lineage-docker-config DOCKER_BUILDKIT=0 docker build -f services/lineage-read/Dockerfile -t lineage-read-jsonschema-regression:local . — passed",
   "image_id": "sha256:f227c3fbeb1d96d6a09eb72bad44b9412ea8c0b36d01113912158016e96204a2",
   "entrypoint": "python /workspace/services/lineage-read/main.py",
