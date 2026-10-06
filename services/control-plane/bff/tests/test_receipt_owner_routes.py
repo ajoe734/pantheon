@@ -189,25 +189,15 @@ def mounted(owner, tmp_path):
 
 
 @pytest.mark.parametrize("create_path", ["/bff/deployments", "/api/v1/deployment-plans"])
-def test_deployment_owner_effect_and_default_refresh(mounted, owner, create_path):
+def test_deployment_plan_create_route_is_retired_without_owner_effect(mounted, owner, create_path):
     client, store, ports = mounted
     headers = {"Authorization": _tok("tenant-a"), "Idempotency-Key": "create"}
     assert client.post(create_path, json={}).status_code == 401
     first = client.post(create_path, json={"reason": "create paper plan"}, headers=headers)
-    assert first.status_code == 202, first.text
-    command = store.get_command_by_idempotency_key("create", operator_id="tenant-a")
-    assert command["status"] == "executed", command
-    assert client.post(create_path, json={"reason": "create paper plan"}, headers=headers).status_code == 202
-    assert json.loads(owner.read_text())["writes"] == 1
-    read = client.get("/bff/deployments", headers=headers)
-    assert read.json()["data"][0]["plan_id"] == "plan-a", read.text
-    assert client.get("/bff/deployments", headers={"Authorization": _tok("tenant-b")}).json()["data"] == []
-    patched = client.patch("/bff/deployments/plan-a", json={"status": "approved"},
-                           headers={**headers, "Idempotency-Key": "patch"})
-    assert patched.status_code == 202, patched.text
-    assert store.get_command_by_idempotency_key("patch", operator_id="tenant-a")["status"] == "executed"
-    assert client.get("/bff/deployments", headers=headers).json()["data"][0]["status"] == "approved"
-    assert json.loads(owner.read_text())["writes"] == 2
+    assert first.status_code == 410, first.text
+    assert first.json()["detail"]["error"]["code"] == "ACTION_RETIRED"
+    assert store.get_command_by_idempotency_key("create", operator_id="tenant-a") is None
+    assert json.loads(owner.read_text())["writes"] == 0
 
 
 def test_program_owner_effect_and_default_refresh(mounted, owner):
@@ -253,8 +243,8 @@ def test_same_operator_cannot_replay_another_tenant_receipt(owner, tmp_path):
         command_store=store, extract_identity=shared_operator,
     )))
     client = TestClient(app)
-    payload = {"command": "StrategyAction", "target": {"type": "Strategy", "id": "strategy-a"},
-               "action": "submit", "params": {"action_id": "submit", "entity_type": "strategy", "entity_id": "strategy-a"},
+    payload = {"command": "EvolutionProgramAction", "target": {"type": "EvolutionProgram", "id": "program-a"},
+               "action": "pause_program", "params": {"action_id": "pause_program", "program_id": "program-a"},
                "audit_context": {"reason": "tenant scoped admission"}}
     headers = {"Authorization": _tok("tenant-a"), "Idempotency-Key": "shared-key"}
     assert client.post("/bff/v1/commands", json=payload, headers=headers).status_code == 202
@@ -280,8 +270,6 @@ def test_default_composition_forwards_validated_browser_session(owner, tmp_path)
 
 
 @pytest.mark.parametrize("method,path,payload,extra_headers", [
-    ("POST", "/api/v1/deployment-plans", {}, {"X-Dry-Run": "true"}),
-    ("POST", "/bff/deployments", {"dryRun": True}, {}),
     ("PATCH", "/bff/deployments/plan-a", {"dryRun": True, "status": "approved"}, {}),
 ])
 def test_resource_dry_run_never_enqueues_or_writes_owner(mounted, owner, method, path, payload, extra_headers):

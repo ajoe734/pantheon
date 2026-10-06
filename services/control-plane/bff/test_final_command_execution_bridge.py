@@ -211,7 +211,6 @@ def _build_test_app() -> FastAPI:
     service = CommandAdapterService(
         command_store=lambda: command_store,
         extract_identity=_test_extract_identity,
-        final_contract_idempotency=_FINAL_CONTRACT_IDEMPOTENCY,
         gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
         process_command_task=lambda cmd_id: None,
     )
@@ -281,7 +280,7 @@ def test_deployment_create_routes_are_retired_before_command_admission() -> None
         )
 
         assert response.status_code == 410, response.text
-        assert response.json()["detail"]["error"]["code"] == "ACTION_RETIRED"
+        assert response.json()["error"]["code"] == "ACTION_RETIRED"
         assert not command_store._get_all_commands()
 
 
@@ -298,7 +297,7 @@ def test_create_deployment_command_is_retired_without_receipt() -> None:
         )
 
         assert response.status_code == 410, response.text
-        assert response.json()["detail"]["error"]["code"] == "ACTION_RETIRED"
+        assert response.json()["error"]["code"] == "ACTION_RETIRED"
         assert not command_store._get_all_commands()
 
 

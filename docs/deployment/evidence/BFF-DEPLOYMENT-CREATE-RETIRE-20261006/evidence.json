@@ -1,0 +1,40 @@
+{
+  "task_id": "BFF-DEPLOYMENT-CREATE-RETIRE-20261006",
+  "decision": "Retire both unused BFF deployment-plan create routes and the CreateDeployment command entry using the existing RETIRED_COMMANDS gate.",
+  "replacement": "Governance approval, then deployment owner POST /api/deployment/plans/validate and POST /api/deployment/plans.",
+  "retired_routes": [
+    {"route": "POST /api/v1/deployment-plans", "prior_location": "services/control-plane/bff/deployment/router.py:create_deployment_plan_v1", "result": "410 ACTION_RETIRED before command admission"},
+    {"route": "POST /bff/deployments", "prior_location": "services/control-plane/bff/deployment/router.py:sem_create_deployment_command", "result": "410 ACTION_RETIRED before command admission"},
+    {"route": "POST /bff/v1/commands (command=CreateDeployment)", "prior_location": "services/control-plane/bff/command_adapters/retired.py:RETIRED_COMMANDS", "result": "410 ACTION_RETIRED before command record or receipt"}
+  ],
+  "removed_forwarding": [
+    {"item": "CreateDeployment adapter membership and dispatch branch / _execute_create_deployment", "prior_location": "services/control-plane/bff/command_adapters/deployment_adapter.py"},
+    {"item": "CreateDeployment action-catalog entry", "prior_location": "services/control-plane/bff/action_catalog.py"},
+    {"item": "DEPLOYMENT_CREATE executor dispatch entry", "prior_location": "services/control-plane/bff/command_executor.py"},
+    {"item": "CreateDeployment wrapper verb mapping", "prior_location": "services/control-plane/bff/command_adapters/contracts.py"},
+    {"item": "create_deployment_plan port method and default forwarding implementation", "prior_location": "services/control-plane/bff/deployment/ports.py and services/control-plane/bff/deployment/adapters.py"},
+    {"item": "pending-plan stand-in fixture and seven stale create-flow tests", "prior_location": "services/control-plane/bff/test_bff_write_gap_2026_05_28.py"}
+  ],
+  "caller_audit": {
+    "frontend": "execute-plans dev commit 76d61777 has no POST caller for either route; only GET /bff/deployments is used. The onboarding step-3 translations are orphaned and DeploymentCreateInput has no UI entry.",
+    "repository_scripts": "Search of scripts for both route paths found read/probe references only; no script POSTs either create route.",
+    "scope": "No deployment-owner service or frontend source was changed."
+  },
+  "route_contracts": {
+    "ownership_registry": "Both route ownership records remain present and identify retired create commands.",
+    "backend_routes_manifest": "Both paths remain represented as superseded routes; GET and detail routes remain unchanged."
+  },
+  "validation": {
+    "write_gap": "python -m pytest -q services/control-plane/bff/test_bff_write_gap_2026_05_28.py — 28 passed",
+    "command_bridge": "python -m pytest -q services/control-plane/bff/test_final_command_execution_bridge.py — 6 passed",
+    "dry_run_rbac": "python -m pytest -q services/control-plane/bff/test_bff_dry_run_rbac_contract.py — 4 passed",
+    "tenant_fallback": "python -m pytest -q services/control-plane/bff/tests/test_tenant_fallback_audit.py — 124 passed, 1 skipped",
+    "receipt_owner_routes": "python -m pytest -q services/control-plane/bff/tests/test_receipt_owner_routes.py — 16 passed",
+    "management_domain_actions": "python -m pytest -q services/control-plane/bff/tests/test_management_domain_actions.py — 22 passed",
+    "product_ownership": "python scripts/check_product_ownership.py — PASS"
+  },
+  "observed_suite_gaps": [
+    "services/control-plane/bff/tests/test_read_surface_caller_migration.py: two failures remain in unrelated reconciliation-drift and deployment-list fixture expectations (RECONCILIATION_DRIFT_URL unset; deployment list fixture empty).",
+    "scripts/test_bff_route_diff.py::test_route_diff_baseline_matches_current_failure_surface reports existing backend/frontend route-baseline drift outside these deployment create routes."
+  ]
+}
