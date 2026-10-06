@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import tempfile
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -31,8 +32,9 @@ from services.control_plane.bff.management_read_models.ranking_router import (
     create_rankings_long_tail_router,
 )
 from services.control_plane.bff.models import CommandType, ObjectType, utc_now
-from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+from services.control_plane.bff.ports import CapitalPoolPort, ReadSurfacePorts, create_in_memory_read_surface_ports
 from services.control_plane.bff.strategies.routes.common import default_read_surface_meta
+from services.control_plane.bff.tests.rebalance_authority_test_support import CapitalBffAuthorityHarness
 from services.control_plane.bff.tools_integrations.service import (
     deprecated_bff_path_response,
     page_slice,
@@ -167,10 +169,45 @@ class CapitalRankingTestReadPorts(ReadSurfacePorts):
         }
         self._canonical = CanonicalMock()
 
-    def dataset_source(self, dataset: str) -> str:
-        if dataset == "persona_bindings":
+        def _pools_provider():
+            if not self._allow_fallback:
+                if not (os.environ.get("PANTHEON_CAPITAL_API_URL") or os.environ.get("PANTHEON_CAPITAL_SERVICE_URL") or os.environ.get("PANTHEON_BFF_CAPITAL_POOL_STORE")):
+                    ok, records = self._canonical.list_records("capital_pools")
+                    if not ok or not records:
+                        if not self._data.get("capital_pools"):
+                            raise RuntimeError("unconfigured: capital pools unavailable")
+            ok, records = self._canonical.list_records("capital_pools")
+            if ok and records:
+                return records
+            if self._data.get("capital_pools"):
+                return list(self._data.get("capital_pools", {}).values())
+            for key in ("pool-alpha", "probe"):
+                ok_p, p = self._canonical.capital_pool(key)
+                if ok_p and p:
+                    return [p]
+            return []
+
+        def _bindings_provider():
             ok, _ = self._canonical.bindings_for_pool("probe")
-            return "canonical" if ok else "missing"
+            if not ok:
+                raise RuntimeError("persona bindings unavailable")
+            for key in (None, "all", "pool-alpha", "probe"):
+                ok_k, b = self._canonical.bindings_for_pool(key)
+                if ok_k and b:
+                    return b
+            return []
+
+        self.capital_pool_port = CapitalPoolPort(
+            pools_provider=_pools_provider,
+            bindings_provider=_bindings_provider,
+        )
+
+    def dataset_source(self, dataset: str) -> str:
+        if dataset in ("capital_pools", "persona_bindings", "bindings"):
+            status = self.capital_pool_port.get_surface_status()
+            if dataset in ("persona_bindings", "bindings"):
+                return "missing" if status.get("bindings_source") in (None, "missing", "unavailable") else "canonical"
+            return "missing" if status.get("source") in (None, "missing", "unavailable") else "canonical"
         if not self._allow_fallback:
             if os.environ.get("PANTHEON_CAPITAL_API_URL") or os.environ.get("PANTHEON_CAPITAL_SERVICE_URL") or os.environ.get("PANTHEON_BFF_CAPITAL_POOL_STORE"):
                 return "canonical"
@@ -188,41 +225,25 @@ class CapitalRankingTestReadPorts(ReadSurfacePorts):
         return {"status": status, "source": src, "snapshot_at": snapshot_at}
 
     def list_capital_pools(self, **kwargs: Any) -> list[dict[str, Any]]:
-        ok, records = self._canonical.list_records("capital_pools", **kwargs)
-        if ok and records:
-            status = kwargs.get("status")
-            rp = kwargs.get("risk_policy_ref")
-            res = [dict(r) for r in records]
-            if status:
-                res = [r for r in res if r.get("status") == status]
-            if rp:
-                res = [r for r in res if r.get("risk_policy_ref") == rp]
-            for r in res:
-                r.setdefault("id", r.get("pool_id"))
-            return res
-        res = [dict(r) for r in self._data.get("capital_pools", {}).values()]
+        status = kwargs.get("status")
+        rp = kwargs.get("risk_policy_ref")
+        res = [dict(r) for r in self.capital_pool_port.list_capital_pools(status=status)]
+        if rp:
+            res = [r for r in res if r.get("risk_policy_ref") == rp]
         for r in res:
             r.setdefault("id", r.get("pool_id"))
         return res
 
     def get_capital_pool(self, pool_id: str | None) -> dict[str, Any] | None:
-        ok, pool = self._canonical.capital_pool(pool_id)
-        if ok and pool:
-            p = dict(pool)
-            p.setdefault("id", p.get("pool_id"))
-            return p
-        raw = self._data.get("capital_pools", {}).get(str(pool_id or ""))
-        if raw:
-            p = dict(raw)
-            p.setdefault("id", p.get("pool_id"))
-            return p
+        p = self.capital_pool_port.get_capital_pool(pool_id)
+        if p:
+            res = dict(p)
+            res.setdefault("id", res.get("pool_id"))
+            return res
         return None
 
     def get_bindings_for_pool(self, pool_id: str | None) -> list[dict[str, Any]]:
-        ok, bindings = self._canonical.bindings_for_pool(pool_id)
-        if ok:
-            return bindings
-        return []
+        return self.capital_pool_port.get_bindings_for_pool(pool_id)
 
     def create_capital_pool(self, *, pool_id: str | None = None, name: str = "", actor_id: str | None = None, **kwargs: Any) -> dict[str, Any]:
         pid = pool_id or f"pool-{uuid.uuid4().hex[:8]}"
@@ -477,22 +498,25 @@ def test_bff_capital_pool_detail_with_seed_data() -> None:
             "capital_allocation": 100000,
             "currency": "USD",
             "max_drawdown_pct": 15.0,
-            "bindings": [],
+            "bindings": [{"binding_id": "dummy-seed-binding", "echoed": True}],
         }
+        owner_bindings = [
+            {"binding_id": "b-1", "persona_id": "persona-a", "capital_pool_id": "pool-alpha", "role": "live_owner", "validity": "active"}
+        ]
         store._canonical.list_records = lambda dataset, **kwargs: (
             (True, [seed_pool]) if dataset == "capital_pools" else (False, [])
         )
         store._canonical.capital_pool = lambda pool_id: (
             (True, seed_pool) if pool_id == "pool-alpha" else (True, None)
         )
-        store._canonical.bindings_for_pool = lambda pool_id: (True, [])
+        store._canonical.bindings_for_pool = lambda pool_id: (True, owner_bindings if pool_id in ("pool-alpha", None, "all") else [])
         command_store = CommandStore(os.path.join(td, "commands.jsonl"))
         client = TestClient(_build_app(store, command_store))
         resp = client.get("/bff/capital-pools/pool-alpha", headers=HEADERS)
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["data"]["name"] == "Alpha Pool"
-        assert "bindings" in body["data"]
+        assert body["data"]["bindings"] == owner_bindings
         assert "meta" in body
 
 
@@ -687,15 +711,17 @@ def test_bff_rebalance_create_requires_capital_pool_id() -> None:
 
 
 
-def test_bff_rebalance_create_rejects_legacy_payload_without_lineage() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client = _fresh_client(td)
-        resp = client.post(
+def test_bff_rebalance_create_rejects_legacy_payload_without_lineage(tmp_path: Path) -> None:
+    with CapitalBffAuthorityHarness(tmp_path, seed_allocation=False) as harness:
+        resp = harness.client.post(
             "/bff/rebalances",
-            json={"capital_pool_id": "pool-alpha", "reason": "quarterly rebalance"},
+            json={"capital_pool_id": "pool-real", "reason": "quarterly rebalance"},
             headers={**HEADERS, "Idempotency-Key": "rb-create-001"},
         )
         assert resp.status_code == 422, resp.text
+        err = _error(resp)
+        assert err["code"] == "VALIDATION_FAILED"
+        assert len(harness.capital_client.get("/api/rebalances").json()) == 0
 
 
 
