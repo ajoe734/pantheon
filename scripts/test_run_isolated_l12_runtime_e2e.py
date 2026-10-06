@@ -131,3 +131,76 @@ def test_busy_shared_lease_returns_before_compose_work(
 
     monkeypatch.setattr(harness, "_DevEnvironmentLeaseSession", BusySession)
     assert harness.main(["--provision-services"]) == 75
+
+
+def test_stimulus_gate_stack_covers_every_domain_suite_url() -> None:
+    assert harness.STIMULUS_GATE_SUITE.endswith("test_stimulus_cross_loop_deployed_e2e.py")
+    assert set(harness.STIMULUS_SERVICES).isdisjoint(harness.SERVICES)
+    assert {"research", "training", "policy_learning", "consultation"} == set(
+        harness.STIMULUS_SERVICES
+    )
+    assert set(harness.STIMULUS_COMPOSE_SERVICES).isdisjoint(
+        harness.REQUIRED_COMPOSE_SERVICES
+    )
+
+
+def test_teardown_down_command_carries_all_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, **_kwargs):
+        seen.append(list(cmd))
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(harness.subprocess, "run", fake_run)
+    monkeypatch.setattr(harness, "_project_container_ids", lambda _p: [])
+    result = harness._teardown_project("proj", ["a.yml"], {})
+    command = result["command"]
+    assert command[command.index("--profile") : command.index("--profile") + 2] == [
+        "--profile",
+        "*",
+    ]
+    assert command.index("--profile") < command.index("down")
+    assert result["zero_project_containers"] is True
+
+
+def test_teardown_fails_closed_when_containers_remain(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        harness.subprocess,
+        "run",
+        lambda cmd, **_k: type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+    )
+    monkeypatch.setattr(harness, "_project_container_ids", lambda _p: ["abc"])
+    assert harness._teardown_project("proj", ["a.yml"], {})["zero_project_containers"] is False
+
+
+def test_one_shot_projector_is_not_in_wait_set() -> None:
+    assert harness.STIMULUS_PROJECTOR_SERVICE == "source-ingest-agora-projector"
+    assert harness.STIMULUS_PROJECTOR_SERVICE not in harness.STIMULUS_COMPOSE_SERVICES
+    assert harness.STIMULUS_PROJECTOR_SERVICE not in harness.REQUIRED_COMPOSE_SERVICES
+
+
+def test_failure_diagnostics_capture_ps_and_unhealthy_logs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    import json as _json
+
+    calls: list[list[str]] = []
+    rows = [
+        {"Service": "ok", "State": "running", "Health": "healthy"},
+        {"Service": "projector", "State": "exited", "Health": ""},
+        {"Service": "sick", "State": "running", "Health": "unhealthy"},
+    ]
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(list(cmd))
+        out = "\n".join(_json.dumps(r) for r in rows) if "ps" in cmd else "log-tail"
+        return type("P", (), {"returncode": 0, "stdout": out, "stderr": ""})()
+
+    monkeypatch.setattr(harness.subprocess, "run", fake_run)
+    result = harness._capture_failure_diagnostics("proj", ["a.yml"], {}, tmp_path)
+    assert result["captured_services"] == ["projector", "sick"]
+    assert (tmp_path / "compose-ps.txt").is_file()
+    assert (tmp_path / "logs-projector.txt").read_text().endswith("log-tail\n")
+    assert not (tmp_path / "logs-ok.txt").exists()
+    log_calls = [c for c in calls if "logs" in c]
+    assert all("--tail" in c and "200" in c and "--no-color" in c for c in log_calls)
