@@ -108,7 +108,6 @@ RETAINED_WRITES_DEFERRED_FROM_READ_SURFACE = frozenset({
     "create_agora_signal",
     "create_agora_training_example",
     "create_decision_journal_entry",
-    "create_deployment_plan",
     "create_persona",
     "create_ranking_formula",
     "create_research_experiment",
