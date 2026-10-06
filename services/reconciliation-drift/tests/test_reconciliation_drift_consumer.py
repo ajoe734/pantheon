@@ -371,3 +371,57 @@ def test_real_consumer_dlq_replay_and_restart_state_are_durable() -> None:
         completed = consumer.ConsumerWorkerState(state_path).completed["evt-real-001"]
         assert completed["attempt_count"] == 1
         assert completed["terminal_incident_ids"] == ["inc-l12-consumer-001"]
+
+
+def test_consumer_survives_read_timeout_then_delivers(monkeypatch) -> None:
+    import http.server
+    import threading
+    import time
+
+    consumer = _load_consumer_module()
+    calls: list[int] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            calls.append(1)
+            if len(calls) == 1:
+                time.sleep(1.5)  # longer than the client timeout
+            body = b'{"status": "ok", "drift_report_count": 1}'
+            try:
+                self.send_response(201)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except OSError:
+                pass
+
+        def log_message(self, *args) -> None:
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setenv("RECONCILIATION_DRIFT_CONSUMER_POST_TIMEOUT_SECONDS", "0.3")
+    try:
+        with tempfile.TemporaryDirectory() as data_dir:
+            state = consumer.ConsumerWorkerState(Path(data_dir) / "state.json")
+            with mock.patch.object(consumer, "fetch_runtime_summaries", return_value=[_runtime_summary()]):
+                result = consumer.run_runtime_summary_consumer_once(
+                    service_url=f"http://127.0.0.1:{server.server_port}",
+                    telemetry_url="http://telemetry:8083",
+                    state=state,
+                    max_attempts=3,
+                    now_fn=lambda: datetime(2026, 7, 15, 1, 1, tzinfo=timezone.utc),
+                )
+    finally:
+        server.shutdown()
+    assert len(calls) == 2
+    assert result["delivered_event_count"] == 1
+    assert not state.pending
+
+
+def test_post_events_non_transient_error_still_raises() -> None:
+    consumer = _load_consumer_module()
+    with mock.patch.object(consumer.urllib.request, "urlopen", side_effect=ValueError("boom")):
+        with pytest.raises(ValueError):
+            consumer.post_events("http://x", [{"event_id": "e"}])

@@ -436,6 +436,11 @@ def build_drift_report_from_event(
     return result
 
 
+def _consume_timeout_seconds() -> float:
+    """The consume handler synchronously calls the incidents API (up to 90s); wait slightly longer, never unbounded."""
+    return float(os.getenv("RECONCILIATION_DRIFT_CONSUMER_POST_TIMEOUT_SECONDS", "100"))
+
+
 def post_events(service_url: str, events: list[dict[str, Any]]) -> dict[str, Any]:
     url = service_url.rstrip("/") + "/api/reconciliation-drift/telemetry-events/consume"
     tenant_ids = {
@@ -477,7 +482,7 @@ def post_events(service_url: str, events: list[dict[str, Any]]) -> dict[str, Any
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310 - dev service URL is operator configured.
+        with urllib.request.urlopen(request, timeout=_consume_timeout_seconds()) as response:  # noqa: S310 - dev service URL is operator configured.
             body = response.read().decode("utf-8")
             decoded = json.loads(body) if body else {}
             if isinstance(decoded, dict) and decoded.get("status") == "deferred":
@@ -488,6 +493,8 @@ def post_events(service_url: str, events: list[dict[str, Any]]) -> dict[str, Any
         raise RuntimeError(f"reconciliation-drift consume failed: {exc.code} {detail}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"reconciliation-drift service unavailable: {exc.reason}") from exc
+    except OSError as exc:  # read timeouts/resets raise bare TimeoutError/OSError, not URLError
+        raise RuntimeError(f"reconciliation-drift service unavailable: {exc!r}") from exc
 
 
 def runtime_summary_to_event(summary: dict[str, Any]) -> dict[str, Any]:

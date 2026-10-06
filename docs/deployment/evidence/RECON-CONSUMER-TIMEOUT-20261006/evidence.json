@@ -1,0 +1,15 @@
+{
+  "task_id": "RECON-CONSUMER-TIMEOUT-20261006",
+  "root_cause": "consume_telemetry_events (main.py) synchronously calls the incidents API per event with PANTHEON_INCIDENTS_API_TIMEOUT_SECONDS=90, while consumer.post_events used a fixed 10s client timeout; a bare TimeoutError from getresponse() was not mapped to RuntimeError so the retry loop missed it and main re-raised. Derived from code reading; no live measurement was possible from the worker (no hosted access).",
+  "fix": "post_events maps OSError (covers TimeoutError, resets) to RuntimeError -> existing attempt/backoff/dead-letter path; client timeout is now RECONCILIATION_DRIFT_CONSUMER_POST_TIMEOUT_SECONDS default 100s (bounded, > 90s downstream bound).",
+  "call_sites": [
+    {"site": "consumer.py post_events", "handling": "HTTPError/URLError/OSError -> RuntimeError -> retry loop, last_error recorded, dead-letter after max_attempts"},
+    {"site": "telemetry_client.py:46", "handling": "already maps HTTPError, URLError, OSError, JSONDecodeError"},
+    {"site": "scheduler_worker.py:252", "handling": "wrapped by except Exception at :295, recorded as worker state"},
+    {"site": "incident_listener.py:286,335", "handling": "called via _retry_operation which catches Exception and records attempts/errors"},
+    {"site": "main.py _post_json:526", "handling": "unchanged; HTTPError/URLError -> 502"}
+  ],
+  "non_transient_errors": "unchanged: only OSError/URLError/HTTPError converted; other exceptions still propagate and fail the tick (test_post_events_non_transient_error_still_raises)",
+  "tests": "tests/test_reconciliation_drift_consumer.py: 12 passed incl. local delayed-server test (first call times out, retried, delivered) ; with worker_resilience/health 22 passed",
+  "hosted_track": "external_wait: next dev pair release must show zero reconciliation-drift worker restarts"
+}
