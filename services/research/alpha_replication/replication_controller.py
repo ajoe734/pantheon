@@ -118,18 +118,17 @@ def _queue_payload_from_registry_entry(
 def build_loop_writer(*, dsn: str, state: ControllerState) -> Any:
     if not dsn:
         return None
-    try:
-        module = importlib.import_module("services.loop-control")
-        return module.LoopControllerWriter(
-            dsn,
-            tenant_id=state.tenant_id,
-            environment=state.environment,
-            controller_id=state.controller_id,
-            controller_name=state.controller_name,
-            deployment_sha=str(state.deployment.get("git_sha") or "unknown"),
-        )
-    except ModuleNotFoundError:
-        return None
+    # A configured durable writer must not silently disappear when an image
+    # omits its driver. Unconfigured local use remains explicitly optional.
+    module = importlib.import_module("services.loop-control")
+    return module.LoopControllerWriter(
+        dsn,
+        tenant_id=state.tenant_id,
+        environment=state.environment,
+        controller_id=state.controller_id,
+        controller_name=state.controller_name,
+        deployment_sha=str(state.deployment.get("git_sha") or "unknown"),
+    )
 
 
 def run_controller_tick(

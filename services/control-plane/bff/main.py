@@ -5701,6 +5701,7 @@ _ASSISTANT_CONTROL_MODE_STORE: Any = None
 def _assistant_ask_enabled() -> bool:
     return os.getenv("PANTHEON_ASSISTANT_ENABLED", "").strip().lower() in {"1", "true", "yes"}
 from .assistant.management_service import (
+    _project_operator_runtime_state_row,
     _assistant_provider_readiness,
     _assistant_provider_list,
     _assistant_provider_register,
@@ -5752,6 +5753,9 @@ from .core.app_factory import compose_bff_app
 app = compose_bff_app(
     app=app,
     app_deps=app_deps,
+    # Capture the real context-aware projector before mounting the router;
+    # the module compatibility facade is installed only after composition.
+    _project_operator_runtime_state_row=_project_operator_runtime_state_row,
 )
 _events_router = app.state.events_router
 _deployment_router = app.state.deployment_router

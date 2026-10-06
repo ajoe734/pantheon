@@ -1259,6 +1259,7 @@ def _project_operator_runtime_state_row(
     return {
         "runtime_id": runtime_id,
         "runtime_binding_id": runtime_binding_id,
+        **{key: binding[key] for key in ("strategy_id", "persona_id") if binding.get(key)},
         "deployment_stage": binding.get("deployment_stage") or binding.get("deployment_mode"),
         "status": binding.get("status"),
         "capital_pool_id": binding.get("capital_pool_id"),
@@ -1385,6 +1386,8 @@ def _build_trading_pulse_baseline_comparison(
     return {
         "runtimeId": runtime_id or None,
         "runtime_id": runtime_id or None,
+        **({"strategyId": row["strategy_id"], "strategy_id": row["strategy_id"]}
+           if row.get("strategy_id") else {}),
         "runtimeBindingId": row.get("runtime_binding_id"),
         "runtime_binding_id": row.get("runtime_binding_id"),
         "deploymentStage": row.get("deployment_stage"),
@@ -2850,7 +2853,7 @@ class ManagementService:
                 )
             )
 
-        baseline_comparisons = [
+        all_comparisons = [
             _build_trading_pulse_baseline_comparison(
                 store,
                 row,
@@ -2860,9 +2863,13 @@ class ManagementService:
             for row in runtime_rows
         ]
         baseline_by_runtime_id = {
-            str(comparison.get("runtimeId") or comparison.get("runtime_id") or ""): comparison
-            for comparison in baseline_comparisons
+            str(c.get("runtimeId") or c.get("runtime_id") or ""): c
+            for c in all_comparisons
         }
+        baseline_comparisons = [
+            c for row, c in zip(runtime_rows, all_comparisons)
+            if _trading_pulse_stage(row) in {"live", "canary"} or (c.get("paper_live_drift") or {}).get("available")
+        ]
         for row in runtime_rows:
             comparison = baseline_by_runtime_id.get(str(row.get("runtime_id") or ""))
             row["baseline_comparison"] = comparison
@@ -2972,8 +2979,8 @@ class ManagementService:
 
         def _make_dataset_surface(ds: str) -> Dict[str, Any]:
             src = _get_dataset_source(ds)
-            surf: Dict[str, Any] = {"status": "ok" if src != "missing" else "unavailable", "source": src}
-            if src == "missing":
+            surf: Dict[str, Any] = {"status": "ok" if src not in {"missing", "unavailable"} else "unavailable", "source": src}
+            if src in {"missing", "unavailable"}:
                 surf.setdefault("staleness", {"served_from": "unverifiable", "last_known_at": snap})
             elif src == "local_snapshot":
                 surf["status"] = "degraded"
@@ -3014,9 +3021,20 @@ class ManagementService:
             )
 
         paper_live_drift_surface = _make_dataset_surface("paper_live_drift_reports")
-        if (
-            runtime_rows
-            and baseline_available_count < len(runtime_rows)
+        live_rows = [row for row in runtime_rows if _trading_pulse_stage(row) in {"live", "canary"}]
+        paper_available_count = sum(
+            1 for row in runtime_rows
+            if _trading_pulse_stage(row) not in {"live", "canary"}
+            and ((row.get("baseline_comparison") or {}).get("paper_live_drift") or {}).get("available")
+        )
+        if not live_rows and baseline_available_count == 0:
+            if paper_live_drift_surface.get("status") == "ok":
+                paper_live_drift_surface["message"] = "No live runtimes require paper/live baseline comparison."
+        elif (
+            (
+                (live_rows and (baseline_available_count - paper_available_count) < len(live_rows))
+                or (paper_available_count > 0 and paper_available_count < (len(runtime_rows) - len(live_rows)))
+            )
             and paper_live_drift_surface.get("status") == "ok"
         ):
             paper_live_drift_surface["status"] = "degraded"

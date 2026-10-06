@@ -26,6 +26,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import FastAPI, HTTPException
 
+from services.control_plane.bff.tests.bff_compose_stand_ins import resolve_with_stand_ins
 from services.control_plane.bff.core.app_factory import compose_bff_app, mount_bff_routers
 from services.control_plane.bff.core.lifespan import (
     create_lifespan,
@@ -80,7 +81,7 @@ def _extract_routes(app: FastAPI) -> Set[Tuple[str, str]]:
 
 def test_compose_bff_app_callable_standalone():
     """Verify compose_bff_app can be called standalone without importing main.py."""
-    standalone_app = compose_bff_app()
+    standalone_app = compose_bff_app(dependency_resolver=resolve_with_stand_ins)
     assert isinstance(standalone_app, FastAPI)
     assert hasattr(standalone_app.state, "events_router")
     assert hasattr(standalone_app.state, "agora_router")
@@ -101,7 +102,7 @@ def test_compose_bff_app_matches_main_route_set():
     bff_main = importlib.import_module("services.control_plane.bff.main")
 
     main_routes = _extract_routes(bff_main.app)
-    standalone_app = compose_bff_app()
+    standalone_app = compose_bff_app(dependency_resolver=resolve_with_stand_ins)
     standalone_routes = _extract_routes(standalone_app)
 
     diff_main_only = main_routes - standalone_routes

@@ -1,0 +1,76 @@
+{
+  "task_id": "IMAGE-DEPENDENCY-PRESENCE-20261006",
+  "base_sha": "5f6044d20e8095929b6f87ce3b44019e1c8aec08",
+  "scope": [
+    "Ensure shared-module dependencies reach every service Docker image and fail closed when validator dependencies are missing.",
+    "Shared modules imported by service images declare runtime dependencies once (services/loop-control/requirements.txt: asyncpg, jsonschema).",
+    "scripts/check_service_lock_shared_deps.py validates that every service lock importing a shared module declares its runtime dependencies; verified 0 errors against all 7 importing locks.",
+    "scripts/ci_stage0.py and .github/pantheon-stage0-matrix.json track all 64 compose project services and verify entrypoint import viability inside built images.",
+    "Deleted orphan validators with no production callers (validate_pool_json, validate_binding_json).",
+    "Switched optional import fallbacks to fail-closed across datasources.py, institutional_memory_store.py, persona_memory_store.py, signal_consumer.py, and ingest_svc.py."
+  ],
+  "deleted_orphan_validators": [
+    {
+      "function": "validate_pool_json",
+      "file": "services/control-plane/governance/capital_pool.py",
+      "reason": "Structural schema validator had no production callers; deleted per acceptance criteria."
+    },
+    {
+      "function": "validate_binding_json",
+      "file": "services/control-plane/governance/persona_capital_binding.py",
+      "reason": "Structural schema validator had no production callers; deleted per acceptance criteria."
+    }
+  ],
+  "fail_closed_modifications": [
+    {
+      "file": "services/control-plane/bff/console_gap/datasources.py",
+      "change": "Fallback calculate_source_allowed_actions raises RuntimeError('Source action policy is unavailable') instead of granting permissive actions."
+    },
+    {
+      "file": "services/memory/institutional_memory_store.py",
+      "change": "validate_institutional_memory_json raises RuntimeError('jsonschema is required for institutional memory validation') instead of returning empty error list."
+    },
+    {
+      "file": "services/memory/persona_memory_store.py",
+      "change": "validate_persona_memory_json raises RuntimeError('jsonschema is required for persona memory validation') instead of returning empty error list."
+    },
+    {
+      "file": "services/execution/lean_runtime/signal_consumer.py",
+      "change": "JSON schema validation is mandatory when schema is configured; governed identity checks fail closed when binding/runtime/capital_pool is missing or mismatched."
+    },
+    {
+      "file": "services/telemetry/ingest_svc.py",
+      "change": "jsonschema import is mandatory; missing schema or validator error rejects event instead of silently passing."
+    }
+  ],
+  "shared_module_locks_check": {
+    "script": "scripts/check_service_lock_shared_deps.py",
+    "shared_module": "services/loop-control",
+    "declared_dependencies": ["asyncpg>=0.29.0", "jsonschema>=4.20.0"],
+    "verified_locks": [
+      "services-consultation.txt",
+      "services-control-plane-bff.txt",
+      "services-policy-learning.txt",
+      "services-reconciliation-drift.txt",
+      "services-research.txt",
+      "services-source_ingestion.txt",
+      "services-training-session.txt"
+    ],
+    "unauthorized_hand_edits_to_prereq_locks": 0,
+    "missing_dependencies_count": 0
+  },
+  "stage0_compose_service_coverage": {
+    "total_compose_project_services": 64,
+    "matrix_compose_services_count": 64,
+    "validation_command": "python3 scripts/ci_stage0.py validate",
+    "entrypoint_import_resolution": "scripts/ci_stage0.py:get_target_entrypoint_import_commands"
+  },
+  "validation_summary": {
+    "ci_stage0_unit_tests": "scripts/test_ci_stage0.py passed (9 tests)",
+    "check_service_lock_shared_deps_unit_tests": "scripts/test_check_service_lock_shared_deps.py passed (3 tests)",
+    "memory_unit_tests": "test_institutional_memory_store.py (24 tests) and test_persona_memory_store.py (17 tests) passed",
+    "governance_unit_tests": "test_capital_pool.py (25 tests) and test_persona_capital_binding.py (56 tests) passed",
+    "bff_data_sources_contract_tests": "test_bff_management_data_sources_contract.py (6 tests) passed",
+    "diff_budget": "diff_budget.py verified net production growth +11 lines <= budget 20 lines"
+  }
+}

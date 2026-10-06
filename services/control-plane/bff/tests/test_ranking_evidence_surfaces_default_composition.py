@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 from fastapi.testclient import TestClient
 
+from services.control_plane.bff.tests.bff_compose_stand_ins import resolve_with_stand_ins
 from services.control_plane.bff.core.app_factory import compose_bff_app
 from services.rankings.test_store import _FakeConnection, _fake_psycopg
 from services.runtime_auth_inbound import encode_jwt_hs256
@@ -164,7 +165,7 @@ def test_ranking_evidence_surfaces_ok_empty_default_composition(mock_owner: Mock
     monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", owner_url)
     monkeypatch.setenv("PANTHEON_SOURCE_INGEST_URL", owner_url)
 
-    app = compose_bff_app()
+    app = compose_bff_app(dependency_resolver=resolve_with_stand_ins)
     client = TestClient(app)
 
     auth = _make_auth_header("tenant-test")
@@ -226,7 +227,7 @@ def test_ranking_evidence_surfaces_ok_populated_default_composition(mock_owner: 
         {"session_id": "sess-test-1", "tenant_id": "tenant-test", "persona_id": "persona-1", "status": "active"},
     ]
 
-    app = compose_bff_app()
+    app = compose_bff_app(dependency_resolver=resolve_with_stand_ins)
     client = TestClient(app)
 
     auth = _make_auth_header("tenant-test")
@@ -253,7 +254,7 @@ def test_ranking_evidence_surfaces_owner_down_degrades_ranking_and_evaluator(moc
 
     mock_owner.should_fail_personas = True
 
-    app = compose_bff_app()
+    app = compose_bff_app(dependency_resolver=resolve_with_stand_ins)
     client = TestClient(app)
 
     auth = _make_auth_header("tenant-test")
@@ -295,7 +296,7 @@ def test_ranking_evidence_surfaces_source_owner_down_reports_unavailable(mock_ow
 
     mock_owner.should_fail_source = True
 
-    app = compose_bff_app()
+    app = compose_bff_app(dependency_resolver=resolve_with_stand_ins)
     client = TestClient(app)
 
     auth = _make_auth_header("tenant-test")
@@ -330,7 +331,7 @@ def test_ranking_evidence_surfaces_cross_tenant_isolation_and_redaction(mock_own
         {"evidence_item_id": "ev-b", "tenant_id": "tenant-b", "title": "Evidence B", "created_at": "2026-01-15T00:00:00Z"},
     ]
 
-    app = compose_bff_app()
+    app = compose_bff_app(dependency_resolver=resolve_with_stand_ins)
     client = TestClient(app)
 
     # Tenant A request

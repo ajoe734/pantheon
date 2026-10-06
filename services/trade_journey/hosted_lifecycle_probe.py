@@ -21,6 +21,7 @@ import time
 from typing import Any, Awaitable, Callable, Mapping, Sequence
 import uuid
 
+from services.trade_journey.telemetry_rows import decode_event_payload
 from services.trade_journey.lifecycle_projector import (
     JOURNEY_STORE_SCHEMA,
     LOOP_STORE_SCHEMA,
@@ -174,9 +175,6 @@ class AsyncpgTelemetrySource:
         rows: list[dict[str, Any]] = []
         try:
             for record in reversed(records):
-                payload = record["payload"]
-                if isinstance(payload, str):
-                    payload = json.loads(payload)
                 rows.append(
                     {
                         "ingested_seq": int(record["ingested_seq"]),
@@ -184,7 +182,7 @@ class AsyncpgTelemetrySource:
                         "event_id": str(record["event_id"]),
                         "event_type": str(record["event_type"]),
                         "created_at": record["created_at"].astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
-                        "payload": dict(payload),
+                        "payload": decode_event_payload(record["payload"]),
                     }
                 )
         except Exception as exc:  # noqa: BLE001 - source content is never exported

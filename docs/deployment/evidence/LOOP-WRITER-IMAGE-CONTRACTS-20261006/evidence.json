@@ -1,0 +1,34 @@
+{
+  "task_id": "LOOP-WRITER-IMAGE-CONTRACTS-20261006",
+  "diagnostic_base_sha": "ddc431ba5624c307e798470d4dad2164f4430f00",
+  "scope": [
+    "Add asyncpg to the five existing worker image dependency inputs/locks. Reconciliation also needs jsonschema, discovered in the actual built image rather than the full development interpreter.",
+    "Supply the existing PostgreSQL DSN to training preview and reconciliation scheduler; retain the established tenant fallback and provide environment/release identity to the existing writers.",
+    "A configured writer no longer silently becomes None when an image lacks its module/driver. Unconfigured local use stays optional. Existing transient publication handling, fences and business execution semantics are unchanged."
+  ],
+  "validation": {
+    "combined_local_suite": "107 passed, 15 warnings; scripts/test_loop_writer_image_contracts.py, scripts/test_worker_tenant_compose_contract.py and six existing owner/controller test files; COMPOSE_PROFILES=root",
+    "lock_resolution": "uv-generated locks; every pre-existing package version preserved. Only asyncpg and reconciliation's missing jsonschema dependency closure were added.",
+    "actual_images": [
+      {"service": "research", "image": "sha256:a3e456715f7509ca258bff7f58984a670269450721f381c5051dfcb6d50aefc9"},
+      {"service": "policy-learning", "image": "sha256:3638acbf4927866b5501097fcfc8608873a8865a7907d0722ebc10da05ce470a"},
+      {"service": "training-session", "image": "sha256:6e52aaf468bbce82b5fc41903ba4ee723422eaee2f0c2a215a04611aa46f0aac"},
+      {"service": "consultation", "image": "sha256:5b20d49142ca39727748b9ee9c034c0362f7c5305b59289c8781a5d47c603174"},
+      {"service": "reconciliation-drift", "image": "sha256:ab9f21987ff9d9c00140b633d536db441bda7e064d98ddada9d46e84f352a1e0"}
+    ],
+    "image_database_boundary": "All five built images constructed their real worker's LoopControllerWriter, matched synthetic tenant/environment/version, wrote tick then failure across separate asyncio.run calls, and read back PostgreSQL timestamps/reason/identity with last_success_at still null. Isolated internal Docker network, disposable postgres:16-alpine, existing loop-control test table schema. Test container/network removed afterward; no shared database or business APIs used.",
+    "qualification": "Local working-tree image/driver validation, not release images, hosted PostgreSQL deployment, real business success or twelve-loop acceptance.",
+    "initial_attempts": [
+      "An initial run omitted the root Compose profile, so four old tenant-render tests could not find worker services; the final combined run explicitly enabled root and passed.",
+      "The initial reconciliation image lacked jsonschema; adding asyncpg alone was insufficient. The input/lock were corrected and the image rebuilt before the passing database test.",
+      "The first consultation diagnostic invoked a /tmp script without the production module entrypoint's current-directory import path. Running via python -c in /workspace matched the existing python -m entrypoint and succeeded without changing that Dockerfile.",
+      "The first isolated database probe observed bootstrap readiness before the named database existed. Final readiness waited for SELECT 1 through TCP to the named disposable database; no business failure was inferred from the fixture race."
+    ]
+  },
+  "remaining": [
+    "Canonical exact-head review, merge and actual deployment are separately required.",
+    "A published controller record does not prove fresh business closure, terminal receipts, telemetry read wiring or L1-L12 acceptance.",
+    "No queue recovery/replay, monitor activation, provider call, credential change or hosted/capital-affecting action occurred."
+  ],
+  "local_logs": "/tmp/pantheon-loop-writer-images-validation/"
+}

@@ -288,8 +288,7 @@ def _default_handle_sse_stream(
 def submit_incident_action_command(
     command_store: Any, entity_type: Any, entity_id: str, action_id: str, resolved_key: str,
     identity: Any, payload: Dict[str, Any], command_type: Any, *,
-    bff_error: Optional[Callable[..., Any]] = None, idempotency_ledger: Optional[Dict[str, Any]] = None,
-    request_hash: str = "",
+    bff_error: Optional[Callable[..., Any]] = None,
 ) -> Dict[str, Any]:
     from services.control_plane.bff.command_adapters.base import ActionUnavailableError
     from services.control_plane.bff.command_adapters.registry import dispatch_domain_command
@@ -333,8 +332,6 @@ def submit_incident_action_command(
     inc_st = (domain_res.get("authoritative_readback") or {}).get("incident_status") or st
     res_data = {"id": cmd_id, "status": "executed", **({"status": st, "read_back_status": st, "incident_status": inc_st, "domain_receipt": domain_res} if st else {})}
     res_dict = {"command_id": cmd_id, "status": "accepted", "read_back_status": st or "executed", "data": res_data}
-    if idempotency_ledger is not None and resolved_key:
-        idempotency_ledger[resolved_key] = {"request_hash": request_hash, "result": res_dict}
     return res_dict
 
 
@@ -373,7 +370,6 @@ def create_incident_router(
     incident_subscribers: Optional[Any] = None,
     acknowledged_alerts: Optional[Any] = None,
     incident_overlay: Optional[Any] = None,
-    idempotency_ledger: Optional[Any] = None,
     durable_writer: Optional[Any] = None,
 ) -> APIRouter:
     """Build the canonical BFF Incidents domain router.
@@ -407,7 +403,6 @@ def create_incident_router(
         get_read_store=get_read_store,
         get_command_store=get_command_store,
         durable_writer=durable_writer,
-        idempotency_ledger=idempotency_ledger,
         incident_events=incident_events,
         incident_subscribers=incident_subscribers,
         utc_now=_utc_now,
@@ -422,14 +417,13 @@ def create_incident_router(
     _list_bff_inc = list_bff_incidents or _service.list_bff_incidents
     _inc_events = incident_events if incident_events is not None else _service._incident_events
     _inc_subscribers = incident_subscribers if incident_subscribers is not None else _service._incident_subscribers
-    _idem_ledger = idempotency_ledger if idempotency_ledger is not None else _service._idempotency_ledger
     _submit_action = submit_action_command
     if _submit_action is None and (command_store or _service.get_command_store()) is not None:
         _cs = command_store or _service.get_command_store()
         _submit_action = lambda et, eid, aid, rk, ident, pl, ct: submit_incident_action_command(
             command_store=_cs, entity_type=et, entity_id=eid, action_id=aid,
             resolved_key=rk, identity=ident, payload=pl, command_type=ct,
-            bff_error=_err, idempotency_ledger=_idem_ledger,
+            bff_error=_err,
         )
 
     # -------------------------------------------------------------------------
@@ -765,24 +759,8 @@ def create_incident_router(
             pass
         _reject_key(payload)
 
-        existing = _idem_ledger.get(resolved_key)
-        req_hash = _stable_json_hash(payload)
-        if existing is not None:
-            if existing.get("request_hash") != req_hash:
-                raise _err(
-                    409,
-                    ErrorCode.IDEMPOTENCY_CONFLICT,
-                    "Idempotency key already used with a different payload",
-                    f"Key {resolved_key!r} is bound to a different request hash",
-                    precondition_failed="idempotency_conflict",
-                    suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-                )
-            return existing["result"]
-
         operator_id = getattr(identity, "operator_id", "operator")
-        result = _service.create_incident(payload, operator_id=operator_id, idempotency_key=resolved_key)
-        _idem_ledger[resolved_key] = {"request_hash": req_hash, "result": result}
-        return result
+        return _service.create_incident(payload, operator_id=operator_id, idempotency_key=resolved_key)
 
     # -------------------------------------------------------------------------
     # Route 13: GET /bff/incidents/{incident_id}
@@ -937,10 +915,22 @@ def create_incident_router(
         clean_id = alert_id.strip()
         resolved_key = _resolve_key(idempotency_key, x_idempotency_key)
         request_hash = _stable_json_hash({"alert_id": clean_id, "action": "acknowledge", "payload": payload})
+        operator_id = getattr(identity, "operator_id", "operator")
 
-        existing = _idem_ledger.get(resolved_key)
-        if existing is not None:
-            if existing.get("request_hash") != request_hash:
+        # Idempotency lives in the durable command ledger, not in BFF process memory.
+        cmd_store = command_store or _service.get_command_store()
+        if not all(hasattr(cmd_store, m) for m in ("get_command_by_idempotency_key", "submit_terminal_command")):
+            raise _err(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Alert acknowledgement unavailable",
+                "No durable command ledger is wired, so the idempotency key cannot be honored.",
+                precondition_failed="owner_idempotency_unsupported",
+            )
+        prior = cmd_store.get_command_by_idempotency_key(resolved_key, operator_id=operator_id)
+        if prior is not None:
+            prior_record = (prior.get("foundation") or {}).get("idempotency_record") or {}
+            if prior_record.get("request_hash") != request_hash:
                 raise _err(
                     409,
                     ErrorCode.IDEMPOTENCY_CONFLICT,
@@ -949,7 +939,7 @@ def create_incident_router(
                     precondition_failed="idempotency_conflict",
                     suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
                 )
-            return existing["result"]
+            return JSONResponse(status_code=200, content=prior_record["response"])
 
         snapshot_at = _utc_now()
         alerts_payload = _build_alerts_payload(snapshot_at)
@@ -986,7 +976,6 @@ def create_incident_router(
 
         command_id = str(uuid.uuid4())
         submitted_at = snapshot_at
-        operator_id = getattr(identity, "operator_id", "operator")
         audit_record = {
             "operator_id": operator_id,
             "roles_at_submission": getattr(identity, "roles", ["operator"]),
@@ -996,13 +985,6 @@ def create_incident_router(
             "idempotency_key": resolved_key,
             "request_hash": request_hash,
         }
-        cmd_store = _service.get_command_store()
-        if cmd_store and hasattr(cmd_store, "submit_terminal_command"):
-            try:
-                cmd_store.submit_terminal_command(command_id=command_id, command_type=CommandType.ALERT_ACKNOWLEDGE, target=TargetObject(type=ObjectType.RISK_ALERT, id=clean_id), submitted_at=submitted_at, params={**payload, "alert_id": clean_id, "incident_id": incident_id, "action": "acknowledge"}, audit_context=audit_record, result=inc_res)
-            except Exception as e:
-                log.warning("command_store.submit_terminal_command failed: %s", e)
-
         tracking_url = f"/api/v1/operator/commands/{command_id}"
         result = {
             "status": "acknowledged",
@@ -1020,7 +1002,18 @@ def create_incident_router(
             },
             "meta": {"idempotency_key": resolved_key, "snapshot_at": snapshot_at},
         }
-        _idem_ledger[resolved_key] = {"request_hash": request_hash, "result": result}
+        cmd_store.submit_terminal_command(
+            command_id=command_id,
+            command_type=CommandType.ALERT_ACKNOWLEDGE,
+            target=TargetObject(type=ObjectType.RISK_ALERT, id=clean_id),
+            submitted_at=submitted_at,
+            params={**payload, "alert_id": clean_id, "incident_id": incident_id, "action": "acknowledge"},
+            audit_context=audit_record,
+            foundation_context={
+                "idempotency_record": {"idempotency_key": resolved_key, "request_hash": request_hash, "response": result},
+            },
+            result=inc_res,
+        )
         return JSONResponse(status_code=200, content=result)
 
     # -------------------------------------------------------------------------

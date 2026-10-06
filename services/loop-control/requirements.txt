@@ -1,0 +1,3 @@
+# Runtime dependencies imported directly by the shared loop-control module.
+asyncpg
+jsonschema

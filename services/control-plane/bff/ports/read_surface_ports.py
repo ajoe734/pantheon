@@ -103,6 +103,9 @@ from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
     create_in_memory_lifecycle_telemetry_governance_port,
     create_lifecycle_telemetry_governance_port,
 )
+from services.control_plane.bff.ports.reconciliation_drift_reads import (
+    ReconciliationDriftReadsPort,
+)
 from services.control_plane.bff.ports.persona_training import (
     PersonaRegistryReadsPort,
     PersonaTrainingDomainPort,
@@ -133,6 +136,7 @@ class ReadSurfacePorts:
         paper_runtime_monitoring_sessions_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         paper_fleet_reconciler_url: Optional[str] = None,
         paper_fleet_transport: Optional[Any] = None,
+        reconciliation_drift_reads: Optional[ReconciliationDriftReadsPort] = None,
     ) -> None:
         self._active_delegate = None
         self.operations_consultation = operations_consultation or create_operations_consultation_port()
@@ -145,6 +149,7 @@ class ReadSurfacePorts:
         self._paper_runtime_monitoring_sessions_provider = paper_runtime_monitoring_sessions_provider
         self._paper_fleet_reconciler_url = paper_fleet_reconciler_url
         self._paper_fleet_transport = paper_fleet_transport
+        self.reconciliation_drift_reads = reconciliation_drift_reads or ReconciliationDriftReadsPort()
 
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -165,6 +170,7 @@ class ReadSurfacePorts:
             "_paper_runtime_monitoring_sessions_provider",
             "_paper_fleet_reconciler_url",
             "_paper_fleet_transport",
+            "reconciliation_drift_reads",
         ):
             super().__setattr__(name, value)
             return
@@ -193,6 +199,7 @@ class ReadSurfacePorts:
             "_paper_runtime_monitoring_sessions_provider",
             "_paper_fleet_reconciler_url",
             "_paper_fleet_transport",
+            "reconciliation_drift_reads",
         ):
             return super().__getattribute__(name)
 
@@ -483,6 +490,18 @@ class ReadSurfacePorts:
             # The incident owner can be down while list_incidents() swallows
             # the outage and returns []; surface its real availability.
             return self.lifecycle_telemetry_governance.dataset_source("incidents")
+        if dataset == "paper_runtime_monitoring_sessions":
+            provider = self._paper_runtime_monitoring_sessions_provider
+            base_url = self._paper_fleet_reconciler_url or os.getenv(
+                "PANTHEON_PAPER_FLEET_RECONCILER_URL", ""
+            )
+            if provider is None and not str(base_url or "").strip():
+                return "missing"
+            try:
+                self.list_authoritative_paper_runtime_monitoring_sessions()
+                return "service"
+            except Exception:
+                return "unavailable"
         if dataset == "telemetry_summaries":
             try:
                 self.lifecycle_telemetry_governance.list_telemetry_summaries()
@@ -524,6 +543,10 @@ class ReadSurfacePorts:
                 return "service"
             except Exception:
                 return "missing"
+        if dataset == "paper_live_drift_reports":
+            if self.reconciliation_drift_reads is not None:
+                return self.reconciliation_drift_reads.get_surface_status()
+            return "typed_store"
         if dataset in (
             "deployment_plans",
             "personas",
@@ -535,7 +558,6 @@ class ReadSurfacePorts:
             "postmortems",
             "kill_switch",
             "drift_reports",
-            "paper_live_drift_reports",
             "telemetry_events",
             "lineage_edges",
             "governance_audit_events",
@@ -785,7 +807,9 @@ class ReadSurfacePorts:
         return self.lifecycle_telemetry_governance.get_telemetry_performance(artifact_id)
 
     def list_paper_live_drift_reports(self) -> List[Dict[str, Any]]:
-        return self.lifecycle_telemetry_governance.list_paper_live_drift_reports()
+        if self.reconciliation_drift_reads is not None:
+            return self.reconciliation_drift_reads.list_paper_live_drift_reports()
+        return []
 
     def artifact_exists(self, artifact_id: str) -> bool:
         return self.lifecycle_telemetry_governance.artifact_exists(artifact_id)
@@ -1175,9 +1199,18 @@ class ReadSurfacePorts:
         if not runtime_id:
             return None
         rid_str = str(runtime_id).strip()
-        for r in self.lifecycle_telemetry_governance.list_paper_live_drift_reports():
-            if str(r.get("runtime_id") or r.get("id") or "").strip() == rid_str:
-                return r
+        if self.reconciliation_drift_reads is not None:
+            binding_id = None
+            try:
+                binding = self.get_runtime_binding_by_runtime_id(rid_str)
+                if isinstance(binding, dict):
+                    binding_id = binding.get("binding_id") or binding.get("id")
+            except Exception:
+                pass
+            return self.reconciliation_drift_reads.get_paper_live_drift_report(
+                binding_id=binding_id,
+                runtime_id=rid_str,
+            )
         return None
 
     def get_latest_run(
@@ -1342,6 +1375,7 @@ def create_read_surface_ports(
     paper_runtime_monitoring_sessions_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None,
     paper_fleet_reconciler_url: Optional[str] = None,
     paper_fleet_transport: Optional[Any] = None,
+    reconciliation_drift_reads: Optional[ReconciliationDriftReadsPort] = None,
     **kwargs: Any,
 ) -> ReadSurfacePorts:
     """Factory creating a production-grade composite ReadSurfacePorts instance."""
@@ -1371,6 +1405,7 @@ def create_read_surface_ports(
         paper_runtime_monitoring_sessions_provider=paper_runtime_monitoring_sessions_provider,
         paper_fleet_reconciler_url=paper_fleet_reconciler_url,
         paper_fleet_transport=paper_fleet_transport,
+        reconciliation_drift_reads=reconciliation_drift_reads,
     )
 
 
@@ -1386,6 +1421,7 @@ def create_in_memory_read_surface_ports(
     paper_runtime_monitoring_sessions_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None,
     paper_fleet_reconciler_url: Optional[str] = None,
     paper_fleet_transport: Optional[Any] = None,
+    reconciliation_drift_reads: Optional[ReconciliationDriftReadsPort] = None,
     **generic_kwargs: Any,
 ) -> ReadSurfacePorts:
     """Factory creating an in-memory test double ReadSurfacePorts instance."""
@@ -1415,6 +1451,10 @@ def create_in_memory_read_surface_ports(
         and paper_fleet_transport is None
     ):
         paper_provider = lambda: []
+    if reconciliation_drift_reads is None and "reconciliation_records_provider" in generic_kwargs:
+        reconciliation_drift_reads = ReconciliationDriftReadsPort(
+            records_provider=generic_kwargs.get("reconciliation_records_provider")
+        )
     return ReadSurfacePorts(
         operations_consultation=ops_port,
         persona_capital_runtime=pcr_port,
@@ -1426,4 +1466,5 @@ def create_in_memory_read_surface_ports(
         paper_runtime_monitoring_sessions_provider=paper_provider,
         paper_fleet_reconciler_url=paper_fleet_reconciler_url,
         paper_fleet_transport=paper_fleet_transport,
+        reconciliation_drift_reads=reconciliation_drift_reads,
     )

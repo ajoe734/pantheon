@@ -831,12 +831,12 @@ mutation_routes:
 - route: POST /api/v1/bindings
   command: create_binding
   router: runtime
-  application_owner: runtime_application
-  store_owner: runtime_manager_store
-  table_or_stream: runtime_bindings
-  outbox_subject: runtime.binding.v1
-  idempotency_scope: runtime_id
-  readback_projection: management_runtime_projection
+  application_owner: capital_application
+  store_owner: capital_store
+  table_or_stream: persona_capital_bindings
+  outbox_subject: capital.allocation.v1
+  idempotency_scope: binding_id
+  readback_projection: management_capital_projection
   legacy_path: null
   legacy_removal_wave: null
 - route: POST /bff/runtimes
@@ -862,7 +862,7 @@ mutation_routes:
   legacy_path: null
   legacy_removal_wave: null
 - route: POST /api/v1/deployment-plans
-  command: create_deployment_plan_v1
+  command: retired_deployment_plan_create
   router: deployment
   application_owner: deployment_application
   store_owner: deployment_store
@@ -884,7 +884,7 @@ mutation_routes:
   legacy_path: null
   legacy_removal_wave: null
 - route: POST /bff/deployments
-  command: sem_create_deployment_command
+  command: retired_deployment_create
   router: deployment
   application_owner: deployment_application
   store_owner: deployment_store
