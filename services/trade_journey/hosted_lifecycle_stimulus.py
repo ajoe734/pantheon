@@ -14,6 +14,7 @@ import asyncio
 from datetime import datetime, timezone
 import json
 import os
+import re
 from pathlib import Path
 import time
 from typing import Any, Callable, Mapping, Sequence
@@ -837,6 +838,15 @@ def trigger_reconciliation(
             exc,
         )
     results = payload.get("lifecycle_append_results")
+    owner_status = re.sub(
+        r"[^a-z0-9_]", "_", _clean(payload.get("failure_code") or payload.get("status")).lower()
+    )[:48]
+    if not isinstance(results, list) and owner_status and _clean(payload.get("detail")):
+        raise StimulusError(
+            f"reconciliation_owner_{owner_status}",
+            "scheduled reconciliation owner reported a non-success status",
+            details={"owner_status": owner_status},
+        )
     if not isinstance(results, list):
         raise StimulusError(
             "reconciliation_response_invalid",
