@@ -41,22 +41,19 @@ def _build_loop_writer(*, dsn: str, tenant_id: str) -> Any:
 
     if not dsn:
         return None
-    try:
-        module = importlib.import_module("services.loop-control")
-        deployment_sha = str(
-            os.getenv("PANTHEON_DEPLOYMENT_SHA") or os.getenv("GIT_SHA") or "unknown"
-        )
-        return module.LoopControllerWriter(
-            dsn,
-            tenant_id=tenant_id,
-            environment=os.getenv("PANTHEON_ENV", "dev"),
-            controller_id=os.getenv("RECONCILIATION_DRIFT_SCHEDULER_ID")
-            or f"{_WORKER_NAME}:{socket.gethostname()}:{os.getpid()}",
-            controller_name=_WORKER_NAME,
-            deployment_sha=deployment_sha,
-        )
-    except ModuleNotFoundError:
-        return None
+    module = importlib.import_module("services.loop-control")
+    deployment_sha = str(
+        os.getenv("PANTHEON_DEPLOYMENT_SHA") or os.getenv("GIT_SHA") or "unknown"
+    )
+    return module.LoopControllerWriter(
+        dsn,
+        tenant_id=tenant_id,
+        environment=os.getenv("PANTHEON_ENV", "dev"),
+        controller_id=os.getenv("RECONCILIATION_DRIFT_SCHEDULER_ID")
+        or f"{_WORKER_NAME}:{socket.gethostname()}:{os.getpid()}",
+        controller_name=_WORKER_NAME,
+        deployment_sha=deployment_sha,
+    )
 
 
 def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
