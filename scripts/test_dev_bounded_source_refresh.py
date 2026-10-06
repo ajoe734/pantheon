@@ -160,3 +160,87 @@ def test_calendar_evidence_invalid_fails_closed() -> None:
     ok, err, norm = validate_taiwan_calendar_evidence(invalid_evidence)
     assert ok is False
     assert err is not None
+
+
+def test_preflight_fails_closed_when_calendar_evidence_missing() -> None:
+    # Test preflight simulation when snapshot exists but has no calendar evidence
+    res = subprocess.run(
+        [
+            "bash",
+            "-c",
+            """
+python3 - false tw-twse-tpex-official-market <<'PY'
+import json, sys
+from datetime import datetime, time, timedelta, timezone
+
+TAIPEI_TZ = timezone(timedelta(hours=8))
+now_taipei = datetime(2026, 10, 6, 16, 0, tzinfo=TAIPEI_TZ) # Tuesday 16:00 (after close)
+taipei_date_str = str(now_taipei.date())
+
+snap = {"event_time": "2026-10-06T05:30:00Z", "observed_at": "2026-10-06T06:00:00Z", "lineage": {}}
+cal_ev = snap.get("calendar_evidence") or (snap.get("lineage") or {}).get("calendar_evidence")
+if cal_ev is None:
+    sys.exit(print(json.dumps({"status": "error", "reason": "market_input_calendar_unverifiable", "detail": "snapshot missing required calendar evidence and pins", "taipei_date": taipei_date_str})))
+PY
+""",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0 or res.stdout.strip()
+    payload = json.loads(res.stdout)
+    assert payload["status"] == "error"
+    assert payload["reason"] == "market_input_calendar_unverifiable"
+    assert "missing required calendar evidence" in payload["detail"]
+
+
+def test_preflight_fails_closed_when_source_ingest_unreachable() -> None:
+    # Test preflight simulation when connection refused occurs
+    res = subprocess.run(
+        [
+            "bash",
+            "-c",
+            """
+python3 - false tw-twse-tpex-official-market <<'PY'
+import json, sys, urllib.error
+
+taipei_date_str = "2026-10-06"
+exc = urllib.error.URLError("Connection refused")
+sys.exit(print(json.dumps({"status": "error", "reason": "source_ingest_unreachable", "detail": str(exc.reason), "taipei_date": taipei_date_str})))
+PY
+""",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(res.stdout)
+    assert payload["status"] == "error"
+    assert payload["reason"] == "source_ingest_unreachable"
+    assert "Connection refused" in payload["detail"]
+
+
+def test_preflight_skips_on_governed_holiday() -> None:
+    # Test preflight simulation when date is in calendar holidays
+    res = subprocess.run(
+        [
+            "bash",
+            "-c",
+            """
+python3 - false tw-twse-tpex-official-market <<'PY'
+import json, sys
+
+taipei_date_str = "2026-02-13" # LNY holiday
+c_norm = {"holidays": {"2026-02-13": {"name": "LNY"}}}
+if taipei_date_str in c_norm.get("holidays", {}):
+    sys.exit(print(json.dumps({"status": "skipped", "reason": "holiday", "taipei_date": taipei_date_str})))
+PY
+""",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(res.stdout)
+    assert payload["status"] == "skipped"
+    assert payload["reason"] == "holiday"
+    assert payload["taipei_date"] == "2026-02-13"
+

@@ -26,7 +26,7 @@ write_result() {
 
 # 1. Calendar & Idempotency Pre-flight Check
 preflight_output="$(python3 - "${FORCE}" "${CONNECTOR_ID}" <<'PY'
-import json, sys, urllib.request
+import json, sys, urllib.error, urllib.request
 from datetime import datetime, time, timedelta, timezone
 
 TAIPEI_TZ = timezone(timedelta(hours=8))
@@ -39,27 +39,48 @@ if not force and now_taipei.weekday() >= 5:
 if not force and now_taipei.time() < time(13, 30):
     sys.exit(print(json.dumps({"status": "skipped", "reason": "session_not_closed", "taipei_date": taipei_date_str, "checked_at": now_utc.isoformat()})))
 
+from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness, validate_taiwan_calendar_evidence
+
+snap = None
 try:
-    from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness, validate_taiwan_calendar_evidence
     req = urllib.request.Request("http://127.0.0.1:18097/api/source-ingest/snapshots/latest?symbol=0050.TW", headers={"Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=3) as resp:
         snap = json.loads(resp.read().decode())
+except urllib.error.HTTPError as exc:
+    if exc.code == 404:
+        snap = None
+    else:
+        sys.exit(print(json.dumps({"status": "error", "reason": "snapshot_lookup_failed", "detail": f"HTTP {exc.code}: {exc.reason}", "taipei_date": taipei_date_str})))
+except urllib.error.URLError as exc:
+    sys.exit(print(json.dumps({"status": "error", "reason": "source_ingest_unreachable", "detail": str(exc.reason), "taipei_date": taipei_date_str})))
+except Exception as exc:
+    sys.exit(print(json.dumps({"status": "error", "reason": "preflight_failed", "detail": str(exc), "taipei_date": taipei_date_str})))
+
+if snap is not None:
     cal_ev = snap.get("calendar_evidence") or (snap.get("lineage") or {}).get("calendar_evidence")
-    if cal_ev is not None:
-        c_ok, c_err, c_norm = validate_taiwan_calendar_evidence(cal_ev, now_dt=now_utc)
-        if not c_ok:
-            sys.exit(print(json.dumps({"status": "error", "reason": "market_input_calendar_unverifiable", "detail": c_err, "taipei_date": taipei_date_str})))
-        if taipei_date_str in (c_norm.get("holidays") or {}):
-            sys.exit(print(json.dumps({"status": "skipped", "reason": "holiday", "taipei_date": taipei_date_str, "checked_at": now_utc.isoformat()})))
-    ev_dt, obs_dt = datetime.fromisoformat(snap["event_time"].replace("Z", "+00:00")), datetime.fromisoformat(snap["observed_at"].replace("Z", "+00:00"))
+    if cal_ev is None:
+        sys.exit(print(json.dumps({"status": "error", "reason": "market_input_calendar_unverifiable", "detail": "snapshot missing required calendar evidence and pins", "taipei_date": taipei_date_str})))
+    c_ok, c_err, c_norm = validate_taiwan_calendar_evidence(cal_ev, now_dt=now_utc)
+    if not c_ok:
+        sys.exit(print(json.dumps({"status": "error", "reason": "market_input_calendar_unverifiable", "detail": c_err, "taipei_date": taipei_date_str})))
+    if taipei_date_str in (c_norm.get("holidays") or {}):
+        sys.exit(print(json.dumps({"status": "skipped", "reason": "holiday", "taipei_date": taipei_date_str, "checked_at": now_utc.isoformat()})))
+
+    ev_dt = datetime.fromisoformat(snap["event_time"].replace("Z", "+00:00"))
+    obs_dt = datetime.fromisoformat(snap["observed_at"].replace("Z", "+00:00"))
     if not force and ev_dt.astimezone(TAIPEI_TZ).date() == now_taipei.date() and obs_dt >= datetime(now_taipei.year, now_taipei.month, now_taipei.day, 13, 30, tzinfo=TAIPEI_TZ).astimezone(timezone.utc):
-        ok, _, _ = evaluate_taiwan_market_freshness(event_time_dt=ev_dt, now_dt=now_utc, refresh_receipt_dt=obs_dt, lineage=snap.get("lineage") or {}, max_refresh_age_seconds=86400, calendar_evidence=cal_ev)
+        ok, reason, detail = evaluate_taiwan_market_freshness(
+            event_time_dt=ev_dt,
+            now_dt=now_utc,
+            refresh_receipt_dt=obs_dt,
+            lineage=snap.get("lineage") or {},
+            max_refresh_age_seconds=86400,
+            calendar_evidence=cal_ev,
+        )
         if ok:
             sys.exit(print(json.dumps({"status": "noop", "reason": "already_fresh", "taipei_date": taipei_date_str, "snapshot_id": snap.get("snapshot_id"), "checked_at": now_utc.isoformat()})))
-except SystemExit:
-    raise
-except Exception:
-    pass
+        else:
+            sys.exit(print(json.dumps({"status": "error", "reason": "existing_snapshot_admission_failed", "detail": f"{reason}: {detail}", "taipei_date": taipei_date_str})))
 
 print(json.dumps({"status": "proceed", "taipei_date": taipei_date_str}))
 PY
@@ -153,7 +174,7 @@ verification_json="$(python3 - "${CONNECTOR_ID}" "${refresh_started_at}" "${evid
 import json, sys, urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness
+from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness, validate_taiwan_calendar_evidence
 
 cid, started_raw, ev_dir, syms_csv = sys.argv[1:5]
 started = datetime.fromisoformat(started_raw.replace("Z", "+00:00"))
@@ -169,7 +190,20 @@ for s in [x for x in syms_csv.split(",") if x]:
         snap = json.loads(resp.read().decode())
     ev_dt, obs_dt = datetime.fromisoformat(snap["event_time"].replace("Z", "+00:00")), datetime.fromisoformat(snap["observed_at"].replace("Z", "+00:00"))
     lineage = snap.get("lineage") or {}
-    ok, reason, detail = evaluate_taiwan_market_freshness(event_time_dt=ev_dt, now_dt=now_utc, refresh_receipt_dt=obs_dt, lineage=lineage, max_refresh_age_seconds=86400, calendar_evidence=snap.get("calendar_evidence") or lineage.get("calendar_evidence"))
+    cal_ev = snap.get("calendar_evidence") or lineage.get("calendar_evidence")
+    if cal_ev is None:
+        raise SystemExit(f"refreshed snapshot missing calendar evidence and pins for {s}")
+    c_ok, c_err, _ = validate_taiwan_calendar_evidence(cal_ev, now_dt=now_utc)
+    if not c_ok:
+        raise SystemExit(f"refreshed snapshot calendar evidence unverifiable for {s}: {c_err}")
+    ok, reason, detail = evaluate_taiwan_market_freshness(
+        event_time_dt=ev_dt,
+        now_dt=now_utc,
+        refresh_receipt_dt=obs_dt,
+        lineage=lineage,
+        max_refresh_age_seconds=86400,
+        calendar_evidence=cal_ev,
+    )
     if not ok:
         raise SystemExit(f"refreshed snapshot failed admission for {s}: {reason} {detail}")
     admitted.append({"symbol": s, "snapshot_id": snap.get("snapshot_id")})

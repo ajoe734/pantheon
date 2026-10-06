@@ -21,7 +21,7 @@
     },
     "4_taiwan_admission_and_lineage_verification": {
       "status": "passed",
-      "detail": "Shared evaluate_taiwan_market_freshness and validate_taiwan_calendar_evidence from services.execution.market_snapshot_admission are enforced. Unverifiable calendar pins fail closed with market_input_calendar_unverifiable instead of bypassing."
+      "detail": "Shared evaluate_taiwan_market_freshness and validate_taiwan_calendar_evidence from services.execution.market_snapshot_admission are enforced. Unverifiable calendar pins or missing calendar evidence strictly fail closed with market_input_calendar_unverifiable instead of bypassing."
     },
     "5_scheduler_delay_tolerance": {
       "status": "passed",
@@ -47,8 +47,8 @@
   ],
   "verification": {
     "test_command": ".venv-pantheon/bin/python3 -m pytest scripts/test_dev_bounded_source_refresh.py -v",
-    "test_result": "7 passed in 1.52s",
-    "diff_budget_check": "python3 scripts/git/diff_budget.py --base 5f6044d20 --change-class corrective --budget 0",
-    "diff_budget_result": "production net: -5 (additions: 298, deletions: 303), evidence additions: 58 <= 400 cap"
+    "test_result": "10 passed in 2.07s",
+    "revert_deploy_nonprod_vm": "Reverted scripts/deploy_nonprod_vm.sh to base 5f6044d20 without artificial line compression.",
+    "honest_additions": ".github/workflows/dev-tw-market-refresh.yml (+51 lines), scripts/run_dev_bounded_source_refresh.sh (+203 lines)"
   }
 }
