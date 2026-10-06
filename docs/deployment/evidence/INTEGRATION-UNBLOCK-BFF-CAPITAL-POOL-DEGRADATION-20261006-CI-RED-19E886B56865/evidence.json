@@ -1,0 +1,112 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-CAPITAL-POOL-DEGRADATION-20261006-CI-RED-19E886B56865",
+  "recorded_at": "2026-10-06T16:48:00Z",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "repository": "ajoe734/pantheon",
+  "base_sha": "2e5750911177b03a2684815d1218e39b0491ad75",
+  "changed_files": [
+    "docs/deployment/evidence/INTEGRATION-UNBLOCK-BFF-CAPITAL-POOL-DEGRADATION-20261006-CI-RED-19E886B56865/evidence.json"
+  ],
+  "source_task": "BFF-CAPITAL-POOL-DEGRADATION-20261006",
+  "source_pr": "https://github.com/ajoe734/pantheon/pull/6214",
+  "original_head": "919d7d0967b1ff3f4de9f50f4e9e859e61f8ba9d",
+  "original_base": "1db1c6d13380f85f83d904eec6a6579b587265c5",
+  "root_cause": {
+    "dispatch_reason": "ci-red",
+    "workflow": "Branch CI Gate",
+    "job": "Smoke acceptance",
+    "run_id": 37494048287,
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/37494048287",
+    "failing_tests": [
+      {
+        "test": "test_migrated_suites_do_not_mutate_sys_path",
+        "file": "services/control-plane/bff/tests/test_bff_test_architecture.py",
+        "assertion": "AssertionError: Non-composition suites must not mutate sys.path: test_bff_capital_ranking_rebalance_contract.py:16: sys.path.insert",
+        "detail": "test_bff_capital_ranking_rebalance_contract.py inserted _tests_dir into sys.path at lines 14-16 to resolve transitive imports when using CapitalBffAuthorityHarness. However, test_bff_test_architecture.py enforces that non-composition test suites must not mutate sys.path. The root cause for why the import failed without sys.path mutation is that management_projection_test_doubles.py imported read_store_fixtures via bare import instead of package-qualified fallback when imported outside the tests package."
+      }
+    ],
+    "integrator_disposition": "scripts/git/auto_integrator.py operated correctly. Blocking on red CI (failed Smoke acceptance check on PR #6214) and publishing an unblock task protects dev mainline governance. No change to auto_integrator.py is required."
+  },
+  "pr_resolution": {
+    "action": "Updated PR #6214 with scoped fix commit on task/BFF-CAPITAL-POOL-DEGRADATION-20261006",
+    "original_pr_number": 6214,
+    "original_pr_url": "https://github.com/ajoe734/pantheon/pull/6214",
+    "branch": "task/BFF-CAPITAL-POOL-DEGRADATION-20261006",
+    "previous_head_sha": "919d7d0967b1ff3f4de9f50f4e9e859e61f8ba9d",
+    "updated_head_sha": "f415213f4da4180d68377989e82477c35b4d949a",
+    "fix_commit": {
+      "sha": "f415213f4da4180d68377989e82477c35b4d949a",
+      "subject": "BFF-CAPITAL-POOL-DEGRADATION-20261006: fix test sys.path mutation",
+      "changes": [
+        "services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py: remove sys.path mutation and unused sys import to comply with non-composition test architecture gate",
+        "services/control-plane/bff/tests/management_projection_test_doubles.py: add package-qualified fallback import for read_store_fixtures so harness imports succeed without sys.path surgery",
+        "docs/deployment/evidence/BFF-CAPITAL-POOL-DEGRADATION-20261006/evidence.json: update verification records with passing architecture test"
+      ]
+    },
+    "diff_budget_validation": {
+      "command": "python3 scripts/git/diff_budget.py --base 1db1c6d13 --change-class corrective --budget 60",
+      "exit_code": 0,
+      "result": "production: +55 added, -4 deleted, net +51 lines (budget <= 60)"
+    },
+    "commit_trailers_validation": {
+      "command": "python3 scripts/git/check_commit_trailers.py --rev f415213f4da4180d68377989e82477c35b4d949a --task-id BFF-CAPITAL-POOL-DEGRADATION-20261006",
+      "exit_code": 0,
+      "result": "Valid subject and trailers (LLM-Agent, Task-ID, Reviewer, Verified)"
+    }
+  },
+  "integrator_code_assessment": {
+    "code_changed": false,
+    "reason_no_code_change": "scripts/git/auto_integrator.py is working as intended. The serialized integrator correctly rejected the red CI PR and filed the unblock request. Full test suite (162 tests) in scripts/git/test_auto_integrator.py passes cleanly."
+  },
+  "validation": [
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "result": "39 passed, 3 warnings in 137.80s"
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py",
+      "exit_code": 1,
+      "result": "23 passed, 7 failed (the 7 ranking formula tests remain untouched for ranking formula task per AC7)"
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/tests/test_capital_router.py services/control-plane/bff/tests/test_bff_capital_pool_bindings.py",
+      "exit_code": 0,
+      "result": "12 passed, 3 warnings in 8.99s"
+    },
+    {
+      "command": "python3 -m unittest scripts/git/test_auto_integrator.py",
+      "exit_code": 0,
+      "result": "Ran 162 tests in 4.289s, OK"
+    },
+    {
+      "command": "python3 scripts/git/check_commit_trailers.py --rev f415213f4da4180d68377989e82477c35b4d949a --task-id BFF-CAPITAL-POOL-DEGRADATION-20261006",
+      "exit_code": 0,
+      "result": "Trailers valid"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "Clean diff with no whitespace errors"
+    }
+  ],
+  "source_review_followup": {
+    "source_task_id": "BFF-CAPITAL-POOL-DEGRADATION-20261006",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "required_actions": [
+      "PR #6214 head updated to f415213f4da4180d68377989e82477c35b4d949a on branch task/BFF-CAPITAL-POOL-DEGRADATION-20261006.",
+      "Branch CI gate reruns with Smoke acceptance passing (39 passed in test_bff_test_architecture.py including test_migrated_suites_do_not_mutate_sys_path).",
+      "Owner Antigravity reopens BFF-CAPITAL-POOL-DEGRADATION-20261006 to clear previous head 919d7d096 review binding and hands off updated head f415213f4da4180d68377989e82477c35b4d949a with manifest docs/deployment/evidence/BFF-CAPITAL-POOL-DEGRADATION-20261006/evidence.json.",
+      "Reviewer Claude reviews and approves updated head.",
+      "Supervisor auto-integrator safely integrates PR #6214 upon green CI."
+    ]
+  },
+  "resolution": {
+    "state": "original_pr_updated_and_no_longer_stranded",
+    "acceptance_1_satisfied": true,
+    "acceptance_2_satisfied": true,
+    "summary": "Root cause for BFF-CAPITAL-POOL-DEGRADATION-20261006 integration blocker is fully documented. Original PR #6214 is updated to head f415213f4da4180d68377989e82477c35b4d949a with verified tests passing, diff budget net +51 production lines (<= 60), zero sys.path mutation, and valid trailers, unblocking integration."
+  }
+}
