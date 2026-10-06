@@ -872,47 +872,27 @@ ssh_bash() {
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
-  command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=$(shell_quote "${DEV_BFF_CORS_ORIGINS:-}")"
-  command_prefix+=" PANTHEON_DEV_BFF_PUBLIC_HOST=$(shell_quote "${DEV_BFF_PUBLIC_HOST:-}")"
   command_prefix+=" PANTHEON_DEV_FE_PUBLIC_HOST=$(shell_quote "${DEV_FE_PUBLIC_HOST:-}")"
   command_prefix+=" PANTHEON_DEV_FE_STATIC_ROOT=$(shell_quote "${DEV_FE_STATIC_ROOT:-}")"
   command_prefix+=" PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS=$(shell_quote "$DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS")"
-  command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
-  command_prefix+=" PANTHEON_DEV_BFF_AUTH_MODE=$(shell_quote "$DEV_BFF_AUTH_MODE")"
-  command_prefix+=" PANTHEON_DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS=$(shell_quote "$DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS")"
-  command_prefix+=" PANTHEON_DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS=$(shell_quote "$DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS")"
   command_prefix+=" PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED=$(shell_quote "$DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED")"
-  command_prefix+=" PANTHEON_DEV_BFF_JWT_SECRET=$(shell_quote "$DEV_BFF_JWT_SECRET")"
   command_prefix+=" PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED=$(shell_quote "$DEV_PAPER_PRINCIPALS_AUTHORIZED")"
   command_prefix+=" PANTHEON_DEV_CAPITAL_JWT_SECRET=$(shell_quote "$DEV_BFF_JWT_SECRET")"
-  command_prefix+=" PANTHEON_DEV_BFF_JWT_ISSUER=$(shell_quote "$DEV_BFF_JWT_ISSUER")"
-  command_prefix+=" PANTHEON_DEV_BFF_JWT_AUDIENCE=$(shell_quote "$DEV_BFF_JWT_AUDIENCE")"
-  command_prefix+=" PANTHEON_DEV_BFF_JWKS_URI=$(shell_quote "$DEV_BFF_JWKS_URI")"
-  command_prefix+=" PANTHEON_DEV_BFF_OIDC_DISCOVERY_URL=$(shell_quote "$DEV_BFF_OIDC_DISCOVERY_URL")"
-  command_prefix+=" PANTHEON_DEV_BFF_OIDC_ISSUER=$(shell_quote "$DEV_BFF_OIDC_ISSUER")"
-  command_prefix+=" PANTHEON_DEV_BFF_OIDC_AUDIENCE=$(shell_quote "$DEV_BFF_OIDC_AUDIENCE")"
-  command_prefix+=" PANTHEON_DEV_BFF_OIDC_CLIENT_ID=$(shell_quote "$DEV_BFF_OIDC_CLIENT_ID")"
-  command_prefix+=" PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET=$(shell_quote "$DEV_BFF_OIDC_CLIENT_SECRET")"
-  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID=$(shell_quote "$DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID")"
-  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET=$(shell_quote "$DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET")"
-  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID=$(shell_quote "$DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID")"
-  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET=$(shell_quote "$DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET")"
-  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID=$(shell_quote "$DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID")"
-  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET=$(shell_quote "$DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET")"
-  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID")"
-  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET")"
-  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID")"
-  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET")"
-  command_prefix+=" PANTHEON_DEV_BFF_MFA_REQUIRED=$(shell_quote "$DEV_BFF_MFA_REQUIRED")"
-  command_prefix+=" PANTHEON_DEV_BFF_MFA_CLAIMS=$(shell_quote "$DEV_BFF_MFA_CLAIMS")"
-  command_prefix+=" PANTHEON_DEV_BFF_MFA_VALUES=$(shell_quote "$DEV_BFF_MFA_VALUES")"
-  command_prefix+=" PANTHEON_DEV_BFF_REQUIRE_EMAIL_VERIFIED=$(shell_quote "$DEV_BFF_REQUIRE_EMAIL_VERIFIED")"
-  command_prefix+=" PANTHEON_DEV_BFF_ROLE_CLAIMS=$(shell_quote "$DEV_BFF_ROLE_CLAIMS")"
-  command_prefix+=" PANTHEON_DEV_BFF_ROLE_MAP=$(shell_quote "$DEV_BFF_ROLE_MAP")"
-  command_prefix+=" PANTHEON_DEV_BFF_ROLE_MAP_MODE=$(shell_quote "$DEV_BFF_ROLE_MAP_MODE")"
-  command_prefix+=" PANTHEON_DEV_BFF_DEFAULT_ROLE=$(shell_quote "$DEV_BFF_DEFAULT_ROLE")"
-  command_prefix+=" PANTHEON_DEV_BFF_TENANT_ID=$(shell_quote "$DEV_BFF_TENANT_ID")"
-  command_prefix+=" PANTHEON_DEV_BFF_ALLOWED_TENANTS=$(shell_quote "$DEV_BFF_ALLOWED_TENANTS")"
+  local bff_var bff_target
+  for bff_var in \
+    CORS_ORIGINS PUBLIC_HOST AUTH_STUB AUTH_MODE AUTH_READINESS_TIMEOUT_SECONDS \
+    AUTH_READINESS_POLL_INTERVAL_SECONDS JWT_SECRET JWT_ISSUER JWT_AUDIENCE \
+    JWKS_URI OIDC_DISCOVERY_URL OIDC_ISSUER OIDC_AUDIENCE OIDC_CLIENT_ID \
+    OIDC_CLIENT_SECRET DEV_LOGIN_VIEWER_CLIENT_ID DEV_LOGIN_VIEWER_CLIENT_SECRET \
+    DEV_LOGIN_APPROVER_CLIENT_ID DEV_LOGIN_APPROVER_CLIENT_SECRET \
+    DEV_LOGIN_RISK_OWNER_CLIENT_ID DEV_LOGIN_RISK_OWNER_CLIENT_SECRET \
+    DEV_LOGIN_OPERATOR_A_CLIENT_ID DEV_LOGIN_OPERATOR_A_CLIENT_SECRET \
+    DEV_LOGIN_OPERATOR_B_CLIENT_ID DEV_LOGIN_OPERATOR_B_CLIENT_SECRET \
+    MFA_REQUIRED MFA_CLAIMS MFA_VALUES REQUIRE_EMAIL_VERIFIED ROLE_CLAIMS \
+    ROLE_MAP ROLE_MAP_MODE DEFAULT_ROLE TENANT_ID ALLOWED_TENANTS; do
+    bff_target="DEV_BFF_${bff_var}"
+    command_prefix+=" PANTHEON_${bff_target}=$(shell_quote "${!bff_target:-}")"
+  done
   command_prefix+=" PANTHEON_ASSISTANT_KERNEL_ENABLED=$(shell_quote "${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}")"
   command_prefix+=" PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH=$(shell_quote "${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-}")"
   command_prefix+=" PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH=$(shell_quote "${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH:-}")"
@@ -1750,25 +1730,18 @@ except Exception as exc:
 
 if snap is not None:
     cal = snap.get("calendar_evidence") or (snap.get("lineage") or {}).get("calendar_evidence")
-    if not cal:
-        emit("error", reason="market_input_calendar_unverifiable", detail="snapshot missing required calendar evidence and pins")
+    if not cal: emit("error", reason="market_input_calendar_unverifiable", detail="snapshot missing required calendar evidence and pins")
     c_ok, c_err, c_norm = validate_taiwan_calendar_evidence(cal, now_dt=now_u)
-    if not c_ok:
-        emit("error", reason="market_input_calendar_unverifiable", detail=c_err)
-    if d_str in (c_norm.get("holidays") or {}):
-        emit("skipped", reason="holiday", checked_at=now_u.isoformat())
+    if not c_ok: emit("error", reason="market_input_calendar_unverifiable", detail=c_err)
+    if d_str in (c_norm.get("holidays") or {}): emit("skipped", reason="holiday", checked_at=now_u.isoformat())
     ev_dt = datetime.fromisoformat(snap["event_time"].replace("Z", "+00:00"))
     obs = snap.get("observed_at")
     obs_dt = datetime.fromisoformat(obs.replace("Z", "+00:00")) if obs else None
     close_t = datetime(now_t.year, now_t.month, now_t.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
     if not force and ev_dt.astimezone(tz).date() == now_t.date() and obs_dt and obs_dt >= close_t:
-        ok, reason, detail = evaluate_taiwan_market_freshness(
-            event_time_dt=ev_dt, now_dt=now_u, refresh_receipt_dt=obs_dt,
-            lineage=snap.get("lineage") or {}, max_refresh_age_seconds=86400, calendar_evidence=cal)
-        if ok:
-            emit("noop", reason="already_fresh", snapshot_id=snap.get("snapshot_id"), checked_at=now_u.isoformat())
+        ok, reason, detail = evaluate_taiwan_market_freshness(event_time_dt=ev_dt, now_dt=now_u, refresh_receipt_dt=obs_dt, lineage=snap.get("lineage") or {}, max_refresh_age_seconds=86400, calendar_evidence=cal)
+        if ok: emit("noop", reason="already_fresh", snapshot_id=snap.get("snapshot_id"), checked_at=now_u.isoformat())
         emit("error", reason="existing_snapshot_admission_failed", detail=f"{reason}: {detail}")
-
 emit("proceed")
 PREFLIGHT_PY
 }
@@ -1812,25 +1785,20 @@ execute_bounded_source_refresh_entrypoint() {
   preflight_output="$(check_taiwan_refresh_preflight "${force}")" || error "preflight execution failed: ${preflight_output}"
   preflight_status="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("status") or "")' "${preflight_output}")"
 
+  [[ -n "${output_path}" && "${preflight_status}" != "proceed" ]] && printf '%s\n' "${preflight_output}" > "${output_path}"
   case "${preflight_status}" in
-    skipped|noop)
-      [[ -n "${output_path}" ]] && printf '%s\n' "${preflight_output}" > "${output_path}"
-      info "bounded source refresh preflight: ${preflight_output}"; return 0 ;;
-    error)
-      [[ -n "${output_path}" ]] && printf '%s\n' "${preflight_output}" > "${output_path}"
-      info "bounded source refresh preflight error: ${preflight_output}" >&2; return 1 ;;
+    skipped|noop) info "bounded source refresh preflight: ${preflight_output}"; return 0 ;;
+    error) info "bounded source refresh preflight error: ${preflight_output}" >&2; return 1 ;;
     proceed) info "bounded source refresh preflight passed; proceeding with refresh" ;;
     *) error "unexpected preflight status: ${preflight_output}" ;;
   esac
 
   local refresh_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" steady_env="$(mktemp)"
   PANTHEON_DEV_COMPOSE_PROFILES="root,source-ingest-scheduler" PANTHEON_EXTERNAL_EGRESS="allowlist" \
-  PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw" \
-  SOURCE_INGEST_BOUNDED_CONNECTOR_ID="tw-twse-tpex-official-market" \
-  SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-1800}" \
-  SOURCE_INGEST_CONTROLLER_MODE="reconcile_and_pull" SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL="reconciled_live_proof" \
-  SOURCE_INGEST_CONTROLLER_RESTART_POLICY="no" SOURCE_INGEST_CONTROLLER_MAX_TICKS="1" \
-  SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="1" SOURCE_INGEST_MAX_RECORDS="100"
+  PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw" SOURCE_INGEST_BOUNDED_CONNECTOR_ID="tw-twse-tpex-official-market" \
+  SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-1800}" SOURCE_INGEST_CONTROLLER_MODE="reconcile_and_pull" \
+  SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL="reconciled_live_proof" SOURCE_INGEST_CONTROLLER_RESTART_POLICY="no" \
+  SOURCE_INGEST_CONTROLLER_MAX_TICKS="1" SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="1" SOURCE_INGEST_MAX_RECORDS="100"
   validate_source_refresh_profile
   resolve_bounded_source_refresh_active_symbols
 
@@ -1867,13 +1835,11 @@ execute_bounded_source_refresh_entrypoint() {
 
   manage_source_ingest_refresh_runtime "${steady_env}" "bounded" "${running_image_id}" "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}"
 
-  COMPOSE_PROFILES="source-ingest-scheduler,workers" \
-  SOURCE_INGEST_CONTROLLER_MODE=reconcile_and_pull SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=reconciled_live_proof \
-  SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 SOURCE_INGEST_CONTROLLER_RESTART_POLICY=no \
-  SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
-  SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
-  SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=1 SOURCE_INGEST_MAX_RECORDS=100 \
-  SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
+  COMPOSE_PROFILES="source-ingest-scheduler,workers" SOURCE_INGEST_CONTROLLER_MODE=reconcile_and_pull \
+  SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=reconciled_live_proof SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 \
+  SOURCE_INGEST_CONTROLLER_RESTART_POLICY=no SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
+  SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=1 \
+  SOURCE_INGEST_MAX_RECORDS=100 SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
     docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest-scheduler source-ingest-agora-projector
   wait_for_bounded_source_refresh_service source-ingest-scheduler
   wait_for_bounded_source_refresh_service source-ingest-agora-projector
@@ -3949,18 +3915,12 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Rollout persistent root runtime.
     cleanup_stale_compose_replacement_containers
-    COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
-    PANTHEON_EXTERNAL_EGRESS="${PANTHEON_EXTERNAL_EGRESS:-deny}" \
-    PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" \
-    SOURCE_INGEST_CONTROLLER_MODE="${SOURCE_INGEST_CONTROLLER_MODE}" \
-    SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL="${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL}" \
-    SOURCE_INGEST_CONTROLLER_MAX_TICKS="${SOURCE_INGEST_CONTROLLER_MAX_TICKS}" \
-    SOURCE_INGEST_CONTROLLER_RESTART_POLICY="${SOURCE_INGEST_CONTROLLER_RESTART_POLICY}" \
-    SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS:-}" \
-    SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS:-}" \
-    SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}" \
-    SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}" \
-    SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
+    COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" PANTHEON_EXTERNAL_EGRESS="${PANTHEON_EXTERNAL_EGRESS:-deny}" \
+    PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" SOURCE_INGEST_CONTROLLER_MODE="${SOURCE_INGEST_CONTROLLER_MODE}" \
+    SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL="${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL}" SOURCE_INGEST_CONTROLLER_MAX_TICKS="${SOURCE_INGEST_CONTROLLER_MAX_TICKS}" \
+    SOURCE_INGEST_CONTROLLER_RESTART_POLICY="${SOURCE_INGEST_CONTROLLER_RESTART_POLICY}" SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS:-}" \
+    SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS:-}" SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}" \
+    SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}" SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
     with_dev_bff_runtime_env "${PANTHEON_DEPLOY_SHA}" "${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
       run_dev_candidate_compose up -d \
       || rollback_dev_bff_on_failure "docker_compose_up"
