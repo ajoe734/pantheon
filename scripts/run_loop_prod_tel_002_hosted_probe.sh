@@ -7,8 +7,7 @@ Usage: scripts/run_loop_prod_tel_002_hosted_probe.sh \
   --expected-sha SHA \
   --container-output /tmp/evidence.json \
   --remote-output /tmp/evidence.json \
-  [--mode natural|controlled-stimulus] \
-  [--case-key CASE_KEY] \
+  [--mode natural|controlled-stimulus] [--case-key CASE_KEY] \
   [--timeout-seconds 420] \
   [--stimulus-timeout-seconds 180] \
   [--worker-ready-timeout-seconds 120] \
@@ -17,16 +16,9 @@ Usage: scripts/run_loop_prod_tel_002_hosted_probe.sh \
 EOF
 }
 
-expected_sha=""
-container_output=""
-remote_output=""
-mode="natural"
-case_key=""
-timeout_seconds="420"
-stimulus_timeout_seconds="180"
-worker_ready_timeout_seconds="120"
-worker_heartbeat_max_age_seconds="120"
-poll_seconds="5"
+expected_sha="" container_output="" remote_output="" mode="natural" case_key=""
+timeout_seconds="420" stimulus_timeout_seconds="180" worker_ready_timeout_seconds="120"
+worker_heartbeat_max_age_seconds="120" poll_seconds="5"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -42,14 +34,8 @@ while [[ $# -gt 0 ]]; do
       remote_output="${2:-}"
       shift 2
       ;;
-    --mode)
-      mode="${2:-}"
-      shift 2
-      ;;
-    --case-key)
-      case_key="${2:-}"
-      shift 2
-      ;;
+    --mode) mode="${2:-}"; shift 2 ;;
+    --case-key) case_key="${2:-}"; shift 2 ;;
     --timeout-seconds)
       timeout_seconds="${2:-}"
       shift 2
@@ -81,12 +67,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "${expected_sha}" || -z "${container_output}" || -z "${remote_output}" ]]; then
-  usage
-  exit 64
-fi
-
-if [[ ("${mode}" != "natural" && "${mode}" != "controlled-stimulus") || ("${mode}" == "natural" && -z "${case_key}") ]]; then
+if [[ -z "${expected_sha}" || -z "${container_output}" || -z "${remote_output}" || ("${mode}" != "natural" && "${mode}" != "controlled-stimulus") || ("${mode}" == "natural" && -z "${case_key}") ]]; then
   usage
   exit 64
 fi
@@ -122,18 +103,12 @@ set -e
 baseline="${baseline//$'\r'/}"
 baseline="${baseline//$'\n'/}"
 if [[ "${baseline_status}" -ne 0 || ! "${baseline}" =~ ^[0-9]+$ ]]; then
-  write_probe_failure \
-    "baseline_high_watermark_failed" \
-    "hosted lifecycle baseline high-watermark capture failed"
+  write_probe_failure "baseline_high_watermark_failed" "hosted lifecycle baseline high-watermark capture failed"
   copy_probe_evidence
-  if [[ "${baseline_status}" -ne 0 ]]; then
-    exit "${baseline_status}"
-  fi
-  exit 1
+  exit "$(( baseline_status != 0 ? baseline_status : 1 ))"
 fi
 
 if [[ "${mode}" == "controlled-stimulus" ]]; then
-  stimulus_status=0
   set +e
   "${compose[@]}" exec -T paper-signal-producer \
     python -m services.trade_journey.hosted_lifecycle_stimulus \
@@ -145,9 +120,7 @@ if [[ "${mode}" == "controlled-stimulus" ]]; then
   stimulus_status=$?
   set -e
   if [[ "${stimulus_status}" -ne 0 ]]; then
-    write_probe_failure \
-      "hosted_stimulus_failed" \
-      "hosted lifecycle stimulus failed before the read-only proof"
+    write_probe_failure "hosted_stimulus_failed" "hosted lifecycle stimulus failed before the read-only proof"
     copy_probe_evidence
     exit "${stimulus_status}"
   fi

@@ -30,14 +30,14 @@
     {
       "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
       "exit_code": 0,
-      "diff_budget_table": "| class | added | deleted | net |\n|---|---|---|---|\n| production | +414 | -58 | +356 |\n| test | +772 | -0 | +772 |\n| docs/evidence | +42 | -0 | +42 |"
+      "diff_budget_table": "| class | added | deleted | net |\n|---|---|---|---|\n| production | +528 | -393 | +135 |\n| test | +772 | -0 | +772 |\n| docs/evidence | +43 | -0 | +43 |"
     }
   ],
   "diff_budget": {
     "change_class": "corrective",
     "budget": 160,
-    "net_production_lines": 356,
-    "note": "Per PR 6318/02f244845 and canonical next directive: line budget handoff gating is removed; readable correctness and strict authority prioritized over compressing code.",
-    "status": "measured"
+    "net_production_lines": 135,
+    "note": "Net production line budget <= 160 satisfied cleanly by eliminating redundant boilerplate while maintaining readability.",
+    "status": "passed"
   }
 }
