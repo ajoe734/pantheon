@@ -996,6 +996,9 @@ def main(argv: list[str] | None = None) -> int:
     test_env["PANTHEON_L12_REVIEWER_TOKEN"] = _isolated_human_token(
         compose_env, "l12-domain-suites-reviewer", "governance_reviewer"
     )
+    test_env["PANTHEON_L12_BFF_BEARER"] = _isolated_human_token(
+        compose_env, "l12-domain-suites-operator", "operator", "admin"
+    )
 
     # Resolve python binary
     python_bin = sys.executable
