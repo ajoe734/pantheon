@@ -95,6 +95,16 @@ def append_lifecycle_event(
             "response": None,
             "error": "PANTHEON_TELEMETRY_API_URL is required",
         }
+    if timeout_seconds <= 0:
+        return {
+            "status": "retryable_error",
+            "terminal": False,
+            "retryable": True,
+            "outcome": "ambiguous",
+            "http_status": 504,
+            "response": None,
+            "error": "scheduled reconciliation SLA budget exhausted",
+        }
     if service_token is None:
         service_token = os.getenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "")
     token = service_token.strip()

@@ -1,0 +1,77 @@
+{
+  "task_id": "RECONCILIATION-NATURAL-BUDGET-20261007",
+  "title": "Bound remaining scheduled natural reconciliation work across store operations and lifecycle append under binding cardinality",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 100,
+  "net_prod_lines": 46,
+  "hosted_incident": {
+    "failing_service": "services/reconciliation-drift",
+    "observed_at": "2026-10-07T14:10:00+00:00",
+    "evidence_files": [
+      "/tmp/pantheon-closure-continuation-20261007T1410Z/RESIDUAL_SA_SD.md",
+      "/tmp/pantheon-closure-continuation-20261007T1220Z/reconciliation-health.json",
+      "/tmp/pantheon-closure-continuation-20261007T1220Z/runtime-readonly.json"
+    ],
+    "observed_symptoms": "After PR #6288 bounded incident dispatch timeouts, natural scheduler ticks 1 and 2 still encountered 90s socket TimeoutError on attempt 1, followed by attempts 2 and 3 receiving deferred lease_active due to active execution in attempt 1. Controller status remained unhealthy, evaluated_binding_count: 0, last_success null.",
+    "phase_measurements_and_root_cause": {
+      "summary_fetch": "Bounded to min(10.0s, remaining_tick_budget); within budget.",
+      "store_operations": "In _accepted_append_visibility_reason, store.list_evaluations() was repeatedly invoked inside the per-binding loop (O(N^2) evaluation scan), reading and parsing all evaluation records from disk 16 times per tick under 15 active bindings.",
+      "lifecycle_append": "_ensure_scheduled_lifecycle_append had no timeout parameter and did not check remaining tick deadline. Under slow or degraded telemetry networks (5.0s default socket timeout), 15 sequential lifecycle calls accumulated up to 75.0s, pushing overall tick duration over the 90.0s client socket timeout before incident dispatch could complete or lease could be gracefully failed.",
+      "incident_dispatch": "Bounded by PR #6288, but starved of remaining time due to upstream lifecycle and store latency."
+    },
+    "repair_strategy": "1. Single pre-fetch of existing evaluations via store.list_evaluations() passed into lifecycle append reason checks, eliminating repeated disk scans. 2. Propagate remaining tick deadline and timeout_seconds to _ensure_scheduled_lifecycle_append and telemetry_client.append_lifecycle_event. 3. If tick SLA budget is exhausted (timeout_seconds <= 0), record durable 504 retryable error immediately without network call, ensuring the tick completes within SLA, fails work cleanly, releases the lease, and allows subsequent ticks to acquire without lock contention."
+  },
+  "acceptance_criteria_verification": {
+    "ac1_read_plan_and_evidence": {
+      "status": "satisfied",
+      "detail": "Read /tmp/pantheon-closure-continuation-20261007T1410Z/RESIDUAL_SA_SD.md section B, reconciliation-health.json, and runtime-readonly.json."
+    },
+    "ac2_clean_task_worktree": {
+      "status": "satisfied",
+      "detail": "Clean task worktree on branch task/RECONCILIATION-NATURAL-BUDGET-20261007."
+    },
+    "ac3_no_hosted_mutation": {
+      "status": "satisfied",
+      "detail": "No hosted mutation, dev lease bypass, synthetic closure, or credential copying. Strictly source code repair."
+    },
+    "ac4_independent_review_and_checks": {
+      "status": "satisfied",
+      "detail": "Exact-head review file committed for Claude. Hosted acceptance remains external_wait."
+    },
+    "ac5_reproduce_http_timeout_under_cardinality": {
+      "status": "satisfied",
+      "detail": "Reproduced remaining HTTP timeout under realistic binding cardinality (15 bindings) with measured phase breakdown."
+    },
+    "ac6_measure_phases_and_fix_boundary": {
+      "status": "satisfied",
+      "detail": "Measured summary fetch, store operations, lifecycle append, and incident dispatch. Confirmed and fixed boundaries in services/reconciliation-drift."
+    },
+    "ac7_no_timeout_inflation": {
+      "status": "satisfied",
+      "detail": "No timeout inflation (client 90s, SLA 60s, lease preserved), no disabled incident dispatch, no manual POST; idempotent leases, durable errors, and bounded progress preserved."
+    },
+    "ac8_root_cause_scope": {
+      "status": "satisfied",
+      "detail": "All fixes contained within services/reconciliation-drift."
+    }
+  },
+  "diff_budget": {
+    "change_class": "corrective",
+    "net_prod_line_budget": 100,
+    "net_prod_lines": 46,
+    "evidence_max_added_lines": 400,
+    "status": "passed"
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -v services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py",
+      "result": "26 passed in 21.42s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/reconciliation-drift/tests",
+      "result": "125 passed in 108.56s"
+    }
+  ]
+}
