@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from services.control_plane.bff.agora.research.router import create_research_router
 from services.control_plane.bff.agora.research.store import MemoryResearchPlanStore
 from services.control_plane.bff.agora.servant import research_proposal
+from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
 from services.control_plane.bff.agora.strategy_workshop.store import MemoryWorkshopStore
 from services.control_plane.bff.personas.service import _bff_error, _require_operator_role, _require_read_role
 
@@ -54,6 +55,10 @@ def fake(monkeypatch):
 def client(monkeypatch):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    # Runs are projected from the research owner (376ad416d); a plan that was never
+    # dispatched has no owner runs, so the owner is configured and lists none.
+    monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://research-owner.test")
+    monkeypatch.setattr(WorkshopCanonicalOperations, "list_research_runs", lambda _self, **_kwargs: [])
     workshops = MemoryWorkshopStore()
     workshops.create_session({"workshop_id": _WORKSHOP, "tenant_id": "tenant-a", "user_id": "owner"})
     identity = SimpleNamespace(operator_id="owner", roles=["operator"], claims={"sub": "owner", "tenant_id": "tenant-a"})
