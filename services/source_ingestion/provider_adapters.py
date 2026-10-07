@@ -33,6 +33,7 @@ from .connectors.taiwan_official import (
     TdccShareholdingDistributionAdapter,
     TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL,
     canonical_taiwan_equity_symbol,
+    resolve_tw_history_trading_days,
 )
 from .connectors.us_public import (
     FRED_API_URL,
@@ -309,11 +310,29 @@ def _taiwan_official(
     active_priority_symbols = _string_list(
         os.getenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "").split(",")
     )
+    raw_history_symbols = (
+        request.get("history_symbols")
+        or request.get("tw_history_symbols")
+        or os.getenv("SOURCE_INGEST_TW_HISTORY_SYMBOLS", "")
+    )
+    if isinstance(raw_history_symbols, str):
+        configured_history_symbols = _string_list(raw_history_symbols.split(","))
+    else:
+        configured_history_symbols = _string_list(raw_history_symbols)
+
     priority_symbols = tuple(
         dict.fromkeys(
             canonical_taiwan_equity_symbol(symbol)
-            for symbol in (*active_priority_symbols, *requested_priority_symbols)
+            for symbol in (
+                *active_priority_symbols,
+                *configured_history_symbols,
+                *requested_priority_symbols,
+            )
+            if str(symbol).strip()
         )
+    )
+    history_trading_days = resolve_tw_history_trading_days(
+        request.get("history_trading_days") or request.get("tw_history_trading_days")
     )
     max_records = int(request.get("max_records") or getattr(adapter, "max_records", 100))
     required_priority_records = (
@@ -385,6 +404,7 @@ def _taiwan_official(
                     symbol,
                     venue,
                     anchor_date=anchor_date,
+                    history_trading_days=history_trading_days,
                     timeout_seconds=timeout_seconds,
                     trace_id=trace_id,
                 )
@@ -412,6 +432,7 @@ def _taiwan_official(
                             venue,
                             payload,
                             available_time=anchor_date,
+                            max_records=max(max_records, history_trading_days),
                             trace_id=trace_id,
                         )
                     )
@@ -431,7 +452,7 @@ def _taiwan_official(
                     and float(close) > 0
                 ):
                     by_event_time[event_time] = candidate
-            selected_dates = sorted(by_event_time)[-TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL :]
+            selected_dates = sorted(by_event_time)[-history_trading_days :]
             if len(selected_dates) < TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL:
                 raise SourceEvidenceError(
                     "bounded official refresh did not resolve distinct finite close history for "
