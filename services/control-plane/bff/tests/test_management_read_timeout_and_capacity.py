@@ -90,10 +90,15 @@ def _isolated_bff(tmp_path) -> Iterator[Tuple[TestClient, ReadSurfacePorts]]:
         original_ps_command_store = persona_service._command_store
         persona_service._read_store = store
         persona_service._command_store = command_store
+
+    from services.control_plane.bff.core import owner_reads
+    original_list_decisions = owner_reads.approval_owner.list_decisions
+    owner_reads.approval_owner.list_decisions = lambda *args, **kwargs: []
     try:
         with TestClient(bff_main.app, raise_server_exceptions=False) as client:
             yield client, store
     finally:
+        owner_reads.approval_owner.list_decisions = original_list_decisions
         bff_main.read_store = original_read_store
         bff_main.command_store = original_command_store
         if persona_service is not None:
@@ -218,3 +223,74 @@ def test_human_inbox_capacity_saturation_yields_immediate_degraded_response_and_
         assert recovered.status_code == 200, recovered.text
         recovered_surfaces = recovered.json()["meta"]["surfaces"]
         assert recovered_surfaces.get("human_inbox", {}).get("status") != "degraded"
+
+
+def test_human_inbox_contributor_carries_caller_auth_context_and_projects_live_approvals(
+    tmp_path, monkeypatch
+) -> None:
+    """Regression test for B4 / BFF-HUMAN-INBOX-AUTH-CONTEXT-20261007:
+    The Human Inbox contributor thread executor must run with a copy of the
+    caller's contextvars context so that owner reads see the request's
+    caller authorization. Without contextvars.copy_context(), authorization.get()
+    is None in contributor worker threads, causing approval_queue and
+    governance_review_queue to fail and degrade.
+    """
+    from services.control_plane.bff.core import owner_reads
+
+    captured_call_auth = []
+    captured_context_var_auth = []
+    captured_thread_names = []
+
+    def stub_list_decisions(authorization: str | None = None, **_kwargs) -> list[dict]:
+        captured_call_auth.append(authorization)
+        captured_context_var_auth.append(owner_reads.authorization.get())
+        captured_thread_names.append(threading.current_thread().name)
+        return [
+            {
+                "id": "decision-canary-001",
+                "decision_id": "decision-canary-001",
+                "target_type": "canary_promotion",
+                "target_id": "persona-alpha",
+                "decision_state": "proposed",
+                "status": "pending",
+                "risk_level": "medium",
+                "created_at": "2026-10-07T00:00:00Z",
+                "submitted_at": "2026-10-07T00:00:00Z",
+                "actor_id": "op-mgmt-cap-001",
+                "rationale": "Promotion proposal for persona-alpha",
+            }
+        ]
+
+    with _isolated_bff(tmp_path) as (client, _store):
+        monkeypatch.setattr(owner_reads.approval_owner, "list_decisions", stub_list_decisions)
+
+        response = client.get(
+            "/bff/management/human-inbox",
+            headers=HEADERS,
+            params={"page_size": 10},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+
+        # 1. Contributor thread sees the request authorization both in the arg and contextvar
+        assert len(captured_call_auth) > 0, "approval_owner.list_decisions was not called"
+        for auth in captured_call_auth:
+            assert auth == HEADERS["Authorization"]
+        for cvar_auth in captured_context_var_auth:
+            assert cvar_auth == HEADERS["Authorization"]
+        assert any(
+            name.startswith("mgmt_human_inbox_contributor") for name in captured_thread_names
+        ), f"expected contributor thread name, got {captured_thread_names}"
+
+        # 2. Live approval proposals appear in the human inbox
+        items = body["data"]["items"]
+        approval_items = [it for it in items if it.get("source_type") == "approval"]
+        assert len(approval_items) >= 1, f"expected live approval proposal in items: {items}"
+        assert approval_items[0]["decision_id"] == "decision-canary-001"
+        assert approval_items[0]["status"] == "proposed"
+
+        # 3. Contributing surface status is ok (not degraded)
+        surfaces = body["meta"]["surfaces"]
+        assert surfaces.get("approval_queue", {}).get("status") == "ok"
+
