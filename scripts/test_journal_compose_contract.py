@@ -151,7 +151,7 @@ def paper_factory_probe(phase: str) -> None:
     from services.control_plane.bff.core.app_factory import compose_bff_app
     from services.control_plane.bff.models import OperatorIdentity
     from services.governance.record_store import PostgresGovernanceRecordStore
-    from services.governance.decision_journal_write_owner import build_decision_journal_write_owner
+    from services.control_plane.bff.governance.decision_journal_write_owner import build_decision_journal_write_owner
     from services.control_plane.bff.bootstrap.dependencies import AppDependencies
 
     def identity(authorization=None, **kwargs):
