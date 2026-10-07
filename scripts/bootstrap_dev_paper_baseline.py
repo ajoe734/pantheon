@@ -185,6 +185,8 @@ def _nudge_run_scheduled(
     source_ingest_url: str,
     controller_token: str,
     request_timeout_seconds: float,
+    force_connector_ids: Sequence[str] = (),
+    exclusive_connector_ids: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Best-effort nudge of a fresh ingest pass for any due connector.
 
@@ -208,9 +210,14 @@ def _nudge_run_scheduled(
     connector identity and actual failure reason lost.
     """
     try:
+        payload: dict[str, Any] = {"max_concurrency": 1}
+        if force_connector_ids:
+            payload["force_connector_ids"] = list(force_connector_ids)
+        if exclusive_connector_ids:
+            payload["exclusive_connector_ids"] = list(exclusive_connector_ids)
         status, body = _post_json(
             f"{source_ingest_url.rstrip('/')}/api/source-ingest/run-scheduled",
-            {"max_concurrency": 1},
+            payload,
             headers=(
                 {"Authorization": f"Bearer {controller_token}"}
                 if controller_token
@@ -302,6 +309,8 @@ def ensure_dev_market_snapshot_ready(
     request_timeout_seconds: float = 10.0,
     controller_token: str = "",
     connector_candidates: Sequence[str] = (),
+    force_connector_ids: Sequence[str] = (),
+    exclusive_connector_ids: Sequence[str] = (),
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
@@ -332,7 +341,12 @@ def ensure_dev_market_snapshot_ready(
         needs_nudge = False
         if status == 200 and isinstance(body, dict):
             closes = body.get("closes")
-            if closes and isinstance(closes, Sequence) and not isinstance(closes, (str, bytes)) and len(closes) >= 2:
+            market = body.get("market")
+            if not market or not isinstance(market, str) or not market.strip():
+                last_reason = "market_context_missing"
+                last_detail = f"snapshot for symbol {symbol!r} lacks market context"
+                needs_nudge = True
+            elif closes and isinstance(closes, Sequence) and not isinstance(closes, (str, bytes)) and len(closes) >= 2:
                 ev_str = str(body.get("event_time") or "")
                 is_fresh = True
                 if ev_str:
@@ -373,6 +387,8 @@ def ensure_dev_market_snapshot_ready(
                 source_ingest_url=source_ingest_url,
                 controller_token=controller_token,
                 request_timeout_seconds=request_timeout_seconds,
+                force_connector_ids=force_connector_ids,
+                exclusive_connector_ids=exclusive_connector_ids,
             )
             nudge_diagnostic = _nudge_diagnostic_summary(
                 nudge_result, connector_candidates=connector_candidates
@@ -991,6 +1007,7 @@ def run_self_tests() -> int:
         "schema_version": 1,
         "snapshot_id": "snap-test-001",
         "symbol": "SPY",
+        "market": "US",
         "event_time": now_iso,
         "observed_at": now_iso,
         "closes": [500.0, 501.5],
@@ -1173,6 +1190,46 @@ def run_self_tests() -> int:
             assert "symbol 'SPY'" in str(exc)
             assert "market_input_invalid" in str(exc)
             tests_run += 1
+
+    # Test 6b: Missing market context rejected
+    missing_market_snapshot = dict(valid_snapshot)
+    missing_market_snapshot.pop("market", None)
+    mock_clock = [0.0]
+    with patch.object(this_module, "_get_json", return_value=(200, missing_market_snapshot)), \
+         patch.object(this_module, "_post_json", return_value=(200, {})):
+        try:
+            ensure_dev_market_snapshot_ready(
+                source_ingest_url="http://mock-source:8097",
+                symbol="SPY",
+                timeout_seconds=5.0,
+                poll_seconds=0.01,
+                monotonic=fake_mono,
+                sleep=lambda _: None,
+            )
+            raise AssertionError("Expected BootstrapError on missing market context")
+        except BootstrapError as exc:
+            assert "symbol 'SPY'" in str(exc)
+            assert "market_context_missing" in str(exc)
+            tests_run += 1
+
+    # Test 6c: Nudge forwards force_connector_ids and exclusive_connector_ids
+    nudge_payload_calls = []
+    def fake_post_payload(url, payload=None, **kwargs):
+        nudge_payload_calls.append(payload)
+        return 200, {"status": "ok"}
+
+    with patch.object(this_module, "_post_json", side_effect=fake_post_payload):
+        _nudge_run_scheduled(
+            source_ingest_url="http://mock-source:8097",
+            controller_token="token",
+            request_timeout_seconds=5.0,
+            force_connector_ids=["dev-paper-us-equity-simulation"],
+            exclusive_connector_ids=["dev-paper-us-equity-simulation"],
+        )
+        assert len(nudge_payload_calls) == 1
+        assert nudge_payload_calls[0].get("force_connector_ids") == ["dev-paper-us-equity-simulation"]
+        assert nudge_payload_calls[0].get("exclusive_connector_ids") == ["dev-paper-us-equity-simulation"]
+        tests_run += 1
 
     # Test 7: Integration in ensure_paper_baseline with effective_source_url.
     # This is an idempotent successful replay (the create response already
