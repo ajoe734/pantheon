@@ -28,3 +28,16 @@ The operator decided on 2026-10-05 that the hosted inventory is complete for Min
 Backup, restore and old-reference readback are therefore not required.
 
 Hosted GCS verification is not applicable and is not claimed as passed. Source-level GCS semantics are handed to OSS-OBJECT-STORE-CUTOVER-002 acceptance 2. No hosted change was made.
+
+## Provenance correction (appended 2026-10-07, REVIEW-PROVENANCE-CORRECTION-20261007)
+
+This section corrects the review description above. Nothing above is rewritten.
+
+- Every earlier review round was a command-line model run started by the coordinator. None was a dispatched fleet review. The wording "Antigravity2 reviewed independently" and the `Reviewer: Antigravity2` line above overstate what happened.
+- The task journal holds no review event for this task.
+- The task was archived on 2026-10-07T00:22:51Z by `reconcile_merged_done`, on the strength of this brief (evidence PR #6105, merge 1db1c6d13, delivery 3817e77ae, brief 6b9487e7c).
+- Model home per round, as far as the available material shows:
+  - 2026-10-02 rounds 1-3 (labelled Codex2): codex-cli started by the coordinator. The material records no `CODEX_HOME`, so the home is not established. The FE-APPROVAL-HOSTED-ACCEPTANCE-001 runs by the same coordinator used no `CODEX_HOME` and likely used `~/.codex`; the same is possible here but unverified. The label "Codex2" is not evidence of `~/.codex2`.
+  - 2026-10-06 rounds 1-2 (labelled Antigravity2): agy with `ANTIGRAVITY_HOME=~/.gemini-agy2`, `--mode plan --sandbox`, no tools. The home matches the label, but the coordinator started the runs.
+- The date "2026-10-03" for earlier Codex2 rounds is not supported by the saved round files, which are dated 2026-10-02.
+- The real review of this evidence is the fleet review of REVIEW-PROVENANCE-CORRECTION-20261007. The claim-by-claim check is in `provenance-review.md` beside this file.

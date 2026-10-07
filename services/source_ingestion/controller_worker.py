@@ -1561,12 +1561,16 @@ def _runtime_controller_id() -> str:
     return f"{base}:{generation}"
 
 
+def _controller_tenant_id() -> str:
+    return str(os.getenv("PANTHEON_TENANT_ID") or os.getenv("PANTHEON_BFF_TENANT_ID") or "default")
+
+
 def _new_state() -> ControllerState:
     return ControllerState(
         controller_id=_runtime_controller_id(),
         controller_name=str(os.getenv("PANTHEON_CONTROLLER_NAME") or "source-ingestion-controller"),
         environment=str(os.getenv("PANTHEON_ENV") or "dev"),
-        tenant_id=str(os.getenv("PANTHEON_TENANT_ID") or "default"),
+        tenant_id=_controller_tenant_id(),
         deployment=_runtime_deployment(),
     )
 
@@ -1575,7 +1579,7 @@ def refresh_runtime_identity(state: ControllerState) -> ControllerState:
     """Fence a restarted process and refresh exact deployment identity."""
 
     environment = str(os.getenv("PANTHEON_ENV") or "dev")
-    tenant_id = str(os.getenv("PANTHEON_TENANT_ID") or "default")
+    tenant_id = _controller_tenant_id()
     if state.environment != environment or state.tenant_id != tenant_id:
         raise ControllerStateError(
             "persisted controller state tenant/environment does not match this runtime"

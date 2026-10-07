@@ -799,3 +799,40 @@ def test_us_simulation_connector_not_offered_outside_dev_env(
     assert action.connector_id is None
     assert connector_store.get_config("dev-paper-us-equity-simulation") is None
     assert schedule_store.get_schedule("dev-paper-us-equity-simulation") is None
+
+
+def test_persona_source_reconciler_stamps_tenant_on_provisioned_connector(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connector_store = JsonlConfiguredConnectorStore(tmp_path / "connector_config.jsonl")
+    schedule_store = JsonlConnectorScheduleStore(tmp_path / "connector_schedule.jsonl")
+
+    reconciler = SourceProvisioningReconciler(
+        manager=IngestManager(),
+        connector_store=connector_store,
+        schedule_store=schedule_store,
+        tenant_id="tenant-dev",
+    )
+    persona = _persona(connector_candidates=["tw-twse-tpex-official-market"])
+    result = reconciler.reconcile_persona(persona)
+    assert result.actions[0].connector_id == "tw-twse-tpex-official-market"
+    config = connector_store.get_config("tw-twse-tpex-official-market")
+    assert config is not None
+    assert config.connector.metadata.get("tenant_id") == "tenant-dev"
+
+    tmp_path2 = tmp_path / "sub2"
+    tmp_path2.mkdir()
+    connector_store2 = JsonlConfiguredConnectorStore(tmp_path2 / "connector_config.jsonl")
+    schedule_store2 = JsonlConnectorScheduleStore(tmp_path2 / "connector_schedule.jsonl")
+    monkeypatch.delenv("PANTHEON_TENANT_ID", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-dev-from-bff")
+    reconciler2 = SourceProvisioningReconciler(
+        manager=IngestManager(),
+        connector_store=connector_store2,
+        schedule_store=schedule_store2,
+    )
+    result2 = reconciler2.reconcile_persona(persona)
+    config2 = connector_store2.get_config("tw-twse-tpex-official-market")
+    assert config2 is not None
+    assert config2.connector.metadata.get("tenant_id") == "tenant-dev-from-bff"
+
