@@ -35,3 +35,18 @@ def _healthy_guard_collaborators(monkeypatch):
     monkeypatch.setattr(capital_guard, "read_safe_mode", lambda pool_id: "normal")
     monkeypatch.setattr(capital_guard, "load_risk_policy", lambda ref: {"risk_policy_id": ref})
     monkeypatch.setattr(capital_guard, "configured_approval_reader", lambda domain: _ApprovesWhatIsAsked())
+
+
+@pytest.fixture(autouse=True)
+def _owner_lineage_is_a_seam(monkeypatch, request):
+    """Owner suites that exercise apply/idempotency/tenancy use synthetic proposal lines with no ranking
+    snapshot behind them.  Lineage itself is covered unpatched by ``real_lineage`` tests."""
+    if request.node.get_closest_marker("real_lineage"):
+        return
+    from services.capital import allocation_lineage
+
+    monkeypatch.setattr(allocation_lineage, "verify_rebalance_lineage", lambda reader, proposal: None)
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "real_lineage: run owner rebalance lineage verification unpatched")

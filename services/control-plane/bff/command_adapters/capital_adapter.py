@@ -64,8 +64,14 @@ class CapitalOwnerWriter:
         if not pool_id:
             raise CapitalValidationError("pool_id is required")
         tenant = self._tenant(tenant_id, auth_token)
+        if tenant:  # the owner stamps the bound tenant into metadata; a different client value must fail before it commits
+            bound_tenant(payload.get("metadata") or {}, tenant, auth_token)
         body = {**_owner_body(payload, actor_id, actor_role, key), "pool_id": pool_id}
         return _executor().create_capital_pool(body, auth_token=auth_token, **({"tenant_id": tenant} if tenant else {}))
+
+    def evaluate_allocation(self, payload, *, auth_token=None, tenant_id=None, **_) -> Dict[str, Any]:
+        tenant = self._tenant(tenant_id, auth_token)
+        return http_request_json(capital_url("/api/allocation-evaluations"), method="POST", payload=payload, auth_token=auth_token, tenant_id=tenant)
 
     def pool_action(self, payload, *, actor_id, actor_role, target_id, auth_token=None, tenant_id=None, **_) -> Dict[str, Any]:
         action = str(payload.get("action_id") or "").strip()
