@@ -77,6 +77,11 @@
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_read_surface_caller_migration.py",
         "result": "29 passed, 3 warnings in 23.36s",
         "exit_code": 0
+      },
+      {
+        "command": "python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py -k test_migrated_suites_do_not_mutate_sys_path",
+        "result": "1 passed, 38 deselected in 6.84s",
+        "exit_code": 0
       }
     ]
   },

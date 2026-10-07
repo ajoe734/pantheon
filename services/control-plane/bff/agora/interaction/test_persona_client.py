@@ -7,19 +7,10 @@ import os
 import sys
 import threading
 import unittest
-from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[5]
-for path in (
-    str(ROOT),
-    str(ROOT / "services" / "control-plane" / "bff"),
-):
-    if path not in sys.path:
-        sys.path.insert(0, path)
-
-from agora.interaction import persona_client
-from agora.interaction.persona_client import PersonaReadPort, build_canonical_persona_client
+from services.control_plane.bff.agora.interaction import persona_client
+from services.control_plane.bff.agora.interaction.persona_client import PersonaReadPort, build_canonical_persona_client
 from services.control_plane.bff.ports.persona_write_owner import PersonaWriteOwnerUnavailable
 
 
