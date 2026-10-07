@@ -368,7 +368,10 @@ class TestResearchKnowledgeSourcePortCutover(unittest.TestCase):
             research_experiments_store={
                 "exp-1": {"experiment_id": "exp-1", "name": "Exp 1"},
             },
+            # spec limits the owner to experiment methods (e194571a1: research
+            # single owner); a bare MagicMock would answer note reads too.
             research_write_owner=MagicMock(
+                spec=["list_research_experiments", "get_research_experiment"],
                 list_research_experiments=MagicMock(return_value=[{"experiment_id": "exp-1", "name": "Exp 1"}]),
                 get_research_experiment=MagicMock(return_value={"experiment_id": "exp-1", "name": "Exp 1"}),
             ),

@@ -109,11 +109,6 @@ def test_deprecated_alternate_url_families_return_410_with_headers() -> None:
         ("patch", "/bff/ranking/formulas/formula-1", "/bff/ranking-formulas/{formula_id}"),
         (
             "post",
-            "/bff/ranking/formulas/formula-1/actions/promote",
-            "/bff/v1/commands",
-        ),
-        (
-            "post",
             "/bff/mcp/tools/tool-1/actions/enable",
             "/bff/mcp-tools/{tool_id}/{action_id}",
         ),
@@ -122,13 +117,24 @@ def test_deprecated_alternate_url_families_return_410_with_headers() -> None:
         response = getattr(client, method)(path, headers=OPERATOR_HEADERS)
         _assert_deprecated(response, replacement)
 
+    # The nested ranking promote family is not a deprecated-path alias: the
+    # RankingFormulaAction command has no executor and fails before admission
+    # with ACTION_RETIRED (410) once.
+    retired = client.post(
+        "/bff/ranking/formulas/formula-1/actions/promote", headers=OPERATOR_HEADERS
+    )
+    assert retired.status_code == 410, retired.text
+    assert retired.json()["error"]["code"] == "ACTION_RETIRED"
+
 
 def test_deprecated_nested_action_families_return_410_with_headers() -> None:
     client = _client()
 
     cases = [
         ("/bff/strategies/strategy-1/actions/promote", "/bff/v1/commands"),
-        ("/bff/personas/persona-1/actions/promote", "/bff/v1/commands"),
+        # Persona promote is a live lifecycle entry point (ade4fd088); the
+        # still-deprecated nested persona family is archive.
+        ("/bff/personas/persona-1/actions/archive", "/bff/v1/commands"),
         ("/bff/deployments/deployment-1/actions/promote", "/bff/v1/commands"),
         ("/bff/runtimes/runtime-1/actions/pause", "/bff/v1/commands"),
         ("/bff/skills/skill-1/actions/disable", "/bff/v1/commands"),
