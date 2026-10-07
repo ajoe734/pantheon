@@ -406,7 +406,12 @@ async def _source_snapshot_after(
     ]
 
 
-def _complete_candidates(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _complete_candidates(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    mode: str = "natural",
+    case: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     groups: dict[tuple[str, ...], dict[str, Any]] = {}
     for row in rows:
         try:

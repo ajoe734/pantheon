@@ -130,6 +130,23 @@ def test_asyncpg_telemetry_source_filters_watermark_and_snapshot(monkeypatch):
     assert fetch[4] == 17
 
 
+DEFAULT_TEST_CASE_KEY = "dev-paper-release-37647100516-1"
+DEFAULT_TEST_CASE = {
+    "tenant_id": "tenant-a",
+    "persona_id": "persona-paper-001",
+    "idempotency_key": DEFAULT_TEST_CASE_KEY,
+    "runtime_binding_id": "10000000-0000-0000-0000-000000000001",
+    "runtime_id": "runtime-paper-001",
+    "capital_pool_id": "pool-paper-001",
+    "deployment_plan_id": "plan-paper-001",
+    "persona_capital_binding_id": "pcb-paper-001",
+    "artifact_id": "artifact-paper-001",
+    "artifact_version": "1.2.3",
+    "artifact_checksum": "sha256-approved-test-checksum",
+}
+DEFAULT_CASE_SOURCE = {DEFAULT_TEST_CASE_KEY: DEFAULT_TEST_CASE}
+
+
 def _natural_lifecycle_rows() -> list[dict]:
     by_type = {row["event_type"]: row for row in lifecycle_rows()}
     event_types = [*probe.REQUIRED_EVENT_TYPES, "reconciliation_completed"]
@@ -196,6 +213,14 @@ def _natural_lifecycle_rows() -> list[dict]:
         event["metadata"]["sequence_no"] = ingested_seq
         event["metadata"]["causal_parent_id"] = causal_parent
         event["metadata"]["source_mode"] = "live"
+        if event_type == "signal_generation":
+            event["source_worker"] = probe.NATURAL_PRODUCER
+            event["artifact_interpreter"] = probe.NATURAL_INTERPRETER
+            event["artifact_checksum"] = DEFAULT_TEST_CASE["artifact_checksum"]
+            event["market_input_ref"] = "market-input-test-001"
+            event["raw_symbol"] = "BTC-USDT"
+            event["is_real_capital"] = False
+            event["is_real_order"] = False
         if event_type == "reconciliation_completed":
             event["metadata"]["reconciliation_evaluation_id"] = evaluation_id
         event["correlation_envelope"].update(
@@ -331,15 +356,21 @@ def _execute(
     root: Path,
     rows: list[dict],
     expected_sha: str = "deployed-sha",
+    mode: str = "natural",
+    case_key: str | None = DEFAULT_TEST_CASE_KEY,
+    case_source: Any | None = DEFAULT_CASE_SOURCE,
 ) -> tuple[int, dict]:
     return asyncio.run(
         probe.execute(
             source=FakeSource(len(rows), rows),
             projection_root=root,
+            case_source=case_source,
             expected_sha=expected_sha,
             output=tmp_path / "evidence.json",
             timeout_seconds=0.1,
             poll_seconds=0.001,
+            mode=mode,
+            case_key=case_key,
         )
     )
 
@@ -386,11 +417,13 @@ def test_probe_correlates_from_relational_projection_snapshot(tmp_path):
             source=BaselineSource(len(rows), rows),
             projection_root=None,
             projection_source=projection,
+            case_source=DEFAULT_CASE_SOURCE,
             expected_sha="deployed-sha",
             output=tmp_path / "relational-evidence.json",
             timeout_seconds=0.1,
             poll_seconds=0.001,
             baseline_high_watermark=0,
+            case_key=DEFAULT_TEST_CASE_KEY,
         )
     )
 
@@ -523,12 +556,14 @@ def test_probe_retries_projection_integrity_until_bundle_is_valid(tmp_path):
         probe.execute(
             source=BaselineSource(len(rows), rows),
             projection_root=root,
+            case_source=DEFAULT_CASE_SOURCE,
             expected_sha="deployed-sha",
             output=tmp_path / "retry-integrity.json",
             timeout_seconds=1,
             poll_seconds=0.001,
             baseline_high_watermark=0,
             sleeper=repair_manifest,
+            case_key=DEFAULT_TEST_CASE_KEY,
         )
     )
 
@@ -548,10 +583,12 @@ def test_probe_reads_only_rows_after_baseline_for_incremental_source(tmp_path):
         probe.execute(
             source=source,
             projection_root=root,
+            case_source=DEFAULT_CASE_SOURCE,
             expected_sha="deployed-sha",
             output=tmp_path / "incremental.json",
             timeout_seconds=0.1,
             poll_seconds=0.001,
+            case_key=DEFAULT_TEST_CASE_KEY,
         )
     )
 
@@ -575,11 +612,13 @@ def test_probe_uses_explicit_baseline_without_initial_high_watermark(tmp_path):
         probe.execute(
             source=source,
             projection_root=root,
+            case_source=DEFAULT_CASE_SOURCE,
             expected_sha="deployed-sha",
             output=tmp_path / "explicit-baseline.json",
             timeout_seconds=0.1,
             poll_seconds=0.001,
             baseline_high_watermark=200,
+            case_key=DEFAULT_TEST_CASE_KEY,
         )
     )
 
@@ -616,10 +655,12 @@ def test_probe_times_out_without_a_complete_natural_aggregate(tmp_path):
         probe.execute(
             source=FakeSource(12, []),
             projection_root=tmp_path / "missing",
+            case_source=DEFAULT_CASE_SOURCE,
             expected_sha="deployed-sha",
             output=output,
             timeout_seconds=0,
             poll_seconds=0.01,
+            case_key=DEFAULT_TEST_CASE_KEY,
         )
     )
 
@@ -706,10 +747,12 @@ def test_probe_rejects_old_lifecycle_inherited_by_expected_deployment(tmp_path):
         probe.execute(
             source=BaselineSource(9, rows),
             projection_root=root,
+            case_source=DEFAULT_CASE_SOURCE,
             expected_sha="new-sha",
             output=output,
             timeout_seconds=0,
             poll_seconds=0.001,
+            case_key=DEFAULT_TEST_CASE_KEY,
         )
     )
 
@@ -754,10 +797,12 @@ def test_source_failure_writes_only_redacted_evidence(tmp_path):
         probe.execute(
             source=BrokenSource(),
             projection_root=tmp_path / "missing",
+            case_source=DEFAULT_CASE_SOURCE,
             expected_sha="deployed-sha",
             output=output,
             timeout_seconds=1,
             poll_seconds=0.001,
+            case_key=DEFAULT_TEST_CASE_KEY,
         )
     )
 
@@ -765,3 +810,161 @@ def test_source_failure_writes_only_redacted_evidence(tmp_path):
     assert code == 1
     assert artifact["failure"]["code"] == "unexpected_probe_error"
     assert "secret" not in raw
+
+
+def _counterexample_rows() -> list[dict]:
+    rows = _natural_lifecycle_rows()
+    sig = rows[0]["payload"]
+    sig["source_worker"] = "loop-prod-tel-002-hosted-stimulus"
+    sig["artifact_interpreter"] = None
+    sig["artifact_checksum"] = None
+    sig["market_input_ref"] = None
+    sig["raw_symbol"] = None
+    sig["metadata"].pop("source_worker", None)
+    sig["metadata"].pop("artifact_interpreter", None)
+    sig["metadata"].pop("artifact_checksum", None)
+    sig["metadata"].pop("market_input_ref", None)
+    sig["metadata"].pop("raw_symbol", None)
+    return rows
+
+
+def test_counterexample_rejected_in_natural_mode(tmp_path):
+    root, rows = _publish(tmp_path, rows=_counterexample_rows())
+    code, artifact = _execute(tmp_path, root=root, rows=rows, mode="natural")
+    assert code == 1
+    assert artifact["outcome"] == "failed"
+    assert artifact["mode"] == "natural"
+    assert artifact["governed_case_key"] == DEFAULT_TEST_CASE_KEY
+    assert artifact["failure"]["code"] == "no_complete_paper_aggregate"
+
+
+def test_counterexample_accepted_in_controlled_stimulus_mode(tmp_path):
+    root, rows = _publish(tmp_path, rows=_counterexample_rows())
+    code, artifact = _execute(tmp_path, root=root, rows=rows, mode="controlled-stimulus", case_key=None, case_source=None)
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert artifact["mode"] == "controlled-stimulus"
+    assert "signal_provenance" in artifact["proof"]
+    assert artifact["proof"]["signal_provenance"]["source_worker"] == "loop-prod-tel-002-hosted-stimulus"
+
+
+@pytest.mark.parametrize(
+    "mutation,field,value,expected_error",
+    [
+        ("producer", "source_worker", "unauthorized-worker", "invalid_producer"),
+        ("interpreter", "artifact_interpreter", "unauthorized.func", "invalid_interpreter"),
+        ("checksum_none", "artifact_checksum", None, "invalid_checksum"),
+        ("checksum_empty", "artifact_checksum", "   ", "invalid_checksum"),
+        ("lineage_missing", "market_input_ref", None, "invalid_lineage"),
+        ("real_capital", "is_real_capital", True, "invalid_capital_mode"),
+        ("real_order", "is_real_order", True, "invalid_capital_mode"),
+    ],
+)
+def test_probe_natural_candidate_validation_rejections(mutation, field, value, expected_error):
+    rows = _natural_lifecycle_rows()
+    sig = rows[0]["payload"]
+    if mutation == "lineage_missing":
+        sig["market_input_ref"] = None
+        sig["raw_symbol"] = None
+    else:
+        sig[field] = value
+    cands = probe._complete_candidates(rows, mode="controlled-stimulus")
+    assert len(cands) == 1
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cands[0], DEFAULT_TEST_CASE)
+    assert exc_info.value.code == expected_error
+
+
+@pytest.mark.parametrize(
+    "case_key,case_value,expected_error",
+    [
+        ("tenant_id", "wrong-tenant", "case_identity_mismatch"),
+        ("runtime_binding_id", "wrong-binding", "case_identity_mismatch"),
+        ("runtime_id", "wrong-runtime", "case_identity_mismatch"),
+        ("deployment_plan_id", "wrong-plan", "case_plan_mismatch"),
+        ("capital_pool_id", "wrong-pool", "case_capital_mismatch"),
+        ("artifact_id", "wrong-artifact", "case_artifact_mismatch"),
+        ("artifact_version", "9.9.9", "case_version_mismatch"),
+        ("artifact_checksum", "sha256-wrong-checksum", "case_checksum_mismatch"),
+    ],
+)
+def test_probe_natural_case_mismatch_rejections(case_key, case_value, expected_error):
+    rows = _natural_lifecycle_rows()
+    cands = probe._complete_candidates(rows, mode="controlled-stimulus")
+    assert len(cands) == 1
+    mismatched_case = dict(DEFAULT_TEST_CASE, **{case_key: case_value})
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cands[0], mismatched_case)
+    assert exc_info.value.code == expected_error
+
+
+def test_probe_natural_mode_missing_case_key(tmp_path):
+    root, rows = _publish(tmp_path)
+    code, artifact = _execute(tmp_path, root=root, rows=rows, mode="natural", case_key=None)
+    assert code == 1
+    assert artifact["outcome"] == "failed"
+    assert artifact["failure"]["code"] == "case_key_missing"
+
+
+def test_probe_natural_mode_missing_case_source(tmp_path):
+    root, rows = _publish(tmp_path)
+    code, artifact = _execute(tmp_path, root=root, rows=rows, mode="natural", case_source=None)
+    assert code == 1
+    assert artifact["outcome"] == "failed"
+    assert artifact["failure"]["code"] == "case_source_missing"
+
+
+def test_probe_natural_mode_case_not_found(tmp_path):
+    root, rows = _publish(tmp_path)
+    code, artifact = _execute(
+        tmp_path, root=root, rows=rows, mode="natural", case_key="nonexistent-key", case_source=DEFAULT_CASE_SOURCE
+    )
+    assert code == 1
+    assert artifact["outcome"] == "failed"
+    assert artifact["failure"]["code"] == "case_not_found"
+
+
+def test_normalize_case_record_from_provisioning_ledger():
+    raw_row = {
+        "tenant_id": "tenant-dev",
+        "persona_id": "persona-dev-001",
+        "idempotency_key": "dev-paper-release-1-1",
+        "references": {
+            "runtime_binding_id": "binding-rel-1",
+            "runtime_id": "runtime-rel-1",
+            "strategy_artifact_approved": {
+                "entry": {
+                    "registry_id": "art-1",
+                    "version": "2.0.0",
+                    "checksum": "sha256-approved",
+                }
+            },
+        },
+        "result": {
+            "capital_pool_id": "pool-dev-1",
+            "deployment_plan_id": "plan-dev-1",
+            "persona_capital_binding_id": "pcb-dev-1",
+        },
+    }
+    normalized = probe._normalize_case_record(raw_row)
+    assert normalized["tenant_id"] == "tenant-dev"
+    assert normalized["persona_id"] == "persona-dev-001"
+    assert normalized["idempotency_key"] == "dev-paper-release-1-1"
+    assert normalized["runtime_binding_id"] == "binding-rel-1"
+    assert normalized["runtime_id"] == "runtime-rel-1"
+    assert normalized["capital_pool_id"] == "pool-dev-1"
+    assert normalized["deployment_plan_id"] == "plan-dev-1"
+    assert normalized["persona_capital_binding_id"] == "pcb-dev-1"
+    assert normalized["artifact_id"] == "art-1"
+    assert normalized["artifact_version"] == "2.0.0"
+    assert normalized["artifact_checksum"] == "sha256-approved"
+
+
+def test_main_cli_mode_and_case_key_validation(tmp_path):
+    out_file = tmp_path / "cli_test.json"
+    ret = probe.main(["--expected-sha", "test-sha", "--output", str(out_file), "--mode", "natural"])
+    assert ret == 1
+    art = json.loads(out_file.read_text(encoding="utf-8"))
+    assert art["outcome"] == "failed"
+    assert art["mode"] == "natural"
+    assert art["failure"]["code"] == "case_key_missing"
