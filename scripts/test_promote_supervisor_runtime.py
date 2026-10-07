@@ -2829,3 +2829,46 @@ def test_migrate_storage_paths_upgrades_fifo_fences_and_ignores_fenced_old_paths
         assert fence.is_dir(), fence
     assert (modern / "state.json").read_text(encoding="utf-8") == '{"workers": {}}'
     assert new_log.exists()
+
+
+def _exited_worker_state(tmp_path: Path, marker: dict) -> Path:
+    marker_path = tmp_path / "run-exited.json"
+    marker_path.write_text(json.dumps(marker))
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({
+        "workers": {
+            "run-exited": {
+                "status": "running",
+                "pid": 31337,
+                "runner_status_path": str(marker_path),
+            }
+        },
+        "queue": {"events": {"evt-1": {"status": "started", "run_id": "run-exited"}}},
+    }))
+    return state
+
+
+def test_drain_accepts_exited_worker_with_its_own_terminal_marker(tmp_path: Path) -> None:
+    state = _exited_worker_state(tmp_path, {
+        "run_id": "run-exited", "pid": 31337, "status": "failed",
+        "exit_code": 143, "signal": 15, "finished_at": "2026-10-06T16:22:44Z",
+    })
+    with mock.patch.object(promotion, "_pid_alive", return_value=False):
+        result = promotion.qualify_and_drain_incumbent_writers({"paths": {"state_file": str(state)}})
+    assert result["exited_run_ids"] == ["run-exited"]
+    assert result["drained_run_ids"] == []
+
+
+@pytest.mark.parametrize("marker", [
+    {"run_id": "run-exited", "pid": 31337, "status": "running"},
+    {"run_id": "run-exited", "pid": 99999, "finished_at": "2026-10-06T16:22:44Z"},
+    {"run_id": "other-run", "pid": 31337, "finished_at": "2026-10-06T16:22:44Z"},
+])
+def test_drain_still_fails_closed_on_dead_worker_without_matching_terminal_marker(
+    tmp_path: Path, marker: dict
+) -> None:
+    state = _exited_worker_state(tmp_path, marker)
+    with mock.patch.object(promotion, "_pid_alive", return_value=False):
+        with pytest.raises(RuntimeError, match="un-drainable status running"):
+            promotion.qualify_and_drain_incumbent_writers({"paths": {"state_file": str(state)}})
+

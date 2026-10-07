@@ -477,6 +477,42 @@ def test_candidate_producer_cannot_start_mutation_before_matching_runner_ack(fix
     assert [event["operation"] for event in _events(recorder)] == ["seal-candidate"]
 
 
+@pytest.mark.parametrize("profiles,services", [
+    ("root,dev-paper-principals", []),
+    ("root", []),
+    ("", ["operator-bff", "agora-interaction-worker", "loop-run-projector-scheduler"]),
+    (None, ["operator-bff"]),
+])
+def test_runtime_wrapper_preserves_caller_profiles_through_candidate_compose(fixture, profiles, services):
+    env, recorder, *_ = fixture
+    seal = json.loads(env["FIXTURE_SEAL_OUTPUT"])
+    env.update({
+        "DEV_CANDIDATE_RECEIPT_ACKED": "true",
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_OVERRIDE_PATH": seal["candidate_image_override_path"],
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_OVERRIDE_SHA256": seal["candidate_image_override_sha256"],
+    })
+    env.pop("COMPOSE_PROFILES", None)
+    if profiles is not None:
+        env["COMPOSE_PROFILES"] = profiles
+    # Real wrapper and sealed-candidate validation; only Docker is a recorder.
+    payload = "set -euo pipefail\ninfo() { :; }\n"
+    payload += '\ndocker() { python3 -c \'import json,os,sys; print(json.dumps({"profiles":os.environ.get("COMPOSE_PROFILES"),"args":sys.argv[1:],"live":os.environ.get("PANTHEON_LIVE_BROKER_ENABLED")}))\' "$@"; }\n'
+    payload += "\n".join(_function(name) for name in (
+        "with_dev_bff_runtime_env", "validate_dev_candidate_override", "run_dev_candidate_compose",
+    ))
+    payload += f'\nwith_dev_bff_runtime_env {SHA} false run_dev_candidate_compose up -d'
+    if services:
+        payload += ' --no-deps ' + ' '.join(services)
+    result = _run(payload + "\n", env)
+    assert result.returncode == 0, result.stderr
+    observed = json.loads(result.stdout)
+    assert observed["profiles"] == (profiles or "")
+    assert observed["live"] == "false"
+    assert observed["args"] == ["compose", "-p", "pantheon", "-f", "docker-compose.yml",
+        "-f", seal["candidate_image_override_path"], "up", "-d", *(["--no-deps", *services] if services else [])]
+    assert _events(recorder) == []
+
+
 def test_three_candidate_start_sites_use_the_admitted_image_override():
     payload = _remote()
     case = payload[payload.index('case "${PANTHEON_DEPLOY_COMPONENT}" in'):]

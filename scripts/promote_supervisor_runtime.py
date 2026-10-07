@@ -917,6 +917,17 @@ def _recover_stopped_runtime_phase_reservations(
     return recovered
 
 
+def _worker_published_terminal_marker(
+    worker: Mapping[str, Any], *, run_id: str, pid: Any
+) -> bool:
+    """True only when this exact run's runner recorded that it finished."""
+    marker_path = worker.get("runner_status_path") or (worker.get("metadata") or {}).get("runner_status_path")
+    if not marker_path or not isinstance(pid, int) or not Path(marker_path).is_file():
+        return False
+    marker = _load_json(Path(marker_path), label="runner terminal marker")
+    return marker.get("run_id") == run_id and marker.get("pid") == pid and bool(marker.get("finished_at"))
+
+
 def qualify_and_drain_incumbent_writers(
     incumbent: Mapping[str, Any] | None,
     *,
@@ -983,6 +994,7 @@ def qualify_and_drain_incumbent_writers(
     workers = raw_state.get("workers") if isinstance(raw_state.get("workers"), Mapping) else {}
     workers_drained: list[int] = []
     drained_run_ids: set[str] = set()
+    exited_run_ids: set[str] = set()
     conflict_statuses = {
         "queued",
         "started",
@@ -1055,6 +1067,12 @@ def qualify_and_drain_incumbent_writers(
                     raise RuntimeError(f"worker {run_id} lacks matching planned SIGTERM terminal receipt")
             workers_drained.append(pid)
             drained_run_ids.add(str(run_id))
+        elif _worker_published_terminal_marker(worker, run_id=run_id, pid=pid):
+            # The worker already exited on its own (for example after finishing
+            # its task) and its runner wrote a terminal marker, but the stopped
+            # incumbent never reconciled the record. The candidate's boot
+            # reconciliation handles it like any other exited worker.
+            exited_run_ids.add(str(run_id))
         else:
             raise RuntimeError(
                 f"cannot promote runtime: active worker {run_id} in un-drainable status {status}"
@@ -1070,7 +1088,7 @@ def qualify_and_drain_incumbent_writers(
         str(eid) for eid, ev in queue_events.items()
         if isinstance(ev, Mapping)
         and str(ev.get("status") or "").strip() in {"started", "running", "admitted"}
-        and str(ev.get("run_id") or "") not in drained_run_ids
+        and str(ev.get("run_id") or "") not in drained_run_ids | exited_run_ids
     ]
     if in_flight_events:
         raise RuntimeError(
@@ -1114,6 +1132,7 @@ def qualify_and_drain_incumbent_writers(
         "drained": True,
         "workers_drained": workers_drained,
         "drained_run_ids": sorted(drained_run_ids),
+        "exited_run_ids": sorted(exited_run_ids),
         "reservations": recovered_reservations,
     }
 

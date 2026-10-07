@@ -10,6 +10,7 @@ def test_dev_root_and_bff_deploys_pin_durable_agora_stores() -> None:
     root_case, remainder = script.split("  root)", 1)[1].split("  bff)", 1)
     bff_case = remainder.split("  exec)", 1)[0]
     bff_env = script.split("with_dev_bff_runtime_env() {", 1)[1].split("\n}\n", 1)[0]
+    assert 'with_dev_bff_runtime_env "${PANTHEON_DEPLOY_SHA}"' in root_case
     assert 'with_dev_bff_runtime_env "${PANTHEON_DEPLOY_SHA}"' in bff_case
 
     expected = (
@@ -24,7 +25,6 @@ def test_dev_root_and_bff_deploys_pin_durable_agora_stores() -> None:
         "AGORA_TRADING_ROOM_STORE_SCHEMA=agora",
     )
     for setting in expected:
-        assert setting in root_case
         assert setting in bff_env
 
 

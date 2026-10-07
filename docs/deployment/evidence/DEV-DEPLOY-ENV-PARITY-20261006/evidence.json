@@ -1,0 +1,149 @@
+{
+  "task_id": "DEV-DEPLOY-ENV-PARITY-20261006",
+  "base_sha": "5160541e2a3b11b386d86c06dd0eeae395cd94f1",
+  "change_class": "corrective",
+  "net_prod_line_budget": 20,
+  "summary": "Restore dropped PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED=true in dev deploy root rollout and establish per-path environment parity behavioral tests.",
+  "scope": [
+    "scripts/deploy_nonprod_vm.sh: restore PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED=true to the root rollout invocation prefix (+1 net production line)",
+    "services/control-plane/bff/tests/test_agora_workshop_dev_deploy_config.py: assert root rollout runs through with_dev_bff_runtime_env instead of removed inline block",
+    "scripts/test_deploy_nonprod_env_parity.py: behavioral and structural tests verifying per-path environment parity against a stub docker compose on PATH",
+    "docs/deployment/evidence/DEV-DEPLOY-ENV-PARITY-20261006/evidence.json: task delivery evidence and per-path diff accounting"
+  ],
+  "env_differences_and_source_commits": {
+    "root_rollout_vs_ddc431ba": [
+      {
+        "variables": [
+          "PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED"
+        ],
+        "status": "restored",
+        "description": "Restored in current task (DEV-DEPLOY-ENV-PARITY-20261006) after accidental drop in a4dcf76ce"
+      },
+      {
+        "variables": [
+          "RECONCILIATION_DRIFT_URL",
+          "RECONCILIATION_DRIFT_AUTH_TOKEN"
+        ],
+        "status": "added",
+        "commit": "d7514b3273e5cc99bc63e00aa2cf00a9a86c5715",
+        "pr": 6183,
+        "task_id": "PAPER-LIVE-RECON-READ-20261006",
+        "description": "Added to with_dev_bff_runtime_env for reconciliation drift read integration"
+      },
+      {
+        "variables": [
+          "PANTHEON_RECONCILIATION_DRIFT_API_URL"
+        ],
+        "status": "added",
+        "commit": "f87d7493dc2005788ab5a630f20c8534c9d03897",
+        "pr": 6193,
+        "task_id": "PAPER-LIVE-RECON-READ-FIX-20261006",
+        "description": "Added to with_dev_bff_runtime_env aligning setting name with downstream health monitor"
+      },
+      {
+        "variables": [
+          "SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS"
+        ],
+        "status": "added",
+        "commit": "a4dcf76ce39ca77f82fbe8b2d9c9fa3d63584c84",
+        "pr": 6206,
+        "task_id": "DEV-TW-DAILY-REFRESH-R2-20261006",
+        "description": "Added as prefix in root rollout for bounded Taiwan market refresh reuse"
+      },
+      {
+        "variables": [
+          "MANAGEMENT_AI_STORE_BACKEND",
+          "MANAGEMENT_AI_STORE_SCHEMA",
+          "MANAGEMENT_AI_DATABASE_URL",
+          "PANTHEON_MGMT_AI_ATTACH_BUCKET",
+          "PANTHEON_MGMT_AI_ATTACH_LOCATION"
+        ],
+        "status": "inherited",
+        "commit": "cf24df355609ff09c0fae3725b84234b62db4921",
+        "description": "Present in with_dev_bff_runtime_env since Management AI dev persistence cutover"
+      }
+    ],
+    "bff_only_recreate_vs_ddc431ba": [
+      {
+        "variables": [
+          "RECONCILIATION_DRIFT_URL",
+          "RECONCILIATION_DRIFT_AUTH_TOKEN"
+        ],
+        "status": "added",
+        "commit": "d7514b3273e5cc99bc63e00aa2cf00a9a86c5715",
+        "pr": 6183,
+        "task_id": "PAPER-LIVE-RECON-READ-20261006"
+      },
+      {
+        "variables": [
+          "PANTHEON_RECONCILIATION_DRIFT_API_URL"
+        ],
+        "status": "added",
+        "commit": "f87d7493dc2005788ab5a630f20c8534c9d03897",
+        "pr": 6193,
+        "task_id": "PAPER-LIVE-RECON-READ-FIX-20261006"
+      }
+    ],
+    "artifact_driver_vs_ddc431ba": [
+      {
+        "variables": [
+          "RECONCILIATION_DRIFT_URL",
+          "RECONCILIATION_DRIFT_AUTH_TOKEN"
+        ],
+        "status": "added",
+        "commit": "d7514b3273e5cc99bc63e00aa2cf00a9a86c5715",
+        "pr": 6183,
+        "task_id": "PAPER-LIVE-RECON-READ-20261006"
+      },
+      {
+        "variables": [
+          "PANTHEON_RECONCILIATION_DRIFT_API_URL"
+        ],
+        "status": "added",
+        "commit": "f87d7493dc2005788ab5a630f20c8534c9d03897",
+        "pr": 6193,
+        "task_id": "PAPER-LIVE-RECON-READ-FIX-20261006"
+      }
+    ]
+  },
+  "acceptance_criteria_verification": {
+    "ac1": "The root rollout passes PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED=true to compose again exactly as before commit a4dcf76ce. Restored at line 4026 in scripts/deploy_nonprod_vm.sh and verified by test_root_rollout_passes_tj_fixture_and_profiles.",
+    "ac2": "For each compose invocation that now runs through with_dev_bff_runtime_env (root rollout, BFF-only recreate, and artifact driver), the set of environment variable names and values matches the pre-refactor set for that path plus only additions made by other merged tasks. Every difference is catalogued with commit ID in env_differences_and_source_commits.",
+    "ac3": "A behavioural test runs the deploy script paths against a stub docker compose on PATH that records the environment of each invocation and fails if any expected variable is missing or changed for its path. Verified in scripts/test_deploy_nonprod_env_parity.py (6 passed).",
+    "ac4": "tests/test_agora_workshop_dev_deploy_config.py asserts the root rollout runs through with_dev_bff_runtime_env instead of the removed inline block and keeps every other assertion. Verified with pytest (2 passed).",
+    "ac5": "COMPOSE_PROFILES behaviour is unchanged: root rollout keeps the configured profiles (PANTHEON_DEV_COMPOSE_PROFILES, default 'root') and only the BFF-only recreate runs without profiles (COMPOSE_PROFILES=''). Verified by test_root_rollout_passes_tj_fixture_and_profiles, test_root_rollout_preserves_custom_profiles, and test_bff_only_recreate_runs_without_profiles_and_without_tj_fixture.",
+    "ac6": "No compressed code is used to meet the line budget. Restored one variable per line without semicolons. Net production line change is exactly +1 line (scripts/deploy_nonprod_vm.sh), complying with net_prod_line_budget <= 20.",
+    "ac7": "Hosted track: the next root deploy accepts TJ-E2E-012 hosted fixture ingest; recorded as external_wait until then."
+  },
+  "validation": [
+    {
+      "suite": "services/control-plane/bff/tests/test_agora_workshop_dev_deploy_config.py",
+      "command": "$PYTHON -m pytest services/control-plane/bff/tests/test_agora_workshop_dev_deploy_config.py",
+      "result": "2 passed"
+    },
+    {
+      "suite": "scripts/test_deploy_nonprod_env_parity.py",
+      "command": "$PYTHON -m pytest scripts/test_deploy_nonprod_env_parity.py",
+      "result": "6 passed"
+    },
+    {
+      "suite": "scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py",
+      "command": "$PYTHON -m pytest scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py",
+      "result": "33 passed"
+    },
+    {
+      "suite": "scripts/test_dev_tw_market_refresh.py",
+      "command": "$PYTHON -m pytest scripts/test_dev_tw_market_refresh.py",
+      "result": "17 passed"
+    },
+    {
+      "check": "diff_budget",
+      "command": "python3 scripts/git/diff_budget.py --base dev --change-class corrective --budget 20",
+      "result": "passed (net production lines +1 <= 20, evidence file <= 400 lines)"
+    }
+  ],
+  "hosted_track": {
+    "status": "external_wait",
+    "detail": "The next root deploy accepts TJ-E2E-012 hosted fixture ingest; recorded as external_wait until then."
+  }
+}

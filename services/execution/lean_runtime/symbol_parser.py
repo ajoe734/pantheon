@@ -25,6 +25,11 @@ _MARKET_MAP: dict[str, tuple[str, str]] = {
     # code          : (LEAN Market constant,  LEAN SecurityType constant)
     "US":           ("Market.USA",            "SecurityType.Equity"),
     "USA":          ("Market.USA",            "SecurityType.Equity"),
+    "NASDAQ":       ("Market.USA",            "SecurityType.Equity"),
+    "NYSE":         ("Market.USA",            "SecurityType.Equity"),
+    "ARCA":         ("Market.USA",            "SecurityType.Equity"),
+    "BATS":         ("Market.USA",            "SecurityType.Equity"),
+    "AMEX":         ("Market.USA",            "SecurityType.Equity"),
     "FOREX":        ("Market.Oanda",          "SecurityType.Forex"),
     "FX":           ("Market.Oanda",          "SecurityType.Forex"),
     "COINBASE":     ("Market.Coinbase",       "SecurityType.Crypto"),
@@ -35,6 +40,9 @@ _MARKET_MAP: dict[str, tuple[str, str]] = {
 
 # Crypto pairs that lack a dot separator — identified by known quote currencies
 _CRYPTO_QUOTES = ("USDT", "USD", "BTC", "ETH", "BNB", "USDC")
+
+# Taiwan venue suffixes routed to Shioaji broker boundary
+_TAIWAN_VENUE_SUFFIXES: tuple[str, ...] = ("TW", "TWSE", "TWO", "TPEX", "TAIFEX")
 
 
 @dataclass
@@ -47,6 +55,37 @@ class ParsedSymbol:
 
 class SymbolParseError(ValueError):
     pass
+
+
+def is_taiwan_venue_symbol(symbol_str: str) -> bool:
+    """Return True if symbol_str has a recognized Taiwan venue suffix."""
+    s = str(symbol_str or "").strip().upper()
+    if "." not in s:
+        return False
+    return s.rsplit(".", 1)[1] in _TAIWAN_VENUE_SUFFIXES
+
+
+def validate_executable_symbol(symbol_str: str) -> None:
+    """Validate that symbol_str is executable by the execution plane.
+
+    A symbol is executable if it is either:
+    1. A Taiwan venue symbol routed to the Shioaji broker boundary, or
+    2. A symbol parseable into LEAN Symbol components via parse().
+
+    Raises SymbolParseError if the symbol is not executable.
+    """
+    if is_taiwan_venue_symbol(symbol_str):
+        return
+    parse(symbol_str)
+
+
+def is_executable_symbol(symbol_str: str) -> bool:
+    """Return True if symbol_str is recognized as an executable symbol."""
+    try:
+        validate_executable_symbol(symbol_str)
+        return True
+    except SymbolParseError:
+        return False
 
 
 def parse(symbol_str: str) -> ParsedSymbol:
