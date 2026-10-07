@@ -33,9 +33,10 @@ from pathlib import Path
 from typing import Any, Mapping
 
 try:
-    from scripts import dev_environment_lease
+    from scripts import dev_environment_lease, issue_dev_paper_principals
 except ModuleNotFoundError:  # Direct ``python scripts/...`` invocation.
     import dev_environment_lease  # type: ignore[no-redef]
+    import issue_dev_paper_principals  # type: ignore[no-redef]
 
 TASK_ID = "PFG-L12-RUNTIME-E2E-20260820"
 MAIN_NEGATIVE_BINDING_ID = "rb-51f84b3169d745e4b34fcf80f0bc5f3c"
@@ -106,6 +107,8 @@ STIMULUS_SERVICES: dict[str, dict[str, Any]] = {
 }
 DB_MIGRATION_SERVICE = "source-ingest-controller-migrate"
 PROJECTION_BOOTSTRAP_SERVICE = "loop-run-projector-scheduler"
+PRINCIPAL_ISSUER_SERVICE = "dev-paper-principal-issuer"
+ISOLATED_DEV_TENANT = "tenant-dev"
 COMPOSE_ALL_PROFILES = ("--profile", "*")
 ISOLATED_SAFE_CONTROLS = {
     "BROKER_PAPER_ENABLED": "true",
@@ -219,13 +222,17 @@ def _mint_projector_service_jwt(
     issuer: str | None = None,
     audience: str | None = None,
     subject: str = "agora-market-projector",
+    roles: tuple[str, ...] = ("source_ingest_reader",),
+    ttl_seconds: int | None = None,
 ) -> str:
     header = {"alg": "HS256", "typ": "JWT"}
-    claims: dict[str, Any] = {"sub": subject, "roles": ["source_ingest_reader"], "tenant_id": tenant_id}
+    claims: dict[str, Any] = {"sub": subject, "roles": list(roles), "tenant_id": tenant_id}
     if issuer:
         claims["iss"] = issuer
     if audience:
         claims["aud"] = audience
+    if ttl_seconds is not None:
+        claims["exp"] = int(time.time()) + ttl_seconds
     b64 = lambda d: base64.urlsafe_b64encode(d).rstrip(b"=").decode("ascii")
     h = b64(json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8"))
     c = b64(json.dumps(claims, separators=(",", ":"), sort_keys=True).encode("utf-8"))
@@ -244,6 +251,48 @@ def _isolated_reader_token(compose_env: Mapping[str, str], subject: str) -> tupl
         subject=subject,
     )
     return token, tenant
+
+
+def _isolated_dev_principal_env(compose_env: Mapping[str, str]) -> dict[str, str]:
+    """Bind owner verifiers and issue owner principals as the hosted dev deploy does.
+
+    deploy_nonprod_vm.sh signs Registry and Governance with the dev BFF secret,
+    runs Compose as tenant-dev and issues owner-to-owner principals through
+    issue_dev_paper_principals.py.  Without them every strict owner rejects
+    service calls (e.g. distillation -> Registry).  The paper grant is asserted
+    only for this throwaway project and signed with its per-run secret.
+    """
+    secret = compose_env["PANTHEON_BFF_JWT_SECRET"]
+    issuer = compose_env["PANTHEON_BFF_JWT_ISSUER"]
+    audience = compose_env["PANTHEON_BFF_JWT_AUDIENCE"]
+    env = {
+        "PANTHEON_DEV_BFF_TENANT_ID": ISOLATED_DEV_TENANT,
+        "PANTHEON_BFF_TENANT_ID": ISOLATED_DEV_TENANT,
+        "PANTHEON_DEPLOYMENT_TENANT_ID": ISOLATED_DEV_TENANT,
+        "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true",
+        "PANTHEON_DEV_BFF_JWT_SECRET": secret,
+        "PANTHEON_DEV_BFF_JWT_ISSUER": issuer,
+        "PANTHEON_DEV_BFF_JWT_AUDIENCE": audience,
+        "PANTHEON_REGISTRY_JWT_SECRET": secret,
+        "PANTHEON_GOVERNANCE_JWT_SECRET": secret,
+        "PANTHEON_GOVERNANCE_JWT_ISSUER": issuer,
+        "PANTHEON_GOVERNANCE_JWT_AUDIENCE": audience,
+    }
+    env.update(issue_dev_paper_principals.issue_environment({**env, "PANTHEON_ENV": "dev"}))
+    return env
+
+
+def _isolated_registry_operator_token(compose_env: Mapping[str, str]) -> str:
+    """Mint the operator identity the domain suites use on Registry routes."""
+    return _mint_projector_service_jwt(
+        compose_env["PANTHEON_REGISTRY_JWT_SECRET"],
+        tenant_id=compose_env["PANTHEON_BFF_TENANT_ID"],
+        issuer=compose_env["PANTHEON_REGISTRY_JWT_ISSUER"],
+        audience=compose_env["PANTHEON_REGISTRY_JWT_AUDIENCE"],
+        subject="l12-domain-suites-operator",
+        roles=("operator",),
+        ttl_seconds=4 * 60 * 60,
+    )
 
 
 def _compose_command(
@@ -891,6 +940,7 @@ def main(argv: list[str] | None = None) -> int:
     # excluded from ISOLATED_SAFE_CONTROLS because that mapping is written to
     # the evidence report.
     compose_env["PANTHEON_BFF_JWT_SECRET"] = secrets.token_urlsafe(48)
+    compose_env.update(_isolated_dev_principal_env(compose_env))
     for port_name, default_port in DEFAULT_PORTS.items():
         if port_name not in compose_env:
             compose_env[port_name] = str(default_port + args.port_offset)
@@ -935,6 +985,8 @@ def main(argv: list[str] | None = None) -> int:
     reader_token, reader_tenant = _isolated_reader_token(compose_env, "l12-domain-suites")
     test_env["PANTHEON_L12_SOURCE_READER_TOKEN"] = reader_token
     test_env["PANTHEON_L12_SOURCE_READER_TENANT_ID"] = reader_tenant
+    test_env["PANTHEON_L12_TENANT_ID"] = compose_env["PANTHEON_BFF_TENANT_ID"]
+    test_env["PANTHEON_L12_REGISTRY_TOKEN"] = _isolated_registry_operator_token(compose_env)
 
     # Resolve python binary
     python_bin = sys.executable
@@ -1026,6 +1078,14 @@ def main(argv: list[str] | None = None) -> int:
                 compose_files,
                 compose_env,
             )
+            # Same order as start_dev_paper_principal_issuer: owners start
+            # with their principal files already written.
+            issuer_command = _compose_command(
+                args.compose_project, compose_files, "up", "-d", "--build",
+                "--no-deps", "--wait", "--wait-timeout", "60", PRINCIPAL_ISSUER_SERVICE,
+            )
+            print(f"[*] Starting the dev principal issuer: {' '.join(issuer_command)}")
+            subprocess.run(issuer_command, env=compose_env, check=True)
             command = _compose_command(
                 args.compose_project,
                 compose_files,
