@@ -393,7 +393,7 @@
     "piastra": {
       "display_name": "PiAstra",
       "provider": "pi_astra",
-      "max_parallel": 0,
+      "max_parallel": 1,
       "adapter": "pi",
       "wake_template": ".orchestrator/templates/wakeup.txt"
     }

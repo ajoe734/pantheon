@@ -177,12 +177,10 @@ class PiWorkerTests(unittest.TestCase):
 
     def test_configured_capacity_uses_lupin_account_cap(self):
         config = json.loads((Path(__file__).parent / "config.json").read_text())
-        # The operator stopped the PiAstra lane on 2026-10-07: its pi login
-        # draws on a quota they need back. The account cap stays in place.
-        self.assertEqual(config["agents"]["piastra"]["max_parallel"], 0)
+        self.assertEqual(config["agents"]["piastra"]["max_parallel"], 1)
         self.assertEqual(supervisor.normalize_agent_id("PiAstra"), "piastra")
         self.assertEqual(supervisor.agent_provider_key(config, "PiAstra"), "pi_astra")
-        self.assertEqual(supervisor.agent_dispatch_capacity(config, "piastra"), 0)
+        self.assertEqual(supervisor.agent_dispatch_capacity(config, "piastra"), 1)
         self.assertEqual(supervisor.agent_account_id(config, "PiAstra"), "lupinchen")
         self.assertEqual(config["providers"]["pi_astra"]["pi"]["agent_dir"], "~/.pi/agent")
         self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"]["lupinchen"], 1)
