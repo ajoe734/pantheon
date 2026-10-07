@@ -3089,14 +3089,10 @@ stage_dev_paper_prerequisite_readiness() {
   token="$(printf '%s' "$token" | tr -d '\r\n[:space:]')"
 
   local auth_header=()
-  if [[ -n "$token" ]]; then
-    auth_header=(-H "Authorization: Bearer ${token}")
-  fi
+  [[ -z "$token" ]] || auth_header=(-H "Authorization: Bearer ${token}")
 
-  local start_time deadline attempt=0
-  start_time="$(date +%s)"
-  deadline=$(( start_time + budget ))
-  local failure_reason="snapshot still lacks market"
+  local deadline attempt=0 triggered=false
+  deadline=$(( $(date +%s) + budget ))
 
   while :; do
     attempt=$(( attempt + 1 ))
@@ -3106,21 +3102,32 @@ stage_dev_paper_prerequisite_readiness() {
     local is_admissible=false
     if [[ -n "$snapshot_resp" ]]; then
       if python3 -c '
-import json, sys
+import json, sys, math
+from datetime import datetime, timezone
+raw = sys.argv[1]
 try:
-    d = json.loads(sys.argv[1])
-    closes = d.get("closes")
-    assert isinstance(closes, list) and len(closes) >= 2
-    assert all(isinstance(c, (int, float)) and not isinstance(c, bool) and c > 0 for c in closes)
-    market = d.get("market")
-    assert isinstance(market, str) and market.strip()
-    ev = d.get("event_time")
-    if ev:
-        from datetime import datetime, timezone
-        age = (datetime.now(timezone.utc) - datetime.fromisoformat(ev.replace("Z", "+00:00"))).total_seconds()
-        assert 0 <= age <= 86400
+    data = json.loads(raw)
 except Exception:
     sys.exit(1)
+closes = data.get("closes")
+if not isinstance(closes, list) or len(closes) < 2:
+    sys.exit(1)
+if any(isinstance(c, bool) or not isinstance(c, (int, float)) or not math.isfinite(float(c)) or float(c) <= 0 for c in closes):
+    sys.exit(1)
+market = data.get("market")
+if not market or not isinstance(market, str) or not market.strip():
+    sys.exit(1)
+ev_str = str(data.get("event_time") or "")
+if ev_str:
+    try:
+        ev_dt = datetime.fromisoformat(ev_str.replace("Z", "+00:00"))
+        now_dt = datetime.now(timezone.utc)
+        age = (now_dt - ev_dt).total_seconds()
+        if age > 86400 or age < 0:
+            sys.exit(1)
+    except Exception:
+        sys.exit(1)
+sys.exit(0)
 ' "$snapshot_resp" 2>/dev/null; then
         is_admissible=true
       fi
@@ -3131,49 +3138,54 @@ except Exception:
       return 0
     fi
 
-    (( attempt == 1 || $(date +%s) < deadline )) || break
+    if [[ "$triggered" == "false" ]]; then
+      triggered=true
+      info "staged dev paper prerequisite snapshot for ${symbol} missing, non-admissible, or lacks market; triggering run-scheduled (attempt 1)"
+      local trigger_resp http_code trigger_body
+      trigger_resp="$(curl -sS -w "\n%{http_code}" -X POST "${auth_header[@]}" \
+        -H "Content-Type: application/json" \
+        -d '{"force_connector_ids":["dev-paper-us-equity-simulation"],"exclusive_connector_ids":["dev-paper-us-equity-simulation"]}' \
+        "${source_ingest_url}/api/source-ingest/run-scheduled" 2>&1 || true)"
+      http_code="$(printf '%s\n' "$trigger_resp" | tail -n 1)"
+      trigger_body="$(printf '%s\n' "$trigger_resp" | sed '$d')"
 
-    info "staged dev paper prerequisite snapshot for ${symbol} missing, non-admissible, or lacks market; triggering run-scheduled (attempt ${attempt})"
-    local trigger_payload='{"force_connector_ids":["dev-paper-us-equity-simulation"],"exclusive_connector_ids":["dev-paper-us-equity-simulation"]}'
-    local trigger_resp http_code trigger_body outcome
-    trigger_resp="$(curl -sS -w "\n%{http_code}" -X POST "${auth_header[@]}" \
-      -H "Content-Type: application/json" \
-      -d "$trigger_payload" \
-      "${source_ingest_url}/api/source-ingest/run-scheduled" 2>&1 || true)"
-    http_code="$(printf '%s\n' "$trigger_resp" | tail -n 1)"
-    trigger_body="$(printf '%s\n' "$trigger_resp" | sed '$d')"
-
-    if [[ "$http_code" == "401" || "$http_code" == "403" ]]; then
-      outcome="authentication rejected"
-    elif [[ "$http_code" != "200" ]]; then
-      outcome="controller mode refuses refresh"
-    elif python3 -c '
+      local eval_out outcome errs diag=""
+      eval_out="$(python3 -c '
 import json, sys
-try:
-    d = json.loads(sys.argv[1])
-    s = d.get("summary") or {}
-    failed = int(s.get("total_failed") or 0)
-    ran = int(s["total_ran"] if "total_ran" in s else (1 if d.get("status") == "ok" else 0))
-    assert failed == 0 and ran >= 1
-except Exception:
-    sys.exit(1)
-' "$trigger_body" 2>/dev/null; then
-      outcome="refreshed"
-    else
-      outcome="controller mode refuses refresh"
-    fi
+code = sys.argv[1] if len(sys.argv) > 1 else ""
+body = sys.argv[2] if len(sys.argv) > 2 else ""
+if code == "000":
+    print("transport failure\t")
+elif code in ("401", "403"):
+    print("authentication rejected\t")
+elif code != "200":
+    print("server error\t")
+else:
+    try:
+        d = json.loads(body)
+        fails = [str(f.get("connector_id")) + ": " + str(f.get("error")) for f in d.get("failed") or [] if isinstance(f, dict)]
+        ran = int((d.get("summary") or {}).get("total_ran", 1 if d.get("status") == "ok" else 0))
+        outcome = "refreshed" if not fails and ran >= 1 else "controller mode refuses refresh"
+        print(outcome + "\t" + "; ".join(fails))
+    except Exception:
+        print("controller mode refuses refresh\t")
+' "$http_code" "$trigger_body" 2>/dev/null || printf 'server error\t')"
+      outcome="${eval_out%%$'\t'*}"
+      errs="${eval_out#*$'\t'}"
+      [[ -z "$errs" ]] || diag=" failed: [${errs}]"
 
-    info "run-scheduled trigger attempt ${attempt}: http_status=${http_code} outcome=${outcome}"
-    if [[ "$outcome" != "refreshed" ]]; then
-      error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: ${outcome}"
-      return 1
+      info "run-scheduled trigger attempt 1: http_status=${http_code} outcome=${outcome}${diag}"
+      if [[ "$outcome" != "refreshed" ]]; then
+        error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: ${outcome}"
+        return 1
+      fi
     fi
 
     (( $(date +%s) < deadline )) || break
     sleep "$poll_interval"
   done
 
-  error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: ${failure_reason}"
+  error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: snapshot still lacks market"
   return 1
 }
 
