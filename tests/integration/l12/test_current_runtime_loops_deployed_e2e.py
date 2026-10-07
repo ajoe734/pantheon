@@ -46,10 +46,12 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 import pytest
+from l12_owner_auth import approve_registry_entry, bearer, human_token, registry_advance_body
 
 
 TASK_ID = "PFG-L12-RUNTIME-E2E-20260820"
-TENANT_ID = "default"
+# The isolated harness runs the stack as the hosted dev tenant.
+TENANT_ID = os.getenv("PANTHEON_L12_TENANT_ID", "default").strip()
 EVOLUTION_TENANT_ID = "pantheon-default"
 PARENT_ARTIFACT_ID = "artifact-tw-session-momentum-v1"
 CANONICAL_LOOP_IDS = {
@@ -560,7 +562,14 @@ class RuntimeChain:
                 "currency": "USD",
                 "budget": 1000.0,
                 "single_runtime_enforced": True,
-                "metadata": {"paper_only": True, "source_task_id": TASK_ID},
+                # Capital admits a paper pool/binding without a live approval
+                # only when the pool declares the paper execution context.
+                "metadata": {
+                    "paper_only": True,
+                    "execution_context": "paper",
+                    "tenant_id": TENANT_ID,
+                    "source_task_id": TASK_ID,
+                },
             },
             headers=headers,
             expected={201},
@@ -606,55 +615,24 @@ class RuntimeChain:
     def _approve_artifact(
         self,
         *,
-        artifact_id: str,
-        version: str,
+        entry: Mapping[str, Any],
         capital: Mapping[str, str],
         label: str,
-    ) -> dict[str, Any]:
-        decision_id = f"approval-l12-{label}-{self.suffix}"
-        self.http.request(
-            "governance",
-            "POST",
-            "/api/governance/approvals",
-            body={
-                "capital_pool_id": capital["pool_id"],
-                "decision_id": decision_id,
-                "persona_id": capital["persona_id"],
-                "risk_level": "medium",
-                "target_id": artifact_id,
-                "target_type": "registry_entry",
-                "target_version": version,
-                "tenant_id": TENANT_ID,
-                "owner_user_id": TASK_ID,
-            },
-            expected={201},
+    ) -> Mapping[str, Any]:
+        return approve_registry_entry(
+            lambda path, payload, headers, expected: self.http.request(
+                "governance", "POST", path, body=payload, headers=headers, expected=set(expected)
+            ),
+            decision_id=f"approval-l12-{label}-{self.suffix}",
+            entry=entry,
+            tenant_id=TENANT_ID,
+            rationale=f"paper-only deployed proof for {TASK_ID}",
+            risk_level="medium",
+            proposal={"capital_pool_id": capital["pool_id"], "persona_id": capital["persona_id"]},
         )
-        self.http.request(
-            "governance",
-            "POST",
-            f"/api/governance/approvals/{decision_id}/review",
-            body={
-                "actor_id": f"{TASK_ID.lower()}-reviewer",
-                "actor_role": "governance_reviewer",
-            },
-        )
-        decided = self.http.request(
-            "governance",
-            "POST",
-            f"/api/governance/approvals/{decision_id}/decide",
-            body={
-                "actor_id": f"{TASK_ID.lower()}-risk-owner",
-                "actor_role": "risk_owner",
-                "outcome": "approved",
-                "rationale": f"paper-only deployed proof for {TASK_ID}",
-            },
-        )
-        if decided.get("decision") != "approved":
-            raise DeployedProofError("Governance did not return an approved decision")
-        return decided
 
     def _setup_source_snapshot(self, market_symbol: str) -> dict[str, Any]:
-        """Ensure canonical latest stored normalized market snapshot exists in source-ingest."""
+        """Read the official latest stored market snapshot the harness pull produced."""
         existing = self.http.request(
             "source_ingest",
             "GET",
@@ -669,90 +647,14 @@ class RuntimeChain:
         ):
             return existing
 
-        connector_id = f"stored-price-{TASK_ID.lower()}"
-        self.http.request(
-            "source_ingest",
-            "POST",
-            "/api/source-ingest/connectors",
-            body={
-                "connector": {
-                    "connector_id": connector_id,
-                    "source_type": "market",
-                    "provider": "Stored normalized test source",
-                    "license_scope": "internal",
-                    "metadata": {"dataset": "daily_prices"},
-                },
-                "fetch": {
-                    "mode": "static_records",
-                    "records": [
-                        {
-                            "source_id": f"{market_symbol}-2026-08-18",
-                            "title": f"{market_symbol} close 2026-08-18",
-                            "content_ref": f"market://daily_prices/{market_symbol}/2026-08-18",
-                            "metadata": {
-                                "normalized_row": {
-                                    "schema_version": "us_equity_price_daily.v1",
-                                    "symbol_canonical": market_symbol,
-                                    "trade_date": "2026-08-18T20:00:00Z",
-                                    "close": 100.0,
-                                }
-                            },
-                        },
-                        {
-                            "source_id": f"{market_symbol}-2026-08-19",
-                            "title": f"{market_symbol} close 2026-08-19",
-                            "content_ref": f"market://daily_prices/{market_symbol}/2026-08-19",
-                            "metadata": {
-                                "normalized_row": {
-                                    "schema_version": "us_equity_price_daily.v1",
-                                    "symbol_canonical": market_symbol,
-                                    "trade_date": "2026-08-19T20:00:00Z",
-                                    "close": 105.0,
-                                }
-                            },
-                        },
-                        {
-                            "source_id": f"{market_symbol}-2026-08-20",
-                            "title": f"{market_symbol} close 2026-08-20",
-                            "content_ref": f"market://daily_prices/{market_symbol}/2026-08-20",
-                            "metadata": {
-                                "normalized_row": {
-                                    "schema_version": "us_equity_price_daily.v1",
-                                    "symbol_canonical": market_symbol,
-                                    "trade_date": "2026-08-20T20:00:00Z",
-                                    "close": 110.0,
-                                }
-                            },
-                        },
-                    ],
-                },
-            },
-            headers=self.source_ingest_headers,
-            expected={200, 201},
+        # No synthetic seeding: Taiwan market admission needs official lineage and
+        # a fresh refresh receipt, so the harness's bounded tw-twse-tpex-official-market
+        # pull (which includes this symbol) must already have produced the snapshot.
+        raise DeployedProofError(
+            f"No official stored snapshot for {market_symbol} with >=2 closes "
+            f"(latest read: {existing!r}); the harness bounded Taiwan official "
+            "pull must run before this suite"
         )
-        self.http.request(
-            "source_ingest",
-            "POST",
-            "/api/source-ingest/jobs",
-            body={
-                "connector_id": connector_id,
-                "trace_id": f"snapshot-ingest-{self.suffix}",
-            },
-            headers=self.source_ingest_headers,
-            expected={200, 201},
-        )
-        snapshot = self.http.request(
-            "source_ingest",
-            "GET",
-            f"/api/source-ingest/snapshots/latest?symbol={urllib.parse.quote(market_symbol, safe='')}",
-            headers=self.source_ingest_headers,
-            expected={200},
-        )
-        if not isinstance(snapshot, dict) or len(snapshot.get("closes", [])) < 2:
-            raise DeployedProofError(
-                f"Source snapshot for {market_symbol} did not yield required closes: {snapshot!r}"
-            )
-        return snapshot
 
     def _retire_invalid_preexisting_bindings(self) -> dict[str, Any]:
         """Retire/migrate pre-existing invalid bindings through canonical APIs before fleet acceptance."""
@@ -835,23 +737,21 @@ class RuntimeChain:
                 "parameter_updates": {"momentum_threshold": parameter},
                 "source_run_ids": [TASK_ID, f"{TASK_ID}-{label}"],
             },
+            headers=bearer(human_token("OPERATOR")),
         )
         child = mutated["entry"]["metadata"]["strategy_artifact"]
-        approval = self._approve_artifact(
-            artifact_id=artifact_id,
-            version=version,
-            capital=capital,
-            label=label,
-        )
+        approval = self._approve_artifact(entry=mutated["entry"], capital=capital, label=label)
         approved = self.http.request(
             "registry",
             "POST",
             f"/api/registry/strategy-artifacts/{artifact_id}/advance",
-            body={
-                "approval_decision_id": approval["decision_id"],
-                "approver": f"{TASK_ID.lower()}-risk-owner",
-                "target_state": "approved",
-            },
+            body=registry_advance_body(
+                mutated["entry"],
+                "approved",
+                command_key=f"{TASK_ID}:{artifact_id}:approved",
+                approval_decision_id=approval["decision_id"],
+            ),
+            headers=bearer(human_token("OPERATOR")),
         )
         registry_entry = approved["entry"]
         artifact_payload = _canonical_json(child)
@@ -896,15 +796,15 @@ class RuntimeChain:
             runtime_metadata["artifact_checksum"] = checksum
 
         plan_id = f"plan-l12-{label}-{self.suffix}"
+        # Deployment reads the Registry entry and the decision from their owners.
         plan_body = {
-            "approval_decision": approval,
             "approval_decision_id": approval["decision_id"],
             "capital_pool_id": capital["pool_id"],
             "created_by": TASK_ID,
             "current_stage": "none",
             "metadata": runtime_metadata,
             "plan_id": plan_id,
-            "registry_entry": registry_entry,
+            "registry_id": artifact_id,
             "sponsor_persona_id": capital["persona_id"],
             "status": "approved",
             "target_stage": "paper",
@@ -940,7 +840,6 @@ class RuntimeChain:
                 "actor_id": TASK_ID,
                 "correlation_id": f"correlation-{plan_id}",
                 "idempotency_key": f"{TASK_ID}:{plan_id}",
-                "registry_entry": registry_entry,
                 "source_task_id": TASK_ID,
                 "trace_id": str(uuid.uuid4()),
                 "workflow_id": "pantheon.l12.current-runtime-e2e",

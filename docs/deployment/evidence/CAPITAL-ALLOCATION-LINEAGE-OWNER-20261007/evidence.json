@@ -1,0 +1,44 @@
+{
+  "task_id": "CAPITAL-ALLOCATION-LINEAGE-OWNER-20261007",
+  "change_class": "corrective",
+  "decision": "Operator decision 2026-10-07: restore allocation lineage (PPL-ALLOC-009/012, deleted from the BFF by c1894c3b0, the 9/1 AST prune) in the Capital owner; the BFF only forwards.",
+  "production_changes": {
+    "services/capital/allocation_lineage.py": "new owner module: evaluate_allocation recomputes targets from the admitted quarterly ranking snapshot (unknown snapshot, foreign persona, duplicate persona, row field differing from the snapshot item, wrong policy version all rejected 422; unreadable Rankings store 503); verify_rebalance_lineage recomputes the evaluation id and each target_weight from the proposal's snapshot and rejects forged ids or weights",
+    "services/capital/main.py": "POST /api/allocation-evaluations; create_rebalance verifies lineage before the existing binding checks; governed_paper_simulation requires an operator role, the dev paper environment (live broker and canary disabled) and a promotion_review_id",
+    "services/control-plane/bff/capital/router.py": "evaluate route forwards the caller JWT to the owner and no longer evaluates locally",
+    "services/control-plane/bff/capital/service.py": "removed the BFF-local evaluate_allocation_policy that ignored ranking_snapshot_id and rows",
+    "services/control-plane/bff/command_adapters/capital_adapter.py": "CapitalOwnerWriter.evaluate_allocation forwarder; create_pool rejects a client metadata.tenant_id that differs from the bound tenant (403 TENANT_MISMATCH) before anything is sent, so the owner can no longer commit and the BFF answer 502 'mismatched create semantics'; same-tenant retries replay safely"
+  },
+  "test_classification": [
+    {
+      "test": "services/control-plane/bff/tests/test_capital_router.py::test_allocation_and_management_readbacks_retain_pool_and_risk_lineage",
+      "classification": "intended change",
+      "decided_by": "operator decision 2026-10-07 (owner, not BFF, evaluates); the old expectation was a 200 for an evaluation built with no snapshot, which is the defect",
+      "action": "fake owner writer gained evaluate_allocation; every original assertion (200, policy version, 2 lines, line digests) is kept"
+    },
+    {
+      "test": "services/capital/** (130 tests) and BFF suites driving synthetic rebalance proposals via CapitalBffAuthorityHarness",
+      "classification": "stale sample",
+      "decided_by": "these exercise apply/idempotency/tenancy with proposal lines that never had a ranking snapshot behind them; lineage is now owner-enforced",
+      "action": "services/capital/conftest.py and the harness stub only verify_rebalance_lineage (marker/ranking_reader opt-in keeps it real); no assertion changed; lineage itself is asserted unpatched in test_allocation_lineage_live_route.py"
+    },
+    {
+      "test": "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py (25 failing)",
+      "classification": "pre-existing, out of scope",
+      "decided_by": "same 25 fail on the unmodified base (stale PplRankingProjectionHarness: CommandAdapterService no longer accepts final_contract_idempotency, plus other persona/ranking projection drift); not caused by this change and left to its own task"
+    },
+    {
+      "test": "services/control-plane/bff/test_architecture_boundaries.py (4 failing)",
+      "classification": "pre-existing, out of scope",
+      "decided_by": "5 fail on the unmodified base, 4 after this change"
+    }
+  ],
+  "new_live_route_tests": "services/control-plane/bff/tests/test_allocation_lineage_live_route.py: viewer + forged snapshot/foreign persona/tampered row/policy version/duplicate -> 422 with no evaluation id; forged snapshot id, forged evaluation id, self-consistent forged weight -> rejected and no rebalance stored, honest evaluation accepted 201; owner without Rankings -> 503; pool create with foreign metadata tenant -> 403 not 5xx, nothing committed, retry identical",
+  "verification": {
+    "services/capital": "346 passed",
+    "bff capital suites (live_route, pool_bindings, persona_allocation_policy, capital_owner_forwarding, capital_router, ppl_alloc_009 x2, rebalance_proposals, capital_ranking_rebalance_contract)": "151 passed",
+    "bff composition/seam suites": "128 passed, 1 skipped; test_architecture_boundaries 4 failed (5 on base)"
+  },
+  "net_prod_lines": 119,
+  "notes": "services/capital/allocation_lineage.py imports persona_allocation_policy and ports.rankings from the BFF package (the Capital image copies the whole repo). Moving the policy module under a shared package is a follow-up. Rankings DB access is read-only via RankingReadStore."
+}

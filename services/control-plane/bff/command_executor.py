@@ -22,7 +22,12 @@ from fastapi import HTTPException
 
 from .models import CommandStatus, CommandType
 from .command_adapters import ActionUnavailableError, dispatch_domain_command
-from .command_adapters.base import _token_tenant, bound_tenant
+from .command_adapters.base import (
+    _token_tenant,
+    bound_tenant,
+    get_base_url,
+    governance_approval_url,
+)
 
 log = logging.getLogger(__name__)
 
@@ -31,19 +36,7 @@ _RUNTIME_MANAGER_CLIENT = None
 
 
 def _configured_base_url(primary_env: str, *fallback_envs: str) -> str:
-    for env_name in (primary_env, *fallback_envs):
-        value = os.getenv(env_name, "").strip()
-        if value:
-            return value.rstrip("/")
-    raise RuntimeError(
-        f"Command backend is unconfigured: set {primary_env}"
-        + (
-            " or one of " + ", ".join(fallback_envs)
-            if fallback_envs
-            else ""
-        )
-        + "."
-    )
+    return get_base_url(primary_env, *fallback_envs)
 
 
 def _internal_url(path: str) -> str:
@@ -52,18 +45,12 @@ def _internal_url(path: str) -> str:
 
 
 def _evolution_url(path: str) -> str:
-    base = _configured_base_url(
-        "PANTHEON_EVOLUTION_API_URL",
-    )
+    base = _configured_base_url("PANTHEON_EVOLUTION_API_URL")
     return f"{base}{path}"
 
 
 def _governance_approval_url(path: str) -> str:
-    base = _configured_base_url(
-        "PANTHEON_GOVERNANCE_APPROVAL_API_URL",
-        "PANTHEON_GOVERNANCE_SERVICE_URL",
-    )
-    return f"{base}{path}"
+    return governance_approval_url(path)
 
 
 def _write_to_governance(

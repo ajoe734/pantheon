@@ -1,0 +1,10 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-RUNTIME-BINDING-TENANT-SCOPE-20261007-CI-RED-D4E148B4288D",
+  "pr": 6268,
+  "root_cause": "Smoke acceptance failed in BFF test architecture gate: services/control-plane/bff/tests/test_runtime_binding_tenant_scope.py used sys.path.insert and importlib.import_module('main'), tripping test_migrated_suites_do_not_mutate_sys_path and test_non_whitelisted_main_importers_is_live_scanned_and_bounded.",
+  "fix_location": "Pushed to PR #6268 branch (commit d78ff99f5). ","fix": "Test now uses monkeypatch.syspath_prepend and loads runtime-manager main.py via spec_from_file_location with monkeypatch.setitem(sys.modules).",
+  "verification": [
+    "pytest test_bff_test_architecture.py -k 'sys_path or live_scanned': 2 passed",
+    "pytest test_runtime_binding_tenant_scope.py: 2 passed"
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "schema_version": "pantheon.corrective-source-evidence.v1",
+  "task_id": "SOURCE-TW-TRAINING-HISTORY-20261007",
+  "base_sha": "dc1a6a0a6",
+  "scope": "Taiwan official connector retains sufficient history depth (default 40 trading days, >=30 bars for training evaluation) for union of active paper and configured history symbols (2330.TW, 2317.TW); includes www.twse.com.tw in egress allowlist; guarantees timezone-aware available_time on tw_price_daily rows",
+  "author": "Antigravity",
+  "review_status": "pending independent Claude review; no approval claimed",
+  "design_choices": [
+    {
+      "choice": "Derive bounded monthly fetch windows based on target trading-day depth",
+      "why": "Rather than hardcoding TW_OFFICIAL_HISTORY_MAX_MONTHS=2, derive_tw_history_max_months computes max(2, ceil(depth / 15) + 1) bounded up to 12 months. When history_trading_days is not passed, existing tests calling fetch_price_history_records default target_days to TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL (2), preserving existing 2-month behavior and backwards compatibility."
+    },
+    {
+      "choice": "Priority symbols union active paper symbols and SOURCE_INGEST_TW_HISTORY_SYMBOLS",
+      "why": "In provider_adapters.py, priority_symbols unifies active_priority_symbols from SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS, configured_history_symbols from request or SOURCE_INGEST_TW_HISTORY_SYMBOLS (defaulting to 2330.TW,2317.TW in docker-compose.yml), and requested priority_symbols. canonical_taiwan_equity_symbol maps .TW to .TWSE and .TWO to .TPEX."
+    },
+    {
+      "choice": "Slice history to history_trading_days while retaining the >=2 distinct closes guard",
+      "why": "In _taiwan_official, selected_dates takes sorted(by_event_time)[-history_trading_days :], retaining up to 40 closes (or configured depth) instead of truncating to the last 2 closes, while still enforcing that at least TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL (2) distinct closes exist so single-close failure tests fail closed."
+    },
+    {
+      "choice": "Allow www.twse.com.tw in connector_definitions.py for tw-twse-tpex-official-market",
+      "why": "STOCK_DAY monthly price history endpoint resides on www.twse.com.tw; including it in allowed_host_patterns alongside openapi.twse.com.tw and www.tpex.org.tw aligns connector definition egress rules with deployment network egress."
+    },
+    {
+      "choice": "Enforce timezone-aware available_time via _tw_price_available_time",
+      "why": "The downstream training-session materializer rejects bare dates (YYYY-MM-DD) with SourceDatasetAuthorityError. _tw_price_available_time ensures that any date without an ISO 8601 timezone offset receives the Taiwan market post-close publication timestamp suffix (+08:00), preventing bare date leakage into tw_price_daily metadata and normalized_row."
+    }
+  ],
+  "validation": [
+    {
+      "command": "python3 -m pytest services/source_ingestion/tests/test_taiwan_official_connectors.py",
+      "result": "21 passed, 1 skipped (22 total tests)"
+    },
+    {
+      "command": "python3 -m pytest services/source_ingestion/test_compose_activation.py",
+      "result": "2 passed"
+    },
+    {
+      "command": "python3 -m pytest services/source_ingestion/tests/test_latest_market_snapshot.py",
+      "result": "7 passed"
+    },
+    {
+      "command": "python3 -m pytest services/execution/lean_runtime/test_paper_signal_producer.py",
+      "result": "65 passed"
+    },
+    {
+      "command": "python3 -m pytest services/source_ingestion/tests/test_srcm_p1_contracts.py",
+      "result": "19 passed"
+    }
+  ],
+  "test_boundaries": [
+    "Tests use recorded official payload fixtures only with zero live network calls",
+    "Preserved published normalized_row contract unchanged without fabricating rows",
+    "No modifications to non-Taiwan connectors or un-scoped services"
+  ],
+  "hosted_acceptance": "not run; unit and contract tests verified locally in task worktree",
+  "remaining_obligations": [
+    "Independent exact-head review by Claude",
+    "Required CI checks on branch delivery"
+  ]
+}

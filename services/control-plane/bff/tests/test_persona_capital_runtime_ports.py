@@ -97,10 +97,10 @@ class TestPersonaFleetPort:
         assert port.list_personas() == []
         assert port.get_persona("any") is None
 
-    def test_empty_records_degraded(self):
+    def test_empty_records_ok(self):
         port = PersonaFleetPort(records_provider=lambda: [])
         status = port.get_surface_status()
-        assert status["status"] == "degraded"
+        assert status["status"] == "ok"
 
     def test_provider_raises_is_unavailable(self):
         def boom():
@@ -200,7 +200,17 @@ class TestCapitalPoolPort:
 
         port2 = CapitalPoolPort(pools_provider=lambda: [], bindings_provider=lambda: [])
         status2 = port2.get_surface_status()
-        assert status2["status"] == "degraded"
+        assert status2["status"] == "ok"
+
+        port3 = CapitalPoolPort(pools_provider=lambda: [])
+        status3 = port3.get_surface_status()
+        assert status3["status"] == "degraded"
+
+        def boom():
+            raise RuntimeError("downstream unavailable")
+        port4 = CapitalPoolPort(pools_provider=lambda: [], bindings_provider=boom)
+        status4 = port4.get_surface_status()
+        assert status4["status"] == "unavailable"
 
     def test_include_market_persona_defaults_accepted(self):
         pools = [{"pool_id": "pool-1", "status": "active"}]

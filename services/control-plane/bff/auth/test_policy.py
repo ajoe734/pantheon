@@ -33,10 +33,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from services.runtime_auth_inbound import encode_jwt_hs256
-from ..models import ErrorCode, OperatorIdentity
-from ..session_lifecycle_store import SessionLifecycleStore
-from .handlers import create_auth_handlers
-from .policy import (
+from services.control_plane.bff.models import ErrorCode, OperatorIdentity
+from services.control_plane.bff.session_lifecycle_store import SessionLifecycleStore
+from services.control_plane.bff.auth.handlers import create_auth_handlers
+from services.control_plane.bff.auth.policy import (
     AuthDependencies,
     SessionLogoutGuard,
     bff_error,
@@ -49,8 +49,8 @@ from .policy import (
     get_session_state,
     raise_if_session_logged_out,
 )
-from .router import create_auth_router
-from .service import AuthFacadeService
+from services.control_plane.bff.auth.router import create_auth_router
+from services.control_plane.bff.auth.service import AuthFacadeService
 
 TEST_JWT_SECRET = "synthetic-test-key-32-chars-long-xxx"
 TEST_JWT_ISSUER = "synthetic-test-issuer"

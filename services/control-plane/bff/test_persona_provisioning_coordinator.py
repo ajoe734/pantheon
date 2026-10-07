@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 from collections import Counter
+import copy
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
@@ -18,6 +19,7 @@ try:
     from services.control_plane.bff.persona_provisioning_coordinator import (
         FIRST_EVALUATION_WORKFLOW_ID,
         PersonaProvisioningCoordinator,
+        PersonaProvisioningCoordinationError,
         deterministic_provisioning_ids,
     )
 except ImportError:
@@ -26,6 +28,7 @@ except ImportError:
     from persona_provisioning_coordinator import (  # type: ignore[no-redef]
         FIRST_EVALUATION_WORKFLOW_ID,
         PersonaProvisioningCoordinator,
+        PersonaProvisioningCoordinationError,
         deterministic_provisioning_ids,
     )
 from services.registry.paper_strategy_spec import validate_strategy_spec
@@ -508,21 +511,24 @@ class FakeOwnerTransport:
         raise AssertionError(f"unexpected mutation: {owner} {path}")
 
 
-def _record_and_store() -> tuple[TrackingStore, ProvisioningRecord]:
+def _record_and_store(request_payload: dict[str, Any] | None = None) -> tuple[TrackingStore, ProvisioningRecord]:
     store = TrackingStore()
+    payload = {
+        "name": "Trader A",
+        "requested_by": "operator-a",
+        "mandate": "Paper-only momentum research",
+        "traits": {"risk_appetite": "low"},
+        "budget": 25000,
+    }
+    if request_payload:
+        payload.update(request_payload)
     record, created = store.reserve(
         tenant_id="tenant-a",
         idempotency_key="create-persona-a",
         request_hash="sha256:persona-request",
         normalized_name="trader a",
         persona_id="persona-a",
-        request_payload={
-            "name": "Trader A",
-            "requested_by": "operator-a",
-            "mandate": "Paper-only momentum research",
-            "traits": {"risk_appetite": "low"},
-            "budget": 25000,
-        },
+        request_payload=payload,
     )
     assert created
     return store, record
@@ -1530,3 +1536,347 @@ def test_safe_early_failure_rejects_non_null_compensation() -> None:
     assert result.state == "failed"
     assert result.compensation == {"status": "completed", "action": "noop"}
     assert "capital_pool" not in result.references
+
+
+def test_coordinator_propagates_explicit_market_to_artifact_and_deployment_metadata() -> None:
+    store = TrackingStore()
+    record, created = store.reserve(
+        tenant_id="tenant-us",
+        idempotency_key="create-persona-us",
+        request_hash="sha256:persona-us-request",
+        normalized_name="trader us",
+        persona_id="persona-us",
+        request_payload={
+            "name": "Trader US",
+            "market": "US",
+            "symbols": ["SPY"],
+            "requested_by": "operator-us",
+            "mandate": "US paper momentum",
+        },
+    )
+    assert created
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+    assert result.state == "provisioning"
+    assert result.current_step == "schedule_registered"
+
+    ids = deterministic_provisioning_ids(record)
+
+    # Verify forward StrategyArtifact
+    artifact_view = transport.objects[("registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}")]
+    forward_entry = artifact_view["entry"]
+    forward_artifact = forward_entry["metadata"]["strategy_artifact"]
+    assert forward_artifact["parameters"]["market"] == "US"
+    assert "market" in forward_artifact["mutation_surface"]["immutable_parameters"]
+    assert forward_entry["metadata"]["market"] == "US"
+
+    # Verify baseline StrategyArtifact
+    baseline_view = transport.objects[("registry", f"/api/registry/strategy-artifacts/{ids.baseline_strategy_artifact_id}")]
+    baseline_entry = baseline_view["entry"]
+    baseline_artifact = baseline_entry["metadata"]["strategy_artifact"]
+    assert baseline_artifact["parameters"]["market"] == "US"
+    assert "market" in baseline_artifact["mutation_surface"]["immutable_parameters"]
+    assert baseline_entry["metadata"]["market"] == "US"
+
+    # Verify StrategySpec
+    spec_view = transport.objects[("registry", f"/api/registry/strategy-specs/{ids.registry_id}")]
+    assert spec_view["entry"]["metadata"]["market"] == "US"
+
+    # Verify PersonaCapitalBinding
+    binding_view = transport.objects[("capital", f"/api/bindings/{ids.persona_capital_binding_id}")]
+    assert binding_view["metadata"]["market"] == "US"
+
+    # Verify DeploymentPlan
+    plan_view = transport.objects[("deployment", f"/api/deployment/plans/{ids.deployment_plan_id}")]
+    assert plan_view["metadata"]["market"] == "US"
+
+
+def test_coordinator_rejects_unsupported_market_context_fail_closed() -> None:
+    store = TrackingStore()
+    record, created = store.reserve(
+        tenant_id="tenant-invalid",
+        idempotency_key="create-persona-invalid",
+        request_hash="sha256:persona-invalid",
+        normalized_name="trader invalid",
+        persona_id="persona-invalid",
+        request_payload={
+            "name": "Trader Invalid",
+            "market": "MARS",
+            "symbols": ["SPY"],
+        },
+    )
+    assert created
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+    assert result.state == "failed"
+    assert result.error is not None
+    assert result.error["failed_step"] == "capital_pool"
+    assert "unsupported market context 'MARS'" in result.error["terminal_reason"]
+
+
+def test_coordinator_rejects_contradictory_market_and_symbols() -> None:
+    store = TrackingStore()
+    record, created = store.reserve(
+        tenant_id="tenant-conflict",
+        idempotency_key="create-persona-conflict",
+        request_hash="sha256:persona-conflict",
+        normalized_name="trader conflict",
+        persona_id="persona-conflict",
+        request_payload={
+            "name": "Trader Conflict",
+            "market": "US",
+            "symbols": ["2330.TW"],
+        },
+    )
+    assert created
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+    assert result.state == "failed"
+    assert result.error is not None
+    assert result.error["failed_step"] == "capital_pool"
+    assert "contradicts explicit market 'US'" in result.error["terminal_reason"]
+
+
+def test_coordinator_dry_run_rejects_invalid_market() -> None:
+    store = TrackingStore()
+    record, created = store.reserve(
+        tenant_id="tenant-dry",
+        idempotency_key="create-persona-dry",
+        request_hash="sha256:persona-dry",
+        normalized_name="trader dry",
+        persona_id="persona-dry",
+        request_payload={
+            "name": "Trader Dry",
+            "market": "INVALID",
+        },
+    )
+    assert created
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    with pytest.raises(Exception, match="unsupported market context 'INVALID'"):
+        coordinator.coordinate(record, dry_run=True)
+
+
+def test_coordinator_omits_market_when_unspecified_preserving_legacy_behavior() -> None:
+    store, record = _record_and_store()
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+    assert result.state == "provisioning"
+
+    ids = deterministic_provisioning_ids(record)
+    artifact_view = transport.objects[("registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}")]
+    forward_entry = artifact_view["entry"]
+    forward_artifact = forward_entry["metadata"]["strategy_artifact"]
+    assert "market" not in forward_artifact["parameters"]
+    assert "market" not in forward_artifact["mutation_surface"]["immutable_parameters"]
+    assert "market" not in forward_entry["metadata"]
+
+
+def test_coordinator_accepts_bare_symbols_with_explicit_market_without_guessing() -> None:
+    # ABNB / GBTC in US market
+    store = TrackingStore()
+    record, created = store.reserve(
+        tenant_id="tenant-us-bare",
+        idempotency_key="create-persona-us-bare",
+        request_hash="sha256:persona-us-bare-request",
+        normalized_name="trader us bare",
+        persona_id="persona-us-bare",
+        request_payload={
+            "name": "Trader US Bare",
+            "market": "US",
+            "symbols": ["ABNB", "GBTC"],
+            "requested_by": "operator-us",
+            "mandate": "US paper momentum bare symbols",
+        },
+    )
+    assert created
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+    assert result.state == "provisioning"
+    ids = deterministic_provisioning_ids(record)
+    artifact_view = transport.objects[("registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}")]
+    forward_artifact = artifact_view["entry"]["metadata"]["strategy_artifact"]
+    assert forward_artifact["parameters"]["market"] == "US"
+    assert forward_artifact["parameters"]["symbols"] == ["ABNB", "GBTC"]
+
+    # EURUSD in FX market
+    record_fx, created_fx = store.reserve(
+        tenant_id="tenant-fx-bare",
+        idempotency_key="create-persona-fx-bare",
+        request_hash="sha256:persona-fx-bare-request",
+        normalized_name="trader fx bare",
+        persona_id="persona-fx-bare",
+        request_payload={
+            "name": "Trader FX Bare",
+            "market": "FX",
+            "symbols": ["EURUSD"],
+            "requested_by": "operator-fx",
+            "mandate": "FX paper momentum bare symbols",
+        },
+    )
+    assert created_fx
+    result_fx = coordinator.coordinate(record_fx)
+    assert result_fx.state == "provisioning"
+    ids_fx = deterministic_provisioning_ids(record_fx)
+    artifact_view_fx = transport.objects[("registry", f"/api/registry/strategy-artifacts/{ids_fx.strategy_artifact_id}")]
+    forward_artifact_fx = artifact_view_fx["entry"]["metadata"]["strategy_artifact"]
+    assert forward_artifact_fx["parameters"]["market"] == "FX"
+    assert forward_artifact_fx["parameters"]["symbols"] == ["EURUSD"]
+
+
+def test_transition_legacy_persona_market_preserves_parent_and_creates_approved_child_revision() -> None:
+    store, record = _record_and_store()
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    # Initial coordinate runs legacy flow without market
+    result = coordinator.coordinate(record)
+    assert result.state == "provisioning"
+
+    ids = deterministic_provisioning_ids(record)
+    parent_path = f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}"
+    parent_view_before = copy.deepcopy(transport.objects[("registry", parent_path)])
+    parent_artifact_before = parent_view_before["entry"]["metadata"]["strategy_artifact"]
+    assert "market" not in parent_artifact_before["parameters"]
+
+    # Transition legacy persona artifact to explicit market 'US'
+    transitioned = coordinator.transition_legacy_persona_market(result, market="US")
+    assert transitioned.state == "provisioning"
+
+    # 1. Parent artifact is byte-identical and completely unmutated
+    parent_view_after = transport.objects[("registry", parent_path)]
+    assert parent_view_after == parent_view_before
+
+    # 2. Child artifact is created, approved, cites parent, and carries explicit market
+    child_id = f"{ids.strategy_artifact_id}-rev1"
+    child_path = f"/api/registry/strategy-artifacts/{child_id}"
+    child_view = transport.objects[("registry", child_path)]
+    child_entry = child_view["entry"]
+    assert child_entry["artifact_state"] == "approved"
+    assert child_entry["version"] == "1.0.1"
+
+    child_artifact = child_entry["metadata"]["strategy_artifact"]
+    assert child_artifact["artifact_id"] == child_id
+    assert child_artifact["version"] == "1.0.1"
+    assert child_artifact["parameters"]["market"] == "US"
+    assert child_artifact["parameters"]["symbols"] == ["SPY"]
+    assert "market" in child_artifact["mutation_surface"]["immutable_parameters"]
+    assert child_artifact["lineage"]["parent_registry_ids"] == [ids.strategy_artifact_id]
+
+    # 3. Governance ApprovalDecision exists and is approved
+    child_decision_id = f"apv-transition-{ids.token}"
+    decision_path = f"/api/governance/approvals/{child_decision_id}"
+    decision_view = transport.objects[("governance", decision_path)]
+    assert decision_view["decision_state"] == "decided"
+    assert decision_view["decision"] == "approved"
+    assert decision_view["target_id"] == child_id
+
+    # 4. Record references and result updated
+    assert "legacy_strategy_artifact_approved" in transitioned.references
+    assert (
+        transitioned.references["legacy_strategy_artifact_approved"]["entry"]["registry_id"]
+        == ids.strategy_artifact_id
+    )
+    assert (
+        transitioned.references["strategy_artifact_approved"]["entry"]["registry_id"]
+        == child_id
+    )
+    assert transitioned.result["strategy_artifact_id"] == child_id
+    assert transitioned.result["market"] == "US"
+
+
+def test_transition_legacy_persona_market_fails_closed_when_market_missing_or_contradictory() -> None:
+    store, record = _record_and_store()
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+    assert result.state == "provisioning"
+
+    # 1. Missing market fails closed when neither request_payload nor parameter provides it
+    with pytest.raises(
+        PersonaProvisioningCoordinationError,
+        match="No authoritative owner market context found",
+    ):
+        coordinator.transition_legacy_persona_market(result, market=None)
+
+    # 2. Empty/whitespace market parameter fails closed
+    with pytest.raises(
+        PersonaProvisioningCoordinationError,
+        match="Supplied market parameter must not be empty or whitespace",
+    ):
+        coordinator.transition_legacy_persona_market(result, market="   ")
+
+    # 3. Invalid market fails closed
+    with pytest.raises(
+        PersonaProvisioningCoordinationError,
+        match="unsupported market context 'INVALID'",
+    ):
+        coordinator.transition_legacy_persona_market(result, market="INVALID")
+
+    # 4. Contradiction between caller-supplied market and persisted owner request fails closed
+    record_with_us_request = store.get(record.tenant_id, record.idempotency_key)
+    record_with_us_request.request_payload["market"] = "US"
+
+    with pytest.raises(
+        PersonaProvisioningCoordinationError,
+        match="Contradictory market context: supplied market 'TW' differs from persisted owner request 'US'",
+    ):
+        coordinator.transition_legacy_persona_market(record_with_us_request, market="TW")
+
+    # 5. Caller market matching persisted request succeeds
+    transitioned_consistent = coordinator.transition_legacy_persona_market(
+        record_with_us_request, market="US"
+    )
+    assert transitioned_consistent.result["market"] == "US"
+
+    # 6. Idempotent return when parent artifact already has the target market
+    idempotent_return = coordinator.transition_legacy_persona_market(
+        transitioned_consistent, market="US"
+    )
+    assert idempotent_return == transitioned_consistent
+
+    # 7. Contradiction between target market and already-set parent artifact market fails closed
+    with pytest.raises(
+        PersonaProvisioningCoordinationError,
+        match="Contradictory market context: target market 'TW' contradicts parent artifact market 'US'",
+    ):
+        coordinator.transition_legacy_persona_market(
+            transitioned_consistent, market="TW"
+        )
+
+
+def test_transition_legacy_persona_market_uses_persisted_owner_request_when_market_param_omitted() -> None:
+    store, record = _record_and_store()
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+    assert result.state == "provisioning"
+
+    # Add market 'US' to the persisted owner request payload
+    record_with_market = store.get(record.tenant_id, record.idempotency_key)
+    record_with_market.request_payload["market"] = "US"
+
+    # Calling with market=None automatically uses persisted owner request 'US'
+    transitioned = coordinator.transition_legacy_persona_market(record_with_market, market=None)
+    assert transitioned.result["market"] == "US"
+    ids = deterministic_provisioning_ids(record)
+    child_id = f"{ids.strategy_artifact_id}-rev1"
+    child_path = f"/api/registry/strategy-artifacts/{child_id}"
+    child_entry = transport.objects[("registry", child_path)]["entry"]
+    assert child_entry["metadata"]["strategy_artifact"]["parameters"]["market"] == "US"
+
+
+

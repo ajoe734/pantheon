@@ -31,6 +31,13 @@ from services.control_plane.bff.models import ErrorCode
 
 
 _LOOP_RUN_PROJECTION_SCHEMA = "pantheon.loop-run-projection.v1"
+_OODA_STAGE_DEFS = (
+    ("observe", "Observe", "telemetry/source/search health"),
+    ("orient", "Orient", "active signal/persona proposal count"),
+    ("decide", "Decide", "pending approvals"),
+    ("act", "Act", "paper runtime / sandbox broker state"),
+    ("learn", "Learn", "evolution/postmortem/retrain state"),
+)
 _OODA_STAGE_STATUSES = {
     "observe": {"open", "observing"},
     "orient": {"oriented"},
@@ -894,6 +901,21 @@ class ControlLoopsService:
             "unavailable" if enabled else "fail_closed"
         )
         open_states = {state for states in _OODA_STAGE_STATUSES.values() for state in states}
+        stage_status = "fail_closed" if not enabled else status
+        stages = {
+            stage: {
+                "label": label,
+                "description": desc,
+                "status": stage_status,
+                "active_count": sum(
+                    1
+                    for packet in packets
+                    if str(packet.get("status") or "").lower() in _OODA_STAGE_STATUSES[stage]
+                ),
+                "detail_link": f"/bff/ooda/packets?stage={stage}",
+            }
+            for stage, label, desc in _OODA_STAGE_DEFS
+        }
         return {
             "enabled": enabled,
             "gate_state": "enabled" if enabled else "fail_closed",
@@ -907,13 +929,19 @@ class ControlLoopsService:
                 1 for packet in packets if str(packet.get("status") or "").lower() == "failed"
             ),
             "total_packet_count": len(packets),
+            "stages": stages,
             "live_capital_side_effects": any(
                 (packet.get("act") or {}).get("live_capital_side_effects") is True
                 for packet in packets
                 if str(packet.get("environment") or "").lower() != "live"
             ),
             "fail_closed_gate_posture": "fail_closed",
-            "meta": {"snapshot_at": snapshot_at, "source": source, "status": status},
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "source": source,
+                "status": status,
+                "surface_key": "ooda_control_room_status",
+            },
         }
 
     def control_room(self) -> Dict[str, Any]:

@@ -1,0 +1,49 @@
+{
+  "task_id": "BFF-RED-TESTS-RESEARCH-20261007",
+  "change_class": "corrective",
+  "production_code_changed": false,
+  "environment": "isolated python venv with fastapi/httpx/pytest; no hosted deployment",
+  "classification": [
+    {
+      "tests": "test_rw01_research_ticket_contract.py (create/patch x2), test_kw02_research_notes_contract.py (create round trip, empty filter)",
+      "class": "intended change",
+      "decision": "92d9f52dc removed the BFF fallback writers; tickets and notes writes now fail closed with 503 DEPENDENCY_UNAVAILABLE without an owner. Tests inject the production services.research.write_owner.ResearchWriteOwner backed by JsonFileOwnerStore JSON-file stores (tests/knowledge_read_port_fixtures.py, same paths the env fixtures read); the JsonFileResearchWriteOwner re-implementation was deleted. Ticket id format (rt-YYYYMMDD-NNN) and lifecycle fields match the real owner, so no rw01/kw02 expectation changed."
+    },
+    {
+      "tests": "tests/test_receipt_research_routes.py (both)",
+      "class": "intended change",
+      "decision": "8b877dc73 fail-closed tenant authority: bare 'Bearer tenant-a' is no longer an identity. Tests use _JWT_ENV and signed _tok('tenant-a'). Assertions unchanged."
+    },
+    {
+      "tests": "research/test_router.py::test_action_dispatches_through_injected_callable",
+      "class": "stale sample",
+      "decision": "dab9aa6c2 changed the dispatch signature (idempotency key positional, authorization= keyword). Fake updated and the test now additionally asserts the idempotency key and authorization are forwarded (strengthened)."
+    },
+    {
+      "tests": "test_cw04_redteam_memo_contract.py (detail reviewer, degraded last-known)",
+      "class": "intended change",
+      "decision": "d62fe6898/dcff559ae fail-closed evidence redaction. Router now wired with models.redact_evidence_refs and auth.policy.capabilities_for_identity (as app_factory.py). Reviewer lacks metric.read/deployment.read, so refs are asserted as insufficient_capability redactions. New test asserts operator is redacted and admin sees full refs. Visibility rules unchanged (operator decision)."
+    },
+    {
+      "tests": "test_cw03_committee_board_contract.py::test_cw03_detail_contract_returns_synthesis_and_allowed_actions",
+      "class": "intended change + stale sample",
+      "decision": "Same redaction wiring. synthesis rationale_ref sample workspace:// -> audit:// because unresolved kinds stay withheld (unresolved_evidence_kind). Operator asserted redacted (insufficient_capability, audit.read/metric.read/deployment.read); new admin test asserts full visibility."
+    },
+    {
+      "tests": "test_cw03_committee_board_contract.py::test_cw03_record_sponsor_decision_executes_and_updates_projection",
+      "class": "intended change",
+      "decision": "660556a75 moved execution into the governance adapter that calls the owner at PANTHEON_INTERNAL_API_URL. Test sets that env, routes governance_adapter.http_request_json to the committee owner double, and now asserts status == executed (was an accept-any-of set) and consensus_state == reached with the rationale applied (previously carved out)."
+    }
+  ],
+  "real_regressions_fixed_in_production": [],
+  "validation": [
+    {
+      "command": "pytest test_rw01_research_ticket_contract.py test_kw02_research_notes_contract.py tests/test_receipt_research_routes.py research/test_router.py test_cw04_redteam_memo_contract.py test_cw03_committee_board_contract.py",
+      "result": "all pass (was 11 failed, 27 passed)"
+    },
+    {
+      "command": "pytest on all 19 files importing knowledge_read_port_fixtures plus the six files above, plus tests/test_bff_main_composition.py",
+      "result": "283 passed, 1 failed: tests/test_bff_main_composition.py jobs retry 410 case, which fails identically on the unmodified tree (pre-existing, out of scope)"
+    }
+  ]
+}

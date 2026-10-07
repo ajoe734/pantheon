@@ -1,0 +1,66 @@
+{
+  "task_id": "BFF-ALLOC-PROJECTION-TESTS-20261007",
+  "change_class": "corrective",
+  "root_cause": "Stale test harness and test assertions after tenant scoping (a6d5bfd8f), removal of final_contract_idempotency (dab9aa6c2), paper monitoring session provider requirement (4e9b4917e), command admission retirement of QuarterlyRankingRecommendationSubmit and PromotionReviewDecision, and restored owner-validated capital lineage (9cef5eb68) with removed approve/sign routes (eedff5c20).",
+  "test_classifications": [
+    {
+      "test": "rebalance_authority_test_support.py: final_contract_idempotency parameter removal",
+      "classification": "stale sample",
+      "decided_by": "commit dab9aa6c2 removed final_contract_idempotency from CommandAdapterService",
+      "assertion_weakened": false
+    },
+    {
+      "test": "rebalance_authority_test_support.py: seeded personas default tenant_id 'pantheon-dev'",
+      "classification": "intended change",
+      "decided_by": "commit a6d5bfd8f requires tenant scoping on personas",
+      "assertion_weakened": false
+    },
+    {
+      "test": "rebalance_authority_test_support.py: paper monitoring sessions provider on double",
+      "classification": "intended change",
+      "decided_by": "commit 4e9b4917e requires paper monitoring session provider on read store",
+      "assertion_weakened": false
+    },
+    {
+      "test": "rebalance_authority_test_support.py: router mount, write owner snapshot fallback, evaluation digest",
+      "classification": "intended change",
+      "decided_by": "architecture parity across test double and live router harnesses without breaking importing suites",
+      "assertion_weakened": false
+    },
+    {
+      "test": "test_ppl_alloc_012_ranking_projection.py: 6 retired submit/decision tests replaced with 410 tests",
+      "classification": "retired",
+      "decided_by": "QuarterlyRankingRecommendationSubmit and PromotionReviewDecision retired in command admission matrix (410 ACTION_RETIRED)",
+      "assertion_weakened": false
+    },
+    {
+      "test": "test_ppl_alloc_012_ranking_projection.py: test_paper_runtime_session_requires_runtime_manager_monitoring_owner",
+      "classification": "stale sample",
+      "decided_by": "ambient persona service context binding required for _pm12_runtime_session_resolution",
+      "assertion_weakened": false
+    },
+    {
+      "test": "test_ppl_alloc_012_ranking_projection.py: test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal",
+      "classification": "intended change",
+      "decided_by": "CAPITAL-ALLOCATION-LINEAGE-OWNER-20261007 (9cef5eb68); tested stage tampering (in ALLOCATION_LINE_DIGEST_FIELDS) which properly fails closed with 422",
+      "assertion_weakened": false
+    },
+    {
+      "test": "test_ppl_alloc_012_ranking_projection.py: test_ppl_alloc_009_governed_paper_chain_applies_without_two_man",
+      "classification": "intended change",
+      "decided_by": "BFF-CAPITAL-FORWARD-002 (eedff5c20) removed /bff/rebalances/{id}/approve; rebalances apply via ApprovedApply command",
+      "assertion_weakened": false
+    }
+  ],
+  "dead_code_report_for_pm12": {
+    "file": "services/control-plane/bff/personas/service.py",
+    "dead_lines": "4832-4841 (list_human_inbox_projections), 10839-10845 (get_human_gate_items_aggregate), 12509-12560 (_human_inbox_trusted_promotion_submission)",
+    "description": "QuarterlyRankingRecommendationSubmit and PromotionReviewDecision are retired with 410 before admission; these inbox/aggregate snapshot-TTL processing blocks are dead and should be removed by the PM12 task."
+  },
+  "verification": {
+    "test_ppl_alloc_012_ranking_projection": "23 passed",
+    "rebalance_authority_test_support_importing_suites": "12 suites passed (249 passed: test_allocation_lineage_live_route, test_bff_emergency_containment, test_bff_rebalance_proposals, test_capital_owner_forwarding, test_evidence_redaction_fail_closed, test_persona_paper_onboarding_capital_integration, test_bff_test_architecture, test_bff_b6_001_security_hardening, test_bff_b6_003_nl_high_risk_refusal, test_bff_b6_management_nl_ask, test_management_nl_assistant_provider, test_management_nl_single_owner)",
+    "total_passing_tests": 272
+  },
+  "net_prod_lines": 0
+}

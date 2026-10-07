@@ -55,6 +55,104 @@ class StrategyArtifactValidationError(RegistryError):
     """Raised when a StrategyArtifact violates schema or semantic rules."""
 
 
+SUPPORTED_MARKETS: tuple[str, ...] = ("US", "TW", "CRYPTO", "FX")
+
+_US_MARKET_TOKENS: frozenset[str] = frozenset({
+    "US",
+    "USA",
+    "UNITED STATES",
+    "UNITED_STATES",
+    "SMART",
+    "NASDAQ",
+    "NYSE",
+    "ARCA",
+    "BATS",
+    "AMEX",
+})
+
+_TW_MARKET_TOKENS: frozenset[str] = frozenset({
+    "TW",
+    "TWSE",
+    "TAIWAN",
+    "TPEX",
+    "TWO",
+    "TSE",
+    "OTC",
+    "TAIFEX",
+})
+
+_CRYPTO_MARKET_TOKENS: frozenset[str] = frozenset({
+    "CRYPTO",
+    "KRAKEN",
+    "BINANCE",
+    "COINBASE",
+})
+
+_FX_MARKET_TOKENS: frozenset[str] = frozenset({
+    "FX",
+    "FOREX",
+    "OANDA",
+})
+
+def classify_market_token(token: Any) -> str | None:
+    """Classify a market token or venue string into a canonical market category."""
+    if not token or not isinstance(token, str):
+        return None
+    raw = token.strip().lstrip(".").upper()
+    if not raw:
+        return None
+    if raw in _US_MARKET_TOKENS:
+        return "US"
+    if raw in _TW_MARKET_TOKENS:
+        return "TW"
+    if raw in _CRYPTO_MARKET_TOKENS:
+        return "CRYPTO"
+    if raw in _FX_MARKET_TOKENS:
+        return "FX"
+    return None
+
+
+def intrinsic_symbol_market(symbol: str) -> str | None:
+    """Detect intrinsic market from dotted suffix."""
+    s = str(symbol or "").strip()
+    if "." in s:
+        suffix = s.rsplit(".", 1)[1]
+        return classify_market_token(suffix)
+    return None
+
+
+def canonical_market_context(
+    market: Any,
+    symbols: Sequence[str] | None = None,
+) -> str:
+    """Validate and return canonical market string (US, TW, CRYPTO, FX).
+
+    Rejects unsupported, non-canonical, or contradictory market contexts.
+    """
+    if not isinstance(market, str):
+        raise StrategyArtifactValidationError(
+            f"market context must be a string, got {type(market).__name__}"
+        )
+    if not market.strip() or market != market.strip():
+        raise StrategyArtifactValidationError(
+            "market context must be a canonical non-blank string without leading/trailing whitespace"
+        )
+    category = classify_market_token(market)
+    if category is None:
+        raise StrategyArtifactValidationError(
+            f"unsupported market context {market!r}; supported markets: {list(SUPPORTED_MARKETS)}"
+        )
+    if symbols and isinstance(symbols, Sequence) and not isinstance(symbols, (str, bytes)):
+        for symbol in symbols:
+            if isinstance(symbol, str):
+                intrinsic = intrinsic_symbol_market(symbol)
+                if intrinsic is not None and intrinsic != category:
+                    raise StrategyArtifactValidationError(
+                        f"symbol {symbol!r} intrinsic market {intrinsic!r} contradicts explicit market {category!r}"
+                    )
+    return category
+
+
 def _canonical_json(payload: Mapping[str, Any]) -> str:
     return json.dumps(
         payload,
@@ -271,6 +369,19 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
         if _is_number(value) and not _is_finite_number(value):
             raise StrategyArtifactValidationError(
                 f"parameter {key!r} must be a finite number"
+            )
+
+    market = parameters.get("market")
+    if market is not None:
+        if not isinstance(market, str):
+            raise StrategyArtifactValidationError("parameter 'market' must be a string")
+        canonical = canonical_market_context(
+            market,
+            symbols=parameters.get("symbols"),
+        )
+        if market != canonical:
+            raise StrategyArtifactValidationError(
+                f"parameter 'market' must be canonical {canonical!r}, got {market!r}"
             )
 
     lineage = artifact["lineage"]
@@ -609,6 +720,132 @@ def mutate_strategy_artifact(
     child_lineage["source_run_ids"] = normalized_source_run_ids
     validate_strategy_artifact(child)
     return child
+
+
+def create_market_transition_revision(
+    parent: Mapping[str, Any],
+    *,
+    market: str,
+    new_artifact_id: str,
+    new_version: str,
+    source_run_ids: Sequence[str],
+    parent_registry_id: str | None = None,
+) -> dict[str, Any]:
+    """Produce a governed new revision of an immutable older artifact to add explicit market context.
+
+    Preserves parent artifact bytes, checksum, version, and raw symbols membership without mutation.
+    The new child revision inherits all parameters, controls, and lineage from parent,
+    links parent_registry_ids to the parent, records source_run_ids, and sets explicit
+    market validated against canonical_market_context(market, symbols=symbols).
+    """
+    validate_strategy_artifact(parent)
+    child = copy.deepcopy(dict(parent))
+
+    new_artifact_id = str(new_artifact_id).strip()
+    if not new_artifact_id or new_artifact_id == parent["artifact_id"]:
+        raise StrategyArtifactValidationError(
+            "a market transition revision requires a new, non-empty artifact_id"
+        )
+    try:
+        parent_semver = tuple(int(part) for part in str(parent["version"]).split("."))
+        child_semver = tuple(int(part) for part in str(new_version).split("."))
+    except (TypeError, ValueError) as exc:
+        raise StrategyArtifactValidationError(
+            "revision version must be semantic version x.y.z"
+        ) from exc
+    if len(child_semver) != 3 or child_semver <= parent_semver:
+        raise StrategyArtifactValidationError(
+            "revision version must be greater than the parent semantic version"
+        )
+
+    symbols = child["parameters"].get("symbols")
+    canonical_market = canonical_market_context(market, symbols=symbols)
+
+    if isinstance(source_run_ids, (str, bytes)):
+        raise StrategyArtifactValidationError(
+            "source_run_ids must be a sequence of ids, not a string"
+        )
+    normalized_source_run_ids: list[str] = []
+    for source_run_id in source_run_ids:
+        if not isinstance(source_run_id, str):
+            raise StrategyArtifactValidationError(
+                "source_run_ids must contain only string ids"
+            )
+        normalized = source_run_id.strip()
+        if not normalized or normalized != source_run_id:
+            raise StrategyArtifactValidationError(
+                "source_run_ids must contain only canonical non-empty ids"
+            )
+        if normalized not in normalized_source_run_ids:
+            normalized_source_run_ids.append(normalized)
+    if not normalized_source_run_ids:
+        raise StrategyArtifactValidationError(
+            "a market transition revision requires at least one producing source_run_id"
+        )
+
+    direct_parent = str(parent_registry_id or parent["artifact_id"]).strip()
+    if not direct_parent:
+        raise StrategyArtifactValidationError("parent_registry_id must not be blank")
+
+    child["artifact_id"] = new_artifact_id
+    child["version"] = str(new_version)
+    child_lineage = child["lineage"]
+    child_lineage["parent_registry_ids"] = [direct_parent]
+    child_lineage["source_run_ids"] = normalized_source_run_ids
+
+    child["parameters"]["market"] = canonical_market
+    immutable_params = child["mutation_surface"]["immutable_parameters"]
+    if "market" not in immutable_params:
+        immutable_params.append("market")
+
+    validate_strategy_artifact(child)
+    return child
+
+
+def build_market_transition_registry_payload(
+    parent_entry: Mapping[str, Any],
+    *,
+    market: str,
+    new_artifact_id: str,
+    new_version: str,
+    source_run_ids: Sequence[str],
+    producer_run_id: str | None = None,
+    parent_registry_id: str | None = None,
+) -> tuple[str, RegistryEntryCreate]:
+    """Map a governed market transition revision to the generic registry envelope."""
+    parent_metadata = parent_entry.get("metadata") if isinstance(parent_entry.get("metadata"), Mapping) else {}
+    parent_artifact = parent_metadata.get("strategy_artifact")
+    if not isinstance(parent_artifact, Mapping):
+        raise StrategyArtifactValidationError(
+            "parent entry is missing metadata.strategy_artifact"
+        )
+    direct_parent_id = str(
+        parent_registry_id
+        or parent_entry.get("registry_id")
+        or parent_artifact.get("artifact_id")
+        or ""
+    ).strip()
+    child_artifact = create_market_transition_revision(
+        parent_artifact,
+        market=market,
+        new_artifact_id=new_artifact_id,
+        new_version=new_version,
+        source_run_ids=source_run_ids,
+        parent_registry_id=direct_parent_id,
+    )
+    registration = {
+        "registry_id": child_artifact["artifact_id"],
+        "artifact_state": ArtifactState.CANDIDATE.value,
+        "strategy_artifact": child_artifact,
+        "producer_run_id": producer_run_id or (source_run_ids[-1] if source_run_ids else None),
+        "rollback_target": direct_parent_id,
+        "metadata": {
+            "parent_registry_id": direct_parent_id,
+            "transition_kind": "legacy_market_addition",
+            "market": child_artifact["parameters"]["market"],
+        },
+    }
+    return build_strategy_artifact_registry_payload(registration)
 
 
 def evaluate_strategy_action(

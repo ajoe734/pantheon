@@ -1,0 +1,33 @@
+{
+  "task_id": "BFF-RED-TESTS-RANKING-20261007",
+  "change_class": "corrective",
+  "summary": "Refresh ranking evolution evaluator and promotion defect tests: evolution surface status ok-empty, evaluator unresolvable saved snapshot 503 DEPENDENCY_UNAVAILABLE, and promotion defect sem_command sample retired command replacement with CONFIRM_TOKEN_CREATE.",
+  "classifications": [
+    {
+      "file": "services/control-plane/bff/tests/test_ranking_evolution_projection_ports.py",
+      "test": "TestEvolutionProjectionPort::test_surface_status",
+      "classification": "intended_change",
+      "deciding_commit": "99a523e50 (2026-10-04)",
+      "rationale": "Commit 99a523e50 established that a reachable owner/reader returning 0 records reports ok rather than degraded. In EvolutionProjectionPort.get_surface_status(), a reachable empty evolution_decisions_reader returning [] reports ok for its surface and ok overall. Updated the expectation to assert ok for both overall status and evolution_decisions surface. Added a separate port instance with a raising reader (RuntimeError) asserting overall degraded and evolution_decisions surface unavailable to preserve degraded fault coverage without weakening assertions."
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_persona_evaluator_projection.py",
+      "test": "test_unresolvable_saved_snapshot_fails_closed",
+      "classification": "intended_change",
+      "deciding_commit": "18828f2fd (2026-10-04)",
+      "rationale": "Commit 18828f2fd established that when a saved evaluator ranking snapshot cannot be resolved by the write owner, the BFF fails closed by returning HTTP 503 DEPENDENCY_UNAVAILABLE ('Saved ranking snapshot unavailable') rather than HTTP 200 with an empty list. Updated the test expectation from expecting HTTP 200 with empty items to expecting HTTP 503 with error code DEPENDENCY_UNAVAILABLE and no items returned."
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_promotion_review_production_defects.py",
+      "test": "test_sem_command_response_mirrors_live_capital_mutation_into_audit",
+      "classification": "retired_stale_sample",
+      "deciding_commit": "BFF-PROMOTION-REVIEW-RETIRE-20261006 / services/control-plane/bff/command_adapters/retired.py",
+      "rationale": "The command string 'HumanGateApprove' was retired from active command types and is rejected before admission by reject_retired_command. Furthermore, sem_command_response strictly requires a CommandType enum member. Replaced the retired sample with active enum CommandType.CONFIRM_TOKEN_CREATE while preserving the exact defect assertion: verifying that sem_command_response mirrors params.live_capital_mutation == False into audit.live_capital_side_effects == False under HTTP 202."
+    }
+  ],
+  "verification": {
+    "test_command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_ranking_evolution_projection_ports.py services/control-plane/bff/tests/test_persona_evaluator_projection.py services/control-plane/bff/tests/test_promotion_review_production_defects.py",
+    "result": "33 passed, 3 warnings in 45.13s",
+    "net_production_lines": 0
+  }
+}

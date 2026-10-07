@@ -209,17 +209,26 @@ def test_action_dispatches_through_injected_callable():
 
     captured = {}
 
-    def submit_experiment_action(entity_type, entity_id, action_id, identity, payload):
-        captured.update(entity_type=entity_type, entity_id=entity_id, action_id=action_id, payload=payload)
+    def submit_experiment_action(entity_type, entity_id, action_id, idempotency_key, identity, payload, *, authorization=None):
+        captured.update(
+            entity_type=entity_type, entity_id=entity_id, action_id=action_id,
+            idempotency_key=idempotency_key, payload=payload, authorization=authorization,
+        )
         return {"status": "accepted"}
 
     client = _build_app(store, submit_experiment_action=submit_experiment_action)
-    resp = client.post("/bff/experiments/e1/actions/cancel", json={"reason": "budget"})
+    resp = client.post(
+        "/bff/experiments/e1/actions/cancel",
+        json={"reason": "budget"},
+        headers={"Idempotency-Key": "cancel-1", "Authorization": "Bearer op:operator"},
+    )
     assert resp.status_code == 202
     assert resp.json() == {"status": "accepted"}
     assert captured == {
         "entity_type": "Experiment",
         "entity_id": "e1",
         "action_id": "cancel",
+        "idempotency_key": "cancel-1",
         "payload": {"reason": "budget"},
+        "authorization": "Bearer op:operator",
     }

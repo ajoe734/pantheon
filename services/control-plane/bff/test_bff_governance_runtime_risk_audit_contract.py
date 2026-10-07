@@ -167,6 +167,27 @@ class GovernanceRuntimeRiskAuditTestReadPorts(ReadSurfacePorts):
         items = list(ds.values()) if isinstance(ds, dict) else list(ds)
         return next((i for i in items if i.get("incident_id") == incident_id or i.get("id") == incident_id), None)
 
+    def create_incident(self, payload: dict[str, Any]) -> dict[str, Any]:
+        inc_id = payload.get("incident_id") or payload.get("id") or "inc-test"
+        existing = self.get_incident(inc_id)
+        if existing:
+            raise HTTPException(status_code=409, detail=f"IncidentCase '{inc_id}' already exists")
+        data = dict(payload)
+        data.setdefault("incident_id", inc_id)
+        data.setdefault("id", inc_id)
+        self._get_dataset("incidents").append(data)
+        return data
+
+    def update_incident_status(self, incident_id: str, status: str, resolved_at: str | None = None) -> dict[str, Any]:
+        clean_id = incident_id.strip()
+        item = self.get_incident(clean_id)
+        if item:
+            item["status"] = status
+            if resolved_at:
+                item["resolved_at"] = resolved_at
+            return item
+        return {"incident_id": clean_id, "status": status}
+
     def list_governance_audit_events(self, **kwargs: Any) -> list[dict[str, Any]]:
         ds = self._get_dataset("audit_log")
         items = list(ds.values()) if isinstance(ds, dict) else list(ds)
@@ -328,6 +349,7 @@ def _isolated_bff() -> Iterator[tuple[TestClient, GovernanceRuntimeRiskAuditTest
                 extract_identity=_extract_identity,
                 submit_action_command=submit_action_cmd,
                 list_governance_audit_events=store.list_governance_audit_events,
+                durable_writer=store,
             )
         )
 

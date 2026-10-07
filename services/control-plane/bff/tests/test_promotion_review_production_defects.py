@@ -147,7 +147,7 @@ def test_sem_command_response_mirrors_live_capital_mutation_into_audit(tmp_path:
     identity = OperatorIdentity(operator_id="op-defect-three", roles=["approver"])
 
     response = svc.sem_command_response(
-        command_type="HumanGateApprove",
+        command_type=CommandType.CONFIRM_TOKEN_CREATE,
         target_type=ObjectType.HUMAN_GATE_ITEM,
         target_id="promotion-review:defect-three",
         payload={"decision": "approve", "live_capital_mutation": False},

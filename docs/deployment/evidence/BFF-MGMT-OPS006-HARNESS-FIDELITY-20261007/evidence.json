@@ -1,0 +1,70 @@
+{
+  "task_id": "BFF-MGMT-OPS006-HARNESS-FIDELITY-20261007",
+  "change_class": "corrective",
+  "net_prod_line_budget": 0,
+  "summary": "Fix fidelity defects in ops_006 test harness and related test suites: forward caller auth tokens unchanged without fabricating tenant tokens, mount control loops router to sign two-man evidence via /bff/v5/interventions/{id}/two-man-sign keeping EmergencyContainment requires_two_man=True, remove warm-up request in read budget test, clean up dead routes/methods/fixtures/imports in b5 humangate test, and record deciding commits for retired commands.",
+  "acceptance_verification": {
+    "ac1_caller_auth_forwarding": "passed: ops_006 harness forwards caller auth token unchanged; stub fallback removed; tests authenticate with tenant-bearing tokens (Bearer op-mgmt-ops-006:operator:tenant-default)",
+    "ac2_two_man_control_preserved": "passed: EmergencyContainment requires_two_man=True asserted without patching; real two-man evidence signed via /bff/v5/interventions/{id}/two-man-sign mounted via create_control_loops_router",
+    "ac3_read_budget_no_warmup": "passed: removed GET /bff/management/data-sources/catalog warm-up request; timed request consistently stays within budget (<0.25s)",
+    "ac4_b5_dead_code_cleanup": "passed: removed dead stub routes _human_inbox and _quarterly_ranking_recommendations, dead MockReadStore.get_ranking_snapshot, dead b5-human-001 fixture, and unused imports without modifying any assertions",
+    "ac5_deciding_commits_named": "passed: Observe retirement commit ade4fd088 and RequestReview retirement commit 4b25b31f0 identified via git log -S and cited",
+    "ac6_all_tests_pass_no_regression": "passed: 107 tests pass across all scoped and related BFF test suites with 0 failures",
+    "ac7_triage_classification": "passed: every changed expectation classified as retired sample, intended change, or harness fidelity correction with deciding commit citations; no assertions weakened",
+    "ac8_no_compressed_code": "passed: clean standard code formatting used; production line delta exactly 0"
+  },
+  "triage_classifications": {
+    "observe_command_retirement": {
+      "classification": "retired_sample",
+      "deciding_commit": "ade4fd088",
+      "commit_summary": "BFF-PERSONA-LIFECYCLE-FORWARD-001: forward lifecycle authority",
+      "detail": "CommandType.OBSERVE was retired from CommandType and action catalog in ade4fd088 when persona lifecycle authority was forwarded to canonical lifecycle routes."
+    },
+    "request_review_command_retirement": {
+      "classification": "retired_sample",
+      "deciding_commit": "4b25b31f0",
+      "commit_summary": "BFF-COMMANDTYPE-CONTINUATION-20261004: retire residual commands",
+      "detail": "CommandType.REQUEST_REVIEW was retired in 4b25b31f0 alongside 15 residual commands replaced by canonical governance approval decisions."
+    },
+    "ops_006_harness_auth_and_two_man_fidelity": {
+      "files": [
+        "services/control-plane/bff/test_bff_mgmt_ops_006_operator_actions_contract.py"
+      ],
+      "classification": "harness_fidelity_correction",
+      "deciding_commit": "18aa49157",
+      "detail": "Production command_adapters/service.py forwards popped auth token unchanged. Removed synthetic stub token substitution in test executor. Mounted create_control_loops_router and used real two-man evidence via /bff/v5/interventions/{id}/two-man-sign with two distinct operators, preserving requires_two_man=True."
+    },
+    "management_read_budget_warmup_removal": {
+      "files": [
+        "services/control-plane/bff/tests/test_management_read_budget.py"
+      ],
+      "classification": "harness_fidelity_correction",
+      "detail": "Removed pre-warming GET /bff/management/data-sources/catalog call before timed degradation request; degradation assertion passes without warm-up."
+    },
+    "b5_humangate_dead_code_removal": {
+      "files": [
+        "services/control-plane/bff/tests/test_bff_b5_humangate_commands.py"
+      ],
+      "classification": "cleanup",
+      "detail": "Removed dead stub routes (_human_inbox, _quarterly_ranking_recommendations), dead MockReadStore.get_ranking_snapshot, b5-human-001 fixture, and unused imports left after #6255."
+    }
+  },
+  "local_verification": {
+    "test_suite_results": {
+      "test_bff_mgmt_ops_006_operator_actions_contract.py": "13 passed",
+      "test_management_read_budget.py": "4 passed",
+      "test_bff_b5_humangate_commands.py": "2 passed",
+      "test_bff_mgmt_ops_001_operations_read_model_contract.py": "11 passed",
+      "test_management_service_context_observations.py": "29 passed",
+      "test_mgmt_read_001_persona_fleet_owner_observations.py": "3 passed",
+      "test_bff_management_cockpit.py": "10 passed",
+      "test_bff_v5_loop_sentinel_contract.py": "35 passed",
+      "total": "107 passed, 0 failed in 74.34s"
+    },
+    "commands": [
+      "/tmp/pantheon-worker-worktrees/pantheon/bff-mgmt-ops006-harness-fidelity-20261007/.venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/test_bff_mgmt_ops_006_operator_actions_contract.py services/control-plane/bff/tests/test_management_read_budget.py services/control-plane/bff/tests/test_bff_b5_humangate_commands.py",
+      "/tmp/pantheon-worker-worktrees/pantheon/bff-mgmt-ops006-harness-fidelity-20261007/.venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_mgmt_ops_001_operations_read_model_contract.py services/control-plane/bff/management_read_models/test_management_service_context_observations.py services/control-plane/bff/tests/test_mgmt_read_001_persona_fleet_owner_observations.py services/control-plane/bff/tests/test_bff_management_cockpit.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/control-plane/bff/test_bff_mgmt_ops_006_operator_actions_contract.py services/control-plane/bff/tests/test_management_read_budget.py services/control-plane/bff/tests/test_bff_b5_humangate_commands.py"
+    ],
+    "result": "passed (107 passed)"
+  }
+}

@@ -252,6 +252,7 @@ class _EvolutionProgramCommandsTestDouble:
 def _build_test_app(store: EvolutionExperimentJobsEventsTestReadPorts) -> FastAPI:
     app = FastAPI()
     app.state.store = store
+    app.state.submitted_actions = []
 
     def _extract_identity(auth: Optional[str] = None, **kw: Any) -> _DummyIdentity:
         return _DummyIdentity()
@@ -294,7 +295,18 @@ def _build_test_app(store: EvolutionExperimentJobsEventsTestReadPorts) -> FastAP
         if surface.get("status") == "unavailable":
             raise HTTPException(status_code=503, detail="unavailable")
 
-    def _submit_prog_action(entity_type: Any, entity_id: str, action_id: str, resolved_key: Any, identity: Any, payload: Any) -> CommandResponse[CommandSubmissionResponse]:
+    def _submit_prog_action(
+        entity_type: Any,
+        entity_id: str,
+        action_id: str,
+        resolved_key: Any,
+        identity: Any,
+        payload: Any,
+        authorization: Optional[str] = None,
+    ) -> CommandResponse[CommandSubmissionResponse]:
+        app.state.submitted_actions.append(
+            {"type": "prog", "id": entity_id, "action": action_id, "authorization": authorization}
+        )
         prog = app.state.store.get_evolution_program(entity_id)
         if not prog:
             raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Program {entity_id} not found")
@@ -318,7 +330,18 @@ def _build_test_app(store: EvolutionExperimentJobsEventsTestReadPorts) -> FastAP
             ),
         )
 
-    def _submit_exp_action(entity_type: Any, entity_id: str, action_id: str, resolved_key: Any, identity: Any, payload: Any) -> CommandResponse[CommandSubmissionResponse]:
+    def _submit_exp_action(
+        entity_type: Any,
+        entity_id: str,
+        action_id: str,
+        resolved_key: Any,
+        identity: Any,
+        payload: Any,
+        authorization: Optional[str] = None,
+    ) -> CommandResponse[CommandSubmissionResponse]:
+        app.state.submitted_actions.append(
+            {"type": "exp", "id": entity_id, "action": action_id, "authorization": authorization}
+        )
         exp = app.state.store.get_research_experiment(entity_id)
         if not exp:
             raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Experiment {entity_id} not found")
@@ -342,7 +365,17 @@ def _build_test_app(store: EvolutionExperimentJobsEventsTestReadPorts) -> FastAP
             ),
         )
 
-    def _submit_job_action(job_id: str, action_id: str, resolved_key: Any, identity: Any, payload: Any) -> CommandResponse[CommandSubmissionResponse]:
+    def _submit_job_action(
+        job_id: str,
+        action_id: str,
+        resolved_key: Any,
+        identity: Any,
+        payload: Any,
+        authorization: Optional[str] = None,
+    ) -> CommandResponse[CommandSubmissionResponse]:
+        app.state.submitted_actions.append(
+            {"type": "job", "id": job_id, "action": action_id, "authorization": authorization}
+        )
         job = app.state.store.get_job_bff(job_id)
         if not job:
             raise _bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Job {job_id} not found")
@@ -604,6 +637,13 @@ def test_evolution_programs_action() -> None:
         )
         assert action_response.status_code == 202, action_response.text
         _assert_final_command_envelope(action_response.json(), "EvolutionProgramAction")
+        assert any(
+            a["type"] == "prog"
+            and a["id"] == program_id
+            and a["action"] == "pause"
+            and a["authorization"] == OPERATOR_TOKEN
+            for a in client.app.state.submitted_actions
+        )
 
 
 def test_evolution_programs_action_404() -> None:
@@ -727,6 +767,13 @@ def test_experiments_action() -> None:
         )
         assert action_response.status_code == 202, action_response.text
         _assert_final_command_envelope(action_response.json(), "ExperimentAction")
+        assert any(
+            a["type"] == "exp"
+            and a["id"] == exp_id
+            and a["action"] == "cancel"
+            and a["authorization"] == OPERATOR_TOKEN
+            for a in client.app.state.submitted_actions
+        )
 
 
 def test_experiments_idempotency_replay() -> None:
@@ -847,6 +894,13 @@ def test_jobs_action() -> None:
         )
         assert action_response.status_code == 202, action_response.text
         _assert_final_command_envelope(action_response.json(), "JobAction")
+        assert any(
+            a["type"] == "job"
+            and a["id"] == "job-004"
+            and a["action"] == "cancel"
+            and a["authorization"] == OPERATOR_TOKEN
+            for a in client.app.state.submitted_actions
+        )
 
 
 def test_jobs_action_404() -> None:
