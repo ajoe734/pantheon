@@ -1,5 +1,7 @@
 # Pantheon 架構清理計畫 — 2026-09-16 重新基準版
 
+Status: historical record, not a current plan. Its 2026-09-16 P1 proposal was withdrawn on 2026-09-17 and the seven ARCH-MAIN-* domain tasks were superseded by the operator; ARCH-MAIN-SHARED-UTILITIES-001 (Appendix B) was delivered in PR #5866. Appendix C is superseded by BFF-TEST-MIGRATION-GATE-CORRECTIVE-001 (PR #5864: live AST gate run in branch CI). The authoritative cleanup plan remains docs/04/pantheon_architecture_cleanup_gap_2026-08-27/.
+
 取代 `docs/04/pantheon_architecture_cleanup_gap_2026-08-27/` 的執行假設。
 原計畫的**處置判斷仍然有效**；失效的是它的現況前提。
 
