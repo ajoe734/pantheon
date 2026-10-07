@@ -384,7 +384,7 @@ fi
 # (worker_runtime.dependency_python). Without it every worker builds its own
 # venv, and a worker that cannot cannot run tests at all. Non-fatal: workers
 # fall back to provisioning their own interpreter.
-WORKER_TEST_PYTHON_PARENT="${PANTHEON_WORKER_TEST_PYTHON_DIR:-${DEPLOY_ROOT}/runtime/worker-test-python}"
+WORKER_TEST_PYTHON_PARENT="${DEPLOY_ROOT}/runtime/worker-test-python"
 if worker_test_output="$(python3 -B "${candidate_root}/scripts/dev/ensure_worker_test_python.py" \
   --root "$candidate_root" --parent "$WORKER_TEST_PYTHON_PARENT" 2>&1)"; then
   log "worker test interpreter ready: $worker_test_output"
