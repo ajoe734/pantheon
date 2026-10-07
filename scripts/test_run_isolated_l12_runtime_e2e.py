@@ -405,3 +405,84 @@ def test_principal_issuer_starts_before_the_owner_stack() -> None:
     issuer = source.index("PRINCIPAL_ISSUER_SERVICE,\n")
     owners = source.index("*required_services,\n")
     assert source.index("_bootstrap_trade_journey_projection(\n                args") < issuer < owners
+
+
+def test_tw_official_pull_env_mirrors_bounded_refresh_entrypoint() -> None:
+    env = harness._tw_official_pull_env({"KEEP": "1", "SOURCE_INGEST_TW_HISTORY_SYMBOLS": "2317.TW"})
+
+    assert env["KEEP"] == "1"
+    assert env["PANTHEON_EXTERNAL_EGRESS"] == "allowlist"
+    assert env["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == (
+        "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw"
+    )
+    assert env["SOURCE_INGEST_CONTROLLER_MODE"] == "reconcile_and_pull"
+    assert env["SOURCE_INGEST_CONTROLLER_RESTART_POLICY"] == "no"
+    assert env["SOURCE_INGEST_CONTROLLER_MAX_TICKS"] == "1"
+    assert env["SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS"] == "tw-twse-tpex-official-market"
+    assert env["SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS"] == "tw-twse-tpex-official-market"
+    # 2330.TW is always part of the history symbols the runtime suite reads.
+    assert env["SOURCE_INGEST_TW_HISTORY_SYMBOLS"] == "2317.TW,2330.TW"
+
+
+def test_tw_official_pull_commands_reuse_compose_services() -> None:
+    commands = harness._tw_official_pull_commands("proj", ["a.yml"])
+
+    assert commands["source_ingest_up"][:6] == ["docker", "compose", "-p", "proj", "-f", "a.yml"]
+    assert commands["source_ingest_up"][-1] == "source-ingest"
+    assert "--no-deps" in commands["scheduler_tick"]
+    assert commands["scheduler_tick"][-1] == "source-ingest-scheduler"
+    assert "run" in commands["scheduler_tick"]
+
+
+def _fake_pull_run(monkeypatch: pytest.MonkeyPatch, tick_rc: int, snapshot: object):
+    import subprocess
+
+    calls: list[tuple[list[str], dict]] = []
+
+    def fake_run(cmd, env=None, **_kwargs):
+        calls.append((list(cmd), dict(env or {})))
+        rc = tick_rc if "run" in cmd else 0
+        return subprocess.CompletedProcess(cmd, rc, stdout="out", stderr="err")
+
+    monkeypatch.setattr(harness.subprocess, "run", fake_run)
+    monkeypatch.setattr(harness, "_get_json", lambda url, headers=None: snapshot)
+    return calls
+
+
+def test_tw_official_pull_runs_tick_then_restores_egress(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    calls = _fake_pull_run(monkeypatch, 0, {"closes": [1.0, 2.0]})
+
+    result = harness._run_tw_official_pull(
+        "proj", ["a.yml"], {"X": "y"}, snapshot_url="http://s", reader_headers={}, diagnostics_dir=tmp_path
+    )
+
+    assert [("run" in c) for c, _ in calls] == [False, True, False]
+    assert calls[0][1]["PANTHEON_EXTERNAL_EGRESS"] == "allowlist"
+    assert calls[2][1].get("PANTHEON_EXTERNAL_EGRESS") is None
+    assert result["snapshot_closes"] == 2
+    assert (tmp_path / "tw-official-pull-scheduler.txt").exists()
+
+
+def test_tw_official_pull_fails_on_scheduler_error_and_still_restores(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    calls = _fake_pull_run(monkeypatch, 3, {"closes": [1.0, 2.0]})
+
+    with pytest.raises(RuntimeError, match="tick exited 3"):
+        harness._run_tw_official_pull(
+            "proj", ["a.yml"], {}, snapshot_url="http://s", reader_headers={}, diagnostics_dir=tmp_path
+        )
+    assert len(calls) == 3
+
+
+def test_tw_official_pull_fails_on_empty_snapshot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    _fake_pull_run(monkeypatch, 0, {"error": "404"})
+
+    with pytest.raises(RuntimeError, match="no usable 2330.TW snapshot"):
+        harness._run_tw_official_pull(
+            "proj", ["a.yml"], {}, snapshot_url="http://s", reader_headers={}, diagnostics_dir=tmp_path
+        )
