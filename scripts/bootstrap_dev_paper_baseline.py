@@ -233,6 +233,8 @@ def _nudge_run_scheduled(
             "failed": failed if isinstance(failed, list) else [],
             "transport_error": None,
         }
+    except AssertionError:
+        raise
     except Exception as exc:
         return {
             "attempted": True,
@@ -328,6 +330,8 @@ def ensure_dev_market_snapshot_ready(
     generic readback failure.
     """
     deadline = monotonic() + timeout_seconds
+    max_poll_iterations = max(int(timeout_seconds / max(poll_seconds, 0.001)) + 5, 50)
+    poll_iterations = 0
     snapshot_url = (
         f"{source_ingest_url.rstrip('/')}/api/source-ingest/snapshots/latest"
         f"?symbol={urllib.parse.quote(symbol, safe='')}"
@@ -337,6 +341,7 @@ def ensure_dev_market_snapshot_ready(
     last_nudge_diagnostic: str | None = None
 
     while True:
+        poll_iterations += 1
         status, body = _get_json(snapshot_url, timeout_seconds=request_timeout_seconds)
         needs_nudge = False
         if status == 200 and isinstance(body, dict):
@@ -408,7 +413,7 @@ def ensure_dev_market_snapshot_ready(
                 last_reason = "ingest_nudge_failed"
                 last_detail = f"{last_detail}; {last_nudge_diagnostic}"
 
-        if monotonic() >= deadline:
+        if monotonic() >= deadline or poll_iterations >= max_poll_iterations:
             raise BootstrapError(
                 f"timed out waiting for admissible market snapshot for symbol {symbol!r}: "
                 f"{last_reason} ({last_detail})"

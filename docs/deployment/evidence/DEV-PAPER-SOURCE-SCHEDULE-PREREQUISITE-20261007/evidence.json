@@ -18,8 +18,9 @@
       "services/source_ingestion/tests/test_latest_market_snapshot_state.py: Added test_stored_marketless_spy_snapshot_becomes_market_bearing_and_admits_producer proving stored marketless SPY snapshot transitions to market: 'US' via registered Source adapter authority and admits PaperSignalProducer.",
       "scripts/deploy_nonprod_vm.sh: Updated stage_dev_paper_prerequisite_readiness with operator stop preservation, prior schedule query, bounded temporary schedule admission (PUT /schedule with controller token), run-scheduled execution, and guaranteed restoration trap on success/failure/exit.",
       "scripts/test_deploy_nonprod_vm.py: Added unit tests verifying schedule admission and restoration on success, restoration on refresh failure, and operator stop preservation.",
-      "scripts/bootstrap_dev_paper_baseline.py: Enforced market context in ensure_dev_market_snapshot_ready, accepted and forwarded force_connector_ids and exclusive_connector_ids in _nudge_run_scheduled, updated self-test valid_snapshot, and added self-tests for missing market and nudge forwarding.",
-      "docs/deployment/evidence/DEV-PAPER-SOURCE-SCHEDULE-PREREQUISITE-20261007/evidence.json: This evidence manifest."
+      "scripts/bootstrap_dev_paper_baseline.py: Enforced market context in ensure_dev_market_snapshot_ready with non-progressing clock iteration guard and AssertionError propagation, accepted and forwarded force_connector_ids and exclusive_connector_ids in _nudge_run_scheduled, updated self-test valid_snapshot, and added self-tests for missing market and nudge forwarding.",
+      "docs/deployment/evidence/DEV-PAPER-SOURCE-SCHEDULE-PREREQUISITE-20261007/evidence.json: This evidence manifest.",
+      "scripts/test_bootstrap_dev_paper_baseline.py: Updated test snapshot fixtures to include market context and aligned test expectations with market-bearing snapshot requirements."
     ],
     "not_changing": [
       "Historical bindings, receipts, and NULL-tenant historical evidence preserved without relabeling.",
@@ -62,6 +63,10 @@
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -v services/source_ingestion/tests/test_scheduler.py services/source_ingestion/tests/test_latest_market_snapshot_state.py scripts/test_deploy_nonprod_vm.py scripts/test_dev_paper_release_stimulus.py",
         "result": "90 passed, 2 skipped, 0 failed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v scripts/test_bootstrap_dev_paper_baseline.py",
+        "result": "50 passed, 0 failed"
       }
     ],
     "runner": {
@@ -69,14 +74,15 @@
       "pytest": "9.1.1"
     },
     "checksums": {
-      "scripts/bootstrap_dev_paper_baseline.py": "15c71d9c0438f45e5211e91f80062f352c1927a29de2247fc9d0669646ab5552",
+      "scripts/bootstrap_dev_paper_baseline.py": "93d5c1e7ee80873254a651c0bdf66108e3bee5376958c8acdec34fa69cd92252",
       "scripts/deploy_nonprod_vm.sh": "78186d299269244327e27f4d42257662cf73ba6db25ce8b748d8f50daf492d22",
       "scripts/test_deploy_nonprod_vm.py": "88a91d3f7df6bb9c1176e9e2a3bb67de82e77649deff4a7a36b08c68564b4776",
       "services/source_ingestion/pipeline.py": "9b13f6efa33627a78e46cc177bcfc656eea9c1ff3790c9e0aed53c473ba1c482",
       "services/source_ingestion/routers/ingest_operations.py": "0dda9772a48235f7ff4d79b6da15d8dcf8513c3f9a986300acad720e3ad04509",
       "services/source_ingestion/runtime.py": "6dee819de17b2b959e79fc84ddc243df7268ada4c86eb27260d9c3b55f7610b4",
       "services/source_ingestion/tests/test_latest_market_snapshot_state.py": "bb575f01b3a25ae6c90304bd5cda822b5aadea709c0a793e2ce464c36c60f87d",
-      "services/source_ingestion/tests/test_scheduler.py": "dc39a1fda1174a052fc852872169cd51c2f019fca9c2b0182f5bf7021041539e"
+      "services/source_ingestion/tests/test_scheduler.py": "dc39a1fda1174a052fc852872169cd51c2f019fca9c2b0182f5bf7021041539e",
+      "scripts/test_bootstrap_dev_paper_baseline.py": "f974d02d4de9682d3f8f4794f9665d3f4b0e288141d72bbc25da4b7cd9830bdd"
     }
   }
 }
