@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build the shared test interpreter that auto-workers receive as PANTHEON_DEPENDENCY_PYTHON.
 
-Each build lives in ``<parent>/<hash>``, where the hash covers
-requirements.txt and services/control-plane/bff/requirements.txt. A build counts only once its
+Each build lives in ``<parent>/<hash>``, where the hash covers every file in
+REQUIREMENTS. A build counts only once its
 ``.ready`` marker exists, and the marker is written after the imports are
 proven. ``<parent>/current`` is switched atomically to the newest ready build,
 so a worker never sees a half-installed venv. The newest few builds are kept
@@ -22,8 +22,12 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-REQUIREMENTS = ("requirements.txt", "services/control-plane/bff/requirements.txt")
-PROBE = "import pytest, fastapi, httpx, pydantic, yaml, cryptography, flask, jsonschema, psycopg"
+REQUIREMENTS = (
+    "requirements.txt",
+    "services/control-plane/bff/requirements.txt",
+    "services/research/runtime-requirements.txt",
+)
+PROBE = "import pytest, fastapi, httpx, pydantic, yaml, cryptography, flask, jsonschema, psycopg, QuantLib, numpy"
 READY = ".ready"
 KEEP = 3
 
