@@ -49,7 +49,8 @@ import pytest
 
 
 TASK_ID = "PFG-L12-RUNTIME-E2E-20260820"
-TENANT_ID = "default"
+# The isolated harness runs the stack as the hosted dev tenant.
+TENANT_ID = os.getenv("PANTHEON_L12_TENANT_ID", "default").strip()
 EVOLUTION_TENANT_ID = "pantheon-default"
 PARENT_ARTIFACT_ID = "artifact-tw-session-momentum-v1"
 CANONICAL_LOOP_IDS = {

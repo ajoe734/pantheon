@@ -133,6 +133,7 @@ class DeployedResearchHarness:
         # Source-record reads require a runtime reader token since 2026-10-04.
         self.source_reader_token = os.getenv("PANTHEON_L12_SOURCE_READER_TOKEN", "").strip()
         self.source_reader_tenant = os.getenv("PANTHEON_L12_SOURCE_READER_TENANT_ID", self.tenant_id).strip()
+        self.registry_token = os.getenv("PANTHEON_L12_REGISTRY_TOKEN", "").strip()
         self._write_report("running")
 
     def _source_reader_headers(self) -> dict[str, str]:
@@ -142,6 +143,11 @@ class DeployedResearchHarness:
             "Authorization": f"Bearer {self.source_reader_token}",
             "X-Tenant-Id": self.source_reader_tenant,
         }
+
+    def _registry_headers(self) -> dict[str, str]:
+        if not self.registry_token:
+            return {}
+        return {"Authorization": f"Bearer {self.registry_token}"}
 
     def _source_ingest_headers(self) -> dict[str, str]:
         if not self.source_controller_token:
@@ -575,6 +581,7 @@ class DeployedResearchHarness:
                 lambda: self._http_json(
                     self.registry_url,
                     f"/api/registry/strategy-specs/{urllib.parse.quote(registry_id, safe='')}",
+                    headers=self._registry_headers(),
                     expected=(200, 404),
                 ),
                 lambda value: (
@@ -624,6 +631,7 @@ class DeployedResearchHarness:
             lambda: self._http_json(
                 self.registry_url,
                 f"/api/registry/strategy-specs/{urllib.parse.quote(registry_id, safe='')}",
+                headers=self._registry_headers(),
             ),
         )
         entry = self._entry(registry_view)
@@ -657,6 +665,7 @@ class DeployedResearchHarness:
                     f"/api/registry/strategy-specs/{urllib.parse.quote(registry_id, safe='')}/advance",
                     method="POST",
                     payload=payload,
+                    headers=self._registry_headers(),
                 )
             return self._entry(view)
 
