@@ -31,6 +31,8 @@ from services.control_plane.bff.models import ErrorCode
 
 
 _LOOP_RUN_PROJECTION_SCHEMA = "pantheon.loop-run-projection.v1"
+_TRADING_STAGES = frozenset({"paper", "broker_sandbox", "canary", "live"})
+_DEV_SERVED_STAGES: Tuple[str, ...] = ("paper", "broker_sandbox")
 _OODA_STAGE_DEFS = (
     ("observe", "Observe", "telemetry/source/search health"),
     ("orient", "Orient", "active signal/persona proposal count"),
@@ -140,6 +142,7 @@ class ControlLoopsService:
         utc_now_fn: Optional[Callable[[], str]] = None,
         bff_error_fn: Optional[Callable[..., Exception]] = None,
         deployed_environment: Optional[str] = None,
+        served_stages: Optional[Sequence[str]] = None,
     ) -> None:
         self.read_store = read_store or _MissingReadPort()
         self.loop_truth = loop_truth_adapter or default_loop_truth
@@ -151,6 +154,20 @@ class ControlLoopsService:
             if deployed_environment is not None
             else os.environ.get("PANTHEON_ENV", "dev")
         ).strip()
+        if served_stages is not None:
+            self.served_stages: Tuple[str, ...] = tuple(
+                str(s).strip() for s in served_stages if str(s).strip()
+            )
+        elif "PANTHEON_LOOP_TRUTH_SERVED_STAGES" in os.environ:
+            self.served_stages = tuple(
+                s.strip()
+                for s in os.environ["PANTHEON_LOOP_TRUTH_SERVED_STAGES"].split(",")
+                if s.strip()
+            )
+        elif self.deployed_environment == "dev":
+            self.served_stages = _DEV_SERVED_STAGES
+        else:
+            self.served_stages = ()
 
     def _error(self, *args: Any, **kwargs: Any) -> Exception:
         return self.bff_error(*args, **kwargs)
@@ -461,15 +478,22 @@ class ControlLoopsService:
                 "Requested controller truth tenant is outside the authenticated scope",
                 precondition_failed="tenant_scope",
             )
-        environment = str(requested_environment or "").strip() or self.deployed_environment
+        default_stage = self.served_stages[0] if self.served_stages else ""
+        stage = str(requested_environment or "").strip() or default_stage
         allowed_environments = _claim_strings(
             identity, "environment", "environments", "allowed_environments", "allowedEnvironments"
         )
         if allowed_environments:
-            environment_allowed = "*" in allowed_environments or environment in allowed_environments
+            identity_allowed = "*" in allowed_environments or stage in allowed_environments
         else:
-            environment_allowed = environment == self.deployed_environment
-        if not environment or not environment_allowed:
+            identity_allowed = True
+        stage_allowed = (
+            bool(stage)
+            and stage in _TRADING_STAGES
+            and stage in self.served_stages
+            and identity_allowed
+        )
+        if not stage_allowed:
             raise self._error(
                 403,
                 ErrorCode.FORBIDDEN,
@@ -477,7 +501,7 @@ class ControlLoopsService:
                 "Requested controller truth environment is outside the authenticated deployment scope",
                 precondition_failed="environment_scope",
             )
-        return tenant_id, environment
+        return tenant_id, stage
 
     def _loop_health_meta(
         self,
