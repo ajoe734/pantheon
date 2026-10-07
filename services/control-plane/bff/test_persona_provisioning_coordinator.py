@@ -1530,3 +1530,201 @@ def test_safe_early_failure_rejects_non_null_compensation() -> None:
     assert result.state == "failed"
     assert result.compensation == {"status": "completed", "action": "noop"}
     assert "capital_pool" not in result.references
+
+
+def test_coordinator_propagates_explicit_market_to_artifact_and_deployment_metadata() -> None:
+    store = TrackingStore()
+    record, created = store.reserve(
+        tenant_id="tenant-us",
+        idempotency_key="create-persona-us",
+        request_hash="sha256:persona-us-request",
+        normalized_name="trader us",
+        persona_id="persona-us",
+        request_payload={
+            "name": "Trader US",
+            "market": "US",
+            "symbols": ["SPY"],
+            "requested_by": "operator-us",
+            "mandate": "US paper momentum",
+        },
+    )
+    assert created
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+    assert result.state == "provisioning"
+    assert result.current_step == "schedule_registered"
+
+    ids = deterministic_provisioning_ids(record)
+
+    # Verify forward StrategyArtifact
+    artifact_view = transport.objects[("registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}")]
+    forward_entry = artifact_view["entry"]
+    forward_artifact = forward_entry["metadata"]["strategy_artifact"]
+    assert forward_artifact["parameters"]["market"] == "US"
+    assert "market" in forward_artifact["mutation_surface"]["immutable_parameters"]
+    assert forward_entry["metadata"]["market"] == "US"
+
+    # Verify baseline StrategyArtifact
+    baseline_view = transport.objects[("registry", f"/api/registry/strategy-artifacts/{ids.baseline_strategy_artifact_id}")]
+    baseline_entry = baseline_view["entry"]
+    baseline_artifact = baseline_entry["metadata"]["strategy_artifact"]
+    assert baseline_artifact["parameters"]["market"] == "US"
+    assert "market" in baseline_artifact["mutation_surface"]["immutable_parameters"]
+    assert baseline_entry["metadata"]["market"] == "US"
+
+    # Verify StrategySpec
+    spec_view = transport.objects[("registry", f"/api/registry/strategy-specs/{ids.registry_id}")]
+    assert spec_view["entry"]["metadata"]["market"] == "US"
+
+    # Verify PersonaCapitalBinding
+    binding_view = transport.objects[("capital", f"/api/bindings/{ids.persona_capital_binding_id}")]
+    assert binding_view["metadata"]["market"] == "US"
+
+    # Verify DeploymentPlan
+    plan_view = transport.objects[("deployment", f"/api/deployment/plans/{ids.deployment_plan_id}")]
+    assert plan_view["metadata"]["market"] == "US"
+
+
+def test_coordinator_rejects_unsupported_market_context_fail_closed() -> None:
+    store = TrackingStore()
+    record, created = store.reserve(
+        tenant_id="tenant-invalid",
+        idempotency_key="create-persona-invalid",
+        request_hash="sha256:persona-invalid",
+        normalized_name="trader invalid",
+        persona_id="persona-invalid",
+        request_payload={
+            "name": "Trader Invalid",
+            "market": "MARS",
+            "symbols": ["SPY"],
+        },
+    )
+    assert created
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+    assert result.state == "failed"
+    assert result.error is not None
+    assert result.error["failed_step"] == "capital_pool"
+    assert "unsupported market context 'MARS'" in result.error["terminal_reason"]
+
+
+def test_coordinator_rejects_contradictory_market_and_symbols() -> None:
+    store = TrackingStore()
+    record, created = store.reserve(
+        tenant_id="tenant-conflict",
+        idempotency_key="create-persona-conflict",
+        request_hash="sha256:persona-conflict",
+        normalized_name="trader conflict",
+        persona_id="persona-conflict",
+        request_payload={
+            "name": "Trader Conflict",
+            "market": "US",
+            "symbols": ["2330.TW"],
+        },
+    )
+    assert created
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+    assert result.state == "failed"
+    assert result.error is not None
+    assert result.error["failed_step"] == "capital_pool"
+    assert "contradicts explicit market 'US'" in result.error["terminal_reason"]
+
+
+def test_coordinator_dry_run_rejects_invalid_market() -> None:
+    store = TrackingStore()
+    record, created = store.reserve(
+        tenant_id="tenant-dry",
+        idempotency_key="create-persona-dry",
+        request_hash="sha256:persona-dry",
+        normalized_name="trader dry",
+        persona_id="persona-dry",
+        request_payload={
+            "name": "Trader Dry",
+            "market": "INVALID",
+        },
+    )
+    assert created
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    with pytest.raises(Exception, match="unsupported market context 'INVALID'"):
+        coordinator.coordinate(record, dry_run=True)
+
+
+def test_coordinator_omits_market_when_unspecified_preserving_legacy_behavior() -> None:
+    store, record = _record_and_store()
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+    assert result.state == "provisioning"
+
+    ids = deterministic_provisioning_ids(record)
+    artifact_view = transport.objects[("registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}")]
+    forward_entry = artifact_view["entry"]
+    forward_artifact = forward_entry["metadata"]["strategy_artifact"]
+    assert "market" not in forward_artifact["parameters"]
+    assert "market" not in forward_artifact["mutation_surface"]["immutable_parameters"]
+    assert "market" not in forward_entry["metadata"]
+
+
+def test_coordinator_accepts_bare_symbols_with_explicit_market_without_guessing() -> None:
+    # ABNB / GBTC in US market
+    store = TrackingStore()
+    record, created = store.reserve(
+        tenant_id="tenant-us-bare",
+        idempotency_key="create-persona-us-bare",
+        request_hash="sha256:persona-us-bare-request",
+        normalized_name="trader us bare",
+        persona_id="persona-us-bare",
+        request_payload={
+            "name": "Trader US Bare",
+            "market": "US",
+            "symbols": ["ABNB", "GBTC"],
+            "requested_by": "operator-us",
+            "mandate": "US paper momentum bare symbols",
+        },
+    )
+    assert created
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+    assert result.state == "provisioning"
+    ids = deterministic_provisioning_ids(record)
+    artifact_view = transport.objects[("registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}")]
+    forward_artifact = artifact_view["entry"]["metadata"]["strategy_artifact"]
+    assert forward_artifact["parameters"]["market"] == "US"
+    assert forward_artifact["parameters"]["symbols"] == ["ABNB", "GBTC"]
+
+    # EURUSD in FX market
+    record_fx, created_fx = store.reserve(
+        tenant_id="tenant-fx-bare",
+        idempotency_key="create-persona-fx-bare",
+        request_hash="sha256:persona-fx-bare-request",
+        normalized_name="trader fx bare",
+        persona_id="persona-fx-bare",
+        request_payload={
+            "name": "Trader FX Bare",
+            "market": "FX",
+            "symbols": ["EURUSD"],
+            "requested_by": "operator-fx",
+            "mandate": "FX paper momentum bare symbols",
+        },
+    )
+    assert created_fx
+    result_fx = coordinator.coordinate(record_fx)
+    assert result_fx.state == "provisioning"
+    ids_fx = deterministic_provisioning_ids(record_fx)
+    artifact_view_fx = transport.objects[("registry", f"/api/registry/strategy-artifacts/{ids_fx.strategy_artifact_id}")]
+    forward_artifact_fx = artifact_view_fx["entry"]["metadata"]["strategy_artifact"]
+    assert forward_artifact_fx["parameters"]["market"] == "FX"
+    assert forward_artifact_fx["parameters"]["symbols"] == ["EURUSD"]
+

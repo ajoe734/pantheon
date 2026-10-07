@@ -55,6 +55,104 @@ class StrategyArtifactValidationError(RegistryError):
     """Raised when a StrategyArtifact violates schema or semantic rules."""
 
 
+SUPPORTED_MARKETS: tuple[str, ...] = ("US", "TW", "CRYPTO", "FX")
+
+_US_MARKET_TOKENS: frozenset[str] = frozenset({
+    "US",
+    "USA",
+    "UNITED STATES",
+    "UNITED_STATES",
+    "SMART",
+    "NASDAQ",
+    "NYSE",
+    "ARCA",
+    "BATS",
+    "AMEX",
+})
+
+_TW_MARKET_TOKENS: frozenset[str] = frozenset({
+    "TW",
+    "TWSE",
+    "TAIWAN",
+    "TPEX",
+    "TWO",
+    "TSE",
+    "OTC",
+    "TAIFEX",
+})
+
+_CRYPTO_MARKET_TOKENS: frozenset[str] = frozenset({
+    "CRYPTO",
+    "KRAKEN",
+    "BINANCE",
+    "COINBASE",
+})
+
+_FX_MARKET_TOKENS: frozenset[str] = frozenset({
+    "FX",
+    "FOREX",
+    "OANDA",
+})
+
+def classify_market_token(token: Any) -> str | None:
+    """Classify a market token or venue string into a canonical market category."""
+    if not token or not isinstance(token, str):
+        return None
+    raw = token.strip().lstrip(".").upper()
+    if not raw:
+        return None
+    if raw in _US_MARKET_TOKENS:
+        return "US"
+    if raw in _TW_MARKET_TOKENS:
+        return "TW"
+    if raw in _CRYPTO_MARKET_TOKENS:
+        return "CRYPTO"
+    if raw in _FX_MARKET_TOKENS:
+        return "FX"
+    return None
+
+
+def intrinsic_symbol_market(symbol: str) -> str | None:
+    """Detect intrinsic market from dotted suffix."""
+    s = str(symbol or "").strip()
+    if "." in s:
+        suffix = s.rsplit(".", 1)[1]
+        return classify_market_token(suffix)
+    return None
+
+
+def canonical_market_context(
+    market: Any,
+    symbols: Sequence[str] | None = None,
+) -> str:
+    """Validate and return canonical market string (US, TW, CRYPTO, FX).
+
+    Rejects unsupported, non-canonical, or contradictory market contexts.
+    """
+    if not isinstance(market, str):
+        raise StrategyArtifactValidationError(
+            f"market context must be a string, got {type(market).__name__}"
+        )
+    if not market.strip() or market != market.strip():
+        raise StrategyArtifactValidationError(
+            "market context must be a canonical non-blank string without leading/trailing whitespace"
+        )
+    category = classify_market_token(market)
+    if category is None:
+        raise StrategyArtifactValidationError(
+            f"unsupported market context {market!r}; supported markets: {list(SUPPORTED_MARKETS)}"
+        )
+    if symbols and isinstance(symbols, Sequence) and not isinstance(symbols, (str, bytes)):
+        for symbol in symbols:
+            if isinstance(symbol, str):
+                intrinsic = intrinsic_symbol_market(symbol)
+                if intrinsic is not None and intrinsic != category:
+                    raise StrategyArtifactValidationError(
+                        f"symbol {symbol!r} intrinsic market {intrinsic!r} contradicts explicit market {category!r}"
+                    )
+    return category
+
+
 def _canonical_json(payload: Mapping[str, Any]) -> str:
     return json.dumps(
         payload,
@@ -271,6 +369,19 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
         if _is_number(value) and not _is_finite_number(value):
             raise StrategyArtifactValidationError(
                 f"parameter {key!r} must be a finite number"
+            )
+
+    market = parameters.get("market")
+    if market is not None:
+        if not isinstance(market, str):
+            raise StrategyArtifactValidationError("parameter 'market' must be a string")
+        canonical = canonical_market_context(
+            market,
+            symbols=parameters.get("symbols"),
+        )
+        if market != canonical:
+            raise StrategyArtifactValidationError(
+                f"parameter 'market' must be canonical {canonical!r}, got {market!r}"
             )
 
     lineage = artifact["lineage"]

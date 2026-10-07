@@ -1274,3 +1274,18 @@ def test_authoritative_worker_read_never_enables_snapshot_fallback(tmp_path) -> 
     assert sessions == [{"id": "session-1", "runtime_id": "rt-1"}]
     assert transport_calls == ["http://paper-reconciler.test/api/fleet/state"]
     assert drift_calls == []
+
+
+def test_explicit_market_context_preserves_through_paper_running_evaluation(
+    harness: _Harness,
+) -> None:
+    raw = _raw_persona(market="US")
+    binding = _runtime_binding()
+    state, persona = _evaluate(
+        raw=raw,
+        bindings={RUNTIME_BINDING_ID: binding},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+    assert state == "paper_running"
+    assert persona["metadata"]["market"] == "US"
+
