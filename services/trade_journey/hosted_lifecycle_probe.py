@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 from datetime import datetime, timezone
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -584,14 +583,15 @@ def _validate_natural_candidate(
         raise ProbeError("invalid_producer", f"natural candidate requires producer {NATURAL_PRODUCER!r}, got {prov.get('source_worker')!r}")
     if prov.get("artifact_interpreter") != NATURAL_INTERPRETER:
         raise ProbeError("invalid_interpreter", f"natural candidate requires interpreter {NATURAL_INTERPRETER!r}, got {prov.get('artifact_interpreter')!r}")
-    checksum = prov.get("artifact_checksum")
-    if not isinstance(checksum, str) or not checksum.strip():
+    if not isinstance(prov.get("artifact_checksum"), str) or not prov["artifact_checksum"].strip():
         raise ProbeError("invalid_checksum", "approved artifact checksum is missing")
-    if not (prov.get("market_input_ref") or prov.get("raw_symbol")):
+    if not isinstance(prov.get("market_input_ref"), str) or not prov["market_input_ref"].strip():
         raise ProbeError("invalid_lineage", "market input lineage ref is missing")
     if prov.get("is_real_capital") is not False or prov.get("is_real_order") is not False:
         raise ProbeError("invalid_capital_mode", "safe paper flags violated")
     if case is not None:
+        if case.get("state") != "succeeded":
+            raise ProbeError("case_state_mismatch", "case provisioning state is not succeeded")
         checks = (
             (candidate["identity"].get("tenant_id"), case.get("tenant_id"), "case_identity_mismatch", "tenant identity mismatch"),
             (prov.get("binding_id"), case.get("runtime_binding_id"), "case_identity_mismatch", "runtime binding ID mismatch"),
@@ -600,41 +600,38 @@ def _validate_natural_candidate(
             (prov.get("capital_pool_id"), case.get("capital_pool_id"), "case_capital_mismatch", "capital pool mismatch"),
             (prov.get("artifact_id"), case.get("artifact_id"), "case_artifact_mismatch", "artifact ID mismatch"),
             (prov.get("artifact_version"), case.get("artifact_version"), "case_version_mismatch", "artifact version mismatch"),
-            (checksum, case.get("artifact_checksum"), "case_checksum_mismatch", "artifact checksum mismatch"),
+            (prov.get("artifact_checksum"), case.get("artifact_checksum"), "case_checksum_mismatch", "artifact checksum mismatch"),
         )
         for actual, expected, code, msg in checks:
-            if expected and actual != expected:
+            if not expected or actual != expected:
                 raise ProbeError(code, msg)
 
 
 def _normalize_case_record(record: Mapping[str, Any]) -> dict[str, Any]:
-    if "artifact_checksum" in record and "runtime_binding_id" in record:
-        return dict(record)
-    tenant_id, persona_id = str(record.get("tenant_id") or ""), str(record.get("persona_id") or "")
-    token = hashlib.sha256(json.dumps({"tenant_id": tenant_id, "persona_id": persona_id}, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:20] if tenant_id and persona_id else ""
     refs, res = _json_object(record.get("references")), _json_object(record.get("result"))
     strat = _json_object(refs.get("strategy_artifact_approved"))
     entry = _json_object(strat.get("entry")) if "entry" in strat else strat
     return {
-        "tenant_id": tenant_id,
-        "persona_id": persona_id,
+        "tenant_id": str(record.get("tenant_id") or ""),
+        "persona_id": str(record.get("persona_id") or ""),
         "idempotency_key": str(record.get("idempotency_key") or ""),
-        "runtime_binding_id": str(refs.get("runtime_binding_id") or res.get("runtime_binding_id") or ""),
-        "runtime_id": str(refs.get("runtime_id") or res.get("runtime_id") or ""),
-        "capital_pool_id": str(res.get("capital_pool_id") or (f"pool-persona-paper-{token}" if token else "")),
-        "deployment_plan_id": str(res.get("deployment_plan_id") or (f"plan-persona-paper-{token}" if token else "")),
-        "persona_capital_binding_id": str(res.get("persona_capital_binding_id") or (f"pcb-persona-paper-{token}" if token else "")),
-        "artifact_id": str(entry.get("registry_id") or entry.get("artifact_id") or res.get("strategy_artifact_id") or (f"artifact-persona-paper-{token}" if token else "")),
-        "artifact_version": str(entry.get("version") or "1.0.0"),
-        "artifact_checksum": entry.get("checksum"),
+        "state": str(record.get("state") or res.get("state") or ""),
+        "runtime_binding_id": str(record.get("runtime_binding_id") or refs.get("runtime_binding_id") or res.get("runtime_binding_id") or ""),
+        "runtime_id": str(record.get("runtime_id") or refs.get("runtime_id") or res.get("runtime_id") or ""),
+        "capital_pool_id": str(record.get("capital_pool_id") or res.get("capital_pool_id") or refs.get("capital_pool_id") or ""),
+        "deployment_plan_id": str(record.get("deployment_plan_id") or res.get("deployment_plan_id") or refs.get("deployment_plan_id") or ""),
+        "persona_capital_binding_id": str(record.get("persona_capital_binding_id") or res.get("persona_capital_binding_id") or refs.get("persona_capital_binding_id") or ""),
+        "artifact_id": str(record.get("artifact_id") or entry.get("registry_id") or entry.get("artifact_id") or res.get("strategy_artifact_id") or res.get("registry_id") or ""),
+        "artifact_version": str(record.get("artifact_version") or entry.get("version") or res.get("artifact_version") or ""),
+        "artifact_checksum": record.get("artifact_checksum") or entry.get("checksum") or res.get("artifact_checksum"),
     }
 
 
 class AsyncpgCaseSource:
     """Read one governed persona provisioning case from Postgres."""
 
-    def __init__(self, dsn: str, *, schema: str = "bff") -> None:
-        self._dsn, self._schema = dsn, schema
+    def __init__(self, dsn: str, *, schema: str = "bff", registry_schema: str = "registry") -> None:
+        self._dsn, self._schema, self._registry_schema = dsn, schema, registry_schema
 
     async def get_case(self, case_key: str) -> dict[str, Any] | None:
         try:
@@ -643,11 +640,25 @@ class AsyncpgCaseSource:
             try:
                 async with conn.transaction(isolation="repeatable_read", readonly=True):
                     row = await conn.fetchrow(
-                        f'SELECT tenant_id, idempotency_key, persona_id, "references", result '
+                        f'SELECT tenant_id, idempotency_key, persona_id, "references", result, state '
                         f'FROM {self._schema}.persona_provisioning WHERE idempotency_key = $1 LIMIT 1',
                         case_key,
                     )
-                    return _normalize_case_record(dict(row)) if row is not None else None
+                    if row is None:
+                        return None
+                    case = _normalize_case_record(dict(row))
+                    if not case.get("artifact_checksum") and case.get("artifact_id"):
+                        reg = await conn.fetchrow(
+                            f"SELECT payload FROM {self._registry_schema}.entries WHERE record_id = $1 LIMIT 1",
+                            case["artifact_id"],
+                        )
+                        if reg is not None:
+                            payload = _json_object(reg["payload"])
+                            if payload.get("checksum"):
+                                case["artifact_checksum"] = payload["checksum"]
+                            if not case.get("artifact_version") and payload.get("version"):
+                                case["artifact_version"] = payload["version"]
+                    return case
             finally:
                 await conn.close()
         except ProbeError:

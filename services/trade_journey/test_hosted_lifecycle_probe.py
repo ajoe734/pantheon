@@ -143,6 +143,7 @@ DEFAULT_TEST_CASE = {
     "artifact_id": "artifact-paper-001",
     "artifact_version": "1.2.3",
     "artifact_checksum": "sha256-approved-test-checksum",
+    "state": "succeeded",
 }
 DEFAULT_CASE_SOURCE = {DEFAULT_TEST_CASE_KEY: DEFAULT_TEST_CASE}
 
@@ -865,7 +866,6 @@ def test_probe_natural_candidate_validation_rejections(mutation, field, value, e
     sig = rows[0]["payload"]
     if mutation == "lineage_missing":
         sig["market_input_ref"] = None
-        sig["raw_symbol"] = None
     else:
         sig[field] = value
     cands = probe._complete_candidates(rows, mode="controlled-stimulus")
@@ -879,13 +879,23 @@ def test_probe_natural_candidate_validation_rejections(mutation, field, value, e
     "case_key,case_value,expected_error",
     [
         ("tenant_id", "wrong-tenant", "case_identity_mismatch"),
+        ("tenant_id", None, "case_identity_mismatch"),
         ("runtime_binding_id", "wrong-binding", "case_identity_mismatch"),
+        ("runtime_binding_id", None, "case_identity_mismatch"),
         ("runtime_id", "wrong-runtime", "case_identity_mismatch"),
+        ("runtime_id", None, "case_identity_mismatch"),
         ("deployment_plan_id", "wrong-plan", "case_plan_mismatch"),
+        ("deployment_plan_id", None, "case_plan_mismatch"),
         ("capital_pool_id", "wrong-pool", "case_capital_mismatch"),
+        ("capital_pool_id", None, "case_capital_mismatch"),
         ("artifact_id", "wrong-artifact", "case_artifact_mismatch"),
+        ("artifact_id", None, "case_artifact_mismatch"),
         ("artifact_version", "9.9.9", "case_version_mismatch"),
+        ("artifact_version", None, "case_version_mismatch"),
         ("artifact_checksum", "sha256-wrong-checksum", "case_checksum_mismatch"),
+        ("artifact_checksum", None, "case_checksum_mismatch"),
+        ("state", "failed", "case_state_mismatch"),
+        ("state", None, "case_state_mismatch"),
     ],
 )
 def test_probe_natural_case_mismatch_rejections(case_key, case_value, expected_error):
@@ -968,3 +978,75 @@ def test_main_cli_mode_and_case_key_validation(tmp_path):
     assert art["outcome"] == "failed"
     assert art["mode"] == "natural"
     assert art["failure"]["code"] == "case_key_missing"
+
+
+def test_normalize_case_record_does_not_invent_ids():
+    raw_row = {
+        "tenant_id": "tenant-dev",
+        "persona_id": "persona-dev-001",
+        "idempotency_key": "dev-paper-release-1-1",
+        "references": {},
+        "result": {},
+    }
+    normalized = probe._normalize_case_record(raw_row)
+    assert normalized["capital_pool_id"] == ""
+    assert normalized["deployment_plan_id"] == ""
+    assert normalized["persona_capital_binding_id"] == ""
+    assert normalized["artifact_id"] == ""
+    assert normalized["artifact_version"] == ""
+    assert normalized["artifact_checksum"] is None
+
+
+def test_asyncpg_case_source_anchors_checksum_from_registry(monkeypatch):
+    class Connection:
+        async def fetchrow(self, query: str, *args):
+            if "persona_provisioning" in query:
+                return {
+                    "tenant_id": "tenant-a",
+                    "persona_id": "persona-1",
+                    "idempotency_key": "key-1",
+                    "state": "succeeded",
+                    "references": {
+                        "runtime_binding_id": "rb-1",
+                        "runtime_id": "rt-1",
+                        "strategy_artifact_approved": {
+                            "entry": {"registry_id": "art-1", "version": "1.2.3"}
+                        },
+                    },
+                    "result": {
+                        "capital_pool_id": "pool-1",
+                        "deployment_plan_id": "plan-1",
+                        "persona_capital_binding_id": "pcb-1",
+                    },
+                }
+            if "entries" in query:
+                return {"payload": json.dumps({"checksum": "sha256-from-registry", "version": "1.2.3"})}
+            return None
+
+        async def close(self):
+            pass
+
+    class TransactionContext:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    conn = Connection()
+    conn.transaction = lambda **kwargs: TransactionContext(conn)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "asyncpg",
+        types.SimpleNamespace(connect=lambda dsn: asyncio.sleep(0, result=conn)),
+    )
+    src = probe.AsyncpgCaseSource("postgresql://unit")
+    case = asyncio.run(src.get_case("key-1"))
+    assert case is not None
+    assert case["artifact_checksum"] == "sha256-from-registry"
+    assert case["artifact_version"] == "1.2.3"
+

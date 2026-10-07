@@ -86,12 +86,7 @@ if [[ -z "${expected_sha}" || -z "${container_output}" || -z "${remote_output}" 
   exit 64
 fi
 
-if [[ "${mode}" != "natural" && "${mode}" != "controlled-stimulus" ]]; then
-  usage
-  exit 64
-fi
-
-if [[ "${mode}" == "natural" && -z "${case_key}" ]]; then
+if [[ ("${mode}" != "natural" && "${mode}" != "controlled-stimulus") || ("${mode}" == "natural" && -z "${case_key}") ]]; then
   usage
   exit 64
 fi
