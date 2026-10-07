@@ -266,6 +266,15 @@ def _projector_run_command(project: str, compose_files: list[str]) -> list[str]:
     )
 
 
+def _suite_url_env(urls: Mapping[str, str]) -> dict[str, str]:
+    """Expose every service URL under the names the deployed suites read."""
+    env = {f"PANTHEON_L12_{name.upper()}_URL": url for name, url in urls.items()}
+    # The research and runtime suites read source-ingest as PANTHEON_L12_SOURCE_URL.
+    if "source_ingest" in urls:
+        env["PANTHEON_L12_SOURCE_URL"] = urls["source_ingest"]
+    return env
+
+
 def _bootstrap_trade_journey_projection(
     project: str,
     compose_files: list[str],
@@ -908,8 +917,7 @@ def main(argv: list[str] | None = None) -> int:
     test_env["PANTHEON_L12_COMPOSE_FILES"] = os.pathsep.join(compose_files)
     test_env["PANTHEON_L12_EVIDENCE_OUTPUT"] = str(args.evidence_output.resolve())
     test_env["PANTHEON_L12_PORT_OFFSET"] = str(args.port_offset)
-    for name, url in urls.items():
-        test_env[f"PANTHEON_L12_{name.upper()}_URL"] = url
+    test_env.update(_suite_url_env(urls))
 
     # Resolve python binary
     python_bin = sys.executable
