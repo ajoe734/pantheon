@@ -259,12 +259,44 @@ class TradeJourneyProjectionStore:
                     clauses.append(link_match)
                     params.extend((identifier_type, str(filters[key])))
         if filters.get("q"):
-            if filters.get("q_journey_only"):
-                clauses.append("journey_id ILIKE %s")
-                params.append(f"%{filters['q']}%")
-            else:
-                clauses.append(f"(journey_id ILIKE %s OR EXISTS (SELECT 1 FROM {self.schema}.identity_links link WHERE link.tenant_id={self.schema}.journeys.tenant_id AND link.environment={self.schema}.journeys.environment AND link.journey_id={self.schema}.journeys.journey_id AND link.identifier_value ILIKE %s) OR EXISTS (SELECT 1 FROM jsonb_each(COALESCE({self.schema}.journeys.current_identity_summary -> 'identifiers', {self.schema}.journeys.current_identity_summary)) dim(k, v), jsonb_array_elements_text(CASE WHEN jsonb_typeof(v)='array' THEN v ELSE jsonb_build_array(v) END) val WHERE k = ANY(%s) AND val ILIKE %s))")
-                params.extend((f"%{filters['q']}%", f"%{filters['q']}%", sorted(SHARED_IDENTIFIER_TYPES), f"%{filters['q']}%"))
+            q_val = str(filters["q"]).strip()
+            if q_val:
+                q_journey_only = bool(filters.get("q_journey_only"))
+                is_exact = bool(filters.get("q_exact"))
+                if not is_exact and not any(ch in q_val for ch in ("%", "_")):
+                    if self._one(f"SELECT 1 FROM {self.schema}.journeys WHERE tenant_id=%s AND environment=%s AND journey_id=%s", (tenant_id, environment, q_val)):
+                        is_exact = True
+                    elif not q_journey_only and self._one(
+                        f"SELECT 1 FROM {self.schema}.identity_links WHERE tenant_id=%s AND environment=%s AND identifier_value=%s UNION ALL SELECT 1 FROM {self.schema}.journeys WHERE tenant_id=%s AND environment=%s AND (COALESCE(current_identity_summary -> 'identifiers', current_identity_summary)) @@ ('$.** == ' || to_json(%s::text))::jsonpath LIMIT 1",
+                        (tenant_id, environment, q_val, tenant_id, environment, q_val),
+                    ):
+                        is_exact = True
+                if is_exact:
+                    if q_journey_only:
+                        clauses.append("journey_id = %s")
+                        params.append(q_val)
+                    else:
+                        clauses.append(
+                            f"journey_id IN ("
+                            f"SELECT %s "
+                            f"UNION SELECT link.journey_id FROM {self.schema}.identity_links link WHERE link.tenant_id=%s AND link.environment=%s AND link.identifier_value=%s "
+                            f"UNION SELECT j.journey_id FROM {self.schema}.journeys j WHERE j.tenant_id=%s AND j.environment=%s AND (COALESCE(j.current_identity_summary -> 'identifiers', j.current_identity_summary)) @@ ('$.** == ' || to_json(%s::text))::jsonpath"
+                            f")"
+                        )
+                        params.extend([q_val, tenant_id, environment, q_val, tenant_id, environment, q_val])
+                else:
+                    pat = f"%{q_val}%"
+                    if q_journey_only:
+                        clauses.append("journey_id ILIKE %s")
+                        params.append(pat)
+                    else:
+                        clauses.append(
+                            f"journey_id IN ("
+                            f"SELECT j.journey_id FROM {self.schema}.journeys j WHERE j.tenant_id=%s AND j.environment=%s AND j.journey_id ILIKE %s "
+                            f"UNION SELECT link.journey_id FROM {self.schema}.identity_links link WHERE link.tenant_id=%s AND link.environment=%s AND link.identifier_value ILIKE %s"
+                            f")"
+                        )
+                        params.extend([tenant_id, environment, pat, tenant_id, environment, pat])
         return clauses, params
 
     def page_journeys(self, *, tenant_id: str, environment: str, filters: Optional[Mapping[str, Any]] = None, sort: str = "updated_at_desc", page_size: int = DEFAULT_PAGE_SIZE, page_token: Optional[str] = None) -> ProjectionPage:
