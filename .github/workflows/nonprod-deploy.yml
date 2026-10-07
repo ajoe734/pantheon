@@ -99,6 +99,11 @@ on:
         required: false
         default: ""
         type: string
+      isolated_provider_qualification:
+        description: "Dev only: run the original isolated L1-L12 stimulus gate with the approved product provider; skips every root deploy, compensation and frontend switch"
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - "master"
@@ -114,7 +119,7 @@ concurrency:
 jobs:
   deploy-dev:
     name: Deploy dev under shared environment lease
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' && !inputs.isolated_provider_qualification }}
     runs-on: ubuntu-latest
     # A root deploy rebuilds the complete dev image set on one VM.  The direct
     # SSH deadline below is two hours; the job budget must also leave room for
@@ -2624,6 +2629,99 @@ jobs:
           fi
           echo "Frontend admission or switch failed and exact rollback proof is absent." >&2
           exit 75
+
+  isolated-l12-provider-qualification:
+    name: Isolated L1-L12 gate with approved provider
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' && inputs.isolated_provider_qualification }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    environment: dev
+    env:
+      TARGET_REF: ${{ inputs.ref || github.sha }}
+      TARGET_COMPONENT: ${{ inputs.component }}
+      ALLOW_DIRTY: ${{ inputs.allow_dirty }}
+      DEV_AUTH_PROFILE: ${{ inputs.dev_auth_profile }}
+    steps:
+      # Plain git keeps the pinned checkout-action inventory unchanged. The
+      # token travels only through git's environment config, never argv.
+      - name: Fetch requested payload
+        env:
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: http.extraheader
+          GH_TOKEN: ${{ github.token }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          basic="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${basic}"
+          git init -q .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch -q origin "+refs/heads/dev:refs/remotes/origin/dev" "${TARGET_REF}"
+          git checkout -q --detach FETCH_HEAD
+          git submodule update --init --recursive --depth 1
+
+      - name: Validate protected exact dev source
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          sha="$(git rev-parse HEAD)"
+          trusted_ref="$(git rev-parse refs/remotes/origin/dev)"
+          if [[ ! "${sha}" =~ ^[0-9a-f]{40}$ || "${sha}" != "${trusted_ref}" || "${GITHUB_REF}" != "refs/heads/dev" || "${GITHUB_SHA}" != "${sha}" ]]; then
+            echo "Isolated qualification must run from the exact current Pantheon dev commit ${trusted_ref}; got payload=${sha} workflow_ref=${GITHUB_REF}" >&2
+            exit 1
+          fi
+          if [[ "${TARGET_COMPONENT}" != "auto" || "${ALLOW_DIRTY}" != "false" || "${DEV_AUTH_PROFILE}" != "strict" ]]; then
+            echo "Isolated qualification requires component=auto, allow_dirty=false and strict auth." >&2
+            exit 1
+          fi
+
+      - name: Install harness dependencies
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: python3 -m pip install -r requirements.txt
+
+      - name: Preflight runner resources for full service set
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          echo "=== Runner Disk and Memory Preflight ==="
+          df -h .
+          free -m
+          avail_kb=$(df -k . | awk 'NR==2 {print $4}')
+          if [[ "${avail_kb}" -lt 5242880 ]]; then
+            echo "Insufficient disk space for isolated compose stack: ${avail_kb} KB < 5GB" >&2
+            exit 1
+          fi
+          avail_mem_kb=$(awk '/MemAvailable/ {print $2}' /proc/meminfo || true)
+          if [[ -n "${avail_mem_kb}" && "${avail_mem_kb}" -lt 1048576 ]]; then
+            echo "Insufficient memory for isolated compose stack: ${avail_mem_kb} KB < 1GB" >&2
+            exit 1
+          fi
+
+      # The driver itself owns the shared qualification lease and teardown, so
+      # no outer lease is taken here. The provider credential reaches only the
+      # gateway container environment; the rendered batch holds an unresolved
+      # ${CLAUDE_CODE_OAUTH_TOKEN} reference and no credential value.
+      - name: Run original isolated L1-L12 stimulus gate
+        env:
+          PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          batch="$(python3 scripts/openclaw_isolated_model_bootstrap.py)"
+          export PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH="${batch}"
+          [[ -n "${PANTHEON_ENVIRONMENT_LEASE_TOKEN}" ]] || { echo "COORDINATION_REPO_TOKEN is required for the qualification lease." >&2; exit 1; }
+          mkdir -p "${RUNNER_TEMP}/l12-qualification"
+          python3 scripts/run_isolated_l12_runtime_e2e.py \
+            --provision-services --stimulus-gate \
+            --compose-project "l12q${GITHUB_RUN_ID}x${GITHUB_RUN_ATTEMPT}" \
+            --port-offset "$((10000 + GITHUB_RUN_ID % 10 * 1000))" \
+            --ready-timeout 600 \
+            --evidence-output "${RUNNER_TEMP}/l12-qualification/report.json"
+
+      - name: Upload qualification report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: l12-provider-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/l12-qualification/
+          if-no-files-found: warn
 
   deploy-staging-live:
     name: Deploy staging-live (independent environment)
