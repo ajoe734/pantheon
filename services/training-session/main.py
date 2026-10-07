@@ -1962,11 +1962,13 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
     session = store.get_session(session_id)
     if not session:
         failure_code = "training_session_not_found"
+        failure_reason = None
         retryable = False
         preview = None
     else:
         _require_tenant_record(session, "training session not found")
         failure_code = None
+        failure_reason = None
         retryable = False
         try:
             preview = _run_preview_evaluation(
@@ -1983,6 +1985,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
         except AuthorityValidationError as exc:
             preview = None
             message = str(exc)
+            failure_reason = " ".join(message.split())[:300]
             retryable = message.startswith(
                 ("real vectorbt evaluation failed", "persona target authority unavailable")
             )
@@ -2010,6 +2013,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
                     "worker_run_id": worker_run_id,
                     "attempt_count": job.get("attempt_count"),
                     "error_code": failure_code,
+                    "failure_reason": failure_reason,
                     "retryable": retryable,
                 },
                 recorded_at=timestamp,
@@ -2025,6 +2029,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
                     "status": "failed",
                     "failed_at": timestamp,
                     "error_code": failure_code,
+                    "failure_reason": failure_reason,
                     "retryable": retryable,
                 }
             )
