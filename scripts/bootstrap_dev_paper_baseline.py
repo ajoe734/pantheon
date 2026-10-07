@@ -434,19 +434,13 @@ def ensure_source_provisioning(
 ) -> dict[str, Any]:
     """Provision the Persona's declared data-source connector/schedule now.
 
-    The BFF's async provisioning reconciler
-    (PANTHEON_PERSONA_PROVISIONING_RECONCILE_SECONDS) only evaluates
-    lifecycle readbacks -- it never provisions source connectors. The
-    source-ingest controller's own scheduler tick instead reads a static
-    desired-state file or URL (SOURCE_INGEST_DESIRED_STATE_PATH /
-    SOURCE_INGEST_DESIRED_STATE_URL) that has no knowledge of a Persona
-    created after that file was written. On a fresh host neither path ever
-    registers the dev synthetic connector (dev-paper-us-equity-simulation),
-    so its snapshot can never appear -- see
-    DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001. This calls source-ingest's
-    own authoritative persona-source-provisioning/reconcile endpoint
-    directly (the same governed API the desired-state controller itself
-    uses) so a first deploy converges without waiting on that external tick.
+    This direct reconcile is a first-tick shortcut so a fresh deploy
+    converges immediately without waiting for the controller's scheduled
+    tick. The source-ingest controller is the single authoritative desired-state
+    owner; its authoritative desired state includes active persona requirements
+    read from the persona owner, preserving this provisioned connector on
+    subsequent controller ticks. This shortcut is not a second desired-state
+    authority.
     """
 
     if not required_data_sources:

@@ -96,7 +96,7 @@ def _request_json(
     payload: Mapping[str, Any] | None = None,
     bearer_token: str | None = None,
     timeout_seconds: float = 30.0,
-) -> dict[str, Any]:
+) -> Any:
     body = _canonical_json(payload).encode("utf-8") if payload is not None else None
     headers = {"Accept": "application/json"}
     if body is not None:
@@ -107,8 +107,8 @@ def _request_json(
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         raw = response.read().decode("utf-8")
     parsed = json.loads(raw) if raw else {}
-    if not isinstance(parsed, dict):
-        raise ControllerTickError("http_contract", f"expected JSON object from {url}")
+    if not isinstance(parsed, (dict, list)):
+        raise ControllerTickError("http_contract", f"expected JSON object or list from {url}")
     return parsed
 
 
@@ -214,26 +214,53 @@ def _personas_from_payload(payload: Any) -> tuple[dict[str, Any], ...]:
     return personas
 
 
+def _is_active_persona(persona: Mapping[str, Any]) -> bool:
+    lifecycle = str(persona.get("lifecycle_state") or persona.get("state") or "").strip().lower()
+    status = str(persona.get("status") or "active").strip().lower()
+    return lifecycle != "retired" and status not in {"retired", "archived"}
+
+
 def load_desired_state(*, timeout_seconds: float = 30.0) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
-    url = str(os.getenv("SOURCE_INGEST_DESIRED_STATE_URL") or "").strip()
     configured_path = str(os.getenv("SOURCE_INGEST_DESIRED_STATE_PATH") or "").strip()
+    path = Path(configured_path) if configured_path else DEFAULT_DESIRED_STATE_PATH
+    try:
+        static_payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ControllerTickError("desired_state_read", f"desired-state file is unreadable: {path}") from exc
+    static_authority = str(static_payload.get("authority") or f"file://{path}") if isinstance(static_payload, Mapping) else f"file://{path}"
+    default_personas = _personas_from_payload(static_payload)
+
+    url = str(os.getenv("SOURCE_INGEST_DESIRED_STATE_URL") or "").strip()
     if url:
-        payload = _request_json(
-            url,
-            bearer_token=_load_bearer_token(),
-            timeout_seconds=timeout_seconds,
-        )
+        try:
+            owner_payload = _request_json(
+                url,
+                bearer_token=_load_bearer_token(),
+                timeout_seconds=timeout_seconds,
+            )
+            owner_personas = _personas_from_payload(owner_payload)
+        except ControllerTickError as exc:
+            raise ControllerTickError("persona_owner_read", f"persona owner read failed: {exc}") from exc
+        except Exception as exc:
+            raise ControllerTickError("persona_owner_read", f"persona owner read failed: {exc}") from exc
+
+        active_personas = [p for p in owner_personas if _is_active_persona(p)]
+        combined: list[dict[str, Any]] = list(default_personas)
+        default_ids = {str(p["persona_id"]) for p in default_personas}
+        for p in active_personas:
+            pid = str(p["persona_id"])
+            if pid in default_ids:
+                combined = [p if str(x["persona_id"]) == pid else x for x in combined]
+            else:
+                combined.append(p)
+        personas = tuple(combined)
         authority = url.split("?", 1)[0]
         transport = "https" if url.startswith("https://") else "internal_http"
     else:
-        path = Path(configured_path) if configured_path else DEFAULT_DESIRED_STATE_PATH
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ControllerTickError("desired_state_read", f"desired-state file is unreadable: {path}") from exc
-        authority = str(payload.get("authority") or f"file://{path}") if isinstance(payload, Mapping) else f"file://{path}"
+        personas = default_personas
+        authority = static_authority
         transport = "deployment_file"
-    personas = _personas_from_payload(payload)
+
     normalized = [persona for persona in personas]
     return personas, {
         "authority": authority,
