@@ -1,0 +1,62 @@
+{
+  "task_id": "BFF-LOOP-DETAIL-SURFACE-PARITY-20261007",
+  "title": "Build the loop-run list and detail projection surfaces from one helper and prove the hosted readback against the real BFF routes",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 40,
+  "net_prod_lines": -5,
+  "hosted_incident": {
+    "deploy_run": "37647100516",
+    "commit_sha": "5724c8ec6",
+    "timestamp": "2026-10-07T16:20:00Z",
+    "failing_step": "services.trade_journey.hosted_bff_readback",
+    "artifact": "loop-prod-tel-002-bff-readback-37647100516-1.json",
+    "error_code": "bff_loop_surface_invalid",
+    "surface": "loop-run detail",
+    "failure_message": "loop-run projection metadata mismatched",
+    "request": "GET /bff/v5/loop-runs/{loop_run_id}?tenant_id=tenant-dev&environment=paper",
+    "missing_fields": [
+      "meta.surfaces.loop_run_detail.projection_schema_version",
+      "meta.surfaces.loop_run_detail.projection_mode"
+    ],
+    "before_behaviour": "control_loops/service.py list_loop_runs built surface with projection_schema_version and projection_mode, but get_loop_run constructed a handwritten detail surface omitting both fields. Readback failed with bff_loop_surface_invalid.",
+    "after_behaviour": "control_loops/service.py shares _postgres_projection_surface helper across list_loop_runs and get_loop_run. Both paths provide identical source, projection_schema_version, projection_mode, controller, and formal truth rule."
+  },
+  "acceptance_criteria_verification": {
+    "ac1_shared_surface_helper": {
+      "status": "satisfied",
+      "detail": "list_loop_runs and get_loop_run build surfaces via _postgres_projection_surface, ensuring parity in schema version, mode, controller, and truth rule."
+    },
+    "ac2_e2e_contract_test": {
+      "status": "satisfied",
+      "detail": "Contract tests in services/trade_journey/test_hosted_bff_readback.py run readback against real FastAPI routes with stub projection reader and dev-login operator, and verify drift failure when projection_schema_version is omitted."
+    },
+    "ac3_readback_not_weakened": {
+      "status": "satisfied",
+      "detail": "services/trade_journey/hosted_bff_readback.py was unchanged; contract verification rules remain strict."
+    },
+    "ac4_hosted_failure_and_missing_fields_recorded": {
+      "status": "satisfied",
+      "detail": "Hosted deploy run 37647100516 documented with artifact, error code, and missing fields projection_schema_version and projection_mode."
+    },
+    "ac5_net_prod_budget_and_no_compression": {
+      "status": "satisfied",
+      "detail": "Production code diff is net -5 lines (-26, +21 in control_loops/service.py), strictly within the 40 line budget with standard clean formatting."
+    },
+    "ac6_hosted_track_external_wait": {
+      "status": "satisfied",
+      "detail": "Hosted track: the next automatic dev pair release passes the authenticated public BFF readback step of the canonical paper lifecycle probe or its evidence names the next failing gate; recorded as external_wait until then."
+    }
+  },
+  "validation": [
+    {
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -q services/trade_journey/test_hosted_bff_readback.py",
+      "result": "9 passed, 1 warning in 6.93s"
+    },
+    {
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -q services/control-plane/bff/tests/test_control_loops_router.py",
+      "result": "14 passed, 3 warnings in 6.56s"
+    }
+  ]
+}

@@ -634,6 +634,16 @@ def test_dev_login_operator_reads_paper_loop_run_and_refuses_live() -> None:
     )
     assert list_paper.status_code == 200, list_paper.text
 
+    detail_surface = resp.json()["meta"]["surfaces"]["loop_run_detail"]
+    list_surface = list_paper.json()["meta"]["surfaces"]["loop_runs"]
+    for surface in (detail_surface, list_surface):
+        assert surface["projection_schema_version"] == "pantheon.trade-journey-projection.v1"
+        assert surface["projection_mode"] == "live"
+        assert surface["source"] == "postgres_lifecycle_projection"
+        assert surface["status"] == "ok"
+        assert surface["truth_status"] == "formal"
+        assert surface["accepted_live"] is True
+
     list_live = client.get(
         "/bff/v5/loop-runs?tenant_id=tenant-dev&environment=live",
         headers=headers,
