@@ -255,11 +255,29 @@ validate_target_selection() {
   esac
 
   local check_vars=(
-    PROJECT_ID REMOTE_USER DEV_VM DEV_ZONE DEV_REMOTE_DIR DEV_DEPLOY_SSH_HOST DEV_DEPLOY_SSH_USER
-    DEV_BFF_PUBLIC_HOST DEV_FE_PUBLIC_HOST DEV_FE_STATIC_ROOT DEV_BFF_CORS_ORIGINS DEV_BFF_CANONICAL_CORS_ORIGIN
-    DEV_BFF_REQUIRED_CORS_ORIGINS PANTHEON_DEPLOY_WORKTREE_ROOT STAGING_CONTROL_VM STAGING_CONTROL_ZONE
-    STAGING_CONTROL_REMOTE_DIR STAGING_EXEC_VM STAGING_EXEC_ZONE STAGING_EXEC_REMOTE_DIR STAGING_EXEC_HEALTH_URL
-    STAGING_BFF_CORS_ORIGINS STAGING_BFF_CANONICAL_CORS_ORIGIN
+    PROJECT_ID
+    REMOTE_USER
+    DEV_VM
+    DEV_ZONE
+    DEV_REMOTE_DIR
+    DEV_DEPLOY_SSH_HOST
+    DEV_DEPLOY_SSH_USER
+    DEV_BFF_PUBLIC_HOST
+    DEV_FE_PUBLIC_HOST
+    DEV_FE_STATIC_ROOT
+    DEV_BFF_CORS_ORIGINS
+    DEV_BFF_CANONICAL_CORS_ORIGIN
+    DEV_BFF_REQUIRED_CORS_ORIGINS
+    PANTHEON_DEPLOY_WORKTREE_ROOT
+    STAGING_CONTROL_VM
+    STAGING_CONTROL_ZONE
+    STAGING_CONTROL_REMOTE_DIR
+    STAGING_EXEC_VM
+    STAGING_EXEC_ZONE
+    STAGING_EXEC_REMOTE_DIR
+    STAGING_EXEC_HEALTH_URL
+    STAGING_BFF_CORS_ORIGINS
+    STAGING_BFF_CANONICAL_CORS_ORIGIN
   )
   local var_name val
   local retired_pattern='sslip\.io|104\.155\.223\.192|35\.201\.204\.12|35\.201\.239\.38|34\.81\.75\.241|35\.236\.178\.81|pantheon-benjamin-20260528|pantheon-lupin-dev-20260719|pantheon-lupin-dev|/home/lupin|^lupin$'
@@ -276,8 +294,14 @@ validate_target_selection() {
       [[ -n "${PROJECT_ID:-}" ]] || error "dev deployment requires --project-id or PROJECT_ID to be set"
       [[ -n "${REMOTE_USER:-}" ]] || error "dev deployment requires REMOTE_USER to be set"
       local required_dev_vars=(
-        DEV_VM DEV_ZONE DEV_REMOTE_DIR DEV_DEPLOY_SSH_HOST DEV_BFF_PUBLIC_HOST
-        DEV_FE_PUBLIC_HOST DEV_FE_STATIC_ROOT DEV_BFF_CORS_ORIGINS
+        DEV_VM
+        DEV_ZONE
+        DEV_REMOTE_DIR
+        DEV_DEPLOY_SSH_HOST
+        DEV_BFF_PUBLIC_HOST
+        DEV_FE_PUBLIC_HOST
+        DEV_FE_STATIC_ROOT
+        DEV_BFF_CORS_ORIGINS
       )
       for var_name in "${required_dev_vars[@]}"; do
         if [[ -z "${!var_name:-}" ]]; then
@@ -810,6 +834,18 @@ CONTEXT_PY
 }
 fi
 
+if [[ "${REFRESH_ONLY:-false}" == "true" ]]; then
+  if [[ -n "${DEV_DEPLOY_SSH_HOST:-}" ]]; then
+    DEPLOY_ENV="dev"
+    COMPONENT="refresh-only"
+    [[ -n "${PROJECT_ID:-}" ]] || PROJECT_ID="pantheon-dev-20260902"
+    [[ -n "${REMOTE_USER:-}" ]] || REMOTE_USER="${DEV_DEPLOY_SSH_USER:-chloe_ong_dev_cctech_support_com}"
+    [[ -n "${DEV_VM:-}" ]] || DEV_VM="pantheon-dev-deploy"
+    [[ -n "${DEV_ZONE:-}" ]] || DEV_ZONE="asia-east1-b"
+    [[ -n "${DEV_REMOTE_DIR:-}" ]] || DEV_REMOTE_DIR="/home/chloe_ong_dev_cctech_support_com/pantheon"
+  fi
+fi
+
 ssh_bash() {
   local vm="$1"
   local zone="$2"
@@ -817,11 +853,13 @@ ssh_bash() {
   local remote_component="$4"
   local command_prefix="" deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-7200}" remote_command=() remote_output=""
   if [[ "${remote_component}" == "refresh-only" ]]; then
-    if [[ -n "${DEV_DEPLOY_SSH_HOST:-}" ]]; then
-      remote_output="/tmp/pantheon-refresh-outcome-${GITHUB_RUN_ID:-$$}.json"
-      command_prefix="PANTHEON_DEPLOY_COMPONENT=refresh-only FORCE_REFRESH=$(shell_quote "${FORCE_REFRESH:-false}") REFRESH_OUTPUT_PATH=$(shell_quote "${remote_output}") bash -s"
-      remote_command=("$SCRIPT_DIR/dev_vm_ssh.sh" exec "$command_prefix")
-    fi
+    [[ -z "${REFRESH_OUTPUT_PATH:-}" ]] || remote_output="/tmp/pantheon-refresh-outcome-${GITHUB_RUN_ID:-$$}.json"
+    command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
+    command_prefix+=" PANTHEON_DEPLOY_COMPONENT=refresh-only"
+    command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
+    command_prefix+=" FORCE_REFRESH=$(shell_quote "${FORCE_REFRESH:-false}")"
+    command_prefix+=" REFRESH_OUTPUT_PATH=$(shell_quote "${remote_output}")"
+    command_prefix+=" bash -s"
   else
     command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
     command_prefix+=" PANTHEON_DEPLOY_COMPONENT=$(shell_quote "$remote_component")"
@@ -955,14 +993,17 @@ ssh_bash() {
       bash -s
       return $?
     fi
-    if [[ "${DEPLOY_ENV}" == dev && "${remote_component}" != "refresh-only" ]]; then
+    if [[ "${DEPLOY_ENV}" == dev ]]; then
       [[ "${PROJECT_ID}" == pantheon-dev-20260902 && "${vm}" == pantheon-dev-deploy && \
          "${zone}" == asia-east1-b && "${DEV_DEPLOY_SSH_HOST}" == 34.81.52.222 && \
-         "${DEV_DEPLOY_SSH_USER:-${REMOTE_USER}}" == chloe_ong_dev_cctech_support_com && \
-         "${DEV_BFF_PUBLIC_HOST}" == api.dev.mvl-cap.tw && "${DEV_FE_PUBLIC_HOST}" == app.dev.mvl-cap.tw ]] \
+         "${DEV_DEPLOY_SSH_USER:-${REMOTE_USER}}" == chloe_ong_dev_cctech_support_com ]] \
         || { info "guarded artifact transport requires the explicit current dev target" >&2; return 75; }
+      if [[ "${remote_component}" != "refresh-only" ]]; then
+        [[ "${DEV_BFF_PUBLIC_HOST}" == api.dev.mvl-cap.tw && "${DEV_FE_PUBLIC_HOST}" == app.dev.mvl-cap.tw ]] \
+          || { info "guarded artifact transport requires the explicit current dev target" >&2; return 75; }
+      fi
       local -a observer_args=()
-      if [[ "${ARTIFACT_RESTORE}" != true && "${ARTIFACT_VERIFY}" != true ]]; then
+      if [[ "${remote_component}" != "refresh-only" && "${ARTIFACT_RESTORE}" != true && "${ARTIFACT_VERIFY}" != true ]]; then
         prepare_dev_candidate_receipt_context || return $?
         observer_args=(--candidate-receipt-context "${PANTHEON_DEV_ARTIFACT_RUNNER_EVIDENCE_DIR}/context.json"
           --candidate-receipt-output "${PANTHEON_DEV_ARTIFACT_RUNNER_EVIDENCE_DIR}/candidate-receipt.json")
@@ -1004,6 +1045,12 @@ with os.fdopen(fd, "wb") as stream:
             --deadline-seconds "${deadline_seconds}" "${observer_args[@]}" || transport_status=$?
         fi
       fi
+      if [[ "${transport_status}" -eq 0 && "${remote_component}" == "refresh-only" && -n "${remote_output:-}" && -n "${REFRESH_OUTPUT_PATH:-}" ]]; then
+        if "$SCRIPT_DIR/dev_vm_ssh.sh" exec "test -f $(shell_quote "${remote_output}")" >/dev/null 2>&1; then
+          "$SCRIPT_DIR/dev_vm_ssh.sh" copy-from "${remote_output}" "${REFRESH_OUTPUT_PATH}" || true
+          "$SCRIPT_DIR/dev_vm_ssh.sh" exec "rm -f $(shell_quote "${remote_output}")" >/dev/null 2>&1 || true
+        fi
+      fi
       # Only these locally-created, exact private paths are removed; never an
       # evidence directory, receipt, retained VM artifact, or caller path.
       python3 - "${private_dir}" <<'CLEAN_PRIVATE_PY'
@@ -1018,7 +1065,6 @@ CLEAN_PRIVATE_PY
     fi
     # Staging retains its existing independent transport; no dev authority is
     # inferred or reused there.
-    local transport_rc=0
     python3 -c '
 import os
 import signal
@@ -1082,14 +1128,7 @@ except Exception:
     raise
 
 sys.exit(exit_code)
-' "${deadline_seconds}" "${remote_command[@]}" || transport_rc=$?
-    if [[ "${transport_rc}" -eq 0 && -n "${remote_output}" && -n "${REFRESH_OUTPUT_PATH:-}" ]]; then
-      if "$SCRIPT_DIR/dev_vm_ssh.sh" exec "test -f $(shell_quote "${remote_output}")" >/dev/null 2>&1; then
-        "$SCRIPT_DIR/dev_vm_ssh.sh" copy-from "${remote_output}" "${REFRESH_OUTPUT_PATH}" || true
-        "$SCRIPT_DIR/dev_vm_ssh.sh" exec "rm -f $(shell_quote "${remote_output}")" >/dev/null 2>&1 || true
-      fi
-    fi
-    return "${transport_rc}"
+' "${deadline_seconds}" "${remote_command[@]}"
   }
   run_remote_payload <<'REMOTE'
 set -euo pipefail
@@ -4354,9 +4393,18 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     ;;
 
   refresh-only)
-    for wt in "${HOME}/pantheon-ci-deploy/managed-deploy-worktrees/dev-root/dev-root" "${HOME}/pantheon-ci-deploy/managed-deploy-worktrees/dev-root"; do
-      if [[ -f "${wt}/docker-compose.yml" ]]; then cd "${wt}"; break; fi
-    done
+    if [[ ! -f "docker-compose.yml" ]]; then
+      local wt_root="${PANTHEON_DEPLOY_WORKTREE_ROOT:-${HOME}/pantheon-ci-deploy/managed-deploy-worktrees}"
+      local wt="" wt_found=false
+      for wt in "${wt_root}/dev-root" "${wt_root}/dev-root/dev-root" "${HOME}/pantheon-ci-deploy/managed-deploy-worktrees/dev-root"; do
+        if [[ -f "${wt}/docker-compose.yml" ]]; then
+          cd "${wt}"
+          wt_found=true
+          break
+        fi
+      done
+      [[ "${wt_found}" == "true" ]] || error "no managed deploy worktree containing docker-compose.yml found in ${wt_root}"
+    fi
     execute_bounded_source_refresh_entrypoint "${FORCE_REFRESH:-false}" "${REFRESH_OUTPUT_PATH:-}"
     exit $?
     ;;
@@ -4371,26 +4419,46 @@ REMOTE
 }
 
 if [[ "${REFRESH_ONLY:-false}" == "true" ]]; then
-  ssh_bash "" "" "" refresh-only
+  ssh_bash "${DEV_VM:-}" "${DEV_ZONE:-}" "${DEV_REMOTE_DIR:-}" refresh-only
   exit $?
 fi
 
+deploy_dev_root() {
+  ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" root
+}
+
+deploy_dev_bff() {
+  ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" bff
+}
+
+deploy_staging_exec() {
+  ssh_bash "$STAGING_EXEC_VM" "$STAGING_EXEC_ZONE" "$STAGING_EXEC_REMOTE_DIR" exec
+}
+
+deploy_staging_control() {
+  ssh_bash "$STAGING_CONTROL_VM" "$STAGING_CONTROL_ZONE" "$STAGING_CONTROL_REMOTE_DIR" control
+}
+
 case "${DEPLOY_ENV}:${COMPONENT}" in
+  dev:refresh-only)
+    ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" refresh-only
+    exit $?
+    ;;
   dev:root)
-    ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" root
+    deploy_dev_root
     ;;
   dev:bff)
-    ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" bff
+    deploy_dev_bff
     ;;
   staging-live:exec)
-    ssh_bash "$STAGING_EXEC_VM" "$STAGING_EXEC_ZONE" "$STAGING_EXEC_REMOTE_DIR" exec
+    deploy_staging_exec
     ;;
   staging-live:control)
-    ssh_bash "$STAGING_CONTROL_VM" "$STAGING_CONTROL_ZONE" "$STAGING_CONTROL_REMOTE_DIR" control
+    deploy_staging_control
     ;;
   staging-live:all)
-    ssh_bash "$STAGING_EXEC_VM" "$STAGING_EXEC_ZONE" "$STAGING_EXEC_REMOTE_DIR" exec
-    ssh_bash "$STAGING_CONTROL_VM" "$STAGING_CONTROL_ZONE" "$STAGING_CONTROL_REMOTE_DIR" control
+    deploy_staging_exec
+    deploy_staging_control
     ;;
   *)
     error "unsupported deployment target ${DEPLOY_ENV}:${COMPONENT}"

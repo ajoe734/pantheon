@@ -12,7 +12,7 @@
     "ac2_runner_checkout_streaming": "passed: runner invokes scripts/deploy_nonprod_vm.sh --refresh-only from local checkout; script streams remote payload over direct SSH; nothing executes from stale DEV_REMOTE_DIR",
     "ac3_shared_dev_environment_lease": "passed: refresh acquires lease via pinned dev_environment_lease.py (wait-seconds 0 to report named LeaseBusy reason), maintains heartbeat loop, wraps execution in run_with_dev_environment_lease.sh, and releases on completion",
     "ac4_workflow_dispatch_outcome_artifact": "passed: workflow uploads tw-refresh-outcome.json as an Actions artifact on completion",
-    "ac5_multiple_trading_day_schedules": "passed: schedule triggers on multiple trading day times ('0 6,7,8,9 * * 1-5') leveraging idempotency and freshness skip",
+    "ac5_multiple_trading_day_schedules": "passed: schedule triggers on multiple trading day times ('0 7 * * 1-5' and '0 8 * * 1-5') leveraging idempotency and freshness skip",
     "ac6_workflow_tests": "passed: scripts/test_dev_tw_market_refresh_workflow.py asserts environment dev, variable/secret sources of SSH inputs, lease guard, artifact upload, and absence of DEV_REMOTE_DIR as execution directory",
     "ac7_no_compressed_code": "passed: net production code additions stay within 60 line budget without compressed code or minification",
     "ac8_hosted_track": "recorded: pending next scheduled trading-day run on hosted dev"

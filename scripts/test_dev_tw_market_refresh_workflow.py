@@ -28,10 +28,19 @@ def test_workflow_declares_environment_dev() -> None:
 def test_workflow_sources_ssh_inputs_strictly() -> None:
     content = WORKFLOW_PATH.read_text(encoding="utf-8")
     wf = _load_workflow()
-    refresh_steps = wf.get("jobs", {}).get("refresh", {}).get("steps", [])
+    refresh_job = wf.get("jobs", {}).get("refresh", {})
+    refresh_steps = refresh_job.get("steps", [])
+
+    job_env = refresh_job.get("env", {})
+    assert job_env.get("DEV_DEPLOY_SSH_HOST") == "${{ vars.DEV_DEPLOY_SSH_HOST }}", (
+        "DEV_DEPLOY_SSH_HOST must be declared at job level env from vars.DEV_DEPLOY_SSH_HOST"
+    )
+    assert job_env.get("DEV_DEPLOY_SSH_USER") == "${{ vars.NONPROD_REMOTE_USER }}", (
+        "DEV_DEPLOY_SSH_USER must be declared at job level env from vars.NONPROD_REMOTE_USER"
+    )
 
     # Check the step environment declarations
-    env_vars: dict[str, str] = {}
+    env_vars: dict[str, str] = dict(job_env)
     for step in refresh_steps:
         if isinstance(step, dict) and "env" in step:
             env_vars.update(step["env"])
@@ -54,6 +63,11 @@ def test_workflow_sources_ssh_inputs_strictly() -> None:
     # 4. DEV_DEPLOY_SSH_USER must come from vars.NONPROD_REMOTE_USER
     assert env_vars.get("DEV_DEPLOY_SSH_USER") == "${{ vars.NONPROD_REMOTE_USER }}", (
         "DEV_DEPLOY_SSH_USER must be read from environment variable vars.NONPROD_REMOTE_USER"
+    )
+
+    # 5. PANTHEON_DEPLOY_WORKTREE_ROOT must come from vars.DEV_DEPLOY_WORKTREE_ROOT
+    assert env_vars.get("PANTHEON_DEPLOY_WORKTREE_ROOT") == "${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}", (
+        "PANTHEON_DEPLOY_WORKTREE_ROOT must be read from environment variable vars.DEV_DEPLOY_WORKTREE_ROOT"
     )
 
 
