@@ -3071,34 +3071,31 @@ assert int(payload.get("total_sweeps_run") or 0) >= 1
 stage_dev_paper_prerequisite_readiness() {
   local source_ingest_url="${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}"
   local symbol="${1:-SPY}"
-  local max_attempts="${2:-15}"
+  local measured_refresh_duration="${DEV_PAPER_REFRESH_DURATION_SECONDS:-5}"
+  local stated_margin="${DEV_PAPER_READINESS_MARGIN_SECONDS:-35}"
+  local budget="${2:-$(( measured_refresh_duration + stated_margin ))}"
   local poll_interval="${3:-2}"
   local token="${SOURCE_INGEST_CONTROLLER_TOKEN:-}"
 
-  info "checking staged dev paper prerequisite readiness for symbol ${symbol}"
+  info "checking staged dev paper prerequisite readiness for symbol ${symbol} (budget=${budget}s margin=${stated_margin}s)"
 
-  # Try to read controller token from file or container if not set
-  if [[ -z "$token" ]]; then
-    local token_file="${SOURCE_INGEST_CONTROLLER_TOKEN_FILE:-}"
-    if [[ -n "$token_file" && -f "$token_file" ]]; then
-      token="$(cat "$token_file" 2>/dev/null || true)"
-    fi
+  if [[ -z "$token" && -n "${SOURCE_INGEST_CONTROLLER_TOKEN_FILE:-}" && -f "${SOURCE_INGEST_CONTROLLER_TOKEN_FILE:-}" ]]; then
+    token="$(cat "$SOURCE_INGEST_CONTROLLER_TOKEN_FILE" 2>/dev/null || true)"
   fi
   if [[ -z "$token" ]]; then
-    local container_id
-    container_id="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
-    if [[ -n "$container_id" ]]; then
-      token="$(docker exec "$container_id" cat /data/source-ingest/controller_token 2>/dev/null || true)"
-    fi
+    local cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
+    [[ -z "$cid" ]] || token="$(docker exec "$cid" cat /data/source-ingest/controller_token 2>/dev/null || true)"
   fi
+  token="$(printf '%s' "$token" | tr -d '\r\n[:space:]')"
 
   local auth_header=()
-  if [[ -n "$token" ]]; then
-    auth_header=(-H "Authorization: Bearer ${token}")
-  fi
+  [[ -z "$token" ]] || auth_header=(-H "Authorization: Bearer ${token}")
 
-  local attempt
-  for attempt in $(seq 1 "$max_attempts"); do
+  local deadline attempt=0 triggered=false
+  deadline=$(( $(date +%s) + budget ))
+
+  while :; do
+    attempt=$(( attempt + 1 ))
     local snapshot_resp=""
     snapshot_resp="$(curl -fsS "${source_ingest_url}/api/source-ingest/snapshots/latest?symbol=${symbol}" 2>/dev/null || true)"
 
@@ -3141,12 +3138,54 @@ sys.exit(0)
       return 0
     fi
 
-    info "staged dev paper prerequisite snapshot for ${symbol} missing, non-admissible, or lacks market; triggering run-scheduled (attempt ${attempt}/${max_attempts})"
-    curl -fsS -X POST "${auth_header[@]}" "${source_ingest_url}/api/source-ingest/run-scheduled" 2>/dev/null || true
+    if [[ "$triggered" == "false" ]]; then
+      triggered=true
+      info "staged dev paper prerequisite snapshot for ${symbol} missing, non-admissible, or lacks market; triggering run-scheduled (attempt 1)"
+      local trigger_resp http_code trigger_body
+      trigger_resp="$(curl -sS -w "\n%{http_code}" -X POST "${auth_header[@]}" \
+        -H "Content-Type: application/json" \
+        -d '{"force_connector_ids":["dev-paper-us-equity-simulation"],"exclusive_connector_ids":["dev-paper-us-equity-simulation"]}' \
+        "${source_ingest_url}/api/source-ingest/run-scheduled" 2>&1 || true)"
+      http_code="$(printf '%s\n' "$trigger_resp" | tail -n 1)"
+      trigger_body="$(printf '%s\n' "$trigger_resp" | sed '$d')"
+
+      local eval_out outcome errs diag=""
+      eval_out="$(python3 -c '
+import json, sys
+code = sys.argv[1] if len(sys.argv) > 1 else ""
+body = sys.argv[2] if len(sys.argv) > 2 else ""
+if code == "000":
+    print("transport failure\t")
+elif code in ("401", "403"):
+    print("authentication rejected\t")
+elif code != "200":
+    print("server error\t")
+else:
+    try:
+        d = json.loads(body)
+        fails = [str(f.get("connector_id")) + ": " + str(f.get("error")) for f in d.get("failed") or [] if isinstance(f, dict)]
+        ran = int((d.get("summary") or {}).get("total_ran", 1 if d.get("status") == "ok" else 0))
+        outcome = "refreshed" if not fails and ran >= 1 else "controller mode refuses refresh"
+        print(outcome + "\t" + "; ".join(fails))
+    except Exception:
+        print("controller mode refuses refresh\t")
+' "$http_code" "$trigger_body" 2>/dev/null || printf 'server error\t')"
+      outcome="${eval_out%%$'\t'*}"
+      errs="${eval_out#*$'\t'}"
+      [[ -z "$errs" ]] || diag=" failed: [${errs}]"
+
+      info "run-scheduled trigger attempt 1: http_status=${http_code} outcome=${outcome}${diag}"
+      if [[ "$outcome" != "refreshed" ]]; then
+        error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: ${outcome}"
+        return 1
+      fi
+    fi
+
+    (( $(date +%s) < deadline )) || break
     sleep "$poll_interval"
   done
 
-  error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}"
+  error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: snapshot still lacks market"
   return 1
 }
 
