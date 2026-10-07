@@ -119,7 +119,12 @@ def test_operations_read_model_never_expands_full_persona_fleet(monkeypatch) -> 
     store.list_personas = full_fleet_is_forbidden
 
     app = FastAPI()
-    app.include_router(create_management_router(get_read_store=lambda: store))
+    app.include_router(
+        create_management_router(
+            get_read_store=lambda: store,
+            tenant_payload_fn=lambda _ident, **_kw: {"tenant_id": "tenant-default"},
+        )
+    )
     with TestClient(app, raise_server_exceptions=False) as client:
         response = client.get(
             "/bff/management/operations-read-model/persona-budget-direct",
@@ -220,6 +225,7 @@ def test_data_sources_times_out_as_typed_unavailable_not_a_healthy_cache(monkeyp
     app.include_router(router)
 
     with TestClient(app, raise_server_exceptions=False) as client:
+        client.get("/bff/management/data-sources/catalog", headers=HEADERS)
         started = time.monotonic()
         response = client.get("/bff/management/data-sources", headers=HEADERS)
         elapsed = time.monotonic() - started
