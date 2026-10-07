@@ -210,6 +210,7 @@ def materialize_source_dataset_version(
         run_id=run_id,
         expected_market=market,
         trusted_now=now,
+        features_required=_connector_declares_features(connector_readback),
     )
     records = storage["records"]
     canonical_bytes = b"".join(_canonical_json_bytes(record) + b"\n" for record in records)
@@ -409,8 +410,13 @@ def _validate_controller_readback(
     desired_dataset_id = _required_text(
         desired_state.get("dataset"), "connector.desired_state.dataset"
     )
-    if selected.get("desired_state_sha256") != desired_digest:
-        raise SourceDatasetAuthorityError("connector desired-state digest contradicts requirement snapshot")
+    # source-ingest stamps each connector with the digest of its own desired
+    # state; the snapshot digest covers the whole persona requirement set.
+    connector_digest = _required_digest(
+        selected.get("desired_state_sha256"), "connector.desired_state_sha256"
+    )
+    if connector_digest != _desired_state_digest(desired_state):
+        raise SourceDatasetAuthorityError("connector desired-state digest does not match its desired state")
     controller_binding = {
         "schema_version": _READBACK_SCHEMA,
         **identity,
@@ -419,9 +425,15 @@ def _validate_controller_readback(
         "connector_id": connector_id,
         "dataset_id": dataset_id,
         "desired_dataset_id": desired_dataset_id,
-        "desired_state_sha256": desired_digest,
+        "desired_state_sha256": connector_digest,
     }
     return controller_binding, selected
+
+
+def _desired_state_digest(desired_state: Mapping[str, Any]) -> str:
+    """Mirror persona_source_reconciler's connector desired-state stamp."""
+    canonical = json.dumps(desired_state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _validate_dlq(payload: Mapping[str, Any]) -> None:
@@ -542,7 +554,13 @@ def _resolve_dataset_identity(
             "financial catalog must uniquely bind dataset, connector, and desired fetch"
         )
     fetch = _required_mapping(template_matches[0].get("fetch"), "financial catalog template.fetch")
-    if fetch.get("dataset") != desired_dataset:
+    fetch_datasets: list[Any] = []
+    if fetch.get("dataset") not in (None, ""):
+        fetch_datasets.append(fetch.get("dataset"))
+    raw_fetch_datasets = fetch.get("datasets")
+    if isinstance(raw_fetch_datasets, Sequence) and not isinstance(raw_fetch_datasets, (str, bytes)):
+        fetch_datasets.extend(raw_fetch_datasets)
+    if desired_dataset not in fetch_datasets:
         raise SourceDatasetAuthorityError(
             "controller desired dataset contradicts financial catalog owner mapping"
         )
@@ -752,6 +770,7 @@ def _validate_and_read_storage_manifest(
     run_id: str,
     expected_market: str,
     trusted_now: datetime,
+    features_required: bool = True,
 ) -> dict[str, Any]:
     if manifest.get("schema_version") != _STORAGE_SCHEMA or manifest.get("ingest_run_id") != run_id:
         raise SourceDatasetAuthorityError("storage manifest identity mismatch")
@@ -760,14 +779,19 @@ def _validate_and_read_storage_manifest(
         raise SourceDatasetAuthorityError("storage manifest created_at is in the future")
     raw_refs = _storage_ref_array(manifest.get("raw_refs"), "raw_refs")
     normalized_refs = _storage_ref_array(manifest.get("normalized_refs"), "normalized_refs")
-    feature_refs = _storage_ref_array(manifest.get("feature_refs"), "feature_refs")
+    raw_feature_refs = manifest.get("feature_refs")
+    if features_required or raw_feature_refs not in (None, []):
+        feature_refs = _storage_ref_array(raw_feature_refs, "feature_refs")
+    else:
+        feature_refs = []
     summary = _required_mapping(manifest.get("summary"), "storage_manifest.summary")
     for label, refs in (
         ("raw_ref_count", raw_refs),
         ("normalized_ref_count", normalized_refs),
         ("feature_ref_count", feature_refs),
     ):
-        if _strict_int(summary.get(label), f"storage_manifest.summary.{label}", minimum=1) != len(refs):
+        minimum = 0 if label == "feature_ref_count" and not feature_refs else 1
+        if _strict_int(summary.get(label), f"storage_manifest.summary.{label}", minimum=minimum) != len(refs):
             raise SourceDatasetAuthorityError(f"storage manifest {label} does not match refs")
 
     checked_raw: list[dict[str, Any]] = []
@@ -913,12 +937,36 @@ def _ohlcv_from_wrapper(
     _required_text(wrapper.get("source_id"), f"{label}.source_id")
     _required_text(wrapper.get("content_ref"), f"{label}.content_ref")
     metadata = _required_mapping(wrapper.get("metadata"), f"{label}.metadata")
-    instrument = _required_text(metadata.get("instrument"), f"{label}.metadata.instrument")
-    date_value = metadata.get("date")
-    trade_date = metadata.get("trade_date")
-    if date_value not in (None, "") and trade_date not in (None, "") and date_value != trade_date:
-        raise SourceDatasetAuthorityError(f"{label} date and trade_date disagree")
-    date_text = _required_text(date_value or trade_date, f"{label}.metadata.date/trade_date")
+    normalized_row = metadata.get("normalized_row")
+    if isinstance(normalized_row, Mapping):
+        # Taiwan official contract: identity in metadata, OHLCV inside normalized_row.
+        instrument = _required_text(
+            metadata.get("symbol_canonical"), f"{label}.metadata.symbol_canonical"
+        )
+        if normalized_row.get("symbol_canonical") not in (None, instrument):
+            raise SourceDatasetAuthorityError(f"{label} symbol_canonical disagrees with normalized_row")
+        if None not in (normalized_row.get("dataset"), metadata.get("dataset")) and (
+            normalized_row["dataset"] != metadata["dataset"]
+        ):
+            raise SourceDatasetAuthorityError(f"{label} normalized_row dataset mismatch")
+        row_date = normalized_row.get("date")
+        meta_date = metadata.get("date") or metadata.get("trade_date")
+        if row_date not in (None, "") and meta_date not in (None, "") and row_date != meta_date:
+            raise SourceDatasetAuthorityError(f"{label} date and normalized_row date disagree")
+        date_text = _required_text(meta_date or row_date, f"{label}.metadata.date")
+        value_source: Mapping[str, Any] = normalized_row
+        market_value = normalized_row.get("market")
+        value_label = f"{label}.normalized_row"
+    else:
+        instrument = _required_text(metadata.get("instrument"), f"{label}.metadata.instrument")
+        date_value = metadata.get("date")
+        trade_date = metadata.get("trade_date")
+        if date_value not in (None, "") and trade_date not in (None, "") and date_value != trade_date:
+            raise SourceDatasetAuthorityError(f"{label} date and trade_date disagree")
+        date_text = _required_text(date_value or trade_date, f"{label}.metadata.date/trade_date")
+        value_source = metadata
+        market_value = metadata.get("market")
+        value_label = f"{label}.metadata"
     if _DATE_RE.fullmatch(date_text) is None:
         raise SourceDatasetAuthorityError(f"{label} date must use YYYY-MM-DD")
     try:
@@ -928,7 +976,7 @@ def _ohlcv_from_wrapper(
     if bar_date > trusted_now:
         raise SourceDatasetAuthorityError(f"{label} contains a future bar")
     values = {
-        key: _finite_number(metadata.get(key), f"{label}.metadata.{key}")
+        key: _finite_number(value_source.get(key), f"{value_label}.{key}")
         for key in ("open", "high", "low", "close", "volume")
     }
     if any(values[key] <= 0 for key in ("open", "high", "low", "close")):
@@ -939,9 +987,17 @@ def _ohlcv_from_wrapper(
         raise SourceDatasetAuthorityError(f"{label} high is inconsistent with OHLC")
     if values["low"] > min(values["open"], values["high"], values["close"]):
         raise SourceDatasetAuthorityError(f"{label} low is inconsistent with OHLC")
-    market_value = metadata.get("market")
-    market = _required_text(market_value, f"{label}.metadata.market") if market_value not in (None, "") else None
+    market = _required_text(market_value, f"{value_label}.market") if market_value not in (None, "") else None
     return {"instrument": instrument, "date": date_text, **values}, market
+
+
+def _connector_declares_features(connector_readback: Mapping[str, Any]) -> bool:
+    connector = connector_readback.get("connector")
+    metadata = connector.get("metadata") if isinstance(connector, Mapping) else None
+    if not isinstance(metadata, Mapping):
+        return False
+    targets = metadata.get("feature_targets")
+    return isinstance(targets, Sequence) and not isinstance(targets, (str, bytes)) and bool(targets)
 
 
 def _storage_ref_array(value: Any, label: str) -> list[Mapping[str, Any]]:
