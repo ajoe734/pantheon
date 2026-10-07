@@ -1315,5 +1315,330 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
         self.assertEqual(dec.reason_code, "market_input_stale")
 
 
+class TestExecutableSymbolContract(unittest.TestCase):
+    """Direct regressions for the executable paper symbol contract."""
+
+    def _make_fixture(
+        self,
+        *,
+        symbol: str = "SPY",
+        artifact_symbols: list[str] | None = None,
+        binding_market: str | None = None,
+        binding_venue: str | None = None,
+        artifact_market: str | None = None,
+        artifact_data_source: str | None = None,
+        binding_version: str | None = None,
+        market_input_symbol: str | None = None,
+        binding_id: str = "rb-contract-test",
+    ) -> tuple[dict[str, Any], InMemoryPendingSignalStore, PaperSignalProducer]:
+        from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
+        from services.execution.lean_runtime.test_current_artifact_signal import _artifact, _binding
+
+        art = _artifact()
+        art["parameters"]["symbols"] = artifact_symbols if artifact_symbols is not None else [symbol]
+        if artifact_data_source is not None:
+            art["parameters"]["data_source"] = artifact_data_source
+            art["lineage"]["source_dataset_refs"] = [artifact_data_source]
+        else:
+            art["parameters"]["data_source"] = "source-ingest:records/unspecified"
+            art["lineage"]["source_dataset_refs"] = ["source-ingest:records/unspecified"]
+        if artifact_market is not None:
+            art["parameters"]["market"] = artifact_market
+            art["mutation_surface"]["immutable_parameters"].append("market")
+
+        b = _binding(art, binding_id=binding_id, include_market_input=False)
+        b["symbol"] = symbol
+        if binding_market is not None:
+            b["market"] = binding_market
+        if binding_venue is not None:
+            b["venue"] = binding_venue
+        if binding_version is not None:
+            b["artifact_version"] = binding_version
+
+        mi_sym = market_input_symbol if market_input_symbol is not None else symbol
+        b["market_input"] = {
+            "symbol": mi_sym,
+            "closes": [100.0, 105.0],
+            "source_ref": f"source-ingest://snapshots/{binding_id}",
+            "observed_at": _NOW,
+        }
+
+        store = InMemoryPendingSignalStore()
+        producer = PaperSignalProducer(
+            store_for=lambda _: store,
+            strategy=CurrentArtifactStrategy(),
+        )
+        return b, store, producer
+
+    def test_bare_us_ticker_with_explicit_context_produces_executable_us_symbol(self) -> None:
+        # Bare SPY with binding.market="US"
+        b, store, producer = self._make_fixture(symbol="SPY", binding_market="US")
+        self.assertEqual(producer.produce(b, _NOW), 1)
+        [sig] = store.get_pending()
+        self.assertEqual(sig["symbol"], "SPY.US")
+        self.assertEqual(sig["metadata"]["raw_symbol"], "SPY")
+
+        # Bare SPY with binding.venue="ARCA"
+        b2, store2, producer2 = self._make_fixture(symbol="SPY", binding_venue="ARCA", binding_id="rb-arca")
+        self.assertEqual(producer2.produce(b2, _NOW), 1)
+        [sig2] = store2.get_pending()
+        self.assertEqual(sig2["symbol"], "SPY.ARCA")
+
+        # Bare SPY with artifact.parameters.market="US"
+        b3, store3, producer3 = self._make_fixture(
+            symbol="SPY",
+            artifact_market="US",
+            binding_id="rb-art-market",
+        )
+        self.assertEqual(producer3.produce(b3, _NOW), 1)
+        [sig3] = store3.get_pending()
+        self.assertEqual(sig3["symbol"], "SPY.US")
+
+    def test_counterexample_1_approved_foreign_suffix_membership_rejected(self) -> None:
+        # Counterexample 1: approved [SPY.TW] plus requested SPY/binding US -> market_input_invalid
+        b, store, producer = self._make_fixture(
+            symbol="SPY",
+            artifact_symbols=["SPY.TW"],
+            binding_market="US",
+            market_input_symbol="SPY",
+            binding_id="rb-counterexample-1",
+        )
+        self.assertEqual(producer.produce(b, _NOW), 0)
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertEqual(
+            producer.degraded_bindings[b["binding_id"]].split(":")[0],
+            "market_input_invalid",
+        )
+
+    def test_counterexample_2_dataset_hint_without_explicit_market_fails_closed(self) -> None:
+        # Counterexample 2: No explicit market, binding data_source='dataset://not-us-price/unverified', raw SPY -> market_context_missing
+        b, store, producer = self._make_fixture(
+            symbol="SPY",
+            artifact_symbols=["SPY"],
+            binding_id="rb-counterexample-2",
+        )
+        b["data_source"] = "dataset://not-us-price/unverified"
+        self.assertEqual(producer.produce(b, _NOW), 0)
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertEqual(
+            producer.degraded_bindings[b["binding_id"]].split(":")[0],
+            "market_context_missing",
+        )
+
+    def test_counterexample_3_unsupported_explicit_market_fails_closed(self) -> None:
+        # Counterexample 3: Explicit market='not-us-price', raw/approved SPY -> market_context_unsupported
+        b, store, producer = self._make_fixture(
+            symbol="SPY",
+            artifact_symbols=["SPY"],
+            binding_market="not-us-price",
+            binding_id="rb-counterexample-3",
+        )
+        self.assertEqual(producer.produce(b, _NOW), 0)
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertEqual(
+            producer.degraded_bindings[b["binding_id"]].split(":")[0],
+            "market_context_unsupported",
+        )
+
+    def test_bare_ticker_missing_market_context_fails_closed(self) -> None:
+        # Bare SPY with NO market context anywhere -> fail closed with market_context_missing
+        b, store, producer = self._make_fixture(symbol="SPY")
+        self.assertEqual(producer.produce(b, _NOW), 0)
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertEqual(
+            producer.degraded_bindings[b["binding_id"]].split(":")[0],
+            "market_context_missing",
+        )
+
+    def test_contradictory_market_context_fails_closed(self) -> None:
+        # binding says US, artifact says TW
+        b, store, producer = self._make_fixture(symbol="SPY", binding_market="US", artifact_market="TW")
+        self.assertEqual(producer.produce(b, _NOW), 0)
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertEqual(
+            producer.degraded_bindings[b["binding_id"]].split(":")[0],
+            "market_context_contradictory",
+        )
+
+        # binding says market="US", venue="TWSE"
+        b2, store2, producer2 = self._make_fixture(
+            symbol="SPY",
+            binding_market="US",
+            binding_venue="TWSE",
+            binding_id="rb-contra-2",
+        )
+        self.assertEqual(producer2.produce(b2, _NOW), 0)
+        self.assertEqual(
+            producer2.degraded_bindings[b2["binding_id"]].split(":")[0],
+            "market_context_contradictory",
+        )
+
+    def test_symbol_intrinsic_market_mismatch_fails_closed(self) -> None:
+        # AAPL.US has intrinsic "US", but binding says market="TW"
+        b, store, producer = self._make_fixture(symbol="AAPL.US", binding_market="TW")
+        self.assertEqual(producer.produce(b, _NOW), 0)
+        self.assertEqual(
+            producer.degraded_bindings[b["binding_id"]].split(":")[0],
+            "market_context_mismatch",
+        )
+
+        # 2330.TW has intrinsic "TW", but binding says market="US"
+        b2, store2, producer2 = self._make_fixture(symbol="2330.TW", binding_market="US", binding_id="rb-tw-us")
+        self.assertEqual(producer2.produce(b2, _NOW), 0)
+        self.assertEqual(
+            producer2.degraded_bindings[b2["binding_id"]].split(":")[0],
+            "market_context_mismatch",
+        )
+
+    def test_canonical_us_symbol_preserved(self) -> None:
+        for sym in ("AAPL.US", "MSFT.NASDAQ"):
+            b, store, producer = self._make_fixture(symbol=sym)
+            self.assertEqual(producer.produce(b, _NOW), 1)
+            [sig] = store.get_pending()
+            self.assertEqual(sig["symbol"], sym)
+
+    def test_canonical_tw_symbols_preserved(self) -> None:
+        for sym in ("2330.TW", "2330.TWSE", "6488.TWO", "TXF202604.TAIFEX"):
+            b, store, producer = self._make_fixture(symbol=sym, binding_id=f"rb-{sym}")
+            self.assertEqual(producer.produce(b, _NOW), 1)
+            [sig] = store.get_pending()
+            self.assertEqual(sig["symbol"], sym)
+
+    def test_bare_tw_ticker_with_explicit_context(self) -> None:
+        # Bare 2330 with market="TW" -> 2330.TW
+        b, store, producer = self._make_fixture(symbol="2330", binding_market="TW")
+        self.assertEqual(producer.produce(b, _NOW), 1)
+        [sig] = store.get_pending()
+        self.assertEqual(sig["symbol"], "2330.TW")
+
+        # Bare 2330 with venue="TWSE" -> 2330.TWSE
+        b2, store2, producer2 = self._make_fixture(symbol="2330", binding_venue="TWSE", binding_id="rb-twse")
+        self.assertEqual(producer2.produce(b2, _NOW), 1)
+        [sig2] = store2.get_pending()
+        self.assertEqual(sig2["symbol"], "2330.TWSE")
+
+        # Bare 6488 with venue="TPEX" -> 6488.TPEX
+        b3, store3, producer3 = self._make_fixture(symbol="6488", binding_venue="TPEX", binding_id="rb-tpex")
+        self.assertEqual(producer3.produce(b3, _NOW), 1)
+        [sig3] = store3.get_pending()
+        self.assertEqual(sig3["symbol"], "6488.TPEX")
+
+    def test_crypto_pairs_produce_executable_symbols(self) -> None:
+        for sym in ("BTCUSDT", "BTCUSD.KRAKEN"):
+            b, store, producer = self._make_fixture(symbol=sym, binding_id=f"rb-{sym}")
+            self.assertEqual(producer.produce(b, _NOW), 1)
+            [sig] = store.get_pending()
+            self.assertEqual(sig["symbol"], sym)
+
+        # BTC/USD with market="CRYPTO"
+        b, store, producer = self._make_fixture(
+            symbol="BTC/USD",
+            artifact_symbols=["BTC/USD"],
+            binding_market="CRYPTO",
+            market_input_symbol="BTC/USD",
+            binding_id="rb-crypto-slash",
+        )
+        self.assertEqual(producer.produce(b, _NOW), 1)
+        [sig] = store.get_pending()
+        self.assertEqual(sig["symbol"], "BTCUSD")
+
+    def test_raw_symbol_membership_validation(self) -> None:
+        # artifact symbols has ["SPY"], binding requests "MSFT" -> market_input_invalid
+        b, store, producer = self._make_fixture(
+            symbol="MSFT",
+            artifact_symbols=["SPY"],
+            binding_market="US",
+        )
+        self.assertEqual(producer.produce(b, _NOW), 0)
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertEqual(
+            producer.degraded_bindings[b["binding_id"]].split(":")[0],
+            "market_input_invalid",
+        )
+
+    def test_wrong_artifact_version_fails_closed(self) -> None:
+        import copy
+        from services.execution.artifact_loader import ArtifactLoader
+        b, store, producer = self._make_fixture(
+            symbol="SPY",
+            binding_market="US",
+        )
+        # Store artifact payload under 2.0.0 key in object_store so ArtifactLoader loads it,
+        # but with payload StrategyArtifact version="1.0.0" so identity validation fails.
+        proj_2 = ArtifactLoader.build_projection("tw_session_momentum", "2.0.0")
+        proj_1 = ArtifactLoader.build_projection("tw_session_momentum", "1.0.0")
+        meta_2 = copy.deepcopy(b["object_store"][proj_1.metadata_key])
+        meta_2["version"] = "2.0.0"
+        b["object_store"][proj_2.metadata_key] = meta_2
+        b["object_store"][proj_2.artifact_key] = b["object_store"][proj_1.artifact_key]
+        b["artifact_version"] = "2.0.0"
+
+        self.assertEqual(producer.produce(b, _NOW), 0)
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertEqual(
+            producer.degraded_bindings[b["binding_id"]].split(":")[0],
+            "artifact_identity_mismatch",
+        )
+
+    def test_direct_executor_symbol_parser_verification(self) -> None:
+        from services.execution.lean_runtime.symbol_parser import (
+            SymbolParseError,
+            is_executable_symbol,
+            is_taiwan_venue_symbol,
+            parse,
+            validate_executable_symbol,
+        )
+
+        parsed_us = parse("SPY.US")
+        self.assertEqual(parsed_us.ticker, "SPY")
+        self.assertEqual(parsed_us.lean_market, "Market.USA")
+        self.assertEqual(parsed_us.lean_security_type, "SecurityType.Equity")
+
+        parsed_arca = parse("SPY.ARCA")
+        self.assertEqual(parsed_arca.ticker, "SPY")
+        self.assertEqual(parsed_arca.lean_market, "Market.USA")
+
+        parsed_crypto = parse("BTCUSDT")
+        self.assertEqual(parsed_crypto.ticker, "BTCUSDT")
+        self.assertEqual(parsed_crypto.lean_market, "Market.Kraken")
+
+        with self.assertRaises(SymbolParseError):
+            parse("SPY")
+
+        self.assertTrue(is_taiwan_venue_symbol("2330.TW"))
+        self.assertTrue(is_taiwan_venue_symbol("2330.TWSE"))
+        self.assertTrue(is_taiwan_venue_symbol("6488.TWO"))
+        self.assertTrue(is_taiwan_venue_symbol("6488.TPEX"))
+        self.assertTrue(is_taiwan_venue_symbol("TXF202604.TAIFEX"))
+        self.assertFalse(is_taiwan_venue_symbol("SPY.US"))
+        self.assertFalse(is_taiwan_venue_symbol("2330"))
+
+        validate_executable_symbol("SPY.US")
+        validate_executable_symbol("2330.TW")
+        validate_executable_symbol("2330.TWSE")
+        validate_executable_symbol("BTCUSDT")
+        with self.assertRaises(SymbolParseError):
+            validate_executable_symbol("SPY")
+
+        self.assertTrue(is_executable_symbol("SPY.US"))
+        self.assertTrue(is_executable_symbol("2330.TW"))
+        self.assertTrue(is_executable_symbol("2330.TWSE"))
+        self.assertTrue(is_executable_symbol("BTCUSDT"))
+        self.assertFalse(is_executable_symbol("SPY"))
+
+    def test_unexecutable_market_symbol_fails_closed(self) -> None:
+        b, store, producer = self._make_fixture(
+            symbol="SPY.INVALID",
+            artifact_symbols=["SPY.INVALID"],
+            binding_market="US",
+        )
+        self.assertEqual(producer.produce(b, _NOW), 0)
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertEqual(
+            producer.degraded_bindings[b["binding_id"]].split(":")[0],
+            "market_symbol_unexecutable",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
