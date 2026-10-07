@@ -342,8 +342,11 @@ def test_postgres_update_reread_and_restart(real_pg_tables):
 
 
 def test_no_leaked_secret_in_evidence_payload_or_exceptions(real_pg_tables):
-    """Acceptance criterion 4: no leaked credentials in stored payload or string representation."""
+    """Acceptance criterion 1 & 4: no leaked credentials in stored payload, representations, or exceptions."""
     dsn, table = real_pg_tables
+    secret_pw = "super_secret_test_password_xyz987"
+    # Create DSN with embedded sensitive password
+    safe_dsn = dsn.replace("postgres:postgres", f"postgres:{secret_pw}") if "postgres:postgres" in dsn else dsn
     repo = PostgresSourceEvidenceRepository(dsn=dsn, table=table, bootstrap=True)
 
     source = SourceRecord(
@@ -365,6 +368,153 @@ def test_no_leaked_secret_in_evidence_payload_or_exceptions(real_pg_tables):
         raw_payload = cursor.fetchone()[0]
 
     assert "password" not in json.dumps(raw_payload).lower()
+
+    # Now verify query failure with sensitive DSN does NOT leak password in message, repr, or cause
+    repo.dsn = f"postgresql://postgres:{secret_pw}@127.0.0.1:1/invalid_db"
+    with pytest.raises(RuntimeError) as exc_info:
+        repo.get_source_record("src-secret-test", tenant_id="tenant-sec")
+    err_str = str(exc_info.value)
+    err_repr = repr(exc_info.value)
+    assert secret_pw not in err_str
+    assert secret_pw not in err_repr
+    assert exc_info.value.__cause__ is None
+    assert "PostgreSQL evidence query failed" in err_str
+
+
+def test_postgres_query_failure_fails_closed_without_returning_stale_cache(real_pg_tables):
+    """Acceptance criterion 1: query/connection failure must NOT return startup stale cache and must fail closed."""
+    dsn, table = real_pg_tables
+    repo = PostgresSourceEvidenceRepository(dsn=dsn, table=table, bootstrap=True)
+    tenant_id = "tenant-failclosed"
+
+    source = SourceRecord(
+        source_id="src-fail-001",
+        connector_id="conn-fail",
+        source_type="market",
+        title="Failclosed Title",
+        content_ref="ref://fail",
+        metadata={"tenant_id": tenant_id, "source_dedupe_key": "dk-fail-src"},
+    )
+    repo.add_source_record(source)
+
+    item = EvidenceItem(
+        evidence_item_id="item-fail-001",
+        source_id=source.source_id,
+        item_type="metric_series",
+        content_ref=source.content_ref,
+        citation_label="cit-fail",
+        body="Failclosed body",
+        metadata={"tenant_id": tenant_id, "evidence_dedupe_key": "dk-fail-item"},
+    )
+    repo.add_evidence_item(item)
+
+    bundle = EvidenceBundle(
+        evidence_bundle_id="bundle-fail-001",
+        source_ids=[source.source_id],
+        evidence_item_ids=[item.evidence_item_id],
+        summary="Failclosed bundle summary",
+        citation_refs=["cit-fail"],
+        confidence=1.0,
+        license_scope="open",
+        access_scope=["public"],
+        created_by="tester",
+        metadata={"tenant_id": tenant_id},
+    )
+    repo.add_bundle(bundle)
+
+    ko = KnowledgeObject(
+        knowledge_object_id="ko-fail-001",
+        source_id=source.source_id,
+        evidence_item_id=item.evidence_item_id,
+        evidence_bundle_id=bundle.evidence_bundle_id,
+        title=source.title,
+        text=item.body,
+        source_type="market",
+        license_scope="open",
+        access_scope=["public"],
+        metadata={"tenant_id": tenant_id},
+    )
+    repo.add_knowledge_object(ko)
+
+    # In-memory startup cache now has all records.
+    # Now induce a real DB failure: point table to non-existent table in Postgres
+    repo.table = '"nonexistent_schema"."nonexistent_table"'
+
+    # Every getter and lister MUST fail closed with sanitized RuntimeError and NOT return stale cache
+    for fn, args in (
+        (repo.get_source_record, ("src-fail-001", tenant_id)),
+        (repo.get_source_record_by_dedupe_key, ("dk-fail-src", tenant_id)),
+        (repo.list_source_records, (tenant_id,)),
+        (repo.get_evidence_item, ("item-fail-001", tenant_id)),
+        (repo.get_evidence_item_by_dedupe_key, ("dk-fail-item", tenant_id)),
+        (repo.list_evidence_items, (tenant_id,)),
+        (repo.get_bundle, ("bundle-fail-001", tenant_id)),
+        (repo.list_bundles, (tenant_id,)),
+        (repo.get_knowledge_object, ("ko-fail-001", tenant_id)),
+        (repo.list_knowledge_objects, (tenant_id,)),
+    ):
+        with pytest.raises(RuntimeError) as exc_info:
+            fn(*args)
+        assert "PostgreSQL evidence query failed" in str(exc_info.value)
+        assert exc_info.value.__cause__ is None
+
+
+def test_mock_typed_sql_fake_exceptions_fail_closed_sanitized(monkeypatch):
+    """Unit proof (labelled unit test, not PG proof): typed SQL exception fails closed sanitized."""
+    class FakeCursor:
+        def __init__(self, rows=()):
+            self._rows = rows
+
+        def fetchall(self):
+            return self._rows
+
+        def fetchone(self):
+            return self._rows[0] if self._rows else None
+
+    class FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, sql, params=()):
+            if "ORDER BY append_id ASC" in sql and "WHERE" not in sql:
+                # reload() during init
+                return FakeCursor([])
+            raise psycopg.OperationalError("server closed the connection unexpectedly [sensitive_token_999]")
+
+    import sys
+    import psycopg
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(
+        connect=lambda dsn: FakeConn(),
+        OperationalError=psycopg.OperationalError,
+    ))
+    repo = PostgresSourceEvidenceRepository(dsn="postgresql://user:pass@localhost:5432/db", bootstrap=False)
+
+    # Pre-populate in-memory cache to simulate boot cache
+    bundle = EvidenceBundle(
+        evidence_bundle_id="b-stale-1",
+        source_ids=["s1"],
+        evidence_item_ids=["i1"],
+        summary="Stale bundle in boot cache",
+        citation_refs=["ref1"],
+        confidence=1.0,
+        license_scope="open",
+        access_scope=["public"],
+        created_by="tester",
+        metadata={"tenant_id": "tenant-mock"},
+    )
+    repo._bundles[bundle.evidence_bundle_id] = bundle
+    repo._bundles_by_tenant[("tenant-mock", bundle.evidence_bundle_id)] = bundle
+
+    with pytest.raises(RuntimeError) as exc_info:
+        repo.get_bundle("b-stale-1", tenant_id="tenant-mock")
+
+    err = str(exc_info.value)
+    assert "sensitive_token_999" not in err
+    assert "PostgreSQL evidence query failed: OperationalError" in err
+    assert exc_info.value.__cause__ is None
 
 
 def test_mock_postgres_read_visibility_and_query_dispatch(monkeypatch):
