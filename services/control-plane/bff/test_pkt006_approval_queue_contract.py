@@ -1,5 +1,6 @@
-from __future__ import annotations
+from typing import Any, Optional
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -16,7 +17,17 @@ from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_
 APPROVER_TOKEN = "Bearer op-6:approver"
 
 
-def _client_for(store: ReadSurfacePorts) -> TestClient:
+def _client_for(store: ReadSurfacePorts, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    from services.control_plane.bff.governance import approval_owner
+
+    def _call_owner(method: str, path: str, authorization: Optional[str] = None, **kwargs: Any) -> Any:
+        if path == "/api/governance/approvals":
+            if callable(getattr(store, "list_approval_queue_items", None)):
+                return list(store.list_approval_queue_items() or [])
+            return []
+        return {}
+
+    monkeypatch.setattr(approval_owner, "call_owner", _call_owner)
     app = FastAPI()
     app.include_router(
         create_governance_router(
@@ -83,11 +94,11 @@ def _approval_queue_items(*, decision_types=None, risk_levels=None, decision_sta
     return items
 
 
-def test_pkt006_approval_queue_filters_and_pagination_follow_contract() -> None:
+def test_pkt006_approval_queue_filters_and_pagination_follow_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     store = create_in_memory_read_surface_ports()
     store.list_approval_queue_items = _approval_queue_items
     store.dataset_source = lambda dataset: "local_snapshot" if dataset == "approval_queue_items" else "missing"
-    client = _client_for(store)
+    client = _client_for(store, monkeypatch)
 
     response = client.get(
         "/api/v1/operator/governance/approval-queue",
@@ -133,10 +144,10 @@ def test_pkt006_approval_queue_filters_and_pagination_follow_contract() -> None:
     assert payload["meta"]["surfaces"]["allowedActions"]["status"] == "degraded"
 
 
-def test_pkt006_approval_queue_returns_unavailable_surface_in_honest_mode() -> None:
+def test_pkt006_approval_queue_returns_unavailable_surface_in_honest_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     store = create_in_memory_read_surface_ports()
     store.dataset_source = lambda dataset: "missing"
-    client = _client_for(store)
+    client = _client_for(store, monkeypatch)
 
     response = client.get(
         "/api/v1/operator/governance/approval-queue",

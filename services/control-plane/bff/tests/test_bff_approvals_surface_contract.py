@@ -13,8 +13,9 @@ Stub dispatch (dev safety): no live broker orders, no capital allocation.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -108,7 +109,7 @@ _BINDING_APPROVAL_PENDING: Dict[str, Any] = {
     "target_id": "binding-filter-003",
     "target_version": "v1",
     "decision": None,
-    "decision_state": "pending",
+    "decision_state": "proposed",
     "actor_role": None,
     "actor_id": "persona-ops",
     "rationale": "Low-risk persona binding pending",
@@ -130,7 +131,7 @@ _KILLSWITCH_APPROVAL_REVIEWED: Dict[str, Any] = {
     "target_id": "ks-filter-004",
     "target_version": "v1",
     "decision": None,
-    "decision_state": "reviewed",
+    "decision_state": "under_review",
     "actor_role": None,
     "actor_id": "risk-lead",
     "rationale": "Critical kill-switch request reviewed",
@@ -157,6 +158,29 @@ _HETEROGENEOUS_APPROVAL_DECISIONS: List[Dict[str, Any]] = [
 
 
 def _client_for(store: ReadSurfacePorts) -> TestClient:
+    from services.control_plane.bff.governance import approval_owner
+
+    def _call_owner(method: str, path: str, authorization: Optional[str] = None, **kwargs: Any) -> Any:
+        if path == "/api/governance/approvals":
+            reader = getattr(getattr(getattr(store, "ooda_management", None), "review_queue", None), "_approval_decisions_reader", None)
+            if callable(reader):
+                return list(reader() or [])
+            return []
+        if path.startswith("/api/governance/approvals/"):
+            clean_id = path.removeprefix("/api/governance/approvals/").split("/")[0]
+            reader = getattr(getattr(getattr(store, "ooda_management", None), "review_queue", None), "_approval_decisions_reader", None)
+            for item in (reader() if callable(reader) else []):
+                if item.get("decision_id") == clean_id:
+                    return dict(item)
+            return {}
+        return {}
+
+    class _BoundTestClient(TestClient):
+        def request(self, *args: Any, **kwargs: Any) -> Any:
+            approval_owner.call_owner = _call_owner
+            return super().request(*args, **kwargs)
+
+    approval_owner.call_owner = _call_owner
     app = FastAPI()
     app.include_router(
         create_governance_router(
@@ -167,7 +191,18 @@ def _client_for(store: ReadSurfacePorts) -> TestClient:
             bff_error=bff_error,
         )
     )
-    return TestClient(app, raise_server_exceptions=False)
+    return _BoundTestClient(app, raise_server_exceptions=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_approval_owner_call_owner() -> Any:
+    from services.control_plane.bff.governance import approval_owner
+
+    original = approval_owner.call_owner
+    try:
+        yield
+    finally:
+        approval_owner.call_owner = original
 
 
 # ---------------------------------------------------------------------------
@@ -252,12 +287,10 @@ class TestGovernanceApprovalQueueSurfaceWithProjectedStore:
         client = _client_for(store)
 
         for state, expected in [
-            ("proposed", ["apv-consdata-001"]),
-            ("under_review", ["apv-filter-002"]),
-            ("pending", ["apv-filter-003"]),
-            ("reviewed", ["apv-filter-004"]),
-            ("proposed,pending", ["apv-consdata-001", "apv-filter-003"]),
-            ("under_review,reviewed", ["apv-filter-002", "apv-filter-004"]),
+            ("proposed", ["apv-consdata-001", "apv-filter-003"]),
+            ("under_review", ["apv-filter-002", "apv-filter-004"]),
+            ("pending", ["apv-consdata-001", "apv-filter-002", "apv-filter-003", "apv-filter-004"]),
+            ("proposed,under_review", ["apv-consdata-001", "apv-filter-002", "apv-filter-003", "apv-filter-004"]),
         ]:
             resp = client.get(self.ROUTE, params={"decision_state": state}, headers=ADMIN_HEADERS)
             assert resp.status_code == 200, resp.text
@@ -273,11 +306,9 @@ class TestGovernanceApprovalQueueSurfaceWithProjectedStore:
         client = _client_for(store)
 
         for state, expected in [
-            ("proposed", ["apv-consdata-001"]),
-            ("under_review", ["apv-filter-002"]),
-            ("pending", ["apv-filter-003"]),
-            ("reviewed", ["apv-filter-004"]),
-            ("proposed,reviewed", ["apv-consdata-001", "apv-filter-004"]),
+            ("proposed", ["apv-consdata-001", "apv-filter-003"]),
+            ("under_review", ["apv-filter-002", "apv-filter-004"]),
+            ("pending", ["apv-consdata-001", "apv-filter-002", "apv-filter-003", "apv-filter-004"]),
         ]:
             resp = client.get(self.ROUTE, params={"state": state}, headers=ADMIN_HEADERS)
             assert resp.status_code == 200, resp.text
@@ -299,7 +330,7 @@ class TestGovernanceApprovalQueueSurfaceWithProjectedStore:
         assert resp.status_code == 200, resp.text
         body = resp.json()
         ids = [item.get("decision_id") for item in (body.get("items") or [])]
-        assert ids == ["apv-consdata-001"], f"expected decision_state to override state alias, got {ids}"
+        assert sorted(ids) == ["apv-consdata-001", "apv-filter-003"], f"expected decision_state to override state alias, got {ids}"
 
     def test_filter_by_risk_level_and_csv(self) -> None:
         """Filter by risk_level accepts single values and comma-separated lists."""
