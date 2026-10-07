@@ -106,6 +106,12 @@ STIMULUS_SERVICES: dict[str, dict[str, Any]] = {
     "training": {"port_var": "TRAINING_SESSION_PORT", "default_port": 18099, "health": "/readyz"},
 }
 DB_MIGRATION_SERVICE = "source-ingest-controller-migrate"
+TW_OFFICIAL_CONNECTOR_ID = "tw-twse-tpex-official-market"
+TW_OFFICIAL_EGRESS_HOSTS = "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw"
+TW_OFFICIAL_PULL_SERVICE = "source-ingest-scheduler"
+TW_OFFICIAL_SNAPSHOT_SYMBOL = "2330.TW"
+TW_OFFICIAL_DEFAULT_HISTORY_SYMBOLS = "2330.TW,2317.TW"
+TW_OFFICIAL_PULL_TIMEOUT_SECONDS = 1800
 PROJECTION_BOOTSTRAP_SERVICE = "loop-run-projector-scheduler"
 PRINCIPAL_ISSUER_SERVICE = "dev-paper-principal-issuer"
 ISOLATED_DEV_TENANT = "tenant-dev"
@@ -323,6 +329,131 @@ def _project_container_ids(project: str) -> list[str]:
         check=False,
     )
     return sorted(line.strip() for line in output.splitlines() if line.strip())
+
+
+def _tw_official_history_symbols(compose_env: Mapping[str, str]) -> str:
+    """History symbols for the pull; always includes the runtime suite's symbol."""
+    raw = (
+        os.getenv("SOURCE_INGEST_TW_HISTORY_SYMBOLS")
+        or compose_env.get("SOURCE_INGEST_TW_HISTORY_SYMBOLS")
+        or TW_OFFICIAL_DEFAULT_HISTORY_SYMBOLS
+    )
+    symbols = [item.strip().upper() for item in raw.split(",") if item.strip()]
+    if TW_OFFICIAL_SNAPSHOT_SYMBOL not in symbols:
+        symbols.append(TW_OFFICIAL_SNAPSHOT_SYMBOL)
+    return ",".join(dict.fromkeys(symbols))
+
+
+def _tw_official_pull_env(compose_env: Mapping[str, str]) -> dict[str, str]:
+    """Env of deploy_nonprod_vm.sh execute_bounded_source_refresh_entrypoint."""
+    return {
+        **compose_env,
+        "PANTHEON_EXTERNAL_EGRESS": "allowlist",
+        "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": TW_OFFICIAL_EGRESS_HOSTS,
+        "SOURCE_INGEST_BOUNDED_CONNECTOR_ID": TW_OFFICIAL_CONNECTOR_ID,
+        "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_and_pull",
+        "SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL": "reconciled_live_proof",
+        "SOURCE_INGEST_CONTROLLER_RESTART_POLICY": "no",
+        "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "1",
+        "SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS": str(TW_OFFICIAL_PULL_TIMEOUT_SECONDS),
+        "SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS": TW_OFFICIAL_CONNECTOR_ID,
+        "SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS": TW_OFFICIAL_CONNECTOR_ID,
+        "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY": "1",
+        "SOURCE_INGEST_MAX_RECORDS": "100",
+        # A fresh isolated stack has no active paper RuntimeBindings to prioritize.
+        "SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS": "",
+        "SOURCE_INGEST_TW_HISTORY_SYMBOLS": _tw_official_history_symbols(compose_env),
+    }
+
+
+def _tw_official_pull_commands(
+    project: str, compose_files: list[str]
+) -> dict[str, list[str]]:
+    return {
+        "source_ingest_up": _compose_command(
+            project, compose_files, "up", "-d", "--no-deps", "--no-build",
+            "--wait", "--wait-timeout", "120", "source-ingest",
+        ),
+        "scheduler_tick": _compose_command(
+            project, compose_files, "run", "--rm", "--no-deps", "-T",
+            TW_OFFICIAL_PULL_SERVICE,
+        ),
+        "source_ingest_restore": _compose_command(
+            project, compose_files, "up", "-d", "--no-deps", "--no-build",
+            "--wait", "--wait-timeout", "120", "source-ingest",
+        ),
+    }
+
+
+def _run_tw_official_pull(
+    project: str,
+    compose_files: list[str],
+    compose_env: Mapping[str, str],
+    *,
+    snapshot_url: str,
+    reader_headers: Mapping[str, str],
+    diagnostics_dir: Path,
+) -> dict[str, Any]:
+    """Run the bounded Taiwan official pull once; fail on error or empty result."""
+    commands = _tw_official_pull_commands(project, compose_files)
+    pull_env = _tw_official_pull_env(compose_env)
+    diagnostics_dir.mkdir(parents=True, exist_ok=True)
+
+    def _capture(name: str, proc: subprocess.CompletedProcess[str]) -> str:
+        text = f"# exit={proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+        (diagnostics_dir / f"tw-official-pull-{name}.txt").write_text(text, encoding="utf-8")
+        return text
+
+    failure: str | None = None
+    tick_returncode: int | None = None
+    snapshot: Any = None
+    try:
+        up = subprocess.run(
+            commands["source_ingest_up"], env=pull_env, capture_output=True, text=True, check=False
+        )
+        up_text = _capture("source-ingest-up", up)
+        if up.returncode != 0:
+            failure = f"source-ingest restart with TWSE/TPEx allowlist failed: {up_text[-2000:]}"
+        else:
+            tick = subprocess.run(
+                commands["scheduler_tick"], env=pull_env, capture_output=True, text=True,
+                check=False, timeout=TW_OFFICIAL_PULL_TIMEOUT_SECONDS + 120,
+            )
+            tick_returncode = tick.returncode
+            tick_text = _capture("scheduler", tick)
+            if tick.returncode != 0:
+                failure = (
+                    f"{TW_OFFICIAL_PULL_SERVICE} tick exited {tick.returncode}: "
+                    f"{tick_text[-2000:]}"
+                )
+    except subprocess.TimeoutExpired as exc:
+        failure = f"{TW_OFFICIAL_PULL_SERVICE} tick timed out: {exc}"
+    finally:
+        restore = subprocess.run(
+            commands["source_ingest_restore"], env=dict(compose_env),
+            capture_output=True, text=True, check=False,
+        )
+        restore_text = _capture("source-ingest-restore", restore)
+        if restore.returncode != 0 and failure is None:
+            failure = f"source-ingest egress restore failed: {restore_text[-2000:]}"
+    if failure is None:
+        snapshot = _get_json(snapshot_url, reader_headers)
+        closes = snapshot.get("closes") if isinstance(snapshot, Mapping) else None
+        if not isinstance(closes, list) or len(closes) < 2:
+            failure = (
+                f"bounded pull produced no usable {TW_OFFICIAL_SNAPSHOT_SYMBOL} "
+                f"snapshot: {snapshot!r}"
+            )
+    if failure is not None:
+        raise RuntimeError(f"bounded Taiwan official pull failed: {failure}")
+    return {
+        "connector_id": TW_OFFICIAL_CONNECTOR_ID,
+        "commands": commands,
+        "history_symbols": pull_env["SOURCE_INGEST_TW_HISTORY_SYMBOLS"],
+        "scheduler_returncode": tick_returncode,
+        "snapshot_symbol": TW_OFFICIAL_SNAPSHOT_SYMBOL,
+        "snapshot_closes": len(snapshot.get("closes", [])),
+    }
 
 
 def _projector_run_command(project: str, compose_files: list[str]) -> list[str]:
@@ -775,6 +906,7 @@ def _augment_report(
     *,
     main_retirement: Mapping[str, Any] | None,
     database_migration: Mapping[str, Any] | None,
+    tw_official_pull: Mapping[str, Any] | None = None,
     preclean: Mapping[str, Any] | None,
     teardown: Mapping[str, Any] | None,
 ) -> None:
@@ -784,6 +916,7 @@ def _augment_report(
     report["harness"] = {
         "main_negative_binding_retirement": dict(main_retirement or {}),
         "database_migration": dict(database_migration or {}),
+        "tw_official_pull": dict(tw_official_pull or {}),
         "isolated_safe_controls": dict(ISOLATED_SAFE_CONTROLS),
         "preclean": dict(preclean or {}),
         "teardown": dict(teardown or {}),
@@ -1030,6 +1163,7 @@ def main(argv: list[str] | None = None) -> int:
     pytest_invoked = False
     main_retirement: dict[str, Any] | None = None
     database_migration: dict[str, Any] | None = None
+    tw_official_pull: dict[str, Any] | None = None
     preclean: dict[str, Any] | None = None
     teardown: dict[str, Any] | None = None
     try:
@@ -1114,6 +1248,21 @@ def main(argv: list[str] | None = None) -> int:
                 f"(offset +{args.port_offset}): {' '.join(command)}"
             )
             subprocess.run(command, env=compose_env, check=True)
+            print("[*] Running the bounded Taiwan official pull (tw-twse-tpex-official-market)...")
+            tw_official_pull = _run_tw_official_pull(
+                args.compose_project,
+                compose_files,
+                compose_env,
+                snapshot_url=(
+                    f"{urls['source_ingest']}/api/source-ingest/snapshots/latest"
+                    f"?symbol={urllib.parse.quote(TW_OFFICIAL_SNAPSHOT_SYMBOL, safe='')}"
+                ),
+                reader_headers={
+                    "Authorization": f"Bearer {reader_token}",
+                    "X-Tenant-Id": reader_tenant,
+                },
+                diagnostics_dir=args.evidence_output.resolve().parent / "diagnostics",
+            )
             if args.stimulus_gate:
                 projector_command = _projector_run_command(
                     args.compose_project, compose_files
@@ -1228,6 +1377,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.evidence_output,
                     main_retirement=main_retirement,
                     database_migration=database_migration,
+                    tw_official_pull=tw_official_pull,
                     preclean=preclean,
                     teardown=teardown,
                 )
