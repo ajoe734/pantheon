@@ -1,9 +1,9 @@
 {
   "task_id": "AGORA-WORKER-HEALTH-ENTRYPOINT-20261007",
-  "owner": "Antigravity2",
+  "owner": "Antigravity",
   "reviewer": "Claude",
   "title": "Fix agora-interaction-worker container healthcheck timing out under 5s deadline",
-  "summary": "Resolved agora-interaction-worker healthcheck timeout failure during official release 37571305114 root rollout. Deferred runtime-only stores in scripts/run_agora_interaction_worker.py until post-healthcheck execution, eliminating >3s CPU / 14s elapsed import overhead during cold starts under PYTHONDONTWRITEBYTECODE=1. Wired canonical persona registry write owner into create_read_surface_ports() in services/control-plane/bff/agora/interaction/persona_client.py, replacing silent empty fallback with strict fail-closed validation on missing, invalid, or unavailable Persona service. Verified with test suites across scripts and control plane services with all 49 relevant tests passing.",
+  "summary": "Resolved agora-interaction-worker healthcheck timeout failure during official release 37571305114 root rollout. Preserved reviewed heartbeat healthcheck from #6272 ensuring fast stdlib-only liveness probe within the 5s deadline while deferring runtime stores. Wired canonical persona registry write owner into create_read_surface_ports() in services/control-plane/bff/agora/interaction/persona_client.py, replacing silent empty fallback with fail-closed behavior on missing or unavailable Persona service. Mapped PERSONA_URL, PANTHEON_PERSONA_SERVICE_TOKEN, PANTHEON_PERSONA_SERVICE_ACTOR_ID and persona service dependency in docker-compose.yml. Verified with 30 focused tests across worker launcher, persona client, runtime wiring, and compose tenant contracts.",
   "root_cause_analysis": {
     "evidence_snapshot": "/tmp/pantheon-natural-closure-evidence-20261007/root-health-0451.json",
     "failing_container": "Agora worker 62ef0660260d (image 69ba57e82dc968c04cacef6218e81a5fa42e75aeae6bfa7861b48890b48673e7)",
@@ -11,76 +11,94 @@
     "mechanism": [
       "services/control-plane/bff/Dockerfile sets ENV PYTHONDONTWRITEBYTECODE=1, forcing full uncached compilation of imported Python modules on every CLI healthcheck invocation.",
       "scripts/run_agora_interaction_worker.py eagerly imported runtime stores (ProposalStore, InteractionLifecycleStore, PostgresWorkshopStore, MemoryResearchPlanStore, etc.) before argument parsing, consuming >3.0s CPU time which ballooned to 14.01s elapsed time under container host load (load average 16-21).",
+      "docker-compose.yml agora-interaction-worker omitted PERSONA_URL and PANTHEON_PERSONA_SERVICE_TOKEN, leaving the container worker unconfigured for canonical Persona owner HTTP communications.",
       "services/control-plane/bff/agora/interaction/persona_client.py called create_read_surface_ports() without persona_registry_store, defaulting to None and falling back to an empty list ([]) when unconfigured, instead of failing closed."
     ]
   },
   "implementation": {
     "scripts/run_agora_interaction_worker.py": {
       "changes": [
-        "Deferred heavy runtime store and worker imports (ProposalStore, AgoraInteractionWorker, etc.) into start_worker().",
-        "Kept the --healthcheck path minimal: only imports persona client wiring, probes Persona status via client.get_surface_status(), and validates persona connectivity.",
-        "Strictly fails closed with sys.exit(1) on missing configuration, network failure, or unavailable status; logs 'Healthcheck OK' and exits 0 only when healthy."
+        "Preserved reviewed heartbeat healthcheck (check_heartbeat()) executing stdlib-only in <0.1s well under the 5s Compose timeout limit.",
+        "Deferred heavy runtime store imports into main() execution after healthcheck parsing.",
+        "Startup retains build_canonical_persona_client() initialization ensuring worker fails closed if dependencies cannot be constructed."
       ]
     },
     "services/control-plane/bff/agora/interaction/persona_client.py": {
       "changes": [
-        "Wired create_persona_registry_write_owner() into create_read_surface_ports() to provide genuine canonical store backing for PersonaReadPort.",
-        "Implemented robust get_surface_status() method returning status ok/unavailable and source details.",
-        "Preserved 100% protocol conformance and existing read surface contract compatibility."
+        "Wired create_persona_registry_write_owner() into create_read_surface_ports() to provide genuine canonical store backing for PersonaReadPort without silent empty fallbacks.",
+        "Preserved protocol conformance and existing read surface contract compatibility."
+      ]
+    },
+    "docker-compose.yml": {
+      "changes": [
+        "Added PERSONA_URL: ${PERSONA_URL:-http://persona:8002} to agora-interaction-worker environment.",
+        "Added PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token} and PANTHEON_PERSONA_SERVICE_ACTOR_ID: operator-bff to agora-interaction-worker environment.",
+        "Added persona dependency (condition: service_healthy, required: false) to agora-interaction-worker depends_on."
+      ]
+    },
+    "scripts/test_worker_tenant_compose_contract.py": {
+      "changes": [
+        "Added contract tests verifying agora-interaction-worker default PERSONA_URL, service token, and actor id resolution.",
+        "Added contract tests verifying environment variable overrides for PERSONA_URL and service token.",
+        "Added contract test verifying agora-interaction-worker depends_on includes persona."
+      ]
+    },
+    "services/control-plane/bff/tests/test_agora_interaction_worker_runtime_wiring.py": {
+      "changes": [
+        "Added cold-start healthcheck test under 5s deadline with PYTHONDONTWRITEBYTECODE=1.",
+        "Added tests verifying missing or stale heartbeat fails closed.",
+        "Added probe test verifying healthcheck does not import runtime stores.",
+        "Added worker --once initialization test with mock Persona server.",
+        "Added canonical persona client wiring and fail-closed surface status tests."
       ]
     }
   },
   "acceptance_criteria_verification": {
     "1_reproduce_cold_start_cost": {
       "satisfied": true,
-      "evidence": "Eager imports consumed 3.01s CPU / 14.01s elapsed before repair. Deferring runtime-only stores reduced healthcheck cold-start to <0.35s CPU / <1.5s elapsed under system load."
+      "evidence": "Eager imports consumed 3.01s CPU / 14.01s elapsed before repair. Deferring runtime-only stores and using stdlib heartbeat probe reduced healthcheck execution to <0.1s elapsed."
     },
     "2_preserve_canonical_persona_config_and_fail_closed": {
       "satisfied": true,
-      "evidence": "Wiring persona_registry_store=create_persona_registry_write_owner() eliminated empty fallback. Missing or invalid Persona dependency strictly raises and exits with code 1."
+      "evidence": "Wiring persona_registry_store=create_persona_registry_write_owner() eliminated empty fallback. Unconfigured or unavailable Persona dependency reports surface unavailable and fails closed."
     },
     "3_separate_runtime_only_work_without_synthetic_readiness": {
       "satisfied": true,
-      "evidence": "Healthcheck actively checks Persona service reachability and registry status before reporting OK. No synthetic 0 exit code or skipped health probes."
+      "evidence": "Healthcheck probe actively checks running loop heartbeat file touched during loop ticks. No synthetic 0 exit code without live running worker."
     },
     "4_subprocess_and_cold_start_tests": {
       "satisfied": true,
-      "evidence": "Comprehensive test suites in scripts/test_run_agora_interaction_worker.py and services/control-plane/bff/tests/test_agora_interaction_worker_runtime_wiring.py test subprocess cold-start, missing config, unavailable service, foreign working directories, and clean pythonpath."
+      "evidence": "Comprehensive test suites in scripts/test_run_agora_interaction_worker.py, services/control-plane/bff/agora/interaction/test_persona_client.py, services/control-plane/bff/tests/test_agora_interaction_worker_runtime_wiring.py, and scripts/test_worker_tenant_compose_contract.py pass completely."
     },
     "5_no_timeout_inflation_or_hosted_mutation": {
       "satisfied": true,
-      "evidence": "Timeout remains strictly 5s (no modification to docker-compose timeout). No runtime data or hosted state mutated."
+      "evidence": "Healthcheck timeout remains strictly 5s. No runtime data or hosted state mutated."
     },
     "6_independent_exact_head_review": {
       "satisfied": false,
-      "evidence": "Pending independent exact-head review by Claude. Source repair and subprocess tests complete; full Compose wiring addition held for Human/Ops artifact scope expansion."
+      "evidence": "Pending fresh exact-head independent review by Claude on PR #6258 following rebase on current dev and Compose Persona wiring addition."
     }
   },
   "verification": {
     "test_suites": [
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -v scripts/test_run_agora_interaction_worker.py",
-        "result": "10 passed in 19.85s",
+        "command": ".venv-pantheon/bin/python3 -m unittest scripts.test_run_agora_interaction_worker",
+        "result": "9 passed in 3.641s",
         "exit_code": 0
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/agora/interaction/test_persona_client.py",
-        "result": "5 passed in 1.92s",
+        "command": ".venv-pantheon/bin/python3 -m unittest services.control_plane.bff.agora.interaction.test_persona_client",
+        "result": "5 passed in 1.751s",
         "exit_code": 0
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_agora_interaction_worker_runtime_wiring.py",
-        "result": "5 passed in 16.47s",
+        "result": "7 passed in 6.12s",
         "exit_code": 0
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_read_surface_caller_migration.py",
-        "result": "29 passed, 3 warnings in 23.36s",
-        "exit_code": 0
-      },
-      {
-        "command": "python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py -k test_migrated_suites_do_not_mutate_sys_path",
-        "result": "1 passed, 38 deselected in 6.84s",
+        "command": ".venv-pantheon/bin/python3 -m pytest -v scripts/test_worker_tenant_compose_contract.py",
+        "result": "9 passed in 5.12s",
         "exit_code": 0
       }
     ]
@@ -91,6 +109,8 @@
     "services/control-plane/bff/agora/interaction/persona_client.py",
     "services/control-plane/bff/agora/interaction/test_persona_client.py",
     "services/control-plane/bff/tests/test_agora_interaction_worker_runtime_wiring.py",
-    "docs/deployment/evidence/AGORA-WORKER-HEALTH-ENTRYPOINT-20261007/evidence.json"
+    "docs/deployment/evidence/AGORA-WORKER-HEALTH-ENTRYPOINT-20261007/evidence.json",
+    "docker-compose.yml",
+    "scripts/test_worker_tenant_compose_contract.py"
   ]
 }
