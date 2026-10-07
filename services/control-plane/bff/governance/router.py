@@ -249,7 +249,7 @@ def create_governance_router(
             _fail(501, "NOT_IMPLEMENTED", str(exc), "Unsupported approval action", precondition_failed="unsupported_action")
         except InvalidApprovalRequest as exc:
             _fail(422, "VALIDATION_FAILED", f"{exc} is required or invalid", f"Invalid approval decision field: {exc}", precondition_failed=str(exc))
-        except (urllib.error.URLError, OSError, RuntimeError):
+        except (urllib.error.URLError, OSError, RuntimeError, AttributeError, ValueError, TypeError):
             _fail(503, "DEPENDENCY_UNAVAILABLE", "Governance approval owner unavailable", "Governance approval owner unreachable")
 
     def _idempotency_key(primary: Optional[str], alternate: Optional[str], *, required: bool = False) -> str:
@@ -617,18 +617,20 @@ def create_governance_router(
     ) -> Dict[str, Any]:
         identity = _identity(authorization)
         resolved_state = decision_state if decision_state is not None else state
-        items = await _forward(approval_owner.list_decisions, authorization, state=resolved_state)
+        items = await _forward(approval_owner.list_decisions, authorization, state=resolved_state, pending_only=True)
         if decision_type:
-            items = [i for i in items if i.get("decision_type") in split_csv(decision_type)]
+            types = split_csv(decision_type)
+            items = [i for i in items if i.get("decision_type") in types or i.get("target_type") in types]
         if risk_level:
             items = [i for i in items if i.get("risk_level") in split_csv(risk_level)]
+        ds_source = _service().dataset_source("approval_queue_items")
         response = _paged(
             items,
             page_token=page_token,
             page_size=page_size,
             surface_key="governance_approval_queue",
             dataset="approval_queue_items",
-            source="service_client",
+            source="service_client" if ds_source in {"service", "ok"} else ds_source,
         )
         redacted_page, total_redacted = _redact_evidence_field_items(identity, response["items"])
         response["items"] = redacted_page
