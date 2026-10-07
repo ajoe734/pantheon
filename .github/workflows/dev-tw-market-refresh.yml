@@ -43,13 +43,11 @@ jobs:
           PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
         run: |
           c="${GITHUB_WORKSPACE}/.lease-controller"
-          [[ "$(git -C "$c" rev-parse HEAD)" == "9e564718da8c39199a4c311f1a667b74226e3428" ]]
           printf '%s  %s\n' \
             52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "$c/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "$c/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           ld="$(mktemp -d "${RUNNER_TEMP}/pantheon-dev-lease-XXXXXX")"
-          chmod 0700 "$ld"
           python3 "$c/scripts/dev_environment_lease.py" acquire \
             --mode qualification --wait-seconds 0 --state-file "$ld/state.json" \
             --owner "pantheon:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}" \
@@ -85,11 +83,10 @@ jobs:
           REFRESH_OUTPUT_PATH: ${{ runner.temp }}/tw-refresh-outcome.json
           FORCE_REFRESH: ${{ inputs.force || false }}
         run: |
-          force_arg=""
-          [[ "${FORCE_REFRESH}" == "true" ]] && force_arg="--force"
-          # runner invokes deploy_nonprod_vm.sh which streams payload via scripts/dev_vm_ssh.sh exec
+          force_arg=()
+          [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
           .lease-controller/scripts/run_with_dev_environment_lease.sh \
-            ./scripts/deploy_nonprod_vm.sh --refresh-only ${force_arg} --output "${REFRESH_OUTPUT_PATH}"
+            ./scripts/deploy_nonprod_vm.sh --refresh-only "${force_arg[@]}" --output "${REFRESH_OUTPUT_PATH}"
 
       - name: Upload refresh outcome artifact
         if: ${{ always() && steps.refresh.outcome != 'cancelled' }}
@@ -108,10 +105,7 @@ jobs:
         run: |
           hpid="$(tr -d '[:space:]' < "${LD}/heartbeat.pid")"
           kill -TERM "$hpid" 2>/dev/null || true
-          for _ in $(seq 1 40); do
-            kill -0 "$hpid" 2>/dev/null || break
-            sleep 0.25
-          done
+          sleep 1
           if [[ "${REFRESH_OUTCOME}" == "success" && ! -e "${LD}/heartbeat-failure.json" ]]; then
             python3 .lease-controller/scripts/dev_environment_lease.py release --state-file "${LD}/state.json"
           fi

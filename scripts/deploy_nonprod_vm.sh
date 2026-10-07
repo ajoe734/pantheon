@@ -838,11 +838,9 @@ if [[ "${REFRESH_ONLY:-false}" == "true" ]]; then
   if [[ -n "${DEV_DEPLOY_SSH_HOST:-}" ]]; then
     DEPLOY_ENV="dev"
     COMPONENT="refresh-only"
-    [[ -n "${PROJECT_ID:-}" ]] || PROJECT_ID="pantheon-dev-20260902"
-    [[ -n "${REMOTE_USER:-}" ]] || REMOTE_USER="${DEV_DEPLOY_SSH_USER:-chloe_ong_dev_cctech_support_com}"
-    [[ -n "${DEV_VM:-}" ]] || DEV_VM="pantheon-dev-deploy"
-    [[ -n "${DEV_ZONE:-}" ]] || DEV_ZONE="asia-east1-b"
-    [[ -n "${DEV_REMOTE_DIR:-}" ]] || DEV_REMOTE_DIR="/home/chloe_ong_dev_cctech_support_com/pantheon"
+    PROJECT_ID="${PROJECT_ID:-pantheon-dev-20260902}"
+    DEV_BFF_PUBLIC_HOST="${DEV_BFF_PUBLIC_HOST:-api.dev.mvl-cap.tw}"
+    DEV_FE_PUBLIC_HOST="${DEV_FE_PUBLIC_HOST:-app.dev.mvl-cap.tw}"
   fi
 fi
 
@@ -996,12 +994,9 @@ ssh_bash() {
     if [[ "${DEPLOY_ENV}" == dev ]]; then
       [[ "${PROJECT_ID}" == pantheon-dev-20260902 && "${vm}" == pantheon-dev-deploy && \
          "${zone}" == asia-east1-b && "${DEV_DEPLOY_SSH_HOST}" == 34.81.52.222 && \
-         "${DEV_DEPLOY_SSH_USER:-${REMOTE_USER}}" == chloe_ong_dev_cctech_support_com ]] \
+         "${DEV_DEPLOY_SSH_USER:-${REMOTE_USER}}" == chloe_ong_dev_cctech_support_com && \
+         "${DEV_BFF_PUBLIC_HOST}" == api.dev.mvl-cap.tw && "${DEV_FE_PUBLIC_HOST}" == app.dev.mvl-cap.tw ]] \
         || { info "guarded artifact transport requires the explicit current dev target" >&2; return 75; }
-      if [[ "${remote_component}" != "refresh-only" ]]; then
-        [[ "${DEV_BFF_PUBLIC_HOST}" == api.dev.mvl-cap.tw && "${DEV_FE_PUBLIC_HOST}" == app.dev.mvl-cap.tw ]] \
-          || { info "guarded artifact transport requires the explicit current dev target" >&2; return 75; }
-      fi
       local -a observer_args=()
       if [[ "${remote_component}" != "refresh-only" && "${ARTIFACT_RESTORE}" != true && "${ARTIFACT_VERIFY}" != true ]]; then
         prepare_dev_candidate_receipt_context || return $?
@@ -1046,10 +1041,8 @@ with os.fdopen(fd, "wb") as stream:
         fi
       fi
       if [[ "${transport_status}" -eq 0 && "${remote_component}" == "refresh-only" && -n "${remote_output:-}" && -n "${REFRESH_OUTPUT_PATH:-}" ]]; then
-        if "$SCRIPT_DIR/dev_vm_ssh.sh" exec "test -f $(shell_quote "${remote_output}")" >/dev/null 2>&1; then
-          "$SCRIPT_DIR/dev_vm_ssh.sh" copy-from "${remote_output}" "${REFRESH_OUTPUT_PATH}" || true
-          "$SCRIPT_DIR/dev_vm_ssh.sh" exec "rm -f $(shell_quote "${remote_output}")" >/dev/null 2>&1 || true
-        fi
+        "$SCRIPT_DIR/dev_vm_ssh.sh" copy-from "${remote_output}" "${REFRESH_OUTPUT_PATH}" || true
+        "$SCRIPT_DIR/dev_vm_ssh.sh" exec "rm -f $(shell_quote "${remote_output}")" >/dev/null 2>&1 || true
       fi
       # Only these locally-created, exact private paths are removed; never an
       # evidence directory, receipt, retained VM artifact, or caller path.
@@ -4394,16 +4387,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
 
   refresh-only)
     if [[ ! -f "docker-compose.yml" ]]; then
-      local wt_root="${PANTHEON_DEPLOY_WORKTREE_ROOT:-${HOME}/pantheon-ci-deploy/managed-deploy-worktrees}"
-      local wt="" wt_found=false
-      for wt in "${wt_root}/dev-root" "${wt_root}/dev-root/dev-root" "${HOME}/pantheon-ci-deploy/managed-deploy-worktrees/dev-root"; do
-        if [[ -f "${wt}/docker-compose.yml" ]]; then
-          cd "${wt}"
-          wt_found=true
-          break
-        fi
-      done
-      [[ "${wt_found}" == "true" ]] || error "no managed deploy worktree containing docker-compose.yml found in ${wt_root}"
+      cd "${PANTHEON_DEPLOY_WORKTREE_ROOT:-${HOME}/pantheon-ci-deploy/managed-deploy-worktrees}/dev-root" \
+        || error "managed deploy worktree is missing"
     fi
     execute_bounded_source_refresh_entrypoint "${FORCE_REFRESH:-false}" "${REFRESH_OUTPUT_PATH:-}"
     exit $?
@@ -4419,7 +4404,7 @@ REMOTE
 }
 
 if [[ "${REFRESH_ONLY:-false}" == "true" ]]; then
-  ssh_bash "${DEV_VM:-}" "${DEV_ZONE:-}" "${DEV_REMOTE_DIR:-}" refresh-only
+  ssh_bash pantheon-dev-deploy asia-east1-b "" refresh-only
   exit $?
 fi
 
