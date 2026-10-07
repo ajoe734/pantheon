@@ -727,38 +727,99 @@ def _make_tw_case(tmp_path: Path) -> AuthorityCase:
         }
         for row in wrappers
     ]
+    feature_rows = [
+        {
+            "source_id": row["source_id"],
+            "connector_id": CONNECTOR_ID,
+            "source_dataset": NORMALIZED_DATASET_ID,
+            "feature_dataset": "returns",
+            "feature_as_of_time": row["metadata"]["date"],
+        }
+        for row in wrappers
+    ]
     _write_jsonl(case.normalized_path, wrappers)
     _write_jsonl(case.raw_path, raw_rows)
+    _write_jsonl(case.feature_path, feature_rows)
     readback = case.responses[READBACK_URL]
     connector = readback["connectors"][0]
     connector["desired_state"] = {**DESIRED_STATE, "market": "TW"}
     connector["desired_state_sha256"] = _desired_digest(connector["desired_state"])
+    connector["connector"]["metadata"]["feature_targets"] = ["returns"]
+    connector["connector"]["metadata"]["storage_targets"] = [
+        "normalized/tw_price_daily",
+        "features/returns",
+    ]
     manifest = connector["source_health"]["metadata"]["storage_refs"]
-    manifest["feature_refs"] = []
-    manifest["summary"]["feature_ref_count"] = 0
+    manifest["feature_refs"] = [
+        {
+            "ref_type": "feature_rows",
+            "dataset": "returns",
+            "source_dataset": NORMALIZED_DATASET_ID,
+            "date": "2026-07-15",
+            "uri": case.feature_path.as_posix(),
+            "row_count": len(wrappers),
+            "feature_as_of_time": "2026-07-15",
+        }
+    ]
+    manifest["summary"]["feature_ref_count"] = 1
     case.responses[CATALOG_URL]["config_templates"][0]["fetch"] = {"datasets": [DESIRED_DATASET_ID]}
     return case
 
 
-def test_tw_normalized_row_contract_materializes_without_feature_refs(tmp_path: Path) -> None:
+def test_tw_normalized_row_contract_materializes_with_feature_refs(tmp_path: Path) -> None:
     case = _make_tw_case(tmp_path)
 
     result = _materialize(case)
 
     assert result.payload["market_scope"] == ["TW"]
     assert result.payload["instrument_scope"] == ["2317.TWSE", "2330.TWSE"]
-    assert result.payload["feature_dataset_refs"] == []
+    assert len(result.payload["feature_dataset_refs"]) == 1
+    assert result.payload["feature_dataset_refs"] == [case.feature_path.as_posix()]
     assert len(result.payload["records"]) == 60
     assert result.payload["records"][0]["instrument"] in {"2317.TWSE", "2330.TWSE"}
     assert result.payload["records"][0]["open"] > 0
 
+    # Load the evaluator contract and verify strict admission of TW DatasetVersion
+    spec = importlib.util.spec_from_file_location(
+        "training_session_evaluation_authority_tw_contract_test",
+        SERVICE_DIR / "evaluation_authority.py",
+    )
+    assert spec and spec.loader
+    evaluator = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = evaluator
+    spec.loader.exec_module(evaluator)
+    tw_policy = {**_policy(), "required_instruments": ["2317.TWSE", "2330.TWSE"]}
+    policy_path = tmp_path / "tw_policy.json"
+    policy_path.write_text(json.dumps(tw_policy), encoding="utf-8")
+    snapshot = evaluator.load_evaluation_authority(
+        result.path,
+        policy_path,
+        trusted_now=NOW,
+        strategy_id="strategy-tw-source-authority",
+        authority_root=result.path.parent,
+    )
+    assert snapshot.dataset_version_id == result.payload["dataset_version_id"]
+    assert snapshot.dataset_digest == result.payload_sha256
+    assert len(snapshot.vectorbt_dataset["records"]) == 60
 
-def test_feature_refs_required_when_connector_declares_feature_targets(tmp_path: Path) -> None:
+
+def test_feature_refs_required_when_storage_omits_feature_refs(tmp_path: Path) -> None:
     case = _make_tw_case(tmp_path)
-    connector = case.responses[READBACK_URL]["connectors"][0]
-    connector["connector"]["metadata"]["feature_targets"] = ["returns"]
+    manifest = case.responses[READBACK_URL]["connectors"][0]["source_health"]["metadata"]["storage_refs"]
+    manifest["feature_refs"] = []
+    manifest["summary"]["feature_ref_count"] = 0
 
     with pytest.raises(SourceDatasetAuthorityError, match="feature_refs"):
+        _materialize(case)
+
+
+def test_altered_feature_artifact_is_rejected(tmp_path: Path) -> None:
+    case = _make_tw_case(tmp_path)
+    rows = [json.loads(line) for line in case.feature_path.read_text().splitlines()]
+    rows[0]["connector_id"] = "different-connector"
+    _write_jsonl(case.feature_path, rows)
+
+    with pytest.raises(SourceDatasetAuthorityError, match="different connector"):
         _materialize(case)
 
 
