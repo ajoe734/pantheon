@@ -225,7 +225,6 @@ def test_data_sources_times_out_as_typed_unavailable_not_a_healthy_cache(monkeyp
     app.include_router(router)
 
     with TestClient(app, raise_server_exceptions=False) as client:
-        client.get("/bff/management/data-sources/catalog", headers=HEADERS)
         started = time.monotonic()
         response = client.get("/bff/management/data-sources", headers=HEADERS)
         elapsed = time.monotonic() - started

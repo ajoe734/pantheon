@@ -5,7 +5,7 @@ import tempfile
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, Optional
 
-from fastapi import FastAPI, Header, Query, Request
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from services.control_plane.bff.action_catalog import get_catalog_entry
@@ -13,14 +13,9 @@ from services.control_plane.bff.command_adapters import (
     CommandAdapterService,
     create_command_adapters_router,
 )
-from services.control_plane.bff.command_executor import execute_command_with_status
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.core.errors import register_error_handlers
-from services.control_plane.bff.models import (
-    CommandStatus,
-    CommandType,
-    OperatorIdentity,
-)
+from services.control_plane.bff.models import OperatorIdentity
 
 
 HEADERS = {
@@ -58,29 +53,6 @@ class MockReadStore:
                 return item
         return None
 
-    def get_ranking_snapshot(self, snapshot_id: str) -> Optional[dict[str, Any]]:
-        from datetime import datetime, timezone
-        from services.control_plane.bff.pm12.service import _stable_json_hash, _PM12_LEAGUE_FORMULA_VERSION
-        now = datetime.now(timezone.utc).isoformat()
-        payload = {
-            "surface": "quarterly",
-            "period": "2026-Q1",
-            "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
-            "items": [
-                {
-                    "persona_id": "p-1",
-                    "score": 90.0,
-                    "components": {"risk_score": 80.0, "execution_score": 75.0},
-                }
-            ],
-        }
-        return {
-            "snapshot_id": snapshot_id,
-            "created_at": now,
-            **payload,
-            "content_digest": _stable_json_hash(payload),
-        }
-
 
 command_store: Optional[CommandStore] = None
 read_store: Optional[MockReadStore] = None
@@ -100,47 +72,6 @@ def _build_test_app() -> FastAPI:
 
     cmd_router = create_command_adapters_router(service=service)
     app.include_router(cmd_router)
-
-    @app.get("/bff/management/human-inbox")
-    async def _human_inbox(
-        source_type: Optional[str] = Query(default=None),
-        page_size: int = Query(default=20),
-    ):
-        return {
-            "data": {
-                "items": [
-                    {
-                        "id": "approval:b5-human-001",
-                        "source_id": "b5-human-001",
-                        "source_type": "approval",
-                        "status": "pending",
-                        "title": "B5 HumanGate approval fixture.",
-                    }
-                ]
-            }
-        }
-
-    @app.get("/bff/management/quarterly-ranking/recommendations")
-    async def _quarterly_ranking_recommendations(
-        quarter: Optional[str] = Query(default=None),
-        page_size: int = Query(default=20),
-    ):
-        q = quarter or "2026-Q1"
-        return {
-            "data": {
-                "items": [
-                    {
-                        "quarter": q,
-                        "recommendation_id": f"pm12-{q.lower()}-p-1-promote_to_canary_candidate",
-                        "action_id": "promote_to_canary_candidate",
-                        "persona_id": "p-1",
-                        "ranking_snapshot_id": "snap-b5-001",
-                        "live_capital_mutation": False,
-                    }
-                ]
-            }
-        }
-
     return app
 
 
@@ -151,7 +82,6 @@ def _isolated_b5_client() -> Iterator[TestClient]:
         command_store = CommandStore(os.path.join(td, "commands.jsonl"))
         read_store = MockReadStore(
             approvals=[
-                {"decision_id": "b5-human-001", "status": "pending", "requested_by": "governance-queue"},
                 {"decision_id": "b5-revoke", "status": "pending", "requested_by": "governance-queue"},
             ]
         )
