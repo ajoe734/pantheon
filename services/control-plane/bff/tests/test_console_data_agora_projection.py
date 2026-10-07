@@ -140,7 +140,7 @@ def _projected_agora_bff(monkeypatch) -> Iterator[TestClient]:
             "PANTHEON_BFF_RESEARCH_TICKET_STORE": out_dir / "research_tickets.json",
             "PANTHEON_BFF_RESEARCH_NOTES_STORE": out_dir / "research_notes.json",
             "PANTHEON_BFF_INSIGHT_CARD_STORE": out_dir / "insight_cards.json",
-            "PANTHEON_BFF_DECISION_JOURNAL_STORE": out_dir / "decision_journal_entries.json",
+            "PANTHEON_DECISION_JOURNAL_DATA_DIR": out_dir,
             "PANTHEON_BFF_POSTMORTEM_STORE": out_dir / "postmortems.json",
         }
         for key, value in store_env.items():
@@ -195,38 +195,11 @@ def _assert_ok_list(client: TestClient, path: str, surface_key: str) -> dict:
 
 
 def test_projected_consultation_agora_surfaces_return_ok_counts(monkeypatch) -> None:
+    # Only journal and postmortems remain routed; signals, sessions, insights, notes,
+    # handoffs, training-examples and inbox were deleted in 0cfb1e2af and now 404.
     with _projected_agora_bff(monkeypatch) as client:
-        signals = _assert_ok_list(client, "/bff/agora/signals", "agora_signal_list")
-        assert signals["items"][0]["signal_id"] == "sig-cr-agora-console-001"
-
-        sessions = _assert_ok_list(client, "/bff/agora/sessions", "agora_session_list")
-        assert sessions["items"][0]["sessionId"] == "agora-consult-session-001"
-
-        insights = _assert_ok_list(client, "/bff/agora/insights", "agora_insight_list")
-        assert {item["source_ref"] for item in insights["items"]} >= {
-            "consultation_request:cr-agora-console-001",
-            "consultation_memo:mem-agora-console-001",
-        }
-
-        notes = _assert_ok_list(client, "/bff/agora/notes", "agora_note_list")
-        assert notes["items"][0]["note_id"] == "note-cr-agora-console-001"
-
         journal = _assert_ok_list(client, "/bff/agora/journal", "agora_journal_list")
         assert journal["items"][0]["id"] == "journal-mem-agora-console-001"
 
-        handoffs = _assert_ok_list(client, "/bff/agora/handoffs", "agora_handoff_list")
-        assert handoffs["items"][0]["handoffId"] == "gh-agora-console-001"
-
-        training = _assert_ok_list(client, "/bff/agora/training-examples", "agora_training_example_list")
-        assert training["items"][0]["trainingExampleId"] == "trn-agora-cr-agora-console-001"
-
         postmortems = _assert_ok_list(client, "/bff/agora/postmortems", "agora_postmortems")
         assert postmortems["items"][0]["postmortem_id"] == "pm-cr-agora-console-001"
-
-        inbox = client.get("/bff/agora/inbox", headers=HEADERS)
-        assert inbox.status_code == 200, inbox.text
-        inbox_payload = inbox.json()
-        assert len(inbox_payload["items"]) >= 3
-        assert inbox_payload["meta"]["surfaces"]["agora_inbox_signals"]["status"] == "ok"
-        assert inbox_payload["meta"]["surfaces"]["agora_inbox_insights"]["status"] == "ok"
-        assert inbox_payload["meta"]["surfaces"]["agora_inbox_research_tasks"]["status"] == "ok"
