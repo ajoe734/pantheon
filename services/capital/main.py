@@ -54,6 +54,7 @@ try:
         UpdateCapitalPoolStatusRequest,
         WriteAuthorityResponse,
     )
+    from . import allocation_lineage as lineage
     from .allocation_store import (
         AllocationAuthorityConflict,
         AllocationAuthorityError,
@@ -100,6 +101,7 @@ except ImportError:
         UpdateCapitalPoolStatusRequest,
         WriteAuthorityResponse,
     )
+    import allocation_lineage as lineage  # type: ignore
     from allocation_store import (  # type: ignore
         AllocationAuthorityConflict,
         AllocationAuthorityError,
@@ -638,6 +640,7 @@ class CapitalBoundaryService:
                     f"CapitalPool {pool.pool_id!r} must be active for a risk-increasing rebalance"
                 )
             payload = {**body.model_dump(mode="json"), "tenant_id": _current_tenant()}
+            lineage.verify_rebalance_lineage(payload)
             for index, line in enumerate(body.lines):
                 increases_risk = self._line_increases_risk(line)
                 sleeve_id = self._normalized_sleeve_id(line.capital_sleeve_id)
@@ -1094,7 +1097,7 @@ def _raise_http_error(exc: Exception) -> None:
 
 CAPITAL_HTTP_ERRORS = (
     CapitalServiceError, CapitalPoolError, PersonaCapitalBindingError,
-    AllocationAuthorityError, ValueError, PermissionError, CapitalInboundAuthorityError,
+    AllocationAuthorityError, lineage.AllocationLineageError, ValueError, PermissionError, CapitalInboundAuthorityError,
 )
 
 
@@ -1251,6 +1254,24 @@ def create_rebalance(body: CreateRebalanceRequest) -> RebalanceBody:
     try:
         body = bind_capital_mutation(body)
         return _rebalance_body(get_capital_service().create_rebalance(body))
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.post("/api/allocation-evaluations")
+def evaluate_allocation_policy(payload: Dict[str, Any]) -> Dict[str, Any]:
+    paper = str(payload.get("authority_mode") or "").strip().lower()
+    try:
+        if paper:
+            if paper != lineage.PAPER_AUTHORITY_MODE:
+                raise lineage.AllocationLineageError(f"Unsupported authority_mode={paper!r}")
+            if "operator" not in current_authority().roles:
+                raise PermissionError("Paper allocation simulation requires an operator")
+            if not lineage.paper_environment_allowed():
+                raise PermissionError("Paper allocation simulation is only available in the paper environment")
+            if not str(payload.get("promotion_review_id") or "").strip():
+                raise lineage.AllocationLineageError("promotion_review_id is required")
+        return lineage.evaluate_allocation(payload, paper=bool(paper))
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 
