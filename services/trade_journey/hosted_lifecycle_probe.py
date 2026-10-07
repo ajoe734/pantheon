@@ -68,6 +68,8 @@ PAPER_LIFECYCLE_UUID_NAMESPACE = uuid.UUID("1760784c-c9e0-47eb-b0aa-d37f58d892df
 DEFAULT_PROJECTION_SCHEMA = "trade_journey_projection"
 DEFAULT_CONTROLLER_ID = "canonical-lifecycle-projector"
 _SCHEMA_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+_SNAPSHOT_REF_RE = re.compile(r"^source-ingest://snapshots/(mss-[0-9a-zA-Z._-]+)$")
+_SNAPSHOT_ID_RE = re.compile(r"^mss-[0-9a-zA-Z._-]+$")
 
 
 class ProbeError(RuntimeError):
@@ -299,68 +301,46 @@ class AsyncpgRelationalProjectionSource:
         controller = {
             "controller_id": controller_data.get("controller_id"),
             "checkpoint": int(controller_data.get("checkpoint_seq") or 0),
-            "source_high_watermark": int(
-                controller_data.get("source_high_watermark") or 0
-            ),
+            "source_high_watermark": int(controller_data.get("source_high_watermark") or 0),
             "backlog": int(controller_data.get("backlog_count") or 0),
             "generation": int(controller_data.get("projection_revision") or 0),
             "deployment_sha": controller_data.get("deployment_sha"),
             "mode": controller_data.get("mode"),
-            "status": (
-                "ready"
-                if str(controller_data.get("status") or "").lower()
-                in {"ok", "ready"}
-                else controller_data.get("status")
-            ),
+            "status": "ready" if str(controller_data.get("status") or "").lower() in {"ok", "ready"} else controller_data.get("status"),
             "accepted_live": bool(controller_data.get("accepted_live")),
-            "truth_level": (
-                "canonical_live"
-                if controller_data.get("mode") == "live"
-                and controller_data.get("accepted_live") is True
-                else "not_accepted_live"
-            ),
+            "truth_level": "canonical_live" if controller_data.get("mode") == "live" and controller_data.get("accepted_live") is True else "not_accepted_live",
             "last_poll_at": str(controller_data.get("last_poll_at") or ""),
             "last_error": controller_data.get("last_error_message") or None,
-            "quarantine_count": int(
-                controller_data.get("unresolved_quarantine_count") or 0
-            ),
+            "quarantine_count": int(controller_data.get("unresolved_quarantine_count") or 0),
         }
 
-        projected_events: list[dict[str, Any]] = []
-        for row in stage_rows:
-            stage = _json_object(row.get("contract_fields"))
-            stage.update(
-                {
-                    "canonical_event_id": str(row.get("source_event_id") or ""),
-                    "stage": str(row.get("stage_name") or ""),
-                    "stage_status": str(row.get("stage_status") or ""),
-                    "source_offset": int(row.get("source_ingested_seq") or 0),
-                }
-            )
-            projected_events.append(stage)
+        projected_events = [
+            {
+                **_json_object(row.get("contract_fields")),
+                "canonical_event_id": str(row.get("source_event_id") or ""),
+                "stage": str(row.get("stage_name") or ""),
+                "stage_status": str(row.get("stage_status") or ""),
+                "source_offset": int(row.get("source_ingested_seq") or 0),
+            }
+            for row in stage_rows
+        ]
 
         loop: dict[str, Any] | None = None
         if loop_row is not None:
             loop_data = dict(loop_row)
+            freshness = _json_object(loop_data.get("freshness_lineage"))
             loop = {
                 **_json_object(loop_data.get("contract_payload")),
                 **_json_object(loop_data.get("lifecycle_summary")),
+                "tenant_id": loop_data.get("tenant_id"),
+                "environment": loop_data.get("environment"),
+                "loop_run_id": loop_data.get("loop_run_id"),
+                "journey_id": loop_data.get("journey_id"),
+                "status": loop_data.get("status"),
+                "accepted_live": bool(freshness.get("accepted_live")),
+                "projection_mode": freshness.get("mode"),
+                "projection_revision": int(loop_data.get("projection_revision") or 0),
             }
-            freshness = _json_object(loop_data.get("freshness_lineage"))
-            loop.update(
-                {
-                    "tenant_id": loop_data.get("tenant_id"),
-                    "environment": loop_data.get("environment"),
-                    "loop_run_id": loop_data.get("loop_run_id"),
-                    "journey_id": loop_data.get("journey_id"),
-                    "status": loop_data.get("status"),
-                    "accepted_live": bool(freshness.get("accepted_live")),
-                    "projection_mode": freshness.get("mode"),
-                    "projection_revision": int(
-                        loop_data.get("projection_revision") or 0
-                    ),
-                }
-            )
 
         generation = int(controller.get("generation") or 0)
         journeys = {
@@ -368,11 +348,7 @@ class AsyncpgRelationalProjectionSource:
             "generation": generation,
             "controller": controller,
             "journey_present": journey_row is not None,
-            "journey_projection_revision": int(
-                dict(journey_row).get("projection_revision") or 0
-            )
-            if journey_row is not None
-            else None,
+            "journey_projection_revision": int(dict(journey_row).get("projection_revision") or 0) if journey_row is not None else None,
         }
         loops = {
             "records": {loop_run_id: loop} if loop is not None else {},
@@ -468,16 +444,18 @@ def _complete_candidates(
             ),
         })
         if event_type == "signal_generation":
-            fld = lambda k: event.get(k) or metadata.get(k)
+            src = {**metadata, **event}
             group["signal_provenance"] = {
-                "source_worker": str(fld("source_worker") or ""),
-                "artifact_interpreter": str(fld("artifact_interpreter") or ""),
-                "artifact_checksum": fld("artifact_checksum"),
-                "market_input_ref": fld("market_input_ref"),
-                "raw_symbol": fld("raw_symbol"),
-                "is_real_order": event.get("is_real_order", metadata.get("is_real_order")),
-                "is_real_capital": event.get("is_real_capital", metadata.get("is_real_capital")),
-                **{k: str(fld(k) or "") for k in ("artifact_id", "artifact_version", "binding_id", "runtime_id", "capital_pool_id", "plan_id", "persona_capital_binding_id")},
+                k: src.get(k)
+                for k in (
+                    "source_worker", "artifact_interpreter", "artifact_id",
+                    "artifact_version", "artifact_checksum", "artifact_registry_id",
+                    "binding_id", "runtime_id", "capital_pool_id", "plan_id",
+                    "persona_capital_binding_id", "raw_symbol", "market_input_ref",
+                    "market_input_snapshot_id", "market_input_observed_at",
+                    "market_input_event_time", "market_input_lineage",
+                    "is_real_order", "is_real_capital",
+                )
             }
     complete: list[dict[str, Any]] = []
     for group in groups.values():
@@ -580,49 +558,86 @@ def _validate_natural_candidate(
     if not isinstance(prov, Mapping):
         raise ProbeError("natural_provenance_missing", "signal provenance metadata is missing")
     if prov.get("source_worker") != NATURAL_PRODUCER:
-        raise ProbeError("invalid_producer", f"natural candidate requires producer {NATURAL_PRODUCER!r}, got {prov.get('source_worker')!r}")
+        raise ProbeError("invalid_producer", f"natural candidate requires producer {NATURAL_PRODUCER!r}")
     if prov.get("artifact_interpreter") != NATURAL_INTERPRETER:
-        raise ProbeError("invalid_interpreter", f"natural candidate requires interpreter {NATURAL_INTERPRETER!r}, got {prov.get('artifact_interpreter')!r}")
+        raise ProbeError("invalid_interpreter", f"natural candidate requires interpreter {NATURAL_INTERPRETER!r}")
     if not isinstance(prov.get("artifact_checksum"), str) or not prov["artifact_checksum"].strip():
         raise ProbeError("invalid_checksum", "approved artifact checksum is missing")
-    if not isinstance(prov.get("market_input_ref"), str) or not prov["market_input_ref"].strip():
-        raise ProbeError("invalid_lineage", "market input lineage ref is missing")
+    if not isinstance(prov.get("artifact_version"), str) or not prov["artifact_version"].strip():
+        raise ProbeError("invalid_version", "approved artifact version is missing")
     if prov.get("is_real_capital") is not False or prov.get("is_real_order") is not False:
         raise ProbeError("invalid_capital_mode", "safe paper flags violated")
+
+    ref = str(prov.get("market_input_ref") or "").strip()
+    match = _SNAPSHOT_REF_RE.match(ref)
+    if not match:
+        raise ProbeError("invalid_lineage", "market input lineage ref is invalid or missing")
+    snapshot_id = str(prov.get("market_input_snapshot_id") or "").strip()
+    if not snapshot_id or not _SNAPSHOT_ID_RE.match(snapshot_id) or snapshot_id != match.group(1):
+        raise ProbeError("invalid_snapshot_id", "market input snapshot ID does not match ref")
+
+    observed_at = str(prov.get("market_input_observed_at") or "").strip()
+    event_time = str(prov.get("market_input_event_time") or "").strip()
+    if not observed_at or not event_time:
+        raise ProbeError("invalid_lineage", "market input observation timestamps missing")
+    try:
+        t_obs = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+        t_evt = datetime.fromisoformat(event_time.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ProbeError("invalid_lineage", "market input timestamps malformed") from exc
+    if t_evt > t_obs:
+        raise ProbeError("invalid_freshness", "market input event_time cannot follow observed_at")
+
+    lineage = prov.get("market_input_lineage")
+    if not isinstance(lineage, Mapping):
+        raise ProbeError("invalid_lineage", "market input lineage is missing")
+    for key in ("source_ids", "connector_ids", "content_refs", "ingest_run_ids"):
+        items = lineage.get(key)
+        if not isinstance(items, (list, tuple)) or not items or not all(isinstance(x, str) and x.strip() for x in items):
+            raise ProbeError("invalid_lineage", f"market input lineage {key} is incomplete")
+
     if case is not None:
         if case.get("state") != "succeeded":
             raise ProbeError("case_state_mismatch", "case provisioning state is not succeeded")
-        checks = (
-            (candidate["identity"].get("tenant_id"), case.get("tenant_id"), "case_identity_mismatch", "tenant identity mismatch"),
-            (prov.get("binding_id"), case.get("runtime_binding_id"), "case_identity_mismatch", "runtime binding ID mismatch"),
-            (prov.get("runtime_id"), case.get("runtime_id"), "case_identity_mismatch", "runtime ID mismatch"),
-            (prov.get("plan_id"), case.get("deployment_plan_id"), "case_plan_mismatch", "deployment plan ID mismatch"),
-            (prov.get("capital_pool_id"), case.get("capital_pool_id"), "case_capital_mismatch", "capital pool mismatch"),
-            (prov.get("artifact_id"), case.get("artifact_id"), "case_artifact_mismatch", "artifact ID mismatch"),
-            (prov.get("artifact_version"), case.get("artifact_version"), "case_version_mismatch", "artifact version mismatch"),
-            (prov.get("artifact_checksum"), case.get("artifact_checksum"), "case_checksum_mismatch", "artifact checksum mismatch"),
+        if case.get("artifact_state") != "approved":
+            raise ProbeError("artifact_not_approved", "case artifact state is not approved")
+        expected = (
+            (candidate["identity"].get("tenant_id"), case.get("tenant_id"), "case_identity_mismatch"),
+            (prov.get("binding_id"), case.get("runtime_binding_id"), "case_identity_mismatch"),
+            (prov.get("runtime_id"), case.get("runtime_id"), "case_identity_mismatch"),
+            (prov.get("plan_id"), case.get("deployment_plan_id"), "case_plan_mismatch"),
+            (prov.get("capital_pool_id"), case.get("capital_pool_id"), "case_capital_mismatch"),
+            (prov.get("artifact_id"), case.get("artifact_id"), "case_artifact_mismatch"),
+            (prov.get("artifact_version"), case.get("artifact_version"), "case_version_mismatch"),
+            (prov.get("artifact_checksum"), case.get("artifact_checksum"), "case_checksum_mismatch"),
         )
-        for actual, expected, code, msg in checks:
-            if not expected or actual != expected:
-                raise ProbeError(code, msg)
+        for act, exp, err_code in expected:
+            if not exp or act != exp:
+                raise ProbeError(err_code, f"mismatch: actual {act!r} != expected {exp!r}")
 
 
 def _normalize_case_record(record: Mapping[str, Any]) -> dict[str, Any]:
-    refs, res = _json_object(record.get("references")), _json_object(record.get("result"))
+    refs = _json_object(record.get("references"))
+    res = _json_object(record.get("result"))
     strat = _json_object(refs.get("strategy_artifact_approved"))
     entry = _json_object(strat.get("entry")) if "entry" in strat else strat
+
+    def pick(*keys: str) -> str:
+        return next((str(v) for k in keys for v in (record.get(k), refs.get(k), res.get(k), entry.get(k)) if v), "")
+
     return {
         "tenant_id": str(record.get("tenant_id") or ""),
         "persona_id": str(record.get("persona_id") or ""),
         "idempotency_key": str(record.get("idempotency_key") or ""),
         "state": str(record.get("state") or res.get("state") or ""),
-        "runtime_binding_id": str(record.get("runtime_binding_id") or refs.get("runtime_binding_id") or res.get("runtime_binding_id") or ""),
-        "runtime_id": str(record.get("runtime_id") or refs.get("runtime_id") or res.get("runtime_id") or ""),
-        "capital_pool_id": str(record.get("capital_pool_id") or res.get("capital_pool_id") or refs.get("capital_pool_id") or ""),
-        "deployment_plan_id": str(record.get("deployment_plan_id") or res.get("deployment_plan_id") or refs.get("deployment_plan_id") or ""),
-        "persona_capital_binding_id": str(record.get("persona_capital_binding_id") or res.get("persona_capital_binding_id") or refs.get("persona_capital_binding_id") or ""),
-        "artifact_id": str(record.get("artifact_id") or entry.get("registry_id") or entry.get("artifact_id") or res.get("strategy_artifact_id") or res.get("registry_id") or ""),
-        "artifact_version": str(record.get("artifact_version") or entry.get("version") or res.get("artifact_version") or ""),
+        "artifact_state": str(record.get("artifact_state") or entry.get("artifact_state") or ""),
+        "runtime_binding_id": pick("runtime_binding_id"),
+        "runtime_id": pick("runtime_id"),
+        "capital_pool_id": pick("capital_pool_id"),
+        "deployment_plan_id": pick("deployment_plan_id"),
+        "persona_capital_binding_id": pick("persona_capital_binding_id"),
+        "artifact_id": pick("artifact_id", "registry_id", "strategy_artifact_id"),
+        "artifact_version": pick("artifact_version", "version"),
         "artifact_checksum": record.get("artifact_checksum") or entry.get("checksum") or res.get("artifact_checksum"),
     }
 
@@ -631,11 +646,14 @@ class AsyncpgCaseSource:
     """Read one governed persona provisioning case from Postgres."""
 
     def __init__(self, dsn: str, *, schema: str = "bff", registry_schema: str = "registry") -> None:
-        self._dsn, self._schema, self._registry_schema = dsn, schema, registry_schema
+        self._dsn = dsn
+        self._schema = schema
+        self._registry_schema = registry_schema
 
     async def get_case(self, case_key: str) -> dict[str, Any] | None:
         try:
             import asyncpg  # type: ignore[import]
+
             conn = await asyncpg.connect(self._dsn)
             try:
                 async with conn.transaction(isolation="repeatable_read", readonly=True):
@@ -647,17 +665,37 @@ class AsyncpgCaseSource:
                     if row is None:
                         return None
                     case = _normalize_case_record(dict(row))
-                    if not case.get("artifact_checksum") and case.get("artifact_id"):
-                        reg = await conn.fetchrow(
-                            f"SELECT payload FROM {self._registry_schema}.entries WHERE record_id = $1 LIMIT 1",
-                            case["artifact_id"],
-                        )
-                        if reg is not None:
-                            payload = _json_object(reg["payload"])
-                            if payload.get("checksum"):
-                                case["artifact_checksum"] = payload["checksum"]
-                            if not case.get("artifact_version") and payload.get("version"):
-                                case["artifact_version"] = payload["version"]
+                    artifact_id = case.get("artifact_id")
+                    if not artifact_id:
+                        raise ProbeError("case_artifact_missing", "case artifact ID is missing")
+
+                    reg_row = await conn.fetchrow(
+                        f"SELECT payload FROM {self._registry_schema}.entries WHERE record_id = $1 LIMIT 1",
+                        artifact_id,
+                    )
+                    if reg_row is None:
+                        raise ProbeError("registry_artifact_missing", f"artifact {artifact_id!r} not found in registry")
+                    payload = _json_object(reg_row["payload"])
+                    reg_state = str(payload.get("artifact_state") or "")
+                    if reg_state != "approved":
+                        raise ProbeError("registry_artifact_not_approved", f"registry artifact state {reg_state!r}")
+                    reg_tenant = str(payload.get("owner_tenant") or "")
+                    if reg_tenant and reg_tenant != case.get("tenant_id") and reg_tenant != "system":
+                        raise ProbeError("registry_tenant_mismatch", "registry artifact tenant mismatch")
+                    reg_checksum = str(payload.get("checksum") or "")
+                    if not reg_checksum:
+                        raise ProbeError("registry_checksum_missing", "registry artifact checksum is missing")
+                    if case.get("artifact_checksum") and case["artifact_checksum"] != reg_checksum:
+                        raise ProbeError("case_checksum_mismatch", "case checksum mismatch")
+                    case["artifact_checksum"] = reg_checksum
+
+                    reg_version = str(payload.get("version") or "")
+                    if not reg_version:
+                        raise ProbeError("registry_version_missing", "registry artifact version is missing")
+                    if case.get("artifact_version") and case["artifact_version"] != reg_version:
+                        raise ProbeError("case_version_mismatch", "case version mismatch")
+                    case["artifact_version"] = reg_version
+                    case["artifact_state"] = "approved"
                     return case
             finally:
                 await conn.close()
@@ -670,7 +708,7 @@ class AsyncpgCaseSource:
 async def _resolve_case(case_source: Any, case_key: str) -> dict[str, Any]:
     if case_source is None:
         raise ProbeError("case_source_missing", "governed case source is required in natural mode")
-    get_fn = case_source.get if isinstance(case_source, Mapping) else (getattr(case_source, "get_case", None) or getattr(case_source, "get", None))
+    get_fn = getattr(case_source, "get_case", None) or getattr(case_source, "get", None)
     if not callable(get_fn):
         raise ProbeError("case_source_invalid", "case source is unavailable")
     res = get_fn(case_key)
@@ -678,7 +716,10 @@ async def _resolve_case(case_source: Any, case_key: str) -> dict[str, Any]:
         res = await res
     if res is None:
         raise ProbeError("case_not_found", f"governed case {case_key!r} not found in provisioning")
-    return _normalize_case_record(res)
+    case = _normalize_case_record(res)
+    if not case.get("artifact_state") and isinstance(res, Mapping):
+        case["artifact_state"] = str(res.get("artifact_state") or "")
+    return case
 
 
 def _read_object(path: Path) -> dict[str, Any]:
@@ -877,19 +918,12 @@ async def run_probe(
                             projection_source.current_projection(candidate),
                             timeout=max(0.001, deadline - monotonic()),
                         )
-                        projection_backend = str(
-                            getattr(projection_source, "backend", "postgres")
-                        )
-                    else:
-                        if projection_root is None:
-                            raise ProbeError(
-                                "configuration_missing",
-                                "projection root or relational projection DSN is required",
-                            )
-                        journeys, loops, generation_name = _current_projection(
-                            projection_root
-                        )
+                        projection_backend = str(getattr(projection_source, "backend", "postgres"))
+                    elif projection_root is not None:
+                        journeys, loops, generation_name = _current_projection(projection_root)
                         projection_backend = "json_generation"
+                    else:
+                        raise ProbeError("configuration_missing", "projection root or relational projection DSN is required")
                     proof = _correlate(
                         candidate=candidate,
                         baseline_high_watermark=observed_baseline_high_watermark,
@@ -929,26 +963,16 @@ async def run_probe(
 
 
 def _failure_artifact(
-    *,
-    expected_sha: str,
-    code: str,
-    message: str,
-    mode: str = "natural",
-    case_key: str | None = None,
-    timed_out: bool | None = None,
+    *, expected_sha: str, code: str, message: str,
+    mode: str = "natural", case_key: str | None = None, timed_out: bool | None = None,
 ) -> dict[str, Any]:
     failure: dict[str, Any] = {"code": code, "message": message}
     if timed_out is not None:
         failure["timed_out"] = timed_out
     result = {
-        "schema_version": SCHEMA_VERSION,
-        "task_id": TASK_ID,
-        "mode": mode,
-        "outcome": "failed",
-        "observed_at": _utc_now(),
-        "expected_deployment_sha": expected_sha,
-        "failure": failure,
-        "redaction": {"dsn_included": False, "payloads_included": False},
+        "schema_version": SCHEMA_VERSION, "task_id": TASK_ID, "mode": mode,
+        "outcome": "failed", "observed_at": _utc_now(), "expected_deployment_sha": expected_sha,
+        "failure": failure, "redaction": {"dsn_included": False, "payloads_included": False},
     }
     if case_key:
         result["governed_case_key"] = case_key
@@ -956,51 +980,28 @@ def _failure_artifact(
 
 
 def write_failure_artifact(
-    output: Path,
-    *,
-    expected_sha: str,
-    code: str,
-    message: str,
-    mode: str = "natural",
-    case_key: str | None = None,
+    output: Path, *, expected_sha: str, code: str, message: str,
+    mode: str = "natural", case_key: str | None = None,
 ) -> dict[str, Any]:
     """Write a redacted failure artifact when hosted transport fails."""
-    artifact = _failure_artifact(
-        expected_sha=expected_sha, code=code, message=message, mode=mode, case_key=case_key
-    )
+    artifact = _failure_artifact(expected_sha=expected_sha, code=code, message=message, mode=mode, case_key=case_key)
     _atomic_write_json(output, artifact)
     return artifact
 
 
 async def execute(
-    *,
-    source: Any,
-    projection_root: Path | None,
-    projection_source: Any | None = None,
-    case_source: Any | None = None,
-    expected_sha: str,
-    output: Path,
-    timeout_seconds: float,
-    poll_seconds: float,
-    baseline_high_watermark: int | None = None,
-    mode: str = "natural",
-    case_key: str | None = None,
-    sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    *, source: Any, projection_root: Path | None, projection_source: Any | None = None,
+    case_source: Any | None = None, expected_sha: str, output: Path, timeout_seconds: float,
+    poll_seconds: float, baseline_high_watermark: int | None = None, mode: str = "natural",
+    case_key: str | None = None, sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> tuple[int, dict[str, Any]]:
     kwargs = dict(expected_sha=expected_sha, mode=mode, case_key=case_key)
     try:
         artifact = await run_probe(
-            source=source,
-            projection_root=projection_root,
-            projection_source=projection_source,
-            case_source=case_source,
-            timeout_seconds=timeout_seconds,
-            poll_seconds=poll_seconds,
-            baseline_high_watermark=baseline_high_watermark,
-            sleeper=sleeper,
-            monotonic=monotonic,
-            **kwargs,
+            source=source, projection_root=projection_root, projection_source=projection_source,
+            case_source=case_source, timeout_seconds=timeout_seconds, poll_seconds=poll_seconds,
+            baseline_high_watermark=baseline_high_watermark, sleeper=sleeper, monotonic=monotonic, **kwargs,
         )
         code = 0
     except ProbeError as exc:
@@ -1029,15 +1030,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     projection_dsn = os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_DSN", "").strip()
     if args.print_high_watermark:
         if not dsn:
-            print(json.dumps({"outcome": "failed", "failure": {"code": "configuration_missing", "message": "telemetry DSN is required"}, "redaction": {"dsn_included": False}}, sort_keys=True), file=sys.stderr)
+            err = {"code": "configuration_missing", "message": "telemetry DSN is required"}
+            print(json.dumps({"outcome": "failed", "failure": err, "redaction": {"dsn_included": False}}, sort_keys=True), file=sys.stderr)
             return 1
         try:
-            high_watermark = asyncio.run(_source_high_watermark(AsyncpgTelemetrySource(dsn)))
+            print(asyncio.run(_source_high_watermark(AsyncpgTelemetrySource(dsn))))
+            return 0
         except ProbeError as exc:
-            print(json.dumps({"outcome": "failed", "failure": {"code": exc.code, "message": exc.safe_message, "timed_out": exc.timed_out}, "redaction": {"dsn_included": False}}, sort_keys=True), file=sys.stderr)
+            err = {"code": exc.code, "message": exc.safe_message, "timed_out": exc.timed_out}
+            print(json.dumps({"outcome": "failed", "failure": err, "redaction": {"dsn_included": False}}, sort_keys=True), file=sys.stderr)
             return 1
-        print(high_watermark)
-        return 0
     if args.output is None:
         parser.error("--output is required unless --print-high-watermark is used")
     if args.mode == "natural" and not args.case_key:
@@ -1046,21 +1048,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not dsn or (not root and not projection_dsn):
         write_failure_artifact(args.output, expected_sha=args.expected_sha, code="configuration_missing", message="telemetry DSN and either projection root or relational projection DSN are required", mode=args.mode, case_key=args.case_key)
         return 1
+    proj_schema = os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA", DEFAULT_PROJECTION_SCHEMA)
     code, artifact = asyncio.run(
         execute(
             source=AsyncpgTelemetrySource(dsn),
             projection_root=Path(root) if root else None,
-            projection_source=(
-                AsyncpgRelationalProjectionSource(
-                    projection_dsn,
-                    schema=os.getenv(
-                        "LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA",
-                        DEFAULT_PROJECTION_SCHEMA,
-                    ),
-                )
-                if projection_dsn
-                else None
-            ),
+            projection_source=AsyncpgRelationalProjectionSource(projection_dsn, schema=proj_schema) if projection_dsn else None,
             case_source=AsyncpgCaseSource(dsn) if dsn else None,
             expected_sha=args.expected_sha,
             output=args.output,

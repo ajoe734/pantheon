@@ -143,6 +143,7 @@ DEFAULT_TEST_CASE = {
     "artifact_id": "artifact-paper-001",
     "artifact_version": "1.2.3",
     "artifact_checksum": "sha256-approved-test-checksum",
+    "artifact_state": "approved",
     "state": "succeeded",
 }
 DEFAULT_CASE_SOURCE = {DEFAULT_TEST_CASE_KEY: DEFAULT_TEST_CASE}
@@ -217,9 +218,25 @@ def _natural_lifecycle_rows() -> list[dict]:
         if event_type == "signal_generation":
             event["source_worker"] = probe.NATURAL_PRODUCER
             event["artifact_interpreter"] = probe.NATURAL_INTERPRETER
+            event["artifact_id"] = DEFAULT_TEST_CASE["artifact_id"]
+            event["artifact_version"] = DEFAULT_TEST_CASE["artifact_version"]
             event["artifact_checksum"] = DEFAULT_TEST_CASE["artifact_checksum"]
-            event["market_input_ref"] = "market-input-test-001"
+            event["binding_id"] = DEFAULT_TEST_CASE["runtime_binding_id"]
+            event["runtime_id"] = DEFAULT_TEST_CASE["runtime_id"]
+            event["capital_pool_id"] = DEFAULT_TEST_CASE["capital_pool_id"]
+            event["plan_id"] = DEFAULT_TEST_CASE["deployment_plan_id"]
+            event["persona_capital_binding_id"] = DEFAULT_TEST_CASE["persona_capital_binding_id"]
             event["raw_symbol"] = "BTC-USDT"
+            event["market_input_ref"] = "source-ingest://snapshots/mss-000000000000000000000001"
+            event["market_input_snapshot_id"] = "mss-000000000000000000000001"
+            event["market_input_observed_at"] = "2026-07-15T00:00:01Z"
+            event["market_input_event_time"] = "2026-07-15T00:00:00Z"
+            event["market_input_lineage"] = {
+                "source_ids": ["src-binance"],
+                "connector_ids": ["conn-binance-spot"],
+                "content_refs": ["sha256:abcd"],
+                "ingest_run_ids": ["run-001"],
+            }
             event["is_real_capital"] = False
             event["is_real_order"] = False
         if event_type == "reconciliation_completed":
@@ -1020,7 +1037,14 @@ def test_asyncpg_case_source_anchors_checksum_from_registry(monkeypatch):
                     },
                 }
             if "entries" in query:
-                return {"payload": json.dumps({"checksum": "sha256-from-registry", "version": "1.2.3"})}
+                return {
+                    "payload": json.dumps({
+                        "checksum": "sha256-from-registry",
+                        "version": "1.2.3",
+                        "artifact_state": "approved",
+                        "owner_tenant": "tenant-a",
+                    })
+                }
             return None
 
         async def close(self):
@@ -1049,4 +1073,105 @@ def test_asyncpg_case_source_anchors_checksum_from_registry(monkeypatch):
     assert case is not None
     assert case["artifact_checksum"] == "sha256-from-registry"
     assert case["artifact_version"] == "1.2.3"
+
+
+@pytest.mark.parametrize(
+    "registry_row,expected_code",
+    [
+        (None, "registry_artifact_missing"),
+        ({"payload": json.dumps({"artifact_state": "draft", "owner_tenant": "tenant-a", "checksum": "cs", "version": "1"})}, "registry_artifact_not_approved"),
+        ({"payload": json.dumps({"artifact_state": "approved", "owner_tenant": "other-tenant", "checksum": "cs", "version": "1"})}, "registry_tenant_mismatch"),
+        ({"payload": json.dumps({"artifact_state": "approved", "owner_tenant": "tenant-a", "checksum": "", "version": "1"})}, "registry_checksum_missing"),
+        ({"payload": json.dumps({"artifact_state": "approved", "owner_tenant": "tenant-a", "checksum": "different-cs", "version": "1"})}, "case_checksum_mismatch"),
+        ({"payload": json.dumps({"artifact_state": "approved", "owner_tenant": "tenant-a", "checksum": "sha256-from-case", "version": ""})}, "registry_version_missing"),
+        ({"payload": json.dumps({"artifact_state": "approved", "owner_tenant": "tenant-a", "checksum": "sha256-from-case", "version": "9.9.9"})}, "case_version_mismatch"),
+    ],
+)
+def test_asyncpg_case_source_registry_adversarial_rejections(monkeypatch, registry_row, expected_code):
+    class Connection:
+        async def fetchrow(self, query: str, *args):
+            if "persona_provisioning" in query:
+                return {
+                    "tenant_id": "tenant-a",
+                    "persona_id": "persona-1",
+                    "idempotency_key": "key-1",
+                    "state": "succeeded",
+                    "references": {
+                        "runtime_binding_id": "rb-1",
+                        "runtime_id": "rt-1",
+                        "strategy_artifact_approved": {
+                            "entry": {"registry_id": "art-1", "version": "1.2.3", "checksum": "sha256-from-case"}
+                        },
+                    },
+                    "result": {"capital_pool_id": "pool-1", "deployment_plan_id": "plan-1", "persona_capital_binding_id": "pcb-1"},
+                }
+            if "entries" in query:
+                return registry_row
+            return None
+
+        async def close(self):
+            pass
+
+    class TransactionContext:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    conn = Connection()
+    conn.transaction = lambda **kwargs: TransactionContext(conn)
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=lambda dsn: asyncio.sleep(0, result=conn)))
+    src = probe.AsyncpgCaseSource("postgresql://unit")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(src.get_case("key-1"))
+    assert exc_info.value.code == expected_code
+
+
+@pytest.mark.parametrize(
+    "mutator,expected_code",
+    [
+        (lambda p: p.pop("source_worker"), "invalid_producer"),
+        (lambda p: p.update(source_worker="wrong-worker"), "invalid_producer"),
+        (lambda p: p.pop("artifact_interpreter"), "invalid_interpreter"),
+        (lambda p: p.update(artifact_interpreter="wrong.interpreter:fn"), "invalid_interpreter"),
+        (lambda p: p.pop("artifact_checksum"), "invalid_checksum"),
+        (lambda p: p.update(artifact_checksum=""), "invalid_checksum"),
+        (lambda p: p.pop("artifact_version"), "invalid_version"),
+        (lambda p: p.update(artifact_version=""), "invalid_version"),
+        (lambda p: p.update(is_real_capital=True), "invalid_capital_mode"),
+        (lambda p: p.update(is_real_order=True), "invalid_capital_mode"),
+        (lambda p: p.pop("market_input_ref"), "invalid_lineage"),
+        (lambda p: p.update(market_input_ref="invalid-ref-format"), "invalid_lineage"),
+        (lambda p: p.pop("market_input_snapshot_id"), "invalid_snapshot_id"),
+        (lambda p: p.update(market_input_snapshot_id="mss-different-snapshot"), "invalid_snapshot_id"),
+        (lambda p: p.pop("market_input_observed_at"), "invalid_lineage"),
+        (lambda p: p.pop("market_input_event_time"), "invalid_lineage"),
+        (lambda p: p.update(market_input_observed_at="bad-iso"), "invalid_lineage"),
+        (lambda p: p.update(market_input_event_time="2026-07-15T00:00:10Z", market_input_observed_at="2026-07-15T00:00:01Z"), "invalid_freshness"),
+        (lambda p: p.pop("market_input_lineage"), "invalid_lineage"),
+        (lambda p: p.update(market_input_lineage={"source_ids": []}), "invalid_lineage"),
+        (lambda p: p.update(market_input_lineage={"source_ids": ["s"], "connector_ids": []}), "invalid_lineage"),
+    ],
+)
+def test_validate_natural_candidate_provenance_rejections(mutator, expected_code):
+    rows = _natural_lifecycle_rows()
+    cands = probe._complete_candidates(rows, mode="controlled-stimulus")
+    cand = json.loads(json.dumps(cands[0]))
+    mutator(cand["signal_provenance"])
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cand, DEFAULT_TEST_CASE)
+    assert exc_info.value.code == expected_code
+
+
+def test_validate_natural_candidate_rejects_non_approved_case():
+    rows = _natural_lifecycle_rows()
+    cands = probe._complete_candidates(rows, mode="controlled-stimulus")
+    case = dict(DEFAULT_TEST_CASE, artifact_state="draft")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cands[0], case)
+    assert exc_info.value.code == "artifact_not_approved"
 
