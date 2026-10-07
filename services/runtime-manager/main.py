@@ -227,6 +227,11 @@ def _canonicalize_deploy_body(
         else {}
     )
     metadata["authoritative_loader_attestation"] = authority_report
+    # The owning tenant comes only from the canonical DeploymentPlan; a caller
+    # asserted tenant is never trusted and a plan without one stays tenantless.
+    metadata.pop("tenant_id", None)
+    if authority_report.get("tenant_id"):
+        metadata["tenant_id"] = authority_report["tenant_id"]
     canonical["metadata"] = metadata
     return canonical
 
@@ -249,6 +254,21 @@ def _canonicalize_promotion_body(body: dict, *, requesting_actor_id: str) -> dic
         ),
     )
     return dict(verified["request"])
+
+
+def _stamp_parent_tenant(body: dict, metadata_key: str) -> None:
+    """Replace any caller tenant with the one on the binding being succeeded.
+
+    A parent without a tenant leaves the child tenantless; nothing is guessed.
+    """
+    metadata = body.get(metadata_key)
+    metadata = dict(metadata) if isinstance(metadata, dict) else {}
+    metadata.pop("tenant_id", None)
+    parent = _get_service().get_binding(str(body.get("current_binding_id") or ""))
+    parent_tenant = (parent.metadata or {}).get("tenant_id") if parent else None
+    if parent_tenant:
+        metadata["tenant_id"] = parent_tenant
+    body[metadata_key] = metadata
 
 
 # ---------------------------------------------------------------------------
@@ -545,6 +565,7 @@ def promote_runtime_binding(binding_id):
             422,
         )
 
+    _stamp_parent_tenant(body, "metadata")
     try:
         result = _get_service().promote_stage(body)
         return jsonify(result), 201
@@ -756,6 +777,7 @@ def execute_rollback():
         )
 
     svc = _get_service()
+    _stamp_parent_tenant(body, "replacement_metadata")
     try:
         result = svc.rollback(body)
         return jsonify(result), 201
