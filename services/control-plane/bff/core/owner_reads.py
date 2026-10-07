@@ -1,5 +1,6 @@
 """Request-scoped owner reads; no cache or BFF copy of domain records."""
 from contextvars import ContextVar
+from http.cookies import SimpleCookie
 from typing import Optional
 
 from ..command_adapters.base import (
@@ -18,7 +19,17 @@ class OwnerReadContextMiddleware:
 
     async def __call__(self, scope, receive, send):
         headers = dict(scope.get("headers", []))
-        token = authorization.set(headers.get(b"authorization", b"").decode() or None)
+        caller_auth = headers.get(b"authorization", b"").decode().strip()
+        if not caller_auth:
+            cookie = SimpleCookie()
+            try:
+                cookie.load(headers.get(b"cookie", b"").decode())
+                session = cookie.get("pantheon_session")
+                if session and session.value:
+                    caller_auth = f"Bearer {session.value}"
+            except (UnicodeDecodeError, ValueError):
+                caller_auth = ""
+        token = authorization.set(caller_auth or None)
         tenant_token = selected_tenant.set(headers.get(b"x-tenant-id", b"").decode().strip() or None)
         try:
             await self.app(scope, receive, send)
@@ -39,6 +50,17 @@ def read_records(url_builder, path, key=None):
     if not isinstance(records, list) or any(not isinstance(r, dict) for r in records):
         raise RuntimeError(f"Invalid owner collection for {path}")
     return records
+
+
+def telemetry_summaries():
+    """Read the authenticated Telemetry owner projection in the current request context."""
+    from ..command_adapters.base import get_base_url
+
+    return read_records(
+        lambda path: get_base_url("PANTHEON_TELEMETRY_API_URL", "PANTHEON_TELEMETRY_URL") + path,
+        "/api/telemetry/runtime-summaries",
+        "summaries",
+    )
 
 
 def approval_records():

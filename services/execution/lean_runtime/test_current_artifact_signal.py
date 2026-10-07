@@ -434,6 +434,82 @@ class CurrentArtifactSignalTest(unittest.TestCase):
         ]
         self.assertFalse(fill["metadata"]["submitted_to_broker"])
 
+    def test_natural_spy_artifact_normalizes_to_executable_symbol_and_fills(self) -> None:
+        """A natural SPY artifact with raw bare ticker 'SPY' and US context produces 'SPY.US' and fills."""
+        artifact = _artifact()
+        artifact["parameters"]["symbols"] = ["SPY"]
+        artifact["parameters"]["data_source"] = (
+            "source-ingest:normalized/us-equity-price/daily"
+        )
+        artifact["lineage"]["source_dataset_refs"] = [
+            "source-ingest:normalized/us-equity-price/daily"
+        ]
+        binding = _binding(artifact, binding_id="rb-natural-spy-runtime", include_market_input=False)
+        binding["symbol"] = "SPY"
+        binding["market"] = "US"
+        binding["market_input"] = {
+            "symbol": "SPY",
+            "closes": [400.0, 410.0],
+            "source_ref": "source-ingest://normalized/us-price/SPY",
+            "observed_at": _NOW,
+        }
+        runtime_binding = _runtime_binding(binding)
+        now_iso = (
+            datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+        store = InMemoryPendingSignalStore()
+        producer = PaperSignalProducer(
+            store_for=lambda _: store,
+            strategy=CurrentArtifactStrategy(),
+        )
+        self.assertEqual(producer.produce(binding, now_iso), 1)
+
+        self.assertEqual(store.queue_depth(), 1)
+        signal = store._pending[0]
+        self.assertEqual(signal["symbol"], "SPY.US")
+        self.assertEqual(signal["metadata"]["raw_symbol"], "SPY")
+        self.assertEqual(signal["metadata"]["artifact_checksum"], binding["artifact_checksum"])
+
+        telemetry = _Telemetry()
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ,
+            {
+                "PANTHEON_LIFECYCLE_OUTBOX_PATH": str(
+                    Path(directory) / "lifecycle-outbox.json"
+                )
+            },
+        ):
+            service = PaperRuntimeService(
+                store=store,
+                identity=_identity(binding),
+                runtime_manager_client=_RuntimeManager(runtime_binding),
+                telemetry_emitter=telemetry,
+                poll_interval_seconds=3600,
+            )
+            for _ in range(3):
+                snapshot = service.drain_once()
+
+        event_types = [event["event_type"] for event in telemetry.events]
+        self.assertEqual(snapshot["status"], "ok")
+        self.assertEqual(
+            snapshot["paper_state"]["processed_signal_count"],
+            1,
+            snapshot,
+        )
+        self.assertGreaterEqual(snapshot["paper_state"]["execution_event_count"], 1)
+        self.assertIn("heartbeat", event_types)
+        self.assertIn("order_submitted", event_types)
+        self.assertIn("paper_fill_simulated", event_types)
+        [fill] = [
+            event
+            for event in telemetry.events
+            if event["event_type"] == "paper_fill_simulated"
+        ]
+        self.assertFalse(fill["metadata"]["submitted_to_broker"])
+
 
 if __name__ == "__main__":
     unittest.main()

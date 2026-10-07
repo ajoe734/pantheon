@@ -433,8 +433,8 @@ def test_postgres_lifecycle_source_filters_watermark_and_fetch(monkeypatch):
     calls: list[tuple] = []
 
     class Connection:
-        async def fetchval(self, query: str, event_types: list[str]) -> int:
-            calls.append(("fetchval", query, event_types))
+        async def fetchval(self, query: str, *event_types: list[str]) -> int:
+            calls.append(("fetchval", query, *event_types))
             return 44
 
         async def fetch(
@@ -460,7 +460,7 @@ def test_postgres_lifecycle_source_filters_watermark_and_fetch(monkeypatch):
     assert asyncio.run(source.high_watermark()) == 44
     assert asyncio.run(source.fetch_after(7, limit=9)) == []
 
-    fetchval = next(call for call in calls if call[0] == "fetchval")
+    fetchval = next(call for call in calls if call[0] == "fetchval" and "event_type = ANY" in call[1])
     fetch = next(call for call in calls if call[0] == "fetch")
     assert "event_type = ANY" in fetchval[1]
     assert "event_type = ANY" in fetch[1]
@@ -469,6 +469,114 @@ def test_postgres_lifecycle_source_filters_watermark_and_fetch(monkeypatch):
     assert fetch[2] == 7
     assert tuple(fetch[3]) == LIFECYCLE_EVENT_TYPE_QUERY
     assert fetch[4] == 9
+
+
+def test_postgres_source_fence_crosses_real_sequence_hole_and_waits_for_writer(
+    relational_postgres_dsn: str, request: pytest.FixtureRequest,
+) -> None:
+    """Real PG proof: aborted allocation is skippable; in-flight writer is fenced."""
+    import psycopg
+    from services.telemetry.ingest_svc import build_postgres_write_fn
+
+    schema = f"frontier_{uuid.uuid4().hex[:12]}"
+    projection_schema = f"frontier_projection_{uuid.uuid4().hex[:10]}"
+    table = f"{schema}.telemetry_events"
+    with psycopg.connect(relational_postgres_dsn) as conn, conn.cursor() as cur:
+        cur.execute(f'CREATE SCHEMA "{schema}"')
+        cur.execute(f'CREATE SEQUENCE "{schema}".telemetry_events_seq')
+        cur.execute(
+            f'''CREATE TABLE "{schema}".telemetry_events (
+                event_id TEXT PRIMARY KEY,
+                event_type TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                payload JSONB NOT NULL,
+                ingested_seq BIGINT NOT NULL DEFAULT nextval('"{schema}".telemetry_events_seq'),
+                ingested_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+            )'''
+        )
+
+    def cleanup() -> None:
+        with psycopg.connect(relational_postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            cur.execute(f'DROP SCHEMA IF EXISTS {projection_schema} CASCADE')
+
+    request.addfinalizer(cleanup)
+    source = PostgresLifecycleSource(
+        relational_postgres_dsn, table=table, include_non_lifecycle=True
+    )
+    writer = build_postgres_write_fn(relational_postgres_dsn, table=table)
+    try:
+        # A rolled-back insert consumes sequence 1 without creating a row.
+        with psycopg.connect(relational_postgres_dsn) as conn:
+            with conn.transaction():
+                conn.execute(
+                    f'INSERT INTO "{schema}".telemetry_events (event_id,event_type,created_at,payload) VALUES (%s,%s,%s,%s)',
+                    ("aborted", "signal_generation", NOW, json.dumps({"event_id": "aborted"})),
+                )
+                raise RuntimeError("abort sequence allocation")
+    except RuntimeError:
+        pass
+
+    async def insert_committed() -> None:
+        result = await writer([{
+            "event_id": "committed-after-hole",
+            "event_type": "signal_generation",
+            "created_at": NOW,
+        }])
+        assert result.success
+
+    asyncio.run(insert_committed())
+    rows = asyncio.run(source.fetch_after(0, limit=10))
+    assert [row["ingested_seq"] for row in rows] == [2]
+    assert source.last_frontier_seq == 2
+    projection_store = ProjectionStore(
+        relational_postgres_dsn, schema=projection_schema, bootstrap=True
+    )
+    projector = RelationalLifecycleProjector(
+        projection_store, controller_id=f"frontier-{uuid.uuid4().hex[:8]}"
+    )
+    projected = projector.project_records(
+        rows,
+        mode="recovery",
+        source_high_watermark=2,
+        source_frontier_seq=source.last_frontier_seq,
+    )
+    assert projected.checkpoint == 2
+    assert projected.quarantined == 1
+
+    # Hold the exact writer fence and lower allocated sequence open. A source
+    # snapshot must wait for its commit rather than claiming absence.
+    import threading
+
+    ready = threading.Event()
+    release = threading.Event()
+
+    def delayed_writer() -> None:
+        with psycopg.connect(relational_postgres_dsn) as conn:
+            with conn.transaction():
+                conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (table,))
+                conn.execute(
+                    f'INSERT INTO "{schema}".telemetry_events (event_id,event_type,created_at,payload) VALUES (%s,%s,%s,%s)',
+                    ("delayed-lower", "signal_generation", NOW, json.dumps({"event_id": "delayed-lower"})),
+                )
+                ready.set()
+                release.wait(timeout=5)
+
+    thread = threading.Thread(target=delayed_writer)
+    thread.start()
+    assert ready.wait(timeout=5)
+    async def fetch_after_release():
+        task = asyncio.create_task(source.fetch_after(2, limit=10))
+        await asyncio.sleep(0.1)
+        assert not task.done()
+        release.set()
+        return await task
+
+    delayed_rows = asyncio.run(fetch_after_release())
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert [row["ingested_seq"] for row in delayed_rows] == [3]
+    assert source.last_frontier_seq == 3
 
 
 def test_postgres_lifecycle_source_startup_check_is_read_only_and_bounded(monkeypatch):

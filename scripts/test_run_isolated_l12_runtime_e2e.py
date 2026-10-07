@@ -308,3 +308,41 @@ def test_projector_run_rebuilds_its_image() -> None:
         "--build",
         harness.STIMULUS_PROJECTOR_SERVICE,
     ]
+
+
+def test_suite_url_env_covers_every_url_the_domain_suites_read() -> None:
+    import re
+    from pathlib import Path
+
+    root = Path(harness.__file__).resolve().parents[1]
+    services = {**harness.SERVICES, **harness.STIMULUS_SERVICES}
+    provided = harness._suite_url_env({name: f"http://127.0.0.1/{name}" for name in services})
+    assert provided["PANTHEON_L12_SOURCE_URL"] == provided["PANTHEON_L12_SOURCE_INGEST_URL"]
+    for suite in (
+        "tests/integration/l12/test_current_research_loops_deployed_e2e.py",
+        "tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+        "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py",
+    ):
+        source = (root / suite).read_text(encoding="utf-8")
+        read = set(re.findall(r'getenv\(\s*"(PANTHEON_L12_[A-Z_]+_URL)"', source))
+        assert read <= set(provided), f"{suite} reads unprovided URLs: {sorted(read - set(provided))}"
+
+
+def test_isolated_reader_token_is_a_signed_tenant_scoped_reader_jwt() -> None:
+    import base64
+    import hashlib
+    import hmac
+    import json
+
+    env = {"PANTHEON_BFF_JWT_SECRET": "s3cret", "PANTHEON_BFF_JWT_ISSUER": "iss", "PANTHEON_BFF_JWT_AUDIENCE": "aud"}
+    token, tenant = harness._isolated_reader_token(env, "l12-domain-suites")
+    header, claims, signature = token.split(".")
+    pad = lambda part: part + "=" * (-len(part) % 4)
+    decoded = json.loads(base64.urlsafe_b64decode(pad(claims)))
+    assert tenant == "default"
+    assert decoded["sub"] == "l12-domain-suites"
+    assert decoded["roles"] == ["source_ingest_reader"]
+    assert decoded["tenant_id"] == "default"
+    assert (decoded["iss"], decoded["aud"]) == ("iss", "aud")
+    expected = hmac.new(b"s3cret", f"{header}.{claims}".encode(), hashlib.sha256).digest()
+    assert base64.urlsafe_b64decode(pad(signature)) == expected

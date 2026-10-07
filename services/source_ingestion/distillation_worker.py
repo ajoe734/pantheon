@@ -767,8 +767,12 @@ class DistillationJobQueue:
         lease_seconds: float = 30.0,
         now: str | datetime | float | None = None,
         limit: int = 100,
+        tenant_id: str | None = None,
     ) -> list[DistillationJob]:
         effective_now = _timestamp(now) if now is not None else self._now()
+        tenant = str(tenant_id or "").strip() or None
+        if tenant_id is not None and tenant is None:
+            raise ValueError("tenant_id must be a non-empty explicit tenant")
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be > 0")
         claimed: list[DistillationJob] = []
@@ -776,16 +780,30 @@ class DistillationJobQueue:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 self._recover_expired(connection, now=effective_now)
-                rows = connection.execute(
+                tenant_clause = ""
+                params: tuple[Any, ...] = (effective_now, max(0, int(limit)))
+                if tenant is not None:
+                    tenant_clause = """
+                       AND EXISTS (
+                           SELECT 1
+                             FROM distillation_source_versions AS source_version
+                            WHERE source_version.source_id = distillation_outbox.source_id
+                              AND source_version.source_digest = distillation_outbox.source_digest
+                              AND json_extract(source_version.payload_json, '$.metadata.tenant_id') = ?
+                       )
                     """
+                    params = (effective_now, tenant, max(0, int(limit)))
+                rows = connection.execute(
+                    f"""
                     SELECT *
                       FROM distillation_outbox
                      WHERE status IN ('pending', 'retry_wait')
                        AND available_at <= ?
+                       {tenant_clause}
                      ORDER BY available_at, enqueued_at, job_id
                      LIMIT ?
                     """,
-                    (effective_now, max(0, int(limit))),
+                    params,
                 ).fetchall()
                 for row in rows:
                     token = f"{worker_id}:{uuid.uuid4().hex}"
@@ -1369,6 +1387,7 @@ class DistillationWorker:
         *,
         limit: int = 100,
         now: str | None = None,
+        tenant_id: str | None = None,
     ) -> DistillationRunResult:
         """Process pending distillation jobs.
 
@@ -1387,6 +1406,7 @@ class DistillationWorker:
             lease_seconds=self._lease_seconds,
             now=now,
             limit=limit,
+            tenant_id=tenant_id,
         )
         processed = created = refreshed = skipped = failed = 0
         registry_synced = retried = dead_lettered = 0
@@ -1442,6 +1462,7 @@ class DistillationWorker:
         *,
         limit: int = 500,
         now: str | None = None,
+        tenant_id: str | None = None,
     ) -> DistillationRunResult:
         """Idempotently enqueue and process all normalized sources without done seeds.
 
@@ -1456,6 +1477,11 @@ class DistillationWorker:
         Returns:
             A DistillationRunResult including the enqueued count.
         """
+        tenant = str(tenant_id or "").strip() or None
+        if tenant_id is not None and tenant is None:
+            raise DistillationError("tenant_id must be a non-empty explicit tenant")
+        if tenant is not None and any(source.tenant_id != tenant for source in source_records):
+            raise DistillationError("source record set contains foreign or unowned tenant scope")
         normalized = [
             s for s in source_records if s.status == SourceRecordStatus.NORMALIZED
         ][:limit]
@@ -1475,7 +1501,7 @@ class DistillationWorker:
         # Read the committed source snapshot from the same ledger as the job.
         # This prevents a later revision in the caller's map from being used to
         # process an earlier versioned event.
-        run_result = self.run_pending(None, now=now)
+        run_result = self.run_pending(None, now=now, tenant_id=tenant)
         return DistillationRunResult(
             processed=run_result.processed,
             created=run_result.created,

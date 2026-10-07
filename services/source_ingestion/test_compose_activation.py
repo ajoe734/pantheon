@@ -118,6 +118,9 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert distillation_env["SOURCE_INGEST_CONTROLLER_MAX_TICKS"] == (
         "${STRATEGY_DISTILLATION_CONTROLLER_MAX_TICKS:-0}"
     )
+    assert distillation_env["SOURCE_INGEST_EVIDENCE_BACKEND"] == "${SOURCE_INGEST_EVIDENCE_BACKEND:-postgres}"
+    assert distillation_env["SOURCE_INGEST_EVIDENCE_DSN"] == "${SOURCE_INGEST_EVIDENCE_DSN:-}"
+    assert distillation_env["SOURCE_INGEST_EVIDENCE_TABLE"] == "${SOURCE_INGEST_EVIDENCE_TABLE:-source_ingest.source_evidence}"
     assert "source-ingest-data:/data/source-ingest" in distillation["volumes"]
     assert distillation["depends_on"]["source-ingest"]["condition"] == "service_healthy"
     assert distillation["depends_on"]["registry"]["condition"] == "service_healthy"

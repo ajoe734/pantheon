@@ -33,6 +33,29 @@ configure its path for **all** users. This change does not migrate or delete it.
 An already-corrupt queue remains unavailable; deploying this repair alone is not
 recovery. Do not weaken these checks to make a deployment gate green.
 
+## Source-owner desired reads — L2-DESIRED-OWNER-READS-20261006
+
+The distillation controller now calls `read_source_records_for_tenant` with
+its checkpoint's explicit `tenant_id`. In the configured Postgres mode, that
+reader queries only `source_ingest.source_evidence` source-record payloads whose
+persisted `metadata.tenant_id` exactly matches the requested tenant, under a
+read-only transaction. It does not bootstrap the source table, use the JSONL
+fallback, materialize foreign rows, or adopt records without tenant metadata.
+Missing/invalid tenant scope and owner-store errors fail the desired read; they
+must not be reported as an empty healthy tick. Queue claims are also constrained
+to the requested tenant using each committed source-version snapshot, so
+pre-admitted foreign or unowned jobs remain pending rather than being processed
+by this controller. JSONL remains supported for local/test use, but its
+repository lookup is tenant-indexed by the same explicit scope.
+
+`strategy-distillation-worker` now receives the same configurable evidence
+backend, DSN and table as source-ingest. Its existing queue and controller
+checkpoint are unchanged. Regression tests persist a tenant-scoped normalized
+record, exercise distillation admission/claim and Registry terminal readback,
+and assert the Postgres read path is read-only and tenant-filtered. These are
+local synthetic proofs only; they do not establish hosted availability or
+perform deployment, restart, replay, or recovery.
+
 ## Evidence and limits
 
 On immutable base `b06a22610f41934c801cc7c7da7b373bc33aa8db`, a live SQLite read

@@ -1,0 +1,50 @@
+{
+  "task_id": "PAPER-EXECUTABLE-SYMBOL-CONTRACT-20261007",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "title": "Normalize executable paper symbols from explicit owner market context; resolve natural SPY signal failure",
+  "timestamp": "2026-10-07T00:52:00Z",
+  "summary": "Resolved natural SPY paper signal execution failure where _strategy_symbol in paper_signal_producer.py validated raw symbol membership against approved artifact parameters but returned bare 'SPY', which downstream executor symbol_parser rejected with SymbolParseError. Implemented authoritative market context resolution leveraging explicit context from binding, artifact metadata/parameters, or market input snapshot without universally appending .US. Integrated normalization via existing adapters (normalize_us_symbol, normalize_taiwan_symbol), added validate_executable_symbol / is_taiwan_venue_symbol / is_executable_symbol to symbol_parser, preserved approved artifact checksum/version/parameters and recorded raw_symbol in signal metadata. Fail-closed semantics strictly enforce raw artifact membership (rejecting approved [SPY.TW] for requested SPY as market_input_invalid), remove loose dataset/lineage substring inference (failing closed with market_context_missing), and reject unsupported explicit context (e.g. market='not-us-price' as market_context_unsupported), alongside market_context_contradictory, market_context_mismatch, and market_symbol_unexecutable. All evidence is qualified as local and synthetic; no hosted execution, deployment, or state mutation was authorized or performed.",
+  "acceptance_criteria_verification": {
+    "executor_parseable_symbols": {
+      "satisfied": true,
+      "evidence": "In local execution, raw bare ticker 'SPY' with explicit US market context normalizes to 'SPY.US' which parses cleanly via symbol_parser.parse() and successfully executes through PaperRuntimeService.drain_once() into simulated paper_fill_simulated events; Taiwan venue symbols ('2330.TW', '2330.TWSE') validate against Shioaji broker boundary. Local synthetic verification only; no hosted execution occurred."
+    },
+    "preserve_approved_artifact_and_raw_membership": {
+      "satisfied": true,
+      "evidence": "Approved artifact parameters.symbols, artifact_id, version, and checksum are strictly preserved without in-place modification; raw symbol membership check strictly enforces exact raw membership against artifact parameters (e.g. 'MSFT' outside ['SPY'] or 'SPY' requested against approved ['SPY.TW'] raises market_input_invalid), and raw_symbol is preserved in emitted signal metadata."
+    },
+    "fail_closed_ambiguous_or_contradictory_context": {
+      "satisfied": true,
+      "evidence": "Never universally appends .US. Bare tickers lacking explicit market context fail closed with market_context_missing even if unverified dataset references are present; unsupported explicit market context (e.g. market='not-us-price') fails closed with market_context_unsupported; conflicting market contexts (e.g. binding US vs artifact TW) fail closed with market_context_contradictory; intrinsic symbol suffixes conflicting with explicit contexts (e.g. 'AAPL.US' with market 'TW') fail closed with market_context_mismatch."
+    },
+    "comprehensive_regressions": {
+      "satisfied": true,
+      "evidence": "76 passing tests across test_current_artifact_signal.py, test_paper_signal_producer.py, and test_tw_signal_producer.py covering bare US ticker with explicit context, bare ticker missing context, contradictory contexts, symbol/context mismatches, canonical US/TW symbols, crypto pairs, raw symbol membership validation, wrong artifact version, direct executor parser verification, and all three boundary counterexamples (approved foreign suffix rejection, dataset hint without explicit market rejection, and unsupported explicit market rejection)."
+    },
+    "source_only_no_hosted_writes": {
+      "satisfied": true,
+      "evidence": "Changes are purely source-level within scoped execution runtime files; zero hosted signal, order, or capital writes performed; no hosted deployment attempted; auth, tenant, and paper/live isolation strictly preserved."
+    }
+  },
+  "scoped_files": [
+    "services/execution/lean_runtime/paper_signal_producer.py",
+    "services/execution/lean_runtime/symbol_parser.py",
+    "services/execution/lean_runtime/test_current_artifact_signal.py",
+    "services/execution/lean_runtime/test_paper_signal_producer.py",
+    "services/execution/lean_runtime/test_tw_signal_producer.py",
+    "docs/deployment/evidence/PAPER-EXECUTABLE-SYMBOL-CONTRACT-20261007/evidence.json"
+  ],
+  "verification_commands": [
+    ".venv-pantheon/bin/python3 -m py_compile services/execution/lean_runtime/paper_signal_producer.py services/execution/lean_runtime/symbol_parser.py services/execution/lean_runtime/test_current_artifact_signal.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_tw_signal_producer.py",
+    ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_current_artifact_signal.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_tw_signal_producer.py"
+  ],
+  "verification_results": {
+    "python_compile": "passed with exit code 0",
+    "pytest_suite": "76 passed, 6 subtests passed in 13.35s"
+  },
+  "review": {
+    "reviewer": "Claude",
+    "decision": "pending independent exact-head review"
+  }
+}

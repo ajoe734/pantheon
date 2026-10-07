@@ -3466,8 +3466,10 @@ with_dev_bff_runtime_env() {
   local target_sha="$1"
   local proof_flag="$2"
   shift 2
+  # Preserve the caller's selection: root rollout supplies root profiles,
+  # while the explicit BFF-only branch deliberately supplies an empty value.
   COMPOSE_BAKE=false \
-  COMPOSE_PROFILES="" \
+  COMPOSE_PROFILES="${COMPOSE_PROFILES:-}" \
   GIT_SHA="${target_sha}" \
   BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   PANTHEON_ENV=dev \
@@ -4021,6 +4023,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}" \
     SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}" \
     SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
+    PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED=true \
     with_dev_bff_runtime_env "${PANTHEON_DEPLOY_SHA}" "${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
       run_dev_candidate_compose up -d \
       || rollback_dev_bff_on_failure "docker_compose_up"
