@@ -85,29 +85,30 @@ def project(decision: Mapping[str, Any]) -> Dict[str, Any]:
     state = str(decision.get("decision_state") or decision.get("state") or "")
     dec_id = decision.get("decision_id") or decision.get("id")
     target_type = decision.get("decision_type") or decision.get("target_type") or "ApprovalDecision"
+    status = "pending" if state in _PENDING else state
     can_decide = state in {"under_review", "reviewed", "in_review", "proposed", "pending"}
-    res = dict(decision)
+    res = {"id": dec_id, "outcome": decision.get("decision"), "status": status, "state": status}
+    res.update(decision)
     res["decision_id"] = dec_id
     res["decision_type"] = target_type
     res.setdefault("risk_level", decision.get("risk_level"))
     res.setdefault("submitted_at", decision.get("created_at"))
-    res.setdefault("submitted_by", decision.get("actor_id") or decision.get("created_by") or "governance-service")
-    res.setdefault("decision_state", state or "pending")
-    res.setdefault("allowedActions", {
-        "canApprove": can_decide,
-        "canReject": can_decide,
-        "canRequestRevision": state in _PENDING,
-    })
-    res.setdefault("decision_context", {
-        "risk_summary": decision.get("rationale") or f"{target_type} approval decision awaiting governance action.",
+    res.setdefault("submitted_by", decision.get("owner_user_id") or decision.get("actor_id") or decision.get("created_by"))
+    if state:
+        res.setdefault("decision_state", state)
+    res.setdefault("allowedActions", {"canApprove": can_decide, "canReject": can_decide, "canRequestRevision": False})
+    context = {
+        "risk_summary": decision.get("rationale"),
         "evidence_refs": list(decision.get("evidence_refs") or []),
         "governance_chain": {
             "target_type": target_type,
             "target_id": decision.get("target_id"),
             "target_version": decision.get("target_version"),
         },
-        "required_approvals": 1,
-    })
+    }
+    if decision.get("required_approvals") is not None:
+        context["required_approvals"] = decision["required_approvals"]
+    res.setdefault("decision_context", context)
     return res
 
 
