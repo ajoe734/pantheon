@@ -522,14 +522,15 @@ def _build_alert_handoffs(evaluation: Dict[str, Any], timestamp: str) -> List[Di
     return alerts
 
 
-def _post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+def _post_json(url: str, payload: Dict[str, Any], *, timeout_seconds: float | None = None) -> Dict[str, Any]:
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    timeout_seconds = float(os.getenv("PANTHEON_INCIDENTS_API_TIMEOUT_SECONDS", "90"))
+    if timeout_seconds is None:
+        timeout_seconds = float(os.getenv("PANTHEON_INCIDENTS_API_TIMEOUT_SECONDS", "90"))
     started = time.monotonic()
     try:
         with urllib.request.urlopen(  # noqa: S310 - service URL is operator configured.
@@ -549,13 +550,14 @@ def _post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         logging.getLogger(__name__).info("incidents call took %.2fs", time.monotonic() - started)
 
 
-def _classify_drift_report_incident(report: Dict[str, Any]) -> Dict[str, Any] | None:
+def _classify_drift_report_incident(report: Dict[str, Any], *, timeout_seconds: float | None = None) -> Dict[str, Any] | None:
     incidents_api_url = os.getenv("PANTHEON_INCIDENTS_API_URL", "").rstrip("/")
     if not incidents_api_url:
         return None
     return _post_json(
         f"{incidents_api_url}/api/incidents/consume-drift-report",
         {"drift_report": report},
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -2579,7 +2581,7 @@ def _scheduled_drift_report(
     }
 
 
-def _dispatch_scheduled_drift_report(report: Dict[str, Any]) -> Dict[str, Any]:
+def _dispatch_scheduled_drift_report(report: Dict[str, Any], *, timeout_seconds: float = 5.0) -> Dict[str, Any]:
     stored = store.put_drift_report(report)
     result: Dict[str, Any] = {
         "status": "not_configured",
@@ -2587,8 +2589,12 @@ def _dispatch_scheduled_drift_report(report: Dict[str, Any]) -> Dict[str, Any]:
         "incident_id": None,
         "error": None,
     }
+    if timeout_seconds <= 0:
+        result["status"] = "retryable_error"
+        result["error"] = {"status_code": 504, "detail": "scheduled reconciliation SLA budget exhausted"}
+        return result
     try:
-        incident = _classify_drift_report_incident(stored)
+        incident = _classify_drift_report_incident(stored, timeout_seconds=timeout_seconds)
     except HTTPException as exc:
         result["status"] = "retryable_error"
         result["error"] = {"status_code": exc.status_code, "detail": exc.detail}
@@ -2761,6 +2767,10 @@ def _execute_scheduled_reconcile(
     lifecycle_terminal_rejections: List[Dict[str, Any]] = []
     lifecycle_ineligible_binding_ids: List[str] = []
     dispatch_incidents = bool(body.dispatch_incidents)
+    tick_deadline = time.monotonic() + max(1.0, float(body.sla_seconds or 60.0) - 5.0)
+
+    def dispatch_timeout() -> float:
+        return max(0.0, min(5.0, tick_deadline - time.monotonic()))
 
     def record_lifecycle_append(binding_id: str, state: Dict[str, Any]) -> None:
         receipt = _lifecycle_append_receipt(binding_id, state)
@@ -2842,7 +2852,10 @@ def _execute_scheduled_reconcile(
                 if incident_id:
                     incident_ids.append(incident_id)
                 continue
-            delivery_result = _dispatch_scheduled_drift_report(report_to_dispatch)
+            delivery_result = _dispatch_scheduled_drift_report(
+                report_to_dispatch,
+                timeout_seconds=dispatch_timeout(),
+            )
             existing_evaluation["incident_delivery"] = {
                 **delivery_result,
                 "attempted_at": timestamp,
@@ -2921,7 +2934,10 @@ def _execute_scheduled_reconcile(
         )
         if report is None:
             continue
-        delivery_result = _dispatch_scheduled_drift_report(report)
+        delivery_result = _dispatch_scheduled_drift_report(
+            report,
+            timeout_seconds=dispatch_timeout(),
+        )
         drift_report_ids.append(str(delivery_result["drift_report_id"]))
         stored["incident_delivery"] = {
             **delivery_result,
