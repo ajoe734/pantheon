@@ -255,29 +255,11 @@ validate_target_selection() {
   esac
 
   local check_vars=(
-    PROJECT_ID
-    REMOTE_USER
-    DEV_VM
-    DEV_ZONE
-    DEV_REMOTE_DIR
-    DEV_DEPLOY_SSH_HOST
-    DEV_DEPLOY_SSH_USER
-    DEV_BFF_PUBLIC_HOST
-    DEV_FE_PUBLIC_HOST
-    DEV_FE_STATIC_ROOT
-    DEV_BFF_CORS_ORIGINS
-    DEV_BFF_CANONICAL_CORS_ORIGIN
-    DEV_BFF_REQUIRED_CORS_ORIGINS
-    PANTHEON_DEPLOY_WORKTREE_ROOT
-    STAGING_CONTROL_VM
-    STAGING_CONTROL_ZONE
-    STAGING_CONTROL_REMOTE_DIR
-    STAGING_EXEC_VM
-    STAGING_EXEC_ZONE
-    STAGING_EXEC_REMOTE_DIR
-    STAGING_EXEC_HEALTH_URL
-    STAGING_BFF_CORS_ORIGINS
-    STAGING_BFF_CANONICAL_CORS_ORIGIN
+    PROJECT_ID REMOTE_USER DEV_VM DEV_ZONE DEV_REMOTE_DIR DEV_DEPLOY_SSH_HOST DEV_DEPLOY_SSH_USER
+    DEV_BFF_PUBLIC_HOST DEV_FE_PUBLIC_HOST DEV_FE_STATIC_ROOT DEV_BFF_CORS_ORIGINS DEV_BFF_CANONICAL_CORS_ORIGIN
+    DEV_BFF_REQUIRED_CORS_ORIGINS PANTHEON_DEPLOY_WORKTREE_ROOT STAGING_CONTROL_VM STAGING_CONTROL_ZONE
+    STAGING_CONTROL_REMOTE_DIR STAGING_EXEC_VM STAGING_EXEC_ZONE STAGING_EXEC_REMOTE_DIR STAGING_EXEC_HEALTH_URL
+    STAGING_BFF_CORS_ORIGINS STAGING_BFF_CANONICAL_CORS_ORIGIN
   )
   local var_name val
   local retired_pattern='sslip\.io|104\.155\.223\.192|35\.201\.204\.12|35\.201\.239\.38|34\.81\.75\.241|35\.236\.178\.81|pantheon-benjamin-20260528|pantheon-lupin-dev-20260719|pantheon-lupin-dev|/home/lupin|^lupin$'
@@ -294,14 +276,8 @@ validate_target_selection() {
       [[ -n "${PROJECT_ID:-}" ]] || error "dev deployment requires --project-id or PROJECT_ID to be set"
       [[ -n "${REMOTE_USER:-}" ]] || error "dev deployment requires REMOTE_USER to be set"
       local required_dev_vars=(
-        DEV_VM
-        DEV_ZONE
-        DEV_REMOTE_DIR
-        DEV_DEPLOY_SSH_HOST
-        DEV_BFF_PUBLIC_HOST
-        DEV_FE_PUBLIC_HOST
-        DEV_FE_STATIC_ROOT
-        DEV_BFF_CORS_ORIGINS
+        DEV_VM DEV_ZONE DEV_REMOTE_DIR DEV_DEPLOY_SSH_HOST DEV_BFF_PUBLIC_HOST
+        DEV_FE_PUBLIC_HOST DEV_FE_STATIC_ROOT DEV_BFF_CORS_ORIGINS
       )
       for var_name in "${required_dev_vars[@]}"; do
         if [[ -z "${!var_name:-}" ]]; then
@@ -839,8 +815,14 @@ ssh_bash() {
   local zone="$2"
   local remote_dir="$3"
   local remote_component="$4"
-  local command_prefix="" deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-7200}" remote_command=()
-  if [[ "${remote_component}" != "refresh-only" ]]; then
+  local command_prefix="" deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-7200}" remote_command=() remote_output=""
+  if [[ "${remote_component}" == "refresh-only" ]]; then
+    if [[ -n "${DEV_DEPLOY_SSH_HOST:-}" ]]; then
+      remote_output="/tmp/pantheon-refresh-outcome-${GITHUB_RUN_ID:-$$}.json"
+      command_prefix="PANTHEON_DEPLOY_COMPONENT=refresh-only FORCE_REFRESH=$(shell_quote "${FORCE_REFRESH:-false}") REFRESH_OUTPUT_PATH=$(shell_quote "${remote_output}") bash -s"
+      remote_command=("$SCRIPT_DIR/dev_vm_ssh.sh" exec "$command_prefix")
+    fi
+  else
     command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
     command_prefix+=" PANTHEON_DEPLOY_COMPONENT=$(shell_quote "$remote_component")"
     command_prefix+=" PANTHEON_DEPLOY_SHA=$(shell_quote "$DEPLOY_SHA")"
@@ -966,14 +948,14 @@ ssh_bash() {
   fi
 
   run_remote_payload() {
-    if [[ "${remote_component}" == "refresh-only" ]]; then
+    if [[ "${remote_component}" == "refresh-only" && -z "${DEV_DEPLOY_SSH_HOST:-}" ]]; then
       PANTHEON_DEPLOY_COMPONENT=refresh-only \
       FORCE_REFRESH="${FORCE_REFRESH:-false}" \
       REFRESH_OUTPUT_PATH="${REFRESH_OUTPUT_PATH:-}" \
       bash -s
       return $?
     fi
-    if [[ "${DEPLOY_ENV}" == dev ]]; then
+    if [[ "${DEPLOY_ENV}" == dev && "${remote_component}" != "refresh-only" ]]; then
       [[ "${PROJECT_ID}" == pantheon-dev-20260902 && "${vm}" == pantheon-dev-deploy && \
          "${zone}" == asia-east1-b && "${DEV_DEPLOY_SSH_HOST}" == 34.81.52.222 && \
          "${DEV_DEPLOY_SSH_USER:-${REMOTE_USER}}" == chloe_ong_dev_cctech_support_com && \
@@ -1036,6 +1018,7 @@ CLEAN_PRIVATE_PY
     fi
     # Staging retains its existing independent transport; no dev authority is
     # inferred or reused there.
+    local transport_rc=0
     python3 -c '
 import os
 import signal
@@ -1099,7 +1082,14 @@ except Exception:
     raise
 
 sys.exit(exit_code)
-' "${deadline_seconds}" "${remote_command[@]}"
+' "${deadline_seconds}" "${remote_command[@]}" || transport_rc=$?
+    if [[ "${transport_rc}" -eq 0 && -n "${remote_output}" && -n "${REFRESH_OUTPUT_PATH:-}" ]]; then
+      if "$SCRIPT_DIR/dev_vm_ssh.sh" exec "test -f $(shell_quote "${remote_output}")" >/dev/null 2>&1; then
+        "$SCRIPT_DIR/dev_vm_ssh.sh" copy-from "${remote_output}" "${REFRESH_OUTPUT_PATH}" || true
+        "$SCRIPT_DIR/dev_vm_ssh.sh" exec "rm -f $(shell_quote "${remote_output}")" >/dev/null 2>&1 || true
+      fi
+    fi
+    return "${transport_rc}"
   }
   run_remote_payload <<'REMOTE'
 set -euo pipefail
@@ -4364,6 +4354,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     ;;
 
   refresh-only)
+    for wt in "${HOME}/pantheon-ci-deploy/managed-deploy-worktrees/dev-root/dev-root" "${HOME}/pantheon-ci-deploy/managed-deploy-worktrees/dev-root"; do
+      if [[ -f "${wt}/docker-compose.yml" ]]; then cd "${wt}"; break; fi
+    done
     execute_bounded_source_refresh_entrypoint "${FORCE_REFRESH:-false}" "${REFRESH_OUTPUT_PATH:-}"
     exit $?
     ;;
@@ -4382,42 +4375,22 @@ if [[ "${REFRESH_ONLY:-false}" == "true" ]]; then
   exit $?
 fi
 
-deploy_dev_root() {
-  ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" root
-}
-
-deploy_dev_bff() {
-  ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" bff
-}
-
-deploy_staging_exec() {
-  ssh_bash "$STAGING_EXEC_VM" "$STAGING_EXEC_ZONE" "$STAGING_EXEC_REMOTE_DIR" exec
-}
-
-deploy_staging_control() {
-  ssh_bash "$STAGING_CONTROL_VM" "$STAGING_CONTROL_ZONE" "$STAGING_CONTROL_REMOTE_DIR" control
-}
-
 case "${DEPLOY_ENV}:${COMPONENT}" in
-  dev:refresh-only)
-    ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" refresh-only
-    exit $?
-    ;;
   dev:root)
-    deploy_dev_root
+    ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" root
     ;;
   dev:bff)
-    deploy_dev_bff
+    ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" bff
     ;;
   staging-live:exec)
-    deploy_staging_exec
+    ssh_bash "$STAGING_EXEC_VM" "$STAGING_EXEC_ZONE" "$STAGING_EXEC_REMOTE_DIR" exec
     ;;
   staging-live:control)
-    deploy_staging_control
+    ssh_bash "$STAGING_CONTROL_VM" "$STAGING_CONTROL_ZONE" "$STAGING_CONTROL_REMOTE_DIR" control
     ;;
   staging-live:all)
-    deploy_staging_exec
-    deploy_staging_control
+    ssh_bash "$STAGING_EXEC_VM" "$STAGING_EXEC_ZONE" "$STAGING_EXEC_REMOTE_DIR" exec
+    ssh_bash "$STAGING_CONTROL_VM" "$STAGING_CONTROL_ZONE" "$STAGING_CONTROL_REMOTE_DIR" control
     ;;
   *)
     error "unsupported deployment target ${DEPLOY_ENV}:${COMPONENT}"

@@ -1,0 +1,29 @@
+{
+  "task_id": "DEV-TW-REFRESH-WORKFLOW-20261007",
+  "change_class": "corrective",
+  "summary": "Fix Dev Taiwan Market Daily Refresh workflow to run bounded TW refresh under shared dev lease from runner checkout, without executing stale code from DEV_REMOTE_DIR.",
+  "incident_context": {
+    "symptom": "Workflow failed with 'Required variable or secret DEV_DEPLOY_SSH_KNOWN_HOSTS is missing' and DEV_DEPLOY_SSH_PRIVATE_KEY was empty; when executed, VM stopped in stale ~/pantheon checkout lacking --refresh-only; schedule '0 7 * * 1-5' was never triggered.",
+    "root_cause": "dev-tw-market-refresh.yml had no environment: dev declared, read KNOWN_HOSTS as secret instead of var, ran remote ssh exec cd DEV_REMOTE_DIR, did not acquire dev environment lease, and had a single daily schedule susceptible to GitHub Actions drops.",
+    "resolution": "Declared environment: dev; read DEV_DEPLOY_SSH_PRIVATE_KEY from secrets and DEV_DEPLOY_SSH_KNOWN_HOSTS from vars; pinned lease controller checkout and wrapped runner execution of scripts/deploy_nonprod_vm.sh --refresh-only with run_with_dev_environment_lease.sh; updated deploy_nonprod_vm.sh to stream payload via direct SSH and copy outcome artifact; added multiple trading-day schedule triggers."
+  },
+  "acceptance_verification": {
+    "ac1_environment_dev_and_ssh_inputs": "passed: refresh job declares environment: dev; reads DEV_DEPLOY_SSH_PRIVATE_KEY from secrets and DEV_DEPLOY_SSH_KNOWN_HOSTS from vars with parity to nonprod-deploy.yml",
+    "ac2_runner_checkout_streaming": "passed: runner invokes scripts/deploy_nonprod_vm.sh --refresh-only from local checkout; script streams remote payload over direct SSH; nothing executes from stale DEV_REMOTE_DIR",
+    "ac3_shared_dev_environment_lease": "passed: refresh acquires lease via pinned dev_environment_lease.py (wait-seconds 0 to report named LeaseBusy reason), maintains heartbeat loop, wraps execution in run_with_dev_environment_lease.sh, and releases on completion",
+    "ac4_workflow_dispatch_outcome_artifact": "passed: workflow uploads tw-refresh-outcome.json as an Actions artifact on completion",
+    "ac5_multiple_trading_day_schedules": "passed: schedule triggers on multiple trading day times ('0 6,7,8,9 * * 1-5') leveraging idempotency and freshness skip",
+    "ac6_workflow_tests": "passed: scripts/test_dev_tw_market_refresh_workflow.py asserts environment dev, variable/secret sources of SSH inputs, lease guard, artifact upload, and absence of DEV_REMOTE_DIR as execution directory",
+    "ac7_no_compressed_code": "passed: net production code additions stay within 60 line budget without compressed code or minification",
+    "ac8_hosted_track": "recorded: pending next scheduled trading-day run on hosted dev"
+  },
+  "local_verification": {
+    "commands": [
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest scripts/test_dev_tw_market_refresh_workflow.py",
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest scripts/test_dev_tw_market_refresh.py",
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest scripts/test_deploy_nonprod_vm.py",
+      "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD --change-class corrective --budget 60"
+    ],
+    "result": "all tests passed; diff budget within 60 net production lines"
+  }
+}

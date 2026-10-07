@@ -2,7 +2,10 @@ name: Dev Taiwan Market Daily Refresh
 
 on:
   schedule:
+    - cron: '0 6 * * 1-5'
     - cron: '0 7 * * 1-5'
+    - cron: '0 8 * * 1-5'
+    - cron: '0 9 * * 1-5'
   workflow_dispatch:
     inputs:
       force:
@@ -16,25 +19,101 @@ jobs:
     name: Taiwan Market Daily Refresh
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    environment: dev
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ajoe734/pantheon
+          ref: 9e564718da8c39199a4c311f1a667b74226e3428
+          path: .lease-controller
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prepare pinned direct SSH transport
+        env:
+          DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
+          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
+        run: scripts/dev_vm_ssh.sh prepare "${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null
+
+      - name: Acquire dev environment lease and start heartbeat
+        id: lease
+        env:
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+        run: |
+          c="${GITHUB_WORKSPACE}/.lease-controller"
+          [[ "$(git -C "$c" rev-parse HEAD)" == "9e564718da8c39199a4c311f1a667b74226e3428" ]]
+          printf '%s  %s\n' \
+            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "$c/scripts/dev_environment_lease.py" \
+            6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "$c/scripts/run_with_dev_environment_lease.sh" \
+            | sha256sum --check --strict
+          ld="$(mktemp -d "${RUNNER_TEMP}/pantheon-dev-lease-XXXXXX")"
+          chmod 0700 "$ld"
+          python3 "$c/scripts/dev_environment_lease.py" acquire \
+            --mode qualification --wait-seconds 0 --state-file "$ld/state.json" \
+            --owner "pantheon:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          exec {token_fd}<<<"${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
+          env -i PATH="${PATH}" HOME="${HOME}" LANG=C.UTF-8 PYTHONNOUSERSITE=1 PYTHONSAFEPATH=1 \
+            python3 "$c/scripts/dev_environment_lease.py" heartbeat-loop \
+              --state-file "$ld/state.json" --failure-json-out "$ld/heartbeat-failure.json" \
+              --identity-json-out "$ld/heartbeat-identity.json" --token-stdin <&"${token_fd}" >"$ld/heartbeat.log" 2>&1 &
+          hpid=$!
+          exec {token_fd}<&-
+          echo "$hpid" > "$ld/heartbeat.pid"
+          for _ in $(seq 1 100); do
+            [[ -s "$ld/heartbeat-identity.json" ]] && break
+            kill -0 "$hpid" 2>/dev/null || exit 75
+            sleep 0.1
+          done
+          [[ -s "$ld/heartbeat-identity.json" ]]
+          echo "ld=$ld" >> "${GITHUB_OUTPUT}"
 
       - name: Execute bounded Taiwan market refresh
-        shell: bash
+        id: refresh
         env:
           DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
           DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
           DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR }}
-          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
+          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
           DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
+          TARGET_ENV: dev
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.ld }}/state.json
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.ld }}/heartbeat.pid
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.ld }}/heartbeat-identity.json
+          PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.ld }}/heartbeat-failure.json
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.ld }}/heartbeat.log
+          REFRESH_OUTPUT_PATH: ${{ runner.temp }}/tw-refresh-outcome.json
           FORCE_REFRESH: ${{ inputs.force || false }}
         run: |
-          for var in DEV_DEPLOY_SSH_HOST DEV_DEPLOY_SSH_USER DEV_REMOTE_DIR DEV_DEPLOY_SSH_KNOWN_HOSTS DEV_DEPLOY_SSH_PRIVATE_KEY; do
-            [[ -n "${!var:-}" ]] || { echo "::error::Required variable or secret ${var} is missing" >&2; exit 1; }
-          done
-          cred_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          scripts/dev_vm_ssh.sh prepare "${cred_dir}" >/dev/null
           force_arg=""
           [[ "${FORCE_REFRESH}" == "true" ]] && force_arg="--force"
-          scripts/dev_vm_ssh.sh exec "set -euo pipefail; cd '${DEV_REMOTE_DIR}'; ./scripts/deploy_nonprod_vm.sh --refresh-only ${force_arg}"
+          # runner invokes deploy_nonprod_vm.sh which streams payload via scripts/dev_vm_ssh.sh exec
+          .lease-controller/scripts/run_with_dev_environment_lease.sh \
+            ./scripts/deploy_nonprod_vm.sh --refresh-only ${force_arg} --output "${REFRESH_OUTPUT_PATH}"
+
+      - name: Upload refresh outcome artifact
+        if: ${{ always() && steps.refresh.outcome != 'cancelled' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tw-refresh-outcome
+          path: ${{ runner.temp }}/tw-refresh-outcome.json
+          if-no-files-found: ignore
+
+      - name: Stop heartbeat and release lease
+        if: ${{ always() && steps.lease.outcome == 'success' }}
+        env:
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          LD: ${{ steps.lease.outputs.ld }}
+          REFRESH_OUTCOME: ${{ steps.refresh.outcome }}
+        run: |
+          hpid="$(tr -d '[:space:]' < "${LD}/heartbeat.pid")"
+          kill -TERM "$hpid" 2>/dev/null || true
+          for _ in $(seq 1 40); do
+            kill -0 "$hpid" 2>/dev/null || break
+            sleep 0.25
+          done
+          if [[ "${REFRESH_OUTCOME}" == "success" && ! -e "${LD}/heartbeat-failure.json" ]]; then
+            python3 .lease-controller/scripts/dev_environment_lease.py release --state-file "${LD}/state.json"
+          fi
