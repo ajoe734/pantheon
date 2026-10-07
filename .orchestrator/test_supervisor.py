@@ -7843,6 +7843,97 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
                     config, candidate_state, self.status, self.task, candidate_receipt,
                 ))
 
+    def test_promotion_drain_recovery_blocked_at_zero_capacity_and_respects_account_limits(self) -> None:
+        self._add_agent("piastra", "PiAstra")
+        self.config["agents"]["piastra"]["provider"] = "pi_astra"
+        self.config["providers"]["pi_astra"] = {
+            "delivery_mode": "pi",
+            "account": "lupinchen",
+        }
+        self.config["ready_dispatcher"]["max_concurrent_per_account"]["lupinchen"] = 1
+        self.task.update(status="in_progress", owner="PiAstra", reviewer="Claude", generation=2)
+        task_id = str(self.task["id"])
+        receipt = {
+            "receipt_id": "promotion-drain-test-receipt",
+            "type": "worker_promotion_drained",
+            "reason_kind": "promotion_drained",
+            "recovery_role": "owner",
+            "status": "pending",
+            "task_id": task_id,
+            "task_generation": 1,
+            "fence_generation": 2,
+        }
+        self.task[supervisor.WORKER_RECOVERY_TASK_KEY] = {
+            "receipt_id": receipt["receipt_id"],
+            "status": "pending",
+            "task_generation": 1,
+            "fence_generation": 2,
+            "replacement_generation": None,
+        }
+        self.status = {
+            "tasks": [self.task],
+            "blockers": [],
+            "handoffs": [],
+            supervisor.WORKER_RECOVERY_RECEIPTS_KEY: {receipt["receipt_id"]: receipt},
+        }
+        supervisor.write_status(self.config, self.status, source="test-promotion-drain-seed")
+        future_iso = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        state = self._state()
+        state["delivery_health"]["endpoints"]["piastra"] = {
+            "state": "healthy", "valid_until": future_iso, "status": "ready"
+        }
+        state["delivery_health"]["accounts"]["lupinchen"] = {
+            "state": "healthy", "valid_until": future_iso, "status": "ready"
+        }
+
+        # Case 1: When piastra lane capacity is 0, recovery is blocked without mutating or rotating
+        cfg_zero = copy.deepcopy(self.config)
+        cfg_zero["agents"]["piastra"]["max_parallel"] = 0
+        pair_zero = supervisor.worker_recovery_assignment_pair(cfg_zero, state, self.status, self.task, receipt)
+        self.assertIsNone(pair_zero)
+        with mock.patch.object(supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox):
+            supervisor.reconcile_pending_worker_recoveries(cfg_zero, state)
+        rechecked = supervisor.load_status(cfg_zero)
+        self.assertEqual(
+            rechecked[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt["receipt_id"]]["status"],
+            "pending",
+        )
+        self.assertEqual(rechecked["tasks"][0]["owner"], "PiAstra")
+        self.assertEqual(rechecked["tasks"][0]["reviewer"], "Claude")
+
+        # Case 2: When lupinchen account limit is occupied by another worker, recovery remains blocked
+        cfg_active = copy.deepcopy(self.config)
+        cfg_active["agents"]["piastra"]["max_parallel"] = 1
+        state_occupied = copy.deepcopy(state)
+        state_occupied["workers"]["w-occupied"] = {
+            "provider": "pi_astra",
+            "status": "running",
+            "task_id": "OTHER-TASK",
+        }
+        pair_occupied = supervisor.worker_recovery_assignment_pair(
+            cfg_active, state_occupied, rechecked, rechecked["tasks"][0], receipt
+        )
+        self.assertIsNone(pair_occupied)
+
+        # Case 3: When piastra lane capacity is 1 and lupinchen account is available, recovery succeeds
+        pair_available = supervisor.worker_recovery_assignment_pair(
+            cfg_active, state, rechecked, rechecked["tasks"][0], receipt
+        )
+        self.assertEqual(pair_available, ("PiAstra", "Claude"))
+        with mock.patch.object(supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox):
+            supervisor.reconcile_pending_worker_recoveries(cfg_active, state)
+        recovered = supervisor.load_status(cfg_active)
+        r_after = recovered[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt["receipt_id"]]
+        self.assertEqual(r_after["status"], "reassigned")
+        self.assertEqual(r_after["replacement"]["owner"], "PiAstra")
+        self.assertEqual(r_after["replacement"]["reviewer"], "Claude")
+        plan = supervisor.build_dispatch_plan(
+            cfg_active, state, recovered, supervisor.queue_events(state), live_total=0
+        )
+        self.assertEqual(len(plan["events"]), 1)
+        self.assertEqual(plan["events"][0]["target_agent"], "PiAstra")
+        self.assertEqual(plan["events"][0]["reason"], supervisor.REASON_OWNED_IN_PROGRESS)
+
     def test_approved_closeout_recovery_preserves_exact_reviewer_binding(self) -> None:
         self.task.update(
             {
