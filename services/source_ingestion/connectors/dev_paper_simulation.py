@@ -51,6 +51,9 @@ DEV_PAPER_SIMULATION_PROVIDER = "Explicit controlled simulation"
 DEV_PAPER_SIMULATION_LICENSE_SCOPE = "internal"
 DEV_PAPER_SIMULATION_SCHEMA_HASH = "dev_paper_simulation_us_price_daily.v1"
 DEFAULT_DEV_PAPER_SIMULATION_SYMBOLS: tuple[str, ...] = ("SPY",)
+DEFAULT_DEV_PAPER_SIMULATION_CONNECTOR_METADATA: Mapping[str, Any] = {
+    "market": "US",
+}
 
 # Deterministic-but-varying baseline close price per symbol so repeated runs
 # produce plausible, slowly drifting values instead of a constant.
@@ -122,7 +125,9 @@ class DevPaperUsEquitySimulationAdapter(SourceConnectorProvider):
     connector_id: str = DEV_PAPER_SIMULATION_CONNECTOR_ID
     symbols: Sequence[str] = field(default_factory=lambda: DEFAULT_DEV_PAPER_SIMULATION_SYMBOLS)
     source_metadata: SourceMetadata | Mapping[str, Any] | None = None
-    connector_metadata: Mapping[str, Any] = field(default_factory=dict)
+    connector_metadata: Mapping[str, Any] = field(
+        default_factory=lambda: dict(DEFAULT_DEV_PAPER_SIMULATION_CONNECTOR_METADATA)
+    )
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(timezone.utc))
 
     def connector(self) -> SourceConnector:
@@ -189,21 +194,36 @@ class DevPaperUsEquitySimulationAdapter(SourceConnectorProvider):
         event_time_iso = _iso(event_time)
         observed_at_iso = _iso(now)
         records: list[SourceRecord] = []
-        market = str(dict(self.connector_metadata).get("market") or "US").strip().upper()
+        raw_market = dict(self.connector_metadata).get("market")
+        market = str(raw_market).strip().upper() if raw_market else None
         for raw_symbol in symbols or self.symbols:
             symbol = str(raw_symbol).strip().upper()
             if not symbol:
                 continue
             close = _synthetic_close(symbol, event_time)
-            normalized_row = {
+            normalized_row: dict[str, Any] = {
                 "symbol": symbol,
                 "close": close,
                 "event_time": event_time_iso,
                 "is_real": False,
                 "provenance": "simulation",
-                "market": market,
             }
+            if market is not None:
+                normalized_row["market"] = market
             row_hash = _stable_row_hash({"symbol": symbol, "event_time": event_time_iso, "close": close})
+            record_metadata: dict[str, Any] = {
+                "is_real": False,
+                "provenance": "simulation",
+                "license_scope": DEV_PAPER_SIMULATION_LICENSE_SCOPE,
+                "access_scope": ["research"],
+                "event_time": event_time_iso,
+                "available_time": observed_at_iso,
+                "observed_at": observed_at_iso,
+                "normalized_row": normalized_row,
+                "dev_only": True,
+            }
+            if market is not None:
+                record_metadata["market"] = market
             records.append(
                 SourceRecord(
                     source_id=f"dev-paper-simulation:{symbol}:{event_time_iso}:{row_hash}",
@@ -211,18 +231,7 @@ class DevPaperUsEquitySimulationAdapter(SourceConnectorProvider):
                     source_type="market",
                     title=f"SIMULATION dev-paper-baseline {symbol} {event_time_iso}",
                     content_ref=f"simulation://dev-paper-us-equity/{symbol}/{event_time_iso}",
-                    metadata={
-                        "is_real": False,
-                        "provenance": "simulation",
-                        "license_scope": DEV_PAPER_SIMULATION_LICENSE_SCOPE,
-                        "access_scope": ["research"],
-                        "event_time": event_time_iso,
-                        "available_time": observed_at_iso,
-                        "observed_at": observed_at_iso,
-                        "normalized_row": normalized_row,
-                        "dev_only": True,
-                        "market": market,
-                    },
+                    metadata=record_metadata,
                     trace_id=trace_id,
                 )
             )

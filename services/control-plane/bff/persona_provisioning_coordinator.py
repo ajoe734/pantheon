@@ -20,6 +20,7 @@ from urllib.parse import quote
 from services.registry.strategy_artifact import (
     StrategyArtifactValidationError,
     canonical_market_context,
+    create_market_transition_revision,
 )
 
 from .persona_provisioning import (
@@ -540,6 +541,274 @@ class PersonaProvisioningCoordinator:
         if not self._needs_compensation_reconciliation(existing):
             return existing
         return self._resume_failure_compensation(existing)
+
+    def transition_legacy_persona_market(
+        self,
+        record: ProvisioningRecord,
+        *,
+        market: str | None = None,
+        new_version: str = "1.0.1",
+    ) -> ProvisioningRecord:
+        """Create and approve a governed child revision for a legacy Persona artifact.
+
+        Preserves every byte, checksum, and version of the parent artifact (AC2).
+        Traces market authority from persisted owner request or explicit parameter,
+        failing closed if unspecified or contradictory (AC3).
+        Coordinates low-risk Governance approval and Registry advance under
+        zero-capital bounds, updating durable coordination receipts (AC4).
+        """
+        symbols, _, _ = self._paper_universe(record)
+        target_market = market or record.request_payload.get("market")
+        if not target_market or not str(target_market).strip():
+            raise PersonaProvisioningCoordinationError(
+                "No authoritative owner market context found for legacy persona transition"
+            )
+        try:
+            canonical_market = canonical_market_context(str(target_market), symbols=symbols)
+        except StrategyArtifactValidationError as exc:
+            raise PersonaProvisioningCoordinationError(
+                f"Invalid market context for transition: {exc}"
+            ) from exc
+
+        parent_receipt = record.references.get("strategy_artifact_approved")
+        if not parent_receipt:
+            raise PersonaProvisioningCoordinationError(
+                "Legacy Persona has no approved strategy artifact to transition"
+            )
+        parent_entry = _registry_entry(parent_receipt)
+        parent_artifact = parent_entry.get("metadata", {}).get("strategy_artifact")
+        if not isinstance(parent_artifact, Mapping):
+            raise PersonaProvisioningCoordinationError(
+                "Legacy strategy artifact receipt is missing metadata.strategy_artifact"
+            )
+        parent_parameters = parent_artifact.get("parameters") or {}
+        if parent_parameters.get("market") == canonical_market:
+            return record
+
+        active = self.store.acquire(
+            record.tenant_id,
+            record.idempotency_key,
+            lease_owner=self.lease_owner,
+            lease_seconds=self.lease_seconds,
+        )
+        if active is None:
+            raise PersonaProvisioningCoordinationError(
+                "Persona provisioning record is leased by another coordinator"
+            )
+
+        try:
+            ids = deterministic_provisioning_ids(active)
+            parent_id = str(parent_artifact.get("artifact_id") or ids.strategy_artifact_id).strip()
+            child_artifact_id = f"{parent_id}-rev1"
+            child_decision_id = f"apv-transition-{ids.token}"
+            source_run_id = f"persona-provisioning-transition-{ids.token}"
+
+            child_artifact = create_market_transition_revision(
+                parent_artifact,
+                market=canonical_market,
+                new_artifact_id=child_artifact_id,
+                new_version=new_version,
+                source_run_ids=[source_run_id],
+                parent_registry_id=parent_id,
+            )
+
+            candidate_payload = {
+                "registry_id": child_artifact_id,
+                "artifact_state": "candidate",
+                "strategy_artifact": child_artifact,
+                "producer_run_id": source_run_id,
+                "evaluation_summary": {
+                    "admission": "legacy_market_transition",
+                    "risk_level": "low",
+                    "execution_context": "paper",
+                    "capital_scale_pct": 0.0,
+                    "source_strategy_spec_id": ids.registry_id,
+                },
+                "rollback_target": parent_id,
+                "metadata": {
+                    "tenant_id": active.tenant_id,
+                    "persona_id": active.persona_id,
+                    "capital_pool_id": ids.capital_pool_id,
+                    "persona_capital_binding_id": ids.persona_capital_binding_id,
+                    "parent_registry_id": parent_id,
+                    "execution_context": "paper",
+                    "capital_scale_pct": 0.0,
+                    "requested_by": self._requested_by(active),
+                    "market": canonical_market,
+                    "transition_kind": "legacy_market_addition",
+                },
+            }
+
+            def validate_candidate(receipt: Mapping[str, Any]) -> None:
+                state = str(_registry_entry(receipt).get("artifact_state") or "")
+                if state not in {"candidate", "approved"}:
+                    raise PersonaProvisioningCoordinationError(
+                        "Transition StrategyArtifact create readback is neither candidate nor approved"
+                    )
+
+            candidate_receipt = self._create_then_get(
+                owner="registry",
+                get_path=f"/api/registry/strategy-artifacts/{_path_id(child_artifact_id)}",
+                post_path="/api/registry/strategy-artifacts",
+                payload=candidate_payload,
+                validate=validate_candidate,
+            )
+            active = self._checkpoint_receipt(
+                active,
+                step="transition_strategy_artifact_candidate_readback",
+                key="transition_strategy_artifact_candidate",
+                receipt=candidate_receipt,
+            )
+
+            cand_entry = _registry_entry(candidate_receipt)
+            candidate_digest = _owner_digest(
+                cand_entry.get("checksum"),
+                label=f"Transition RegistryEntry {child_artifact_id} readback",
+            )
+            expires_at = _approval_expiry(
+                cand_entry.get("created_at"),
+                label=f"Transition RegistryEntry {child_artifact_id} readback created_at",
+            )
+            proposal_payload = {
+                "decision_id": child_decision_id,
+                "expected_version": 0,
+                "target_type": "registry_entry",
+                "target_id": child_artifact_id,
+                "target_version": new_version,
+                "risk_level": "low",
+                "capital_pool_id": ids.capital_pool_id,
+                "persona_id": active.persona_id,
+                "tenant_id": active.tenant_id,
+                "owner_user_id": self.governance_actor_id,
+                "proposal_id": f"persona-provisioning-transition-{ids.token}",
+                "proposal_revision": 1,
+                "proposal_content_digest": active.request_hash,
+                "validation_result_digest": _stable_hash(
+                    {
+                        "registry_id": child_artifact_id,
+                        "risk_level": "low",
+                        "candidate_digest": candidate_digest,
+                    }
+                ),
+                "candidate_digest": candidate_digest,
+                "expires_at": expires_at,
+            }
+
+            def validate_proposal(receipt: Mapping[str, Any]) -> None:
+                self._validate_approval_identity(
+                    receipt,
+                    active,
+                    ids,
+                    registry_id=child_artifact_id,
+                    decision_id=child_decision_id,
+                    version=new_version,
+                    candidate_digest=candidate_digest,
+                    expires_at=expires_at,
+                )
+
+            proposal_receipt = self._create_then_get(
+                owner="governance",
+                get_path=f"/api/governance/approvals/{_path_id(child_decision_id)}",
+                post_path="/api/governance/approvals",
+                payload=proposal_payload,
+                validate=validate_proposal,
+            )
+            active = self._checkpoint_receipt(
+                active,
+                step="transition_approval_proposed_readback",
+                key="transition_approval_proposed",
+                receipt=proposal_receipt,
+            )
+
+            gov_path = f"/api/governance/approvals/{_path_id(child_decision_id)}"
+            review_receipt = self._transition_then_get(
+                owner="governance",
+                get_path=gov_path,
+                post_path=f"{gov_path}/review",
+                payload=lambda curr: {
+                    "actor_role": "automated_gate",
+                    "actor_id": self.governance_actor_id,
+                    "expected_version": int((curr or {}).get("version") or 0),
+                },
+                ready=lambda r: str(r.get("decision_state") or "") in {"under_review", "decided"},
+                validate=lambda r: None,
+            )
+
+            decide_receipt = self._transition_then_get(
+                owner="governance",
+                get_path=gov_path,
+                post_path=f"{gov_path}/decide",
+                payload=lambda curr: {
+                    "actor_role": "automated_gate",
+                    "actor_id": self.governance_actor_id,
+                    "outcome": "approved",
+                    "rationale": "Low-risk internal paper Persona market transition",
+                    "evidence_refs": [{"ref_type": "registry_entry", "ref_id": child_artifact_id}],
+                    "candidate_digest": candidate_digest,
+                    "expires_at": expires_at,
+                    "expected_version": int((curr or {}).get("version") or 0),
+                },
+                ready=lambda r: r.get("decision_state") == "decided" and r.get("decision") == "approved",
+                validate=lambda r: None,
+            )
+            active = self._checkpoint_receipt(
+                active,
+                step="transition_approval_decided_readback",
+                key="transition_approval_decided",
+                receipt=decide_receipt,
+            )
+
+            def build_advance_payload(current: Mapping[str, Any] | None) -> Mapping[str, Any]:
+                if current is None:
+                    raise PersonaProvisioningCoordinationError(
+                        "Registry transition candidate has no readback to advance"
+                    )
+                entry = _registry_entry(current)
+                base = {
+                    "approval_decision_id": child_decision_id,
+                    "expected_artifact_state": "candidate",
+                    "expected_version": str(entry["version"]),
+                    "expected_updated_at": entry.get("updated_at"),
+                }
+                command_key = (
+                    f"persona-provisioning:{ids.token}:advance:{child_artifact_id}:approved:"
+                    f"{_stable_hash(base)[:16]}"
+                )
+                return {"target_state": "approved", "command_key": command_key, **base}
+
+            advance_path = f"/api/registry/strategy-artifacts/{_path_id(child_artifact_id)}"
+            approved_receipt = self._transition_then_get(
+                owner="registry",
+                get_path=advance_path,
+                post_path=f"{advance_path}/advance",
+                payload=build_advance_payload,
+                ready=lambda r: _registry_entry(r).get("artifact_state") == "approved",
+                validate=lambda r: None,
+            )
+            active = self._checkpoint_receipt(
+                active,
+                step="transition_strategy_artifact_approved_readback",
+                key="transition_strategy_artifact_approved",
+                receipt=approved_receipt,
+            )
+
+            if "legacy_strategy_artifact_approved" not in active.references:
+                active.references["legacy_strategy_artifact_approved"] = deepcopy(parent_receipt)
+            active.references["strategy_artifact_approved"] = deepcopy(approved_receipt)
+            if active.result is not None:
+                active.result["strategy_artifact_id"] = child_artifact_id
+                active.result["registry_id"] = child_artifact_id
+                active.result["approval_decision_id"] = child_decision_id
+                active.result["legacy_strategy_artifact_id"] = parent_id
+                active.result["market"] = canonical_market
+            active = self._checkpoint(active)
+            return active
+        finally:
+            self.store.release(
+                active,
+                lease_owner=self.lease_owner,
+                lease_seconds=self.lease_seconds,
+            )
 
     def _preview(self, record: ProvisioningRecord) -> ProvisioningRecord:
         symbols, _, _ = self._paper_universe(record)

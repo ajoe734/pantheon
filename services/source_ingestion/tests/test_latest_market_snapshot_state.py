@@ -319,6 +319,16 @@ def test_dev_paper_simulation_adapter_emits_market_in_row_and_metadata() -> None
         assert rec.metadata["provenance"] == "simulation"
 
 
+def test_dev_paper_simulation_adapter_fails_closed_without_metadata_market() -> None:
+    """AC3 requirement: connector fails closed without market when connector_metadata lacks market (no guessing 'US')."""
+    adapter = DevPaperUsEquitySimulationAdapter(connector_metadata={})
+    records = adapter.records_from_now(symbols=["SPY"])
+    assert len(records) >= 1
+    for rec in records:
+        assert rec.metadata.get("market") is None
+        assert "market" not in rec.metadata["normalized_row"]
+
+
 def _projection(artifact: dict[str, Any]) -> tuple[dict[str, Any], str]:
     payload = json.dumps(
         artifact,

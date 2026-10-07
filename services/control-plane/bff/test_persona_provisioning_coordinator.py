@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 from collections import Counter
+import copy
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
@@ -18,6 +19,7 @@ try:
     from services.control_plane.bff.persona_provisioning_coordinator import (
         FIRST_EVALUATION_WORKFLOW_ID,
         PersonaProvisioningCoordinator,
+        PersonaProvisioningCoordinationError,
         deterministic_provisioning_ids,
     )
 except ImportError:
@@ -26,6 +28,7 @@ except ImportError:
     from persona_provisioning_coordinator import (  # type: ignore[no-redef]
         FIRST_EVALUATION_WORKFLOW_ID,
         PersonaProvisioningCoordinator,
+        PersonaProvisioningCoordinationError,
         deterministic_provisioning_ids,
     )
 from services.registry.paper_strategy_spec import validate_strategy_spec
@@ -1727,4 +1730,89 @@ def test_coordinator_accepts_bare_symbols_with_explicit_market_without_guessing(
     forward_artifact_fx = artifact_view_fx["entry"]["metadata"]["strategy_artifact"]
     assert forward_artifact_fx["parameters"]["market"] == "FX"
     assert forward_artifact_fx["parameters"]["symbols"] == ["EURUSD"]
+
+
+def test_transition_legacy_persona_market_preserves_parent_and_creates_approved_child_revision() -> None:
+    store, record = _record_and_store()
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    # Initial coordinate runs legacy flow without market
+    result = coordinator.coordinate(record)
+    assert result.state == "provisioning"
+
+    ids = deterministic_provisioning_ids(record)
+    parent_path = f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}"
+    parent_view_before = copy.deepcopy(transport.objects[("registry", parent_path)])
+    parent_artifact_before = parent_view_before["entry"]["metadata"]["strategy_artifact"]
+    assert "market" not in parent_artifact_before["parameters"]
+
+    # Transition legacy persona artifact to explicit market 'US'
+    transitioned = coordinator.transition_legacy_persona_market(result, market="US")
+    assert transitioned.state == "provisioning"
+
+    # 1. Parent artifact is byte-identical and completely unmutated
+    parent_view_after = transport.objects[("registry", parent_path)]
+    assert parent_view_after == parent_view_before
+
+    # 2. Child artifact is created, approved, cites parent, and carries explicit market
+    child_id = f"{ids.strategy_artifact_id}-rev1"
+    child_path = f"/api/registry/strategy-artifacts/{child_id}"
+    child_view = transport.objects[("registry", child_path)]
+    child_entry = child_view["entry"]
+    assert child_entry["artifact_state"] == "approved"
+    assert child_entry["version"] == "1.0.1"
+
+    child_artifact = child_entry["metadata"]["strategy_artifact"]
+    assert child_artifact["artifact_id"] == child_id
+    assert child_artifact["version"] == "1.0.1"
+    assert child_artifact["parameters"]["market"] == "US"
+    assert child_artifact["parameters"]["symbols"] == ["SPY"]
+    assert "market" in child_artifact["mutation_surface"]["immutable_parameters"]
+    assert child_artifact["lineage"]["parent_registry_ids"] == [ids.strategy_artifact_id]
+
+    # 3. Governance ApprovalDecision exists and is approved
+    child_decision_id = f"apv-transition-{ids.token}"
+    decision_path = f"/api/governance/approvals/{child_decision_id}"
+    decision_view = transport.objects[("governance", decision_path)]
+    assert decision_view["decision_state"] == "decided"
+    assert decision_view["decision"] == "approved"
+    assert decision_view["target_id"] == child_id
+
+    # 4. Record references and result updated
+    assert "legacy_strategy_artifact_approved" in transitioned.references
+    assert (
+        transitioned.references["legacy_strategy_artifact_approved"]["entry"]["registry_id"]
+        == ids.strategy_artifact_id
+    )
+    assert (
+        transitioned.references["strategy_artifact_approved"]["entry"]["registry_id"]
+        == child_id
+    )
+    assert transitioned.result["strategy_artifact_id"] == child_id
+    assert transitioned.result["market"] == "US"
+
+
+def test_transition_legacy_persona_market_fails_closed_when_market_missing_or_contradictory() -> None:
+    store, record = _record_and_store()
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+    assert result.state == "provisioning"
+
+    # Missing market fails closed
+    with pytest.raises(
+        PersonaProvisioningCoordinationError,
+        match="No authoritative owner market context found",
+    ):
+        coordinator.transition_legacy_persona_market(result, market=None)
+
+    # Invalid market fails closed
+    with pytest.raises(
+        PersonaProvisioningCoordinationError,
+        match="unsupported market context 'INVALID'",
+    ):
+        coordinator.transition_legacy_persona_market(result, market="INVALID")
+
 
