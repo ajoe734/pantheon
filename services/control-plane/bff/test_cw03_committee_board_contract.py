@@ -18,7 +18,8 @@ from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.command_adapters.service import CommandAdapterService
 from services.control_plane.bff.command_adapters.router import create_command_adapters_router
 from services.control_plane.bff.governance.router import create_governance_router
-from services.control_plane.bff.models import OperatorIdentity
+from services.control_plane.bff.auth.policy import capabilities_for_identity
+from services.control_plane.bff.models import OperatorIdentity, redact_evidence_refs
 from services.control_plane.bff.ports.operations_consultation import DomainConsultationPort, _model_to_data
 from services.consultation.models import (
     ActorRef,
@@ -39,8 +40,23 @@ from services.consultation.models import (
 from services.consultation.store import ConsultationStore
 
 
+def _redacted_ref(ref_id: str, kind: str, required_capability: str) -> dict:
+    return {
+        "ref_id": ref_id,
+        "kind": kind,
+        "required_capability": required_capability,
+        "reason": "insufficient_capability",
+        "redacted": True,
+        "display_label": None,
+        "redacted_count": None,
+    }
+
+
+_REDACTED_TELEMETRY_REF = _redacted_ref("telemetry-vol-spike-20260419", "metric", "metric.read")
+_REDACTED_DEPLOYMENT_REF = _redacted_ref("dp-20260419-014", "deployment", "deployment.read")
 OPERATOR_AUTH = "Bearer test-operator:operator"
 REVIEWER_AUTH = "Bearer test-reviewer:reviewer"
+ADMIN_AUTH = "Bearer test-admin:admin"
 
 _CONSULTATION_SESSION_STORE_ENV = "PANTHEON_BFF_CONSULTATION_SESSION_STORE"
 
@@ -120,7 +136,7 @@ def _default_consultation_sessions() -> Dict[str, Dict[str, Any]]:
                     },
                     "synthesis_summary": {
                         "outcome": "pending",
-                        "rationale_ref": "workspace://consultation-rationales/cs-20260419-081",
+                        "rationale_ref": "audit://consultation-rationales/cs-20260419-081",
                         "evidence_refs": [
                             "telemetry-vol-spike-20260419",
                             "dp-20260419-014",
@@ -555,6 +571,8 @@ read_store = _ReadStoreProxy()
 
 
 def _extract_identity(authorization: Optional[str] = None, **kwargs: Any) -> OperatorIdentity:
+    if authorization and "admin" in authorization:
+        return OperatorIdentity(operator_id="test-admin", roles=["admin"], mfa_verified=True)
     if authorization and "reviewer" in authorization:
         return OperatorIdentity(operator_id="test-reviewer", roles=["reviewer"], mfa_verified=True)
     return OperatorIdentity(operator_id="test-operator", roles=["operator", "approver"], mfa_verified=True)
@@ -583,6 +601,8 @@ def _seeded_client():
             create_governance_router(
                 read_surface=store,
                 extract_identity=_extract_identity,
+                redact_evidence_refs=redact_evidence_refs,
+                capabilities_for_identity=capabilities_for_identity,
             )
         )
         app.include_router(create_command_adapters_router(service=service))
@@ -622,6 +642,26 @@ def test_cw03_list_contract_returns_committee_projection() -> None:
         assert payload["meta"]["surfaces"]["committee_board"] in {"degraded", "ok", "stale"}
 
 
+def test_cw03_detail_evidence_visible_to_role_holding_the_capabilities() -> None:
+    with _seeded_client() as client:
+        response = client.get(
+            "/api/v1/committees/committee-regime-risk-20260419-081",
+            headers={"Authorization": ADMIN_AUTH},
+        )
+        assert response.status_code == 200, response.text
+
+        payload = response.json()
+        assert payload["synthesis_summary"]["rationale_ref"] == "audit://consultation-rationales/cs-20260419-081"
+        assert payload["linked_evidence"][0] == {
+            "id": "telemetry-vol-spike-20260419",
+            "type": "evidence_link",
+            "evidence_type": "telemetry",
+            "artifact_ref": "artifact-042",
+            "description": "Volatility spike - 2026-04-19",
+            "link": "/telemetry/events/telemetry-vol-spike-20260419",
+        }
+
+
 def test_cw03_detail_contract_returns_synthesis_and_allowed_actions() -> None:
     with _seeded_client() as client:
         response = client.get(
@@ -637,13 +677,13 @@ def test_cw03_detail_contract_returns_synthesis_and_allowed_actions() -> None:
         assert payload["consensus_state"] == "sponsor_required"
         assert payload["sponsor_assignment"]["persona_id"] == "p-compliance-sponsor"
         assert payload["participant_roster"][0]["persona_label"] == "Macro Observer"
+        # Operator/approver roles hold none of audit.read, metric.read or
+        # deployment.read, so the production redaction policy withholds the
+        # rationale and evidence refs (visibility unchanged by this test).
         assert payload["synthesis_summary"] == {
             "outcome": "pending",
-            "rationale_ref": "workspace://consultation-rationales/cs-20260419-081",
-            "evidence_refs": [
-                "telemetry-vol-spike-20260419",
-                "dp-20260419-014",
-            ],
+            "rationale_ref": _redacted_ref("audit://consultation-rationales/cs-20260419-081", "audit", "audit.read"),
+            "evidence_refs": [_REDACTED_TELEMETRY_REF, _REDACTED_DEPLOYMENT_REF],
             "dissent_refs": [
                 "workspace://consultation-dissent/cs-20260419-081/execution-lead"
             ],
@@ -651,19 +691,33 @@ def test_cw03_detail_contract_returns_synthesis_and_allowed_actions() -> None:
         assert payload["allowedActions"] == {
             "canRecordSponsorDecision": True,
         }
-        assert payload["linked_evidence"][0] == {
-            "id": "telemetry-vol-spike-20260419",
-            "type": "evidence_link",
-            "evidence_type": "telemetry",
-            "artifact_ref": "artifact-042",
-            "description": "Volatility spike - 2026-04-19",
-            "link": "/telemetry/events/telemetry-vol-spike-20260419",
-        }
+        assert payload["linked_evidence"] == [_REDACTED_TELEMETRY_REF, _REDACTED_DEPLOYMENT_REF]
         assert payload["meta"]["surfaces"]["committee_board"] in {"degraded", "ok", "stale"}
 
 
+def _sponsor_decision_owner(url: str, method: str = "GET", payload: Optional[Dict[str, Any]] = None, **_: Any) -> Dict[str, Any]:
+    """Stand-in for the consultation owner's internal sponsor-decision endpoint."""
+    assert method == "POST"
+    committee_id = url.rsplit("/committees/", 1)[1].removesuffix("/sponsor-decision")
+    updated = read_store.record_sponsor_decision(
+        committee_id,
+        sponsor_decision=payload["sponsor_decision"],
+        rationale_ref=payload["rationale_ref"],
+        actor_id="test-operator",
+    )
+    assert updated is not None
+    return {"status": "recorded", "committee_id": committee_id}
+
+
 def test_cw03_record_sponsor_decision_executes_and_updates_projection() -> None:
-    with _seeded_client() as client:
+    rationale_ref = "audit://committee-rationales/committee-regime-risk-20260419-081/final"
+    # 660556a75 moved command execution behind the governance adapter, which
+    # dispatches to the owner at PANTHEON_INTERNAL_API_URL; route that call to
+    # the committee owner double instead of the network.
+    with patch.dict(os.environ, {"PANTHEON_INTERNAL_API_URL": "http://internal.unit.invalid"}), patch(
+        "services.control_plane.bff.command_adapters.governance_adapter.http_request_json",
+        side_effect=_sponsor_decision_owner,
+    ), _seeded_client() as client:
         response = client.post(
             "/bff/v1/commands",
             headers={
@@ -674,34 +728,29 @@ def test_cw03_record_sponsor_decision_executes_and_updates_projection() -> None:
                 "command_type": "RecordSponsorDecision",
                 "committee_id": "committee-regime-risk-20260419-081",
                 "sponsor_decision": "approved",
-                "rationale_ref": "workspace://committee-rationales/committee-regime-risk-20260419-081/final",
+                "rationale_ref": rationale_ref,
                 "note": "Compliance sponsor approves the risk review outcome",
             },
         )
         assert response.status_code == 202, response.text
-        receipt = response.json()
-        command_id = receipt["data"]["receipt_id"]
+        command_id = response.json()["data"]["receipt_id"]
 
         status = client.get(
             f"/api/v1/operator/commands/{command_id}",
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert status.status_code == 200, status.text
-        payload = status.json()
-        assert payload["status"] in {"submitted", "processing", "executed"}
+        assert status.json()["status"] == "executed"
 
-        # Validation/admission passes (202) and the command is durably
-        # tracked and pollable via the surviving GET status readback; the
-        # async execution write-path that would flip the committee
-        # projection to "reached" is a separate, already-tracked
-        # DOMAIN-WRITERS concern (see scripts/test_bff_cw_contract_prerequisite.py
-        # for the same carve-out), not something introduced or fixed by
-        # retiring the legacy POST /api/v1/operator/commands route.
         detail = client.get(
             "/api/v1/committees/committee-regime-risk-20260419-081",
-            headers={"Authorization": OPERATOR_AUTH},
+            headers={"Authorization": ADMIN_AUTH},
         )
         assert detail.status_code == 200, detail.text
+        payload = detail.json()
+        assert payload["consensus_state"] == "reached"
+        assert payload["synthesis_summary"]["outcome"] == "approved"
+        assert payload["synthesis_summary"]["rationale_ref"] == rationale_ref
 
 
 def test_cw03_detail_hides_record_sponsor_decision_for_reviewer_only() -> None:

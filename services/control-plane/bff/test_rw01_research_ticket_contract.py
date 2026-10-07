@@ -75,9 +75,14 @@ class _TicketPortDouble(DefaultResearchKnowledgeSourcePort):
         source: str,
         persistence_path: Path | None = None,
     ) -> None:
-        super().__init__(research_tickets_store=records)
+        super().__init__(
+            research_tickets_store=records,
+            research_write_owner=build_json_file_research_write_owner(
+                tickets=records,
+                tickets_path=persistence_path,
+            ),
+        )
         self._source = source
-        self._persistence_path = persistence_path
 
     def dataset_source(self, dataset: str, **_: object) -> str:
         if dataset == "research_tickets":
@@ -98,25 +103,9 @@ class _TicketPortDouble(DefaultResearchKnowledgeSourcePort):
             return None
         return super().get_research_ticket(ticket_id)
 
-    def _persist(self) -> None:
-        if self._persistence_path is not None:
-            self._persistence_path.write_text(
-                json.dumps(self._tickets, indent=2),
-                encoding="utf-8",
-            )
-
-    def create_research_ticket(self, **kwargs: object) -> dict:
-        ticket = super().create_research_ticket(**kwargs)
-        self._persist()
-        return ticket
-
-    def patch_research_ticket(self, ticket_id: str, **kwargs: object) -> dict | None:
-        ticket = super().patch_research_ticket(ticket_id, **kwargs)
-        self._persist()
-        return ticket
-
 
 from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
+    build_json_file_research_write_owner,
     create_research_test_app,
 )
 
