@@ -133,10 +133,15 @@ def test_bff_v1_commands_missing_approval_returns_409_envelope() -> None:
                 "X-Correlation-Id": "corr-precondition-approval",
             },
             json={
-                "command": "ApproveDecision",
-                "target": {"type": "ApprovalDecision", "id": "appr-final-precondition-001"},
-                "params": {"decision_id": "appr-final-precondition-001"},
-                "audit_context": {"reason": "Approve decision after evidence review"},
+                # ApproveDecision is exempt from the approval-evidence
+                # precondition (6631736ae); ApproveDeployment still requires it.
+                "command": "ApproveDeployment",
+                "target": {"type": "DeploymentPlan", "id": "dp-final-precondition-001"},
+                "params": {
+                    "deployment_plan_id": "dp-final-precondition-001",
+                    "approval_decision": "approve",
+                },
+                "audit_context": {"reason": "Approve deployment after evidence review"},
             },
         )
 
@@ -144,9 +149,9 @@ def test_bff_v1_commands_missing_approval_returns_409_envelope() -> None:
             response,
             status_code=409,
             code="HUMAN_GATE_PENDING",
-            action_id="ApproveDecision",
-            entity_type="ApprovalDecision",
-            entity_id="appr-final-precondition-001",
+            action_id="ApproveDeployment",
+            entity_type="DeploymentPlan",
+            entity_id="dp-final-precondition-001",
             kind="approval",
             correlation_id="corr-precondition-approval",
         )

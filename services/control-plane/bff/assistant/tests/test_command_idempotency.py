@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from .. import command_idempotency as command_idempotency_module
-from ..command_idempotency import (
+from services.control_plane.bff.assistant import command_idempotency as command_idempotency_module
+from services.control_plane.bff.assistant.command_idempotency import (
     CommandIdempotencyHeaderConflict,
     CommandIdempotencyInProgress,
     CommandIdempotencyKeyRequired,

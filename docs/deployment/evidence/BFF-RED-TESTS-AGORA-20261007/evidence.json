@@ -1,0 +1,48 @@
+{
+  "task_id": "BFF-RED-TESTS-AGORA-20261007",
+  "title": "Refresh Agora candidate router research proposal and console projection tests",
+  "owner": "Claude",
+  "reviewer": "PiAstra",
+  "change_class": "corrective",
+  "net_prod_line_budget": 0,
+  "summary": "Four failing test files refreshed; 45 passed in the research test interpreter. No production code changed. No assertion weakened.",
+  "verification": {
+    "command": "pytest tests/test_agora_candidate_truth.py tests/test_agora_router.py agora/servant/test_servant_research_proposal.py tests/test_console_data_agora_projection.py (run from services/control-plane/bff with runtime/research-test-python)",
+    "result": "45 passed, 0 failed",
+    "net_prod_lines": 0
+  },
+  "expectation_classifications": [
+    {
+      "file": "services/control-plane/bff/tests/test_agora_candidate_truth.py",
+      "changed_item": "Viewer-owned pool is now created and scored by an operator with the same user id, then read with a viewer token (_VIEWER_AUTH is now agora-truth-user:viewer)",
+      "classification": "intended change",
+      "citing_commits": ["bb71d540d"],
+      "rationale": "bb71d540d removed the viewer write carve-out, so viewers cannot create or score pools. The redaction guarantee (viewer_role, no private score explanations) is still asserted unchanged on the viewer read path."
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_agora_router.py",
+      "changed_item": "Import create_read_surface_ports / create_in_memory_read_surface_ports only from services.control_plane.bff.ports.read_surface_ports",
+      "classification": "stale sample",
+      "citing_commits": [],
+      "rationale": "The bare 'ports.read_surface_ports' import resolved to a second module copy whose relative imports fail. Canonical package path is the only supported import."
+    },
+    {
+      "file": "services/control-plane/bff/agora/servant/test_servant_research_proposal.py",
+      "changed_item": "Fixture sets PANTHEON_RESEARCH_ORCHESTRATOR_API_URL and patches WorkshopCanonicalOperations.list_research_runs to return no owner runs",
+      "classification": "intended change",
+      "citing_commits": ["376ad416d"],
+      "rationale": "Runs are projected from the research owner, not copied into the BFF. A never-dispatched plan has no owner runs; the 409 dispatch and empty runs assertions are unchanged."
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_console_data_agora_projection.py",
+      "changed_item": "Use PANTHEON_DECISION_JOURNAL_DATA_DIR instead of the retired PANTHEON_BFF_DECISION_JOURNAL_STORE; drop assertions for signals, sessions, insights, notes, handoffs, training-examples and inbox",
+      "classification": "retired",
+      "citing_commits": ["e9ab0aa63", "0cfb1e2af"],
+      "rationale": "e9ab0aa63 rejects the legacy journal env var. 0cfb1e2af deleted those seven surfaces (they 404). Journal and postmortems, the surfaces still routed, keep their assertions."
+    }
+  ],
+  "not_changed": [
+    "test_agora_research_candidate_governed needs the research interpreter and is out of scope",
+    "test_agora_workshop_dev_deploy_config is covered by DEV-DEPLOY-ENV-PARITY-20261006"
+  ]
+}

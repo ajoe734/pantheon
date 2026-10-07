@@ -39,6 +39,7 @@ PACK_D_D21_ERROR_CODES = [
     "UPSTREAM_ERROR",
     "INTERNAL_ERROR",
     "NOT_IMPLEMENTED",
+    "ACTION_RETIRED",
     "MAINTENANCE_MODE",
     "KILL_SWITCH_ACTIVE",
     "SAFE_MODE_ACTIVE",
@@ -113,7 +114,7 @@ def _assert_error_envelope(
 def test_error_code_enum_matches_pack_d_d21_allowlist() -> None:
     observed = [code.value for code in ErrorCode]
     assert observed == PACK_D_D21_ERROR_CODES
-    assert len(observed) == 26
+    assert len(observed) == 27
 
 
 def test_error_behavior_matrix_covers_pack_d_d21_allowlist() -> None:
@@ -127,6 +128,7 @@ def test_error_behavior_matrix_covers_pack_d_d21_allowlist() -> None:
     assert behavior["RESOURCE_NOT_FOUND"] == {"retryable": False, "userActionable": True}
     assert behavior["VALIDATION_FAILED"] == {"retryable": False, "userActionable": True}
     assert behavior["FORBIDDEN"] == {"retryable": False, "userActionable": False}
+    assert behavior["ACTION_RETIRED"] == {"retryable": False, "userActionable": True}
     assert behavior["RATE_LIMITED"] == {"retryable": True, "userActionable": True}
     assert behavior["DEPENDENCY_UNAVAILABLE"] == {"retryable": True, "userActionable": True}
     assert behavior["UPSTREAM_TIMEOUT"] == {"retryable": True, "userActionable": True}

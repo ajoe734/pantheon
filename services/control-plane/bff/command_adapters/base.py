@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote
 
+from starlette.exceptions import HTTPException
+
 log = logging.getLogger(__name__)
 
 _DEFAULT_REQUEST_TIMEOUT = int(os.getenv("PANTHEON_COMMAND_TIMEOUT_SECONDS", "30"))
@@ -27,7 +29,7 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-class ActionUnavailableError(ValueError):
+class ActionUnavailableError(HTTPException, ValueError):
     """Raised when an action is explicitly unavailable or unsupported in production.
 
     ``retryable``/``downstream_status`` distinguish a genuinely unsupported
@@ -48,7 +50,19 @@ class ActionUnavailableError(ValueError):
         retryable: bool = False,
         downstream_status: int = 422,
     ) -> None:
-        super().__init__(message)
+        ValueError.__init__(self, message)
+        HTTPException.__init__(
+            self,
+            status_code=downstream_status,
+            detail={
+                "error": {
+                    "code": error_code,
+                    "message": message,
+                    "details": {"reason": message, "suggestion": suggestion},
+                    "retryable": retryable,
+                }
+            },
+        )
         self.message = message
         self.action_id = action_id
         self.entity_type = entity_type
@@ -56,6 +70,9 @@ class ActionUnavailableError(ValueError):
         self.suggestion = suggestion
         self.retryable = retryable
         self.downstream_status = downstream_status
+
+    def __str__(self) -> str:
+        return self.message
 
 
 def get_base_url(primary_env: str, *fallback_envs: str) -> str:
@@ -91,7 +108,15 @@ def registry_url(path: str) -> str:
 
 
 def governance_approval_url(path: str) -> str:
-    base = get_base_url("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "PANTHEON_GOVERNANCE_SERVICE_URL")
+    try:
+        base = get_base_url("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "PANTHEON_GOVERNANCE_SERVICE_URL")
+    except RuntimeError as exc:
+        raise ActionUnavailableError(
+            str(exc),
+            error_code="DEPENDENCY_UNAVAILABLE",
+            downstream_status=503,
+            retryable=True,
+        ) from exc
     return f"{base}{path}"
 
 
@@ -105,7 +130,7 @@ def deployment_url(path: str) -> str:
 
 
 def evolution_url(path: str) -> str:
-    base = get_base_url("PANTHEON_EVOLUTION_API_URL", "PANTHEON_GOVERNANCE_API_URL")
+    base = get_base_url("PANTHEON_EVOLUTION_API_URL")
     return f"{base}{path}"
 
 

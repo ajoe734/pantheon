@@ -1,0 +1,65 @@
+{
+  "schema_version": "pantheon.corrective-source-evidence.v1",
+  "task_id": "BFF-HUMAN-INBOX-AUTH-CONTEXT-20261007",
+  "base_sha": "ab964c61f2b8ba300d6341cf2a817b67bc9a6a19",
+  "title": "Carry the caller auth context into human inbox contributor threads",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_delta": 1,
+  "net_prod_line_budget": 10,
+  "summary": "Fixes real regression where _HUMAN_INBOX_CONTRIBUTOR_EXECUTOR.submit ran contributor reads without caller contextvars context, causing owner_reads.approval_records to raise RuntimeError due to missing authorization contextvar in worker threads and degrading human inbox approval queue. Submits with contextvars.copy_context().run and stubs owner_reads.approval_owner.list_decisions in test fixture.",
+  "classification_of_test_changes": [
+    {
+      "test": "test_human_inbox_capacity_saturation_yields_immediate_degraded_response_and_recovers",
+      "classification": "real_regression_fixed_in_production",
+      "detail": "Assertion that recovered human_inbox surface is not degraded previously failed with contributor_read_error ('Governance reads require the caller authorization') because thread pool lacked caller auth context. Fixed in production by passing contextvars.copy_context().run to executor.submit; test fixture stubs owner_reads.approval_owner.list_decisions."
+    },
+    {
+      "test": "test_human_inbox_contributor_carries_caller_auth_context_and_projects_live_approvals",
+      "classification": "new_regression_test",
+      "detail": "Proves contributor thread receives request authorization both as call argument and in authorization.get() contextvar, and confirms live approval proposals appear in /bff/management/human-inbox data items."
+    }
+  ],
+  "acceptance_verification": [
+    {
+      "criterion": "Human inbox contributor reads run with the caller context so owner reads see caller authorization; live approval proposals appear in inbox; regression test proves contributor thread sees request authorization",
+      "status": "passed",
+      "detail": "Verified by test_human_inbox_contributor_carries_caller_auth_context_and_projects_live_approvals in services/control-plane/bff/tests/test_management_read_timeout_and_capacity.py."
+    },
+    {
+      "criterion": "Every test in the listed test files passes on the merged tree and no previously passing BFF test regresses",
+      "status": "passed",
+      "detail": "All 4 tests in services/control-plane/bff/tests/test_management_read_timeout_and_capacity.py pass; test_bff_b3_human_inbox.py (5 passed) and test_bff_promotion_review_governance.py (11 passed) pass."
+    },
+    {
+      "criterion": "Each changed test expectation is classified in evidence as retired/stale/intended or real regression; no assertion weakened",
+      "status": "passed",
+      "detail": "Zero assertions weakened; test_human_inbox_capacity_saturation_yields_immediate_degraded_response_and_recovers recovered expectation retained and satisfied by production fix."
+    },
+    {
+      "criterion": "No compressed code is used to meet the line budget",
+      "status": "passed",
+      "detail": "Net production code change is +1 line in router.py (standard import contextvars and contextvars.copy_context().run), well within the 10 line budget."
+    }
+  ],
+  "validation_commands": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_management_read_timeout_and_capacity.py",
+      "result": "4 passed, 3 warnings in 10.73s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b3_human_inbox.py",
+      "result": "5 passed, 3 warnings in 13.91s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_promotion_review_governance.py",
+      "result": "11 passed, 3 warnings in 23.36s"
+    }
+  ],
+  "scoped_artifacts": [
+    "services/control-plane/bff/management_read_models/router.py",
+    "services/control-plane/bff/tests/test_management_read_timeout_and_capacity.py",
+    "docs/deployment/evidence/BFF-HUMAN-INBOX-AUTH-CONTEXT-20261007/evidence.json"
+  ]
+}

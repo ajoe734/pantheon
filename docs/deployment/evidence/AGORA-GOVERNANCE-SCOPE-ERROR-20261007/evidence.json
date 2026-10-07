@@ -1,0 +1,10 @@
+{
+  "task_id": "AGORA-GOVERNANCE-SCOPE-ERROR-20261007",
+  "production_change": "agora/governance/router.py scope() now maps AgoraScopeResolutionError via agora.router._raise_scope_error (403/401 instead of 400 VALIDATION_FAILED)",
+  "test_classification": [
+    {"change": "jwt_authorization() carries tenant_id=pantheon-dev", "class": "stale sample", "decision": "tenant fail-closed since 1e503188a / 62bfaad67 (agora/identity/scope.py)"},
+    {"change": "added test_tenantless_jwt_scope_denial_is_403", "class": "real regression fixed in production code", "decision": "governance router did not map AgoraScopeResolutionError as agora/router.py does"}
+  ],
+  "assertions_weakened": false,
+  "verification": "pytest services/control-plane/bff/tests/test_agora_governed_proposals.py: 14 passed"
+}

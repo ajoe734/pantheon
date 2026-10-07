@@ -1,0 +1,43 @@
+{
+  "task_id": "OPS-CRON-PROMOTION-RECOVERY-20261007",
+  "title": "Diagnose and unblock native promotion drain recovery for PERSONA-CRON-REGISTRATION-20261007",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "status": "in_progress",
+  "head_binding_policy": "The final PR head SHA is bound by REVIEW_HEAD_SHA at independent reviewer approval time via scripts/git/task_review_merge_gate.py. This evidence manifest does not claim a commit can contain its own SHA.",
+  "changed_paths": [
+    ".orchestrator/config.json",
+    ".orchestrator/test_pi_worker.py",
+    ".orchestrator/test_supervisor.py",
+    "docs/deployment/evidence/OPS-CRON-PROMOTION-RECOVERY-20261007/evidence.json"
+  ],
+  "diagnosed_admission_block": {
+    "blocked_task_id": "PERSONA-CRON-REGISTRATION-20261007",
+    "recovery_receipt_id": "promotion-drain-f2d24df1d9a4dd41fada7162e4b68623fa4d838debd2f0cc4f96cd8688b83433",
+    "reason_kind": "promotion_drained",
+    "task_generation": 1,
+    "fence_generation": 2,
+    "assigned_pair": ["PiAstra", "Claude"],
+    "root_cause": "Commit f96d405de (OPS-PIASTRA-STOP-20261007) set agents.piastra.max_parallel to 0, which caused evaluate_task_delivery_admission to report LANE_CAPACITY_REACHED (0 >= 0). For planned promotion drain recovery, worker_recovery_assignment_pair preserves the original owner PiAstra and reviewer Claude without falling back. With max_parallel 0, _worker_recovery_candidate_has_capacity returned False, causing the recovery receipt to remain pending indefinitely.",
+    "resolution": "Restored agents.piastra.max_parallel to 1 in .orchestrator/config.json, matching lupinchen account concurrency cap (1) without widening account capacity. Added regression test verifying blocked recovery at zero capacity and unblocked recovery with lupinchen capacity preservation."
+  },
+  "preserved_invariants": {
+    "receipt_lease": "Canonical receipt generation lease promotion-drain-f2d24df1d9a4dd41fada7162e4b68623fa4d838debd2f0cc4f96cd8688b83433 preserved (fence_generation 2, task_generation 1)",
+    "assignment_pair": "Original owner PiAstra and reviewer Claude preserved",
+    "authority": "No hand-edited runtime or task JSON; no fake process receipts; supervisor remains sole dispatcher",
+    "account_capacity": "lupinchen account limit remains 1; no account capacity widened",
+    "archived_wip": "Preserved archived workspace at /tmp/pantheon-worker-worktree-archive/persona-cron-registration-20261007-20261007T014523Z-1589333"
+  },
+  "verification_commands": [
+    ".venv-pantheon/bin/python3 -m pytest -v .orchestrator/test_pi_worker.py",
+    ".venv-pantheon/bin/python3 -m pytest -v .orchestrator/test_supervisor.py -k 'RuntimeConfigurationContractTests or ShippedReviewerFallbackPolicyTests or DurableWorkerRecoveryTests'",
+    ".venv-pantheon/bin/python3 -m pytest -v scripts/test_supervisor_runtime_health.py",
+    ".venv-pantheon/bin/python3 -c 'import sys; sys.path.insert(0, \".orchestrator\"); import supervisor; supervisor.validate_provider_accounts(supervisor.load_config())'"
+  ],
+  "verification_results": {
+    "test_pi_worker": "13 passed in 3.55s",
+    "supervisor_capacity_and_recovery_tests": "42 passed in 12.95s",
+    "supervisor_runtime_health": "13 passed in 2.72s",
+    "provider_accounts_validation": "passed with 0 exit code"
+  }
+}

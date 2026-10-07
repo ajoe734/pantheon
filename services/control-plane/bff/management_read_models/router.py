@@ -45,6 +45,7 @@ from .models import (
     PostmortemsEnvelope,
 )
 import concurrent.futures
+import contextvars
 from .service import ManagementService
 
 from services.control_plane.bff.models import ErrorCode
@@ -102,7 +103,7 @@ class _StoreTimeoutProxy:
         attr = getattr(self._target, name)
         if name in ("list_governance_review_queue_items", "list_approval_queue_items", "list_approval_records") and callable(attr):
             def _timed_call(*args: Any, **kwargs: Any) -> Any:
-                fut = _HUMAN_INBOX_CONTRIBUTOR_EXECUTOR.submit(attr, *args, **kwargs)
+                fut = _HUMAN_INBOX_CONTRIBUTOR_EXECUTOR.submit(contextvars.copy_context().run, attr, *args, **kwargs)
                 try:
                     return fut.result(timeout=self._timeout)
                 except concurrent.futures.TimeoutError:

@@ -1,0 +1,48 @@
+{
+  "task_id": "BFF-PAPER-LIVE-DRIFT-STATUS-20261007",
+  "base_sha": "ab964c61f2b8ba300d6341cf2a817b67bc9a6a19",
+  "change_class": "corrective",
+  "net_prod_line_budget": 10,
+  "summary": "Report a missing paper/live drift source as unavailable not degraded in operator runtime router.",
+  "scope": [
+    "services/control-plane/bff/runtime/router.py: check base_report_surface status is not unavailable before setting degraded for live/canary runtime with missing report; compare report_surface status is not degraded before overriding paper_live_drift aggregate surface",
+    "docs/deployment/evidence/BFF-PAPER-LIVE-DRIFT-STATUS-20261007/evidence.json: verification and test classification manifest"
+  ],
+  "acceptance_criteria_verification": {
+    "ac1": "A missing base report source surfaces as unavailable and the guard handles it; other drift statuses are unchanged. Verified in test_pkt014_paper_live_drift_returns_unavailable_payload_when_report_missing and test_operator_paper_live_drift_endpoint_degraded_for_live_without_record_and_preserves_degraded.",
+    "ac2": "Every test in the listed test files passes on the merged tree and no previously passing BFF test regresses. test_pkt014_paper_live_drift_contract.py (2 passed), test_owner_read_wiring.py (27 passed), test_read_surface_caller_migration.py (29 passed), test_bff_b3_trading_pulse.py (5 passed), test_runtime_state_trades.py (7 passed).",
+    "ac3": "Each changed test expectation is classified in the evidence as retired or stale sample or intended change (with the deciding commit or decision) or as a real regression fixed in production code; no assertion is weakened to go green. Classification: No test assertions were changed or weakened; test_pkt014_paper_live_drift_contract.py correctly expected unavailable when the report source dataset is missing, which was a real production regression introduced in commit f87d7493d and resolved in production code in runtime/router.py.",
+    "ac4": "No compressed code is used to meet the line budget. Net production line change is 0 lines (2 additions, 2 deletions) against a budget of 10."
+  },
+  "test_expectation_classification": {
+    "status": "no_test_expectations_changed",
+    "details": "The test in test_pkt014_paper_live_drift_contract.py was preserved without modifications. The failure was a real regression introduced in f87d7493d where a missing report dataset source was reported as degraded instead of unavailable; this was fixed directly in production code."
+  },
+  "validation": [
+    {
+      "suite": "services/control-plane/bff/test_pkt014_paper_live_drift_contract.py",
+      "command": "$PYTHON -m pytest -v services/control-plane/bff/test_pkt014_paper_live_drift_contract.py",
+      "result": "2 passed"
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_owner_read_wiring.py",
+      "command": "$PYTHON -m pytest -v services/control-plane/bff/tests/test_owner_read_wiring.py",
+      "result": "27 passed"
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+      "command": "$PYTHON -m pytest -v services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+      "result": "29 passed"
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+      "command": "$PYTHON -m pytest -v services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+      "result": "5 passed"
+    },
+    {
+      "suite": "services/control-plane/bff/test_runtime_state_trades.py",
+      "command": "$PYTHON -m pytest -v services/control-plane/bff/test_runtime_state_trades.py",
+      "result": "7 passed"
+    }
+  ]
+}

@@ -389,3 +389,97 @@ def test_policy_rejects_unknown_field(tmp_path: Path) -> None:
 
     with pytest.raises(AuthorityValidationError, match="unknown fields"):
         _load(tmp_path, _valid_dataset(), policy)
+
+
+TW_POLICY_PATH = SERVICE_DIR / "threshold_policy.json"
+TW_CONNECTOR_ID = "tw-twse-tpex-official-market"
+
+
+def _tw_dataset(last_bar: date) -> dict[str, Any]:
+    dataset = _valid_dataset()
+    records = []
+    for offset in range(30):
+        bar_date = (last_bar - timedelta(days=29 - offset)).isoformat()
+        for instrument, base in (("2330.TWSE", 900.0), ("2317.TWSE", 180.0)):
+            open_price = base + offset
+            records.append(
+                {
+                    "instrument": instrument,
+                    "date": bar_date,
+                    "open": open_price,
+                    "high": open_price + 5.0,
+                    "low": open_price - 5.0,
+                    "close": open_price + 1.0,
+                    "volume": 10_000.0 + offset,
+                }
+            )
+    dataset.update(
+        {
+            "market_scope": ["TW"],
+            "instrument_scope": ["2317.TWSE", "2330.TWSE"],
+            "records": records,
+            "created_at": "2026-10-07T00:00:00Z",
+            "frozen_at": f"{(last_bar + timedelta(days=1)).isoformat()}T08:00:00Z",
+            "metadata_json": {
+                "authority_status": "authoritative",
+                "source_connector_id": TW_CONNECTOR_ID,
+            },
+        }
+    )
+    return dataset
+
+
+def _load_tw(tmp_path: Path, dataset: dict[str, Any], now: datetime):
+    dataset_path, _, _ = _write_authorities(tmp_path, dataset=dataset)
+    return load_evaluation_authority(
+        dataset_path,
+        TW_POLICY_PATH,
+        trusted_now=now,
+        strategy_id="preview-session-001",
+    )
+
+
+def test_policy_v3_requires_taiwan_instruments_and_trading_day_staleness() -> None:
+    policy = json.loads(TW_POLICY_PATH.read_text(encoding="utf-8"))
+    v2_thresholds = {
+        "required_backend": "vectorbt_portfolio",
+        "min_sharpe_ratio": -0.5,
+        "min_total_return": -0.2,
+        "max_drawdown": 0.25,
+    }
+
+    assert policy["policy_version"] == "3.0.0"
+    assert policy["approval_decision_ref"] == "TRAINING-TW-EVALUATION-20261007-threshold-policy-v3"
+    assert policy["effective_until"] == "2027-01-15T00:00:00Z"
+    assert policy["required_instruments"] == ["2330.TWSE", "2317.TWSE"]
+    assert policy["min_instruments"] == 2
+    assert policy["min_bars_per_instrument"] == 30
+    assert policy["staleness_basis"] == "taiwan_trading_days"
+    assert {key: policy[key] for key in v2_thresholds} == v2_thresholds
+
+
+def test_tw_weekend_gap_after_friday_close_passes(tmp_path: Path) -> None:
+    # Friday 2026-10-16 bar, evaluated Saturday: no newer session can exist.
+    now = datetime(2026, 10, 17, 12, 0, tzinfo=timezone.utc)
+
+    snapshot = _load_tw(tmp_path, _tw_dataset(date(2026, 10, 16)), now)
+
+    assert snapshot.to_dict()["dataset"]["latest_bar_at_by_instrument"]["2330.TWSE"].startswith(
+        "2026-10-16"
+    )
+
+
+def test_tw_unexplained_weekday_gap_fails_closed(tmp_path: Path) -> None:
+    # Monday 2026-10-19 session has closed with no evidence for it.
+    now = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
+
+    with pytest.raises(AuthorityValidationError, match="instrument .* is stale"):
+        _load_tw(tmp_path, _tw_dataset(date(2026, 10, 16)), now)
+
+
+def test_policy_rejects_unknown_staleness_basis(tmp_path: Path) -> None:
+    policy = _valid_policy()
+    policy["staleness_basis"] = "lunar_days"
+
+    with pytest.raises(AuthorityValidationError, match="staleness_basis"):
+        _load(tmp_path, _valid_dataset(), policy)

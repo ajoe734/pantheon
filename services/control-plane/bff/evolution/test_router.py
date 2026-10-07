@@ -268,18 +268,23 @@ def test_action_dispatches_through_injected_callable():
 
     captured = {}
 
-    def submit_program_action(entity_type, entity_id, action_id, resolved_key, identity, payload):
+    def submit_program_action(entity_type, entity_id, action_id, resolved_key, identity, payload, authorization=None):
         captured.update(
             entity_type=entity_type,
             entity_id=entity_id,
             action_id=action_id,
             resolved_key=resolved_key,
             payload=payload,
+            authorization=authorization,
         )
         return {"status": "accepted"}
 
     client = _build_app(store, submit_program_action=submit_program_action)
-    resp = client.post("/bff/evolution-programs/p1/actions/approve", json={"reason": "looks good"})
+    resp = client.post(
+        "/bff/evolution-programs/p1/actions/approve",
+        json={"reason": "looks good"},
+        headers={"Authorization": "Bearer test-operator-token"},
+    )
     assert resp.status_code == 202
     assert resp.json() == {"status": "accepted"}
     assert captured == {
@@ -288,4 +293,5 @@ def test_action_dispatches_through_injected_callable():
         "action_id": "approve",
         "resolved_key": "",
         "payload": {"reason": "looks good"},
+        "authorization": "Bearer test-operator-token",
     }
