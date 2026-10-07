@@ -2658,7 +2658,8 @@ jobs:
           git init -q .
           git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
           git fetch -q origin "+refs/heads/dev:refs/remotes/origin/dev" "${TARGET_REF}"
-          git checkout -q --detach FETCH_HEAD
+          target_sha="$(git rev-parse --verify "${TARGET_REF}^{commit}")"
+          git checkout -q --detach "${target_sha}"
           git submodule update --init --recursive --depth 1
 
       - name: Validate protected exact dev source
