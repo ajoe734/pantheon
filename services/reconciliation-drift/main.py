@@ -28,7 +28,12 @@ from services.trade_journey.correlation_envelope import (
     validate_envelope,
 )
 from store import build_reconciliation_drift_store
-from telemetry_client import TelemetryAuthError, TelemetryError, fetch_runtime_summaries
+from telemetry_client import (
+    TelemetryAuthError,
+    TelemetryError,
+    append_lifecycle_event,
+    fetch_runtime_summaries,
+)
 
 
 DEFAULT_WARNING_RELATIVE_DELTA = 0.2
@@ -2072,80 +2077,23 @@ def _accepted_append_visibility_reason(
     return "accepted_lifecycle_append_not_visible", visibility
 
 
-def _telemetry_response_body(raw: bytes) -> tuple[Dict[str, Any] | None, str | None]:
-    if not raw:
-        return {}, None
-    try:
-        parsed = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        return None, str(exc)
-    if not isinstance(parsed, dict):
-        return None, "telemetry response body is not an object"
-    return parsed, None
-
-
 def _append_telemetry_lifecycle_event(
     telemetry_url: str,
     event: Dict[str, Any],
+    *,
+    tenant_id: str | None = None,
+    service_token: str | None = None,
+    timeout_seconds: float = 5.0,
 ) -> Dict[str, Any]:
     """Append once and distinguish terminal acceptance from retryable ambiguity."""
-    url = telemetry_url.rstrip("/") + "/api/telemetry/ingest"
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(event, separators=(",", ":"), sort_keys=True).encode("utf-8"),
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
-        method="POST",
+    return append_lifecycle_event(
+        telemetry_url,
+        event,
+        tenant_id=tenant_id,
+        service_token=service_token,
+        timeout_seconds=timeout_seconds,
+        urlopen=urllib.request.urlopen,
     )
-    try:
-        with urllib.request.urlopen(request, timeout=5) as response:  # noqa: S310
-            response_status = getattr(response, "status", None)
-            http_status = int(response_status if response_status is not None else response.getcode())
-            raw_body = response.read()
-    except urllib.error.HTTPError as exc:
-        raw_body = exc.read()
-        response_body, parse_error = _telemetry_response_body(raw_body)
-        http_status = int(exc.code)
-        retryable = http_status >= 500 or http_status in _RETRYABLE_HTTP_STATUSES
-        return {
-            "status": "retryable_error" if retryable else "terminal_rejected",
-            "terminal": not retryable,
-            "retryable": retryable,
-            "outcome": "failed",
-            "http_status": http_status,
-            "response": response_body,
-            "error": parse_error or f"telemetry ingest returned HTTP {http_status}",
-        }
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        return {
-            "status": "retryable_error",
-            "terminal": False,
-            "retryable": True,
-            "outcome": "ambiguous",
-            "http_status": None,
-            "response": None,
-            "error": str(getattr(exc, "reason", exc)),
-        }
-
-    response_body, parse_error = _telemetry_response_body(raw_body)
-    if http_status == 202 and response_body is not None and response_body.get("status") == "accepted":
-        return {
-            "status": "accepted",
-            "terminal": True,
-            "retryable": False,
-            "outcome": "accepted",
-            "http_status": http_status,
-            "response": response_body,
-            "error": None,
-        }
-    return {
-        "status": "retryable_error",
-        "terminal": False,
-        "retryable": True,
-        "outcome": "ambiguous",
-        "http_status": http_status,
-        "response": response_body,
-        "error": parse_error or "telemetry ingest did not return terminal accepted status",
-    }
 
 
 def _ensure_scheduled_lifecycle_append(
@@ -2224,7 +2172,11 @@ def _ensure_scheduled_lifecycle_append(
         store.put_evaluation(evaluation)
 
     try:
-        delivery = _append_telemetry_lifecycle_event(telemetry_url, event)
+        delivery = _append_telemetry_lifecycle_event(
+            telemetry_url,
+            event,
+            tenant_id=str(event.get("tenant_id") or "").strip() or None,
+        )
     except Exception as exc:  # noqa: BLE001 - delivery ambiguity must remain retryable.
         delivery = {
             "status": "retryable_error",
@@ -2341,7 +2293,11 @@ def _scheduled_lifecycle_only_reconcile(
             }
         else:
             try:
-                delivery = _append_telemetry_lifecycle_event(telemetry_url, event)
+                delivery = _append_telemetry_lifecycle_event(
+                    telemetry_url,
+                    event,
+                    tenant_id=str(event.get("tenant_id") or "").strip() or None,
+                )
             except Exception as exc:  # noqa: BLE001 - preserve retryable ambiguity
                 delivery = {
                     "status": "retryable_error",
