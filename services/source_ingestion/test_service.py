@@ -1594,3 +1594,123 @@ def test_postgres_backend_cross_process_evidence_visibility_via_api():
                 conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
 
 
+def test_postgres_backend_adversarial_db_failure_cannot_return_stale_cache_via_api():
+    """Adversarial proof: loaded bootcache then DB failure cannot HTTP 200 with stale evidence."""
+    from services.source_ingestion.test_pg_store import _get_test_pg_dsn
+
+    dsn = _get_test_pg_dsn()
+    if not dsn:
+        pytest.skip("No accessible PostgreSQL instance found for real PG tests")
+    from unittest import mock
+    import psycopg
+    import uuid
+    from services.knowledge.evidence import EvidenceBundle, EvidenceItem, KnowledgeObject
+    from services.source_ingestion.connectors.base import SourceRecord
+    from services.source_ingestion.pg_store import PostgresSourceEvidenceRepository
+
+    schema = f"test_api_adv_{uuid.uuid4().hex[:12]}"
+    table = f"{schema}.source_evidence"
+    tempdir = tempfile.mkdtemp(prefix="source_ingest_adv_")
+
+    env_overrides = {
+        "SOURCE_INGEST_DATA_DIR": tempdir,
+        "SOURCE_INGEST_MAX_RECORDS": "3",
+        "PANTHEON_RUNTIME_JWT_SECRET": "source-test-secret",
+        "SOURCE_INGEST_EVIDENCE_BACKEND": "postgres",
+        "SOURCE_INGEST_EVIDENCE_DSN": dsn,
+        "SOURCE_INGEST_EVIDENCE_TABLE": table,
+        "SOURCE_INGEST_EVIDENCE_BOOTSTRAP": "1",
+    }
+    with mock.patch.dict(os.environ, env_overrides):
+        tenant_dev = "tenant-adv"
+        headers = _read_headers(tenant=tenant_dev)
+
+        # Step 1: Pre-populate data in Postgres before server boots
+        bootstrap_repo = PostgresSourceEvidenceRepository(dsn=dsn, table=table, bootstrap=True)
+        source = SourceRecord(
+            source_id="src-adv-001",
+            connector_id="tw-twse-tpex-official-market",
+            source_type="market",
+            title="Adversarial Source",
+            content_ref="tw-official://tw_price_daily/TWSE/2330/2026-10-07",
+            status="normalized",
+            metadata={"tenant_id": tenant_dev, "source_dedupe_key": "dk-adv-src"},
+        )
+        bootstrap_repo.add_source_record(source)
+
+        item = EvidenceItem(
+            evidence_item_id="item-adv-001",
+            source_id=source.source_id,
+            item_type="metric_series",
+            content_ref=source.content_ref,
+            citation_label="TWSE:2330",
+            body="Adversarial item body.",
+            metadata={"tenant_id": tenant_dev, "evidence_dedupe_key": "dk-adv-item"},
+        )
+        bootstrap_repo.add_evidence_item(item)
+
+        bundle = EvidenceBundle(
+            evidence_bundle_id="bundle-adv-001",
+            source_ids=[source.source_id],
+            evidence_item_ids=[item.evidence_item_id],
+            summary="Adversarial bundle summary",
+            citation_refs=["TWSE:2330"],
+            confidence=1.0,
+            license_scope="official",
+            access_scope=["internal"],
+            created_by="source-ingest-tester",
+            metadata={"tenant_id": tenant_dev},
+        )
+        bootstrap_repo.add_bundle(bundle)
+
+        ko = KnowledgeObject(
+            knowledge_object_id="ko-adv-001",
+            source_id=source.source_id,
+            evidence_item_id=item.evidence_item_id,
+            evidence_bundle_id=bundle.evidence_bundle_id,
+            title=source.title,
+            text=item.body,
+            source_type="market",
+            license_scope="official",
+            access_scope=["internal"],
+            metadata={"tenant_id": tenant_dev},
+        )
+        bootstrap_repo.add_knowledge_object(ko)
+
+        # Step 2: Boot API server. During startup, reload() populates the in-memory boot cache.
+        sys.modules.pop("services.source_ingestion.main", None)
+        module = importlib.import_module("services.source_ingestion.main")
+        module = importlib.reload(module)
+        api_client = TestClient(module.app)
+
+        try:
+            # Healthy verification: API returns 200 with persisted record
+            healthy_res = api_client.get(f"/api/source-ingest/source-records/{source.source_id}", headers=headers)
+            assert healthy_res.status_code == 200
+
+            # Step 3: Adversarial situation: drop the table in Postgres to cause genuine DB query failure
+            with psycopg.connect(dsn) as conn:
+                conn.execute(f'DROP TABLE "{schema}"."source_evidence"')
+
+            # Step 4: Assert API fails closed (503), CANNOT return HTTP 200 with stale bootcache
+            endpoints = [
+                f"/api/source-ingest/source-records/{source.source_id}",
+                "/api/source-ingest/source-records",
+                f"/api/source-ingest/evidence/items/{item.evidence_item_id}",
+                "/api/source-ingest/evidence/items",
+                f"/api/source-ingest/evidence/bundles/{bundle.evidence_bundle_id}",
+                "/api/source-ingest/evidence/bundles",
+                f"/api/source-ingest/evidence/knowledge-objects/{ko.knowledge_object_id}",
+                "/api/source-ingest/evidence/knowledge-objects",
+            ]
+            for ep in endpoints:
+                res = api_client.get(ep, headers=headers)
+                assert res.status_code != 200, f"Endpoint {ep} unexpectedly returned 200 with stale cache"
+                assert res.status_code == 503, f"Endpoint {ep} returned {res.status_code}, expected 503"
+                assert "stale" not in res.text.lower()
+        finally:
+            with psycopg.connect(dsn) as conn:
+                conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+
