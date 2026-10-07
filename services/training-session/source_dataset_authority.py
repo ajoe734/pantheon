@@ -88,14 +88,40 @@ class MaterializedDatasetVersion:
         }
 
 
-def urllib_json_get(url: str, *, timeout_seconds: float = 5.0) -> Any:
+def source_read_headers(token_file: Any, tenant_id: Any) -> dict[str, str]:
+    """Build source-ingest reader headers from a token file; fail closed if absent."""
+
+    path_text = str(token_file or "").strip()
+    tenant = str(tenant_id or "").strip()
+    if not path_text:
+        raise SourceDatasetAuthorityError("source read token file is required")
+    if not tenant or tenant == "*":
+        raise SourceDatasetAuthorityError("source read tenant is required")
+    from services.service_token_file import configured_service_token
+
+    variable = "TRAINING_SESSION_SOURCE_READ_TOKEN"
+    try:
+        token = configured_service_token(variable, {variable + "_FILE": path_text})
+    except RuntimeError as exc:
+        raise SourceDatasetAuthorityError("source read token file is unavailable or unsafe") from exc
+    if not token:
+        raise SourceDatasetAuthorityError("source read token file is empty or malformed")
+    return {"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant}
+
+
+def urllib_json_get(
+    url: str,
+    *,
+    timeout_seconds: float = 5.0,
+    headers: Mapping[str, str] | None = None,
+) -> Any:
     """Small strict GET transport for callers that do not inject one."""
 
     if not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool):
         raise SourceDatasetAuthorityError("timeout_seconds must be numeric")
     if not math.isfinite(float(timeout_seconds)) or float(timeout_seconds) <= 0:
         raise SourceDatasetAuthorityError("timeout_seconds must be finite and greater than zero")
-    request = urllib.request.Request(url, method="GET")
+    request = urllib.request.Request(url, method="GET", headers=dict(headers or {}))
     try:
         with urllib.request.urlopen(request, timeout=float(timeout_seconds)) as response:  # noqa: S310
             body = response.read(_MAX_FILE_BYTES + 1)
@@ -651,9 +677,16 @@ def _validate_connector_terminal_truth(
         raise SourceDatasetAuthorityError("latest source record belongs to a different run")
     for field in ("provider", "api_endpoint", "license_scope", "schema_hash"):
         _required_text(provenance.get(field), f"latest_source_record.provenance.{field}")
-    scope = provenance.get("access_scope")
-    for item in scope if isinstance(scope, list) and scope else (scope,):
-        _required_text(item, "latest_source_record.provenance.access_scope")
+    access_scope = provenance.get("access_scope")
+    if isinstance(access_scope, (list, tuple)):
+        if not access_scope:
+            raise SourceDatasetAuthorityError(
+                "latest_source_record.provenance.access_scope must not be empty"
+            )
+        for item in access_scope:
+            _required_text(item, "latest_source_record.provenance.access_scope")
+    else:
+        _required_text(access_scope, "latest_source_record.provenance.access_scope")
     available_at = _parse_timestamp(
         provenance.get("available_time"), "latest_source_record.provenance.available_time"
     )
@@ -1382,6 +1415,7 @@ def _text_array(value: Any, label: str) -> list[str]:
 
 __all__ = [
     "HttpGetTransport",
+    "source_read_headers",
     "MaterializedDatasetVersion",
     "SourceDatasetAuthorityError",
     "materialize_source_dataset_version",

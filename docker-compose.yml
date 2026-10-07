@@ -38,6 +38,7 @@ services:
       - dev-paper-capital-tokens:/issued/capital
       - dev-paper-evolution-tokens:/issued/evolution
       - dev-paper-persona-evaluator-tokens:/issued/persona-evaluator-agent
+      - dev-paper-training-session-tokens:/issued/training-session-svc
     healthcheck:
       test: ["CMD", "python", "/issuer/issue_dev_paper_principals.py", "--healthcheck"]
       interval: 30s
@@ -518,6 +519,8 @@ services:
       SOURCE_INGEST_API_URL: ${SOURCE_INGEST_API_URL:-http://source-ingest:8097}
       TRAINING_SESSION_SOURCE_CONNECTOR_ID: ${TRAINING_SESSION_SOURCE_CONNECTOR_ID:-tw-twse-tpex-official-market}
       TRAINING_SESSION_SOURCE_DATASET_ID: ${TRAINING_SESSION_SOURCE_DATASET_ID:-tw_price_daily}
+      TRAINING_SESSION_SOURCE_READ_TOKEN_FILE: ${TRAINING_SESSION_SOURCE_READ_TOKEN_FILE:-/run/pantheon-principals/TRAINING_SESSION_SOURCE_READ_TOKEN}
+      TRAINING_SESSION_SOURCE_READ_TENANT_ID: ${TRAINING_SESSION_SOURCE_READ_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-tenant-dev}}
       TRAINING_SESSION_PREVIEW_JOB_MAX_ATTEMPTS: ${TRAINING_SESSION_PREVIEW_JOB_MAX_ATTEMPTS:-3}
       TRAINING_SESSION_PREVIEW_JOB_LEASE_SECONDS: ${TRAINING_SESSION_PREVIEW_JOB_LEASE_SECONDS:-120}
       TRAINING_SESSION_PERSONA_AUTHORITY_TIMEOUT_SECONDS: ${TRAINING_SESSION_PERSONA_AUTHORITY_TIMEOUT_SECONDS:-5}
@@ -534,6 +537,7 @@ services:
     volumes:
       - training-session-data:/data/training-session
       - source-ingest-data:/data/source-ingest:ro
+      - dev-paper-training-session-tokens:/run/pantheon-principals:ro
     ports:
       - "${TRAINING_SESSION_PORT:-18099}:8099"
     depends_on:
@@ -3004,6 +3008,7 @@ volumes:
   dev-paper-capital-tokens:
   dev-paper-evolution-tokens:
   dev-paper-persona-evaluator-tokens:
+  dev-paper-training-session-tokens:
   broker-data:
   bff-data:
   capital-data:
