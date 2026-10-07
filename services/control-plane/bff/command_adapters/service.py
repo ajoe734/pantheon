@@ -66,7 +66,9 @@ except (ImportError, ValueError):
         TargetObject,
         utc_now,
     )
+from ..assistant.management_service import _resolve_final_idempotency_key
 from .base import ActionUnavailableError
+from .incident_adapter import IncidentRouteRejected, bind_incident_route_target
 from .contracts import (
     _FINAL_COMMAND_ROUTE,
     _HUMAN_GATE_DECISIONS_BY_COMMAND,
@@ -201,14 +203,6 @@ def _stable_json_hash(payload: Any) -> str:
         return sha256(encoded).hexdigest()
     except Exception:
         return sha256(str(payload).encode("utf-8")).hexdigest()
-
-
-def _resolve_final_idempotency_key(
-    idempotency_key: Optional[str] = None,
-    x_idempotency_key: Optional[str] = None,
-) -> str:
-    key = str(idempotency_key or x_idempotency_key or "").strip()
-    return key
 
 
 def _reject_body_idempotency_key(payload: Optional[Dict[str, Any]]) -> None:
@@ -855,6 +849,27 @@ class CommandAdapterService:
         command_type: CommandType, *, authorization: Optional[str] = None,
         background_tasks: Any = None,
     ) -> JSONResponse:
+        claims = getattr(identity, "claims", None) or {}
+        if (
+            getattr(identity, "token_kind", "") == "stub"
+            and not (claims.get("tenant_id") or claims.get("tenantId") or claims.get("tid") or claims.get("tenant_ids"))
+        ):
+            # Owners bind the caller tenant at execution; refuse now rather than admit a command that must fail.
+            raise self._raise_error(
+                403, ErrorCode.FORBIDDEN, "Tenant access denied",
+                "Caller has no verified tenant scope", precondition_failed="tenant_scope",
+            )
+        if command_type in {CommandType.INCIDENT_ACTION, CommandType.RISK_ALERT_ACTION}:
+            try:
+                payload = bind_incident_route_target(
+                    command_type.value, entity_type.value, entity_id, action_id, payload,
+                )
+            except IncidentRouteRejected as exc:
+                raise self._raise_error(
+                    422, ErrorCode.OPERATION_NOT_ALLOWED, "Action target mismatch"
+                    if exc.precondition == "route_target_mismatch" else "Action unavailable",
+                    str(exc), precondition_failed=exc.precondition,
+                ) from exc
         return self.sem_command_response(
             command_type=command_type, target_type=entity_type, target_id=entity_id,
             payload=payload, identity=identity, idempotency_key=resolved_key,
