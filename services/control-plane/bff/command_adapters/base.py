@@ -105,7 +105,7 @@ def deployment_url(path: str) -> str:
 
 
 def evolution_url(path: str) -> str:
-    base = get_base_url("PANTHEON_EVOLUTION_API_URL", "PANTHEON_GOVERNANCE_API_URL")
+    base = get_base_url("PANTHEON_EVOLUTION_API_URL")
     return f"{base}{path}"
 
 

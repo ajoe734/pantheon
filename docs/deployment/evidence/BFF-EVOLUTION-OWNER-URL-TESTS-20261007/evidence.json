@@ -1,0 +1,81 @@
+{
+  "schema_version": "pantheon.corrective-source-evidence.v1",
+  "task_id": "BFF-EVOLUTION-OWNER-URL-TESTS-20261007",
+  "owner": "Antigravity",
+  "reviewer": "PiAstra",
+  "title": "Use one evolution owner URL and fix evolution test isolation",
+  "timestamp": "2026-10-07T05:00:00Z",
+  "summary": "Unified evolution owner backend URL resolution to read solely PANTHEON_EVOLUTION_API_URL across both command_executor and command_adapters/base.py, removing legacy fallback to PANTHEON_GOVERNANCE_API_URL. Fixed test environment variable leakage in test_command_executor.py by adopting patch.dict + addCleanup for PANTHEON_EVOLUTION_API_URL. Added autouse delenv fixture in test_evolution_program_owner_contract.py to ensure hermetic test execution. Updated router test stubs in test_evolution_program_owner_contract.py, evolution/test_router.py, and test_bff_evolution_experiment_jobs_events_contract.py to accept authorization and assert its forwarding per commit dab9aa6c2. All 81 scoped tests pass deterministically in both forward and reverse order with zero assertion weakening.",
+  "acceptance_criteria_verification": {
+    "evolution_owner_url_single_env": {
+      "satisfied": true,
+      "evidence": "command_adapters/base.py evolution_url now calls get_base_url('PANTHEON_EVOLUTION_API_URL') with no fallback to PANTHEON_GOVERNANCE_API_URL, matching command_executor._evolution_url."
+    },
+    "test_environment_isolation_and_order_independence": {
+      "satisfied": true,
+      "evidence": "test_command_executor.py setUp methods now use patch.dict(os.environ, {'PANTHEON_EVOLUTION_API_URL': 'http://localhost:5001'}) with self.addCleanup(patcher.stop) instead of polluting ambient os.environ. test_evolution_program_owner_contract.py uses an autouse monkeypatch.delenv fixture. Tests pass in forward and reverse orders (81 passed in both directions)."
+    },
+    "router_stubs_authorization_forwarding": {
+      "satisfied": true,
+      "evidence": "Stubs in test_evolution_program_owner_contract.py, evolution/test_router.py, and test_bff_evolution_experiment_jobs_events_contract.py accept authorization=None. Forwarding assertions verify that authorization tokens from client requests are forwarded directly to the injected action handlers matching commit dab9aa6c2."
+    },
+    "all_scoped_tests_pass_without_regression": {
+      "satisfied": true,
+      "evidence": "All 81 tests pass across the four scoped test files, and related evolution suites (test_evolution_program_action_receipts, test_evochain_004, test_evochain_005, test_receipt_owner_routes) remain green."
+    },
+    "classification_of_changed_test_expectations": {
+      "satisfied": true,
+      "classifications": [
+        {
+          "artifact": "services/control-plane/bff/command_adapters/base.py",
+          "classification": "real_regression_fixed_in_production",
+          "rationale": "base.evolution_url still fell back to PANTHEON_GOVERNANCE_API_URL while command_executor read only PANTHEON_EVOLUTION_API_URL since e87c896fd; fixed in production code by removing the fallback."
+        },
+        {
+          "artifact": "services/control-plane/bff/test_command_executor.py",
+          "classification": "stale_test_sample",
+          "rationale": "Tests still configured PANTHEON_GOVERNANCE_API_URL without cleanup from before e87c896fd separated evolution from governance; updated to set PANTHEON_EVOLUTION_API_URL via patch.dict and addCleanup."
+        },
+        {
+          "artifact": "services/control-plane/bff/tests/test_evolution_program_owner_contract.py",
+          "classification": "intended_change",
+          "rationale": "Added hermetic delenv fixture and aligned _submit_program_action_unavailable stub signature with dab9aa6c2 authorization parameter."
+        },
+        {
+          "artifact": "services/control-plane/bff/evolution/test_router.py",
+          "classification": "intended_change",
+          "rationale": "Aligned submit_program_action stub signature with dab9aa6c2 authorization parameter and added assertion verifying forwarding."
+        },
+        {
+          "artifact": "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py",
+          "classification": "intended_change",
+          "rationale": "Aligned _submit_prog_action, _submit_exp_action, and _submit_job_action stubs with dab9aa6c2 authorization parameter and added forwarding assertions."
+        }
+      ]
+    },
+    "net_prod_line_budget": {
+      "satisfied": true,
+      "evidence": "Production code changes in services/control-plane/bff/command_adapters/base.py result in 0 net lines (+1, -1), well under the 10 net line budget for change_class=corrective. No compressed code used."
+    }
+  },
+  "scoped_files": [
+    "services/control-plane/bff/command_adapters/base.py",
+    "services/control-plane/bff/test_command_executor.py",
+    "services/control-plane/bff/tests/test_evolution_program_owner_contract.py",
+    "services/control-plane/bff/evolution/test_router.py",
+    "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py",
+    "docs/deployment/evidence/BFF-EVOLUTION-OWNER-URL-TESTS-20261007/evidence.json"
+  ],
+  "verification_commands": [
+    "python3 -m pytest services/control-plane/bff/test_command_executor.py services/control-plane/bff/tests/test_evolution_program_owner_contract.py services/control-plane/bff/evolution/test_router.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py",
+    "python3 -m pytest services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/evolution/test_router.py services/control-plane/bff/tests/test_evolution_program_owner_contract.py services/control-plane/bff/test_command_executor.py"
+  ],
+  "verification_results": {
+    "forward_order_pytest": "81 passed in 48.51s",
+    "reverse_order_pytest": "81 passed in 47.40s"
+  },
+  "review": {
+    "reviewer": "PiAstra",
+    "decision": "pending independent exact-head review"
+  }
+}
