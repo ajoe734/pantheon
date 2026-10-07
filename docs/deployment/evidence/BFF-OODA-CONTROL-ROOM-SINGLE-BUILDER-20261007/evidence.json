@@ -1,0 +1,17 @@
+{
+  "task_id": "BFF-OODA-CONTROL-ROOM-SINGLE-BUILDER-20261007",
+  "change": "control_loops/service.py _ooda_status now returns per-stage cards (stages.*) and meta.surface_key; main.py old _build_ooda_control_room_status_card and _OODA_STAGE_* removed; main.py /bff/v5/control-room replay (used by assistant source_collectors) delegates to ControlLoopsService.control_room().",
+  "decision": "Default from task brief: port stages into single control_loops builder, no retirement.",
+  "test_expectation_changes": [],
+  "tests_modified": "none; no assertion changed or weakened",
+  "results": {
+    "test_mgmt_ooda_005_control_room_card.py + test_control_room_incident_owner_availability.py + test_assistant_source_collectors_owner.py": "34 passed",
+    "related control-room/assistant suites": "279+ passed",
+    "preexisting_failures_unrelated_identical_on_baseline": [
+      "tests/test_assistant_security.py (9 failed, AuditExport not in allowlist, 403) ",
+      "test_execute_plans_final_live_wiring_contract.py (2 failed, research analysis not found)",
+      "test_bff_v5_loop_sentinel_contract.py (collection error: flask not installed in env)"
+    ]
+  },
+  "production_net_lines": "+29/-1 service.py, +2/-163 main.py"
+}
