@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -33,6 +34,8 @@ from services.trade_journey.lifecycle_projector import (
 
 SCHEMA_VERSION = "pantheon.lifecycle-proj-cutover-hosted-proof.v1"
 TASK_ID = "LIFECYCLE-PROJ-CUTOVER-001"
+NATURAL_PRODUCER = "paper-signal-producer"
+NATURAL_INTERPRETER = "services.registry.strategy_artifact:evaluate_strategy_action"
 REQUIRED_EVENT_TYPES = (
     "signal_generation",
     "trade_decision",
@@ -460,6 +463,18 @@ def _complete_candidates(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, An
                 metadata.get("reconciliation_evaluation_id") or ""
             ),
         })
+        if event_type == "signal_generation":
+            fld = lambda k: event.get(k) or metadata.get(k)
+            group["signal_provenance"] = {
+                "source_worker": str(fld("source_worker") or ""),
+                "artifact_interpreter": str(fld("artifact_interpreter") or ""),
+                "artifact_checksum": fld("artifact_checksum"),
+                "market_input_ref": fld("market_input_ref"),
+                "raw_symbol": fld("raw_symbol"),
+                "is_real_order": event.get("is_real_order", metadata.get("is_real_order")),
+                "is_real_capital": event.get("is_real_capital", metadata.get("is_real_capital")),
+                **{k: str(fld(k) or "") for k in ("artifact_id", "artifact_version", "binding_id", "runtime_id", "capital_pool_id", "plan_id", "persona_capital_binding_id")},
+            }
     complete: list[dict[str, Any]] = []
     for group in groups.values():
         selected = sorted(group["events"], key=lambda item: item["sequence_no"])
@@ -544,8 +559,110 @@ def _complete_candidates(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, An
             continue
         group["selected_events"] = selected
         group["max_ingested_seq"] = max(item["ingested_seq"] for item in selected)
+        if mode == "natural":
+            try:
+                _validate_natural_candidate(group, case)
+            except ProbeError:
+                continue
         complete.append(group)
     return sorted(complete, key=lambda item: item["max_ingested_seq"], reverse=True)
+
+
+def _validate_natural_candidate(
+    candidate: Mapping[str, Any],
+    case: Mapping[str, Any] | None = None,
+) -> None:
+    prov = candidate.get("signal_provenance")
+    if not isinstance(prov, Mapping):
+        raise ProbeError("natural_provenance_missing", "signal provenance metadata is missing")
+    if prov.get("source_worker") != NATURAL_PRODUCER:
+        raise ProbeError("invalid_producer", f"natural candidate requires producer {NATURAL_PRODUCER!r}, got {prov.get('source_worker')!r}")
+    if prov.get("artifact_interpreter") != NATURAL_INTERPRETER:
+        raise ProbeError("invalid_interpreter", f"natural candidate requires interpreter {NATURAL_INTERPRETER!r}, got {prov.get('artifact_interpreter')!r}")
+    checksum = prov.get("artifact_checksum")
+    if not isinstance(checksum, str) or not checksum.strip():
+        raise ProbeError("invalid_checksum", "approved artifact checksum is missing")
+    if not (prov.get("market_input_ref") or prov.get("raw_symbol")):
+        raise ProbeError("invalid_lineage", "market input lineage ref is missing")
+    if prov.get("is_real_capital") is not False or prov.get("is_real_order") is not False:
+        raise ProbeError("invalid_capital_mode", "safe paper flags violated")
+    if case is not None:
+        checks = (
+            (candidate["identity"].get("tenant_id"), case.get("tenant_id"), "case_identity_mismatch", "tenant identity mismatch"),
+            (prov.get("binding_id"), case.get("runtime_binding_id"), "case_identity_mismatch", "runtime binding ID mismatch"),
+            (prov.get("runtime_id"), case.get("runtime_id"), "case_identity_mismatch", "runtime ID mismatch"),
+            (prov.get("plan_id"), case.get("deployment_plan_id"), "case_plan_mismatch", "deployment plan ID mismatch"),
+            (prov.get("capital_pool_id"), case.get("capital_pool_id"), "case_capital_mismatch", "capital pool mismatch"),
+            (prov.get("artifact_id"), case.get("artifact_id"), "case_artifact_mismatch", "artifact ID mismatch"),
+            (prov.get("artifact_version"), case.get("artifact_version"), "case_version_mismatch", "artifact version mismatch"),
+            (checksum, case.get("artifact_checksum"), "case_checksum_mismatch", "artifact checksum mismatch"),
+        )
+        for actual, expected, code, msg in checks:
+            if expected and actual != expected:
+                raise ProbeError(code, msg)
+
+
+def _normalize_case_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    if "artifact_checksum" in record and "runtime_binding_id" in record:
+        return dict(record)
+    tenant_id, persona_id = str(record.get("tenant_id") or ""), str(record.get("persona_id") or "")
+    token = hashlib.sha256(json.dumps({"tenant_id": tenant_id, "persona_id": persona_id}, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:20] if tenant_id and persona_id else ""
+    refs, res = _json_object(record.get("references")), _json_object(record.get("result"))
+    strat = _json_object(refs.get("strategy_artifact_approved"))
+    entry = _json_object(strat.get("entry")) if "entry" in strat else strat
+    return {
+        "tenant_id": tenant_id,
+        "persona_id": persona_id,
+        "idempotency_key": str(record.get("idempotency_key") or ""),
+        "runtime_binding_id": str(refs.get("runtime_binding_id") or res.get("runtime_binding_id") or ""),
+        "runtime_id": str(refs.get("runtime_id") or res.get("runtime_id") or ""),
+        "capital_pool_id": str(res.get("capital_pool_id") or (f"pool-persona-paper-{token}" if token else "")),
+        "deployment_plan_id": str(res.get("deployment_plan_id") or (f"plan-persona-paper-{token}" if token else "")),
+        "persona_capital_binding_id": str(res.get("persona_capital_binding_id") or (f"pcb-persona-paper-{token}" if token else "")),
+        "artifact_id": str(entry.get("registry_id") or entry.get("artifact_id") or res.get("strategy_artifact_id") or (f"artifact-persona-paper-{token}" if token else "")),
+        "artifact_version": str(entry.get("version") or "1.0.0"),
+        "artifact_checksum": entry.get("checksum"),
+    }
+
+
+class AsyncpgCaseSource:
+    """Read one governed persona provisioning case from Postgres."""
+
+    def __init__(self, dsn: str, *, schema: str = "bff") -> None:
+        self._dsn, self._schema = dsn, schema
+
+    async def get_case(self, case_key: str) -> dict[str, Any] | None:
+        try:
+            import asyncpg  # type: ignore[import]
+            conn = await asyncpg.connect(self._dsn)
+            try:
+                async with conn.transaction(isolation="repeatable_read", readonly=True):
+                    row = await conn.fetchrow(
+                        f'SELECT tenant_id, idempotency_key, persona_id, "references", result '
+                        f'FROM {self._schema}.persona_provisioning WHERE idempotency_key = $1 LIMIT 1',
+                        case_key,
+                    )
+                    return _normalize_case_record(dict(row)) if row is not None else None
+            finally:
+                await conn.close()
+        except ProbeError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise ProbeError("case_query_error", "governed case query failed") from exc
+
+
+async def _resolve_case(case_source: Any, case_key: str) -> dict[str, Any]:
+    if case_source is None:
+        raise ProbeError("case_source_missing", "governed case source is required in natural mode")
+    get_fn = case_source.get if isinstance(case_source, Mapping) else (getattr(case_source, "get_case", None) or getattr(case_source, "get", None))
+    if not callable(get_fn):
+        raise ProbeError("case_source_invalid", "case source is unavailable")
+    res = get_fn(case_key)
+    if asyncio.iscoroutine(res):
+        res = await res
+    if res is None:
+        raise ProbeError("case_not_found", f"governed case {case_key!r} not found in provisioning")
+    return _normalize_case_record(res)
 
 
 def _read_object(path: Path) -> dict[str, Any]:
@@ -593,6 +710,8 @@ def _correlate(
     generation_name: str,
     projection_backend: str,
     expected_sha: str,
+    mode: str = "natural",
+    case_key: str | None = None,
 ) -> dict[str, Any]:
     controller = loops.get("controller")
     if not isinstance(controller, Mapping):
@@ -654,6 +773,9 @@ def _correlate(
         },
         "identity": {field: identity[field] for field in STABLE_IDENTITY_FIELDS},
         "events": list(candidate["selected_events"]),
+        "mode": mode,
+        "governed_case_key": case_key,
+        "signal_provenance": candidate.get("signal_provenance"),
         "projection": {
             "backend": projection_backend,
             "generation": loops.get("generation"),
@@ -676,10 +798,13 @@ async def run_probe(
     source: Any,
     projection_root: Path | None,
     projection_source: Any | None = None,
+    case_source: Any | None = None,
     expected_sha: str,
     timeout_seconds: float,
     poll_seconds: float,
     baseline_high_watermark: int | None = None,
+    mode: str = "natural",
+    case_key: str | None = None,
     sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
@@ -687,8 +812,20 @@ async def run_probe(
         raise ProbeError("invalid_expected_sha", "a concrete expected deployment SHA is required")
     if baseline_high_watermark is not None and baseline_high_watermark < 0:
         raise ProbeError("invalid_baseline_high_watermark", "baseline high watermark must be non-negative")
+    if mode not in ("natural", "controlled-stimulus"):
+        raise ProbeError("invalid_mode", f"unsupported probe mode {mode!r}")
+    case = None
+    if mode == "natural":
+        if not case_key:
+            raise ProbeError("case_key_missing", "governed case key is required in natural mode")
+        case = await _resolve_case(case_source, case_key)
     deadline = monotonic() + max(0.0, timeout_seconds)
-    last_error = ProbeError("no_complete_paper_aggregate", "no complete committed paper lifecycle aggregate matched")
+    last_error = ProbeError(
+        "no_complete_paper_aggregate",
+        "no complete committed paper lifecycle aggregate matched governed case"
+        if mode == "natural"
+        else "no complete committed paper lifecycle aggregate matched",
+    )
     observed_baseline_high_watermark = baseline_high_watermark
     while True:
         remaining = deadline - monotonic()
@@ -715,7 +852,7 @@ async def run_probe(
             ) from exc
         if observed_baseline_high_watermark is None:
             observed_baseline_high_watermark = high
-        candidates = _complete_candidates(rows)
+        candidates = _complete_candidates(rows, mode=mode, case=case)
         if candidates:
             for candidate in candidates:
                 try:
@@ -746,10 +883,14 @@ async def run_probe(
                         generation_name=generation_name,
                         projection_backend=projection_backend,
                         expected_sha=expected_sha,
+                        mode=mode,
+                        case_key=case_key,
                     )
                     return {
                         "schema_version": SCHEMA_VERSION,
                         "task_id": TASK_ID,
+                        "mode": mode,
+                        "governed_case_key": case_key,
                         "outcome": "passed",
                         "observed_at": _utc_now(),
                         "expected_deployment_sha": expected_sha,
@@ -776,20 +917,26 @@ def _failure_artifact(
     expected_sha: str,
     code: str,
     message: str,
+    mode: str = "natural",
+    case_key: str | None = None,
     timed_out: bool | None = None,
 ) -> dict[str, Any]:
     failure: dict[str, Any] = {"code": code, "message": message}
     if timed_out is not None:
         failure["timed_out"] = timed_out
-    return {
+    result = {
         "schema_version": SCHEMA_VERSION,
         "task_id": TASK_ID,
+        "mode": mode,
         "outcome": "failed",
         "observed_at": _utc_now(),
         "expected_deployment_sha": expected_sha,
         "failure": failure,
         "redaction": {"dsn_included": False, "payloads_included": False},
     }
+    if case_key:
+        result["governed_case_key"] = case_key
+    return result
 
 
 def write_failure_artifact(
@@ -798,12 +945,12 @@ def write_failure_artifact(
     expected_sha: str,
     code: str,
     message: str,
+    mode: str = "natural",
+    case_key: str | None = None,
 ) -> dict[str, Any]:
     """Write a redacted failure artifact when hosted transport fails."""
     artifact = _failure_artifact(
-        expected_sha=expected_sha,
-        code=code,
-        message=message,
+        expected_sha=expected_sha, code=code, message=message, mode=mode, case_key=case_key
     )
     _atomic_write_json(output, artifact)
     return artifact
@@ -814,41 +961,37 @@ async def execute(
     source: Any,
     projection_root: Path | None,
     projection_source: Any | None = None,
+    case_source: Any | None = None,
     expected_sha: str,
     output: Path,
     timeout_seconds: float,
     poll_seconds: float,
     baseline_high_watermark: int | None = None,
+    mode: str = "natural",
+    case_key: str | None = None,
     sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> tuple[int, dict[str, Any]]:
+    kwargs = dict(expected_sha=expected_sha, mode=mode, case_key=case_key)
     try:
         artifact = await run_probe(
             source=source,
             projection_root=projection_root,
             projection_source=projection_source,
-            expected_sha=expected_sha,
+            case_source=case_source,
             timeout_seconds=timeout_seconds,
             poll_seconds=poll_seconds,
             baseline_high_watermark=baseline_high_watermark,
             sleeper=sleeper,
             monotonic=monotonic,
+            **kwargs,
         )
         code = 0
     except ProbeError as exc:
-        artifact = _failure_artifact(
-            expected_sha=expected_sha,
-            code=exc.code,
-            message=exc.safe_message,
-            timed_out=exc.timed_out,
-        )
+        artifact = _failure_artifact(code=exc.code, message=exc.safe_message, timed_out=exc.timed_out, **kwargs)
         code = 1
     except Exception:  # noqa: BLE001 - keep unexpected failures redacted and durable
-        artifact = _failure_artifact(
-            expected_sha=expected_sha,
-            code="unexpected_probe_error",
-            message="hosted lifecycle probe failed unexpectedly",
-        )
+        artifact = _failure_artifact(code="unexpected_probe_error", message="hosted lifecycle probe failed unexpectedly", **kwargs)
         code = 1
     _atomic_write_json(output, artifact)
     return code, artifact
@@ -860,68 +1003,32 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--baseline-high-watermark", type=int)
     parser.add_argument("--print-high-watermark", action="store_true")
-    parser.add_argument(
-        "--timeout-seconds", "--timeout", dest="timeout", type=float, default=300.0
-    )
-    parser.add_argument(
-        "--poll-seconds", "--poll", dest="poll", type=float, default=2.0
-    )
+    parser.add_argument("--timeout-seconds", "--timeout", dest="timeout", type=float, default=300.0)
+    parser.add_argument("--poll-seconds", "--poll", dest="poll", type=float, default=2.0)
+    parser.add_argument("--mode", choices=["natural", "controlled-stimulus"], default="natural")
+    parser.add_argument("--case-key", help="Fresh governed case key (required in natural mode)")
     args = parser.parse_args(argv)
     dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
     root = os.getenv("LIFECYCLE_PROJECTION_ROOT", "").strip()
     projection_dsn = os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_DSN", "").strip()
     if args.print_high_watermark:
         if not dsn:
-            print(
-                json.dumps(
-                    {
-                        "outcome": "failed",
-                        "failure": {
-                            "code": "configuration_missing",
-                            "message": "telemetry DSN is required",
-                        },
-                        "redaction": {"dsn_included": False},
-                    },
-                    sort_keys=True,
-                ),
-                file=sys.stderr,
-            )
+            print(json.dumps({"outcome": "failed", "failure": {"code": "configuration_missing", "message": "telemetry DSN is required"}, "redaction": {"dsn_included": False}}, sort_keys=True), file=sys.stderr)
             return 1
         try:
-            high_watermark = asyncio.run(
-                _source_high_watermark(AsyncpgTelemetrySource(dsn))
-            )
+            high_watermark = asyncio.run(_source_high_watermark(AsyncpgTelemetrySource(dsn)))
         except ProbeError as exc:
-            print(
-                json.dumps(
-                    {
-                        "outcome": "failed",
-                        "failure": {
-                            "code": exc.code,
-                            "message": exc.safe_message,
-                            "timed_out": exc.timed_out,
-                        },
-                        "redaction": {"dsn_included": False},
-                    },
-                    sort_keys=True,
-                ),
-                file=sys.stderr,
-            )
+            print(json.dumps({"outcome": "failed", "failure": {"code": exc.code, "message": exc.safe_message, "timed_out": exc.timed_out}, "redaction": {"dsn_included": False}}, sort_keys=True), file=sys.stderr)
             return 1
         print(high_watermark)
         return 0
     if args.output is None:
         parser.error("--output is required unless --print-high-watermark is used")
+    if args.mode == "natural" and not args.case_key:
+        write_failure_artifact(args.output, expected_sha=args.expected_sha, code="case_key_missing", message="governed case key is required in natural mode", mode=args.mode)
+        return 1
     if not dsn or (not root and not projection_dsn):
-        write_failure_artifact(
-            args.output,
-            expected_sha=args.expected_sha,
-            code="configuration_missing",
-            message=(
-                "telemetry DSN and either projection root or relational projection DSN "
-                "are required"
-            ),
-        )
+        write_failure_artifact(args.output, expected_sha=args.expected_sha, code="configuration_missing", message="telemetry DSN and either projection root or relational projection DSN are required", mode=args.mode, case_key=args.case_key)
         return 1
     code, artifact = asyncio.run(
         execute(
@@ -938,11 +1045,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if projection_dsn
                 else None
             ),
+            case_source=AsyncpgCaseSource(dsn) if dsn else None,
             expected_sha=args.expected_sha,
             output=args.output,
             timeout_seconds=args.timeout,
             poll_seconds=args.poll,
             baseline_high_watermark=args.baseline_high_watermark,
+            mode=args.mode,
+            case_key=args.case_key,
         )
     )
     print(json.dumps({"outcome": artifact["outcome"], "output": str(args.output)}, sort_keys=True))

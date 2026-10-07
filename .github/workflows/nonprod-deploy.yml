@@ -1537,22 +1537,24 @@ jobs:
           local_evidence="/tmp/${evidence_name}"
           readback_evidence="/tmp/${readback_name}"
           container_evidence="/tmp/${evidence_name}"
+          case_key="dev-paper-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           printf -v worktree_q '%q' "${DEV_DEPLOY_WORKTREE}"
           printf -v deploy_sha_q '%q' "${DEPLOY_SHA}"
           printf -v remote_evidence_q '%q' "${remote_evidence}"
           printf -v container_evidence_q '%q' "${container_evidence}"
+          printf -v case_key_q '%q' "${case_key}"
           echo "artifact_path=${local_evidence}" >> "$GITHUB_OUTPUT"
           echo "readback_artifact_path=${readback_evidence}" >> "$GITHUB_OUTPUT"
           set +e
           "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh" exec \
-            "set -uo pipefail; cd ${worktree_q} || exit 1; scripts/run_loop_prod_tel_002_hosted_probe.sh --expected-sha ${deploy_sha_q} --container-output ${container_evidence_q} --remote-output ${remote_evidence_q} --timeout-seconds 420 --poll-seconds 5"
+            "set -uo pipefail; cd ${worktree_q} || exit 1; scripts/run_loop_prod_tel_002_hosted_probe.sh --expected-sha ${deploy_sha_q} --container-output ${container_evidence_q} --remote-output ${remote_evidence_q} --timeout-seconds 420 --poll-seconds 5 --mode natural --case-key ${case_key_q}"
           probe_status=$?
           scp_status=0
           "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh" copy-from \
             "${remote_evidence}" "${local_evidence}" || scp_status=$?
           set -e
           if [[ "${scp_status}" -ne 0 || ! -s "${local_evidence}" ]]; then
-            python3 -c 'import sys; from pathlib import Path; from services.trade_journey.hosted_lifecycle_probe import write_failure_artifact; write_failure_artifact(Path(sys.argv[1]), expected_sha=sys.argv[2], code="hosted_probe_transport_error", message="hosted lifecycle evidence transport failed")' "${local_evidence}" "${DEPLOY_SHA}"
+            python3 -c 'import sys; from pathlib import Path; from services.trade_journey.hosted_lifecycle_probe import write_failure_artifact; write_failure_artifact(Path(sys.argv[1]), expected_sha=sys.argv[2], code="hosted_probe_transport_error", message="hosted lifecycle evidence transport failed", mode="natural", case_key=sys.argv[3])' "${local_evidence}" "${DEPLOY_SHA}" "${case_key}"
           fi
           readback_status=0
           python3 -m services.trade_journey.hosted_bff_readback \
