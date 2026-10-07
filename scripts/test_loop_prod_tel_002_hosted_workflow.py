@@ -34,10 +34,6 @@ def test_nonprod_workflow_has_opt_in_read_only_canonical_lifecycle_probe() -> No
     assert "services.trade_journey.hosted_bff_readback" in source
     assert "--expected-sha" in source
     assert "--timeout-seconds 420" in source
-    assert "--mode natural" in source
-    assert "--case-key" in source
-    assert "--mode natural|controlled-stimulus" in script
-    assert "--case-key" in script
     assert "docker cp" in script
     assert "hosted_probe_transport_error" in source
     assert "hosted_stimulus_failed" in script

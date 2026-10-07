@@ -190,3 +190,9 @@ def test_probe_wrapper_stimulus_failure(tmp_path: Path, mock_docker):
     assert res.returncode != 0
     calls = log_file.read_text().splitlines()
     assert any("hosted_stimulus_failed" in call for call in calls)
+
+
+def test_nonprod_workflow_wires_natural_mode_and_case_key():
+    wf_text = (ROOT / ".github" / "workflows" / "nonprod-deploy.yml").read_text(encoding="utf-8")
+    assert "--mode natural" in wf_text
+    assert "--case-key" in wf_text

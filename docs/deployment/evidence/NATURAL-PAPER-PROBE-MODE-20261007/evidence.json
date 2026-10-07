@@ -24,14 +24,8 @@
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -v scripts/test_run_loop_prod_tel_002_hosted_probe.py",
       "exit_code": 0,
-      "test_count": 7,
-      "output": "7 passed"
-    },
-    {
-      "command": ".venv-pantheon/bin/python3 -m pytest -v scripts/test_loop_prod_tel_002_hosted_workflow.py",
-      "exit_code": 0,
-      "test_count": 2,
-      "output": "2 passed"
+      "test_count": 8,
+      "output": "8 passed"
     },
     {
       "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD --change-class corrective --budget 160",
