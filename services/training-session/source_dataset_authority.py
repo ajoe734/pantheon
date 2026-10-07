@@ -649,8 +649,11 @@ def _validate_connector_terminal_truth(
         raise SourceDatasetAuthorityError("latest source record belongs to a different dataset")
     if provenance.get("source_ingest_run_id") != run_id:
         raise SourceDatasetAuthorityError("latest source record belongs to a different run")
-    for field in ("provider", "api_endpoint", "access_scope", "license_scope", "schema_hash"):
+    for field in ("provider", "api_endpoint", "license_scope", "schema_hash"):
         _required_text(provenance.get(field), f"latest_source_record.provenance.{field}")
+    scope = provenance.get("access_scope")
+    for item in scope if isinstance(scope, list) and scope else (scope,):
+        _required_text(item, "latest_source_record.provenance.access_scope")
     available_at = _parse_timestamp(
         provenance.get("available_time"), "latest_source_record.provenance.available_time"
     )

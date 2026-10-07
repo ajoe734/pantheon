@@ -929,7 +929,7 @@ class DeployedResearchHarness:
                 and value.get("status") in {"completed", "failed"},
             ),
         )
-        self._require(job.get("status") == "completed", f"Teaching evaluation job failed: {job.get('error_code')}")
+        self._require(job.get("status") == "completed", f"Teaching evaluation job failed: {job.get('error_code')}: {job.get('failure_reason')}")
         terminal = self._at(
             "teaching.authority_actual_state",
             lambda: self._poll(
