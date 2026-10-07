@@ -643,6 +643,9 @@ Do not use `done` as the reviewer.
 
 The internal collaboration panel lives at `docs-site/index.html`.
 
+The canonical status root comes from the live supervisor config, and the
+dashboard serves its own checkout only when no live config exists.
+
 Start it locally with:
 
 ```bash
@@ -659,11 +662,11 @@ The dashboard renders:
 - sprint snapshot
 - recent activity
 
-If the panel looks stale:
-
-```bash
-bash scripts/sync-state.sh
-```
+A stale panel means checking, with ps, that the running dashboard_server.py
+--repo-root is the canonical status root, and that the fleet is writing (the
+supervisor is healthy and the data files' mtimes are recent). A checkout
+without a live config shows only its own committed projection, and nothing
+refreshes it.
 
 ## 7. Prompt Prefix
 

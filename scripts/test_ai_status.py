@@ -1282,6 +1282,10 @@ class HumanOpsStatusWrapperTests(unittest.TestCase):
             scripts_dir.mkdir()
             wrapper = scripts_dir / "human-ops-status.sh"
             shutil.copy2(repo_root / "scripts" / "human-ops-status.sh", wrapper)
+            shutil.copy2(
+                repo_root / "scripts" / "canonical-task-state-binding.sh",
+                scripts_dir / "canonical-task-state-binding.sh",
+            )
             target = scripts_dir / "ai-status.sh"
             target.write_text(
                 "#!/usr/bin/env bash\n"
