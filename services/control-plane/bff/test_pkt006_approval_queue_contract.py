@@ -114,6 +114,10 @@ def test_pkt006_approval_queue_filters_and_pagination_follow_contract(monkeypatc
     payload = response.json()
     assert payload["items"] == [
         {
+            "id": "appr-001",
+            "outcome": None,
+            "status": "pending",
+            "state": "pending",
             "decision_id": "appr-001",
             "decision_type": "DeploymentPlan",
             "risk_level": "medium",
