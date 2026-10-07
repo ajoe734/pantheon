@@ -1053,7 +1053,8 @@ def test_dev_paper_baseline_strategy_seed_route_excludes_other_tenant_persona(mo
         def match_candidates(self, *_args, **_kwargs):
             return [_Match()]
 
-    monkeypatch.setattr(seeds_module, "StrategySpecSeedStore", _SeedStore)
+    import services.control_plane.bff.strategies.service as strategies_service
+    monkeypatch.setattr(strategies_service, "StrategySpecSeedStore", _SeedStore)
     monkeypatch.setattr(seeds_module, "PersonaStrategyDiscoveryService", _Discovery)
     client = _build_test_client(read_store)
     response = client.get(
