@@ -538,10 +538,14 @@ accepting it. In order:
 1. `--dependency-python`
 2. `$PANTHEON_DEPENDENCY_PYTHON` — **this is the one that normally answers for
    an auto worker.** The supervisor exports `worker_runtime.dependency_python`,
-   a shared venv that `sync-dev-root.sh` builds from `requirements.txt` plus
-   `services/control-plane/bff/requirements.txt`, and `requirements.txt` is the
-   list Smoke acceptance installs. Do not build your own venv or `pip install`
-   into `/usr/bin/python3` when it is set.
+   a shared venv that `sync-dev-root.sh` builds via `ensure_worker_test_python.py`
+   from the builder's `REQUIREMENTS`, which include the base Research runtime
+   (`QuantLib`). The exact Research runtime pins therefore also fix shared packages
+   such as `fastapi`, `uvicorn`, `pydantic` and `asyncpg` in that interpreter, so
+   a future pin conflict shows up as a failed builder run at promotion. Scientific
+   framework locks such as `vectorbt` and `statsmodels` stay in their own isolated
+   environments. Do not build your own venv or `pip install` into `/usr/bin/python3`
+   when it is set.
 3. the interpreter you ran the script with
 4. `$VIRTUAL_ENV`
 5. `<checkout>/.venv`

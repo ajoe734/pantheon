@@ -36,9 +36,10 @@ class EnsureWorkerTestPythonTests(unittest.TestCase):
         base = Path(self.tmp.name)
         self.root, self.parent = base / "repo", base / "worker-test-python"
         self.root.mkdir()
-        (self.root / "requirements.txt").write_text("flask\n")
-        (self.root / "services" / "control-plane" / "bff").mkdir(parents=True)
-        (self.root / "services" / "control-plane" / "bff" / "requirements.txt").write_text("fastapi\n")
+        for name in wtp.REQUIREMENTS:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("flask\n")
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -84,6 +85,29 @@ class EnsureWorkerTestPythonTests(unittest.TestCase):
         self.assertEqual(len(pip_calls), 1)
         r_args = [pip_calls[0][i + 1] for i, arg in enumerate(pip_calls[0]) if arg == "-r"]
         self.assertEqual(r_args, [str(self.root / name) for name in wtp.REQUIREMENTS])
+
+    def test_each_requirements_entry_change_switches_current_and_passes_flag(self) -> None:
+        run = FakeRun()
+        wtp.ensure(self.root, self.parent, python="py", run=run)
+        prev_hash = wtp.requirements_hash(self.root)
+        self.assertEqual(os.readlink(self.parent / "current"), prev_hash)
+
+        for name in wtp.REQUIREMENTS:
+            path = self.root / name
+            path.write_text(path.read_text() + f"# change {name}\n")
+            new_hash = wtp.requirements_hash(self.root)
+            self.assertNotEqual(new_hash, prev_hash)
+
+            run.calls.clear()
+            result = wtp.ensure(self.root, self.parent, python="py", run=run)
+            self.assertFalse(result["reused"])
+            self.assertEqual(os.readlink(self.parent / "current"), new_hash)
+
+            pip_calls = [c for c in run.calls if c[1:4] == ["-m", "pip", "install"]]
+            self.assertEqual(len(pip_calls), 1)
+            r_args = [pip_calls[0][i + 1] for i, arg in enumerate(pip_calls[0]) if arg == "-r"]
+            self.assertIn(str(path), r_args)
+            prev_hash = new_hash
 
 
 class SupervisorExportTests(unittest.TestCase):
