@@ -1,0 +1,21 @@
+{
+  "task_id": "SOURCE-EVIDENCE-CROSS-PROCESS-READ-20261007",
+  "change_class": "corrective",
+  "summary": "Implement direct PostgreSQL reads in PostgresSourceEvidenceRepository for cross-process evidence visibility across scheduler and API server without process restart while preserving strict tenant isolation.",
+  "diagnosis": "In qualification-37678408482 L4 persona teaching run, training failed 'source DatasetVersion authority rejected: exactly one source evidence bundle must bind the selected connector run'. PostgresSourceEvidenceRepository loaded in-memory state only at __init__; writes upserted to PostgreSQL but getters/listers inherited InMemoryEvidenceRepository, so separate scheduler writes were invisible to the running API server process.",
+  "fix": "PostgresSourceEvidenceRepository implements scoped _read_one, _read_many, and _read_by_dedupe querying PostgreSQL source_evidence with tenant-isolated WHERE clauses and in-memory fallback on connection failure. API server observes committed scheduler source records, items, bundles, and knowledge objects across processes without restart.",
+  "acceptance_verification": {
+    "ac1_cross_process_visibility": "passed: two independent PostgreSQL instances alive before write prove cross-process getter and list visibility for source records, items, bundles, and knowledge objects without restart or reload",
+    "ac2_current_tenant_reads": "passed: authenticated SourceAPI reads observe committed scheduler bundles and records for the admitted tenant without api restart",
+    "ac3_tenant_isolation": "passed: wrong-tenant reads return None / empty list; missing bundles return None; no wildcard fallback or waivers",
+    "ac4_focused_pg_tests": "passed: test_pg_store.py and test_service.py distinguish missing bundle vs wrong tenant, update/reread/restart, and verify no leaked secrets; prod net lines 93 <= 100"
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/test_pg_store.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/test_postgres_store.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/test_service.py"
+    ],
+    "result": "passed (5 pg_store tests, 14 postgres_store tests, 27 service tests passed; 0 failures)"
+  }
+}

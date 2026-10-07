@@ -20,6 +20,7 @@ from services.knowledge.evidence import (
     JsonlEvidenceRepository,
     KnowledgeObject,
 )
+from services.knowledge.evidence.repository import _UNSCOPED, _Unscoped
 from services.knowledge.evidence.models import EvidenceValidationError
 from services.source_ingestion.connectors.base import SourceRecord
 
@@ -228,6 +229,98 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
             self._rollback_knowledge_object(stored)
             raise
         return stored
+
+    def _fetch_records(self, sql: str, params: tuple[Any, ...], r_type: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> list[Any] | None:
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(sql, params).fetchall()
+        except Exception:
+            return None
+        loader = _EVIDENCE_LOADERS.get(r_type)
+        if not loader:
+            return []
+        results: list[Any] = []
+        for row in rows:
+            if isinstance(row, tuple) and len(row) > 1:
+                if row[0] != r_type:
+                    continue
+                payload = row[1]
+            else:
+                payload = row[0] if isinstance(row, tuple) else (row.get("payload") if isinstance(row, dict) else row)
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            if not isinstance(payload, dict):
+                continue
+            if tenant_id is not _UNSCOPED:
+                t = payload.get("metadata", {}).get("tenant_id")
+                if (tenant_id is None and t) or (tenant_id is not None and t != tenant_id):
+                    continue
+            results.append(loader(payload))
+        return results
+
+    def _read_one(self, r_type: str, r_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED, fallback: Any = None) -> Any | None:
+        if tenant_id is not _UNSCOPED:
+            sql, params = f"SELECT payload FROM {self.table} WHERE record_type = %s AND record_id = %s", (r_type, _scoped_record_id(tenant_id, r_id))
+        else:
+            k = "source_id" if r_type == "source_record" else f"{r_type}_id"
+            sql, params = f"SELECT payload FROM {self.table} WHERE record_type = %s AND (record_id = %s OR payload->>%s = %s) ORDER BY append_id DESC LIMIT 1", (r_type, r_id, k, r_id)
+        records = self._fetch_records(sql, params, r_type, tenant_id=tenant_id)
+        if records is None:
+            return fallback() if fallback else None
+        k = "source_id" if r_type == "source_record" else f"{r_type}_id"
+        return next((r for r in records if getattr(r, k, None) == r_id), records[0] if records else None)
+
+    def _read_many(self, r_type: str, tenant_id: str | None | _Unscoped = _UNSCOPED, fallback: Any = None) -> list[Any]:
+        if tenant_id is not _UNSCOPED:
+            where = "payload->'metadata'->>'tenant_id' = %s" if tenant_id is not None else "(payload->'metadata'->>'tenant_id' IS NULL OR payload->'metadata'->>'tenant_id' = '')"
+            params = (r_type, tenant_id) if tenant_id is not None else (r_type,)
+            sql = f"SELECT payload FROM {self.table} WHERE record_type = %s AND {where} ORDER BY append_id ASC"
+        else:
+            sql, params = f"SELECT payload FROM {self.table} WHERE record_type = %s ORDER BY append_id ASC", (r_type,)
+        records = self._fetch_records(sql, params, r_type, tenant_id=tenant_id)
+        return fallback() if records is None and fallback else (records or [])
+
+    def _read_by_dedupe(self, r_type: str, field: str, key: str, tenant_id: str | None | _Unscoped = _UNSCOPED, fallback: Any = None) -> Any | None:
+        if tenant_id is not _UNSCOPED:
+            where = "AND payload->'metadata'->>'tenant_id' = %s" if tenant_id is not None else "AND (payload->'metadata'->>'tenant_id' IS NULL OR payload->'metadata'->>'tenant_id' = '')"
+            params = (r_type, field, key, tenant_id) if tenant_id is not None else (r_type, field, key)
+            sql = f"SELECT payload FROM {self.table} WHERE record_type = %s AND payload->'metadata'->>%s = %s {where} ORDER BY append_id DESC LIMIT 1"
+        else:
+            sql, params = f"SELECT payload FROM {self.table} WHERE record_type = %s AND payload->'metadata'->>%s = %s ORDER BY append_id DESC LIMIT 1", (r_type, field, key)
+        records = self._fetch_records(sql, params, r_type, tenant_id=tenant_id)
+        if records is None:
+            return fallback() if fallback else None
+        return next((r for r in records if str(r.metadata.get(field) or "") == key), None)
+
+    def get_source_record(self, source_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> SourceRecord | None:
+        return self._read_one("source_record", source_id, tenant_id, lambda: super(PostgresSourceEvidenceRepository, self).get_source_record(source_id, tenant_id=tenant_id))
+
+    def get_source_record_by_dedupe_key(self, source_dedupe_key: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> SourceRecord | None:
+        return self._read_by_dedupe("source_record", "source_dedupe_key", source_dedupe_key, tenant_id, lambda: super(PostgresSourceEvidenceRepository, self).get_source_record_by_dedupe_key(source_dedupe_key, tenant_id=tenant_id))
+
+    def list_source_records(self, tenant_id: str | None | _Unscoped = _UNSCOPED) -> List[SourceRecord]:
+        return self._read_many("source_record", tenant_id, lambda: super(PostgresSourceEvidenceRepository, self).list_source_records(tenant_id=tenant_id))
+
+    def get_evidence_item(self, evidence_item_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> EvidenceItem | None:
+        return self._read_one("evidence_item", evidence_item_id, tenant_id, lambda: super(PostgresSourceEvidenceRepository, self).get_evidence_item(evidence_item_id, tenant_id=tenant_id))
+
+    def get_evidence_item_by_dedupe_key(self, evidence_dedupe_key: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> EvidenceItem | None:
+        return self._read_by_dedupe("evidence_item", "evidence_dedupe_key", evidence_dedupe_key, tenant_id, lambda: super(PostgresSourceEvidenceRepository, self).get_evidence_item_by_dedupe_key(evidence_dedupe_key, tenant_id=tenant_id))
+
+    def list_evidence_items(self, tenant_id: str | None | _Unscoped = _UNSCOPED) -> List[EvidenceItem]:
+        return self._read_many("evidence_item", tenant_id, lambda: super(PostgresSourceEvidenceRepository, self).list_evidence_items(tenant_id=tenant_id))
+
+    def get_bundle(self, evidence_bundle_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> EvidenceBundle | None:
+        return self._read_one("evidence_bundle", evidence_bundle_id, tenant_id, lambda: super(PostgresSourceEvidenceRepository, self).get_bundle(evidence_bundle_id, tenant_id=tenant_id))
+
+    def list_bundles(self, tenant_id: str | None | _Unscoped = _UNSCOPED) -> List[EvidenceBundle]:
+        return self._read_many("evidence_bundle", tenant_id, lambda: super(PostgresSourceEvidenceRepository, self).list_bundles(tenant_id=tenant_id))
+
+    def get_knowledge_object(self, knowledge_object_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> KnowledgeObject | None:
+        return self._read_one("knowledge_object", knowledge_object_id, tenant_id, lambda: super(PostgresSourceEvidenceRepository, self).get_knowledge_object(knowledge_object_id, tenant_id=tenant_id))
+
+    def list_knowledge_objects(self, tenant_id: str | None | _Unscoped = _UNSCOPED) -> List[KnowledgeObject]:
+        return self._read_many("knowledge_object", tenant_id, lambda: super(PostgresSourceEvidenceRepository, self).list_knowledge_objects(tenant_id=tenant_id))
 
 
 def read_source_records_for_tenant(
