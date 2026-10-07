@@ -62,15 +62,11 @@ def render_wakeup_message(
         )
         binding = task_payload.get("delivery_binding") or {}
         if binding.get("base_sha") and binding.get("head_sha"):
-            budget_args = ""
-            if task_payload.get("change_class"):
-                budget_args = f" --change-class {task_payload['change_class']}"
-                if task_payload.get("net_prod_line_budget") is not None:
-                    budget_args += f" --budget {task_payload['net_prod_line_budget']}"
             role_guardrails += (
                 "- 淨變動：執行 `python3 scripts/git/diff_budget.py --base "
-                f"{binding['base_sha']} --head {binding['head_sha']}{budget_args}`，"
-                "把 production／test／docs-evidence 的淨行數寫進審查結論。\n"
+                f"{binding['base_sha']} --head {binding['head_sha']}`，"
+                "把 production／test／docs-evidence 的淨行數當作輔助證據寫進審查結論；"
+                "若指令因 evidence 檔新增行數超過上限而 exit 1，必要 CI 檢查 Runtime mirror guard 也會失敗，屬於 reopen 理由。\n"
             )
     elif reason == "owned_finalize_dispatch":
         role_guardrails = (
@@ -79,16 +75,6 @@ def render_wakeup_message(
             "- 核對 exact-head approval 與必要交付後才執行 `done`。\n"
             "- 若 frozen approved head 未變，不得重跑 reviewer 已完成並綁定的測試；"
             "只核對 approval、merged ancestry 與乾淨工作樹後收尾。\n"
-        )
-    if task_payload.get("change_class") and reason not in {
-        "review_ready_dispatch",
-        "owned_finalize_dispatch",
-    }:
-        limit = task_payload.get("net_prod_line_budget")
-        role_guardrails += (
-            f"\n這個任務的 change_class={task_payload['change_class']}：production 程式碼淨行數上限 "
-            f"{limit if limit is not None else '採設定預設值'}，handoff 時會自動檢查，超過即被擋。"
-            "優先刪除重複與無用程式碼；evidence 檔新增行數也有上限。\n"
         )
 
     dependency_truth = [
