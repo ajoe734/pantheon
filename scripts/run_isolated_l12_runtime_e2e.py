@@ -282,15 +282,19 @@ def _isolated_dev_principal_env(compose_env: Mapping[str, str]) -> dict[str, str
     return env
 
 
-def _isolated_registry_operator_token(compose_env: Mapping[str, str]) -> str:
-    """Mint the operator identity the domain suites use on Registry routes."""
+def _isolated_human_token(compose_env: Mapping[str, str], subject: str, *roles: str) -> str:
+    """Mint a human operator/reviewer identity for the domain suites.
+
+    Registry and Governance verify the dev BFF signer (see
+    _isolated_dev_principal_env), so one signer serves both owners.
+    """
     return _mint_projector_service_jwt(
-        compose_env["PANTHEON_REGISTRY_JWT_SECRET"],
+        compose_env["PANTHEON_BFF_JWT_SECRET"],
         tenant_id=compose_env["PANTHEON_BFF_TENANT_ID"],
-        issuer=compose_env["PANTHEON_REGISTRY_JWT_ISSUER"],
-        audience=compose_env["PANTHEON_REGISTRY_JWT_AUDIENCE"],
-        subject="l12-domain-suites-operator",
-        roles=("operator",),
+        issuer=compose_env["PANTHEON_BFF_JWT_ISSUER"],
+        audience=compose_env["PANTHEON_BFF_JWT_AUDIENCE"],
+        subject=subject,
+        roles=roles,
         ttl_seconds=4 * 60 * 60,
     )
 
@@ -986,7 +990,12 @@ def main(argv: list[str] | None = None) -> int:
     test_env["PANTHEON_L12_SOURCE_READER_TOKEN"] = reader_token
     test_env["PANTHEON_L12_SOURCE_READER_TENANT_ID"] = reader_tenant
     test_env["PANTHEON_L12_TENANT_ID"] = compose_env["PANTHEON_BFF_TENANT_ID"]
-    test_env["PANTHEON_L12_REGISTRY_TOKEN"] = _isolated_registry_operator_token(compose_env)
+    test_env["PANTHEON_L12_OPERATOR_TOKEN"] = _isolated_human_token(
+        compose_env, "l12-domain-suites-operator", "operator"
+    )
+    test_env["PANTHEON_L12_REVIEWER_TOKEN"] = _isolated_human_token(
+        compose_env, "l12-domain-suites-reviewer", "governance_reviewer"
+    )
 
     # Resolve python binary
     python_bin = sys.executable

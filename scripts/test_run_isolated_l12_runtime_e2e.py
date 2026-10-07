@@ -383,15 +383,19 @@ def test_isolated_stack_binds_owner_verifiers_and_principals_like_the_dev_deploy
     assert not set(env) & set(harness.ISOLATED_SAFE_CONTROLS)
 
 
-def test_registry_operator_token_carries_the_identity_strict_registry_requires() -> None:
+def test_human_tokens_carry_the_identity_strict_registry_and_governance_require() -> None:
     env = {**_isolated_signer_env()}
     env.update(harness._isolated_dev_principal_env(env))
-    claims = _decoded_claims(harness._isolated_registry_operator_token(env), env["PANTHEON_REGISTRY_JWT_SECRET"])
+    token = harness._isolated_human_token(env, "l12-reviewer", "governance_reviewer")
 
-    assert claims["sub"] and claims["exp"] > claims.get("iat", 0)
-    assert claims["roles"] == ["operator"]
+    for owner in ("REGISTRY", "GOVERNANCE"):
+        claims = _decoded_claims(token, env[f"PANTHEON_{owner}_JWT_SECRET"])
+        assert (claims["iss"], claims["aud"]) == (
+            env.get(f"PANTHEON_{owner}_JWT_ISSUER"), env.get(f"PANTHEON_{owner}_JWT_AUDIENCE"),
+        )
+    assert claims["sub"] == "l12-reviewer" and claims["exp"] > 0
+    assert claims["roles"] == ["governance_reviewer"]
     assert claims["tenant_id"] == "tenant-dev"
-    assert (claims["iss"], claims["aud"]) == (env["PANTHEON_REGISTRY_JWT_ISSUER"], env["PANTHEON_REGISTRY_JWT_AUDIENCE"])
 
 
 def test_principal_issuer_starts_before_the_owner_stack() -> None:
