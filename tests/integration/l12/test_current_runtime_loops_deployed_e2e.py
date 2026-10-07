@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 import pytest
+from l12_owner_auth import approve_registry_entry, bearer, human_token, registry_advance_body
 
 
 TASK_ID = "PFG-L12-RUNTIME-E2E-20260820"
@@ -561,7 +562,14 @@ class RuntimeChain:
                 "currency": "USD",
                 "budget": 1000.0,
                 "single_runtime_enforced": True,
-                "metadata": {"paper_only": True, "source_task_id": TASK_ID},
+                # Capital admits a paper pool/binding without a live approval
+                # only when the pool declares the paper execution context.
+                "metadata": {
+                    "paper_only": True,
+                    "execution_context": "paper",
+                    "tenant_id": TENANT_ID,
+                    "source_task_id": TASK_ID,
+                },
             },
             headers=headers,
             expected={201},
@@ -607,52 +615,21 @@ class RuntimeChain:
     def _approve_artifact(
         self,
         *,
-        artifact_id: str,
-        version: str,
+        entry: Mapping[str, Any],
         capital: Mapping[str, str],
         label: str,
-    ) -> dict[str, Any]:
-        decision_id = f"approval-l12-{label}-{self.suffix}"
-        self.http.request(
-            "governance",
-            "POST",
-            "/api/governance/approvals",
-            body={
-                "capital_pool_id": capital["pool_id"],
-                "decision_id": decision_id,
-                "persona_id": capital["persona_id"],
-                "risk_level": "medium",
-                "target_id": artifact_id,
-                "target_type": "registry_entry",
-                "target_version": version,
-                "tenant_id": TENANT_ID,
-                "owner_user_id": TASK_ID,
-            },
-            expected={201},
+    ) -> Mapping[str, Any]:
+        return approve_registry_entry(
+            lambda path, payload, headers, expected: self.http.request(
+                "governance", "POST", path, body=payload, headers=headers, expected=set(expected)
+            ),
+            decision_id=f"approval-l12-{label}-{self.suffix}",
+            entry=entry,
+            tenant_id=TENANT_ID,
+            rationale=f"paper-only deployed proof for {TASK_ID}",
+            risk_level="medium",
+            proposal={"capital_pool_id": capital["pool_id"], "persona_id": capital["persona_id"]},
         )
-        self.http.request(
-            "governance",
-            "POST",
-            f"/api/governance/approvals/{decision_id}/review",
-            body={
-                "actor_id": f"{TASK_ID.lower()}-reviewer",
-                "actor_role": "governance_reviewer",
-            },
-        )
-        decided = self.http.request(
-            "governance",
-            "POST",
-            f"/api/governance/approvals/{decision_id}/decide",
-            body={
-                "actor_id": f"{TASK_ID.lower()}-risk-owner",
-                "actor_role": "risk_owner",
-                "outcome": "approved",
-                "rationale": f"paper-only deployed proof for {TASK_ID}",
-            },
-        )
-        if decided.get("decision") != "approved":
-            raise DeployedProofError("Governance did not return an approved decision")
-        return decided
 
     def _setup_source_snapshot(self, market_symbol: str) -> dict[str, Any]:
         """Ensure canonical latest stored normalized market snapshot exists in source-ingest."""
@@ -836,23 +813,21 @@ class RuntimeChain:
                 "parameter_updates": {"momentum_threshold": parameter},
                 "source_run_ids": [TASK_ID, f"{TASK_ID}-{label}"],
             },
+            headers=bearer(human_token("OPERATOR")),
         )
         child = mutated["entry"]["metadata"]["strategy_artifact"]
-        approval = self._approve_artifact(
-            artifact_id=artifact_id,
-            version=version,
-            capital=capital,
-            label=label,
-        )
+        approval = self._approve_artifact(entry=mutated["entry"], capital=capital, label=label)
         approved = self.http.request(
             "registry",
             "POST",
             f"/api/registry/strategy-artifacts/{artifact_id}/advance",
-            body={
-                "approval_decision_id": approval["decision_id"],
-                "approver": f"{TASK_ID.lower()}-risk-owner",
-                "target_state": "approved",
-            },
+            body=registry_advance_body(
+                mutated["entry"],
+                "approved",
+                command_key=f"{TASK_ID}:{artifact_id}:approved",
+                approval_decision_id=approval["decision_id"],
+            ),
+            headers=bearer(human_token("OPERATOR")),
         )
         registry_entry = approved["entry"]
         artifact_payload = _canonical_json(child)
@@ -897,15 +872,15 @@ class RuntimeChain:
             runtime_metadata["artifact_checksum"] = checksum
 
         plan_id = f"plan-l12-{label}-{self.suffix}"
+        # Deployment reads the Registry entry and the decision from their owners.
         plan_body = {
-            "approval_decision": approval,
             "approval_decision_id": approval["decision_id"],
             "capital_pool_id": capital["pool_id"],
             "created_by": TASK_ID,
             "current_stage": "none",
             "metadata": runtime_metadata,
             "plan_id": plan_id,
-            "registry_entry": registry_entry,
+            "registry_id": artifact_id,
             "sponsor_persona_id": capital["persona_id"],
             "status": "approved",
             "target_stage": "paper",
@@ -941,7 +916,6 @@ class RuntimeChain:
                 "actor_id": TASK_ID,
                 "correlation_id": f"correlation-{plan_id}",
                 "idempotency_key": f"{TASK_ID}:{plan_id}",
-                "registry_entry": registry_entry,
                 "source_task_id": TASK_ID,
                 "trace_id": str(uuid.uuid4()),
                 "workflow_id": "pantheon.l12.current-runtime-e2e",

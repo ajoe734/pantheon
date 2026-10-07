@@ -17,6 +17,7 @@ CASES = {
     "agora-interaction-worker": ("PANTHEON_TENANT_ID", "tenant-dev"),
     "training-session-preview-worker": ("TRAINING_SESSION_TENANT_ID", "tenant-dev"),
     "reconciliation-drift-incident-listener": ("PANTHEON_TENANT_ID", "tenant-dev"),
+    "reconciliation-drift-svc": ("PANTHEON_TENANT_ID", "tenant-dev"),
     "strategy-distillation-worker": ("PANTHEON_TENANT_ID", "tenant-dev"),
 }
 
