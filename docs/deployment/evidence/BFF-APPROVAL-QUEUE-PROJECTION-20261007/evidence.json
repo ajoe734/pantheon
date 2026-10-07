@@ -1,0 +1,81 @@
+{
+  "task_id": "BFF-APPROVAL-QUEUE-PROJECTION-20261007",
+  "title": "Fix regression in governance approval queue projection and status handling",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 50,
+  "net_prod_lines": 31,
+  "acceptance_criteria": {
+    "ac_1_exclude_terminal_decisions_from_queue": {
+      "status": "satisfied",
+      "detail": "approval_owner.list_decisions applies pending_only=True filtering to prevent decided, approved, or rejected decisions from leaking into /api/v1/operator/governance/approval-queue; decision_type filter matches target_type."
+    },
+    "ac_2_project_queue_item_shape": {
+      "status": "satisfied",
+      "detail": "approval_owner.project maps queue items in one place to include decision_type, submitted_by, allowedActions, and decision_context matching the PKT-006 contract while preserving decision fields."
+    },
+    "ac_3_dependency_unavailable_on_invalid_owner_response": {
+      "status": "satisfied",
+      "detail": "router._forward catches ValueError, AttributeError, and TypeError alongside network errors, converting malformed or non-list owner responses into HTTP 503 DEPENDENCY_UNAVAILABLE instead of 500."
+    },
+    "ac_4_no_regressions_and_passing_tests": {
+      "status": "satisfied",
+      "detail": "Every test in test_pkt006_approval_queue_contract.py (2 passed), test_bff_approvals_surface_contract.py (11 passed), and test_governance_router.py (7 passed) passes cleanly without call_owner leaks."
+    },
+    "ac_5_test_expectation_classifications": {
+      "status": "satisfied",
+      "detail": "Each changed test expectation is classified as retired, stale_sample, intended_change (with deciding commit), or real_regression_fix backed by production code."
+    },
+    "ac_6_line_budget_and_formatting": {
+      "status": "satisfied",
+      "detail": "Production code diff is +31 net lines against origin/dev, well below the 50 net line budget, with no compressed code used."
+    }
+  },
+  "test_expectations": {
+    "test_governance_router:test_governance_queues_audit_and_mutation_review": {
+      "classification": "real_regression_fix",
+      "description": "Approval queue total updated from 2 to 1 and items[0].decision_id asserts approval-1. Decided approval-2 with state approved is terminal and excluded from queue per AC1; backed by production fix in approval_owner.py/router.py pending_only=True."
+    },
+    "test_governance_router:test_consultation_session_and_policy_read_routes": {
+      "classification": "intended_change",
+      "deciding_commit": "45b6d66ab79c8e6f1319984bc412521dcdb3313f (BFF-GOVERNANCE-EVIDENCE-REDACTION-SWEEP-001)",
+      "description": "Expected redacted_evidence_count updated from 0 to 1 due to canonical fail-closed default evidence redaction policy introduced in 45b6d66ab for /api/v1/consultations/{session_id}/evidence. No production change in this PR backs this expectation."
+    },
+    "test_governance_router:test_review_and_governance_ledger_compatibility": {
+      "classification": "retired",
+      "deciding_commit": "499a8adc0e1e396c8df90869ae5630972a33ef23 (BFF-PROMOTION-REVIEW-RETIRE-20261006)",
+      "description": "POST /bff/reviews expectation updated from 202 accepted to 410 ACTION_RETIRED. Route was retired to HTTP 410 in 499a8adc0 (and dab9aa6c2). No production change in this PR backs this expectation."
+    },
+    "test_bff_approvals_surface_contract:sample_binding_approval_pending_state": {
+      "classification": "stale_sample",
+      "description": "Sample _BINDING_APPROVAL_PENDING decision_state updated from pending to proposed. In canonical governance owner model, pending is a meta-category (_PENDING = {'proposed', 'under_review'}) rather than a concrete owner state."
+    },
+    "test_bff_approvals_surface_contract:sample_killswitch_approval_reviewed_state": {
+      "classification": "stale_sample",
+      "description": "Sample _KILLSWITCH_APPROVAL_REVIEWED decision_state updated from reviewed to under_review. Aligns with canonical governance owner in-review state representation."
+    },
+    "test_bff_approvals_surface_contract:state_filter_expectations": {
+      "classification": "intended_change",
+      "description": "Expectations for decision_state and state alias query params updated to match canonical state projection (proposed returns 2 items, under_review returns 2 items, pending returns all 4 pending items). Backed by production AC1/AC2 filtering."
+    },
+    "test_bff_approvals_surface_contract:decision_state_overrides_state_sorted_ids": {
+      "classification": "intended_change",
+      "description": "assert sorted(ids) == ['apv-consdata-001', 'apv-filter-003'] ensures deterministic order-independent comparison for multi-item result when decision_state=proposed overrides state=under_review."
+    }
+  },
+  "validation": [
+    {
+      "command": "python3 -m pytest services/control-plane/bff/test_pkt006_approval_queue_contract.py",
+      "result": "2 passed"
+    },
+    {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_bff_approvals_surface_contract.py",
+      "result": "11 passed"
+    },
+    {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_governance_router.py",
+      "result": "7 passed"
+    }
+  ]
+}
