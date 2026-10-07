@@ -684,6 +684,25 @@ class ControlLoopsService:
             surface["status"] = "degraded" if available else "unavailable"
         return surface
 
+    def _postgres_projection_surface(
+        self, controller: Optional[Mapping[str, Any]]
+    ) -> Dict[str, Any]:
+        ctrl = dict(controller or {})
+        formal = (
+            ctrl.get("accepted_live") is True
+            and ctrl.get("status") == "ready"
+            and ctrl.get("mode") == "live"
+        )
+        return {
+            "status": "ok" if formal else "degraded",
+            "source": "postgres_lifecycle_projection",
+            "projection_schema_version": "pantheon.trade-journey-projection.v1",
+            "controller": ctrl,
+            "accepted_live": ctrl.get("accepted_live"),
+            "projection_mode": ctrl.get("mode"),
+            "truth_status": "formal" if formal else "degraded",
+        }
+
     def _projection_reader(self) -> Any:
         provider = getattr(self.read_store, "trade_journey_projection_reader", None)
         return provider() if callable(provider) else None
@@ -730,20 +749,7 @@ class ControlLoopsService:
                 return self._list_envelope(
                     [], dataset="loop_runs", surface_key="loop_runs", source="missing"
                 )
-            formal = (
-                controller.get("accepted_live") is True
-                and controller.get("status") == "ready"
-                and controller.get("mode") == "live"
-            )
-            surface = {
-                "status": "ok" if formal else "degraded",
-                "source": "postgres_lifecycle_projection",
-                "projection_schema_version": "pantheon.trade-journey-projection.v1",
-                "controller": controller,
-                "accepted_live": controller.get("accepted_live"),
-                "projection_mode": controller.get("mode"),
-                "truth_status": "formal" if formal else "degraded",
-            }
+            surface = self._postgres_projection_surface(controller)
             response = self._list_envelope(
                 records,
                 dataset="loop_runs",
@@ -806,18 +812,7 @@ class ControlLoopsService:
                     source="missing",
                     available=False,
                 )
-            formal = (
-                controller.get("accepted_live") is True
-                and controller.get("status") == "ready"
-                and controller.get("mode") == "live"
-            )
-            surface = {
-                "status": "ok" if formal else "degraded",
-                "source": "postgres_lifecycle_projection",
-                "controller": controller,
-                "accepted_live": controller.get("accepted_live"),
-                "truth_status": "formal" if formal else "degraded",
-            }
+            surface = self._postgres_projection_surface(controller)
             return self._detail(
                 record if isinstance(record, Mapping) else None,
                 entity_id=loop_run_id,
