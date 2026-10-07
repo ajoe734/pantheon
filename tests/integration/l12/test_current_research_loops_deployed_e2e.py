@@ -130,7 +130,18 @@ class DeployedResearchHarness:
         self.source_controller_token = os.getenv(
             "PANTHEON_L12_SOURCE_INGEST_CONTROLLER_TOKEN", ""
         ).strip()
+        # Source-record reads require a runtime reader token since 2026-10-04.
+        self.source_reader_token = os.getenv("PANTHEON_L12_SOURCE_READER_TOKEN", "").strip()
+        self.source_reader_tenant = os.getenv("PANTHEON_L12_SOURCE_READER_TENANT_ID", self.tenant_id).strip()
         self._write_report("running")
+
+    def _source_reader_headers(self) -> dict[str, str]:
+        if not self.source_reader_token:
+            return {}
+        return {
+            "Authorization": f"Bearer {self.source_reader_token}",
+            "X-Tenant-Id": self.source_reader_tenant,
+        }
 
     def _source_ingest_headers(self) -> dict[str, str]:
         if not self.source_controller_token:
@@ -415,6 +426,7 @@ class DeployedResearchHarness:
             self._http_json(
                 self.source_url,
                 f"/api/source-ingest/source-records/{urllib.parse.quote(source_id, safe='')}",
+                headers=self._source_reader_headers(),
                 expected=(404,),
             )
 
@@ -506,6 +518,7 @@ class DeployedResearchHarness:
                     lambda: self._http_json(
                         self.source_url,
                         f"/api/source-ingest/source-records/{urllib.parse.quote(source_id, safe='')}",
+                        headers=self._source_reader_headers(),
                         expected=(200, 404),
                     ),
                     lambda value: (

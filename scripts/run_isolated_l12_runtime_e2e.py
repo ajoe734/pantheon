@@ -218,9 +218,10 @@ def _mint_projector_service_jwt(
     tenant_id: str,
     issuer: str | None = None,
     audience: str | None = None,
+    subject: str = "agora-market-projector",
 ) -> str:
     header = {"alg": "HS256", "typ": "JWT"}
-    claims: dict[str, Any] = {"sub": "agora-market-projector", "roles": ["source_ingest_reader"], "tenant_id": tenant_id}
+    claims: dict[str, Any] = {"sub": subject, "roles": ["source_ingest_reader"], "tenant_id": tenant_id}
     if issuer:
         claims["iss"] = issuer
     if audience:
@@ -230,6 +231,19 @@ def _mint_projector_service_jwt(
     c = b64(json.dumps(claims, separators=(",", ":"), sort_keys=True).encode("utf-8"))
     sig = hmac.new(secret.encode("utf-8"), f"{h}.{c}".encode("ascii"), hashlib.sha256).digest()
     return f"{h}.{c}.{b64(sig)}"
+
+
+def _isolated_reader_token(compose_env: Mapping[str, str], subject: str) -> tuple[str, str]:
+    """Mint a source-ingest reader token that the isolated stack accepts."""
+    tenant = compose_env.get("PANTHEON_TENANT_ID") or compose_env.get("PANTHEON_BFF_TENANT_ID") or "default"
+    token = _mint_projector_service_jwt(
+        compose_env.get("PANTHEON_RUNTIME_JWT_SECRET") or compose_env.get("PANTHEON_BFF_JWT_SECRET") or "",
+        tenant_id=tenant,
+        issuer=compose_env.get("PANTHEON_RUNTIME_JWT_ISSUER") or compose_env.get("PANTHEON_BFF_JWT_ISSUER"),
+        audience=compose_env.get("PANTHEON_RUNTIME_JWT_AUDIENCE") or compose_env.get("PANTHEON_BFF_JWT_AUDIENCE"),
+        subject=subject,
+    )
+    return token, tenant
 
 
 def _compose_command(
@@ -918,6 +932,9 @@ def main(argv: list[str] | None = None) -> int:
     test_env["PANTHEON_L12_EVIDENCE_OUTPUT"] = str(args.evidence_output.resolve())
     test_env["PANTHEON_L12_PORT_OFFSET"] = str(args.port_offset)
     test_env.update(_suite_url_env(urls))
+    reader_token, reader_tenant = _isolated_reader_token(compose_env, "l12-domain-suites")
+    test_env["PANTHEON_L12_SOURCE_READER_TOKEN"] = reader_token
+    test_env["PANTHEON_L12_SOURCE_READER_TENANT_ID"] = reader_tenant
 
     # Resolve python binary
     python_bin = sys.executable
@@ -1033,13 +1050,8 @@ def main(argv: list[str] | None = None) -> int:
                     "[*] Running one-shot Agora projector after market seeding: "
                     f"{' '.join(projector_command)}"
                 )
-                projector_secret = compose_env.get("PANTHEON_RUNTIME_JWT_SECRET") or compose_env.get("PANTHEON_BFF_JWT_SECRET") or ""
-                projector_tenant = compose_env.get("PANTHEON_TENANT_ID") or compose_env.get("PANTHEON_BFF_TENANT_ID") or "default"
-                projector_token = _mint_projector_service_jwt(
-                    projector_secret,
-                    tenant_id=projector_tenant,
-                    issuer=compose_env.get("PANTHEON_RUNTIME_JWT_ISSUER") or compose_env.get("PANTHEON_BFF_JWT_ISSUER"),
-                    audience=compose_env.get("PANTHEON_RUNTIME_JWT_AUDIENCE") or compose_env.get("PANTHEON_BFF_JWT_AUDIENCE"),
+                projector_token, projector_tenant = _isolated_reader_token(
+                    compose_env, "agora-market-projector"
                 )
                 projector_process = subprocess.run(
                     projector_command,
