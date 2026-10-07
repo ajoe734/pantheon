@@ -173,6 +173,8 @@ def test_source_ingestion_remains_reconcile_only_manual() -> None:
 
     assert scheduler_env.get("SOURCE_INGEST_CONTROLLER_MODE") == "${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_only}"
     assert scheduler_env.get("SOURCE_INGEST_CONTROLLER_MAX_TICKS") == "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}"
+    assert scheduler_env.get("SOURCE_INGEST_DESIRED_STATE_URL") == "${SOURCE_INGEST_DESIRED_STATE_URL:-http://persona:8002/api/personas}"
+    assert scheduler_env.get("SOURCE_INGEST_DESIRED_STATE_BEARER_TOKEN") == "${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}"
     assert scheduler.get("restart") == "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-unless-stopped}"
 
     for svc_name, svc in services.items():

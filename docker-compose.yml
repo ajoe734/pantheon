@@ -248,6 +248,8 @@ services:
     environment:
       SOURCE_INGEST_API_URL: http://source-ingest:8097
       SOURCE_INGEST_DESIRED_STATE_PATH: /workspace/services/source_ingestion/default_desired_state.json
+      SOURCE_INGEST_DESIRED_STATE_URL: ${SOURCE_INGEST_DESIRED_STATE_URL:-http://persona:8002/api/personas}
+      SOURCE_INGEST_DESIRED_STATE_BEARER_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}
       SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS: ${SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS:-60}
       SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS: ${SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS:-30}
       SOURCE_INGEST_CONTROLLER_MODE: ${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_only}
@@ -275,6 +277,9 @@ services:
         required: false
       source-ingest-controller-migrate:
         condition: service_completed_successfully
+      persona:
+        condition: service_healthy
+        required: false
     healthcheck:
       test:
         [
