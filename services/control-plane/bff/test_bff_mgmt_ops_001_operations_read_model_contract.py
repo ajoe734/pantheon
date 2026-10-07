@@ -145,8 +145,14 @@ class OperationsReadModelTestReadPorts(ReadSurfacePorts):
 def _mounted_app(store: OperationsReadModelTestReadPorts) -> FastAPI:
     app = FastAPI()
     register_error_handlers(app)
-    app.include_router(create_management_router(read_surface=store))
+    app.include_router(
+        create_management_router(
+            read_surface=store,
+            tenant_payload_fn=lambda _ident, **_kw: {"tenant_id": "tenant-default"},
+        )
+    )
     return app
+
 
 
 @contextmanager

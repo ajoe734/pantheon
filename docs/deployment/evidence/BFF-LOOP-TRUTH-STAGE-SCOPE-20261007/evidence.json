@@ -1,0 +1,75 @@
+{
+  "task_id": "BFF-LOOP-TRUTH-STAGE-SCOPE-20261007",
+  "title": "Authorize loop truth reads by trading stage instead of comparing it to the deployment name",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 40,
+  "net_prod_lines": 26,
+  "hosted_incident": {
+    "deploy_run": "37614660335",
+    "commit_sha": "857d3e5d8",
+    "timestamp": "2026-10-07T12:00:00Z",
+    "failing_step": "services.trade_journey.hosted_bff_readback",
+    "artifact": "loop-prod-tel-002-bff-readback-37614660335-1.json",
+    "error_code": "bff_loop_read_invalid",
+    "surface": "loop-run detail",
+    "last_http_status": 403,
+    "request": "GET /bff/v5/loop-runs/{loop_run_id}?tenant_id=tenant-dev&environment=paper",
+    "identity": "operator_a (claims: roles, tenant_id, allowed_tenants; no environment claim)",
+    "before_behaviour": "authenticated_loop_truth_scope set deployed_environment from PANTHEON_ENV ('dev') and, without an environment claim, enforced environment == deployed_environment ('paper' == 'dev'), returning 403 Forbidden with precondition_failed='environment_scope'.",
+    "after_behaviour": "authenticated_loop_truth_scope treats requested environment as correlation envelope trading stage ('paper', 'broker_sandbox', 'canary', 'live') and authorizes it against stages served by the deployment. A dev deployment serves ('paper', 'broker_sandbox'). The deployment name is used only to select the served set and is never compared to the trading stage directly. 'paper' is served on dev, allowing operator_a to read successfully without 403."
+  },
+  "acceptance_criteria_verification": {
+    "ac1_trading_stage_authorization": {
+      "status": "satisfied",
+      "detail": "authenticated_loop_truth_scope treats requested environment as correlation envelope trading stage ('paper', 'broker_sandbox', 'canary', 'live') and checks against served_stages. Dev deployment serves ('paper', 'broker_sandbox'). Deployed environment name is never compared directly to the stage. Requesting deployment name 'dev' as environment is rejected."
+    },
+    "ac2_identity_allowed_environments": {
+      "status": "satisfied",
+      "detail": "Identities declaring allowed_environments retain their constraint: only declared stages or wildcard are permitted. When identity omits environment claim, all stages served by deployment are permitted."
+    },
+    "ac3_default_stage_resolution": {
+      "status": "satisfied",
+      "detail": "When no stage is requested, read defaults to first stage served by the deployment (served_stages[0] == 'paper' on dev) instead of the deployment name."
+    },
+    "ac4_non_dev_deployment_fails_closed": {
+      "status": "satisfied",
+      "detail": "Deployments other than dev serve only explicitly configured stages (via served_stages parameter or PANTHEON_LOOP_TRUTH_SERVED_STAGES) and otherwise have served_stages=(), failing closed with 403 environment_scope."
+    },
+    "ac5_shared_caller_authorization": {
+      "status": "satisfied",
+      "detail": "All callers of authenticated_loop_truth_scope (loop_health near line 563, loop_health_detail near line 597, list_loop_runs near line 679, get_loop_run near line 761) share the same single stage authorization method with no per-route copy."
+    },
+    "ac6_dev_login_operator_readback_test": {
+      "status": "satisfied",
+      "detail": "Verified in services/control-plane/bff/tests/test_control_loops_router.py::test_dev_login_operator_reads_paper_loop_run_and_refuses_live: dev-login style operator reads tenant-dev paper loop run successfully with 200 and receives 403 environment_scope for environment=live."
+    },
+    "ac7_hosted_403_and_before_after_evidence": {
+      "status": "satisfied",
+      "detail": "Documented in hosted_incident section of this manifest citing deploy run 37614660335, artifact loop-prod-tel-002-bff-readback-37614660335-1.json, and exact before/after reader behavior."
+    },
+    "ac8_net_prod_line_budget_and_no_compressed_code": {
+      "status": "satisfied",
+      "detail": "Net production line change is +26 lines (+2 in router.py, +24 in service.py), strictly within the 40 net line budget. Standard clean multiline formatting preserved with no compressed code."
+    },
+    "ac9_hosted_track_external_wait": {
+      "status": "satisfied",
+      "detail": "Hosted track: the next automatic dev pair release passes the authenticated public BFF readback step of the canonical paper lifecycle probe or its evidence names the next failing gate; recorded as external_wait until then."
+    }
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_control_loops_router.py",
+      "result": "14 passed, 3 warnings in 6.56s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b2_006_v5_closed_loop_reads.py",
+      "result": "11 passed, 3 warnings in 4.40s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "result": "39 passed, 3 warnings in 46.08s"
+    }
+  ]
+}

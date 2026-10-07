@@ -685,3 +685,54 @@ def test_canonical_dataset_validation_and_fail_closed_and_evidence() -> None:
         payload = record["payload"]
         assert payload.get("decision_by", None) in (None, "[REDACTED]")
         assert payload.get("requested_by", None) in (None, "[REDACTED]")
+
+
+def test_source_authority_read_sends_reader_bearer_and_tenant_or_fails_closed(tmp_path: Path) -> None:
+    module = _load_service_module()
+    captured: dict = {}
+
+    def fake_materialize(**kwargs):
+        kwargs["http_get"]("http://source-ingest:8097/api/source-ingest/evidence/bundles")
+        raise module.SourceDatasetAuthorityError("stop after transport")
+
+    def fake_get(url, *, timeout_seconds, headers=None):
+        captured["headers"] = headers
+        return {}
+
+    token = tmp_path / "token"
+    token.write_text("reader.jwt.token\n", encoding="utf-8")
+    token.chmod(0o600)
+    env = {
+        "TRAINING_SESSION_CANONICAL_DATASET_PATH": "",
+        "SOURCE_INGEST_API_URL": "http://source-ingest:8097",
+        "TRAINING_SESSION_SOURCE_CONNECTOR_ID": "c",
+        "TRAINING_SESSION_SOURCE_DATASET_ID": "d",
+        "TRAINING_SESSION_SOURCE_VOLUME_ROOT": str(tmp_path),
+        "TRAINING_SESSION_DATASET_AUTHORITY_OUTPUT_ROOT": str(tmp_path / "out"),
+        "TRAINING_SESSION_SOURCE_READ_TOKEN_FILE": str(token),
+        "TRAINING_SESSION_SOURCE_READ_TENANT_ID": "tenant-dev",
+    }
+    with mock.patch.dict("os.environ", env), mock.patch.object(
+        module, "materialize_source_dataset_version", fake_materialize
+    ), mock.patch.object(module, "urllib_json_get", fake_get):
+        try:
+            module._load_authority_snapshot(trusted_now=FIXED_TRUSTED_NOW, strategy_id="s")
+        except module.AuthorityValidationError:
+            pass
+    assert captured["headers"] == {
+        "Authorization": "Bearer reader.jwt.token",
+        "X-Tenant-Id": "tenant-dev",
+    }
+
+    token.unlink()
+    captured.clear()
+    with mock.patch.dict("os.environ", env), mock.patch.object(
+        module, "materialize_source_dataset_version", fake_materialize
+    ), mock.patch.object(module, "urllib_json_get", fake_get):
+        try:
+            module._load_authority_snapshot(trusted_now=FIXED_TRUSTED_NOW, strategy_id="s")
+            raised = None
+        except module.AuthorityValidationError as exc:
+            raised = exc
+    assert raised is not None and "token file" in str(raised)
+    assert "headers" not in captured

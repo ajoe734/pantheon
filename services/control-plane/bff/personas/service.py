@@ -139,7 +139,7 @@ except ImportError:
     foundation_id = lambda: str(uuid.uuid4())
     sha256_checksum = lambda data: hashlib.sha256(data.encode() if isinstance(data, str) else data).hexdigest()
 
-from ..auth.policy import bff_me_tenant_payload, bool_from_env
+from ..auth.policy import _PACK_D_D21_ERROR_BEHAVIOR, bff_me_tenant_payload, bool_from_env
 from ..shared.cross_domain_utils import (
     _management_as_float,
     _management_first_float,
@@ -8534,37 +8534,6 @@ _LEGACY_ERROR_CODE_ALIASES = {
     "TWO_MAN_REQUIRED": ErrorCode.TWO_MAN_SIGNATURE_REQUIRED.value,
     "MFA_REQUIRED": ErrorCode.AUTH_REQUIRED.value,
     "SSE_REPLAY_UNAVAILABLE": ErrorCode.RESOURCE_CONFLICT.value,
-}
-
-
-# --- _PACK_D_D21_ERROR_BEHAVIOR ---
-_PACK_D_D21_ERROR_BEHAVIOR: Dict[str, Dict[str, bool]] = {
-    ErrorCode.RESOURCE_NOT_FOUND.value: {"retryable": False, "userActionable": True},
-    ErrorCode.AUTH_REQUIRED.value: {"retryable": False, "userActionable": True},
-    ErrorCode.AUTH_EXPIRED.value: {"retryable": False, "userActionable": True},
-    ErrorCode.FORBIDDEN.value: {"retryable": False, "userActionable": False},
-    ErrorCode.RATE_LIMITED.value: {"retryable": True, "userActionable": True},
-    ErrorCode.VALIDATION_FAILED.value: {"retryable": False, "userActionable": True},
-    ErrorCode.BUSINESS_RULE_VIOLATION.value: {"retryable": False, "userActionable": True},
-    ErrorCode.IDEMPOTENCY_CONFLICT.value: {"retryable": False, "userActionable": True},
-    ErrorCode.PRECONDITION_FAILED.value: {"retryable": False, "userActionable": True},
-    ErrorCode.CONFIRMATION_REQUIRED.value: {"retryable": False, "userActionable": True},
-    ErrorCode.TWO_MAN_SIGNATURE_REQUIRED.value: {"retryable": False, "userActionable": True},
-    ErrorCode.HUMAN_GATE_PENDING.value: {"retryable": False, "userActionable": True},
-    ErrorCode.HUMAN_GATE_REJECTED.value: {"retryable": False, "userActionable": True},
-    ErrorCode.HUMAN_GATE_EXPIRED.value: {"retryable": False, "userActionable": True},
-    ErrorCode.RESOURCE_CONFLICT.value: {"retryable": False, "userActionable": True},
-    ErrorCode.OPERATION_NOT_ALLOWED.value: {"retryable": False, "userActionable": True},
-    ErrorCode.DEPENDENCY_UNAVAILABLE.value: {"retryable": True, "userActionable": True},
-    ErrorCode.UPSTREAM_TIMEOUT.value: {"retryable": True, "userActionable": True},
-    ErrorCode.UPSTREAM_ERROR.value: {"retryable": True, "userActionable": True},
-    ErrorCode.INTERNAL_ERROR.value: {"retryable": False, "userActionable": False},
-    ErrorCode.NOT_IMPLEMENTED.value: {"retryable": False, "userActionable": False},
-    ErrorCode.MAINTENANCE_MODE.value: {"retryable": True, "userActionable": True},
-    ErrorCode.KILL_SWITCH_ACTIVE.value: {"retryable": False, "userActionable": False},
-    ErrorCode.SAFE_MODE_ACTIVE.value: {"retryable": False, "userActionable": False},
-    ErrorCode.DEGRADED_READ_ONLY.value: {"retryable": False, "userActionable": False},
-    ErrorCode.REQUEST_TOO_LARGE.value: {"retryable": False, "userActionable": True},
 }
 
 

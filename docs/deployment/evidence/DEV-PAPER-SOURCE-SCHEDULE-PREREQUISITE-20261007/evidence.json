@@ -1,0 +1,88 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "DEV-PAPER-SOURCE-SCHEDULE-PREREQUISITE-20261007",
+  "title": "Repair dev paper Source schedule prerequisite before final release health without inventing authority",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "execution",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "0249f09f2",
+  "objective": "Repair lawful dev paper Source schedule prerequisite before final release health without inventing authority or patching binding/approval.",
+  "scope": {
+    "owned": [
+      "services/source_ingestion/runtime.py: Added _is_operator_stopped(connector) helper distinguishing explicit operator stops from controller-managed retirement (retired_by_authoritative_snapshot).",
+      "services/source_ingestion/routers/ingest_operations.py: Enforced PUT /api/source-ingest/connectors/{connector_id}/schedule fails closed with HTTP 400 when an explicit operator stop is active on the connector.",
+      "services/source_ingestion/pipeline.py: Updated run_scheduled_pipeline to fail closed and report explicit operator stop when exclusively selected connector is stopped.",
+      "services/source_ingestion/tests/test_scheduler.py: Added tests verifying disabled schedule fails closed, temporary admission and restoration on success, and operator stop preservation.",
+      "services/source_ingestion/tests/test_latest_market_snapshot_state.py: Added test_stored_marketless_spy_snapshot_becomes_market_bearing_and_admits_producer proving stored marketless SPY snapshot transitions to market: 'US' via registered Source adapter authority and admits PaperSignalProducer.",
+      "scripts/deploy_nonprod_vm.sh: Updated stage_dev_paper_prerequisite_readiness with operator stop preservation, prior schedule query, bounded temporary schedule admission (PUT /schedule with controller token), run-scheduled execution, and guaranteed restoration trap on success/failure/exit.",
+      "scripts/test_deploy_nonprod_vm.py: Added unit tests verifying schedule admission and restoration on success, restoration on refresh failure, and operator stop preservation.",
+      "scripts/bootstrap_dev_paper_baseline.py: Enforced market context in ensure_dev_market_snapshot_ready with non-progressing clock iteration guard and AssertionError propagation, accepted and forwarded force_connector_ids and exclusive_connector_ids in _nudge_run_scheduled, updated self-test valid_snapshot, and added self-tests for missing market and nudge forwarding.",
+      "docs/deployment/evidence/DEV-PAPER-SOURCE-SCHEDULE-PREREQUISITE-20261007/evidence.json: This evidence manifest.",
+      "scripts/test_bootstrap_dev_paper_baseline.py: Updated test snapshot fixtures to include market context and aligned test expectations with market-bearing snapshot requirements."
+    ],
+    "not_changing": [
+      "Historical bindings, receipts, and NULL-tenant historical evidence preserved without relabeling.",
+      "No production, live trading, or capital-affecting changes; paper-only fences and zero real capital guarantees remain intact.",
+      "No bypass of release lease gates or provider health checks."
+    ],
+    "composes_with": [
+      "Persona provisioning and paper fleet baseline bootstrap in scripts/bootstrap_dev_paper_baseline.py.",
+      "Release deployment workflow in scripts/deploy_nonprod_vm.sh stage_dev_paper_prerequisite_readiness.",
+      "Source Ingestion scheduler and market snapshot store."
+    ],
+    "deliberately_not_attempted": []
+  },
+  "implementation": {
+    "root_cause": "Release 37604190265 failed in Phase 4 of deploy_nonprod_vm.sh at stage_dev_paper_prerequisite_readiness. PR #6282 passed force_connector_ids and exclusive_connector_ids for dev-paper-us-equity-simulation to run-scheduled, but connector_schedule.jsonl on the host had dev-paper-us-equity-simulation set to enabled: false. pipeline.py failed closed reporting 'exclusively selected connector schedule is disabled', causing deploy_nonprod_vm.sh to classify the outcome as 'controller mode refuses refresh' and abort before baseline bootstrap could run.",
+    "solution": "Implemented lawful bounded temporary schedule admission: (1) Check GET /connectors/{id} for explicit operator stop and fail closed if stopped; (2) Query GET /connectors/{id}/schedule to record prior enabled and interval; (3) If disabled, temporarily enable via authenticated PUT /schedule with controller bearer token; (4) Set an exit/INT/TERM trap to ensure restoration of prior schedule state on both success and failure; (5) Trigger run-scheduled and verify snapshot becomes market-bearing ('US') before proceeding; (6) Restore prior schedule state on all exit paths."
+  },
+  "verification": {
+    "passed": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/source_ingestion/tests/test_scheduler.py",
+        "result": "3 passed, 0 failed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/source_ingestion/tests/test_latest_market_snapshot_state.py",
+        "result": "16 passed, 0 failed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v -k 'stage_dev_paper' scripts/test_deploy_nonprod_vm.py",
+        "result": "12 passed, 0 failed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v scripts/test_dev_paper_release_stimulus.py",
+        "result": "12 passed, 0 failed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/bootstrap_dev_paper_baseline.py --self-test",
+        "result": "11 passed, 0 failed (suite: bootstrap_dev_paper_baseline_self_test)"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/source_ingestion/tests/test_scheduler.py services/source_ingestion/tests/test_latest_market_snapshot_state.py scripts/test_deploy_nonprod_vm.py scripts/test_dev_paper_release_stimulus.py",
+        "result": "90 passed, 2 skipped, 0 failed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v scripts/test_bootstrap_dev_paper_baseline.py",
+        "result": "51 passed, 0 failed"
+      }
+    ],
+    "runner": {
+      "python": "3.12.3",
+      "pytest": "9.1.1"
+    },
+    "checksums": {
+      "scripts/bootstrap_dev_paper_baseline.py": "6903fcd235c5d460b3c5ea0044a4f9fd0e366eb1dcc81d716ee292209234217a",
+      "scripts/deploy_nonprod_vm.sh": "78186d299269244327e27f4d42257662cf73ba6db25ce8b748d8f50daf492d22",
+      "scripts/test_deploy_nonprod_vm.py": "aed269f6ce6fe6d5d401861eb8d3d66f0b40259dd65853850161f6328d46093a",
+      "services/source_ingestion/pipeline.py": "9b13f6efa33627a78e46cc177bcfc656eea9c1ff3790c9e0aed53c473ba1c482",
+      "services/source_ingestion/routers/ingest_operations.py": "0dda9772a48235f7ff4d79b6da15d8dcf8513c3f9a986300acad720e3ad04509",
+      "services/source_ingestion/runtime.py": "6dee819de17b2b959e79fc84ddc243df7268ada4c86eb27260d9c3b55f7610b4",
+      "services/source_ingestion/tests/test_latest_market_snapshot_state.py": "bb575f01b3a25ae6c90304bd5cda822b5aadea709c0a793e2ce464c36c60f87d",
+      "services/source_ingestion/tests/test_scheduler.py": "dc39a1fda1174a052fc852872169cd51c2f019fca9c2b0182f5bf7021041539e",
+      "scripts/test_bootstrap_dev_paper_baseline.py": "105fda9b2a769ea4363fb5f766fbf41bb1ecd477963663c15dbd1d6e3f011448"
+    }
+  }
+}

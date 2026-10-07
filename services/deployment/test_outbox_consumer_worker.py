@@ -2196,6 +2196,243 @@ class TestExecuteCompensation:
         client.rollback.assert_not_called()
         client.list_by_pool.assert_called_once_with("pool-001")
 
+    def test_incident_payload_omits_unverified_lineage_ref_and_passes_canonical_validation(self, worker):
+        saga = _compensating_saga("enter_safe_mode_and_raise_incident")
+        binding = _runtime_binding(status="paused")
+        event = self._event("enter_safe_mode_and_raise_incident")
+        payload = worker._incident_payload(
+            saga=saga,
+            binding=binding,
+            event_id=event["event_id"],
+            reason="provisioning schedule registration timed out",
+        )
+        assert "lineage_ref" not in payload
+
+        from services.incidents.models import CreateIncidentRequest
+        from services.incident.incident import IncidentCase, validate_incident_case
+        from services.incident.reference_validation import CanonicalReferenceValidator
+
+        req = CreateIncidentRequest(**payload)
+        inc = IncidentCase(
+            incident_id=req.incident_id,
+            title=req.title,
+            status=req.status,
+            severity=req.severity,
+            created_at="2026-10-07T01:15:09Z",
+            binding_id=req.binding_id,
+            deployment_stage=req.deployment_stage,
+            deployment_plan_id=req.deployment_plan_id,
+            capital_pool_id=req.capital_pool_id,
+            persona_capital_binding_id=req.persona_capital_binding_id,
+            artifact_id=req.artifact_id,
+            artifact_version=req.artifact_version,
+            runtime_id=req.runtime_id,
+            trace_id=req.trace_id,
+            lineage_ref=req.lineage_ref,
+        )
+        assert validate_incident_case(inc) == []
+
+        mock_binding_lookup = MagicMock()
+        mock_binding_lookup.get_binding.return_value = {
+            **binding,
+            "effective_at": "2026-10-07T01:14:29Z",
+        }
+        ref_val = CanonicalReferenceValidator(binding_lookup=mock_binding_lookup)
+        ref_val.validate_incident(inc)
+
+    def test_rollback_compensation_zero_prior_candidates_contains_and_creates_incident(self, worker):
+        saga = _compensating_saga("request_rollback")
+        binding = _runtime_binding(status="active")
+        paused = _runtime_binding(status="paused")
+        client = MagicMock()
+        client.get.side_effect = [binding, paused]
+        client.get_safe_mode.side_effect = [
+            {"safe_mode_state": "normal"},
+            {"safe_mode_state": "paused"},
+        ]
+        client.list_by_pool.return_value = [binding]
+        client.execute_kill_switch.return_value = {"telemetry_ack": _kill_ack()}
+
+        plan = {
+            "plan_id": "plan-001",
+            "status": "executed",
+            "rollback": {
+                "target_artifact_id": "artifact-fallback",
+                "target_version": "v0.9.0",
+                "action_type": "replace",
+            },
+        }
+
+        created_incidents = []
+
+        def _mock_create_incident(*, base_url, payload, timeout_seconds):
+            created_incidents.append(payload)
+            return dict(payload)
+
+        with (
+            patch.object(worker, "create_incident", side_effect=_mock_create_incident),
+            patch.object(worker, "finalize_compensation") as finalize,
+        ):
+            result = worker.execute_compensation(
+                api_url="http://deployment:8095",
+                saga=saga,
+                plan=plan,
+                event=self._event("request_rollback"),
+                client=client,
+                incident_url="http://incidents:8090",
+                timeout_seconds=10.0,
+            )
+
+        assert result == ("failed", "executed")
+        assert len(created_incidents) == 1
+        assert "lineage_ref" not in created_incidents[0]
+        client.rollback.assert_not_called()
+        finalize.assert_called_once()
+        finalize_kwargs = finalize.call_args.kwargs
+        assert finalize_kwargs["terminal_status"] == "failed"
+        assert "safe mode paused binding" in finalize_kwargs["note"]
+
+    def test_rollback_execution_error_fails_closed_to_incident_containment(self, worker):
+        RuntimeManagerClientError = worker.RuntimeManagerClientError
+
+        saga = _compensating_saga("request_rollback")
+        binding = _runtime_binding(status="active")
+        paused = _runtime_binding(status="paused")
+        prior = _runtime_binding(
+            binding_id="rb-prior",
+            plan_id="plan-fallback",
+            runtime_id="rt-prior",
+            artifact_id="artifact-fallback",
+            artifact_version="v0.9.0",
+            status="retired",
+            effective_at="2026-07-13T08:00:00Z",
+            metadata={
+                "allowed_deployment_scope": "canary",
+                "strategy_id": "strategy-001",
+                "authoritative_loader_attestation": _fallback_authority_report(
+                    allowed_deployment_scope="canary"
+                ),
+            },
+        )
+        client = MagicMock()
+        client.get.side_effect = [binding, paused]
+        client.get_safe_mode.side_effect = [
+            {"safe_mode_state": "normal"},
+            {"safe_mode_state": "paused"},
+        ]
+        client.list_by_pool.return_value = [binding, prior]
+        client.rollback.side_effect = RuntimeManagerClientError(
+            "Rollback requires an approved human_gate_decision bound to this exact rollback target; none was provided.",
+            status_code=400,
+        )
+        client.execute_kill_switch.return_value = {"telemetry_ack": _kill_ack()}
+
+        plan = {
+            "plan_id": "plan-001",
+            "status": "executed",
+            "rollback": {
+                "target_artifact_id": "artifact-fallback",
+                "target_version": "v0.9.0",
+                "action_type": "replace",
+            },
+        }
+
+        created_incidents = []
+
+        def _mock_create_incident(*, base_url, payload, timeout_seconds):
+            created_incidents.append(payload)
+            return dict(payload)
+
+        with (
+            patch.object(worker, "fetch_plan", return_value=_fallback_plan()),
+            patch.object(worker, "create_incident", side_effect=_mock_create_incident),
+            patch.object(worker, "finalize_compensation") as finalize,
+        ):
+            result = worker.execute_compensation(
+                api_url="http://deployment:8095",
+                saga=saga,
+                plan=plan,
+                event=self._event("request_rollback"),
+                client=client,
+                incident_url="http://incidents:8090",
+                timeout_seconds=10.0,
+            )
+
+        assert result == ("failed", "executed")
+        assert len(created_incidents) == 1
+        assert "lineage_ref" not in created_incidents[0]
+        finalize.assert_called_once()
+        assert finalize.call_args.kwargs["terminal_status"] == "failed"
+
+    def test_rollback_propagates_human_gate_decision_when_present(self, worker):
+        saga = _compensating_saga("request_rollback")
+        old = _runtime_binding()
+        retired = _runtime_binding(status="retired")
+        prior = _runtime_binding(
+            binding_id="rb-prior",
+            plan_id="plan-fallback",
+            runtime_id="rt-prior",
+            artifact_id="artifact-fallback",
+            artifact_version="v0.9.0",
+            status="retired",
+            effective_at="2026-07-13T08:00:00Z",
+            metadata={
+                "allowed_deployment_scope": "canary",
+                "strategy_id": "strategy-001",
+                "authoritative_loader_attestation": _fallback_authority_report(
+                    allowed_deployment_scope="canary"
+                ),
+            },
+        )
+        child = _runtime_binding(
+            binding_id="rb-fallback",
+            plan_id="plan-fallback",
+            runtime_id="rt-fallback",
+            artifact_id="artifact-fallback",
+            artifact_version="v0.9.0",
+            rollback_parent="rb-001",
+            rollback_action_type="replace",
+        )
+        gate_decision = {
+            "decision_id": "hgd-001",
+            "target_type": "RuntimeRollback",
+            "target_id": "rb-001->rb-prior",
+            "status": "approved",
+        }
+        client = MagicMock()
+        client.get.side_effect = [old, retired, child]
+        client.list_by_pool.return_value = [old, prior]
+        client.rollback.return_value = {"new_binding": child}
+        client.get_active_for_pool.return_value = child
+        plan = {
+            "plan_id": "plan-001",
+            "status": "executed",
+            "rollback": {
+                "target_artifact_id": "artifact-fallback",
+                "target_version": "v0.9.0",
+                "action_type": "replace",
+                "human_gate_decision": gate_decision,
+            },
+        }
+        with (
+            patch.object(worker, "fetch_plan", return_value=_fallback_plan()),
+            patch.object(worker, "finalize_compensation") as finalize,
+        ):
+            result = worker.execute_compensation(
+                api_url="http://deployment:8095",
+                saga=saga,
+                plan=plan,
+                event=self._event("request_rollback"),
+                client=client,
+                incident_url="http://incidents:8090",
+                timeout_seconds=10.0,
+            )
+
+        assert result == ("failed", "executed")
+        rollback_payload = client.rollback.call_args.args[0]
+        assert rollback_payload["human_gate_decision"] == gate_decision
+        finalize.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # health file

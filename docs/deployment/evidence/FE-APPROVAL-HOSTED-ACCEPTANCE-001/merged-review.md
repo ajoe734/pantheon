@@ -34,3 +34,13 @@ The hosted run exercised the Governance approval owner through the exact release
 The approval pages were not driven in a browser. Frontend rendering of pending versus final, the 409 refresh and failed-readback handling remain unverified by this hosted run.
 
 An unknown approval id returns 409 stale rather than the 404 documented in `contract.md`. This is recorded only.
+
+## Provenance correction (appended 2026-10-07, REVIEW-PROVENANCE-CORRECTION-20261007)
+
+This section corrects the review description above. Nothing above is rewritten.
+
+- Every earlier review round was a command-line model run started by the coordinator. None was a dispatched fleet review. The wording "Codex2 reviewed the hosted evidence independently" and the `Reviewer: Codex2` line above overstate what happened.
+- The task journal holds no review event for this task.
+- The task was archived on 2026-10-04T00:06:37Z by `reconcile_merged_done`, on the strength of this brief (pantheon PR #6117 and #6119; execute-plans PR #810 holds the evidence copy).
+- Model home: the coordinator ran codex-cli 0.153.0 in read-only mode with no `CODEX_HOME` set, so all three rounds likely used `~/.codex`, not `~/.codex2`. This is likely, not verified. The label "Codex2" does not show which home ran.
+- The real review of this evidence is the fleet review of REVIEW-PROVENANCE-CORRECTION-20261007. The claim-by-claim check is in `provenance-review.md` beside this file.

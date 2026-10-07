@@ -32,6 +32,7 @@ from services.persona.write_owner import (
     PersistentPersonaOwner,
     create_app as create_persona_owner_app,
 )
+from services.runtime_auth_inbound import encode_jwt_hs256
 
 
 _SERVICE_TOKEN = "test-persona-owner-service-token"
@@ -139,11 +140,32 @@ def _running_persona_service(
             raise RuntimeError("Persona owner test service did not stop")
 
 
+_JWT_SECRET = "pantheon-local-bff-jwt-secret"
+
+
 def _configure_service_env(monkeypatch: pytest.MonkeyPatch, base_url: str) -> None:
     monkeypatch.setenv("PERSONA_URL", base_url)
     monkeypatch.setenv("PANTHEON_PERSONA_SERVICE_TOKEN", _SERVICE_TOKEN)
     monkeypatch.setenv("PANTHEON_PERSONA_SERVICE_ACTOR_ID", _SERVICE_ACTOR)
     monkeypatch.setenv("PERSONA_AUTH_MODE", "strict")
+    monkeypatch.setenv("PERSONA_JWT_SECRET", _JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", _JWT_SECRET)
+
+
+def _jwt_bearer(
+    *,
+    role: str = "operator",
+    tenant_id: str = "tenant-alpha",
+    actor_id: str = "production-write-owner",
+) -> str:
+    payload = {
+        "sub": actor_id,
+        "roles": [role],
+        "tenant_id": tenant_id,
+        "allowed_tenants": [tenant_id],
+        "exp": 4102444800,
+    }
+    return f"Bearer {encode_jwt_hs256(payload, secret=_JWT_SECRET)}"
 
 
 def _sync_persona_write_owner(monkeypatch: pytest.MonkeyPatch, source_owner: PersonaRegistryHttpWritePort) -> None:
@@ -202,7 +224,7 @@ def _ensure_headers(
     request_id: str,
 ) -> dict[str, str]:
     return {
-        "Authorization": "Bearer production-write-owner:operator",
+        "Authorization": _jwt_bearer(tenant_id=tenant_id),
         "X-Tenant-Id": tenant_id,
         "Idempotency-Key": idempotency_key,
         "X-Request-Id": request_id,
@@ -340,7 +362,13 @@ def test_http_owner_restart_preserves_fleet_to_detail_read_symmetry(
         fresh_client = TestClient(bff_main.app, raise_server_exceptions=False)
 
         for role in ("operator", "viewer"):
-            headers = {"Authorization": f"Bearer production-fleet-readback:{role}"}
+            headers = {
+                "Authorization": _jwt_bearer(
+                    role=role,
+                    tenant_id="tenant-alpha",
+                    actor_id=f"production-fleet-readback-{role}",
+                )
+            }
             fleet = fresh_client.get(
                 "/bff/management/persona-fleet?page_size=100",
                 headers=headers,
@@ -366,7 +394,11 @@ def test_http_owner_restart_preserves_fleet_to_detail_read_symmetry(
         # from Fleet and remain undiscoverable by ID.
         monkeypatch.delenv("PANTHEON_BFF_TENANT_ID")
         foreign_headers = {
-            "Authorization": "Bearer production-foreign:operator:tenant-beta"
+            "Authorization": _jwt_bearer(
+                role="operator",
+                tenant_id="tenant-beta",
+                actor_id="production-foreign",
+            )
         }
         foreign_fleet = fresh_client.get(
             "/bff/management/persona-fleet?page_size=100",
@@ -418,7 +450,7 @@ def test_servant_identity_and_session_access_are_tenant_isolated_over_http_owner
         alpha_session = client.post(
             "/bff/agora/servant/sessions",
             headers={
-                "Authorization": "Bearer production-write-owner:operator",
+                "Authorization": _jwt_bearer(tenant_id="tenant-alpha"),
                 "X-Tenant-Id": "tenant-alpha",
                 "Idempotency-Key": "production-alpha-session",
                 "X-Request-Id": "req-production-alpha-session",
@@ -431,7 +463,7 @@ def test_servant_identity_and_session_access_are_tenant_isolated_over_http_owner
         cross_tenant = client.get(
             f"/bff/agora/servant/sessions/{session_id}",
             headers={
-                "Authorization": "Bearer production-write-owner:operator",
+                "Authorization": _jwt_bearer(tenant_id="tenant-beta"),
                 "X-Tenant-Id": "tenant-beta",
             },
         )
@@ -617,7 +649,7 @@ def test_servant_production_http_owner_included_in_interaction_eligibility_e2e(
         context_res = client.post(
             "/bff/agora/interactions/context:resolve",
             headers={
-                "Authorization": "Bearer production-write-owner:operator",
+                "Authorization": _jwt_bearer(tenant_id="tenant-alpha"),
                 "X-Tenant-Id": "tenant-alpha",
                 "Idempotency-Key": "e2e-context-resolve-1",
             },
@@ -635,7 +667,7 @@ def test_servant_production_http_owner_included_in_interaction_eligibility_e2e(
         eligible_res = client.post(
             "/bff/agora/interactions/participants:eligible",
             headers={
-                "Authorization": "Bearer production-write-owner:operator",
+                "Authorization": _jwt_bearer(tenant_id="tenant-alpha"),
                 "X-Tenant-Id": "tenant-alpha",
             },
             json={
@@ -665,7 +697,7 @@ def test_servant_production_http_owner_included_in_interaction_eligibility_e2e(
         interaction_res = client.post(
             "/bff/agora/interactions",
             headers={
-                "Authorization": "Bearer production-write-owner:operator",
+                "Authorization": _jwt_bearer(tenant_id="tenant-alpha"),
                 "X-Tenant-Id": "tenant-alpha",
                 "Idempotency-Key": "e2e-submit-interaction-1",
             },
@@ -691,7 +723,7 @@ def test_servant_production_http_owner_included_in_interaction_eligibility_e2e(
         beta_context_res = client.post(
             "/bff/agora/interactions/context:resolve",
             headers={
-                "Authorization": "Bearer production-write-owner:operator",
+                "Authorization": _jwt_bearer(tenant_id="tenant-beta"),
                 "X-Tenant-Id": "tenant-beta",
                 "Idempotency-Key": "e2e-context-resolve-beta",
             },
@@ -708,7 +740,7 @@ def test_servant_production_http_owner_included_in_interaction_eligibility_e2e(
         beta_eligible_res = client.post(
             "/bff/agora/interactions/participants:eligible",
             headers={
-                "Authorization": "Bearer production-write-owner:operator",
+                "Authorization": _jwt_bearer(tenant_id="tenant-beta"),
                 "X-Tenant-Id": "tenant-beta",
             },
             json={
@@ -731,7 +763,7 @@ def test_servant_production_http_owner_included_in_interaction_eligibility_e2e(
         live_eligible_res = client.post(
             "/bff/agora/interactions/participants:eligible",
             headers={
-                "Authorization": "Bearer production-write-owner:operator",
+                "Authorization": _jwt_bearer(tenant_id="tenant-alpha"),
                 "X-Tenant-Id": "tenant-alpha",
             },
             json={

@@ -307,9 +307,22 @@ class TestEvolutionProjectionPort:
             evolution_decisions_reader=lambda: [],
         )
         status2 = port2.get_surface_status()
-        assert status2["status"] == "degraded"
+        assert status2["status"] == "ok"
         assert status2["surfaces"]["evolution_programs"]["status"] == "ok"
-        assert status2["surfaces"]["evolution_decisions"]["status"] == "degraded"
+        assert status2["surfaces"]["evolution_decisions"]["status"] == "ok"
+
+        def raising_decisions():
+            raise RuntimeError("decisions reader error")
+
+        port3 = EvolutionProjectionPort(
+            evolution_programs_reader=lambda: [{"program_id": "prog-1"}],
+            evolution_decisions_reader=raising_decisions,
+        )
+        status3 = port3.get_surface_status()
+        assert status3["status"] == "degraded"
+        assert status3["surfaces"]["evolution_programs"]["status"] == "ok"
+        assert status3["surfaces"]["evolution_decisions"]["status"] == "unavailable"
+
 
 
 # ---------------------------------------------------------------------------

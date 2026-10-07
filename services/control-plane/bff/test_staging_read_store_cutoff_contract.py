@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -43,7 +44,10 @@ def test_staging_operator_bff_has_no_cross_service_read_volume_mounts() -> None:
     assert "PANTHEON_RUNTIME_DATA_DIR" not in block
     assert "INCIDENTS_DATA_DIR" not in block
     assert "POSTMORTEMS_DATA_DIR" not in block
-    assert "governance-data:/data/governance" not in block
+    # 3619312f3: the only cross-service mount is the read-only governance
+    # journal consumer mount; a writable mount must stay absent.
+    assert "      - governance-data:/data/governance:ro\n" in block
+    assert block.count("governance-data:/data/governance") == 1
     assert "runtime-data:/data/runtime" not in block
     assert "incident-data:/data/incidents" not in block
 
@@ -56,6 +60,8 @@ def test_merged_staging_operator_bff_has_no_cross_service_read_volume_mounts() -
         [
             "docker",
             "compose",
+            "--profile",
+            "root",
             "-f",
             str(BASE_COMPOSE),
             "-f",
@@ -67,14 +73,25 @@ def test_merged_staging_operator_bff_has_no_cross_service_read_volume_mounts() -
         check=True,
         capture_output=True,
         text=True,
+        # Required-variable interpolation (99833357f profiles; 9644a6b5e
+        # persona/OpenClaw wiring) needs dummy values to render offline.
+        env={
+            **os.environ,
+            "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN": "dummy-token",
+            "PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL": "http://openclaw-gateway:8080",
+            "PANTHEON_PERSONA_SERVICE_TOKEN": "dummy-token",
+        },
     )
     operator_bff = json.loads(rendered.stdout)["services"]["operator-bff"]
     volumes = {
-        (volume.get("source"), volume.get("target"))
+        (volume.get("source"), volume.get("target"), bool(volume.get("read_only")))
         for volume in operator_bff.get("volumes", [])
     }
 
-    assert volumes == {("bff-data", "/data/bff")}
+    assert volumes == {
+        ("bff-data", "/data/bff", False),
+        ("governance-data", "/data/governance", True),
+    }
 
 
 def test_prod_control_example_documents_cutoff_flag() -> None:

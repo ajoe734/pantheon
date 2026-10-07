@@ -50,6 +50,7 @@ from persona_target import (
 from source_dataset_authority import (
     SourceDatasetAuthorityError,
     materialize_source_dataset_version,
+    source_read_headers,
     urllib_json_get,
 )
 from policy_lineage import (
@@ -858,8 +859,14 @@ def _load_authority_snapshot(*, trusted_now: datetime, strategy_id: str) -> Eval
             )
         try:
             timeout = float(os.getenv("TRAINING_SESSION_SOURCE_AUTHORITY_TIMEOUT_SECONDS", "5"))
+            read_headers = source_read_headers(
+                os.getenv("TRAINING_SESSION_SOURCE_READ_TOKEN_FILE"),
+                os.getenv("TRAINING_SESSION_SOURCE_READ_TENANT_ID"),
+            )
             materialized = materialize_source_dataset_version(
-                http_get=lambda url: urllib_json_get(url, timeout_seconds=timeout),
+                http_get=lambda url: urllib_json_get(
+                    url, timeout_seconds=timeout, headers=read_headers
+                ),
                 source_api_url=source_api_url,
                 connector_id=connector_id,
                 dataset_id=dataset_id,
@@ -1962,11 +1969,13 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
     session = store.get_session(session_id)
     if not session:
         failure_code = "training_session_not_found"
+        failure_reason = None
         retryable = False
         preview = None
     else:
         _require_tenant_record(session, "training session not found")
         failure_code = None
+        failure_reason = None
         retryable = False
         try:
             preview = _run_preview_evaluation(
@@ -1983,6 +1992,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
         except AuthorityValidationError as exc:
             preview = None
             message = str(exc)
+            failure_reason = " ".join(message.split())[:300]
             retryable = message.startswith(
                 ("real vectorbt evaluation failed", "persona target authority unavailable")
             )
@@ -2010,6 +2020,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
                     "worker_run_id": worker_run_id,
                     "attempt_count": job.get("attempt_count"),
                     "error_code": failure_code,
+                    "failure_reason": failure_reason,
                     "retryable": retryable,
                 },
                 recorded_at=timestamp,
@@ -2025,6 +2036,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
                     "status": "failed",
                     "failed_at": timestamp,
                     "error_code": failure_code,
+                    "failure_reason": failure_reason,
                     "retryable": retryable,
                 }
             )

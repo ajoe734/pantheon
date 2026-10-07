@@ -476,7 +476,6 @@ class _DummyProvisioningStore:
 
 _ORIGINAL_PERSONA_COLLECTION_COORDINATE = persona_collection._coordinate_persona_create
 _ORIGINAL_PERSONA_SERVICE_COORDINATE = persona_service._coordinate_persona_create
-_ORIGINAL_PERSONA_PROVISIONING_STORE = persona_service._PERSONA_PROVISIONING_STORE
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -494,7 +493,10 @@ def _patch_persona_create_coordination_seam():
     """
     assert persona_collection._coordinate_persona_create is _ORIGINAL_PERSONA_COLLECTION_COORDINATE
     assert persona_service._coordinate_persona_create is _ORIGINAL_PERSONA_SERVICE_COORDINATE
-    assert persona_service._PERSONA_PROVISIONING_STORE is _ORIGINAL_PERSONA_PROVISIONING_STORE
+    # The provisioning store is captured here, not at import time: another
+    # module's wiring may legitimately rebind the global between this file's
+    # collection and its first test, which made this guard order dependent.
+    original_provisioning_store = persona_service._PERSONA_PROVISIONING_STORE
 
     persona_collection._coordinate_persona_create = _forward_coordinate_persona_create
     persona_service._coordinate_persona_create = _forward_coordinate_persona_create
@@ -504,10 +506,10 @@ def _patch_persona_create_coordination_seam():
     finally:
         persona_collection._coordinate_persona_create = _ORIGINAL_PERSONA_COLLECTION_COORDINATE
         persona_service._coordinate_persona_create = _ORIGINAL_PERSONA_SERVICE_COORDINATE
-        persona_service._PERSONA_PROVISIONING_STORE = _ORIGINAL_PERSONA_PROVISIONING_STORE
+        persona_service._PERSONA_PROVISIONING_STORE = original_provisioning_store
         assert persona_collection._coordinate_persona_create is _ORIGINAL_PERSONA_COLLECTION_COORDINATE
         assert persona_service._coordinate_persona_create is _ORIGINAL_PERSONA_SERVICE_COORDINATE
-        assert persona_service._PERSONA_PROVISIONING_STORE is _ORIGINAL_PERSONA_PROVISIONING_STORE
+        assert persona_service._PERSONA_PROVISIONING_STORE is original_provisioning_store
 
 
 facade_state = None

@@ -291,6 +291,7 @@ def test_trading_pulse_preserves_owner_reported_status(status: str) -> None:
         source_kind="unavailable",
         status=status,
         degradation_reason="owner offline",
+        tenant_id="tenant-a",
     )
     context = _collect_context(SimpleNamespace(list_runtime_bindings=lambda: [row]), focus="trading_pulse")
     surface = context["surfaces"]["management_trading_pulse"]
@@ -307,6 +308,7 @@ def test_portfolio_exposes_unavailable_owner_regardless_of_row_order(unavailable
         status="ok",
         source_version="v1",
         correlation_id="c1",
+        tenant_id="tenant-a",
     )
     failed = dict(
         runtime_id="r2",
@@ -315,6 +317,7 @@ def test_portfolio_exposes_unavailable_owner_regardless_of_row_order(unavailable
         status="unavailable",
         degradation_reason="owner-2 offline",
         correlation_id="c2",
+        tenant_id="tenant-a",
     )
     rows = [failed, healthy] if unavailable_first else [healthy, failed]
     context = _collect_context(SimpleNamespace(list_runtime_bindings=lambda: rows, list_capital_pools=lambda: []))
@@ -407,6 +410,7 @@ def test_portfolio_surface_threads_every_owner_identity_through_json(reverse: bo
             correlation_id=f"correlation-{i}",
             observed_at="2026-09-07T18:00:00Z",
             degradation_reason="provider offline",
+            tenant_id="tenant-a",
         )
         for i in (1, 2)
     ]

@@ -371,7 +371,7 @@ _MARKET_SNAPSHOT_STATE_REQUIRED_FIELDS = frozenset(
         "points",
     }
 )
-_MARKET_SNAPSHOT_STATE_OPTIONAL_FIELDS = frozenset({"calendar_evidence"})
+_MARKET_SNAPSHOT_STATE_OPTIONAL_FIELDS = frozenset({"calendar_evidence", "market"})
 _MARKET_SNAPSHOT_ENVELOPE_FIELDS = frozenset(
     {"state", "checksum_algorithm", "checksum"}
 )
@@ -467,6 +467,7 @@ class MarketSnapshotPoint:
     connector_id: str
     content_ref: str
     ingest_run_id: str
+    market: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -481,6 +482,9 @@ class MarketSnapshotPoint:
                 field_name,
                 _market_snapshot_text(getattr(self, field_name), field_name=f"point {field_name}"),
             )
+        if self.market is not None:
+            clean_market = _market_snapshot_text(self.market, field_name="point market")
+            object.__setattr__(self, "market", clean_market)
 
     @property
     def key(self) -> tuple[str, str, str, str, float]:
@@ -493,7 +497,7 @@ class MarketSnapshotPoint:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "event_time": self.event_time,
             "close": self.close,
             "source_id": self.source_id,
@@ -501,17 +505,23 @@ class MarketSnapshotPoint:
             "content_ref": self.content_ref,
             "ingest_run_id": self.ingest_run_id,
         }
+        if self.market is not None:
+            data["market"] = self.market
+        return data
 
     @classmethod
     def from_dict(cls, value: Any) -> "MarketSnapshotPoint":
-        if not isinstance(value, Mapping) or set(value) != {
+        if not isinstance(value, Mapping):
+            raise MarketSnapshotStateError("market snapshot point schema is invalid")
+        required_keys = {
             "event_time",
             "close",
             "source_id",
             "connector_id",
             "content_ref",
             "ingest_run_id",
-        }:
+        }
+        if not required_keys.issubset(value) or not set(value).issubset(required_keys | {"market"}):
             raise MarketSnapshotStateError("market snapshot point schema is invalid")
         return cls(
             event_time=value["event_time"],
@@ -520,6 +530,7 @@ class MarketSnapshotPoint:
             connector_id=value["connector_id"],
             content_ref=value["content_ref"],
             ingest_run_id=value["ingest_run_id"],
+            market=value.get("market"),
         )
 
 
@@ -532,6 +543,7 @@ class LatestMarketSnapshot:
     observed_at: str
     schema_version: str = MARKET_SNAPSHOT_SCHEMA_VERSION
     calendar_evidence: Mapping[str, Any] | None = None
+    market: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "symbol", _market_snapshot_symbol(self.symbol))
@@ -559,6 +571,41 @@ class LatestMarketSnapshot:
             "calendar_evidence",
             _market_snapshot_calendar_evidence(self.calendar_evidence),
         )
+
+        from services.registry.strategy_artifact import (
+            StrategyArtifactValidationError,
+            canonical_market_context,
+        )
+
+        point_markets = {point.market for point in points if point.market is not None}
+        if len(point_markets) > 1:
+            raise MarketSnapshotStateError(
+                f"market snapshot points have contradictory markets: {sorted(point_markets)}"
+            )
+        derived_market = next(iter(point_markets)) if point_markets else None
+
+        target_market: str | None = None
+        if self.market is not None:
+            try:
+                target_market = canonical_market_context(self.market, symbols=[self.symbol])
+            except StrategyArtifactValidationError as exc:
+                raise MarketSnapshotStateError(f"invalid market context {self.market!r}: {exc}") from exc
+            if derived_market is not None:
+                try:
+                    derived_canonical = canonical_market_context(derived_market, symbols=[self.symbol])
+                except StrategyArtifactValidationError as exc:
+                    raise MarketSnapshotStateError(f"invalid point market context {derived_market!r}: {exc}") from exc
+                if target_market != derived_canonical:
+                    raise MarketSnapshotStateError(
+                        f"explicit snapshot market {target_market!r} contradicts points market {derived_canonical!r}"
+                    )
+        elif derived_market is not None:
+            try:
+                target_market = canonical_market_context(derived_market, symbols=[self.symbol])
+            except StrategyArtifactValidationError as exc:
+                raise MarketSnapshotStateError(f"invalid point market context {derived_market!r}: {exc}") from exc
+
+        object.__setattr__(self, "market", target_market)
 
     @property
     def event_time(self) -> str:
@@ -589,6 +636,8 @@ class LatestMarketSnapshot:
         }
         if self.calendar_evidence is not None:
             canonical["calendar_evidence"] = self.calendar_evidence
+        if self.market is not None:
+            canonical["market"] = self.market
         return f"mss-{sha256(_canonical_json(canonical).encode('utf-8')).hexdigest()[:24]}"
 
     def to_dict(self) -> dict[str, Any]:
@@ -604,6 +653,8 @@ class LatestMarketSnapshot:
         }
         if self.calendar_evidence is not None:
             state["calendar_evidence"] = _market_snapshot_calendar_evidence(self.calendar_evidence)
+        if self.market is not None:
+            state["market"] = self.market
         return state
 
     def to_public_dict(self, *, requested_symbol: Any | None = None) -> dict[str, Any]:
@@ -627,6 +678,8 @@ class LatestMarketSnapshot:
         }
         if self.calendar_evidence is not None:
             public["calendar_evidence"] = _market_snapshot_calendar_evidence(self.calendar_evidence)
+        if self.market is not None:
+            public["market"] = self.market
         return public
 
     @classmethod
@@ -649,6 +702,7 @@ class LatestMarketSnapshot:
             points=tuple(MarketSnapshotPoint.from_dict(point) for point in points_value),
             observed_at=value.get("observed_at"),
             calendar_evidence=value.get("calendar_evidence"),
+            market=value.get("market"),
         )
         if value.get("event_time") != snapshot.event_time:
             raise MarketSnapshotStateError("market snapshot event_time does not match points")
@@ -746,6 +800,7 @@ class LatestMarketSnapshotStore:
         record: Any,
         *,
         ingest_run_id: str,
+        default_market: str | None = None,
     ) -> tuple[str, MarketSnapshotPoint, dict[str, Any] | None] | None:
         metadata = getattr(record, "metadata", None)
         if not isinstance(metadata, Mapping):
@@ -765,7 +820,31 @@ class LatestMarketSnapshotStore:
         if symbol in (None, "") or close is None or event_time in (None, ""):
             return None
         try:
+            from services.registry.strategy_artifact import (
+                StrategyArtifactValidationError,
+                canonical_market_context,
+            )
+
             normalized_symbol = _market_snapshot_symbol(symbol)
+
+            # Market context extraction with contradiction rejection
+            candidate_markets = []
+            if row.get("market"):
+                candidate_markets.append(str(row["market"]).strip())
+            if metadata.get("market"):
+                candidate_markets.append(str(metadata["market"]).strip())
+            if default_market:
+                candidate_markets.append(str(default_market).strip())
+
+            canonical_candidates = set()
+            for m in candidate_markets:
+                canonical_candidates.add(canonical_market_context(m, symbols=[normalized_symbol]))
+
+            if len(canonical_candidates) > 1:
+                # Contradictory market declarations across row/metadata/connector -> reject record
+                return None
+            record_market = next(iter(canonical_candidates)) if canonical_candidates else None
+
             point = MarketSnapshotPoint(
                 event_time=event_time,
                 close=close,
@@ -773,6 +852,7 @@ class LatestMarketSnapshotStore:
                 connector_id=getattr(record, "connector_id", None),
                 content_ref=getattr(record, "content_ref", None),
                 ingest_run_id=ingest_run_id,
+                market=record_market,
             )
             # Prefer the normalized market row because it is the exact
             # source-selected record.  The metadata fallback preserves the
@@ -783,7 +863,7 @@ class LatestMarketSnapshotStore:
                 if row.get("calendar_evidence") is not None
                 else metadata.get("calendar_evidence")
             )
-        except MarketSnapshotStateError:
+        except (MarketSnapshotStateError, StrategyArtifactValidationError):
             return None
         return normalized_symbol, point, calendar_evidence
 
@@ -793,6 +873,8 @@ class LatestMarketSnapshotStore:
         *,
         ingest_run_id: str,
         observed_at: str | None = None,
+        default_market: str | None = None,
+        connector: Any | None = None,
     ) -> dict[str, Any]:
         """Project normalized stored closes into one bounded snapshot per symbol."""
 
@@ -801,12 +883,21 @@ class LatestMarketSnapshotStore:
             observed_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
             field_name="observed_at",
         )
+        if default_market is None and connector is not None:
+            conn_meta = getattr(connector, "metadata", None)
+            if isinstance(conn_meta, Mapping) and conn_meta.get("market"):
+                default_market = str(conn_meta["market"]).strip()
+
         grouped: dict[str, list[tuple[MarketSnapshotPoint, dict[str, Any] | None]]] = {}
         accepted_record_count = 0
         for record in records:
             if bool(getattr(record, "is_rejected", False)):
                 continue
-            candidate = self._point_from_record(record, ingest_run_id=run_id)
+            candidate = self._point_from_record(
+                record,
+                ingest_run_id=run_id,
+                default_market=default_market,
+            )
             if candidate is None:
                 continue
             symbol, point, calendar_evidence = candidate
@@ -864,6 +955,7 @@ class LatestMarketSnapshotStore:
                                 and prior.points == candidate.points
                                 and prior.calendar_evidence == candidate.calendar_evidence
                                 and prior.observed_at == candidate.observed_at
+                                and prior.market == candidate.market
                             ):
                                 continue
                             state = candidate.to_dict()

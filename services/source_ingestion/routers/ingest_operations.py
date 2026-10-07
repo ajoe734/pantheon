@@ -399,6 +399,11 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
         config = runtime.connector_store.get_config(connector_id)
         if config is None:
             raise HTTPException(status_code=404, detail="connector config not found")
+        if request.enabled and getattr(runtime, "_is_operator_stopped", lambda _: False)(config.connector):
+            raise HTTPException(
+                status_code=400,
+                detail=f"cannot enable schedule for connector '{connector_id}': explicit operator stop is active",
+            )
         try:
             with runtime.authoritative_reconcile_lock:
                 runtime._fence_managed_connector_mutation(

@@ -6,12 +6,12 @@ from fastapi import FastAPI, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
 
-from ..session_lifecycle_store import SessionLifecycleStore
-from . import policy
-from .browser_session import DevBrowserSessionMiddleware
-from .handlers import create_auth_handlers
-from .router import create_auth_router
-from .service import AuthFacadeService
+from services.control_plane.bff.session_lifecycle_store import SessionLifecycleStore
+from services.control_plane.bff.auth import policy
+from services.control_plane.bff.auth.browser_session import DevBrowserSessionMiddleware
+from services.control_plane.bff.auth.handlers import create_auth_handlers
+from services.control_plane.bff.auth.router import create_auth_router
+from services.control_plane.bff.auth.service import AuthFacadeService
 
 ORIGIN = "https://app.dev.mvl-cap.tw"
 BASE = "https://api.dev.mvl-cap.tw"

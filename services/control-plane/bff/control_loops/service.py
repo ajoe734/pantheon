@@ -31,6 +31,15 @@ from services.control_plane.bff.models import ErrorCode
 
 
 _LOOP_RUN_PROJECTION_SCHEMA = "pantheon.loop-run-projection.v1"
+_TRADING_STAGES = frozenset({"paper", "broker_sandbox", "canary", "live"})
+_DEV_SERVED_STAGES: Tuple[str, ...] = ("paper", "broker_sandbox")
+_OODA_STAGE_DEFS = (
+    ("observe", "Observe", "telemetry/source/search health"),
+    ("orient", "Orient", "active signal/persona proposal count"),
+    ("decide", "Decide", "pending approvals"),
+    ("act", "Act", "paper runtime / sandbox broker state"),
+    ("learn", "Learn", "evolution/postmortem/retrain state"),
+)
 _OODA_STAGE_STATUSES = {
     "observe": {"open", "observing"},
     "orient": {"oriented"},
@@ -133,6 +142,7 @@ class ControlLoopsService:
         utc_now_fn: Optional[Callable[[], str]] = None,
         bff_error_fn: Optional[Callable[..., Exception]] = None,
         deployed_environment: Optional[str] = None,
+        served_stages: Optional[Sequence[str]] = None,
     ) -> None:
         self.read_store = read_store or _MissingReadPort()
         self.loop_truth = loop_truth_adapter or default_loop_truth
@@ -144,6 +154,20 @@ class ControlLoopsService:
             if deployed_environment is not None
             else os.environ.get("PANTHEON_ENV", "dev")
         ).strip()
+        if served_stages is not None:
+            self.served_stages: Tuple[str, ...] = tuple(
+                str(s).strip() for s in served_stages if str(s).strip()
+            )
+        elif "PANTHEON_LOOP_TRUTH_SERVED_STAGES" in os.environ:
+            self.served_stages = tuple(
+                s.strip()
+                for s in os.environ["PANTHEON_LOOP_TRUTH_SERVED_STAGES"].split(",")
+                if s.strip()
+            )
+        elif self.deployed_environment == "dev":
+            self.served_stages = _DEV_SERVED_STAGES
+        else:
+            self.served_stages = ()
 
     def _error(self, *args: Any, **kwargs: Any) -> Exception:
         return self.bff_error(*args, **kwargs)
@@ -454,15 +478,22 @@ class ControlLoopsService:
                 "Requested controller truth tenant is outside the authenticated scope",
                 precondition_failed="tenant_scope",
             )
-        environment = str(requested_environment or "").strip() or self.deployed_environment
+        default_stage = self.served_stages[0] if self.served_stages else ""
+        stage = str(requested_environment or "").strip() or default_stage
         allowed_environments = _claim_strings(
             identity, "environment", "environments", "allowed_environments", "allowedEnvironments"
         )
         if allowed_environments:
-            environment_allowed = "*" in allowed_environments or environment in allowed_environments
+            identity_allowed = "*" in allowed_environments or stage in allowed_environments
         else:
-            environment_allowed = environment == self.deployed_environment
-        if not environment or not environment_allowed:
+            identity_allowed = True
+        stage_allowed = (
+            bool(stage)
+            and stage in _TRADING_STAGES
+            and stage in self.served_stages
+            and identity_allowed
+        )
+        if not stage_allowed:
             raise self._error(
                 403,
                 ErrorCode.FORBIDDEN,
@@ -470,7 +501,7 @@ class ControlLoopsService:
                 "Requested controller truth environment is outside the authenticated deployment scope",
                 precondition_failed="environment_scope",
             )
-        return tenant_id, environment
+        return tenant_id, stage
 
     def _loop_health_meta(
         self,
@@ -653,6 +684,25 @@ class ControlLoopsService:
             surface["status"] = "degraded" if available else "unavailable"
         return surface
 
+    def _postgres_projection_surface(
+        self, controller: Optional[Mapping[str, Any]]
+    ) -> Dict[str, Any]:
+        ctrl = dict(controller or {})
+        formal = (
+            ctrl.get("accepted_live") is True
+            and ctrl.get("status") == "ready"
+            and ctrl.get("mode") == "live"
+        )
+        return {
+            "status": "ok" if formal else "degraded",
+            "source": "postgres_lifecycle_projection",
+            "projection_schema_version": "pantheon.trade-journey-projection.v1",
+            "controller": ctrl,
+            "accepted_live": ctrl.get("accepted_live"),
+            "projection_mode": ctrl.get("mode"),
+            "truth_status": "formal" if formal else "degraded",
+        }
+
     def _projection_reader(self) -> Any:
         provider = getattr(self.read_store, "trade_journey_projection_reader", None)
         return provider() if callable(provider) else None
@@ -699,20 +749,7 @@ class ControlLoopsService:
                 return self._list_envelope(
                     [], dataset="loop_runs", surface_key="loop_runs", source="missing"
                 )
-            formal = (
-                controller.get("accepted_live") is True
-                and controller.get("status") == "ready"
-                and controller.get("mode") == "live"
-            )
-            surface = {
-                "status": "ok" if formal else "degraded",
-                "source": "postgres_lifecycle_projection",
-                "projection_schema_version": "pantheon.trade-journey-projection.v1",
-                "controller": controller,
-                "accepted_live": controller.get("accepted_live"),
-                "projection_mode": controller.get("mode"),
-                "truth_status": "formal" if formal else "degraded",
-            }
+            surface = self._postgres_projection_surface(controller)
             response = self._list_envelope(
                 records,
                 dataset="loop_runs",
@@ -775,18 +812,7 @@ class ControlLoopsService:
                     source="missing",
                     available=False,
                 )
-            formal = (
-                controller.get("accepted_live") is True
-                and controller.get("status") == "ready"
-                and controller.get("mode") == "live"
-            )
-            surface = {
-                "status": "ok" if formal else "degraded",
-                "source": "postgres_lifecycle_projection",
-                "controller": controller,
-                "accepted_live": controller.get("accepted_live"),
-                "truth_status": "formal" if formal else "degraded",
-            }
+            surface = self._postgres_projection_surface(controller)
             return self._detail(
                 record if isinstance(record, Mapping) else None,
                 entity_id=loop_run_id,
@@ -894,6 +920,21 @@ class ControlLoopsService:
             "unavailable" if enabled else "fail_closed"
         )
         open_states = {state for states in _OODA_STAGE_STATUSES.values() for state in states}
+        stage_status = "fail_closed" if not enabled else status
+        stages = {
+            stage: {
+                "label": label,
+                "description": desc,
+                "status": stage_status,
+                "active_count": sum(
+                    1
+                    for packet in packets
+                    if str(packet.get("status") or "").lower() in _OODA_STAGE_STATUSES[stage]
+                ),
+                "detail_link": f"/bff/ooda/packets?stage={stage}",
+            }
+            for stage, label, desc in _OODA_STAGE_DEFS
+        }
         return {
             "enabled": enabled,
             "gate_state": "enabled" if enabled else "fail_closed",
@@ -907,13 +948,19 @@ class ControlLoopsService:
                 1 for packet in packets if str(packet.get("status") or "").lower() == "failed"
             ),
             "total_packet_count": len(packets),
+            "stages": stages,
             "live_capital_side_effects": any(
                 (packet.get("act") or {}).get("live_capital_side_effects") is True
                 for packet in packets
                 if str(packet.get("environment") or "").lower() != "live"
             ),
             "fail_closed_gate_posture": "fail_closed",
-            "meta": {"snapshot_at": snapshot_at, "source": source, "status": status},
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "source": source,
+                "status": status,
+                "surface_key": "ooda_control_room_status",
+            },
         }
 
     def control_room(self) -> Dict[str, Any]:

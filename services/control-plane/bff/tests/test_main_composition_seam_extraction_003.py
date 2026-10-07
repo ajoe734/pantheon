@@ -262,7 +262,6 @@ def test_evidence_and_approvals_routers_wire_run_management_read():
         utc_now=utc_now,
         submit_action=lambda *a, **kw: {},
         publish_event=lambda *a, **kw: None,
-        run_management_read=run_management_read,
     )
     assert gov_router is not None
 
@@ -315,6 +314,11 @@ _AUTH = _real["_AUTH"]
 CommandStore = _real["CommandStore"]
 
 # Review-rejection regressions: mounted with the production _gov_bff_action_command callback.
+
+# A stub token carries a tenant only in its third segment; bare operator tokens are tenantless.
+_TENANT_AUTH = {'Authorization': 'Bearer tester:operator:tenant-dev'}
+
+
 @_pytest.fixture
 def mounted_prod_callback(monkeypatch, tmp_path):
     server = StubIncidentsServer()
@@ -324,11 +328,15 @@ def mounted_prod_callback(monkeypatch, tmp_path):
     monkeypatch.setenv('PANTHEON_BFF_AUTH_STUB', 'true')
     monkeypatch.setenv('PANTHEON_BFF_AUTH_MODE', 'permissive')
     from services.control_plane.bff import main
-    monkeypatch.setattr(main, '_GOV_BFF_IDEMPOTENCY', {})
+    from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
+    # Command stores live in tmp_path: the shared /tmp/pantheon/bff/commands.jsonl leaks 409s across runs.
+    store = CommandStore(str(tmp_path / 'production-commands.jsonl'))
     monkeypatch.setattr(main, '_check_read_surface_state', lambda: None)
-    monkeypatch.setattr(main, 'command_store', CommandStore(str(tmp_path / 'production-commands.jsonl')))
+    monkeypatch.setattr(main, 'command_store', store)
+    monkeypatch.setattr(main._command_adapter_service, '_get_command_store', lambda: store)
     app = _build_app(StubReadStoreWithIncidentPort(url), tmp_path,
                           submit_action_command=main._gov_bff_action_command)
+    app.add_middleware(OwnerReadContextMiddleware)
     try:
         yield server, TestClient(app, raise_server_exceptions=False)
     finally:
@@ -340,18 +348,20 @@ def mounted_prod_callback(monkeypatch, tmp_path):
 ])
 def test_identical_retry_returns_original_receipt(mounted_prod_callback, path):
     server, client = mounted_prod_callback
-    headers = {**_AUTH, 'Idempotency-Key': str(uuid.uuid4())}
+    headers = {**_TENANT_AUTH, 'Idempotency-Key': str(uuid.uuid4())}
     first = client.post(path, headers=headers, json={})
     second = client.post(path, headers=headers, json={})
     assert first.status_code == 202, first.text
     assert second.status_code == first.status_code, second.text
-    assert second.json() == first.json()
+    # Identical retry replays the admitted receipt (stale: it used to return the first body verbatim).
+    assert second.json()['data']['receipt_id'] == first.json()['data']['receipt_id']
+    assert second.json()['meta']['idempotency']['replayed'] is True
     assert len(server.status_calls) == 1
 
 def test_unsupported_risk_action_cannot_change_incident(mounted_prod_callback):
     server, client = mounted_prod_callback
     response = client.post('/bff/risk/alerts/alert-incident-inc-real-001/actions/not-a-real-action',
-                           headers={**_AUTH, 'Idempotency-Key': str(uuid.uuid4())}, json={})
+                           headers={**_TENANT_AUTH, 'Idempotency-Key': str(uuid.uuid4())}, json={})
     assert response.status_code == 422 and server.status_calls == [], {
         'http': response.status_code, 'body': response.json(), 'writes': server.status_calls}
 
@@ -363,7 +373,7 @@ def test_unsupported_risk_action_cannot_change_incident(mounted_prod_callback):
 def test_acknowledge_cannot_substitute_unrelated_durable_owner(mounted_prod_callback, payload):
     server, client = mounted_prod_callback
     response = client.post('/bff/risk/alerts/alert-runtime-unowned/actions/acknowledge',
-                           headers={**_AUTH, 'Idempotency-Key': str(uuid.uuid4())},
+                           headers={**_TENANT_AUTH, 'Idempotency-Key': str(uuid.uuid4())},
                            json=payload)
     assert response.status_code == 422 and server.status_calls == [], {
         'http': response.status_code, 'body': response.json(), 'writes': server.status_calls}
@@ -387,10 +397,11 @@ def test_incident_action_payload_cannot_replace_route_target_or_action(
 
     response = client.post(
         '/bff/incidents/inc-real-001/actions/resolve',
-        headers={**_AUTH, 'Idempotency-Key': str(uuid.uuid4())}, json=payload,
+        headers={**_TENANT_AUTH, 'Idempotency-Key': str(uuid.uuid4())}, json=payload,
     )
 
     assert response.status_code == 422, response.text
+    assert response.json()['error']['details']['precondition_failed'] == 'route_target_mismatch'
     assert server.status_calls == []
     assert server.incidents['inc-real-001']['status'] == 'open'
     assert server.incidents['inc-other']['status'] == 'open'
@@ -406,11 +417,12 @@ def test_rest_acknowledgement_cannot_replace_alert_owner(mounted_prod_callback, 
 
     response = client.post(
         f'/bff/alerts/{alert_id}/acknowledge',
-        headers={**_AUTH, 'Idempotency-Key': str(uuid.uuid4())},
+        headers={**_TENANT_AUTH, 'Idempotency-Key': str(uuid.uuid4())},
         json={'incident_id': 'inc-other'},
     )
 
     assert response.status_code == 422, response.text
+    assert response.json()['error']['details']['precondition_failed'] == 'route_target_mismatch'
     assert server.status_calls == []
     assert server.incidents['inc-real-001']['status'] == 'open'
     assert server.incidents['inc-other']['status'] == 'open'
@@ -420,7 +432,7 @@ def test_rest_acknowledgement_tracking_records_completed_owner_result(mounted_pr
     server, client = mounted_prod_callback
     response = client.post(
         '/bff/alerts/alert-incident-inc-real-001/acknowledge',
-        headers={**_AUTH, 'Idempotency-Key': str(uuid.uuid4())}, json={},
+        headers={**_TENANT_AUTH, 'Idempotency-Key': str(uuid.uuid4())}, json={},
     )
 
     assert response.status_code == 200, response.text
@@ -443,11 +455,13 @@ def test_incident_acknowledgement_accepts_owner_uuid(mounted_prod_callback):
 
     response = client.post(
         f'/bff/incidents/{incident_id}/actions/acknowledge',
-        headers={**_AUTH, 'Idempotency-Key': str(uuid.uuid4())}, json={},
+        headers={**_TENANT_AUTH, 'Idempotency-Key': str(uuid.uuid4())}, json={},
     )
 
     assert response.status_code == 202, response.text
-    assert response.json()['read_back_status'] == 'investigating'
+    from services.control_plane.bff import main
+    command = main._command_adapter_service.command_store.get_command(response.json()['data']['receipt_id'])
+    assert command['result']['status'] == 'investigating'
     assert [(call['incident_id'], call['body']['status']) for call in server.status_calls] == [
         (incident_id, 'investigating'),
     ]
@@ -461,8 +475,21 @@ def test_incident_remediation_is_rejected(mounted_prod_callback, path):
     server, client = mounted_prod_callback
     response = client.post(
         path,
-        headers={**_AUTH, 'Idempotency-Key': str(uuid.uuid4())}, json={},
+        headers={**_TENANT_AUTH, 'Idempotency-Key': str(uuid.uuid4())}, json={},
     )
 
     assert response.status_code == 422, response.text
+    assert response.json()['error']['details']['precondition_failed'] == 'unsupported_action'
+    assert server.status_calls == []
+
+
+def test_tenantless_stub_caller_is_rejected_before_admission(mounted_prod_callback):
+    server, client = mounted_prod_callback
+    response = client.post(
+        '/bff/incidents/inc-real-001/actions/resolve',
+        headers={**_AUTH, 'Idempotency-Key': str(uuid.uuid4())}, json={},
+    )
+
+    assert response.status_code == 403, response.text
+    assert response.json()['error']['details']['precondition_failed'] == 'tenant_scope'
     assert server.status_calls == []
