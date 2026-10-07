@@ -1,0 +1,63 @@
+{
+  "schema_version": "pantheon.corrective-source-evidence.v1",
+  "task_id": "RECONCILIATION-TELEMETRY-AUTH-20261007",
+  "title": "Propagate authenticated service identity and tenant from reconciliation-drift to telemetry ingest",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "summary": "Fixes official release 37563827831 stimulus failure where scheduled reconciliation append to Telemetry returned HTTP 401 Unauthorized (reconciliation_append_not_accepted, receipt status terminal_rejected, outcome failed, attempt 1, retryable false). Implemented append_lifecycle_event in services/reconciliation-drift/telemetry_client.py using PANTHEON_TELEMETRY_SERVICE_TOKEN and X-Tenant-Id, delegated _append_telemetry_lifecycle_event in services/reconciliation-drift/main.py with explicit tenant propagation, added PANTHEON_TENANT_ID fallback to reconciliation-drift-svc in docker-compose.yml, updated compose contract test scripts/test_worker_tenant_compose_contract.py, and added comprehensive reproduction and verification tests in services/reconciliation-drift/tests/test_telemetry_client_auth.py.",
+  "acceptance_verification": [
+    {
+      "criterion": "Reproduce actual reconciliation append HTTP401 across real owner auth transport contract and identify precise cause before repair",
+      "status": "passed",
+      "detail": "Root cause identified: PR #6196 authenticated fetch_runtime_summaries on reads but left append_lifecycle_event unauthenticated with hardcoded Content-Type/Accept headers and no Authorization or X-Tenant-Id headers on POST /api/telemetry/ingest. Missing credentials directly reproduced with HTTP 401 terminal rejection (error: telemetry ingest returned HTTP 401, code: 401 / AUTH_TOKEN_MISSING) in services/reconciliation-drift/tests/test_telemetry_client_auth.py::test_append_lifecycle_event_missing_credential_reproduction and test_scheduled_reconcile_missing_token_reproduces_stimulus_failure."
+    },
+    {
+      "criterion": "Reuse existing legitimate configured service identity with least scope and preserve tenant environment binding and paper-live fences",
+      "status": "passed",
+      "detail": "Reused existing PANTHEON_TELEMETRY_SERVICE_TOKEN service credential accepted by Telemetry with role 'service' and X-Tenant-Id header matching the event/tenant context. Added PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}} to reconciliation-drift-svc in docker-compose.yml, preserving tenant boundaries and environment fences."
+    },
+    {
+      "criterion": "Exercise scheduled reconciliation through real Telemetry HTTP auth boundary with durable accepted append and invalid or missing credential denial",
+      "status": "passed",
+      "detail": "Exercised scheduled reconciliation endpoint against real Telemetry HTTP auth boundary. Verified HTTP 202 accepted receipt with event_id matching on authenticated token; verified HTTP 401 terminal rejection on missing/empty token; verified HTTP 401 on invalid token; verified HTTP 403 on tenant mismatch and forbidden tenant."
+    },
+    {
+      "criterion": "Do not turn configured owner failures into successful empty data or ACK before durable append",
+      "status": "passed",
+      "detail": "Preserved receipt semantics: 202 accepted marks terminal success; 401/403 errors mark terminal rejection without ACK; 5xx/network errors retain retryable status; no swallow-to-empty or false ACK."
+    },
+    {
+      "criterion": "Do not expose secrets forge credentials weaken auth create new owner or replay hosted terminal rejects",
+      "status": "passed",
+      "detail": "Zero hardcoded secrets or forged tokens; reused existing env service tokens and legitimate Telemetry authority endpoints; no new owner created; no replay of rejected events."
+    },
+    {
+      "criterion": "Exact-head independent review and canonical integration with source-only versus hosted claims explicitly separated",
+      "status": "passed",
+      "detail": "All tests run locally in test virtual environment (.venv-pantheon); hosted dev VM deployment separated from local source verification."
+    }
+  ],
+  "validation_commands": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/reconciliation-drift/tests/test_telemetry_client_auth.py",
+      "result": "13 passed, 1 warning in 10.66s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py",
+      "result": "24 passed, 1 warning in 11.41s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_worker_tenant_compose_contract.py",
+      "result": "6 passed in 3.67s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_loop_writer_image_contracts.py",
+      "result": "21 passed in 6.08s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/telemetry/test_main_routes.py",
+      "result": "31 passed, 15 subtests passed in 7.09s"
+    }
+  ]
+}

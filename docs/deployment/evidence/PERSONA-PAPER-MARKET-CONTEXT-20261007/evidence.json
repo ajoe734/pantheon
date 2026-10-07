@@ -1,6 +1,6 @@
 {
   "task_id": "PERSONA-PAPER-MARKET-CONTEXT-20261007",
-  "base_sha": "dc1a6a0a66581de6d243b4fdec538fa234c19145",
+  "base_sha": "83e44da60be75ba39f4fdfc61469cc392fc2f35f",
   "scope": "Propagate explicit owner market context from ProvisioningRecord.request_payload to StrategyArtifact parameters, immutable parameters, candidate envelope metadata, deployment plan metadata, and dispatch metadata, allowing natural symbol normalization without guessing",
   "author": "Antigravity",
   "reviewer": "Claude",
