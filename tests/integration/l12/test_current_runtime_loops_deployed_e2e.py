@@ -632,7 +632,7 @@ class RuntimeChain:
         )
 
     def _setup_source_snapshot(self, market_symbol: str) -> dict[str, Any]:
-        """Ensure canonical latest stored normalized market snapshot exists in source-ingest."""
+        """Read the official latest stored market snapshot the harness pull produced."""
         existing = self.http.request(
             "source_ingest",
             "GET",
@@ -647,90 +647,14 @@ class RuntimeChain:
         ):
             return existing
 
-        connector_id = f"stored-price-{TASK_ID.lower()}"
-        self.http.request(
-            "source_ingest",
-            "POST",
-            "/api/source-ingest/connectors",
-            body={
-                "connector": {
-                    "connector_id": connector_id,
-                    "source_type": "market",
-                    "provider": "Stored normalized test source",
-                    "license_scope": "internal",
-                    "metadata": {"dataset": "daily_prices"},
-                },
-                "fetch": {
-                    "mode": "static_records",
-                    "records": [
-                        {
-                            "source_id": f"{market_symbol}-2026-08-18",
-                            "title": f"{market_symbol} close 2026-08-18",
-                            "content_ref": f"market://daily_prices/{market_symbol}/2026-08-18",
-                            "metadata": {
-                                "normalized_row": {
-                                    "schema_version": "us_equity_price_daily.v1",
-                                    "symbol_canonical": market_symbol,
-                                    "trade_date": "2026-08-18T20:00:00Z",
-                                    "close": 100.0,
-                                }
-                            },
-                        },
-                        {
-                            "source_id": f"{market_symbol}-2026-08-19",
-                            "title": f"{market_symbol} close 2026-08-19",
-                            "content_ref": f"market://daily_prices/{market_symbol}/2026-08-19",
-                            "metadata": {
-                                "normalized_row": {
-                                    "schema_version": "us_equity_price_daily.v1",
-                                    "symbol_canonical": market_symbol,
-                                    "trade_date": "2026-08-19T20:00:00Z",
-                                    "close": 105.0,
-                                }
-                            },
-                        },
-                        {
-                            "source_id": f"{market_symbol}-2026-08-20",
-                            "title": f"{market_symbol} close 2026-08-20",
-                            "content_ref": f"market://daily_prices/{market_symbol}/2026-08-20",
-                            "metadata": {
-                                "normalized_row": {
-                                    "schema_version": "us_equity_price_daily.v1",
-                                    "symbol_canonical": market_symbol,
-                                    "trade_date": "2026-08-20T20:00:00Z",
-                                    "close": 110.0,
-                                }
-                            },
-                        },
-                    ],
-                },
-            },
-            headers=self.source_ingest_headers,
-            expected={200, 201},
+        # No synthetic seeding: Taiwan market admission needs official lineage and
+        # a fresh refresh receipt, so the harness's bounded tw-twse-tpex-official-market
+        # pull (which includes this symbol) must already have produced the snapshot.
+        raise DeployedProofError(
+            f"No official stored snapshot for {market_symbol} with >=2 closes "
+            f"(latest read: {existing!r}); the harness bounded Taiwan official "
+            "pull must run before this suite"
         )
-        self.http.request(
-            "source_ingest",
-            "POST",
-            "/api/source-ingest/jobs",
-            body={
-                "connector_id": connector_id,
-                "trace_id": f"snapshot-ingest-{self.suffix}",
-            },
-            headers=self.source_ingest_headers,
-            expected={200, 201},
-        )
-        snapshot = self.http.request(
-            "source_ingest",
-            "GET",
-            f"/api/source-ingest/snapshots/latest?symbol={urllib.parse.quote(market_symbol, safe='')}",
-            headers=self.source_ingest_headers,
-            expected={200},
-        )
-        if not isinstance(snapshot, dict) or len(snapshot.get("closes", [])) < 2:
-            raise DeployedProofError(
-                f"Source snapshot for {market_symbol} did not yield required closes: {snapshot!r}"
-            )
-        return snapshot
 
     def _retire_invalid_preexisting_bindings(self) -> dict[str, Any]:
         """Retire/migrate pre-existing invalid bindings through canonical APIs before fleet acceptance."""

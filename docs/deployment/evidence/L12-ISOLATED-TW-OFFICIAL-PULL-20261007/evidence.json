@@ -1,0 +1,12 @@
+{
+  "task_id": "L12-ISOLATED-TW-OFFICIAL-PULL-20261007",
+  "verification": {
+    "offline": "scripts/test_run_isolated_l12_runtime_e2e.py: 26 passed",
+    "live_gate": "not run; workers cannot run docker, operator runs the live isolated gate"
+  },
+  "changes": [
+    "harness runs the bounded tw-twse-tpex-official-market pull after migration/principal issuance/up --wait and before domain suites (all provisioned runs, since the runtime-only suite also needs the snapshot)",
+    "failed scheduler tick or empty 2330.TW snapshot fails the run; diagnostics written to diagnostics/tw-official-pull-*.txt; source-ingest egress restored to deny afterwards",
+    "runtime suite no longer seeds a synthetic static connector; it reads the official 2330.TW snapshot and fails if absent"
+  ]
+}
