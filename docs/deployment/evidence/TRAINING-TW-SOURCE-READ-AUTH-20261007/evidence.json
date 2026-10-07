@@ -1,0 +1,14 @@
+{
+  "task_id": "TRAINING-TW-SOURCE-READ-AUTH-20261007",
+  "changes": [
+    "provenance.access_scope accepts non-empty string or non-empty list of non-empty strings; all else fails closed",
+    "training-session source reads send Authorization Bearer (source_ingest_reader) and X-Tenant-Id from TRAINING_SESSION_SOURCE_READ_TOKEN_FILE; missing token/tenant fails closed",
+    "issue_dev_paper_principals: READERS/CONSUMER_FILES gain TRAINING_SESSION_SOURCE_READ_TOKEN (role source_ingest_reader, tenant-dev); compose mounts dev-paper-training-session-tokens read-only into training-session-svc and issuer"
+  ],
+  "verification": {
+    "services/training-session pytest": "174 passed, 2 skipped",
+    "scripts/test_issue_dev_paper_principals.py": "33 passed",
+    "scripts/test_dev_paper_principal_renewal.py": "19 passed",
+    "persona_owner_contract_ci": "passed (run 37647623675)"
+  }
+}

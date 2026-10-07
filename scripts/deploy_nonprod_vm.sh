@@ -3068,6 +3068,216 @@ assert int(payload.get("total_sweeps_run") or 0) >= 1
   return 1
 }
 
+stage_dev_paper_prerequisite_readiness() {
+  local source_ingest_url="${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}"
+  local symbol="${1:-SPY}"
+  local measured_refresh_duration="${DEV_PAPER_REFRESH_DURATION_SECONDS:-5}"
+  local stated_margin="${DEV_PAPER_READINESS_MARGIN_SECONDS:-35}"
+  local budget="${2:-$(( measured_refresh_duration + stated_margin ))}"
+  local poll_interval="${3:-2}"
+  local token="${SOURCE_INGEST_CONTROLLER_TOKEN:-}"
+
+  info "checking staged dev paper prerequisite readiness for symbol ${symbol} (budget=${budget}s margin=${stated_margin}s)"
+
+  if [[ -z "$token" && -n "${SOURCE_INGEST_CONTROLLER_TOKEN_FILE:-}" && -f "${SOURCE_INGEST_CONTROLLER_TOKEN_FILE:-}" ]]; then
+    token="$(cat "$SOURCE_INGEST_CONTROLLER_TOKEN_FILE" 2>/dev/null || true)"
+  fi
+  if [[ -z "$token" ]]; then
+    local cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
+    [[ -z "$cid" ]] || token="$(docker exec "$cid" cat /data/source-ingest/controller_token 2>/dev/null || true)"
+  fi
+  token="$(printf '%s' "$token" | tr -d '\r\n[:space:]')"
+
+  local auth_header=()
+  [[ -z "$token" ]] || auth_header=(-H "Authorization: Bearer ${token}")
+
+  local simulation_connector_id="dev-paper-us-equity-simulation"
+  local temporary_admission_active="false"
+  local prior_enabled="false"
+  local prior_interval=86400
+
+  restore_dev_paper_schedule() {
+    local rc=$?
+    trap - EXIT INT TERM
+    if [[ "$temporary_admission_active" == "true" ]]; then
+      info "restoring connector ${simulation_connector_id} schedule (enabled=${prior_enabled}, interval=${prior_interval})"
+      curl -sS -X PUT "${auth_header[@]}" \
+        -H "Content-Type: application/json" \
+        -d "{\"interval_seconds\": ${prior_interval}, \"enabled\": ${prior_enabled}}" \
+        "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}/schedule" >/dev/null 2>&1 || true
+      temporary_admission_active="false"
+    fi
+    return "$rc"
+  }
+
+  local deadline attempt=0 triggered=false
+  deadline=$(( $(date +%s) + budget ))
+
+  while :; do
+    attempt=$(( attempt + 1 ))
+    local snapshot_resp=""
+    snapshot_resp="$(curl -fsS "${source_ingest_url}/api/source-ingest/snapshots/latest?symbol=${symbol}" 2>/dev/null || true)"
+
+    local is_admissible=false
+    if [[ -n "$snapshot_resp" ]]; then
+      if python3 -c '
+import json, sys, math
+from datetime import datetime, timezone
+raw = sys.argv[1]
+try:
+    data = json.loads(raw)
+except Exception:
+    sys.exit(1)
+closes = data.get("closes")
+if not isinstance(closes, list) or len(closes) < 2:
+    sys.exit(1)
+if any(isinstance(c, bool) or not isinstance(c, (int, float)) or not math.isfinite(float(c)) or float(c) <= 0 for c in closes):
+    sys.exit(1)
+market = data.get("market")
+if not market or not isinstance(market, str) or not market.strip():
+    sys.exit(1)
+ev_str = str(data.get("event_time") or "")
+if ev_str:
+    try:
+        ev_dt = datetime.fromisoformat(ev_str.replace("Z", "+00:00"))
+        now_dt = datetime.now(timezone.utc)
+        age = (now_dt - ev_dt).total_seconds()
+        if age > 86400 or age < 0:
+            sys.exit(1)
+    except Exception:
+        sys.exit(1)
+sys.exit(0)
+' "$snapshot_resp" 2>/dev/null; then
+        is_admissible=true
+      fi
+    fi
+
+    if [[ "$is_admissible" == "true" ]]; then
+      restore_dev_paper_schedule
+      info "staged dev paper prerequisite readiness satisfied for ${symbol}"
+      return 0
+    fi
+
+    if [[ "$triggered" == "false" ]]; then
+      triggered=true
+      info "staged dev paper prerequisite snapshot for ${symbol} missing, non-admissible, or lacks market; triggering run-scheduled (attempt 1)"
+
+      # Check if simulation connector is stopped by explicit operator stop
+      local connector_resp=""
+      connector_resp="$(curl -fsS "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}" 2>/dev/null || true)"
+      if [[ -n "$connector_resp" ]]; then
+        local is_op_stop="false"
+        is_op_stop="$(python3 -c '
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+    conn = d.get("connector", d)
+    meta = conn.get("metadata") or {}
+    if meta.get("operator_stop"):
+        print("true")
+        sys.exit(0)
+    if conn.get("status") == "disabled":
+        rec = meta.get("persona_source_reconciliation") or {}
+        if not (isinstance(rec, dict) and rec.get("retired_by_authoritative_snapshot") is True):
+            print("true")
+            sys.exit(0)
+except Exception:
+    pass
+print("false")
+' "$connector_resp" 2>/dev/null || printf 'false')"
+        if [[ "$is_op_stop" == "true" ]]; then
+          error "connector ${simulation_connector_id} has explicit operator stop; refusing prerequisite refresh"
+          return 1
+        fi
+      fi
+
+      # Check prior schedule state
+      local sched_resp=""
+      sched_resp="$(curl -fsS "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}/schedule" 2>/dev/null || true)"
+      if [[ -n "$sched_resp" ]]; then
+        local sched_info=""
+        sched_info="$(python3 -c '
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+    sched = d.get("schedule", d)
+    enabled = "true" if sched.get("enabled") is True else "false"
+    interval = int(sched.get("interval_seconds", 86400))
+    print(f"{enabled} {interval}")
+except Exception:
+    print("false 86400")
+' "$sched_resp" 2>/dev/null || printf 'false 86400')"
+        prior_enabled="${sched_info%% *}"
+        prior_interval="${sched_info##* }"
+      fi
+
+      # If prior schedule is disabled, temporarily admit schedule
+      if [[ "$prior_enabled" != "true" ]]; then
+        info "temporarily admitting schedule for connector ${simulation_connector_id} (interval=${prior_interval})"
+        local adm_resp="" http_adm=""
+        adm_resp="$(curl -sS -w "\n%{http_code}" -X PUT "${auth_header[@]}" \
+          -H "Content-Type: application/json" \
+          -d "{\"interval_seconds\": ${prior_interval}, \"enabled\": true}" \
+          "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}/schedule" 2>&1 || true)"
+        http_adm="$(printf '%s\n' "$adm_resp" | tail -n 1)"
+        if [[ "$http_adm" == "200" ]]; then
+          temporary_admission_active="true"
+          trap restore_dev_paper_schedule EXIT INT TERM
+        else
+          info "temporary schedule admission returned http_status=${http_adm}; proceeding to trigger run-scheduled"
+        fi
+      fi
+
+      local trigger_resp http_code trigger_body
+      trigger_resp="$(curl -sS -w "\n%{http_code}" -X POST "${auth_header[@]}" \
+        -H "Content-Type: application/json" \
+        -d "{\"force_connector_ids\":[\"${simulation_connector_id}\"],\"exclusive_connector_ids\":[\"${simulation_connector_id}\"]}" \
+        "${source_ingest_url}/api/source-ingest/run-scheduled" 2>&1 || true)"
+      http_code="$(printf '%s\n' "$trigger_resp" | tail -n 1)"
+      trigger_body="$(printf '%s\n' "$trigger_resp" | sed '$d')"
+
+      local eval_out outcome errs diag=""
+      eval_out="$(python3 -c '
+import json, sys
+code = sys.argv[1] if len(sys.argv) > 1 else ""
+body = sys.argv[2] if len(sys.argv) > 2 else ""
+if code == "000":
+    print("transport failure\t")
+elif code in ("401", "403"):
+    print("authentication rejected\t")
+elif code != "200":
+    print("server error\t")
+else:
+    try:
+        d = json.loads(body)
+        fails = [str(f.get("connector_id")) + ": " + str(f.get("error")) for f in d.get("failed") or [] if isinstance(f, dict)]
+        ran = int((d.get("summary") or {}).get("total_ran", 1 if d.get("status") == "ok" else 0))
+        outcome = "refreshed" if not fails and ran >= 1 else "controller mode refuses refresh"
+        print(outcome + "\t" + "; ".join(fails))
+    except Exception:
+        print("controller mode refuses refresh\t")
+' "$http_code" "$trigger_body" 2>/dev/null || printf 'server error\t')"
+      outcome="${eval_out%%$'\t'*}"
+      errs="${eval_out#*$'\t'}"
+      [[ -z "$errs" ]] || diag=" failed: [${errs}]"
+
+      info "run-scheduled trigger attempt 1: http_status=${http_code} outcome=${outcome}${diag}"
+      if [[ "$outcome" != "refreshed" ]]; then
+        restore_dev_paper_schedule
+        error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: ${outcome}"
+        return 1
+      fi
+    fi
+
+    (( $(date +%s) < deadline )) || break
+    sleep "$poll_interval"
+  done
+
+  restore_dev_paper_schedule
+  error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: snapshot still lacks market"
+  return 1
+}
+
 verify_exact_component_deployment() {
   local target_services=("$@")
   local expected_sha="${GIT_SHA:-${PANTHEON_DEPLOY_SHA:-${DEPLOY_SHA:-}}}"
@@ -4073,6 +4283,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # receipt replay before the workflow's public smokes run.
     PANTHEON_DEV_REPO="$(pwd)" bash scripts/verify_trade_journey_residual_dev.sh \
       || rollback_dev_bff_on_failure "trade_journey_residual"
+    stage_dev_paper_prerequisite_readiness \
+      || rollback_dev_bff_on_failure "paper_prerequisite_readiness"
     verify_exact_component_deployment \
       || rollback_dev_bff_on_failure "exact_component_deployment"
     ;;

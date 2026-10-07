@@ -96,7 +96,8 @@ def _request_json(
     payload: Mapping[str, Any] | None = None,
     bearer_token: str | None = None,
     timeout_seconds: float = 30.0,
-) -> dict[str, Any]:
+    allow_list: bool = False,
+) -> Any:
     body = _canonical_json(payload).encode("utf-8") if payload is not None else None
     headers = {"Accept": "application/json"}
     if body is not None:
@@ -107,8 +108,12 @@ def _request_json(
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         raw = response.read().decode("utf-8")
     parsed = json.loads(raw) if raw else {}
-    if not isinstance(parsed, dict):
-        raise ControllerTickError("http_contract", f"expected JSON object from {url}")
+    if allow_list:
+        if not isinstance(parsed, (dict, list)):
+            raise ControllerTickError("http_contract", f"expected JSON object or list from {url}")
+    else:
+        if not isinstance(parsed, dict):
+            raise ControllerTickError("http_contract", f"expected JSON object from {url}")
     return parsed
 
 
@@ -214,26 +219,82 @@ def _personas_from_payload(payload: Any) -> tuple[dict[str, Any], ...]:
     return personas
 
 
+DEPLOYMENT_REQUIREMENT_HOLDER_ID = "persona-source-ingest-public-market"
+
+
+def _is_active_persona(persona: Mapping[str, Any]) -> bool:
+    lifecycle = str(persona.get("lifecycle_state") or persona.get("state") or "").strip().lower()
+    status = str(persona.get("status") or "active").strip().lower()
+    return lifecycle != "retired" and status not in {"retired", "archived"}
+
+
+def _requirement_key(req: Mapping[str, Any]) -> tuple:
+    candidates = tuple(str(c).strip() for c in (req.get("connector_candidates") or []))
+    return (
+        str(req.get("market") or "").strip().upper(),
+        str(req.get("dataset") or "").strip().lower(),
+        str(req.get("cadence") or "").strip().lower(),
+        str(req.get("source_class") or "").strip().lower(),
+        candidates,
+    )
+
+
 def load_desired_state(*, timeout_seconds: float = 30.0) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
-    url = str(os.getenv("SOURCE_INGEST_DESIRED_STATE_URL") or "").strip()
     configured_path = str(os.getenv("SOURCE_INGEST_DESIRED_STATE_PATH") or "").strip()
+    path = Path(configured_path) if configured_path else DEFAULT_DESIRED_STATE_PATH
+    try:
+        static_payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ControllerTickError("desired_state_read", f"desired-state file is unreadable: {path}") from exc
+    static_authority = str(static_payload.get("authority") or f"file://{path}") if isinstance(static_payload, Mapping) else f"file://{path}"
+    default_personas = _personas_from_payload(static_payload)
+
+    url = str(os.getenv("SOURCE_INGEST_DESIRED_STATE_URL") or "").strip()
     if url:
-        payload = _request_json(
-            url,
-            bearer_token=_load_bearer_token(),
-            timeout_seconds=timeout_seconds,
+        try:
+            owner_payload = _request_json(
+                url,
+                bearer_token=_load_bearer_token(),
+                timeout_seconds=timeout_seconds,
+                allow_list=True,
+            )
+            owner_personas = _personas_from_payload(owner_payload)
+        except ControllerTickError as exc:
+            raise ControllerTickError("persona_owner_read", f"persona owner read failed: {exc}") from exc
+        except Exception as exc:
+            raise ControllerTickError("persona_owner_read", f"persona owner read failed: {exc}") from exc
+
+        active_personas = [p for p in owner_personas if _is_active_persona(p)]
+        combined: list[dict[str, Any]] = [dict(p) for p in default_personas]
+        holder_idx = next(
+            (i for i, p in enumerate(combined) if str(p.get("persona_id")) == DEPLOYMENT_REQUIREMENT_HOLDER_ID),
+            0 if combined else None,
         )
+        if holder_idx is not None:
+            holder = dict(combined[holder_idx])
+            holder_reqs = [dict(r) for r in (holder.get("required_data_sources") or [])]
+            seen_req_keys = {_requirement_key(r) for r in holder_reqs}
+            for p in active_personas:
+                for req in (p.get("required_data_sources") or []):
+                    if not isinstance(req, Mapping):
+                        continue
+                    source_class = str(req.get("source_class") or "").strip().lower()
+                    if source_class not in {"live_pull", "live_push"}:
+                        continue
+                    key = _requirement_key(req)
+                    if key not in seen_req_keys:
+                        seen_req_keys.add(key)
+                        holder_reqs.append(dict(req))
+            holder["required_data_sources"] = holder_reqs
+            combined[holder_idx] = holder
+        personas = tuple(combined)
         authority = url.split("?", 1)[0]
         transport = "https" if url.startswith("https://") else "internal_http"
     else:
-        path = Path(configured_path) if configured_path else DEFAULT_DESIRED_STATE_PATH
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ControllerTickError("desired_state_read", f"desired-state file is unreadable: {path}") from exc
-        authority = str(payload.get("authority") or f"file://{path}") if isinstance(payload, Mapping) else f"file://{path}"
+        personas = default_personas
+        authority = static_authority
         transport = "deployment_file"
-    personas = _personas_from_payload(payload)
+
     normalized = [persona for persona in personas]
     return personas, {
         "authority": authority,
@@ -953,6 +1014,15 @@ def _validate_terminal_readback(
     return validated_frontier_backlog
 
 
+_SOURCE_HEALTH_DERIVED_FIELDS = frozenset({"staleness_seconds"})
+
+
+def _persisted_source_health(health: Any) -> Any:
+    if isinstance(health, Mapping):
+        return {k: v for k, v in health.items() if k not in _SOURCE_HEALTH_DERIVED_FIELDS}
+    return health
+
+
 def _validate_due_state_readback(
     *,
     reconcile: Mapping[str, Any],
@@ -1074,7 +1144,9 @@ def _validate_due_state_readback(
                             reconcile=reconcile,
                             actual_readback=actual,
                         )
-                    if pre_c.get("source_health") != act_c.get("source_health"):
+                    pre_health = _persisted_source_health(pre_c.get("source_health"))
+                    act_health = _persisted_source_health(act_c.get("source_health"))
+                    if pre_health != act_health:
                         raise ControllerTickError(
                             "provider_boundary",
                             f"reconcile-only tick mutated source_health for non-executed connector {cid}",
@@ -1489,12 +1561,16 @@ def _runtime_controller_id() -> str:
     return f"{base}:{generation}"
 
 
+def _controller_tenant_id() -> str:
+    return str(os.getenv("PANTHEON_TENANT_ID") or os.getenv("PANTHEON_BFF_TENANT_ID") or "default")
+
+
 def _new_state() -> ControllerState:
     return ControllerState(
         controller_id=_runtime_controller_id(),
         controller_name=str(os.getenv("PANTHEON_CONTROLLER_NAME") or "source-ingestion-controller"),
         environment=str(os.getenv("PANTHEON_ENV") or "dev"),
-        tenant_id=str(os.getenv("PANTHEON_TENANT_ID") or "default"),
+        tenant_id=_controller_tenant_id(),
         deployment=_runtime_deployment(),
     )
 
@@ -1503,7 +1579,7 @@ def refresh_runtime_identity(state: ControllerState) -> ControllerState:
     """Fence a restarted process and refresh exact deployment identity."""
 
     environment = str(os.getenv("PANTHEON_ENV") or "dev")
-    tenant_id = str(os.getenv("PANTHEON_TENANT_ID") or "default")
+    tenant_id = _controller_tenant_id()
     if state.environment != environment or state.tenant_id != tenant_id:
         raise ControllerStateError(
             "persisted controller state tenant/environment does not match this runtime"

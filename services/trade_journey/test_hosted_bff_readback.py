@@ -1,7 +1,21 @@
 from __future__ import annotations
 
 import json
+from typing import Any, Mapping, Optional
 
+from fastapi import Body, FastAPI, HTTPException
+from fastapi.testclient import TestClient
+
+from services.control_plane.bff.control_loops.router import create_control_loops_router
+from services.control_plane.bff.control_loops.service import ControlLoopsService
+from services.control_plane.bff.core.app_factory import create_version_handler
+from services.control_plane.bff.models import OperatorIdentity
+from services.control_plane.bff.trade_journeys import create_trade_journeys_router
+from services.control_plane.bff.trade_journey_projection_store import (
+    InvalidPageToken,
+    ProjectionPage,
+    TimelinePage,
+)
 from services.trade_journey import hosted_bff_readback as readback
 from services.trade_journey.hosted_lifecycle_probe import (
     EXPECTED_STAGES,
@@ -9,6 +23,7 @@ from services.trade_journey.hosted_lifecycle_probe import (
     TASK_ID,
 )
 from services.trade_journey.lifecycle_projector import STABLE_IDENTITY_FIELDS
+from services.trade_journey.materializer import JourneyProjection
 
 
 SHA = "a" * 40
@@ -488,3 +503,369 @@ def test_readback_reports_redacted_bounded_retry_failure(tmp_path):
     raw = output.read_text(encoding="utf-8")
     assert "token-value" not in raw
     assert "client-secret" not in raw
+
+
+class StubProjectionReader:
+    def __init__(
+        self,
+        *,
+        identity: Mapping[str, Any],
+        events: list[dict[str, Any]],
+        controller: Mapping[str, Any],
+        loop_status: str = "completed",
+    ) -> None:
+        self.identity = identity
+        self.events = events
+        self.controller = controller
+        self.loop_status = loop_status
+
+    def get_loop_run(
+        self,
+        *,
+        tenant_id: str,
+        environment: str,
+        loop_run_id: str,
+    ) -> Optional[dict[str, Any]]:
+        if tenant_id != self.identity["tenant_id"] or environment != self.identity["environment"]:
+            return None
+        if loop_run_id != self.identity["loop_run_id"]:
+            return None
+        return {
+            "id": self.identity["loop_run_id"],
+            **self.identity,
+            "source": "postgres_lifecycle_projection",
+            "status": self.loop_status,
+            "freshness_lineage": {
+                "accepted_live": True,
+                "mode": "live",
+            },
+        }
+
+    def page_loop_runs(
+        self,
+        *,
+        tenant_id: str,
+        environment: str,
+        statuses: Optional[list[str]] = None,
+        page_size: int = 50,
+        page_token: Optional[str] = None,
+    ) -> tuple[list[dict[str, Any]], Optional[str]]:
+        if page_token == "stale-cutover-token":
+            raise InvalidPageToken("stale page token")
+        record = self.get_loop_run(
+            tenant_id=tenant_id,
+            environment=environment,
+            loop_run_id=self.identity["loop_run_id"],
+        )
+        records = [record] if record else []
+        return records, None
+
+    def list_loop_runs(
+        self,
+        *,
+        tenant_id: str,
+        environment: str,
+        statuses: Optional[list[str]] = None,
+        page_size: int = 50,
+        page_token: Optional[str] = None,
+    ) -> tuple[list[dict[str, Any]], Optional[str]]:
+        return self.page_loop_runs(
+            tenant_id=tenant_id,
+            environment=environment,
+            statuses=statuses,
+            page_size=page_size,
+            page_token=page_token,
+        )
+
+    def controller_freshness(
+        self,
+        *,
+        tenant_id: str,
+        environment: str,
+    ) -> dict[str, Any]:
+        return dict(self.controller)
+
+    def get_journey(
+        self,
+        *,
+        tenant_id: str,
+        environment: str,
+        journey_id: str,
+    ) -> Optional[JourneyProjection]:
+        if tenant_id != self.identity["tenant_id"] or environment != self.identity["environment"]:
+            return None
+        if journey_id != self.identity["journey_id"]:
+            return None
+        timeline_items = [
+            {
+                "event_id": event["event_id"],
+                "journey_id": self.identity["journey_id"],
+                "stage": EXPECTED_STAGES[event["event_type"]],
+                "event_type": event["event_type"],
+                "stage_status": "succeeded",
+                "status": "succeeded",
+                "occurred_at": "2026-10-07T12:00:00Z",
+                "recorded_at": "2026-10-07T12:00:00Z",
+                "evidence_refs": [],
+                "input_refs": [],
+                "output_refs": [],
+                "policy_refs": [],
+            }
+            for event in self.events
+        ]
+        return JourneyProjection(
+            journey_id=self.identity["journey_id"],
+            tenant_id=tenant_id,
+            environment=environment,
+            timeline=timeline_items,
+            snapshot={
+                "status": self.loop_status,
+                "created_at": "2026-10-07T12:00:00Z",
+                "updated_at": "2026-10-07T12:01:00Z",
+                "identifiers": {
+                    "tenant_id": self.identity["tenant_id"],
+                    "journey_id": self.identity["journey_id"],
+                    "loop_run_id": self.identity["loop_run_id"],
+                },
+                "stages": {
+                    EXPECTED_STAGES[event["event_type"]]: {"status": "succeeded"}
+                    for event in self.events
+                },
+                "completeness": {"missing_stages": []},
+            },
+            graph_edges=[
+                {
+                    "source": self.identity["journey_id"],
+                    "target": self.identity["journey_id"],
+                    "kind": "journey_id",
+                }
+            ],
+            diagnostics=[],
+        )
+
+    def page_journeys(
+        self,
+        *,
+        tenant_id: str,
+        environment: str,
+        filters: Any = None,
+        sort: str = "updated_at_desc",
+        page_size: int = 50,
+        page_token: Optional[str] = None,
+    ) -> ProjectionPage:
+        if page_token == "stale-cutover-token":
+            raise InvalidPageToken("stale page token")
+        journey = self.get_journey(
+            tenant_id=tenant_id,
+            environment=environment,
+            journey_id=self.identity["journey_id"],
+        )
+        items = [journey] if journey else []
+        return ProjectionPage(items=items, next_page_token=None, total=len(items))
+
+    def page_timeline(
+        self,
+        *,
+        tenant_id: str,
+        environment: str,
+        journey_id: str,
+        page_size: int = 50,
+        page_token: Optional[str] = None,
+    ) -> Optional[TimelinePage]:
+        journey = self.get_journey(
+            tenant_id=tenant_id,
+            environment=environment,
+            journey_id=journey_id,
+        )
+        if journey is None:
+            return None
+        return TimelinePage(
+            items=journey.timeline,
+            next_page_token=None,
+            total=len(journey.timeline),
+        )
+
+
+class AppTestHttpClient:
+    def __init__(self, test_client: TestClient) -> None:
+        self._client = test_client
+
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        payload: Mapping[str, Any] | None = None,
+    ) -> readback.HttpResult:
+        path = url
+        if url.startswith(BASE_URL):
+            path = url[len(BASE_URL):]
+        resp = self._client.request(
+            method,
+            path,
+            headers=dict(headers or {}),
+            json=payload if payload is not None else None,
+        )
+        try:
+            body = resp.json()
+        except Exception:
+            body = None
+        return readback.HttpResult(status=resp.status_code, payload=body)
+
+
+def _build_real_bff_app(projection_reader: StubProjectionReader) -> tuple[FastAPI, ControlLoopsService]:
+    class MockReadStore:
+        def __init__(self) -> None:
+            self.trade_journey_projection_reader = lambda: projection_reader
+
+        def dataset_source(self, dataset: str) -> str:
+            return "postgres_lifecycle_projection"
+
+    service = ControlLoopsService(
+        read_store=MockReadStore(),
+        deployed_environment="dev",
+        served_stages=("paper", "broker_sandbox"),
+    )
+
+    def extract_identity(authorization: Optional[str] = None) -> OperatorIdentity:
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(
+                status_code=401,
+                detail={"error": {"code": "AUTH_REQUIRED", "message": "Missing bearer token"}},
+            )
+        token = authorization[len("Bearer "):].strip()
+        if token != "token-value":
+            raise HTTPException(
+                status_code=401,
+                detail={"error": {"code": "AUTH_REQUIRED", "message": "Invalid token"}},
+            )
+        return OperatorIdentity(
+            operator_id="operator",
+            roles=["operator", "viewer"],
+            mfa_verified=True,
+            claims={
+                "tenant_id": "tenant-dev",
+                "allowed_tenants": ["tenant-dev"],
+            },
+        )
+
+    def require_read_role(identity: Any) -> None:
+        roles = set(getattr(identity, "roles", []) or [])
+        if not {"operator", "viewer"}.intersection(roles):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    app = FastAPI()
+
+    app.get("/bff/version")(
+        create_version_handler(
+            source_commit_fn=lambda: SHA,
+            auth_stub_fn=lambda: False,
+            auth_mode_fn=lambda: "strict",
+            dev_login_fn=lambda: True,
+            environment="dev",
+        )
+    )
+
+    @app.post("/bff/auth/dev-login")
+    async def dev_login(payload: dict = Body(...)) -> dict[str, Any]:
+        if (
+            payload.get("client_id") != "client-id"
+            or payload.get("client_secret") != "client-secret"
+        ):
+            raise HTTPException(status_code=401, detail="Invalid client credentials")
+        return {
+            "access_token": "token-value",
+            "token_type": "bearer",
+            "expires_in": 900,
+            "meta": {"identity": "operator"},
+        }
+
+    app.include_router(
+        create_control_loops_router(
+            service=service,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+        )
+    )
+    app.include_router(
+        create_trade_journeys_router(
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            get_projection_reader=lambda: projection_reader,
+        )
+    )
+    return app, service
+
+
+def test_readback_against_real_bff_routes(tmp_path: Any) -> None:
+    projection_reader = StubProjectionReader(
+        identity=IDENTITY,
+        events=EVENTS,
+        controller=dict(CONTROLLER, generation=13),
+    )
+    app, _ = _build_real_bff_app(projection_reader)
+    client = TestClient(app, base_url=BASE_URL, raise_server_exceptions=False)
+    http_client = AppTestHttpClient(client)
+
+    source = tmp_path / "source.json"
+    output = tmp_path / "readback.json"
+    source.write_text(json.dumps(_source_artifact()), encoding="utf-8")
+
+    code, artifact = readback.execute_readback(
+        source_path=source,
+        output=output,
+        expected_sha=SHA,
+        base_url=BASE_URL,
+        client_id="client-id",
+        client_secret="client-secret",
+        client=http_client,
+    )
+
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert artifact["public_bff"]["loop_run"]["projection_generation"] == 13
+    assert artifact["public_bff"]["trade_journey"]["projection_generation"] == 13
+    assert artifact["public_bff"]["cross_surface"]["monotonic_controller_generations"] is True
+    assert artifact["public_bff"]["cross_surface"]["exact_event_ids"] is True
+
+
+def test_readback_detects_real_bff_drift_when_projection_schema_version_missing(tmp_path: Any) -> None:
+    projection_reader = StubProjectionReader(
+        identity=IDENTITY,
+        events=EVENTS,
+        controller=dict(CONTROLLER, generation=13),
+    )
+    app, service = _build_real_bff_app(projection_reader)
+
+    # Simulate the historical drift where get_loop_run omitted projection_schema_version
+    original_surface_helper = service._postgres_projection_surface
+
+    def omitting_schema_surface(ctrl: Optional[Mapping[str, Any]]) -> dict[str, Any]:
+        surface = original_surface_helper(ctrl)
+        surface.pop("projection_schema_version", None)
+        return surface
+
+    service._postgres_projection_surface = omitting_schema_surface
+
+    client = TestClient(app, base_url=BASE_URL, raise_server_exceptions=False)
+    http_client = AppTestHttpClient(client)
+
+    source = tmp_path / "source.json"
+    output = tmp_path / "readback.json"
+    source.write_text(json.dumps(_source_artifact()), encoding="utf-8")
+
+    code, artifact = readback.execute_readback(
+        source_path=source,
+        output=output,
+        expected_sha=SHA,
+        base_url=BASE_URL,
+        client_id="client-id",
+        client_secret="client-secret",
+        client=http_client,
+    )
+
+    assert code == 1
+    assert artifact["failure"]["code"] == "bff_loop_surface_invalid"
+    assert artifact["failure"]["message"] == "loop-run projection metadata mismatched"
+

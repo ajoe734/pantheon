@@ -206,6 +206,24 @@ def admit_normalized_records_to_distillation(
     return admissions
 
 
+def stamp_source_record_tenant(record: SourceRecord, tenant_id: str) -> SourceRecord:
+    if record.metadata.get("tenant_id") == tenant_id:
+        return record
+    meta = dict(record.metadata)
+    meta["tenant_id"] = tenant_id
+    return SourceRecord(
+        source_id=record.source_id,
+        connector_id=record.connector_id,
+        source_type=record.source_type.value if hasattr(record.source_type, "value") else str(record.source_type),
+        title=record.title,
+        content_ref=record.content_ref,
+        status=record.status.value if hasattr(record.status, "value") else str(record.status),
+        metadata=meta,
+        trace_id=record.trace_id,
+        created_at=record.created_at,
+    )
+
+
 def persist_source_evidence_refs(
     manager: IngestManager,
     evidence_repository: Any,
@@ -214,6 +232,14 @@ def persist_source_evidence_refs(
     result: Any,
     storage_refs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    connector = manager.get_connector(result.run.connector_id)
+    connector_tenant = None
+    if connector and isinstance(connector.metadata, Mapping) and connector.metadata.get("tenant_id"):
+        connector_tenant = str(connector.metadata["tenant_id"]).strip() or None
+    elif connector and hasattr(manager, "runtime") and hasattr(manager.runtime, "_is_controller_owned") and manager.runtime._is_controller_owned(connector):
+        env_tenant = os.getenv("PANTHEON_TENANT_ID") or os.getenv("PANTHEON_BFF_TENANT_ID") or ""
+        connector_tenant = env_tenant.strip() or None
+
     source_records = [
         with_source_ingest_run(
             compact_bulk_market_record(record, storage_refs),
@@ -231,10 +257,15 @@ def persist_source_evidence_refs(
             "distillation_admissions": {},
         }
 
+    if connector_tenant:
+        source_records = [
+            stamp_source_record_tenant(record, connector_tenant)
+            for record in source_records
+        ]
+
     if len({record.tenant_id for record in source_records}) != 1:
         raise EvidenceValidationError("An ingest evidence batch must have one tenant identity")
 
-    connector = manager.get_connector(result.run.connector_id)
     source_records = [
         validate_external_source_record(record, connector=connector)
         for record in source_records
@@ -343,6 +374,8 @@ def persist_market_data_storage_refs(
 def persist_latest_market_snapshots(
     latest_market_snapshot_store: LatestMarketSnapshotStore,
     result: Any,
+    *,
+    connector: Any | None = None,
 ) -> dict[str, Any]:
     """Project completed normalized SourceRecords into the read-only paper API."""
     if result.run.status.value != "completed":
@@ -357,6 +390,7 @@ def persist_latest_market_snapshots(
         result.records,
         ingest_run_id=result.run.ingest_run_id,
         observed_at=run_finished_at_iso(result.run),
+        connector=connector,
     )
 
 
@@ -830,11 +864,29 @@ class IngestPipelineService:
         frontier_id: str | None = None,
     ) -> tuple[Any, dict[str, Any], dict[str, Any] | None]:
         self.runtime._assert_connector_lifecycle_allows_run(connector)
+        connector_tenant = None
+        if isinstance(connector.metadata, Mapping) and connector.metadata.get("tenant_id"):
+            connector_tenant = str(connector.metadata["tenant_id"]).strip() or None
+        elif hasattr(self.runtime, "_is_controller_owned") and self.runtime._is_controller_owned(connector):
+            env_tenant = os.getenv("PANTHEON_TENANT_ID") or os.getenv("PANTHEON_BFF_TENANT_ID") or ""
+            connector_tenant = env_tenant.strip() or None
+
+        effective_fetch_batch = fetch_batch
+        if connector_tenant:
+            def tenant_stamped_fetch_batch(watermark: str | None) -> Any:
+                fetched = fetch_batch(watermark)
+                batch_records = fetched.records if isinstance(fetched, IngestBatch) else tuple(fetched)
+                stamped_records = tuple(stamp_source_record_tenant(r, connector_tenant) for r in batch_records)
+                if isinstance(fetched, IngestBatch):
+                    return replace(fetched, records=stamped_records)
+                return stamped_records
+            effective_fetch_batch = tenant_stamped_fetch_batch
+
         result = self.scheduler.run_once(
             connector_id=connector.connector_id,
             trace_id=trace_id,
             trigger_type=trigger_type,
-            fetch_batch=fetch_batch,
+            fetch_batch=effective_fetch_batch,
             frontier_id=frontier_id,
         )
         evidence_refs: dict[str, Any] = {
@@ -859,7 +911,11 @@ class IngestPipelineService:
             storage_refs = persist_market_data_storage_refs(self.manager, self.market_data_storage_writer, result)
             evidence_refs["storage_refs"] = storage_refs
             post_processing_stage = "latest_market_snapshot"
-            market_snapshots = persist_latest_market_snapshots(self.latest_market_snapshot_store, result)
+            market_snapshots = persist_latest_market_snapshots(
+                self.latest_market_snapshot_store,
+                result,
+                connector=connector,
+            )
             evidence_refs["market_snapshots"] = market_snapshots
             post_processing_stage = "source_evidence"
             evidence_refs = persist_source_evidence_refs(
@@ -1197,9 +1253,22 @@ class IngestPipelineService:
                 continue
             if not sched.enabled or sched.interval_seconds <= 0:
                 if sched.connector_id in exclusive_connector_ids:
+                    config = self.connector_store.get_config(sched.connector_id)
+                    is_op_stop = False
+                    if (
+                        config is not None
+                        and config.connector.status == ConnectorStatus.DISABLED
+                        and hasattr(self.runtime, "_is_operator_stopped")
+                    ):
+                        is_op_stop = self.runtime._is_operator_stopped(config.connector)
+                    err_msg = (
+                        "exclusively selected connector is disabled by explicit operator stop"
+                        if is_op_stop
+                        else "exclusively selected connector schedule is disabled"
+                    )
                     failed.append({
                         "connector_id": sched.connector_id,
-                        "error": "exclusively selected connector schedule is disabled",
+                        "error": err_msg,
                     })
                 else:
                     skipped.append(sched.connector_id)
@@ -1222,10 +1291,18 @@ class IngestPipelineService:
                 failed.append({"connector_id": sched.connector_id, "error": "connector config not found"})
                 continue
             if config.connector.status == ConnectorStatus.DISABLED:
+                is_op_stop = False
+                if hasattr(self.runtime, "_is_operator_stopped"):
+                    is_op_stop = self.runtime._is_operator_stopped(config.connector)
+                err_msg = (
+                    "exclusively selected connector is disabled by explicit operator stop"
+                    if is_op_stop
+                    else "exclusively selected connector is disabled"
+                )
                 if sched.connector_id in exclusive_connector_ids:
                     failed.append({
                         "connector_id": sched.connector_id,
-                        "error": "exclusively selected connector is disabled",
+                        "error": err_msg,
                     })
                 else:
                     skipped.append(sched.connector_id)

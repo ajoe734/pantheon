@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import json
 import sys
@@ -20,7 +21,26 @@ DATASET_ID = "ds-authoritative-crypto-spot"
 DESIRED_DATASET_ID = "crypto_spot_daily_and_price"
 NORMALIZED_DATASET_ID = "crypto_spot_daily"
 RUN_ID = "ingest-authority-001"
-DESIRED_SHA = "a" * 64
+DESIRED_SHA = "a" * 64  # requirement snapshot digest over the persona set
+
+
+DESIRED_STATE = {
+    "dataset": DESIRED_DATASET_ID,
+    "market": "CRYPTO_SPOT",
+    "cadence": "daily",
+    "source_class": "live_pull",
+}
+SNAPSHOT_SHA = DESIRED_SHA
+
+
+def _desired_digest(desired_state: dict[str, Any]) -> str:
+    return _connector_digest(desired_state)
+
+
+def _connector_digest(desired_state: dict[str, Any]) -> str:
+    """source-ingest stamps each connector with the digest of its own desired state."""
+    canonical = json.dumps(desired_state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _load_module(name: str):
@@ -220,13 +240,8 @@ def _make_case(tmp_path: Path) -> AuthorityCase:
                     "status": "enabled",
                     "metadata": {"normalized_datasets": [NORMALIZED_DATASET_ID]},
                 },
-                "desired_state": {
-                    "dataset": DESIRED_DATASET_ID,
-                    "market": "CRYPTO_SPOT",
-                    "cadence": "daily",
-                    "source_class": "live_pull",
-                },
-                "desired_state_sha256": DESIRED_SHA,
+                "desired_state": dict(DESIRED_STATE),
+                "desired_state_sha256": _desired_digest(DESIRED_STATE),
                 "schedule": {
                     "connector_id": CONNECTOR_ID,
                     "enabled": True,
@@ -251,7 +266,7 @@ def _make_case(tmp_path: Path) -> AuthorityCase:
                         "dataset": NORMALIZED_DATASET_ID,
                         "available_time": "2026-07-15T11:58:00Z",
                         "api_endpoint": "https://market.example.test/ohlcv",
-                        "access_scope": "public",
+                        "access_scope": ["public"],
                         "license_scope": "open",
                         "schema_hash": "canonical-ohlcv-wrapper.v1",
                         "source_ingest_run_id": RUN_ID,
@@ -339,6 +354,8 @@ def _make_case(tmp_path: Path) -> AuthorityCase:
             }
         ],
     }
+    for connector in readback["connectors"]:
+        connector["desired_state_sha256"] = _connector_digest(connector["desired_state"])
     return AuthorityCase(
         source_root=source_root,
         output_root=output_root,
@@ -575,6 +592,27 @@ def test_missing_deployment_identity_is_rejected(tmp_path: Path) -> None:
         _materialize(case)
 
 
+def test_connector_digest_is_its_own_desired_state_not_the_snapshot(tmp_path: Path) -> None:
+    case = _make_case(tmp_path)
+    readback = case.responses[f"{BASE_URL}/api/source-ingest/controller/readback"]
+    connector = readback["connectors"][0]
+    assert connector["desired_state_sha256"] != readback["requirement_snapshot"]["desired_state_sha256"]
+
+    connector["desired_state"]["cadence"] = "hourly"
+    with pytest.raises(SourceDatasetAuthorityError, match="does not match its desired state"):
+        _materialize(case)
+
+
+@pytest.mark.parametrize("scope", [[], [""], ["public", " "], "", None, [1]])
+def test_empty_provenance_access_scope_fails_closed(tmp_path: Path, scope: Any) -> None:
+    case = _make_case(tmp_path)
+    readback = case.responses[f"{BASE_URL}/api/source-ingest/controller/readback"]
+    readback["connectors"][0]["latest_source_record"]["provenance"]["access_scope"] = scope
+
+    with pytest.raises(SourceDatasetAuthorityError, match="access_scope"):
+        _materialize(case)
+
+
 def test_unresolved_dlq_is_rejected(tmp_path: Path) -> None:
     case = _make_case(tmp_path)
     readback = case.responses[f"{BASE_URL}/api/source-ingest/controller/readback"]
@@ -613,3 +651,217 @@ def test_restart_materialization_is_idempotent(tmp_path: Path) -> None:
     assert second.canonical_ohlcv_sha256 == first.canonical_ohlcv_sha256
     assert len(list(case.output_root.glob("dataset-version-*.json"))) == 1
     assert len(list(case.output_root.glob("canonical-ohlcv-*.jsonl"))) == 1
+
+
+READBACK_URL = f"{BASE_URL}/api/source-ingest/controller/readback"
+CATALOG_URL = f"{BASE_URL}/api/source-ingest/data-sources/financial-catalog"
+TW_INSTRUMENTS = (("2330.TWSE", "2330", 900.0), ("2317.TWSE", "2317", 180.0))
+
+
+def _make_tw_case(tmp_path: Path) -> AuthorityCase:
+    """Rewrite the crypto fixture into the Taiwan normalized_row contract."""
+
+    case = _make_case(tmp_path)
+    wrappers: list[dict[str, Any]] = []
+    first_date = date(2026, 6, 16)
+    for offset in range(30):
+        trade_date = (first_date + timedelta(days=offset)).isoformat()
+        for canonical, symbol, base in TW_INSTRUMENTS:
+            open_price = base + offset
+            normalized_row = {
+                "dataset": "tw_price_daily",
+                "date": trade_date,
+                "symbol": symbol,
+                "symbol_canonical": canonical,
+                "market": "TW",
+                "venue": "TWSE",
+                "open": open_price,
+                "high": open_price + 5.0,
+                "low": open_price - 5.0,
+                "close": open_price + 1.0,
+                "volume": 10_000 + offset,
+            }
+            wrappers.append(
+                {
+                    "source_id": f"tw-official:tw_price_daily:TWSE:{symbol}:{trade_date}",
+                    "connector_id": CONNECTOR_ID,
+                    "dataset": NORMALIZED_DATASET_ID,
+                    "content_ref": f"tw-official://tw_price_daily/TWSE/{symbol}/{trade_date}",
+                    "metadata": {
+                        "dataset": "tw_price_daily",
+                        "symbol": symbol,
+                        "symbol_canonical": canonical,
+                        "date": trade_date,
+                        "normalized_row": normalized_row,
+                    },
+                }
+            )
+    raw_rows = [
+        {
+            **{k: row[k] for k in ("source_id", "connector_id", "content_ref")},
+            "metadata": {**row["metadata"], "dataset": NORMALIZED_DATASET_ID},
+        }
+        for row in wrappers
+    ]
+    _write_jsonl(case.normalized_path, wrappers)
+    _write_jsonl(case.raw_path, raw_rows)
+    readback = case.responses[READBACK_URL]
+    connector = readback["connectors"][0]
+    connector["desired_state"] = {**DESIRED_STATE, "market": "TW"}
+    connector["desired_state_sha256"] = _desired_digest(connector["desired_state"])
+    manifest = connector["source_health"]["metadata"]["storage_refs"]
+    manifest["feature_refs"] = []
+    manifest["summary"]["feature_ref_count"] = 0
+    case.responses[CATALOG_URL]["config_templates"][0]["fetch"] = {"datasets": [DESIRED_DATASET_ID]}
+    return case
+
+
+def test_tw_normalized_row_contract_materializes_without_feature_refs(tmp_path: Path) -> None:
+    case = _make_tw_case(tmp_path)
+
+    result = _materialize(case)
+
+    assert result.payload["market_scope"] == ["TW"]
+    assert result.payload["instrument_scope"] == ["2317.TWSE", "2330.TWSE"]
+    assert result.payload["feature_dataset_refs"] == []
+    assert len(result.payload["records"]) == 60
+    assert result.payload["records"][0]["instrument"] in {"2317.TWSE", "2330.TWSE"}
+    assert result.payload["records"][0]["open"] > 0
+
+
+def test_feature_refs_required_when_connector_declares_feature_targets(tmp_path: Path) -> None:
+    case = _make_tw_case(tmp_path)
+    connector = case.responses[READBACK_URL]["connectors"][0]
+    connector["connector"]["metadata"]["feature_targets"] = ["returns"]
+
+    with pytest.raises(SourceDatasetAuthorityError, match="feature_refs"):
+        _materialize(case)
+
+
+def test_catalog_template_with_datasets_list_binds_desired_dataset(tmp_path: Path) -> None:
+    case = _make_tw_case(tmp_path)
+    # Force the catalog path: request an id that is not the controller dataset.
+    case.responses[READBACK_URL]["connectors"][0]["connector"]["metadata"][
+        "normalized_datasets"
+    ] = [NORMALIZED_DATASET_ID]
+
+    result = _materialize(case)
+
+    assert result.payload["metadata_json"]["source_dataset_resolution"]["resolution_mode"] == (
+        "financial_catalog_mapping"
+    )
+
+
+def test_catalog_template_datasets_list_without_desired_dataset_is_rejected(tmp_path: Path) -> None:
+    case = _make_tw_case(tmp_path)
+    case.responses[CATALOG_URL]["config_templates"][0]["fetch"] = {"datasets": ["other_dataset"]}
+
+    with pytest.raises(SourceDatasetAuthorityError, match="contradicts financial catalog"):
+        _materialize(case)
+
+
+def test_two_templates_binding_dataset_and_connector_are_rejected(tmp_path: Path) -> None:
+    case = _make_tw_case(tmp_path)
+    catalog = case.responses[CATALOG_URL]
+    catalog["config_templates"].append(
+        {**catalog["config_templates"][0], "template_id": "template-duplicate"}
+    )
+
+    with pytest.raises(SourceDatasetAuthorityError, match="uniquely bind"):
+        _materialize(case)
+
+
+def test_tw_symbol_canonical_disagreement_is_rejected(tmp_path: Path) -> None:
+    case = _make_tw_case(tmp_path)
+    rows = [json.loads(line) for line in case.normalized_path.read_text().splitlines()]
+    rows[0]["metadata"]["normalized_row"]["symbol_canonical"] = "9999.TWSE"
+    _write_jsonl(case.normalized_path, rows)
+
+    with pytest.raises(SourceDatasetAuthorityError, match="symbol_canonical"):
+        _materialize(case)
+
+
+def test_list_access_scope_is_accepted(tmp_path: Path) -> None:
+    case = _make_tw_case(tmp_path)
+    case.responses[READBACK_URL]["connectors"][0]["latest_source_record"]["provenance"][
+        "access_scope"
+    ] = ["public", "research"]
+
+    assert _materialize(case).path.exists()
+
+
+@pytest.mark.parametrize("scope", [[], [""], ["public", 1], None, "", 7, {"a": "b"}])
+def test_invalid_access_scope_fails_closed(tmp_path: Path, scope: Any) -> None:
+    case = _make_tw_case(tmp_path)
+    case.responses[READBACK_URL]["connectors"][0]["latest_source_record"]["provenance"][
+        "access_scope"
+    ] = scope
+
+    with pytest.raises(SourceDatasetAuthorityError, match="access_scope"):
+        _materialize(case)
+
+
+def test_source_read_headers_send_bearer_and_tenant(tmp_path: Path) -> None:
+    token = tmp_path / "token"
+    token.write_text("aaa.bbb.ccc\n", encoding="utf-8")
+    token.chmod(0o600)
+
+    assert AUTHORITY.source_read_headers(str(token), "tenant-dev") == {
+        "Authorization": "Bearer aaa.bbb.ccc",
+        "X-Tenant-Id": "tenant-dev",
+    }
+
+
+@pytest.mark.parametrize("variant", ["unset", "missing", "empty", "bad_tenant", "wildcard", "unsafe_mode", "symlink", "whitespace"])
+def test_source_read_headers_fail_closed(tmp_path: Path, variant: str) -> None:
+    token = tmp_path / "token"
+    token.write_text(
+        "" if variant == "empty" else "aaa bbb" if variant == "whitespace" else "aaa.bbb.ccc",
+        encoding="utf-8",
+    )
+    token.chmod(0o644 if variant == "unsafe_mode" else 0o600)
+    path: Any = str(token)
+    tenant = "tenant-dev"
+    if variant == "unset":
+        path = None
+    elif variant == "missing":
+        path = str(tmp_path / "absent")
+    elif variant == "symlink":
+        link = tmp_path / "link"
+        link.symlink_to(token)
+        path = str(link)
+    elif variant == "bad_tenant":
+        tenant = ""
+    elif variant == "wildcard":
+        tenant = "*"
+
+    with pytest.raises(SourceDatasetAuthorityError):
+        AUTHORITY.source_read_headers(path, tenant)
+
+
+def test_urllib_json_get_sends_supplied_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, _n: int) -> bytes:
+            return b'{"ok": true}'
+
+    def fake_urlopen(request, timeout):
+        seen["headers"] = {k.lower(): v for k, v in request.header_items()}
+        return _Response()
+
+    monkeypatch.setattr(AUTHORITY.urllib.request, "urlopen", fake_urlopen)
+
+    payload = AUTHORITY.urllib_json_get(
+        BASE_URL + "/x", headers={"Authorization": "Bearer t", "X-Tenant-Id": "tenant-dev"}
+    )
+
+    assert payload == {"ok": True}
+    assert seen["headers"]["authorization"] == "Bearer t"
+    assert seen["headers"]["x-tenant-id"] == "tenant-dev"

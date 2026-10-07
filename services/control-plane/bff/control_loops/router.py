@@ -134,6 +134,7 @@ def create_control_loops_router(
     bff_error: Optional[Callable[..., Exception]] = None,
     utc_now_fn: Optional[Callable[[], str]] = None,
     deployed_environment: Optional[str] = None,
+    served_stages: Optional[Sequence[str]] = None,
     redact_evidence_refs: Optional[Callable[..., Tuple[List[Dict[str, Any]], int]]] = None,
     capabilities_for_identity: Optional[Callable[[Any], Any]] = None,
 ) -> APIRouter:
@@ -170,6 +171,7 @@ def create_control_loops_router(
             utc_now_fn=utc_now_fn,
             bff_error_fn=_err,
             deployed_environment=deployed_environment,
+            served_stages=served_stages,
         )
     resolved_service = service
 

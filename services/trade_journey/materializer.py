@@ -217,10 +217,13 @@ class JourneyMaterializer:
             diagnostics.append({"code": "orphan_identifier", "identifier_type": "order_id"})
 
         status = self._rollup(stages, corrections, explicit_cancel, diagnostics)
+        occurred = [event["occurred_at"] for event in events]
         snapshot = {
             "journey_id": journey_id, "tenant_id": tenant_id, "environment": environment,
             "status": status, "stages": stages, "revision": len(events),
-            "created_at": events[0]["occurred_at"], "updated_at": events[-1]["occurred_at"],
+            # Causal order may disagree with raw producer clocks under drift;
+            # the temporal envelope must still satisfy first <= last.
+            "created_at": min(occurred, key=self._instant), "updated_at": max(occurred, key=self._instant),
             "identifiers": {name: sorted(values) for name, values in sorted(identifiers.items())},
             "completeness": {"missing_stages": missing, "complete": not missing},
         }
@@ -273,6 +276,13 @@ class JourneyMaterializer:
             return list(STAGES)
         furthest = max(STAGES.index(stage) for stage in stages)
         return [stage for stage in STAGES[:furthest + 1] if stage not in stages]
+
+    @staticmethod
+    def _instant(value: Any) -> datetime:
+        if isinstance(value, datetime):
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
     @staticmethod
     def _sort_key(event: Mapping[str, Any]) -> tuple[int, int, str, str, str]:

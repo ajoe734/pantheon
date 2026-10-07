@@ -137,9 +137,25 @@ The default Compose path evaluates with the pinned upstream vectorbt backend
 `source-ingest` using `SOURCE_INGEST_API_URL`,
 `TRAINING_SESSION_SOURCE_CONNECTOR_ID`, and
 `TRAINING_SESSION_SOURCE_DATASET_ID`; the source-ingest data volume is also
-mounted read-only for authoritative local readback. Missing, stale, invalid,
+mounted read-only for authoritative local readback. Compose defaults to the
+Taiwan official source: connector `tw-twse-tpex-official-market`, dataset
+`tw_price_daily` (OHLCV read from the published `normalized_row`, instrument
+from `symbol_canonical`, market `TW`). Threshold policy v3.0.0 requires
+`2330.TWSE` and `2317.TWSE` (>= 30 bars each) and measures staleness in Taiwan
+trading days through the shared `market_snapshot_admission` calendar rule: a
+weekend gap passes, an unexplained weekday gap fails closed. Feature refs are
+required only when the connector declares `feature_targets`. Missing, stale, invalid,
 insufficient, or provenance-mismatched data fails closed and cannot produce a
 passing commit gate.
+
+Source-ingest evidence reads require a `source_ingest_reader` principal. The
+service sends `Authorization: Bearer <token>` and `X-Tenant-Id` on every read,
+taking the JWT from `TRAINING_SESSION_SOURCE_READ_TOKEN_FILE` (default
+`/run/pantheon-principals/TRAINING_SESSION_SOURCE_READ_TOKEN`, issued by
+`scripts/issue_dev_paper_principals.py` for `tenant-dev`) and the tenant from
+`TRAINING_SESSION_SOURCE_READ_TENANT_ID`. A missing or empty token file or
+tenant fails closed. `provenance.access_scope` may be a non-empty string or a
+non-empty list of non-empty strings.
 
 Runtime evaluation and decision records are written under
 `TRAINING_SESSION_RUNTIME_EVIDENCE_PATH` on the durable training-session data

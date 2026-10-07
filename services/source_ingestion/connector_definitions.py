@@ -374,7 +374,7 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         secret_fields=(),
         required_pit_fields=("event_time", "available_time", "ingest_time"),
         default_limits={"max_records": 100, "max_bytes": 10485760, "timeout_seconds": 15, "max_rate_per_second": 5.0},
-        allowed_host_patterns=("openapi.twse.com.tw", "www.tpex.org.tw"),
+        allowed_host_patterns=("openapi.twse.com.tw", "www.twse.com.tw", "www.tpex.org.tw"),
         definition_state=DefinitionState.SUPPORTED,
         test_manifest_ref="evidence://connector-definition/tw-twse-tpex-official-market",
     ),

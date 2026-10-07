@@ -1,0 +1,25 @@
+{
+  "task_id": "BFF-APPROVAL-PROJECTION-NO-FABRICATION-20261007",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "change_class": "corrective",
+  "net_prod_lines": 1,
+  "acceptance_criteria": {
+    "ac_1_no_fabrication": "project() no longer defaults submitted_by to governance-service, generates risk_summary, hard-codes required_approvals=1 or defaults decision_state to pending. submitted_by = owner_user_id or actor_id or created_by or null; risk_summary = owner rationale or null; required_approvals only when the owner provides it.",
+    "ac_2_no_revision_action": "allowedActions.canRequestRevision is False (RequestApprovalRevision retired, 410 since 2026-10-01).",
+    "ac_3_legacy_fields_restored": "id, outcome, status, state are projected as before 224b60032 (status/state pending for proposed/under_review); owner-supplied keys still override as before.",
+    "ac_4_tests": "test_approval_projection_invents_nothing_and_keeps_legacy_fields asserts null/absent values for a bare owner record and both old and new fields.",
+    "ac_5_suites": "test_governance_router.py, test_bff_approvals_surface_contract.py, test_pkt006_approval_queue_contract.py, test_ooda_management_ports.py: 35 passed."
+  },
+  "test_expectations": {
+    "test_pkt006_approval_queue_contract:test_pkt006_approval_queue_filters_and_pagination_follow_contract": {
+      "classification": "intended_change",
+      "description": "Exact-match expected item gains id, outcome, status, state because AC3 of this task restores the pre-224b60032 projected fields. No existing expected value was removed or weakened."
+    },
+    "test_governance_router:test_approval_projection_invents_nothing_and_keeps_legacy_fields": {
+      "classification": "new_test",
+      "description": "New coverage for AC1-AC4."
+    }
+  },
+  "note": "required_deciders for capital/rebalance increase targets (services/governance/approval_targets.py) is not re-derived in the BFF; required_approvals is passed through only when the owner supplies it."
+}

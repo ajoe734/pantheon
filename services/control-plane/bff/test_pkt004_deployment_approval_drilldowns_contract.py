@@ -20,10 +20,37 @@ from services.control_plane.bff.personas.service import (
     _snapshot_meta,
     utc_now,
 )
+import copy
+import urllib.error
+import pytest
+
+from services.control_plane.bff.governance import approval_owner
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
+
+
+@pytest.fixture(autouse=True)
+def _owner_serves_approvals(monkeypatch):
+    decision = {
+        "id": "approval-042",
+        "decision_id": "approval-042",
+        "decision": "approved",
+        "decision_state": "decided",
+        "outcome": "approved",
+        "state": "decided",
+        "status": "decided",
+    }
+
+    def call_owner(method, path, authorization, **_kwargs):
+        if path.endswith("/approvals"):
+            return [copy.deepcopy(decision)]
+        if path.endswith("/approval-042"):
+            return copy.deepcopy(decision)
+        raise urllib.error.HTTPError(path, 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(approval_owner, "call_owner", call_owner)
 
 
 def _read_surface_meta(

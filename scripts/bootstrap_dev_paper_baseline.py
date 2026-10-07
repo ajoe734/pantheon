@@ -62,6 +62,7 @@ DEV_US_REQUIRED_DATA_SOURCES: tuple[dict[str, Any], ...] = (
         ],
     },
 )
+DEPLOYMENT_REQUIREMENT_HOLDER_ID = "persona-source-ingest-public-market"
 
 
 class BootstrapError(RuntimeError):
@@ -185,6 +186,8 @@ def _nudge_run_scheduled(
     source_ingest_url: str,
     controller_token: str,
     request_timeout_seconds: float,
+    force_connector_ids: Sequence[str] = (),
+    exclusive_connector_ids: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Best-effort nudge of a fresh ingest pass for any due connector.
 
@@ -208,9 +211,14 @@ def _nudge_run_scheduled(
     connector identity and actual failure reason lost.
     """
     try:
+        payload: dict[str, Any] = {"max_concurrency": 1}
+        if force_connector_ids:
+            payload["force_connector_ids"] = list(force_connector_ids)
+        if exclusive_connector_ids:
+            payload["exclusive_connector_ids"] = list(exclusive_connector_ids)
         status, body = _post_json(
             f"{source_ingest_url.rstrip('/')}/api/source-ingest/run-scheduled",
-            {"max_concurrency": 1},
+            payload,
             headers=(
                 {"Authorization": f"Bearer {controller_token}"}
                 if controller_token
@@ -226,6 +234,8 @@ def _nudge_run_scheduled(
             "failed": failed if isinstance(failed, list) else [],
             "transport_error": None,
         }
+    except AssertionError:
+        raise
     except Exception as exc:
         return {
             "attempted": True,
@@ -302,6 +312,8 @@ def ensure_dev_market_snapshot_ready(
     request_timeout_seconds: float = 10.0,
     controller_token: str = "",
     connector_candidates: Sequence[str] = (),
+    force_connector_ids: Sequence[str] = (),
+    exclusive_connector_ids: Sequence[str] = (),
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
@@ -319,6 +331,8 @@ def ensure_dev_market_snapshot_ready(
     generic readback failure.
     """
     deadline = monotonic() + timeout_seconds
+    max_poll_iterations = max(int(timeout_seconds / max(poll_seconds, 0.001)) + 5, 50)
+    poll_iterations = 0
     snapshot_url = (
         f"{source_ingest_url.rstrip('/')}/api/source-ingest/snapshots/latest"
         f"?symbol={urllib.parse.quote(symbol, safe='')}"
@@ -328,11 +342,17 @@ def ensure_dev_market_snapshot_ready(
     last_nudge_diagnostic: str | None = None
 
     while True:
+        poll_iterations += 1
         status, body = _get_json(snapshot_url, timeout_seconds=request_timeout_seconds)
         needs_nudge = False
         if status == 200 and isinstance(body, dict):
             closes = body.get("closes")
-            if closes and isinstance(closes, Sequence) and not isinstance(closes, (str, bytes)) and len(closes) >= 2:
+            market = body.get("market")
+            if not market or not isinstance(market, str) or not market.strip():
+                last_reason = "market_context_missing"
+                last_detail = f"snapshot for symbol {symbol!r} lacks market context"
+                needs_nudge = True
+            elif closes and isinstance(closes, Sequence) and not isinstance(closes, (str, bytes)) and len(closes) >= 2:
                 ev_str = str(body.get("event_time") or "")
                 is_fresh = True
                 if ev_str:
@@ -373,6 +393,8 @@ def ensure_dev_market_snapshot_ready(
                 source_ingest_url=source_ingest_url,
                 controller_token=controller_token,
                 request_timeout_seconds=request_timeout_seconds,
+                force_connector_ids=force_connector_ids,
+                exclusive_connector_ids=exclusive_connector_ids,
             )
             nudge_diagnostic = _nudge_diagnostic_summary(
                 nudge_result, connector_candidates=connector_candidates
@@ -392,7 +414,7 @@ def ensure_dev_market_snapshot_ready(
                 last_reason = "ingest_nudge_failed"
                 last_detail = f"{last_detail}; {last_nudge_diagnostic}"
 
-        if monotonic() >= deadline:
+        if monotonic() >= deadline or poll_iterations >= max_poll_iterations:
             raise BootstrapError(
                 f"timed out waiting for admissible market snapshot for symbol {symbol!r}: "
                 f"{last_reason} ({last_detail})"
@@ -427,26 +449,21 @@ def source_ingest_controller_token(environ: Mapping[str, str] | None = None) -> 
 def ensure_source_provisioning(
     *,
     source_ingest_url: str,
-    persona_id: str,
+    persona_id: str = DEPLOYMENT_REQUIREMENT_HOLDER_ID,
     required_data_sources: Sequence[Mapping[str, Any]],
     controller_token: str,
     request_timeout_seconds: float = 10.0,
 ) -> dict[str, Any]:
     """Provision the Persona's declared data-source connector/schedule now.
 
-    The BFF's async provisioning reconciler
-    (PANTHEON_PERSONA_PROVISIONING_RECONCILE_SECONDS) only evaluates
-    lifecycle readbacks -- it never provisions source connectors. The
-    source-ingest controller's own scheduler tick instead reads a static
-    desired-state file or URL (SOURCE_INGEST_DESIRED_STATE_PATH /
-    SOURCE_INGEST_DESIRED_STATE_URL) that has no knowledge of a Persona
-    created after that file was written. On a fresh host neither path ever
-    registers the dev synthetic connector (dev-paper-us-equity-simulation),
-    so its snapshot can never appear -- see
-    DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001. This calls source-ingest's
-    own authoritative persona-source-provisioning/reconcile endpoint
-    directly (the same governed API the desired-state controller itself
-    uses) so a first deploy converges without waiting on that external tick.
+    This direct reconcile is a first-tick shortcut so a fresh deploy
+    converges immediately without waiting for the controller's scheduled
+    tick. The source-ingest controller is the single authoritative desired-state
+    owner; its authoritative desired state derives active persona requirements
+    from the persona owner and submits them under the deployment requirement holder
+    identity (DEPLOYMENT_REQUIREMENT_HOLDER_ID), preserving this provisioned connector
+    on subsequent controller ticks. Both paths converge on this single holder identity,
+    ensuring this shortcut is not a second desired-state authority.
     """
 
     if not required_data_sources:
@@ -683,7 +700,7 @@ def ensure_paper_baseline(
         provisioning_controller_token = source_ingest_controller_token(env)
         ensure_source_provisioning(
             source_ingest_url=effective_source_url,
-            persona_id=persona_id,
+            persona_id=DEPLOYMENT_REQUIREMENT_HOLDER_ID,
             required_data_sources=required_data_sources,
             controller_token=provisioning_controller_token,
             request_timeout_seconds=request_timeout_seconds,
@@ -901,6 +918,74 @@ def ensure_paper_baseline(
 
         sleep(poll_seconds)
 
+def transition_legacy_persona_market_record(
+    *,
+    idempotency_key: str,
+    tenant_id: str = "tenant-a",
+    market: str = "US",
+    new_version: str = "1.0.1",
+    coordinator: Any = None,
+) -> dict[str, Any]:
+    """Execute a governed legacy persona market transition for an existing provisioning record.
+
+    Coordinates an approved child revision (version 1.0.1) citing the immutable parent
+    artifact via existing Registry and Governance owners under zero-capital bounds.
+    """
+    if coordinator is None:
+        try:
+            from services.control_plane.bff.persona_provisioning_coordinator import (
+                PersonaProvisioningCoordinator,
+            )
+            from services.control_plane.bff.personas.service import (
+                PERSONA_OWNER_SERVICE_ACTOR_ID,
+                _PersonaOwnerHttpTransport,
+                _persona_provisioning_store,
+                _register_persona_cron_required,
+            )
+
+            store = _persona_provisioning_store()
+            coordinator = PersonaProvisioningCoordinator(
+                store=store,
+                transport=_PersonaOwnerHttpTransport(tenant_id=tenant_id),
+                schedule_registrar=_register_persona_cron_required,
+                lease_owner=f"legacy-market-transition:{os.getpid()}",
+                lease_seconds=180,
+                actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+                governance_actor_id=os.getenv(
+                    "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-dev-paper-provisioner"
+                ),
+            )
+        except Exception as exc:
+            raise BootstrapError(
+                f"Cannot initialize coordinator for legacy persona market transition: {exc}"
+            ) from exc
+
+    store = getattr(coordinator, "store", None)
+    if store is None or not hasattr(store, "get"):
+        raise BootstrapError("Coordinator is missing an accessible provisioning store")
+    record = store.get(tenant_id, idempotency_key)
+    if record is None:
+        raise BootstrapError(
+            f"Persona provisioning record not found for tenant '{tenant_id}' and key '{idempotency_key}'"
+        )
+
+    transitioned = coordinator.transition_legacy_persona_market(
+        record,
+        market=market,
+        new_version=new_version,
+    )
+    result = getattr(transitioned, "result", None) or {}
+    return {
+        "status": "ok",
+        "tenant_id": getattr(transitioned, "tenant_id", tenant_id),
+        "persona_id": getattr(transitioned, "persona_id", ""),
+        "idempotency_key": getattr(transitioned, "idempotency_key", idempotency_key),
+        "strategy_artifact_id": result.get("strategy_artifact_id"),
+        "legacy_strategy_artifact_id": result.get("legacy_strategy_artifact_id"),
+        "market": result.get("market"),
+        "version": new_version,
+    }
+
 
 def run_self_tests() -> int:
     """Run regression self-tests covering market snapshot readiness paths.
@@ -923,6 +1008,7 @@ def run_self_tests() -> int:
         "schema_version": 1,
         "snapshot_id": "snap-test-001",
         "symbol": "SPY",
+        "market": "US",
         "event_time": now_iso,
         "observed_at": now_iso,
         "closes": [500.0, 501.5],
@@ -1106,6 +1192,46 @@ def run_self_tests() -> int:
             assert "market_input_invalid" in str(exc)
             tests_run += 1
 
+    # Test 6b: Missing market context rejected
+    missing_market_snapshot = dict(valid_snapshot)
+    missing_market_snapshot.pop("market", None)
+    mock_clock = [0.0]
+    with patch.object(this_module, "_get_json", return_value=(200, missing_market_snapshot)), \
+         patch.object(this_module, "_post_json", return_value=(200, {})):
+        try:
+            ensure_dev_market_snapshot_ready(
+                source_ingest_url="http://mock-source:8097",
+                symbol="SPY",
+                timeout_seconds=5.0,
+                poll_seconds=0.01,
+                monotonic=fake_mono,
+                sleep=lambda _: None,
+            )
+            raise AssertionError("Expected BootstrapError on missing market context")
+        except BootstrapError as exc:
+            assert "symbol 'SPY'" in str(exc)
+            assert "market_context_missing" in str(exc)
+            tests_run += 1
+
+    # Test 6c: Nudge forwards force_connector_ids and exclusive_connector_ids
+    nudge_payload_calls = []
+    def fake_post_payload(url, payload=None, **kwargs):
+        nudge_payload_calls.append(payload)
+        return 200, {"status": "ok"}
+
+    with patch.object(this_module, "_post_json", side_effect=fake_post_payload):
+        _nudge_run_scheduled(
+            source_ingest_url="http://mock-source:8097",
+            controller_token="token",
+            request_timeout_seconds=5.0,
+            force_connector_ids=["dev-paper-us-equity-simulation"],
+            exclusive_connector_ids=["dev-paper-us-equity-simulation"],
+        )
+        assert len(nudge_payload_calls) == 1
+        assert nudge_payload_calls[0].get("force_connector_ids") == ["dev-paper-us-equity-simulation"]
+        assert nudge_payload_calls[0].get("exclusive_connector_ids") == ["dev-paper-us-equity-simulation"]
+        tests_run += 1
+
     # Test 7: Integration in ensure_paper_baseline with effective_source_url.
     # This is an idempotent successful replay (the create response already
     # reports paper_running/succeeded), so it also proves the governed source
@@ -1148,6 +1274,49 @@ def run_self_tests() -> int:
         assert res["persona_id"] == "p-1"
         tests_run += 1
 
+    # Test 9: transition_legacy_persona_market_record wires coordinator call correctly
+    class _MockStore:
+        def __init__(self, rec):
+            self.rec = rec
+        def get(self, tenant, key):
+            if tenant == "t1" and key == "k1":
+                return self.rec
+            return None
+
+    class _MockRecord:
+        def __init__(self):
+            self.tenant_id = "t1"
+            self.persona_id = "p1"
+            self.idempotency_key = "k1"
+            self.result = {
+                "strategy_artifact_id": "art-rev1",
+                "legacy_strategy_artifact_id": "art-parent",
+                "market": "US",
+            }
+
+    mock_rec = _MockRecord()
+    class _MockCoord:
+        def __init__(self):
+            self.store = _MockStore(mock_rec)
+            self.called_with = None
+        def transition_legacy_persona_market(self, record, *, market=None, new_version="1.0.1"):
+            self.called_with = (record, market, new_version)
+            return record
+
+    mock_coord = _MockCoord()
+    trans_res = transition_legacy_persona_market_record(
+        idempotency_key="k1",
+        tenant_id="t1",
+        market="US",
+        coordinator=mock_coord,
+    )
+    assert trans_res["status"] == "ok"
+    assert trans_res["strategy_artifact_id"] == "art-rev1"
+    assert trans_res["legacy_strategy_artifact_id"] == "art-parent"
+    assert trans_res["market"] == "US"
+    assert mock_coord.called_with[1] == "US"
+    tests_run += 1
+
     print(json.dumps({
         "status": "passed",
         "tests_run": tests_run,
@@ -1181,6 +1350,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Maximum wait time for admissible market snapshot before paper baseline creation",
     )
     parser.add_argument(
+        "--transition-legacy-persona",
+        action="store_true",
+        help="Execute governed child revision transition with explicit market for a legacy persona",
+    )
+    parser.add_argument(
+        "--legacy-idempotency-key",
+        default="",
+        help="Idempotency key of the legacy persona provisioning record to transition",
+    )
+    parser.add_argument(
+        "--legacy-tenant-id",
+        default=os.getenv("PANTHEON_DEFAULT_TENANT_ID", "tenant-a"),
+        help="Tenant ID of the legacy persona provisioning record to transition",
+    )
+    parser.add_argument(
+        "--legacy-market",
+        default="US",
+        help="Market context for the legacy persona transition (default: US)",
+    )
+    parser.add_argument(
         "--self-test",
         action="store_true",
         help="Run self-tests verifying first-run and steady-state bootstrap paths",
@@ -1192,6 +1381,31 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.self_test:
         return run_self_tests()
+    if args.transition_legacy_persona:
+        if not args.legacy_idempotency_key:
+            print(
+                json.dumps(
+                    {
+                        "status": "error",
+                        "message": "--legacy-idempotency-key is required when --transition-legacy-persona is set",
+                    },
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            result = transition_legacy_persona_market_record(
+                idempotency_key=args.legacy_idempotency_key,
+                tenant_id=args.legacy_tenant_id,
+                market=args.legacy_market,
+            )
+        except (BootstrapError, OSError, ValueError) as exc:
+            print(json.dumps({"status": "error", "message": str(exc)}, sort_keys=True), file=sys.stderr)
+            return 1
+        print(json.dumps(result, sort_keys=True))
+        return 0
+
     try:
         result = ensure_paper_baseline(
             base_url=args.base_url,

@@ -24,6 +24,11 @@ from services.control_plane.bff.command_queue import CommandStore
 AUTH_HEADERS = {"Authorization": "Bearer test-operator:operator,reviewer,admin"}
 
 
+def _error(resp) -> Dict[str, Any]:
+    body = resp.json()
+    return body.get("detail", body)["error"]
+
+
 class FakeRankingWriteOwner:
     def __init__(self):
         self.snapshots = {}
@@ -46,11 +51,44 @@ def enable_auth_stub(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
 
 
+class FakePersonaStore:
+    def __init__(self):
+        self.personas = {}
+        self.sessions = []
+        self.teaching_sessions = []
+        self.capabilities = {}
+
+    def list_personas(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        return list(self.personas.values())
+
+    def get_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.personas.get(persona_id)
+
+    def get_bindings_for_persona(self, persona_id: Optional[str]) -> List[Dict[str, Any]]:
+        return []
+
+    def list_sessions_for_persona(self, persona_id: Optional[str] = None, **kwargs: Any) -> List[Dict[str, Any]]:
+        return [s for s in self.sessions if not persona_id or s.get("persona_id") == persona_id]
+
+    def list_teaching_sessions_for_persona(self, persona_id: Optional[str] = None, **kwargs: Any) -> List[Dict[str, Any]]:
+        return [s for s in self.teaching_sessions if not persona_id or s.get("persona_id") == persona_id]
+
+    def get_capability_snapshot_for_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.capabilities.get(persona_id)
+
+    def get_persona_capabilities(self, persona_id: str) -> Optional[Dict[str, Any]]:
+        return self.get_capability_snapshot_for_persona(persona_id)
+
+    def dataset_source(self, dataset: str) -> str:
+        return "typed_store"
+
+
 @pytest.fixture
 def persona_router(tmp_path) -> Any:
+    fake_persona_store = FakePersonaStore()
     write_owner = create_persona_registry_write_owner()
     ranking_write_owner = FakeRankingWriteOwner()
-    read_store = create_read_surface_ports(persona_registry_store=write_owner)
+    read_store = create_read_surface_ports(persona_registry_store=fake_persona_store)
     command_store = CommandStore(str(tmp_path / "commands.jsonl"))
     service = PersonaService(
         write_owner=write_owner,
@@ -100,12 +138,14 @@ def test_list_personas_api_v1(client: TestClient):
 
 def test_get_persona_detail_api_v1(client: TestClient):
     resp = client.get("/api/v1/personas/persona-alpha", headers=AUTH_HEADERS)
-    assert resp.status_code in (200, 404)
+    assert resp.status_code == 404
+    assert _error(resp)["code"] == "RESOURCE_NOT_FOUND", resp.text
 
 
 def test_list_persona_sessions_api_v1(client: TestClient):
     resp = client.get("/api/v1/personas/persona-alpha/sessions", headers=AUTH_HEADERS)
-    assert resp.status_code in (200, 404)
+    assert resp.status_code == 404
+    assert _error(resp)["code"] == "RESOURCE_NOT_FOUND", resp.text
 
 
 def test_get_session_detail_api_v1(client: TestClient):
@@ -115,17 +155,42 @@ def test_get_session_detail_api_v1(client: TestClient):
 
 def test_list_persona_teaching_sessions_api_v1(client: TestClient):
     resp = client.get("/api/v1/personas/persona-alpha/teaching", headers=AUTH_HEADERS)
-    assert resp.status_code in (200, 404)
+    assert resp.status_code == 404
+    assert _error(resp)["code"] == "RESOURCE_NOT_FOUND", resp.text
 
 
 def test_get_persona_capabilities_api_v1(client: TestClient):
     resp = client.get("/api/v1/personas/persona-alpha/capabilities", headers=AUTH_HEADERS)
-    assert resp.status_code in (200, 404)
+    assert resp.status_code == 404
+    assert _error(resp)["code"] == "RESOURCE_NOT_FOUND", resp.text
 
 
 def test_get_persona_management_api_v1(client: TestClient):
     resp = client.get("/api/v1/operator/persona-management/persona-alpha", headers=AUTH_HEADERS)
-    assert resp.status_code in (200, 404)
+    assert resp.status_code == 404
+    assert _error(resp)["code"] == "RESOURCE_NOT_FOUND", resp.text
+
+
+def test_unconfigured_owner_returns_503(tmp_path, monkeypatch):
+    """When the persona owner is unconfigured, requests for nonexistent personas fail closed with 503 (e32ab2785)."""
+    for name in ("PERSONA_URL", "PANTHEON_PERSONA_URL", "PANTHEON_PERSONA_API_URL"):
+        monkeypatch.delenv(name, raising=False)
+    write_owner = create_persona_registry_write_owner()
+    read_store = create_read_surface_ports(persona_registry_store=write_owner)
+    service = PersonaService(
+        write_owner=write_owner,
+        ranking_write_owner=FakeRankingWriteOwner(),
+        read_store=read_store,
+        command_store=CommandStore(str(tmp_path / "commands_unconfigured.jsonl")),
+    )
+    app = FastAPI()
+    app.include_router(create_personas_router(service=service))
+    unconfigured_client = TestClient(app)
+    resp = unconfigured_client.get("/api/v1/personas/persona-alpha", headers=AUTH_HEADERS)
+    assert resp.status_code == 503
+    error = _error(resp)
+    assert error["code"] == "DEPENDENCY_UNAVAILABLE", resp.text
+    assert error["retryable"] is True, resp.text
 
 
 def test_bff_list_personas(client: TestClient):

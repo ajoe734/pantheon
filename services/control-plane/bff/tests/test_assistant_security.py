@@ -1080,7 +1080,7 @@ def test_execute_governed_tool_denies_shell_action() -> None:
 
 def test_validate_tool_fails_rbac_mismatch() -> None:
     """Actor without any required role returns ok=False with RBAC error."""
-    result = validate_tool("AuditExport", {}, actor_roles=["viewer"])
+    result = validate_tool("EscalateDiff", {}, actor_roles=["viewer"])
     assert not result.ok
     assert any("required roles" in e for e in result.errors)
 
@@ -1090,13 +1090,13 @@ def test_execute_governed_tool_raises_rbac_error() -> None:
     import pytest
     with pytest.raises(ToolRbacError) as exc_info:
         execute_governed_tool(
-            action_id="AuditExport",
-            entity_type="AuditExport",
+            action_id="EscalateDiff",
+            entity_type="EvolutionDecision",
             params={},
             actor_id="op-001",
             actor_roles=["viewer"],
         )
-    assert exc_info.value.action_id == "AuditExport"
+    assert exc_info.value.action_id == "EscalateDiff"
 
 
 # ---- reason and confirm_token enforcement -----------------------------------
@@ -1139,17 +1139,17 @@ def test_execute_medium_risk_requires_reason() -> None:
 def test_execute_low_risk_returns_receipt_shape() -> None:
     """Low-risk execution produces a ToolReceipt with required fields."""
     receipt = _exec_admitted(
-        action_id="AuditExport",
-        entity_type="AuditExport",
-        params={"export_format": "csv"},
+        action_id="EscalateDiff",
+        entity_type="EvolutionDecision",
+        params={},
         actor_id="op-001",
         actor_roles=["operator"],
     )
     assert receipt.receipt_id.startswith("asst-receipt-")
     assert receipt.trace_id.startswith("asst-tool-")
     assert receipt.command_id.startswith("cmd-asst-")
-    assert receipt.action_id == "AuditExport"
-    assert receipt.entity_type == "AuditExport"
+    assert receipt.action_id == "EscalateDiff"
+    assert receipt.entity_type == "EvolutionDecision"
     assert receipt.risk_level == "low"
     assert receipt.actor_id == "op-001"
     assert receipt.status in ("executed", "admitted")
@@ -1218,8 +1218,8 @@ def test_receipt_trace_id_propagated() -> None:
     """Caller-supplied trace_id is present in the receipt."""
     trace_id = "asst-tool-test-trace-abc"
     receipt = _exec_admitted(
-        action_id="AuditExport",
-        entity_type="AuditExport",
+        action_id="EscalateDiff",
+        entity_type="EvolutionDecision",
         params={},
         actor_id="op-001",
         actor_roles=["operator"],
@@ -1274,12 +1274,12 @@ def test_tool_preview_route_returns_descriptor_for_allowlisted(tmp_path) -> None
     client = TestClient(_make_tool_test_app())
     resp = client.post(
         "/bff/assistant/tools/preview",
-        json={"action_id": "AuditExport"},
+        json={"action_id": "EscalateDiff"},
         headers=OPERATOR_TOOL_HEADERS,
     )
     assert resp.status_code == 200
     data = resp.json()["data"]
-    assert data["action_id"] == "AuditExport"
+    assert data["action_id"] == "EscalateDiff"
     assert data["risk_level"] == "low"
     assert data["in_allowlist"] is True
     assert "required_roles" in data
@@ -1291,7 +1291,7 @@ def test_tool_validate_route_returns_validation_result(tmp_path) -> None:
     client = TestClient(_make_tool_test_app())
     resp = client.post(
         "/bff/assistant/tools/validate",
-        json={"action_id": "AuditExport"},
+        json={"action_id": "EscalateDiff"},
         headers=OPERATOR_TOOL_HEADERS,
     )
     assert resp.status_code == 200
@@ -1306,7 +1306,7 @@ def test_tool_execute_route_returns_receipt_for_low_risk(tmp_path) -> None:
     client = TestClient(_make_tool_test_app())
     resp = client.post(
         "/bff/assistant/tools/execute",
-        json={"action_id": "AuditExport", "entity_type": "AuditExport", "params": {}},
+        json={"action_id": "EscalateDiff", "entity_type": "EvolutionDecision", "params": {}},
         headers=OPERATOR_TOOL_HEADERS,
     )
     assert resp.status_code == 201
@@ -1314,7 +1314,7 @@ def test_tool_execute_route_returns_receipt_for_low_risk(tmp_path) -> None:
     assert data["receipt_id"].startswith("asst-receipt-")
     assert data["trace_id"].startswith("asst-tool-")
     assert data["command_id"].startswith("cmd-asst-")
-    assert data["action_id"] == "AuditExport"
+    assert data["action_id"] == "EscalateDiff"
     assert data["source"] == "assistant_tool_contract"
     assert "status" in data
     assert "executed_at" in data
@@ -1487,8 +1487,8 @@ def test_epic_unauthorized_skill_fail_closed() -> None:
 def test_epic_one_audit_entry_per_execute_invoke() -> None:
     """EPIC one audit per invoke: every execute call produces a ToolReceipt with source tag."""
     receipt = _exec_admitted(
-        action_id="AuditExport",
-        entity_type="AuditExport",
+        action_id="EscalateDiff",
+        entity_type="EvolutionDecision",
         params={},
         actor_id="op-001",
         actor_roles=["operator"],
@@ -1508,9 +1508,9 @@ def test_epic_one_audit_entry_per_execute_invoke() -> None:
 def test_epic_provider_credentials_not_in_receipt(monkeypatch) -> None:
     """EPIC no credential leak: ToolReceipt result must not contain raw credential fields."""
     receipt = _exec_admitted(
-        action_id="AuditExport",
-        entity_type="AuditExport",
-        params={"export_format": "csv"},
+        action_id="EscalateDiff",
+        entity_type="EvolutionDecision",
+        params={},
         actor_id="op-001",
         actor_roles=["operator"],
     )

@@ -279,7 +279,7 @@ def create_runtime_router(
         stage = str((runtime_binding or {}).get("deployment_stage") or (runtime_binding or {}).get("deployment_mode") or "").strip().lower()
         if report is not None:
             report_surface = base_report_surface
-        elif stage in {"live", "canary"}:
+        elif stage in {"live", "canary"} and base_report_surface.get("status") != "unavailable":
             report_surface = {**base_report_surface, "status": "degraded", "message": "Paper/live drift report missing for live runtime."}
         elif base_report_surface.get("status") == "ok":
             report_surface = {
@@ -370,7 +370,7 @@ def create_runtime_router(
             unavailable_message="Paper/live drift view unavailable.",
             degraded_message="Paper/live drift view is available, but one or more supporting surfaces are degraded.",
         )
-        if report is None and paper_live_drift_surface.get("status") != "degraded":
+        if report is None and report_surface.get("status") != "degraded":
             if report_surface.get("status") == "ok":
                 paper_live_drift_surface["status"] = "ok"
                 paper_live_drift_surface["message"] = "No paper/live telemetry metrics available."

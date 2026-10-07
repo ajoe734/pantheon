@@ -7,7 +7,7 @@ import sys
 import pytest
 
 from scripts.issue_dev_paper_principals import (
-    PAPER_SCOPE, PAPER_SUBJECT, READERS, WRITERS, TTL_SECONDS, issue_environment, write_environment,
+    CONSUMER_FILES, PAPER_SCOPE, PAPER_SUBJECT, READERS, WRITERS, TTL_SECONDS, issue_environment, write_environment,
 )
 from services.runtime_auth_inbound import AuthError, _verify_jwt_hs256, validate_request_auth
 
@@ -173,3 +173,20 @@ def test_deploy_and_compose_connect_authorized_environment_without_embedded_toke
     assert "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN" in compose["runtime-manager"]["environment"]
     assert "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN_FILE" in compose["runtime-manager"]["environment"]
     assert "CAPITAL_ALLOWED_READER_SERVICES" in compose["capital"]["environment"]
+
+
+def test_training_session_source_reader_principal_is_dedicated_and_mounted():
+    import yaml
+    root = Path(__file__).resolve().parents[1]
+    variable = "TRAINING_SESSION_SOURCE_READ_TOKEN"
+    assert CONSUMER_FILES["training-session-svc"] == (variable,)
+    claims = verify(issue_environment(configured(), now=NOW)[variable])
+    assert claims["roles"] == ["source_ingest_reader"]
+    assert claims["tenant_id"] == "tenant-dev"
+    assert claims["allowed_tenants"] == ["tenant-dev"]
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())
+    training = compose["services"]["training-session-svc"]
+    assert "dev-paper-training-session-tokens:/run/pantheon-principals:ro" in training["volumes"]
+    assert training["environment"]["TRAINING_SESSION_SOURCE_READ_TOKEN_FILE"].endswith(variable + "}")
+    issuer = compose["services"]["dev-paper-principal-issuer"]["volumes"]
+    assert "dev-paper-training-session-tokens:/issued/training-session-svc" in issuer
