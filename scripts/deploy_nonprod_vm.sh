@@ -3071,66 +3071,56 @@ assert int(payload.get("total_sweeps_run") or 0) >= 1
 stage_dev_paper_prerequisite_readiness() {
   local source_ingest_url="${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}"
   local symbol="${1:-SPY}"
-  local max_attempts="${2:-15}"
+  local measured_refresh_duration="${DEV_PAPER_REFRESH_DURATION_SECONDS:-5}"
+  local stated_margin="${DEV_PAPER_READINESS_MARGIN_SECONDS:-35}"
+  local budget="${2:-$(( measured_refresh_duration + stated_margin ))}"
   local poll_interval="${3:-2}"
   local token="${SOURCE_INGEST_CONTROLLER_TOKEN:-}"
 
-  info "checking staged dev paper prerequisite readiness for symbol ${symbol}"
+  info "checking staged dev paper prerequisite readiness for symbol ${symbol} (budget=${budget}s margin=${stated_margin}s)"
 
-  # Try to read controller token from file or container if not set
-  if [[ -z "$token" ]]; then
-    local token_file="${SOURCE_INGEST_CONTROLLER_TOKEN_FILE:-}"
-    if [[ -n "$token_file" && -f "$token_file" ]]; then
-      token="$(cat "$token_file" 2>/dev/null || true)"
-    fi
+  if [[ -z "$token" && -n "${SOURCE_INGEST_CONTROLLER_TOKEN_FILE:-}" && -f "${SOURCE_INGEST_CONTROLLER_TOKEN_FILE:-}" ]]; then
+    token="$(cat "$SOURCE_INGEST_CONTROLLER_TOKEN_FILE" 2>/dev/null || true)"
   fi
   if [[ -z "$token" ]]; then
-    local container_id
-    container_id="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
-    if [[ -n "$container_id" ]]; then
-      token="$(docker exec "$container_id" cat /data/source-ingest/controller_token 2>/dev/null || true)"
-    fi
+    local cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
+    [[ -z "$cid" ]] || token="$(docker exec "$cid" cat /data/source-ingest/controller_token 2>/dev/null || true)"
   fi
+  token="$(printf '%s' "$token" | tr -d '\r\n[:space:]')"
 
   local auth_header=()
   if [[ -n "$token" ]]; then
     auth_header=(-H "Authorization: Bearer ${token}")
   fi
 
-  local attempt
-  for attempt in $(seq 1 "$max_attempts"); do
+  local start_time deadline attempt=0
+  start_time="$(date +%s)"
+  deadline=$(( start_time + budget ))
+  local failure_reason="snapshot still lacks market"
+
+  while :; do
+    attempt=$(( attempt + 1 ))
     local snapshot_resp=""
     snapshot_resp="$(curl -fsS "${source_ingest_url}/api/source-ingest/snapshots/latest?symbol=${symbol}" 2>/dev/null || true)"
 
     local is_admissible=false
     if [[ -n "$snapshot_resp" ]]; then
       if python3 -c '
-import json, sys, math
-from datetime import datetime, timezone
-raw = sys.argv[1]
+import json, sys
 try:
-    data = json.loads(raw)
+    d = json.loads(sys.argv[1])
+    closes = d.get("closes")
+    assert isinstance(closes, list) and len(closes) >= 2
+    assert all(isinstance(c, (int, float)) and not isinstance(c, bool) and c > 0 for c in closes)
+    market = d.get("market")
+    assert isinstance(market, str) and market.strip()
+    ev = d.get("event_time")
+    if ev:
+        from datetime import datetime, timezone
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(ev.replace("Z", "+00:00"))).total_seconds()
+        assert 0 <= age <= 86400
 except Exception:
     sys.exit(1)
-closes = data.get("closes")
-if not isinstance(closes, list) or len(closes) < 2:
-    sys.exit(1)
-if any(isinstance(c, bool) or not isinstance(c, (int, float)) or not math.isfinite(float(c)) or float(c) <= 0 for c in closes):
-    sys.exit(1)
-market = data.get("market")
-if not market or not isinstance(market, str) or not market.strip():
-    sys.exit(1)
-ev_str = str(data.get("event_time") or "")
-if ev_str:
-    try:
-        ev_dt = datetime.fromisoformat(ev_str.replace("Z", "+00:00"))
-        now_dt = datetime.now(timezone.utc)
-        age = (now_dt - ev_dt).total_seconds()
-        if age > 86400 or age < 0:
-            sys.exit(1)
-    except Exception:
-        sys.exit(1)
-sys.exit(0)
 ' "$snapshot_resp" 2>/dev/null; then
         is_admissible=true
       fi
@@ -3141,12 +3131,49 @@ sys.exit(0)
       return 0
     fi
 
-    info "staged dev paper prerequisite snapshot for ${symbol} missing, non-admissible, or lacks market; triggering run-scheduled (attempt ${attempt}/${max_attempts})"
-    curl -fsS -X POST "${auth_header[@]}" "${source_ingest_url}/api/source-ingest/run-scheduled" 2>/dev/null || true
+    (( attempt == 1 || $(date +%s) < deadline )) || break
+
+    info "staged dev paper prerequisite snapshot for ${symbol} missing, non-admissible, or lacks market; triggering run-scheduled (attempt ${attempt})"
+    local trigger_payload='{"force_connector_ids":["dev-paper-us-equity-simulation"],"exclusive_connector_ids":["dev-paper-us-equity-simulation"]}'
+    local trigger_resp http_code trigger_body outcome
+    trigger_resp="$(curl -sS -w "\n%{http_code}" -X POST "${auth_header[@]}" \
+      -H "Content-Type: application/json" \
+      -d "$trigger_payload" \
+      "${source_ingest_url}/api/source-ingest/run-scheduled" 2>&1 || true)"
+    http_code="$(printf '%s\n' "$trigger_resp" | tail -n 1)"
+    trigger_body="$(printf '%s\n' "$trigger_resp" | sed '$d')"
+
+    if [[ "$http_code" == "401" || "$http_code" == "403" ]]; then
+      outcome="authentication rejected"
+    elif [[ "$http_code" != "200" ]]; then
+      outcome="controller mode refuses refresh"
+    elif python3 -c '
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+    s = d.get("summary") or {}
+    failed = int(s.get("total_failed") or 0)
+    ran = int(s["total_ran"] if "total_ran" in s else (1 if d.get("status") == "ok" else 0))
+    assert failed == 0 and ran >= 1
+except Exception:
+    sys.exit(1)
+' "$trigger_body" 2>/dev/null; then
+      outcome="refreshed"
+    else
+      outcome="controller mode refuses refresh"
+    fi
+
+    info "run-scheduled trigger attempt ${attempt}: http_status=${http_code} outcome=${outcome}"
+    if [[ "$outcome" != "refreshed" ]]; then
+      error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: ${outcome}"
+      return 1
+    fi
+
+    (( $(date +%s) < deadline )) || break
     sleep "$poll_interval"
   done
 
-  error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}"
+  error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: ${failure_reason}"
   return 1
 }
 

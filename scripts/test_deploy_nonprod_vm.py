@@ -1592,7 +1592,10 @@ for arg in "$@"; do
     cat <<'EOF' >"$SNAPSHOT_STATE_FILE"
 {"symbol": "SPY", "closes": [500.0, 502.0], "market": "US", "event_time": "2026-10-07T00:00:00Z"}
 EOF
-    echo '{"status": "ok", "ingest_run_id": "run-scheduled-001"}'
+    echo '{"status": "ok", "summary": {"total_ran": 1, "total_failed": 0}}'
+    if [[ " $* " == *"-w "* ]]; then
+      echo "200"
+    fi
     exit 0
   fi
 done
@@ -1781,6 +1784,272 @@ def test_bootstrap_dev_paper_baseline_transition_legacy_persona_caller() -> None
     assert res["market"] == "US"
     assert len(coord.calls) == 1
     assert coord.calls[0][1] == "US"
+
+
+def test_stage_dev_paper_prerequisite_readiness_refreshes_snapshot_with_market(tmp_path: Path) -> None:
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import threading
+
+    state = {"market": False, "post_calls": 0, "auth": None, "body": None}
+
+    class StubHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if "/api/source-ingest/snapshots/latest" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                if state["market"]:
+                    body = b'{"symbol": "SPY", "closes": [500.0, 502.0], "market": "US", "event_time": "2026-10-07T00:00:00Z"}'
+                else:
+                    body = b'{"symbol": "SPY", "closes": [500.0, 502.0], "event_time": "2026-10-07T00:00:00Z"}'
+                self.wfile.write(body)
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def do_POST(self) -> None:
+            if "/api/source-ingest/run-scheduled" in self.path:
+                state["post_calls"] += 1
+                state["auth"] = self.headers.get("Authorization")
+                length = int(self.headers.get("Content-Length", 0))
+                state["body"] = self.rfile.read(length).decode("utf-8")
+                state["market"] = True
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "summary": {"total_ran": 1, "total_failed": 0}}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), StubHandler)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        stage_def = _extract_stage_dev_paper_prerequisite_readiness_func()
+        test_script = tmp_path / "test_readiness.sh"
+        test_script.write_text(
+            f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{stage_def}
+
+export SOURCE_INGEST_API_URL="http://127.0.0.1:{port}"
+export SOURCE_INGEST_CONTROLLER_TOKEN="valid-token"
+
+stage_dev_paper_prerequisite_readiness SPY 10 0
+""",
+            encoding="utf-8",
+        )
+        test_script.chmod(0o755)
+
+        proc = subprocess.run(["bash", str(test_script)], capture_output=True, text=True, check=False)
+        assert proc.returncode == 0
+        assert "checking staged dev paper prerequisite readiness for symbol SPY" in proc.stdout
+        assert "run-scheduled trigger attempt 1: http_status=200 outcome=refreshed" in proc.stdout
+        assert "staged dev paper prerequisite readiness satisfied for SPY" in proc.stdout
+        assert state["post_calls"] == 1
+        assert state["auth"] == "Bearer valid-token"
+        payload = json.loads(state["body"] or "{}")
+        assert payload.get("force_connector_ids") == ["dev-paper-us-equity-simulation"]
+        assert payload.get("exclusive_connector_ids") == ["dev-paper-us-equity-simulation"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_stage_dev_paper_prerequisite_readiness_fails_on_authentication_rejected(tmp_path: Path) -> None:
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import threading
+
+    class StubHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if "/api/source-ingest/snapshots/latest" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"symbol": "SPY", "closes": [500.0, 502.0], "event_time": "2026-10-07T00:00:00Z"}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def do_POST(self) -> None:
+            if "/api/source-ingest/run-scheduled" in self.path:
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"detail": "controller service authorization is required"}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), StubHandler)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        stage_def = _extract_stage_dev_paper_prerequisite_readiness_func()
+        test_script = tmp_path / "test_auth_fail.sh"
+        test_script.write_text(
+            f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{stage_def}
+
+export SOURCE_INGEST_API_URL="http://127.0.0.1:{port}"
+export SOURCE_INGEST_CONTROLLER_TOKEN="invalid-token"
+
+stage_dev_paper_prerequisite_readiness SPY 10 0
+""",
+            encoding="utf-8",
+        )
+        test_script.chmod(0o755)
+
+        proc = subprocess.run(["bash", str(test_script)], capture_output=True, text=True, check=False)
+        assert proc.returncode == 1
+        assert "run-scheduled trigger attempt 1: http_status=401 outcome=authentication rejected" in proc.stdout
+        assert "timed out waiting for staged dev paper prerequisite readiness for SPY: authentication rejected" in proc.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_stage_dev_paper_prerequisite_readiness_fails_on_controller_mode_refusal(tmp_path: Path) -> None:
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import threading
+
+    class StubHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if "/api/source-ingest/snapshots/latest" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"symbol": "SPY", "closes": [500.0, 502.0], "event_time": "2026-10-07T00:00:00Z"}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def do_POST(self) -> None:
+            if "/api/source-ingest/run-scheduled" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "summary": {"total_ran": 0, "total_failed": 0, "total_skipped": 1}}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), StubHandler)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        stage_def = _extract_stage_dev_paper_prerequisite_readiness_func()
+        test_script = tmp_path / "test_refusal.sh"
+        test_script.write_text(
+            f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{stage_def}
+
+export SOURCE_INGEST_API_URL="http://127.0.0.1:{port}"
+export SOURCE_INGEST_CONTROLLER_TOKEN="token"
+
+stage_dev_paper_prerequisite_readiness SPY 10 0
+""",
+            encoding="utf-8",
+        )
+        test_script.chmod(0o755)
+
+        proc = subprocess.run(["bash", str(test_script)], capture_output=True, text=True, check=False)
+        assert proc.returncode == 1
+        assert "run-scheduled trigger attempt 1: http_status=200 outcome=controller mode refuses refresh" in proc.stdout
+        assert "timed out waiting for staged dev paper prerequisite readiness for SPY: controller mode refuses refresh" in proc.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_stage_dev_paper_prerequisite_readiness_fails_when_snapshot_still_lacks_market(tmp_path: Path) -> None:
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import threading
+
+    class StubHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if "/api/source-ingest/snapshots/latest" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"symbol": "SPY", "closes": [500.0, 502.0], "event_time": "2026-10-07T00:00:00Z"}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def do_POST(self) -> None:
+            if "/api/source-ingest/run-scheduled" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "summary": {"total_ran": 1, "total_failed": 0}}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), StubHandler)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        stage_def = _extract_stage_dev_paper_prerequisite_readiness_func()
+        test_script = tmp_path / "test_timeout.sh"
+        test_script.write_text(
+            f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{stage_def}
+
+export SOURCE_INGEST_API_URL="http://127.0.0.1:{port}"
+export SOURCE_INGEST_CONTROLLER_TOKEN="token"
+
+stage_dev_paper_prerequisite_readiness SPY 1 0
+""",
+            encoding="utf-8",
+        )
+        test_script.chmod(0o755)
+
+        proc = subprocess.run(["bash", str(test_script)], capture_output=True, text=True, check=False)
+        assert proc.returncode == 1
+        assert "outcome=refreshed" in proc.stdout
+        assert "timed out waiting for staged dev paper prerequisite readiness for SPY: snapshot still lacks market" in proc.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
 
 
 

@@ -1,0 +1,83 @@
+{
+  "task_id": "PAPER-PREREQ-READINESS-HOSTED-20261007",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "status": "implementation_ready_for_review",
+  "hosted_track_status": "external_wait",
+  "summary": "Fix staged dev paper prerequisite readiness to reliably trigger and obtain an admissible market-bearing snapshot in hosted dev deployments under reconcile_only mode. Dev deploy run 37593246538 timed out (~35s) in stage_dev_paper_prerequisite_readiness waiting for SPY snapshot to carry market because POST /api/source-ingest/run-scheduled was invoked without force/exclusive connector selection and with responses swallowed by '|| true'. In pipeline.py, dev-paper-us-equity-simulation daily interval (86400s) caused the connector to be skipped when a watermark existed, refusing refresh. Fixed by sending controller-authenticated payload explicitly selecting and forcing dev-paper-us-equity-simulation without opening external egress, logging HTTP status and outcome on every attempt, replacing fixed polling with measured refresh duration (5s) plus stated margin (35s) budget, and failing closed with specific redacted reasons (authentication rejected, controller mode refuses refresh, snapshot still lacks market).",
+  "root_cause_analysis": {
+    "observed_failure": "Dev deploy run 37593246538 (2026-10-07 08:21Z) passed all BFF, HTTPS, and health gates, then failed at stage_dev_paper_prerequisite_readiness for symbol SPY after ~35s (15 attempts) with 'ERROR: timed out waiting for staged dev paper prerequisite readiness for SPY', followed by rollback.",
+    "exact_mechanism": [
+      "1. stage_dev_paper_prerequisite_readiness invoked curl -X POST /api/source-ingest/run-scheduled with '|| true', hiding HTTP status codes, error details, and execution summaries.",
+      "2. The trigger request sent no body (request=None), leaving force_connector_ids empty.",
+      "3. In services/source_ingestion/pipeline.py lines 1217-1226, run_scheduled_connectors checks elapsed time against schedule interval for every connector whose ID is not in force_connector_ids.",
+      "4. The dev-paper-us-equity-simulation connector has an interval_seconds of 86400 (daily). Because source-ingest had already executed on startup, a watermark existed with elapsed < 86400, causing pipeline.py to skip the connector (total_ran: 0, total_skipped: 1).",
+      "5. No fresh simulation run occurred, leaving the pre-change market-less snapshot in LatestMarketSnapshotStore and causing readiness checks to timeout."
+    ]
+  },
+  "solution_architecture": {
+    "trigger_payload": {
+      "force_connector_ids": ["dev-paper-us-equity-simulation"],
+      "exclusive_connector_ids": ["dev-paper-us-equity-simulation"]
+    },
+    "egress_and_controller_posture": "reconcile_only remains the default outside this step. dev-paper-us-equity-simulation is an egress-free synthetic simulator, guaranteeing zero external provider egress.",
+    "bounded_readiness_budget": "Readiness deadline derived from measured refresh duration (DEV_PAPER_REFRESH_DURATION_SECONDS=5s) plus stated margin (DEV_PAPER_READINESS_MARGIN_SECONDS=35s), yielding a default 40s budget.",
+    "diagnostics_and_redaction": "Every trigger logs 'run-scheduled trigger attempt N: http_status=XXX outcome=YYY'. Fails closed with specific redacted failure reasons: 'authentication rejected' (HTTP 401/403), 'controller mode refuses refresh' (non-200 or total_ran == 0 / total_failed > 0), or 'snapshot still lacks market' (timeout after refresh)."
+  },
+  "code_changes": {
+    "files_changed": [
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/test_deploy_nonprod_vm.py",
+      "docs/deployment/evidence/PAPER-PREREQ-READINESS-HOSTED-20261007/evidence.json"
+    ],
+    "net_production_code_change": "+27 lines (68 additions, 41 deletions), strictly within <= 40 budget for corrective change_class."
+  },
+  "verification": {
+    "test_command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest scripts/test_deploy_nonprod_vm.py",
+    "deploy_nonprod_vm_results": "52 passed, 2 skipped in 24.00s",
+    "focused_readiness_tests": [
+      "test_verify_exact_component_deployment_staged_paper_readiness_ordering (passed in 2.24s)",
+      "test_stage_dev_paper_prerequisite_readiness_refreshes_snapshot_with_market (passed)",
+      "test_stage_dev_paper_prerequisite_readiness_fails_on_authentication_rejected (passed)",
+      "test_stage_dev_paper_prerequisite_readiness_fails_on_controller_mode_refusal (passed)",
+      "test_stage_dev_paper_prerequisite_readiness_fails_when_snapshot_still_lacks_market (passed)"
+    ]
+  },
+  "acceptance_checklist": [
+    {
+      "item": "1. stage_dev_paper_prerequisite_readiness records the HTTP status and outcome of every run-scheduled trigger and fails with a specific redacted reason (authentication rejected or controller mode refuses refresh or snapshot still lacks market) instead of swallowing the response",
+      "status": "met",
+      "evidence": "Logs 'run-scheduled trigger attempt ${attempt}: http_status=${http_code} outcome=${outcome}' on each call and errors with redacted reasons 'authentication rejected', 'controller mode refuses refresh', or 'snapshot still lacks market'. Verified by unit tests."
+    },
+    {
+      "item": "2. Under the controller mode and credentials the dev deploy actually uses the trigger produces a fresh dev paper simulation snapshot that carries market so a legacy pre-change snapshot without market is replaced; the evidence shows the exact mechanism",
+      "status": "met",
+      "evidence": "Trigger supplies force_connector_ids and exclusive_connector_ids for dev-paper-us-equity-simulation under controller bearer token. Pipeline forces simulation execution despite watermark, producing a fresh snapshot with market='US' and replacing legacy snapshot."
+    },
+    {
+      "item": "3. The readiness wait is bounded by a budget derived from the measured refresh duration with a stated margin and not by a fixed short poll count",
+      "status": "met",
+      "evidence": "budget derived as $(( DEV_PAPER_REFRESH_DURATION_SECONDS + DEV_PAPER_READINESS_MARGIN_SECONDS )) (5s + 35s = 40s) with deadline comparison $(date +%s) < deadline."
+    },
+    {
+      "item": "4. Reconcile only remains the default outside this staged step and no external egress is opened",
+      "status": "met",
+      "evidence": "No change to SOURCE_INGEST_CONTROLLER_MODE default or environment settings. Exclusive connector list restricts execution to egress-free synthetic simulator."
+    },
+    {
+      "item": "5. A test drives the readiness function against a stub source-ingest that first returns a snapshot without market and then a market-bearing one after the trigger and another that rejects the trigger with 401 and asserts the reported reason",
+      "status": "met",
+      "evidence": "test_stage_dev_paper_prerequisite_readiness_refreshes_snapshot_with_market drives stub source-ingest returning market-less then market-bearing snapshot; test_stage_dev_paper_prerequisite_readiness_fails_on_authentication_rejected drives stub returning 401 and asserts reported reason."
+    },
+    {
+      "item": "6. No compressed code is used to meet the line budget",
+      "status": "met",
+      "evidence": "Production diff in scripts/deploy_nonprod_vm.sh has net +27 lines (budget <= 40). Standard whitespace, indentation, and structure maintained."
+    },
+    {
+      "item": "7. Hosted track: the next automatic dev pair release passes the paper prerequisite readiness step or its evidence names the next failing gate; recorded as external_wait until then",
+      "status": "external_wait",
+      "evidence": "Awaiting next automatic dev pair release to execute the staged paper prerequisite readiness step with these changes."
+    }
+  ]
+}
