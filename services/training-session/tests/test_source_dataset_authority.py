@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import json
 import sys
@@ -20,7 +21,13 @@ DATASET_ID = "ds-authoritative-crypto-spot"
 DESIRED_DATASET_ID = "crypto_spot_daily_and_price"
 NORMALIZED_DATASET_ID = "crypto_spot_daily"
 RUN_ID = "ingest-authority-001"
-DESIRED_SHA = "a" * 64
+DESIRED_SHA = "a" * 64  # requirement snapshot digest over the persona set
+
+
+def _connector_digest(desired_state: dict[str, Any]) -> str:
+    """source-ingest stamps each connector with the digest of its own desired state."""
+    canonical = json.dumps(desired_state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _load_module(name: str):
@@ -339,6 +346,8 @@ def _make_case(tmp_path: Path) -> AuthorityCase:
             }
         ],
     }
+    for connector in readback["connectors"]:
+        connector["desired_state_sha256"] = _connector_digest(connector["desired_state"])
     return AuthorityCase(
         source_root=source_root,
         output_root=output_root,
@@ -572,6 +581,17 @@ def test_missing_deployment_identity_is_rejected(tmp_path: Path) -> None:
     readback["controller_state"]["deployment"]["git_sha"] = "unknown"
 
     with pytest.raises(SourceDatasetAuthorityError, match="unresolved"):
+        _materialize(case)
+
+
+def test_connector_digest_is_its_own_desired_state_not_the_snapshot(tmp_path: Path) -> None:
+    case = _make_case(tmp_path)
+    readback = case.responses[f"{BASE_URL}/api/source-ingest/controller/readback"]
+    connector = readback["connectors"][0]
+    assert connector["desired_state_sha256"] != readback["requirement_snapshot"]["desired_state_sha256"]
+
+    connector["desired_state"]["cadence"] = "hourly"
+    with pytest.raises(SourceDatasetAuthorityError, match="does not match its desired state"):
         _materialize(case)
 
 

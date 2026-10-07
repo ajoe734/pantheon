@@ -409,8 +409,13 @@ def _validate_controller_readback(
     desired_dataset_id = _required_text(
         desired_state.get("dataset"), "connector.desired_state.dataset"
     )
-    if selected.get("desired_state_sha256") != desired_digest:
-        raise SourceDatasetAuthorityError("connector desired-state digest contradicts requirement snapshot")
+    # source-ingest stamps each connector with the digest of its own desired
+    # state; the snapshot digest covers the whole persona requirement set.
+    connector_digest = _required_digest(
+        selected.get("desired_state_sha256"), "connector.desired_state_sha256"
+    )
+    if connector_digest != _desired_state_digest(desired_state):
+        raise SourceDatasetAuthorityError("connector desired-state digest does not match its desired state")
     controller_binding = {
         "schema_version": _READBACK_SCHEMA,
         **identity,
@@ -419,9 +424,15 @@ def _validate_controller_readback(
         "connector_id": connector_id,
         "dataset_id": dataset_id,
         "desired_dataset_id": desired_dataset_id,
-        "desired_state_sha256": desired_digest,
+        "desired_state_sha256": connector_digest,
     }
     return controller_binding, selected
+
+
+def _desired_state_digest(desired_state: Mapping[str, Any]) -> str:
+    """Mirror persona_source_reconciler's connector desired-state stamp."""
+    canonical = json.dumps(desired_state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _validate_dlq(payload: Mapping[str, Any]) -> None:
