@@ -17,12 +17,18 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import quote
 
+from services.registry.strategy_artifact import (
+    StrategyArtifactValidationError,
+    canonical_market_context,
+)
+
 from .persona_provisioning import (
     TERMINAL_STATES,
     PersonaProvisioningStore,
     ProvisioningRecord,
     utc_now,
 )
+
 
 
 FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
@@ -335,6 +341,8 @@ class PersonaProvisioningCoordinator:
         failed_step = "capital_pool"
         ids = deterministic_provisioning_ids(active)
         try:
+            symbols, _, _ = self._paper_universe(active)
+            self._explicit_market(active, symbols)
             active = self._coordinate_capital_pool(active, ids)
 
             failed_step = "baseline_strategy_spec_candidate"
@@ -534,6 +542,8 @@ class PersonaProvisioningCoordinator:
         return self._resume_failure_compensation(existing)
 
     def _preview(self, record: ProvisioningRecord) -> ProvisioningRecord:
+        symbols, _, _ = self._paper_universe(record)
+        self._explicit_market(record, symbols)
         preview = ProvisioningRecord.from_mapping(record.to_dict())
         ids = deterministic_provisioning_ids(preview)
         preview.state = record.state
@@ -736,6 +746,25 @@ class PersonaProvisioningCoordinator:
         )
         return list(symbols), bar_frequency, data_source
 
+    @staticmethod
+    def _explicit_market(
+        record: ProvisioningRecord,
+        symbols: Any = None,
+    ) -> str | None:
+        """Extract and validate explicit owner market context from record request payload.
+
+        Returns canonical market ('US', 'TW', 'CRYPTO', 'FX') when specified,
+        or None when omitted. Rejects unsupported, non-canonical, or contradictory
+        market values.
+        """
+        raw = record.request_payload.get("market")
+        if raw is None:
+            return None
+        try:
+            return canonical_market_context(raw, symbols=symbols)
+        except StrategyArtifactValidationError as exc:
+            raise PersonaProvisioningCoordinationError(str(exc)) from exc
+
     def _strategy_spec_payload(
         self,
         record: ProvisioningRecord,
@@ -747,6 +776,7 @@ class PersonaProvisioningCoordinator:
         name = str(record.request_payload.get("name") or record.normalized_name)
         mandate = str(record.request_payload.get("mandate") or "").strip()
         symbols, bar_frequency, data_source = self._paper_universe(record)
+        explicit_market = self._explicit_market(record, symbols)
         # Registry validates inline StrategySpec content against
         # services/control-plane/specs/strategy_spec.schema.json (closed
         # object) and hashes exactly that content, so the spec is composed
@@ -840,6 +870,7 @@ class PersonaProvisioningCoordinator:
                 # capital exactly like the fail-closed baseline it is parented to.
                 "capital_scale_pct": 0.0,
                 "fail_closed_baseline": baseline,
+                **({"market": explicit_market} if explicit_market is not None else {}),
             },
         }
         source_run_id = f"persona-provisioning-{label}-{ids.token}"
@@ -878,6 +909,7 @@ class PersonaProvisioningCoordinator:
                     None if baseline else ids.baseline_registry_id
                 ),
                 "provisioning_request_hash": record.request_hash,
+                **({"market": explicit_market} if explicit_market is not None else {}),
             },
             "strategy_spec": strategy_spec,
         }
@@ -930,6 +962,7 @@ class PersonaProvisioningCoordinator:
         version: str | None = None,
         approval_decision_id: str | None = None,
         artifact_type: str = "strategy_spec",
+        expected_market: str | None = None,
     ) -> None:
         entry = _registry_entry(receipt)
         expected_registry_id = registry_id or ids.registry_id
@@ -964,6 +997,15 @@ class PersonaProvisioningCoordinator:
                 raise PersonaProvisioningCoordinationError(
                     "StrategyArtifact payload identity does not match RegistryEntry"
                 )
+            if expected_market is not None:
+                market_in_meta = metadata.get("market")
+                parameters = artifact.get("parameters")
+                parameters = parameters if isinstance(parameters, Mapping) else {}
+                market_in_params = parameters.get("market")
+                if market_in_meta != expected_market or market_in_params != expected_market:
+                    raise PersonaProvisioningCoordinationError(
+                        f"Registry readback does not match expected market {expected_market!r}"
+                    )
 
     def _coordinate_strategy_spec(
         self,
@@ -1028,6 +1070,7 @@ class PersonaProvisioningCoordinator:
         positive_action = "HOLD" if baseline else "BUY"
         non_positive_action = "HOLD" if baseline else "SELL"
         symbols, bar_frequency, data_source = self._paper_universe(record)
+        explicit_market = self._explicit_market(record, symbols)
         artifact = {
             "artifact_schema_version": "1.0",
             "artifact_id": artifact_id,
@@ -1063,6 +1106,7 @@ class PersonaProvisioningCoordinator:
                 "order_quantity": 0 if baseline else 1,
                 "quantity_type": "SHARES",
                 "zero_momentum_action": non_positive_action,
+                **({"market": explicit_market} if explicit_market is not None else {}),
             },
             "mutation_surface": {
                 "controls": [
@@ -1088,6 +1132,7 @@ class PersonaProvisioningCoordinator:
                     "order_quantity",
                     "quantity_type",
                     "zero_momentum_action",
+                    *(["market"] if explicit_market is not None else []),
                 ],
             },
             "lineage": {
@@ -1140,6 +1185,7 @@ class PersonaProvisioningCoordinator:
                     None if baseline else ids.baseline_strategy_artifact_id
                 ),
                 "provisioning_request_hash": record.request_hash,
+                **({"market": explicit_market} if explicit_market is not None else {}),
             },
         }
 
@@ -1155,6 +1201,8 @@ class PersonaProvisioningCoordinator:
             baseline=baseline,
         )
         checkpoint_prefix = "baseline_" if baseline else ""
+        symbols, _, _ = self._paper_universe(record)
+        explicit_market = self._explicit_market(record, symbols)
 
         def validate(receipt: Mapping[str, Any]) -> None:
             state = str(_registry_entry(receipt).get("artifact_state") or "")
@@ -1170,6 +1218,7 @@ class PersonaProvisioningCoordinator:
                 version=version,
                 approval_decision_id=approval_id if state == "approved" else None,
                 artifact_type="execution_bundle",
+                expected_market=explicit_market,
             )
 
         receipt = self._create_then_get(
@@ -1611,6 +1660,8 @@ class PersonaProvisioningCoordinator:
             if strategy_artifact
             else f"{checkpoint_prefix}strategy_spec_approved"
         )
+        symbols, _, _ = self._paper_universe(record)
+        explicit_market = self._explicit_market(record, symbols) if strategy_artifact else None
         get_path = f"/api/registry/{registry_kind}/{_path_id(registry_id)}"
 
         def ready(receipt: Mapping[str, Any]) -> bool:
@@ -1640,6 +1691,7 @@ class PersonaProvisioningCoordinator:
                 registry_id=registry_id,
                 version=version,
                 artifact_type=artifact_type,
+                expected_market=explicit_market,
             )
             entry = _registry_entry(current)
             updated_at = entry.get("updated_at")
@@ -1673,6 +1725,7 @@ class PersonaProvisioningCoordinator:
                 version=version,
                 approval_decision_id=decision_id,
                 artifact_type=artifact_type,
+                expected_market=explicit_market,
             ),
         )
         return self._checkpoint_receipt(
@@ -1704,6 +1757,8 @@ class PersonaProvisioningCoordinator:
         record: ProvisioningRecord,
         ids: ProvisioningIds,
     ) -> ProvisioningRecord:
+        symbols, _, _ = self._paper_universe(record)
+        explicit_market = self._explicit_market(record, symbols)
         base_payload: dict[str, Any] = {
             "actor_id": self.actor_id,
             "actor_role": "admin",
@@ -1721,6 +1776,7 @@ class PersonaProvisioningCoordinator:
                 "strategy_spec_registry_id": ids.registry_id,
                 "requested_by": self._requested_by(record),
                 "provisioning_request_hash": record.request_hash,
+                **({"market": explicit_market} if explicit_market is not None else {}),
             },
         }
         payload = {
@@ -1787,6 +1843,8 @@ class PersonaProvisioningCoordinator:
         record: ProvisioningRecord,
         ids: ProvisioningIds,
     ) -> ProvisioningRecord:
+        symbols, _, _ = self._paper_universe(record)
+        explicit_market = self._explicit_market(record, symbols)
         # Deployment reads the authoritative RegistryEntry and ApprovalDecision
         # itself under its own scoped verified reader principal, and its request
         # model forbids extra fields.  These checkpointed receipts therefore stay
@@ -1813,6 +1871,7 @@ class PersonaProvisioningCoordinator:
             version=ids.version,
             approval_decision_id=ids.strategy_artifact_approval_decision_id,
             artifact_type="execution_bundle",
+            expected_market=explicit_market,
         )
         baseline_entry = _registry_entry(baseline_receipt)
         self._validate_registry(
@@ -1823,6 +1882,7 @@ class PersonaProvisioningCoordinator:
             version=ids.baseline_version,
             approval_decision_id=ids.baseline_strategy_artifact_approval_decision_id,
             artifact_type="execution_bundle",
+            expected_market=explicit_market,
         )
         payload = {
             "plan_id": ids.deployment_plan_id,
@@ -1865,6 +1925,7 @@ class PersonaProvisioningCoordinator:
                 ),
                 "requested_by": self._requested_by(record),
                 "provisioning_request_hash": record.request_hash,
+                **({"market": explicit_market} if explicit_market is not None else {}),
             },
         }
 
@@ -1891,6 +1952,10 @@ class PersonaProvisioningCoordinator:
                 or metadata.get("strategy_artifact_id") != ids.strategy_artifact_id
                 or rollback.get("target_artifact_id") != ids.baseline_strategy_artifact_id
                 or rollback.get("target_version") != ids.baseline_version
+                or (
+                    explicit_market is not None
+                    and metadata.get("market") != explicit_market
+                )
             ):
                 raise PersonaProvisioningCoordinationError(
                     "DeploymentPlan readback does not match approved paper admission"
@@ -1915,6 +1980,8 @@ class PersonaProvisioningCoordinator:
         record: ProvisioningRecord,
         ids: ProvisioningIds,
     ) -> ProvisioningRecord:
+        symbols, _, _ = self._paper_universe(record)
+        explicit_market = self._explicit_market(record, symbols)
         saga_path = f"/api/deployment/sagas/{_path_id(ids.deployment_saga_id)}"
 
         def ready(receipt: Mapping[str, Any]) -> bool:
@@ -1946,6 +2013,7 @@ class PersonaProvisioningCoordinator:
             version=ids.version,
             approval_decision_id=ids.strategy_artifact_approval_decision_id,
             artifact_type="execution_bundle",
+            expected_market=explicit_market,
         )
         receipt = self._transition_then_get(
             owner="deployment",
@@ -1968,6 +2036,7 @@ class PersonaProvisioningCoordinator:
                     "persona_capital_binding_id": ids.persona_capital_binding_id,
                     "execution_context": "paper",
                     "requested_by": self._requested_by(record),
+                    **({"market": explicit_market} if explicit_market is not None else {}),
                 },
             },
             ready=ready,

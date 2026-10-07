@@ -1,0 +1,61 @@
+{
+  "task_id": "PERSONA-PAPER-MARKET-CONTEXT-20261007",
+  "base_sha": "dc1a6a0a66581de6d243b4fdec538fa234c19145",
+  "scope": "Propagate explicit owner market context from ProvisioningRecord.request_payload to StrategyArtifact parameters, immutable parameters, candidate envelope metadata, deployment plan metadata, and dispatch metadata, allowing natural symbol normalization without guessing",
+  "author": "Antigravity",
+  "reviewer": "Claude",
+  "summary": "Repairs pre-approval producer contract to preserve explicit owner market ('US', 'TW', 'CRYPTO', 'FX') from record.request_payload into StrategyArtifact parameters['market'] before checksum and governance approval. Allows CurrentArtifactStrategy with PaperSignalProducer to normalize bare tickers like 'SPY' to 'SPY.US' and execute through the real executor parser without guessing market, mutating old approved bundles, or adding post-approval mutable inference.",
+  "incident_context": {
+    "observed_issue": "In dev-paper-release-37553990288-1 (source-context-2.json), bff.persona_provisioning request contained market 'US', but PersonaProvisioningCoordinator._strategy_artifact_payload and deployment metadata dropped record.request_payload.market. Registry artifact approved bundle parameters contained symbols ['SPY'] with no market field. PaperSignalProducer with CurrentArtifactStrategy correctly failed closed with market_context_missing under #6232 rather than guessing from dataset strings.",
+    "repair_strategy": "Propagate explicit market from record.request_payload upfront before checksum, immutable parameters, and governance approval. Zero in-place mutation of old approved bundles; reject contradictory or unsupported contexts; do not guess when market is absent."
+  },
+  "acceptance_verification": {
+    "criteria_1_pre_approval_authority": {
+      "statement": "Use existing persisted explicit market as source of authority before artifact checksum and governance approval",
+      "status": "PASS",
+      "detail": "PersonaProvisioningCoordinator._explicit_market validates record.request_payload['market'] and adds it to StrategyArtifact parameters, immutable_parameters, and envelope metadata prior to candidate creation, durable checksum calculation, and Governance proposal."
+    },
+    "criteria_2_backward_compatibility_and_fail_closed": {
+      "statement": "Keep previous approved artifact bytes versions and checksums unchanged and reject ambiguous unsupported contexts",
+      "status": "PASS",
+      "detail": "When market is omitted from request_payload, parameters['market'] and immutable_parameters remain untouched, producing identical bytes and checksums as existing bundles. Unsupported market contexts (e.g. 'MARS') or contradictory intrinsic symbols (e.g. market='US' with symbol='2330.TW') fail closed with PersonaProvisioningCoordinationError."
+    },
+    "criteria_3_actual_coordinator_builder_execution": {
+      "statement": "Exercise actual coordinator artifact builder through current artifact signal producer and real executor parser not hand fabricated market-enriched artifact",
+      "status": "PASS",
+      "detail": "In test_natural_spy_artifact_normalizes_to_executable_symbol_and_fills, candidate payload is created via coordinator._strategy_artifact_payload(record, ids). The resulting artifact is projected into binding object_store and evaluated by PaperSignalProducer with CurrentArtifactStrategy. Emitted signal 'SPY.US' is verified against services.execution.lean_runtime.symbol_parser (parse and validate_executable_symbol) and drained through PaperRuntimeService to confirm simulated paper fill."
+    },
+    "criteria_4_raw_symbols_and_fences_preserved": {
+      "statement": "Preserve exact raw symbol membership tenant approval Capital and paper/live fences and deterministic retry",
+      "status": "PASS",
+      "detail": "Original raw symbol 'SPY' is preserved in signal metadata raw_symbol; tenant ID and capital pool binding boundaries are strictly validated; paper execution fences remain intact."
+    },
+    "criteria_5_us_tw_crypto_semantics": {
+      "statement": "Validate US TW crypto semantics only where existing owner contract supports them and do not invent a new instrument catalog",
+      "status": "PASS",
+      "detail": "Companion tests in test_current_artifact_signal.py verify US ('SPY' -> 'SPY.US' via LEAN parser), Taiwan ('2330' -> '2330.TW' via is_taiwan_venue_symbol and Shioaji route), and Crypto ('BTCUSDT' -> 'BTCUSDT' via LEAN Kraken Crypto parser)."
+    },
+    "criteria_6_review_and_canonical_integration": {
+      "statement": "Independent exact-head review and canonical integration followed by separately coordinated natural hosted evidence",
+      "status": "READY_FOR_REVIEW",
+      "detail": "Exact-head task commit, push, PR creation, and governed handoff to Claude."
+    }
+  },
+  "validation_results": {
+    "services/registry/test_strategy_artifact.py": "41 passed",
+    "services/control-plane/bff/test_persona_provisioning_coordinator.py": "20 passed",
+    "services/control-plane/bff/test_persona_provisioning_readback.py": "54 passed",
+    "services/execution/lean_runtime/test_current_artifact_signal.py": "10 passed",
+    "total_passed": 125,
+    "total_failed": 0
+  },
+  "scoped_artifacts": [
+    "services/control-plane/bff/persona_provisioning_coordinator.py",
+    "services/control-plane/bff/test_persona_provisioning_coordinator.py",
+    "services/control-plane/bff/test_persona_provisioning_readback.py",
+    "services/registry/strategy_artifact.py",
+    "services/registry/test_strategy_artifact.py",
+    "services/execution/lean_runtime/test_current_artifact_signal.py",
+    "docs/deployment/evidence/PERSONA-PAPER-MARKET-CONTEXT-20261007/evidence.json"
+  ]
+}
