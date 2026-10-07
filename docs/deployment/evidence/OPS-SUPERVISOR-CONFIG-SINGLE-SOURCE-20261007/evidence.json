@@ -1,0 +1,68 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "OPS-SUPERVISOR-CONFIG-SINGLE-SOURCE-20261007",
+  "title": "Make the live config the only source of integration_path, drop duplicate watchdog checks, schedule the watchdog timer by calendar",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "base_sha": "0f5571764b5d70663bf4b1d814c09933c65b84fe",
+  "change_class": "simplify",
+  "net_prod_line_budget": 0,
+  "net_prod_lines_actual": -32,
+  "production_line_counts": {
+    "before": {
+      ".orchestrator/config.json": 883,
+      "scripts/ai_status.py": 11836,
+      "scripts/supervisor_watchdog_install.py": 362,
+      "scripts/sync-dev-root.sh": 446,
+      "total": 13527
+    },
+    "after": {
+      ".orchestrator/config.json": 880,
+      "scripts/ai_status.py": 11860,
+      "scripts/supervisor_watchdog_install.py": 335,
+      "scripts/sync-dev-root.sh": 420,
+      "total": 13495
+    },
+    "diff": {
+      ".orchestrator/config.json": -3,
+      "scripts/ai_status.py": 24,
+      "scripts/supervisor_watchdog_install.py": -27,
+      "scripts/sync-dev-root.sh": -26,
+      "net_change": -32
+    }
+  },
+  "runtime_effect_status": "runtime effect pending operator promotion",
+  "known_limitations": {
+    "check_range_limitation": "check_commit_trailers.check_range does not fetch, and the live integration clone normally lacks freshly pushed PR heads. On 2026-10-07 the heads of open PRs were absent from it. So a real operator handoff may still stop at 'cannot validate commit trailer range ... ensure the exact base and head commits are available'. This is the pre-existing #6157 design; runtime effect awaits an operator promotion and does not claim that end-to-end operator handoff works."
+  },
+  "validation": {
+    "pytest_suite": {
+      "command": "PYTHONPATH=.orchestrator python3 -m pytest -q scripts/test_supervisor_watchdog_install.py scripts/test_dashboard_autostart_install.py scripts/test_sync_dev_root.py scripts/test_provision_live_supervisor_config.py scripts/test_check_config_drift.py scripts/git/test_auto_integrator.py",
+      "result": "314 passed, 649 subtests passed in 86.94s",
+      "exit_code": 0
+    },
+    "unittest_full_suite": {
+      "command": "PYTHONPATH=.orchestrator python3 -m unittest scripts.test_ai_status test_supervisor rewrite.test_task_contract scripts.test_check_config_drift",
+      "result": "Ran 562 tests in 254.524s - OK",
+      "exit_code": 0
+    },
+    "unittest_hermeticity_suite": {
+      "command": "d=$(mktemp -d); env -u PANTHEON_LIVE_SUPERVISOR_CONFIG PANTHEON_DEPLOY_ROOT=\"$d\" PYTHONPATH=.orchestrator python3 -m unittest scripts.test_ai_status rewrite.test_task_contract",
+      "result": "Ran 557 tests in 253.566s - OK",
+      "exit_code": 0
+    },
+    "bash_syntax_check": {
+      "command": "bash -n scripts/sync-dev-root.sh",
+      "exit_code": 0
+    },
+    "diff_budget_check": {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD --change-class simplify",
+      "status": "verified (net production change is -32 <= 0)"
+    },
+    "clean_greps": {
+      "removed_checks": "git grep -n -e verify_installed_watchdog -e verify_runtime_pointers -e b435986b -- .orchestrator scripts returned 0 matches",
+      "timer_assertion": "git grep -n OnUnitActiveSec -- scripts matched only scripts/test_supervisor_watchdog_install.py:58: assert \"OnUnitActiveSec\" not in timer",
+      "live_supervisor_config_read": "git grep -n PANTHEON_LIVE_SUPERVISOR_CONFIG -- scripts/ai_status.py matched exactly line 3276 (single inline read)"
+    }
+  }
+}

@@ -3272,8 +3272,32 @@ def _done_delivery_repository_root(
         except RuntimeError as exc:
             raise SystemExit(f"Cannot {action} task: {exc}.") from exc
     else:
-        repo_dict = resolve_repository(config, repository_id)
-        integration_raw = str(repo_dict.get("integration_path") or "").strip()
+        if action == "handoff":
+            raw = str(os.environ.get("PANTHEON_LIVE_SUPERVISOR_CONFIG") or "").strip()
+            live_path = (
+                Path(raw)
+                if raw
+                else Path(
+                    os.environ.get("PANTHEON_DEPLOY_ROOT")
+                    or Path.home() / "pantheon-ci-deploy"
+                ).expanduser()
+                / "runtime"
+                / "live-supervisor-mainroot-config.json"
+            )
+            try:
+                live_config = json.loads(live_path.read_text(encoding="utf-8"))
+                if not isinstance(live_config, dict):
+                    raise ValueError(
+                        f"live supervisor config must be a dict: {type(live_config)}"
+                    )
+                live_repo = resolve_repository(live_config, repository_id)
+            except (OSError, ValueError) as exc:
+                raise SystemExit(
+                    f"Cannot {action} task: live supervisor config is unreadable: {live_path}."
+                ) from exc
+            integration_raw = str(live_repo.get("integration_path") or "").strip()
+        else:
+            integration_raw = ""
         if action == "handoff" and integration_raw:
             configured_root = Path(integration_raw).expanduser()
             if not configured_root.is_absolute():
