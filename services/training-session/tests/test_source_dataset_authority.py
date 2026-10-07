@@ -266,7 +266,7 @@ def _make_case(tmp_path: Path) -> AuthorityCase:
                         "dataset": NORMALIZED_DATASET_ID,
                         "available_time": "2026-07-15T11:58:00Z",
                         "api_endpoint": "https://market.example.test/ohlcv",
-                        "access_scope": "public",
+                        "access_scope": ["public"],
                         "license_scope": "open",
                         "schema_hash": "canonical-ohlcv-wrapper.v1",
                         "source_ingest_run_id": RUN_ID,
@@ -600,6 +600,16 @@ def test_connector_digest_is_its_own_desired_state_not_the_snapshot(tmp_path: Pa
 
     connector["desired_state"]["cadence"] = "hourly"
     with pytest.raises(SourceDatasetAuthorityError, match="does not match its desired state"):
+        _materialize(case)
+
+
+@pytest.mark.parametrize("scope", [[], [""], ["public", " "], "", None, [1]])
+def test_empty_provenance_access_scope_fails_closed(tmp_path: Path, scope: Any) -> None:
+    case = _make_case(tmp_path)
+    readback = case.responses[f"{BASE_URL}/api/source-ingest/controller/readback"]
+    readback["connectors"][0]["latest_source_record"]["provenance"]["access_scope"] = scope
+
+    with pytest.raises(SourceDatasetAuthorityError, match="access_scope"):
         _materialize(case)
 
 

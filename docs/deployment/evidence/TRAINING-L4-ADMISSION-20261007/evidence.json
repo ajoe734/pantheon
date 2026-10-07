@@ -1,0 +1,33 @@
+{
+  "task_id": "TRAINING-L4-ADMISSION-20261007",
+  "diagnosis": {
+    "reproduced_at_head": "1fa363214",
+    "reproduced_from_report": "/tmp/pantheon-closure-continuation-20261007T1255Z/isolated-retry/run-report.json",
+    "initial_failure": "evaluation_admission_rejected: source DatasetVersion authority rejected: latest_source_record.provenance.access_scope must be a non-empty string",
+    "classification": "source dataset authority shape mismatch; not threshold policy, not Persona authority",
+    "root_cause": "source-ingest external_sources emits provenance.access_scope as a list of strings; training validator and its fixture assumed a bare string",
+    "subsequent_boundary": "source authority GET failed for http://source-ingest:8097/api/source-ingest/evidence/bundles: HTTPError: HTTP Error 401: Unauthorized"
+  },
+  "fix": "validator accepts a non-empty list of non-empty strings (or the legacy string); empty/blank/non-string entries still fail closed; evaluation failure payload includes failure_reason",
+  "unchanged": [
+    "thresholds",
+    "digest-bound source authority",
+    "Persona authority",
+    "vectorbt computation",
+    "other provenance fields"
+  ],
+  "verification": {
+    "unit": "pytest services/training-session: 152 passed, 2 skipped (includes access_scope negative cases)",
+    "isolated_leased_harness": {
+      "compose_project": "l12l4adm20261007",
+      "head_sha": "c50236ef05f4e8a1fe60ea9eed88c534e939414c",
+      "research_cases_1_to_3": "PASSED (Source Ingestion, Strategy Distillation, Alpha Replication)",
+      "research_case_4_persona_teaching": "access_scope list validation passed; advanced to evidence bundles GET returning 401 Unauthorized"
+    },
+    "external_prerequisites": [
+      "TRAINING-TW-SOURCE-READ-AUTH-20261007 (PR #6294): passes source_ingest_reader token and X-Tenant-Id for source evidence reads",
+      "SOURCE-OFFICIAL-TENANT-STAMP-20261007 (PR #6295): ensures official market data is stamped with expected tenant"
+    ],
+    "closure_scope_boundary": "L4 terminal completion blocked on PR #6294/#6295; L5-L12 remain unproven and owned by parent closure task"
+  }
+}
