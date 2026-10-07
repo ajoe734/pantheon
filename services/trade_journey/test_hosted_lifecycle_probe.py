@@ -162,7 +162,35 @@ DEFAULT_TEST_CASE = {
     "state": "succeeded",
     "source_snapshot": DEFAULT_TEST_SNAPSHOT,
 }
-DEFAULT_CASE_SOURCE = {DEFAULT_TEST_CASE_KEY: DEFAULT_TEST_CASE}
+
+
+class InMemoryCaseSource:
+    def __init__(self, cases: Mapping[str, Any], snapshots: Mapping[str, Any] | None = None):
+        self._cases = dict(cases)
+        self._snapshots = dict(snapshots or {})
+
+    async def get_case(self, case_key: str) -> dict[str, Any] | None:
+        return self._cases.get(case_key)
+
+    async def get_source_snapshot(
+        self, snapshot_id: str, tenant_id: str, symbol: str | None = None
+    ) -> dict[str, Any] | None:
+        return self._snapshots.get(snapshot_id)
+
+    async def verify_source_lineage(self, lineage: Mapping[str, Any], tenant_id: str) -> None:
+        pass
+
+    def __getitem__(self, key: str) -> Any:
+        return self._cases[key]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._cases.get(key, default)
+
+
+DEFAULT_CASE_SOURCE = InMemoryCaseSource(
+    {DEFAULT_TEST_CASE_KEY: DEFAULT_TEST_CASE},
+    {DEFAULT_TEST_SNAPSHOT["snapshot_id"]: DEFAULT_TEST_SNAPSHOT},
+)
 
 
 def _natural_lifecycle_rows() -> list[dict]:
@@ -1206,9 +1234,11 @@ def test_asyncpg_case_source_verify_source_lineage_unit_rejections(monkeypatch):
                 "source_id": "src-1",
                 "connector_id": "conn-1",
                 "content_ref": "ref-1",
-                "ingest_run_id": "run-1",
-                "checksum": "sha256-test-checksum",
-                "metadata": {"tenant_id": "tenant-a"},
+                "metadata": {
+                    "tenant_id": "tenant-a",
+                    "source_ingest_run_id": "run-1",
+                    "content_hash": "sha256-test-checksum",
+                },
             }
 
         async def fetch(self, query: str, *args):
@@ -1272,39 +1302,55 @@ def test_asyncpg_case_source_verify_source_lineage_unit_rejections(monkeypatch):
         asyncio.run(src.verify_source_lineage(bad_chk, "tenant-a"))
     assert exc_info.value.code == "source_checksum_mismatch"
 
-    missing_tenant_src = make_src({"source_id": "src-1", "connector_id": "conn-1", "content_ref": "ref-1", "ingest_run_id": "run-1", "checksum": "chk-1"})
+    missing_tenant_src = make_src({"source_id": "src-1", "connector_id": "conn-1", "content_ref": "ref-1", "metadata": {"source_ingest_run_id": "run-1", "content_hash": "chk-1"}})
     with pytest.raises(probe.ProbeError) as exc_info:
         asyncio.run(missing_tenant_src.verify_source_lineage(good_lineage, "tenant-a"))
     assert exc_info.value.code == "source_tenant_missing"
 
-    missing_conn_src = make_src({"source_id": "src-1", "content_ref": "ref-1", "ingest_run_id": "run-1", "checksum": "chk-1", "tenant_id": "tenant-a"})
+    missing_conn_src = make_src({"source_id": "src-1", "content_ref": "ref-1", "metadata": {"tenant_id": "tenant-a", "source_ingest_run_id": "run-1", "content_hash": "chk-1"}})
     with pytest.raises(probe.ProbeError) as exc_info:
         asyncio.run(missing_conn_src.verify_source_lineage(good_lineage, "tenant-a"))
     assert exc_info.value.code == "source_connector_missing"
 
-    missing_ref_src = make_src({"source_id": "src-1", "connector_id": "conn-1", "ingest_run_id": "run-1", "checksum": "chk-1", "tenant_id": "tenant-a"})
+    missing_ref_src = make_src({"source_id": "src-1", "connector_id": "conn-1", "metadata": {"tenant_id": "tenant-a", "source_ingest_run_id": "run-1", "content_hash": "chk-1"}})
     with pytest.raises(probe.ProbeError) as exc_info:
         asyncio.run(missing_ref_src.verify_source_lineage(good_lineage, "tenant-a"))
     assert exc_info.value.code == "source_content_ref_missing"
 
-    missing_run_src = make_src({"source_id": "src-1", "connector_id": "conn-1", "content_ref": "ref-1", "checksum": "chk-1", "tenant_id": "tenant-a"})
+    missing_run_src = make_src({"source_id": "src-1", "connector_id": "conn-1", "content_ref": "ref-1", "metadata": {"tenant_id": "tenant-a", "content_hash": "chk-1"}})
     with pytest.raises(probe.ProbeError) as exc_info:
         asyncio.run(missing_run_src.verify_source_lineage(good_lineage, "tenant-a"))
     assert exc_info.value.code == "source_ingest_run_missing"
 
-    missing_chk_src = make_src({"source_id": "src-1", "connector_id": "conn-1", "content_ref": "ref-1", "ingest_run_id": "run-1", "tenant_id": "tenant-a"})
+    missing_chk_src = make_src({"source_id": "src-1", "connector_id": "conn-1", "content_ref": "ref-1", "metadata": {"tenant_id": "tenant-a", "source_ingest_run_id": "run-1"}})
     with pytest.raises(probe.ProbeError) as exc_info:
         asyncio.run(missing_chk_src.verify_source_lineage(good_lineage, "tenant-a"))
     assert exc_info.value.code == "source_checksum_missing"
 
 
-def test_asyncpg_case_source_live_postgres_queries():
+def test_asyncpg_case_source_live_postgres_queries(tmp_path):
     import asyncpg
 
     dsn = "postgresql://postgres:postgres@127.0.0.1:15432/postgres"
     schema = "test_bff_live"
     reg_schema = "test_reg_live"
     source_schema = "test_src_live"
+
+    snap_file = tmp_path / "latest_market_snapshots.jsonl"
+    snap_store = probe.LatestMarketSnapshotStore(snap_file)
+    rec = types.SimpleNamespace(
+        metadata={
+            "symbol_canonical": "BTC-USDT",
+            "close": 50000.0,
+            "event_time": "2026-07-15T00:00:00Z",
+        },
+        source_id="src-live-01",
+        connector_id="conn-live-01",
+        content_ref="ref-live-01",
+    )
+    snap_store.append_normalized_records([rec], ingest_run_id="run-01", observed_at="2026-07-15T00:00:01Z")
+    expected_snap = snap_store.get("BTC-USDT")
+    assert expected_snap is not None
 
     async def run_live():
         conn = await asyncpg.connect(dsn)
@@ -1331,9 +1377,11 @@ def test_asyncpg_case_source_live_postgres_queries():
             """)
             await conn.execute(f"""
                 CREATE TABLE IF NOT EXISTS {source_schema}.source_evidence (
+                    append_id BIGSERIAL PRIMARY KEY,
                     record_id TEXT NOT NULL,
                     record_type TEXT NOT NULL,
-                    payload JSONB NOT NULL
+                    payload JSONB NOT NULL,
+                    UNIQUE (record_type, record_id)
                 )
             """)
 
@@ -1351,12 +1399,12 @@ def test_asyncpg_case_source_live_postgres_queries():
 
             await conn.execute(f"""
                 INSERT INTO {source_schema}.source_evidence (record_id, record_type, payload)
-                VALUES ('src-live-01', 'source_record', '{{"source_id": "src-live-01", "connector_id": "conn-live-01", "content_ref": "ref-live-01", "ingest_run_id": "run-01", "checksum": "sha256-live-checksum", "metadata": {{"tenant_id": "tenant-live"}}}}'::jsonb)
+                VALUES ('@t11:tenant-live:src-live-01', 'source_record', '{{"source_id": "src-live-01", "connector_id": "conn-live-01", "content_ref": "ref-live-01", "metadata": {{"tenant_id": "tenant-live", "source_ingest_run_id": "run-01", "content_hash": "sha256-live-checksum"}}}}'::jsonb)
             """)
 
             await conn.execute(f"""
                 INSERT INTO {source_schema}.source_evidence (record_id, record_type, payload)
-                VALUES ('mss-live-01', 'source_snapshot', '{{"snapshot_id": "mss-live-01", "source_ref": "source-ingest://snapshots/mss-live-01", "symbol": "BTC-USDT", "event_time": "2026-07-15T00:00:00Z", "observed_at": "2026-07-15T00:00:01Z", "lineage": {{"source_ids": ["src-live-01"], "connector_ids": ["conn-live-01"], "content_refs": ["ref-live-01"], "ingest_run_ids": ["run-01"]}}, "checksum": "sha256-live-checksum", "data_checksum": "sha256-live-checksum"}}'::jsonb)
+                VALUES ('@t12:tenant-rogue:src-live-01', 'source_record', '{{"source_id": "src-live-01", "connector_id": "conn-live-01", "content_ref": "ref-live-01", "metadata": {{"tenant_id": "tenant-rogue", "source_ingest_run_id": "run-01", "content_hash": "sha256-live-checksum"}}}}'::jsonb)
             """)
 
             src = probe.AsyncpgCaseSource(
@@ -1364,6 +1412,7 @@ def test_asyncpg_case_source_live_postgres_queries():
                 schema=schema,
                 registry_schema=reg_schema,
                 source_evidence_schema=source_schema,
+                snapshot_store=snap_store,
             )
 
             case = await src.get_case("case-live-01")
@@ -1373,9 +1422,13 @@ def test_asyncpg_case_source_live_postgres_queries():
             assert case["artifact_version"] == "1.0.0"
             assert case["artifact_state"] == "approved"
 
-            snap = await src.get_source_snapshot("mss-live-01", "tenant-live")
+            snap = await src.get_source_snapshot(expected_snap.snapshot_id, "tenant-live", symbol="BTC-USDT")
             assert snap is not None
-            assert snap["snapshot_id"] == "mss-live-01"
+            assert snap["snapshot_id"] == expected_snap.snapshot_id
+            assert snap["checksum"] is not None
+
+            missing_snap = await src.get_source_snapshot("mss-unknown", "tenant-live", symbol="BTC-USDT")
+            assert missing_snap is None
 
             lineage = {
                 "source_ids": ["src-live-01"],
@@ -1500,5 +1553,29 @@ def test_adversarial_qa_source_snapshot_binding_validation():
     with pytest.raises(probe.ProbeError) as exc_info:
         probe._validate_natural_candidate(candidate, case_no_snap)
     assert exc_info.value.code == "source_snapshot_missing"
+
+
+def test_case_blob_cannot_bypass_independent_source_snapshot_lookup(tmp_path):
+    root, rows = _publish(tmp_path)
+
+    # Case has source_snapshot, but case_source has NO snapshot in store (returns None)
+    case_with_snapshot = dict(DEFAULT_TEST_CASE, source_snapshot=DEFAULT_TEST_SNAPSHOT)
+    case_source_missing_snapshot = InMemoryCaseSource(
+        {DEFAULT_TEST_CASE_KEY: case_with_snapshot},
+        snapshots={},
+    )
+
+    code, artifact = _execute(
+        tmp_path,
+        root=root,
+        rows=rows,
+        mode="natural",
+        case_key=DEFAULT_TEST_CASE_KEY,
+        case_source=case_source_missing_snapshot,
+    )
+    assert code == 1
+    assert artifact["outcome"] == "failed"
+    assert artifact["failure"]["code"] == "source_snapshot_missing"
+
 
 

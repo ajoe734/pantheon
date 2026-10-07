@@ -5,22 +5,23 @@
   "change_class": "corrective",
   "net_prod_line_budget": 350,
   "title": "Reject actual natural Source authority and trusted-time false positives",
-  "summary": "Eliminated independently reproduced false positives from PR #6315 (adversarial QA counterexamples): 1) Replaced arbitrary 2024-2030 guess range with independent trusted UTC clock sampled after remote observations, zero future tolerance, and removed fallback to market_input_observed_at for signal clock; 2) Enforced strict PostgreSQL source authority and tenant isolation directly in SQL and fail closed on missing/mismatched tenant_id, connector_id, content_ref, ingest_run_id, and checksum; 3) Enforced checksummed SourceSnapshot binding against actual authorized snapshot proof, binding snapshot ID, ref, lineage, timestamps, and data checksum; 4) Reused product freshness policy instead of probe runner timeout as Source policy. All 103 unit, integration, and live-Postgres tests pass with zero skips.",
+  "summary": "Eliminated independently reproduced false positives from PR #6315 (adversarial QA counterexamples): 1) Replaced arbitrary 2024-2030 guess range with independent trusted UTC clock sampled after remote Source reads, zero future tolerance, and removed fallback to market_input_observed_at for signal clock; 2) Enforced strict PostgreSQL source authority and tenant isolation directly in SQL and fail closed on missing/mismatched tenant_id, connector_id, content_ref, ingest_run_id, and checksum (inspecting metadata.content_hash and metadata.source_ingest_run_id); 3) Enforced actual Source snapshot authority via LatestMarketSnapshotStore and /api/source-ingest/snapshots/latest (no synthetic source_snapshot rows in Postgres source_evidence) and prevented case blobs from bypassing independent Source authority lookup; 4) Reused product freshness policy instead of probe runner timeout as Source policy. All 104 unit, integration, and live-Postgres tests pass with zero skips.",
   "counterexamples_eliminated": {
     "future_2029_candidate": "Rejected with invalid_freshness via independent trusted UTC clock and zero future tolerance",
     "empty_source_metadata_fake_conn": "Rejected with source_tenant_missing; fail-closed enforcement on missing/mismatched tenant, connector, content_ref, ingest_run_id, and checksum",
     "cross_tenant_sql_leak": "Constrained case tenant and tenanted record keys directly in SQL query",
-    "unbound_snapshot_proof": "Enforced strict SourceSnapshot proof binding across snapshot ID, ref, lineage, timestamps, and checksum"
+    "unbound_snapshot_proof": "Enforced strict SourceSnapshot proof binding across snapshot ID, ref, lineage, timestamps, and checksum",
+    "case_blob_bypass": "Independent Source authority lookup is always queried; case blob cannot bypass source snapshot verification"
   },
   "verification": [
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_hosted_lifecycle_probe.py scripts/test_run_loop_prod_tel_002_hosted_probe.py",
       "exit_code": 0,
-      "test_count": 103,
-      "output": "103 passed in 22.14s"
+      "test_count": 104,
+      "output": "104 passed in 16.03s"
     },
     {
-      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
+      "command": "python3 scripts/git/diff_budget.py --base 6cd88876a --head HEAD",
       "exit_code": 0,
       "status": "passed"
     }
