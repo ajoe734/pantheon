@@ -1,0 +1,38 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "OPS-SUPERVISOR-SINGLE-PATH-CLEANUP-20261007",
+  "title": "Supervisor single-path cleanup: queue-intent task read, remove dead dirty-PR review hold, honour superseded native auth markers",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "base_sha": "7b3bbb216",
+  "change_class": "simplify",
+  "net_prod_line_budget": 0,
+  "diff_budget": {
+    "command": "python3 scripts/git/diff_budget.py --base 7b3bbb216 --change-class simplify",
+    "production": {"added": 36, "deleted": 374, "net": -338},
+    "test": {"added": 35, "deleted": 500, "net": -465},
+    "docs_evidence": {"added": 3, "deleted": 1, "net": 2, "note": "measured before this evidence file was added; evidence.json itself adds under 400 lines"}
+  },
+  "changes": {
+    "build_request": "reads the task only from metadata.task; _queue_delivery_event_locked is the single writer of queue intents (live state: 204 records, 0 top-level task, 204 metadata.task).",
+    "dirty_pr_hold_removed": "OPS-REVIEW-DISPATCH-DIRTY-PR-HOLD-001 removed from supervisor.py and worker_runner.py. It keyed on task['review_binding'], which a review-status task never carries: handoff pops review_binding and only approve and operator_accept write it. The hold therefore always failed open; the activity log and 4,048 archives hold 0 worker_review_pr_dirty_hold events. Removing it changes no runtime behaviour. The review flow does NOT handle a DIRTY PR: reviewer reopen is refused by admission revalidation and blocker is owner-only. That gap is a separate operator decision and out of scope.",
+    "kept": "a037cc53c blocker responsibility transfer (RESPONSIBILITY_TRANSFER_EVENT_TYPES, canonical_worker_terminal_status) and #6221 _set_pending_wait_reason; only two docstrings of the blocker tests changed, bodies untouched.",
+    "native_log_failure": "scan stays newest to oldest; an auth marker older than a line with 'authenticated successfully' and no auth marker is skipped; quota markers never skipped; marker strings unchanged (split into NATIVE_LOG_QUOTA_MARKERS and NATIVE_LOG_AUTH_MARKERS). Reference semantics: provider_permissions._antigravity_probe_ready, not imported or edited.",
+    "stale_probe_vectors": "Four (0,'OK','OK',native,'not_logged_in') vectors of test_native_auth_lifecycle_preserves_terminal_and_model_failures have been red since #5871 (546a9cf01, 2026-09-17), a deliberate behaviour change that made non-empty model output decisive (see test_antigravity_probe_ready_trusts_model_output_over_trailing_native_marker). They are stale expectations, not a regression. Fixed by giving each empty stdout and empty output; native input and expected not_logged_in unchanged; test_provider_permissions.py not edited.",
+    "docs": "docs/operations/auto-worker-readiness.md gains the success-supersedes sentence."
+  },
+  "validation": {
+    "pytest_head": {
+      "command": "PANTHEON_STATUS_ROOT=<coordination root> $PANTHEON_DEPENDENCY_PYTHON -m pytest -q (from repo root) .orchestrator/test_supervisor.py test_worker_runner.py test_worker_runner_heartbeat.py test_antigravity_error_observability.py test_provider_permissions.py rewrite/test_worker_recovery.py",
+      "result": "660 passed, 278 subtests passed, 0 failed"
+    },
+    "red_on_base": "With the unmodified base supervisor.py, test_native_log_auth_marker_superseded_by_later_success_is_not_a_failure fails (returns 'You are not logged into Antigravity.'); the two guard cases and all other observability tests pass (1 failed, 15 passed).",
+    "base_failures": "Full six-file run was not repeated on the base; head has no failures, so there is no new failure and no base-only failure to name."
+  },
+  "runtime_effect_status": "runtime effect pending operator promotion",
+  "operator_follow_up": [
+    "Runtime promotion (not run by this delivery; no sync-dev-root.sh).",
+    "Decide separately how a reviewer should handle a DIRTY PR.",
+    "Optionally share one auth-superseded predicate between native_log_failure and provider_permissions."
+  ]
+}
