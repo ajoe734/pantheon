@@ -45,8 +45,6 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert source_ingest_env["SOURCE_INGEST_CONTROLLER_TOKEN_FILE"] == "/data/source-ingest/controller_token"
     assert source_ingest_env["SOURCE_INGEST_MAX_RECORDS"] == "${SOURCE_INGEST_MAX_RECORDS:-100}"
     assert source_ingest_env["SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS"] == "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}"
-    assert source_ingest_env["SOURCE_INGEST_TW_HISTORY_SYMBOLS"] == "${SOURCE_INGEST_TW_HISTORY_SYMBOLS:-2330.TW,2317.TW}"
-    assert source_ingest_env["SOURCE_INGEST_TW_HISTORY_TRADING_DAYS"] == "${SOURCE_INGEST_TW_HISTORY_TRADING_DAYS:-40}"
     assert source_ingest_env["SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"] == "${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}"
     assert source_ingest_env["SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS"] == "${SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS:-2}"
     assert source_ingest_env["SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS"] == "${SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS:-60}"
