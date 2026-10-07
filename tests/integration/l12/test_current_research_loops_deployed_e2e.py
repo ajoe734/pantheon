@@ -17,6 +17,7 @@ runtime, create development tasks, or continue into later loop cases.
 from __future__ import annotations
 
 import ast
+import base64
 import hashlib
 import inspect
 import json
@@ -27,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -119,6 +120,7 @@ class DeployedResearchHarness:
         self.registry_url = os.getenv("PANTHEON_L12_REGISTRY_URL", "http://127.0.0.1:18087").rstrip("/")
         self.research_url = os.getenv("PANTHEON_L12_RESEARCH_URL", "http://127.0.0.1:18101").rstrip("/")
         self.training_url = os.getenv("PANTHEON_L12_TRAINING_URL", "http://127.0.0.1:18099").rstrip("/")
+        self.governance_url = os.getenv("PANTHEON_L12_GOVERNANCE_URL", "http://127.0.0.1:18082").rstrip("/")
         self.tenant_id = os.getenv("PANTHEON_L12_TENANT_ID", "default").strip()
         self.report_path = Path(os.getenv("PANTHEON_L12_REPORT_PATH", str(DEFAULT_REPORT_PATH)))
         self.git_sha = self._command(["git", "rev-parse", "HEAD"]).strip()
@@ -133,6 +135,8 @@ class DeployedResearchHarness:
         # Source-record reads require a runtime reader token since 2026-10-04.
         self.source_reader_token = os.getenv("PANTHEON_L12_SOURCE_READER_TOKEN", "").strip()
         self.source_reader_tenant = os.getenv("PANTHEON_L12_SOURCE_READER_TENANT_ID", self.tenant_id).strip()
+        self.operator_token = os.getenv("PANTHEON_L12_OPERATOR_TOKEN", "").strip()
+        self.reviewer_token = os.getenv("PANTHEON_L12_REVIEWER_TOKEN", "").strip()
         self._write_report("running")
 
     def _source_reader_headers(self) -> dict[str, str]:
@@ -142,6 +146,66 @@ class DeployedResearchHarness:
             "Authorization": f"Bearer {self.source_reader_token}",
             "X-Tenant-Id": self.source_reader_tenant,
         }
+
+    def _registry_headers(self) -> dict[str, str]:
+        if not self.operator_token:
+            return {}
+        return {"Authorization": f"Bearer {self.operator_token}"}
+
+    @staticmethod
+    def _bearer_subject(token: str) -> str:
+        payload = token.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        return str(claims["sub"])
+
+    def _governance_approval(self, entry: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Record a real Governance decision for the exact StrategySpec version."""
+        self._require(bool(self.operator_token and self.reviewer_token), "operator/reviewer tokens are required")
+        decision_id = f"approval-l12-e2e-{self.run_token}"
+        path = f"/api/governance/approvals/{urllib.parse.quote(decision_id, safe='')}"
+        reviewer = self._bearer_subject(self.reviewer_token)
+
+        def command(token: str, suffix: str, payload: Mapping[str, Any], expected: Sequence[int]) -> Mapping[str, Any]:
+            return self._http_json(
+                self.governance_url,
+                path + suffix if suffix != "propose" else "/api/governance/approvals",
+                method="POST",
+                payload=payload,
+                headers={"Authorization": f"Bearer {token}", "Idempotency-Key": f"{decision_id}-{suffix.strip('/')}"},
+                expected=expected,
+            )
+
+        proposed = command(self.operator_token, "propose", {
+            "decision_id": decision_id,
+            "expected_version": 0,
+            "target_type": "registry_entry",
+            "target_id": entry.get("registry_id"),
+            "target_version": entry.get("version"),
+            "candidate_digest": entry.get("checksum"),
+            "risk_level": "low",
+            "tenant_id": self.tenant_id,
+            "owner_user_id": self._bearer_subject(self.operator_token),
+        }, (201,))
+        reviewed = command(self.reviewer_token, "/review", {
+            "expected_version": proposed.get("version"),
+            "actor_id": reviewer,
+            "actor_role": "governance_reviewer",
+        }, (200,))
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        decided = command(self.reviewer_token, "/decide", {
+            "expected_version": reviewed.get("version"),
+            "actor_id": reviewer,
+            "actor_role": "governance_reviewer",
+            "outcome": "approved",
+            "rationale": f"L12 deployed E2E research admission {self.run_token}",
+            "candidate_digest": entry.get("checksum"),
+            "expires_at": expires_at,
+        }, (200,))
+        self._require(
+            decided.get("decision_state") == "decided" and decided.get("decision") == "approved",
+            "Governance did not record an approved decision",
+        )
+        return decided
 
     def _source_ingest_headers(self) -> dict[str, str]:
         if not self.source_controller_token:
@@ -454,6 +518,9 @@ class DeployedResearchHarness:
                                 "Controlled research evidence for the deployed owner chain. "
                                 f"run_token={self.run_token}"
                             ),
+                            # Source evidence reads are tenant-scoped; the record's
+                            # tenant claim is what makes it readable at all.
+                            "tenant_id": self.tenant_id,
                             "access_scope": ["research"],
                             "license_scope": "internal",
                             "available_time": available_time,
@@ -572,6 +639,7 @@ class DeployedResearchHarness:
                 lambda: self._http_json(
                     self.registry_url,
                     f"/api/registry/strategy-specs/{urllib.parse.quote(registry_id, safe='')}",
+                    headers=self._registry_headers(),
                     expected=(200, 404),
                 ),
                 lambda value: (
@@ -621,6 +689,7 @@ class DeployedResearchHarness:
             lambda: self._http_json(
                 self.registry_url,
                 f"/api/registry/strategy-specs/{urllib.parse.quote(registry_id, safe='')}",
+                headers=self._registry_headers(),
             ),
         )
         entry = self._entry(registry_view)
@@ -642,20 +711,28 @@ class DeployedResearchHarness:
         }
 
         def approve() -> Mapping[str, Any]:
+            observed = entry
             for target in ("candidate", "approved"):
+                # Registry advance is a caller-bound CAS on the observed entry.
                 payload: dict[str, Any] = {
                     "target_state": target,
-                    "approver": f"l12-e2e-reviewer-{self.run_token}",
+                    "command_key": f"l12-e2e-{self.run_token}-{target}",
+                    "expected_artifact_state": observed.get("artifact_state"),
+                    "expected_version": observed.get("version"),
+                    "expected_updated_at": observed.get("updated_at"),
                 }
                 if target == "approved":
-                    payload["approval_decision_id"] = f"approval-l12-e2e-{self.run_token}"
+                    decision = self._governance_approval(observed)
+                    payload["approval_decision_id"] = decision.get("decision_id")
                 view = self._http_json(
                     self.registry_url,
                     f"/api/registry/strategy-specs/{urllib.parse.quote(registry_id, safe='')}/advance",
                     method="POST",
                     payload=payload,
+                    headers=self._registry_headers(),
                 )
-            return self._entry(view)
+                observed = self._entry(view)
+            return observed
 
         approved = self._at("distill.reviewed_admission_prerequisite", approve)
         self._require(approved.get("artifact_state") == "approved", "StrategySpec approval did not persist")
@@ -783,7 +860,6 @@ class DeployedResearchHarness:
                     "persona_id": f"persona-l12-e2e-{self.run_token}",
                     "objective": "Evaluate controls against the admitted Alpha replication result",
                     "mode": "evaluation",
-                    "actor_id": "l12-deployed-e2e",
                     "trace_id": f"trace-teaching-{self.run_token}",
                     "context_refs": [
                         {
@@ -876,7 +952,6 @@ class DeployedResearchHarness:
                 method="POST",
                 payload={
                     "mode": "refresh",
-                    "requested_by": "l12-deployed-e2e",
                     "terminalize_session": True,
                 },
                 headers={**headers, "Idempotency-Key": f"l12-e2e-{self.run_token}"},

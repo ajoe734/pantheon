@@ -346,3 +346,62 @@ def test_isolated_reader_token_is_a_signed_tenant_scoped_reader_jwt() -> None:
     assert (decoded["iss"], decoded["aud"]) == ("iss", "aud")
     expected = hmac.new(b"s3cret", f"{header}.{claims}".encode(), hashlib.sha256).digest()
     assert base64.urlsafe_b64decode(pad(signature)) == expected
+
+
+def _decoded_claims(token: str, secret: str) -> dict:
+    import base64
+    import hashlib
+    import hmac
+
+    header, claims, signature = token.split(".")
+    pad = lambda part: part + "=" * (-len(part) % 4)
+    expected = hmac.new(secret.encode(), f"{header}.{claims}".encode(), hashlib.sha256).digest()
+    assert base64.urlsafe_b64decode(pad(signature)) == expected
+    return json.loads(base64.urlsafe_b64decode(pad(claims)))
+
+
+def _isolated_signer_env() -> dict[str, str]:
+    return {
+        "PANTHEON_BFF_JWT_SECRET": "x" * 64,
+        "PANTHEON_BFF_JWT_ISSUER": harness.ISOLATED_SAFE_CONTROLS["PANTHEON_BFF_JWT_ISSUER"],
+        "PANTHEON_BFF_JWT_AUDIENCE": harness.ISOLATED_SAFE_CONTROLS["PANTHEON_BFF_JWT_AUDIENCE"],
+    }
+
+
+def test_isolated_stack_binds_owner_verifiers_and_principals_like_the_dev_deploy() -> None:
+    signer = _isolated_signer_env()
+    env = harness._isolated_dev_principal_env(signer)
+
+    assert env["PANTHEON_BFF_TENANT_ID"] == env["PANTHEON_DEPLOYMENT_TENANT_ID"] == "tenant-dev"
+    assert env["PANTHEON_REGISTRY_JWT_SECRET"] == env["PANTHEON_GOVERNANCE_JWT_SECRET"] == signer["PANTHEON_BFF_JWT_SECRET"]
+    assert env["PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED"] == "true"
+    assert env["DISTILLATION_REGISTRY_SERVICE_TOKEN_FILE"] == "/run/pantheon-principals/DISTILLATION_REGISTRY_SERVICE_TOKEN"
+    writer = _decoded_claims(env["DISTILLATION_REGISTRY_SERVICE_TOKEN"], signer["PANTHEON_BFF_JWT_SECRET"])
+    assert writer["roles"] == ["registry-writer"] and writer["tenant_id"] == "tenant-dev"
+    assert (writer["iss"], writer["aud"]) == (env["PANTHEON_REGISTRY_JWT_ISSUER"], env["PANTHEON_REGISTRY_JWT_AUDIENCE"])
+    # The evidence report records ISOLATED_SAFE_CONTROLS; no principal may leak into it.
+    assert not set(env) & set(harness.ISOLATED_SAFE_CONTROLS)
+
+
+def test_human_tokens_carry_the_identity_strict_registry_and_governance_require() -> None:
+    env = {**_isolated_signer_env()}
+    env.update(harness._isolated_dev_principal_env(env))
+    token = harness._isolated_human_token(env, "l12-reviewer", "governance_reviewer")
+
+    for owner in ("REGISTRY", "GOVERNANCE"):
+        claims = _decoded_claims(token, env[f"PANTHEON_{owner}_JWT_SECRET"])
+        assert (claims["iss"], claims["aud"]) == (
+            env.get(f"PANTHEON_{owner}_JWT_ISSUER"), env.get(f"PANTHEON_{owner}_JWT_AUDIENCE"),
+        )
+    assert claims["sub"] == "l12-reviewer" and claims["exp"] > 0
+    assert claims["roles"] == ["governance_reviewer"]
+    assert claims["tenant_id"] == "tenant-dev"
+
+
+def test_principal_issuer_starts_before_the_owner_stack() -> None:
+    from pathlib import Path
+
+    source = Path(harness.__file__).read_text(encoding="utf-8")
+    issuer = source.index("PRINCIPAL_ISSUER_SERVICE,\n")
+    owners = source.index("*required_services,\n")
+    assert source.index("_bootstrap_trade_journey_projection(\n                args") < issuer < owners
