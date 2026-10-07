@@ -230,6 +230,61 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         return stored
 
 
+def read_source_records_for_tenant(
+    *,
+    jsonl_path: Path,
+    tenant_id: str,
+) -> list[SourceRecord]:
+    """Read normalized records for one tenant without taking source write ownership.
+
+    Postgres reads query the owner table directly in an explicitly read-only
+    transaction and constrain rows by their persisted tenant claim. JSONL is
+    retained for local/test configurations, but the caller still supplies an
+    explicit tenant and the repository's tenant index enforces that scope.
+    """
+    tenant = str(tenant_id or "").strip()
+    if not tenant or tenant == "*":
+        raise ValueError("an explicit non-wildcard tenant_id is required for source evidence reads")
+
+    backend = os.getenv("SOURCE_INGEST_EVIDENCE_BACKEND", "jsonl").strip().lower()
+    if backend in ("", "jsonl"):
+        return JsonlEvidenceRepository(jsonl_path).list_source_records(tenant_id=tenant)
+    if backend != "postgres":
+        raise ValueError("SOURCE_INGEST_EVIDENCE_BACKEND must be jsonl or postgres")
+
+    dsn = os.getenv("SOURCE_INGEST_EVIDENCE_DSN") or os.getenv("DATABASE_URL")
+    if not dsn:
+        raise ValueError("SOURCE_INGEST_EVIDENCE_DSN or DATABASE_URL is required for Postgres evidence reads")
+    table = _quote_pg(os.getenv("SOURCE_INGEST_EVIDENCE_TABLE", "source_ingest.source_evidence"))
+    try:
+        import psycopg  # type: ignore[import]
+    except ImportError as exc:
+        raise RuntimeError("psycopg is required when SOURCE_INGEST_EVIDENCE_BACKEND=postgres") from exc
+
+    # This consumer never bootstraps schema, reloads other record kinds, or
+    # writes. Filter in SQL so foreign/unowned rows are not materialized here.
+    with psycopg.connect(dsn) as conn:
+        conn.execute("SET TRANSACTION READ ONLY")
+        rows = conn.execute(
+            f"SELECT payload FROM {table} "
+            "WHERE record_type = %s AND payload->'metadata'->>'tenant_id' = %s "
+            "ORDER BY append_id ASC",
+            ("source_record", tenant),
+        ).fetchall()
+    records: list[SourceRecord] = []
+    for row in rows:
+        payload = row[0] if isinstance(row, tuple) else row.get("payload")
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        if not isinstance(payload, dict):
+            raise EvidenceValidationError("Source evidence owner returned a malformed source record")
+        source = SourceRecord.from_dict(payload)
+        if source.tenant_id != tenant:
+            raise EvidenceValidationError("Source evidence owner returned a record outside the requested tenant")
+        records.append(source)
+    return records
+
+
 def build_source_evidence_repository(
     jsonl_path: Path,
 ) -> InMemoryEvidenceRepository:

@@ -122,6 +122,84 @@ def _write_stable_knowledge_object_across_bundles(repo):
 # Tests
 # ---------------------------------------------------------------------------
 
+def test_read_source_records_for_tenant_uses_read_only_scoped_postgres_query(monkeypatch, tmp_path):
+    from services.source_ingestion.connectors.base import SourceRecord
+    from services.source_ingestion.pg_store import read_source_records_for_tenant
+
+    source = SourceRecord(
+        source_id="src-tenant-bound", connector_id="conn", source_type="paper",
+        title="Persisted normalized record", content_ref="https://example.test/source",
+        metadata={"tenant_id": "tenant-a"},
+    )
+    statements = []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, sql, params=()):
+            statements.append((" ".join(sql.split()), params))
+            if sql.startswith("SELECT"):
+                assert params == ("source_record", "tenant-a")
+                return _FakeCursor([(source.to_dict(),)])
+            return _FakeCursor([])
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=lambda _dsn: Connection()))
+    monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_BACKEND", "postgres")
+    monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_DSN", "postgresql://readonly/test")
+
+    records = read_source_records_for_tenant(jsonl_path=tmp_path / "absent.jsonl", tenant_id="tenant-a")
+
+    assert [record.to_dict() for record in records] == [source.to_dict()]
+    assert statements[0][0] == "SET TRANSACTION READ ONLY"
+    assert "payload->'metadata'->>'tenant_id' = %s" in statements[1][0]
+    assert "tenant-a" not in statements[1][0]
+
+
+def test_read_source_records_for_tenant_rejects_mis_scoped_owner_result(monkeypatch, tmp_path):
+    from services.source_ingestion.pg_store import read_source_records_for_tenant
+
+    foreign_payload = {
+        "source_id": "src-foreign",
+        "connector_id": "conn",
+        "source_type": "paper",
+        "title": "Foreign persisted source",
+        "content_ref": "https://example.test/foreign",
+        "status": "normalized",
+        "metadata": {"tenant_id": "tenant-b"},
+    }
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, sql, _params=()):
+            return _FakeCursor([(foreign_payload,)]) if sql.startswith("SELECT") else _FakeCursor([])
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=lambda _dsn: Connection()))
+    monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_BACKEND", "postgres")
+    monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_DSN", "postgresql://readonly/test")
+
+    from services.knowledge.evidence.models import EvidenceValidationError
+    with pytest.raises(EvidenceValidationError, match="outside the requested tenant"):
+        read_source_records_for_tenant(jsonl_path=tmp_path / "absent.jsonl", tenant_id="tenant-a")
+
+
+def test_read_source_records_for_tenant_rejects_unscoped_and_foreign(monkeypatch, tmp_path):
+    from services.source_ingestion.pg_store import read_source_records_for_tenant
+
+    with pytest.raises(ValueError, match="explicit non-wildcard tenant_id"):
+        read_source_records_for_tenant(jsonl_path=tmp_path / "absent.jsonl", tenant_id="")
+    with pytest.raises(ValueError, match="explicit non-wildcard tenant_id"):
+        read_source_records_for_tenant(jsonl_path=tmp_path / "absent.jsonl", tenant_id="*")
+
+
 def test_build_source_evidence_repository_jsonl_default():
     """JSONL remains default when env is empty."""
     from services.source_ingestion.pg_store import build_source_evidence_repository

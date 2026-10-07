@@ -83,7 +83,7 @@ def test_distillation_controller_tick_success(tmp_path, monkeypatch) -> None:
     alive_path = tmp_path / "controller_alive"
     
     # Pre-populate source evidence JSONL with a normalized record
-    record = _normalized_source("src-note-test-001")
+    record = _normalized_source("src-note-test-001", tenant_id="test")
     with open(evidence_path, "w", encoding="utf-8") as f:
         f.write(json.dumps({"record_type": "source_record", "payload": record.to_dict()}) + "\n")
         
@@ -178,7 +178,7 @@ def test_distillation_controller_tick_processes_pre_admitted_job_without_reenque
     state_path = tmp_path / "controller_state.json"
     alive_path = tmp_path / "controller_alive"
 
-    record = _normalized_source("src-note-test-003")
+    record = _normalized_source("src-note-test-003", tenant_id="test")
     with open(evidence_path, "w", encoding="utf-8") as f:
         f.write(json.dumps({"record_type": "source_record", "payload": record.to_dict()}) + "\n")
 
@@ -257,7 +257,7 @@ def test_distillation_controller_immutable_protection(tmp_path, monkeypatch) -> 
     state_path = tmp_path / "controller_state.json"
     alive_path = tmp_path / "controller_alive"
     
-    record = _normalized_source("src-note-test-002")
+    record = _normalized_source("src-note-test-002", tenant_id="test")
     with open(evidence_path, "w", encoding="utf-8") as f:
         f.write(json.dumps({"record_type": "source_record", "payload": record.to_dict()}) + "\n")
         
@@ -462,7 +462,7 @@ def test_failed_tick_publishes_failure_not_reconciled_proof(tmp_path, monkeypatc
     def fail_read(*args, **kwargs):
         raise ValueError("source repository failed")
 
-    monkeypatch.setattr("services.source_ingestion.distillation_controller.build_source_evidence_repository", fail_read)
+    monkeypatch.setattr("services.source_ingestion.distillation_controller.read_source_records_for_tenant", fail_read)
     if writer_unavailable:
         async def fail_write(**kwargs):
             raise OSError("shared writer unavailable")

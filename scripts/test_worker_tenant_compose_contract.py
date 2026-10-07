@@ -17,6 +17,7 @@ CASES = {
     "agora-interaction-worker": ("PANTHEON_TENANT_ID", "tenant-dev"),
     "training-session-preview-worker": ("TRAINING_SESSION_TENANT_ID", "tenant-dev"),
     "reconciliation-drift-incident-listener": ("PANTHEON_TENANT_ID", "tenant-dev"),
+    "strategy-distillation-worker": ("PANTHEON_TENANT_ID", "tenant-dev"),
 }
 
 
@@ -26,7 +27,7 @@ def _render(env: dict[str, str]) -> dict:
     ).returncode != 0:
         pytest.skip("docker compose unavailable")
     result = subprocess.run(
-        ["docker", "compose", "-f", "docker-compose.yml", "config", "--format", "json"],
+        ["docker", "compose", "--profile", "*", "-f", "docker-compose.yml", "config", "--format", "json"],
         cwd=ROOT,
         env={**os.environ, **env},
         capture_output=True,

@@ -120,6 +120,22 @@ class TestEnqueueFromSourceRecord:
         with pytest.raises(DistillationError, match="Only normalized source"):
             worker.enqueue_from_source_record(source)
 
+    def test_run_pending_tenant_scope_does_not_claim_foreign_or_unowned_jobs(self, tmp_path: Path) -> None:
+        worker, queue, _ = _make_worker(tmp_path)
+        tenant_source = _normalized_source("src-tenant-a", tenant_id="tenant-a")
+        foreign_source = _normalized_source("src-tenant-b", tenant_id="tenant-b")
+        unowned_source = _normalized_source("src-unowned")
+        for source in (tenant_source, foreign_source, unowned_source):
+            worker.enqueue_from_source_record(source)
+
+        claimed = queue.claim_due(worker_id="tenant-a-worker", tenant_id="tenant-a")
+
+        assert [job.source_id for job in claimed] == ["src-tenant-a"]
+        assert queue.get("src-tenant-b", source_version_digest(foreign_source)).status == "pending"
+        assert queue.get("src-unowned", source_version_digest(unowned_source)).status == "pending"
+        with pytest.raises(DistillationError, match="foreign or unowned tenant scope"):
+            worker.catch_up([foreign_source], tenant_id="tenant-a")
+
     def test_run_pending_processes_enqueued_job(self, tmp_path: Path) -> None:
         worker, queue, seed_store = _make_worker(tmp_path)
         source = _normalized_source()
