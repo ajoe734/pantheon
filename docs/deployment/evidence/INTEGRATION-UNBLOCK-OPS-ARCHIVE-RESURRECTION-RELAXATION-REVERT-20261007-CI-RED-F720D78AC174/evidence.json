@@ -1,6 +1,6 @@
 {
   "task_id": "INTEGRATION-UNBLOCK-OPS-ARCHIVE-RESURRECTION-RELAXATION-REVERT-20261007-CI-RED-F720D78AC174",
-  "recorded_at": "2026-10-07T19:51:00Z",
+  "recorded_at": "2026-10-07T19:52:00Z",
   "owner": "Antigravity2",
   "reviewer": "Claude",
   "repository": "ajoe734/pantheon",
@@ -22,13 +22,15 @@
     "analysis": "During Pantheon Stage 0 CI run 37675576943 on PR #6313, job 112978357515 (Import smoke services-promotion-Dockerfile) failed at step 'Build image and import every service entrypoint inside it'. The failure was caused by a transient HTTP 502 Bad Gateway error when docker build attempted to pull the python:3.12-slim base image from Docker Hub (registry-1.docker.io). PR #6313 modifies only scripts/ai_status.py, scripts/test_ai_status.py, and docs/deployment/evidence/OPS-ARCHIVE-RESURRECTION-RELAXATION-REVERT-20261007/evidence.json; it has no changes to services/promotion/Dockerfile. All other 38 Stage 0 smoke and test jobs in run 37675576943 passed, confirming the failure was an isolated external infrastructure flake."
   },
   "pr_resolution": {
-    "action": "Triggered rerun of failed jobs via 'gh run rerun 37675576943 --failed', confirmed rerun job 112983731334 succeeded in 37s, verified all Stage 0 CI checks are now green, and posted formal resolution report on PR #6313 (issuecomment-6045620151)",
+    "action": "Triggered rerun of failed jobs via 'gh run rerun 37675576943 --failed', confirmed rerun job 112983731334 succeeded in 37s, verified all Stage 0 CI checks turned green, posted formal resolution report on PR #6313 (issuecomment-6045620151), and confirmed PR #6313 was successfully integrated into dev by auto-integrator",
     "original_pr_number": 6313,
     "original_pr_url": "https://github.com/ajoe734/pantheon/pull/6313",
     "head_sha": "eb79f6768dfb585f086556956a3bc5f21389bf3f",
     "comment_url": "https://github.com/ajoe734/pantheon/pull/6313#issuecomment-6045620151",
     "rerun_job_id": 112983731334,
-    "status": "unstranded_and_green"
+    "status": "unstranded_and_merged",
+    "merge_commit": "78a4b565ec48e1f7ecb75d7db3e2bf6f4a19f8c7",
+    "merged_at": "2026-10-07T19:50:47Z"
   },
   "integrator_code_assessment": {
     "code_changed": false,
@@ -59,11 +61,16 @@
       "command": "auto_integrator.integration_status_rollup (PR 6313)",
       "exit_code": 0,
       "result": "Checks state: green, Failing: (), Pending: ()"
+    },
+    {
+      "command": "gh pr view 6313 --json state,mergeCommit",
+      "exit_code": 0,
+      "result": "state: MERGED, mergeCommit: 78a4b565ec48e1f7ecb75d7db3e2bf6f4a19f8c7"
     }
   ],
   "resolution": {
     "acceptance_1_satisfied": true,
     "acceptance_2_satisfied": true,
-    "summary": "Root cause for OPS-ARCHIVE-RESURRECTION-RELAXATION-REVERT-20261007 integration blocker is documented (transient Docker Hub 502 Bad Gateway pulling python:3.12-slim during Stage 0 CI). Failed job was rerun and passed. PR #6313 checks are now all green, diagnostic comment posted, and PR is unstranded and ready for auto-integration. Auto-integrator code verified intact."
+    "summary": "Root cause for OPS-ARCHIVE-RESURRECTION-RELAXATION-REVERT-20261007 integration blocker is documented (transient Docker Hub 502 Bad Gateway pulling python:3.12-slim during Stage 0 CI). Failed job was rerun and passed. PR #6313 checks became all green, diagnostic comment posted, and PR #6313 was successfully integrated into dev by auto-integrator at merge commit 78a4b565ec48e1f7ecb75d7db3e2bf6f4a19f8c7. Auto-integrator code verified intact."
   }
 }
