@@ -1,0 +1,87 @@
+{
+  "schema_version": "pantheon.corrective-source-evidence.v1",
+  "task_id": "BFF-RED-TESTS-PERSONA-20261007",
+  "title": "Refresh strategy registry persona router port provisioning and synthesis tests",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 0,
+  "net_prod_lines": 0,
+  "acceptance_criteria": {
+    "ac_1_all_triaged_tests_pass": {
+      "status": "satisfied",
+      "detail": "All 146 tests across the 5 scoped test suites pass cleanly without regressing previously passing BFF behavior."
+    },
+    "ac_2_classification_and_rigor": {
+      "status": "satisfied",
+      "detail": "Each changed expectation is classified with deciding commit references (1e503188a, 18aa49157, dbbb2a401, e32ab2785, 99a523e50, 8ca8f2d8f, f19470ebd). No assertion was weakened; assertions were tightened (e.g. status_code in (200, 404) -> status_code == 404, asserting exact synthesis call count, asserting degraded and unavailable fault paths)."
+    },
+    "ac_3_no_compressed_code": {
+      "status": "satisfied",
+      "detail": "Standard idiomatic formatting preserved; no artificial compression or minification used."
+    }
+  },
+  "triage_classifications": [
+    {
+      "suite": "services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py",
+      "classification": "intended_change",
+      "deciding_commits": ["1e503188a", "18aa49157", "dbbb2a401"],
+      "description": "JWT requires tenant_id claim in addition to tenant. Added tenant_id to _strict_token() helper and provided valid auth_token in TestHttpRequestJsonMethodDispatch tests so owner outbound HTTP dispatch passes authentication preflight without 403 TENANT_MISMATCH."
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_persona_router.py",
+      "classification": "stale_sample",
+      "deciding_commits": ["e32ab2785"],
+      "description": "persona_router fixture used an unconfigured write owner for read surface ports, causing queries to fail with 503 DEPENDENCY_UNAVAILABLE instead of 404. Injected FakePersonaStore with typed_store status, strengthened assertions from status_code in (200, 404) to status_code == 404, and added test_unconfigured_owner_returns_503 to verify fail-closed 503 behavior when owner is unconfigured."
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_persona_capital_runtime_ports.py",
+      "classification": "intended_change",
+      "deciding_commits": ["99a523e50"],
+      "description": "Reachable empty owner reports ok (empty records from healthy provider is normal, not degraded). Renamed test_empty_records_degraded to test_empty_records_ok asserting ok status, and added explicit test cases for degraded (missing bindings) and unavailable (downstream error) states in TestCapitalPoolPort."
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py",
+      "classification": "stale_sample",
+      "deciding_commits": ["8ca8f2d8f"],
+      "description": "Persona discovery service resolves seed store from strategies.service rather than seeds_module. Patched strategies.service.StrategySpecSeedStore in test_dev_paper_baseline_strategy_seed_route_excludes_other_tenant_persona to correctly intercept seed store initialization."
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_pint_012_real_persona_provider.py",
+      "classification": "intended_change",
+      "deciding_commits": ["f19470ebd"],
+      "description": "Provider fake gains invoke_structured_extraction method matching contract. Opinion ids in synthesis assertions are compared using sorted() order, and single synthesis call is asserted via getattr(provider, 'synthesis_calls', 0) == 1."
+    }
+  ],
+  "validation": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py",
+      "result": "54 passed in 55.91s"
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q services/control-plane/bff/tests/test_persona_router.py",
+      "result": "42 passed in 78.91s"
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q services/control-plane/bff/tests/test_persona_capital_runtime_ports.py",
+      "result": "22 passed in 17.65s"
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py",
+      "result": "21 passed in 38.92s"
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q services/control-plane/bff/tests/test_pint_012_real_persona_provider.py",
+      "result": "7 passed in 9.65s"
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py services/control-plane/bff/tests/test_persona_router.py services/control-plane/bff/tests/test_persona_capital_runtime_ports.py services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py services/control-plane/bff/tests/test_pint_012_real_persona_provider.py",
+      "result": "146 passed, 8 warnings in 315.37s"
+    }
+  ],
+  "diff_stat": {
+    "production_files_modified": 0,
+    "production_net_lines": 0,
+    "test_files_modified": 5
+  }
+}

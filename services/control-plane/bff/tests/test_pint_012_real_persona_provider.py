@@ -132,6 +132,19 @@ class Provider:
             },
         }
 
+    def invoke_structured_extraction(self, *, prompt, extraction_schema, **kwargs):
+        self.synthesis_calls = getattr(self, "synthesis_calls", 0) + 1
+        opinions = json.loads(prompt[prompt.index("[{"):])
+        ids = [o["opinion_id"] for o in opinions]
+        labels = {o["conclusion"] for o in opinions}
+        status = ("more_research_required" if "insufficient_evidence" in labels
+                  else "no_consensus" if len(labels) > 1 else "recommendation")
+        disagreements = ([{"opinion_ids": ids, "cause": "conflicting reasons", "detail": "provider judged"}]
+                         if status == "no_consensus" else [])
+        return {"status": "ok", "data": {"output": {"structured_data": {
+            "status": status, "summary": f"provider synthesis: {status}", "agreements": [],
+            "disagreements": disagreements, "evidence_refs": []}}}}
+
 
 def run(provider, participants=("alpha", "risk")):
     workshop = WorkshopStore()
@@ -169,9 +182,10 @@ def test_each_frozen_persona_invokes_a_distinct_admitted_agent_with_exact_contex
         "unique provider reasoning from risk",
     }
     assert result["synthesis"]["status"] == "no_consensus"
-    assert result["synthesis"]["opinion_ids"] == [
+    assert result["synthesis"]["opinion_ids"] == sorted(
         opinion["opinion_id"] for opinion in result["opinions"]
-    ]
+    )
+    assert getattr(provider, "synthesis_calls", 0) == 1
     assert len({call["agent_id"] for call in provider.calls}) == 2
     for call in provider.calls:
         context = call["context_pack"]
