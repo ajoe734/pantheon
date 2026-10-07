@@ -1,0 +1,19 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-COMMAND-ADMISSION-ENTRY-POINTS-20261007-CI-RED-5F093E29A591",
+  "source_pr": "https://github.com/ajoe734/pantheon/pull/6307",
+  "root_cause": "Smoke acceptance failed in test_bff_test_architecture.py::test_non_whitelisted_main_importers_is_live_scanned_and_bounded: tests/test_command_target_binding_entry_points.py imports main (whole-app TestClient contract) but was not in composition_allowlist / WHOLE_APP_ALLOWLIST.",
+  "fix": {
+    "pushed_to": "task/BFF-COMMAND-ADMISSION-ENTRY-POINTS-20261007",
+    "commit": "586ff1fcdaf3cc14106aa481dd6f8fafb97c230a",
+    "changes": [
+      "merged origin/dev into PR branch",
+      "added test to composition_allowlist in bff_test_architecture_inventory.json",
+      "added test to WHOLE_APP_ALLOWLIST in test_bff_test_architecture.py"
+    ]
+  },
+  "auto_integrator_code_changed": false,
+  "validation": [
+    {"command": "pytest --noconftest test_bff_test_architecture.py -k 'allowlist or non_whitelisted'", "result": "2 passed"},
+    {"note": "7 other tests in that file need fastapi, unavailable in worker sandbox; they are unrelated to the change. Full CI re-run on PR 6307 is the authoritative gate."}
+  ]
+}
