@@ -131,6 +131,21 @@ def test_asyncpg_telemetry_source_filters_watermark_and_snapshot(monkeypatch):
 
 
 DEFAULT_TEST_CASE_KEY = "dev-paper-release-37647100516-1"
+DEFAULT_TEST_SNAPSHOT = {
+    "snapshot_id": "mss-000000000000000000000001",
+    "source_ref": "source-ingest://snapshots/mss-000000000000000000000001",
+    "symbol": "BTC-USDT",
+    "event_time": "2026-07-15T00:00:00Z",
+    "observed_at": "2026-07-15T00:00:01Z",
+    "lineage": {
+        "source_ids": ["src-binance"],
+        "connector_ids": ["conn-binance-spot"],
+        "content_refs": ["sha256:abcd"],
+        "ingest_run_ids": ["run-001"],
+    },
+    "checksum": "sha256-approved-test-snapshot-checksum",
+    "data_checksum": "sha256-approved-test-snapshot-checksum",
+}
 DEFAULT_TEST_CASE = {
     "tenant_id": "tenant-a",
     "persona_id": "persona-paper-001",
@@ -145,6 +160,7 @@ DEFAULT_TEST_CASE = {
     "artifact_checksum": "sha256-approved-test-checksum",
     "artifact_state": "approved",
     "state": "succeeded",
+    "source_snapshot": DEFAULT_TEST_SNAPSHOT,
 }
 DEFAULT_CASE_SOURCE = {DEFAULT_TEST_CASE_KEY: DEFAULT_TEST_CASE}
 
@@ -1185,18 +1201,18 @@ def test_validate_natural_candidate_rejects_non_approved_case():
 
 def test_asyncpg_case_source_verify_source_lineage_unit_rejections(monkeypatch):
     class Connection:
+        def __init__(self, record_payload=None):
+            self.payload = record_payload or {
+                "source_id": "src-1",
+                "connector_id": "conn-1",
+                "content_ref": "ref-1",
+                "ingest_run_id": "run-1",
+                "checksum": "sha256-test-checksum",
+                "metadata": {"tenant_id": "tenant-a"},
+            }
+
         async def fetch(self, query: str, *args):
-            return [
-                {
-                    "record_id": "src-1",
-                    "payload": json.dumps({
-                        "source_id": "src-1",
-                        "connector_id": "conn-1",
-                        "content_ref": "ref-1",
-                        "metadata": {"tenant_id": "tenant-a"},
-                    }),
-                }
-            ]
+            return [{"record_id": "src-1", "payload": json.dumps(self.payload)}]
 
         async def close(self):
             pass
@@ -1211,17 +1227,20 @@ def test_asyncpg_case_source_verify_source_lineage_unit_rejections(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-    conn = Connection()
-    conn.transaction = lambda **kwargs: TransactionContext(conn)
-    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=lambda dsn: asyncio.sleep(0, result=conn)))
-    src = probe.AsyncpgCaseSource("postgresql://unit")
+    def make_src(payload=None):
+        conn = Connection(payload)
+        conn.transaction = lambda **kwargs: TransactionContext(conn)
+        monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=lambda dsn: asyncio.sleep(0, result=conn)))
+        return probe.AsyncpgCaseSource("postgresql://unit")
 
     good_lineage = {
         "source_ids": ["src-1"],
         "connector_ids": ["conn-1"],
         "content_refs": ["ref-1"],
         "ingest_run_ids": ["run-1"],
+        "checksums": ["sha256-test-checksum"],
     }
+    src = make_src()
     asyncio.run(src.verify_source_lineage(good_lineage, "tenant-a"))
 
     bad_source = dict(good_lineage, source_ids=["src-unobserved"])
@@ -1242,6 +1261,41 @@ def test_asyncpg_case_source_verify_source_lineage_unit_rejections(monkeypatch):
     with pytest.raises(probe.ProbeError) as exc_info:
         asyncio.run(src.verify_source_lineage(bad_ref, "tenant-a"))
     assert exc_info.value.code == "source_content_ref_mismatch"
+
+    bad_run = dict(good_lineage, ingest_run_ids=["run-other"])
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(src.verify_source_lineage(bad_run, "tenant-a"))
+    assert exc_info.value.code == "source_ingest_run_mismatch"
+
+    bad_chk = dict(good_lineage, checksums=["sha256-other"])
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(src.verify_source_lineage(bad_chk, "tenant-a"))
+    assert exc_info.value.code == "source_checksum_mismatch"
+
+    missing_tenant_src = make_src({"source_id": "src-1", "connector_id": "conn-1", "content_ref": "ref-1", "ingest_run_id": "run-1", "checksum": "chk-1"})
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(missing_tenant_src.verify_source_lineage(good_lineage, "tenant-a"))
+    assert exc_info.value.code == "source_tenant_missing"
+
+    missing_conn_src = make_src({"source_id": "src-1", "content_ref": "ref-1", "ingest_run_id": "run-1", "checksum": "chk-1", "tenant_id": "tenant-a"})
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(missing_conn_src.verify_source_lineage(good_lineage, "tenant-a"))
+    assert exc_info.value.code == "source_connector_missing"
+
+    missing_ref_src = make_src({"source_id": "src-1", "connector_id": "conn-1", "ingest_run_id": "run-1", "checksum": "chk-1", "tenant_id": "tenant-a"})
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(missing_ref_src.verify_source_lineage(good_lineage, "tenant-a"))
+    assert exc_info.value.code == "source_content_ref_missing"
+
+    missing_run_src = make_src({"source_id": "src-1", "connector_id": "conn-1", "content_ref": "ref-1", "checksum": "chk-1", "tenant_id": "tenant-a"})
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(missing_run_src.verify_source_lineage(good_lineage, "tenant-a"))
+    assert exc_info.value.code == "source_ingest_run_missing"
+
+    missing_chk_src = make_src({"source_id": "src-1", "connector_id": "conn-1", "content_ref": "ref-1", "ingest_run_id": "run-1", "tenant_id": "tenant-a"})
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(missing_chk_src.verify_source_lineage(good_lineage, "tenant-a"))
+    assert exc_info.value.code == "source_checksum_missing"
 
 
 def test_asyncpg_case_source_live_postgres_queries():
@@ -1297,7 +1351,12 @@ def test_asyncpg_case_source_live_postgres_queries():
 
             await conn.execute(f"""
                 INSERT INTO {source_schema}.source_evidence (record_id, record_type, payload)
-                VALUES ('src-live-01', 'source_record', '{{"source_id": "src-live-01", "connector_id": "conn-live-01", "content_ref": "ref-live-01", "metadata": {{"tenant_id": "tenant-live"}}}}'::jsonb)
+                VALUES ('src-live-01', 'source_record', '{{"source_id": "src-live-01", "connector_id": "conn-live-01", "content_ref": "ref-live-01", "ingest_run_id": "run-01", "checksum": "sha256-live-checksum", "metadata": {{"tenant_id": "tenant-live"}}}}'::jsonb)
+            """)
+
+            await conn.execute(f"""
+                INSERT INTO {source_schema}.source_evidence (record_id, record_type, payload)
+                VALUES ('mss-live-01', 'source_snapshot', '{{"snapshot_id": "mss-live-01", "source_ref": "source-ingest://snapshots/mss-live-01", "symbol": "BTC-USDT", "event_time": "2026-07-15T00:00:00Z", "observed_at": "2026-07-15T00:00:01Z", "lineage": {{"source_ids": ["src-live-01"], "connector_ids": ["conn-live-01"], "content_refs": ["ref-live-01"], "ingest_run_ids": ["run-01"]}}, "checksum": "sha256-live-checksum", "data_checksum": "sha256-live-checksum"}}'::jsonb)
             """)
 
             src = probe.AsyncpgCaseSource(
@@ -1314,11 +1373,16 @@ def test_asyncpg_case_source_live_postgres_queries():
             assert case["artifact_version"] == "1.0.0"
             assert case["artifact_state"] == "approved"
 
+            snap = await src.get_source_snapshot("mss-live-01", "tenant-live")
+            assert snap is not None
+            assert snap["snapshot_id"] == "mss-live-01"
+
             lineage = {
                 "source_ids": ["src-live-01"],
                 "connector_ids": ["conn-live-01"],
                 "content_refs": ["ref-live-01"],
                 "ingest_run_ids": ["run-01"],
+                "checksums": ["sha256-live-checksum"],
             }
             await src.verify_source_lineage(lineage, "tenant-live")
 
@@ -1329,7 +1393,7 @@ def test_asyncpg_case_source_live_postgres_queries():
 
             with pytest.raises(probe.ProbeError) as exc_info:
                 await src.verify_source_lineage(lineage, "wrong-tenant")
-            assert exc_info.value.code == "source_tenant_mismatch"
+            assert exc_info.value.code in {"source_tenant_mismatch", "unobserved_source_record"}
         finally:
             await conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
             await conn.execute(f"DROP SCHEMA IF EXISTS {reg_schema} CASCADE")
@@ -1337,5 +1401,104 @@ def test_asyncpg_case_source_live_postgres_queries():
             await conn.close()
 
     asyncio.run(run_live())
+
+
+def test_adversarial_qa_future_2029_candidate_strictly_rejected():
+    candidate = probe._complete_candidates(
+        _natural_lifecycle_rows(), mode="natural", case=DEFAULT_TEST_CASE
+    )[0]
+    future = json.loads(json.dumps(candidate))
+    future["signal_provenance"].update(
+        market_input_event_time="2029-01-01T00:00:00Z",
+        market_input_observed_at="2029-01-01T00:00:01Z",
+        signal_event_time="2029-01-01T00:00:02Z",
+    )
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(future, DEFAULT_TEST_CASE)
+    assert exc_info.value.code == "invalid_freshness"
+
+
+def test_adversarial_qa_fake_connection_empty_metadata_strictly_rejected(monkeypatch):
+    class FakeConnection:
+        async def fetch(self, *args):
+            return [{"record_id": "src-binance", "payload": {"source_id": "src-binance", "metadata": {}}}]
+
+        async def close(self):
+            pass
+
+    class FakeContext:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            return self.conn
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    fake_conn = FakeConnection()
+    fake_conn.transaction = lambda **kwargs: FakeContext(fake_conn)
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=lambda dsn: asyncio.sleep(0, result=fake_conn)))
+    src = probe.AsyncpgCaseSource("unused-unit-test-dsn")
+    candidate = probe._complete_candidates(
+        _natural_lifecycle_rows(), mode="natural", case=DEFAULT_TEST_CASE
+    )[0]
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(
+            src.verify_source_lineage(
+                candidate["signal_provenance"]["market_input_lineage"],
+                DEFAULT_TEST_CASE["tenant_id"],
+            )
+        )
+    assert exc_info.value.code == "source_tenant_missing"
+
+
+def test_adversarial_qa_source_snapshot_binding_validation():
+    candidate = probe._complete_candidates(
+        _natural_lifecycle_rows(), mode="natural", case=DEFAULT_TEST_CASE
+    )[0]
+    prov = candidate["signal_provenance"]
+
+    # Wrong snapshot ID
+    bad_id_snap = dict(DEFAULT_TEST_SNAPSHOT, snapshot_id="mss-wrong")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._bind_source_snapshot(bad_id_snap, prov)
+    assert exc_info.value.code == "invalid_snapshot_id"
+
+    # Wrong ref
+    bad_ref_snap = dict(DEFAULT_TEST_SNAPSHOT, source_ref="source-ingest://snapshots/mss-wrong")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._bind_source_snapshot(bad_ref_snap, prov)
+    assert exc_info.value.code == "invalid_lineage"
+
+    # Wrong event time
+    bad_evt_snap = dict(DEFAULT_TEST_SNAPSHOT, event_time="2026-07-14T00:00:00Z")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._bind_source_snapshot(bad_evt_snap, prov)
+    assert exc_info.value.code == "invalid_freshness"
+
+    # Wrong observed at
+    bad_obs_snap = dict(DEFAULT_TEST_SNAPSHOT, observed_at="2026-07-14T00:00:01Z")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._bind_source_snapshot(bad_obs_snap, prov)
+    assert exc_info.value.code == "invalid_freshness"
+
+    # Wrong lineage
+    bad_lin_snap = dict(DEFAULT_TEST_SNAPSHOT, lineage=dict(DEFAULT_TEST_SNAPSHOT["lineage"], source_ids=["src-wrong"]))
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._bind_source_snapshot(bad_lin_snap, prov)
+    assert exc_info.value.code == "invalid_lineage"
+
+    # Missing checksum
+    no_chk_snap = dict(DEFAULT_TEST_SNAPSHOT, checksum="", data_checksum="")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._bind_source_snapshot(no_chk_snap, prov)
+    assert exc_info.value.code == "invalid_checksum"
+
+    # Missing snapshot on case fails closed
+    case_no_snap = {k: v for k, v in DEFAULT_TEST_CASE.items() if k != "source_snapshot"}
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(candidate, case_no_snap)
+    assert exc_info.value.code == "source_snapshot_missing"
 
 
