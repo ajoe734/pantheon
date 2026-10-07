@@ -1,0 +1,194 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "EXEC-ARTIFACT-LOADER-STRICT-LINEAGE-20261007",
+  "title": "Make the artifact loader reject null lineage again (remove read-side tolerance)",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "base_sha": "754aba1400a12c72e76df1c9235300231ef172c1",
+  "change_class": "simplify",
+  "net_prod_line_budget": -5,
+  "deleted_block": {
+    "file": "services/execution/artifact_loader.py",
+    "method": "ArtifactLoader._validate_metadata",
+    "before_line_range": "367-371",
+    "after_line_range": "deleted (0 lines in its place)",
+    "deleted_code": "lineage = metadata.get(\"lineage\")\nif isinstance(lineage, dict):\n    for field in (\"parent_registry_ids\", \"source_run_ids\", \"source_dataset_refs\", \"source_strategy_spec_id\"):\n        if lineage.get(field) is None:\n            lineage.pop(field, None)",
+    "first_statement_after": "errors = sorted(self._validator.iter_errors(metadata), key=lambda error: list(error.path))"
+  },
+  "red_run": {
+    "description": "Replacement test test_load_exact_rejects_null_lineage_fields executed against unchanged loader",
+    "command": "\"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest services/execution/test_artifact_loader.py -k test_load_exact_rejects_null_lineage_fields -v",
+    "exit_code": 1,
+    "summary": "4 failed, 1 passed, 21 deselected in 1.18s",
+    "subtest_failures": [
+      {
+        "field": "parent_registry_ids",
+        "error": "AssertionError: ArtifactLoadError not raised"
+      },
+      {
+        "field": "source_run_ids",
+        "error": "AssertionError: ArtifactLoadError not raised"
+      },
+      {
+        "field": "source_dataset_refs",
+        "error": "AssertionError: ArtifactLoadError not raised"
+      },
+      {
+        "field": "source_strategy_spec_id",
+        "error": "AssertionError: ArtifactLoadError not raised"
+      }
+    ]
+  },
+  "green_run": {
+    "description": "Replacement test test_load_exact_rejects_null_lineage_fields executed after deleting null-lineage tolerance",
+    "command": "\"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest services/execution/test_artifact_loader.py -k test_load_exact_rejects_null_lineage_fields -v",
+    "exit_code": 0,
+    "summary": "1 passed, 21 deselected, 4 subtests passed in 1.17s",
+    "subtest_results": [
+      {
+        "field": "parent_registry_ids",
+        "status": "passed",
+        "expected_error": "Metadata schema validation failed at lineage.parent_registry_ids: None is not of type 'array'"
+      },
+      {
+        "field": "source_run_ids",
+        "status": "passed",
+        "expected_error": "Metadata schema validation failed at lineage.source_run_ids: None is not of type 'array'"
+      },
+      {
+        "field": "source_dataset_refs",
+        "status": "passed",
+        "expected_error": "Metadata schema validation failed at lineage.source_dataset_refs: None is not of type 'array'"
+      },
+      {
+        "field": "source_strategy_spec_id",
+        "status": "passed",
+        "expected_error": "Metadata schema validation failed at lineage.source_strategy_spec_id: None is not of type 'string'"
+      }
+    ]
+  },
+  "step4_test_verification": [
+    {
+      "command": "\"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/execution/test_artifact_loader.py services/registry/promotion/test_gate.py services/control-plane/governance/test_deployment_plan.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_current_artifact_signal.py services/execution/lean_runtime/test_tw_signal_producer.py services/execution/lean_runtime/test_algorithm_smoke.py services/deployment/test_inline_paper_execution_projection.py tests/e2e/test_deployment_plan_to_paper_run.py services/source_ingestion/tests/test_latest_market_snapshot_state.py scripts/test_deploy_nonprod_vm.py::test_verify_exact_component_deployment_staged_paper_readiness_ordering",
+      "passed": 174,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "subtests_passed": 13,
+      "exit_code": 0,
+      "duration": "95.24s"
+    },
+    {
+      "command": "\"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/execution/test_artifact_loader.py",
+      "passed": 22,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "subtests_passed": 4,
+      "exit_code": 0
+    },
+    {
+      "command": "\"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/registry/promotion/test_gate.py",
+      "passed": 6,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "subtests_passed": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "\"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/control-plane/governance/test_deployment_plan.py",
+      "passed": 35,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "subtests_passed": 3,
+      "exit_code": 0
+    },
+    {
+      "command": "\"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/execution/lean_runtime/test_paper_signal_producer.py",
+      "passed": 65,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "subtests_passed": 6,
+      "exit_code": 0
+    },
+    {
+      "command": "\"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/execution/lean_runtime/test_current_artifact_signal.py",
+      "passed": 10,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "subtests_passed": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "\"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/execution/lean_runtime/test_tw_signal_producer.py",
+      "passed": 4,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "subtests_passed": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "\"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/execution/lean_runtime/test_algorithm_smoke.py",
+      "passed": 4,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "subtests_passed": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "\"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/deployment/test_inline_paper_execution_projection.py",
+      "passed": 5,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "subtests_passed": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "\"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q tests/e2e/test_deployment_plan_to_paper_run.py",
+      "passed": 3,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 3,
+      "subtests_passed": 0,
+      "exit_code": 0,
+      "note": "3 skips for uninitialised LEAN submodule"
+    },
+    {
+      "command": "\"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/source_ingestion/tests/test_latest_market_snapshot_state.py",
+      "passed": 16,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "subtests_passed": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "\"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q scripts/test_deploy_nonprod_vm.py::test_verify_exact_component_deployment_staged_paper_readiness_ordering",
+      "passed": 1,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "subtests_passed": 0,
+      "exit_code": 0
+    }
+  ],
+  "name_only_file_list": [
+    "services/execution/artifact_loader.py",
+    "services/execution/test_artifact_loader.py",
+    "docs/deployment/evidence/EXEC-ARTIFACT-LOADER-STRICT-LINEAGE-20261007/evidence.json"
+  ],
+  "diff_budget": {
+    "table": "| class | added | deleted | net |\n|---|---|---|---|\n| production | +0 | -5 | -5 |\n| test | +20 | -14 | +6 |\n| docs/evidence | +194 | -0 | +194 |",
+    "net_production_lines": -5,
+    "change_class": "simplify",
+    "budget": -5,
+    "verdict": "pass"
+  }
+}

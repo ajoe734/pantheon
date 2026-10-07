@@ -364,11 +364,6 @@ class ArtifactLoader:
         version: str,
         mode: ExecutionMode,
     ) -> None:
-        lineage = metadata.get("lineage")
-        if isinstance(lineage, dict):
-            for field in ("parent_registry_ids", "source_run_ids", "source_dataset_refs", "source_strategy_spec_id"):
-                if lineage.get(field) is None:
-                    lineage.pop(field, None)
         errors = sorted(self._validator.iter_errors(metadata), key=lambda error: list(error.path))
         if errors:
             first = errors[0]

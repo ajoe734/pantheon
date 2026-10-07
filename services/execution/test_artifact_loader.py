@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import tempfile
@@ -144,20 +145,25 @@ class TestArtifactLoader(unittest.TestCase):
         self.assertEqual(loaded.payload, self.payload)
         self.assertEqual(loaded.projection.metadata_key, self.projection.metadata_key)
 
-    def test_load_exact_treats_null_lineage_fields_as_absent(self):
-        metadata = build_metadata()
-        metadata["lineage"]["source_dataset_refs"] = None
-        metadata["lineage"]["source_strategy_spec_id"] = None
-        loader = self._build_loader(metadata)
+    def test_load_exact_rejects_null_lineage_fields(self):
+        for field in ("parent_registry_ids", "source_run_ids", "source_dataset_refs", "source_strategy_spec_id"):
+            with self.subTest(field=field):
+                metadata = build_metadata()
+                metadata["lineage"][field] = None
+                before = copy.deepcopy(metadata)
+                store = {self.projection.metadata_key: metadata, self.projection.artifact_key: self.payload}
 
-        loaded = loader.load_exact(
-            registry_id="reg-strat-001-1.2.3",
-            strategy_id="strat-001",
-            version="1.2.3",
-            execution_mode=ExecutionMode.PAPER,
-        )
+                with self.assertRaisesRegex(ArtifactLoadError, rf"lineage\.{field}"):
+                    ArtifactLoader(store).load_exact(
+                        registry_id="reg-strat-001-1.2.3",
+                        strategy_id="strat-001",
+                        version="1.2.3",
+                        execution_mode=ExecutionMode.PAPER,
+                    )
 
-        self.assertNotIn("source_dataset_refs", loaded.metadata["lineage"])
+                self.assertEqual(store[self.projection.metadata_key], before)
+                self.assertIn(field, store[self.projection.metadata_key]["lineage"])
+                self.assertIsNone(store[self.projection.metadata_key]["lineage"][field])
 
     def test_rejects_non_array_non_null_lineage_field(self):
         metadata = build_metadata()
