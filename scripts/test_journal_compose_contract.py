@@ -19,7 +19,7 @@ import uuid
 
 
 ROOT = Path(__file__).resolve().parent.parent
-PROBE = "services/control-plane/bff/tests/test_journal_runtime_contract.py"
+PROBE = "scripts/test_journal_compose_contract.py"
 
 
 def run(*args: str, env=None, timeout=60) -> str:
@@ -135,11 +135,115 @@ def runtime_contract(rendered: dict, bff_image: str) -> None:
                 run("docker", "network", "rm", network)
 
 
+def paper_factory_probe(phase: str) -> None:
+    """Run in separate processes/containers against only disposable local storage.
+
+    Identity is injected at the documented composition seam, not by changing
+    production authentication. All journal owners, read ports and handlers are
+    the real default factory objects; no test journal owner is injected.
+    """
+    import errno
+    import json
+    from fastapi.testclient import TestClient
+    # Production resolves composition dependencies from the loaded main module;
+    # importing it (not a stand-in resolver) makes a missing dependency fail the probe.
+    import services.control_plane.bff.main  # noqa: F401
+    from services.control_plane.bff.core.app_factory import compose_bff_app
+    from services.control_plane.bff.models import OperatorIdentity
+    from services.governance.record_store import PostgresGovernanceRecordStore
+    from services.governance.decision_journal_write_owner import build_decision_journal_write_owner
+    from services.control_plane.bff.bootstrap.dependencies import AppDependencies
+
+    def identity(authorization=None, **kwargs):
+        tenant = "tenant-b" if authorization == "Bearer tenant-b" else "tenant-a"
+        return OperatorIdentity(
+            operator_id="paper-reviewer", roles=["operator"],
+            claims={"tenant_id": tenant, "allowed_tenants": [tenant]},
+        )
+
+    deps = AppDependencies.create_default()
+    owner = deps.decision_journal_write_owner
+    app = compose_bff_app(app_deps=deps, _extract_identity=identity)
+    assert app.state.decision_journal_write_owner is owner
+    if phase != "unavailable":
+        assert app.state.agora_router.agora_service.journal_write_owner is owner
+    assert isinstance(owner.stores.entries, PostgresGovernanceRecordStore)
+    # The actual read-only consumer mount remains unwritable, even while the
+    # distinct Postgres authority accepts writes. Do not substitute chmod.
+    if os.getenv("JOURNAL_REQUIRE_RO_MOUNT") == "1":
+        try:
+            Path("/data/governance/forbidden-write").write_text("must not write")
+        except OSError as exc:
+            assert exc.errno == errno.EROFS, exc
+        else:
+            raise AssertionError("governance consumer mount is not read-only")
+
+    payload = {"title": "Paper runtime contract", "body": "No live execution", "visibility": "private"}
+    headers = {"Idempotency-Key": "paper-runtime-create"}
+    with TestClient(app, raise_server_exceptions=False) as client:
+        if phase == "unavailable":
+            assert not owner.is_storage_healthy
+            response = client.post("/bff/agora/journal", json=payload, headers=headers)
+            assert response.status_code == 503, response.text
+            assert response.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE", response.text
+            assert not list(Path(os.environ["PANTHEON_DECISION_JOURNAL_DATA_DIR"]).glob("*.json"))
+            print(json.dumps({"phase": phase, "status": response.status_code, "no_json_fallback": True}))
+            return
+
+        assert owner.is_storage_healthy
+        response = client.post("/bff/agora/journal", json=payload, headers=headers)
+        assert response.status_code == 201, response.text
+        created = response.json()["data"]
+        entry_id = created["id"]
+        listed = client.get("/bff/agora/journal")
+        assert listed.status_code == 200, listed.text
+        assert any(row["id"] == entry_id for row in listed.json()["data"]), listed.text
+        if phase == "restart":
+            assert response.json()["meta"]["idempotency"]["replayed"] is True
+            conflict = client.post("/bff/agora/journal", json={**payload, "body": "changed"}, headers=headers)
+            assert conflict.status_code == 409, conflict.text
+            other = client.get("/bff/agora/journal", headers={"Authorization": "Bearer tenant-b"})
+            assert other.status_code == 200 and other.json()["data"] == [], other.text
+            denied = client.patch(f"/bff/agora/journal/{entry_id}", json={"title": "cross-tenant"},
+                                  headers={"Authorization": "Bearer tenant-b", "Idempotency-Key": "paper-patch", "Content-Type": "application/merge-patch+json"})
+            assert denied.status_code in (403, 404), denied.text
+            patched = client.patch(f"/bff/agora/journal/{entry_id}", json={"title": "Paper reviewed"},
+                                   headers={"Idempotency-Key": "paper-patch", "Content-Type": "application/merge-patch+json"})
+            assert patched.status_code == 200, patched.text
+            assert patched.json()["data"]["version"] == 2, patched.text
+            replay = client.patch(f"/bff/agora/journal/{entry_id}", json={"title": "Paper reviewed"},
+                                  headers={"Idempotency-Key": "paper-patch", "Content-Type": "application/merge-patch+json"})
+            assert replay.status_code == 200 and replay.json()["meta"]["idempotency"]["replayed"], replay.text
+            # The selected durable authority must reject a stale CAS from an
+            # independent store instance, without replacing the committed row.
+            second = build_decision_journal_write_owner()
+            current = second.stores.entries.get(entry_id)
+            stale = {**current, "version": 1}
+            accepted, canonical = second.stores.entries.compare_and_set(stale, {**current, "title": "stale"})
+            assert not accepted and canonical == current
+            # Same raw key in another tenant has independent durable identity.
+            other_create = client.post("/bff/agora/journal", json=payload,
+                                       headers={**headers, "Authorization": "Bearer tenant-b"})
+            assert other_create.status_code == 201, other_create.text
+            assert other_create.json()["data"]["id"] != entry_id
+        elif phase == "reread":
+            row = next(row for row in listed.json()["data"] if row["id"] == entry_id)
+            assert row["title"] == "Paper reviewed" and row["version"] == 2
+        else:
+            assert phase == "create"
+            assert created["version"] == 1
+        print(json.dumps({"phase": phase, "entry_id": entry_id, "backend": "postgres", "passed": True}))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", action="store_true")
     parser.add_argument("--bff-image", default="pantheon-bff-test")
+    parser.add_argument("--paper-probe", choices=["create", "restart", "reread", "unavailable"], default=None)
     args = parser.parse_args()
-    config = validate_compose_contract()
-    if args.runtime:
-        runtime_contract(config, args.bff_image)
+    if args.paper_probe:
+        paper_factory_probe(args.paper_probe)
+    else:
+        config = validate_compose_contract()
+        if args.runtime:
+            runtime_contract(config, args.bff_image)

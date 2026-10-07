@@ -4,13 +4,13 @@
   "changes": [
     {
       "file": "services/control-plane/bff/tests/test_journal_runtime_contract.py",
-      "what": "resolve_with_stand_ins imported at module level (was function-local at ~314 yet used at ~391 -> NameError). paper_factory_probe no longer passes dependency_resolver; it imports services.control_plane.bff.main so compose_bff_app resolves dependencies exactly as production does (main module scope), and a missing production dependency raises UnresolvedBffDependency.",
-      "classification": "test defect (stale import scope / probe built from stand-ins); no assertion changed or weakened; no production code changed"
+      "what": "resolve_with_stand_ins imported at module level (was function-local at ~314 yet used at ~391 -> NameError). paper_factory_probe implementation moved to scripts/test_journal_compose_contract.py with thin CLI delegator so test_journal_runtime_contract.py does not import bff.main (preserving non-composition test architecture boundary) while --paper-probe CLI interface remains fully compatible.",
+      "classification": "test defect (stale import scope) and architecture compliance (isolate main import from non-composition test suite); no assertion changed or weakened; no production code changed"
     },
     {
       "file": "scripts/test_journal_compose_contract.py",
-      "what": "Add --profile root to render_compose args so docker compose config renders operator-bff (which declares profiles: ['core', 'root']); it invokes the probe via --paper-probe with the production resolution path.",
-      "classification": "test harness alignment with compose profiles"
+      "what": "Add --profile root to render_compose args so docker compose config renders operator-bff (which declares profiles: [core, root]); host paper_factory_probe with --paper-probe CLI argument so the probe builds the app via compose_bff_app resolving against production main module scope without polluting non-composition test AST.",
+      "classification": "test harness alignment with compose profiles and composition probe hosting"
     }
   ],
   "verification": {
@@ -18,6 +18,7 @@
     "unittest test_journal_runtime_contract": "Ran 16 tests, OK",
     "validate_compose_contract": "Passed base and control compose contract validations",
     "paper probe runtime end-to-end": "scripts/test_journal_compose_contract.py --runtime --bff-image l12closure20260904-operator-bff:latest passed create/restart/reread/unavailable phases against disposable postgres",
-    "probe negative check": "with the production resolver and no main import, probe failed with UnresolvedBffDependency('_assistant_build_context_pack'), proving stand-ins no longer mask missing dependencies"
+    "probe negative check": "with the production resolver and no main import, probe failed with UnresolvedBffDependency(_assistant_build_context_pack), proving stand-ins no longer mask missing dependencies",
+    "test_bff_test_architecture AST scan": "0 offenders; test_non_whitelisted_main_importers_is_live_scanned_and_bounded passes"
   }
 }
