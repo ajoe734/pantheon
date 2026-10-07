@@ -2776,3 +2776,19 @@ def test_persona_owner_read_failure_leaves_every_connector_and_schedule_unchange
         persona_server.server_close()
 
 
+def test_controller_worker_resolves_tenant_from_bff_tenant_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PANTHEON_TENANT_ID", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-dev")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    assert controller_worker._controller_tenant_id() == "tenant-dev"
+
+    state = controller_worker._new_state()
+    assert state.tenant_id == "tenant-dev"
+
+    refreshed = controller_worker.refresh_runtime_identity(state)
+    assert refreshed.tenant_id == "tenant-dev"
+
+
+

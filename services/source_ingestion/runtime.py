@@ -1162,7 +1162,7 @@ class SourceIngestionRuntime:
         for receipt in freshness_snapshot["receipts"]:
             receipts_by_connector.setdefault(receipt.connector_id, []).append(receipt)
         observed_at = datetime.now(timezone.utc)
-        latest_by_connector = self._latest_source_record_by_connector()
+        latest_by_connector = self._latest_source_record_by_connector(receipts_by_connector=receipts_by_connector)
 
         connector_ids = set(configured_by_id)
         connectors = list(self.manager.list_connectors())
@@ -1237,10 +1237,12 @@ class SourceIngestionRuntime:
         return self._default_source_provisioning_reconciler()
 
     def _default_source_provisioning_reconciler(self) -> SourceProvisioningReconciler:
+        tenant_id = str(os.getenv("PANTHEON_TENANT_ID") or os.getenv("PANTHEON_BFF_TENANT_ID") or "").strip() or None
         return SourceProvisioningReconciler(
             manager=self.manager,
             connector_store=self.connector_store,
             schedule_store=self.schedule_config_store,
+            tenant_id=tenant_id,
         )
 
     def _desired_state_digest(self, personas: list[dict[str, Any]]) -> str:
@@ -1356,6 +1358,7 @@ class SourceIngestionRuntime:
             "schema_hash",
             "source_ingest_run_id",
             "calendar_evidence",
+            "tenant_id",
         )
         return {
             "source_id": payload["source_id"],
@@ -1366,6 +1369,7 @@ class SourceIngestionRuntime:
             "status": payload["status"],
             "trace_id": payload["trace_id"],
             "created_at": payload["created_at"],
+            "metadata": metadata,
             "provenance": {key: metadata[key] for key in provenance_keys if key in metadata},
         }
 

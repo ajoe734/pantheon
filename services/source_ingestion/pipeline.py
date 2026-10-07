@@ -206,6 +206,24 @@ def admit_normalized_records_to_distillation(
     return admissions
 
 
+def stamp_source_record_tenant(record: SourceRecord, tenant_id: str) -> SourceRecord:
+    if record.metadata.get("tenant_id") == tenant_id:
+        return record
+    meta = dict(record.metadata)
+    meta["tenant_id"] = tenant_id
+    return SourceRecord(
+        source_id=record.source_id,
+        connector_id=record.connector_id,
+        source_type=record.source_type.value if hasattr(record.source_type, "value") else str(record.source_type),
+        title=record.title,
+        content_ref=record.content_ref,
+        status=record.status.value if hasattr(record.status, "value") else str(record.status),
+        metadata=meta,
+        trace_id=record.trace_id,
+        created_at=record.created_at,
+    )
+
+
 def persist_source_evidence_refs(
     manager: IngestManager,
     evidence_repository: Any,
@@ -214,6 +232,14 @@ def persist_source_evidence_refs(
     result: Any,
     storage_refs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    connector = manager.get_connector(result.run.connector_id)
+    connector_tenant = None
+    if connector and isinstance(connector.metadata, Mapping) and connector.metadata.get("tenant_id"):
+        connector_tenant = str(connector.metadata["tenant_id"]).strip() or None
+    elif connector and hasattr(manager, "runtime") and hasattr(manager.runtime, "_is_controller_owned") and manager.runtime._is_controller_owned(connector):
+        env_tenant = os.getenv("PANTHEON_TENANT_ID") or os.getenv("PANTHEON_BFF_TENANT_ID") or ""
+        connector_tenant = env_tenant.strip() or None
+
     source_records = [
         with_source_ingest_run(
             compact_bulk_market_record(record, storage_refs),
@@ -231,10 +257,15 @@ def persist_source_evidence_refs(
             "distillation_admissions": {},
         }
 
+    if connector_tenant:
+        source_records = [
+            stamp_source_record_tenant(record, connector_tenant)
+            for record in source_records
+        ]
+
     if len({record.tenant_id for record in source_records}) != 1:
         raise EvidenceValidationError("An ingest evidence batch must have one tenant identity")
 
-    connector = manager.get_connector(result.run.connector_id)
     source_records = [
         validate_external_source_record(record, connector=connector)
         for record in source_records
@@ -833,11 +864,29 @@ class IngestPipelineService:
         frontier_id: str | None = None,
     ) -> tuple[Any, dict[str, Any], dict[str, Any] | None]:
         self.runtime._assert_connector_lifecycle_allows_run(connector)
+        connector_tenant = None
+        if isinstance(connector.metadata, Mapping) and connector.metadata.get("tenant_id"):
+            connector_tenant = str(connector.metadata["tenant_id"]).strip() or None
+        elif hasattr(self.runtime, "_is_controller_owned") and self.runtime._is_controller_owned(connector):
+            env_tenant = os.getenv("PANTHEON_TENANT_ID") or os.getenv("PANTHEON_BFF_TENANT_ID") or ""
+            connector_tenant = env_tenant.strip() or None
+
+        effective_fetch_batch = fetch_batch
+        if connector_tenant:
+            def tenant_stamped_fetch_batch(watermark: str | None) -> Any:
+                fetched = fetch_batch(watermark)
+                batch_records = fetched.records if isinstance(fetched, IngestBatch) else tuple(fetched)
+                stamped_records = tuple(stamp_source_record_tenant(r, connector_tenant) for r in batch_records)
+                if isinstance(fetched, IngestBatch):
+                    return replace(fetched, records=stamped_records)
+                return stamped_records
+            effective_fetch_batch = tenant_stamped_fetch_batch
+
         result = self.scheduler.run_once(
             connector_id=connector.connector_id,
             trace_id=trace_id,
             trigger_type=trigger_type,
-            fetch_batch=fetch_batch,
+            fetch_batch=effective_fetch_batch,
             frontier_id=frontier_id,
         )
         evidence_refs: dict[str, Any] = {
