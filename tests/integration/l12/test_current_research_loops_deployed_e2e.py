@@ -860,7 +860,6 @@ class DeployedResearchHarness:
                     "persona_id": f"persona-l12-e2e-{self.run_token}",
                     "objective": "Evaluate controls against the admitted Alpha replication result",
                     "mode": "evaluation",
-                    "actor_id": "l12-deployed-e2e",
                     "trace_id": f"trace-teaching-{self.run_token}",
                     "context_refs": [
                         {
@@ -953,7 +952,6 @@ class DeployedResearchHarness:
                 method="POST",
                 payload={
                     "mode": "refresh",
-                    "requested_by": "l12-deployed-e2e",
                     "terminalize_session": True,
                 },
                 headers={**headers, "Idempotency-Key": f"l12-e2e-{self.run_token}"},
