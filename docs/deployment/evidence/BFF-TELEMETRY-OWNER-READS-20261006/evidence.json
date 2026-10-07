@@ -1,0 +1,31 @@
+{
+  "task_id": "BFF-TELEMETRY-OWNER-READS-20261006",
+  "title": "BFF telemetry owner reads",
+  "status": "implementation_evidence",
+  "scope": "Source-level proof that the production BFF telemetry summaries port reads the existing authenticated Telemetry owner endpoint using the current caller authorization and selected tenant.",
+  "owner_endpoint": "GET /api/telemetry/runtime-summaries",
+  "bff_transport": "services.control_plane.bff.core.owner_reads.read_records via the existing command-adapter HTTP transport",
+  "validation": {
+    "commands": [
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_telemetry_owner_read_wiring.py services/control-plane/bff/tests/test_owner_read_wiring.py services/control-plane/bff/tests/test_lifecycle_telemetry_governance_ports.py",
+        "result": "passed: 56 tests"
+      },
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_read_surface_port_cutover.py -k 'not test_knowledge_and_research_lists'",
+        "result": "passed: 19 tests; 1 unrelated research-list test deselected"
+      },
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_telemetry_owner_read_wiring.py services/control-plane/bff/tests/test_owner_read_wiring.py services/control-plane/bff/tests/test_read_surface_port_cutover.py",
+        "result": "53 passed, 1 failed; unrelated research-list fixture expected one research note but got zero"
+      }
+    ],
+    "result": "focused telemetry, owner-read, lifecycle-port and cutover checks passed; the wider run exposed an unrelated research fixture failure"
+  },
+  "acceptance_boundaries": [
+    "Explicit injected telemetry summaries remain a local/test source.",
+    "Missing owner configuration is reported as missing; authorization failures, timeouts, and malformed owner data remain unavailable and are not converted into healthy empty data.",
+    "This is source-level evidence only; it does not claim hosted deployment or acceptance.",
+    "No monitor activation, throughput redefinition, rollback derivation, capital patch, or hosted mutation is included."
+  ]
+}
