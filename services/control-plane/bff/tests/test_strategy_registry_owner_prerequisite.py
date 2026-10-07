@@ -75,6 +75,7 @@ def _strict_token(
         {
             "sub": sub,
             "tenant": tenant,
+            "tenant_id": tenant,
             "roles": [role],
             "iss": _TEST_JWT_ISSUER,
             "aud": _TEST_JWT_AUDIENCE,
@@ -1146,14 +1147,14 @@ class TestHttpRequestJsonMethodDispatch:
         assert _CapturingHandler.received["method"] == "GET"
 
     def test_post_sends_real_post_with_payload(self):
-        body = http_request_json(self._url(), method="POST", payload={"a": 1})
+        body = http_request_json(self._url(), method="POST", payload={"a": 1}, auth_token=_strict_token())
         assert body == {"ok": True}
         assert _CapturingHandler.received["method"] == "POST"
         assert _CapturingHandler.received["body"] == {"a": 1}
 
     def test_patch_sends_real_patch_not_post(self):
         """The exact regression: PATCH must not be silently sent as POST."""
-        body = http_request_json(self._url(), method="PATCH", payload={"metadata": {"note": "x"}})
+        body = http_request_json(self._url(), method="PATCH", payload={"metadata": {"note": "x"}}, auth_token=_strict_token())
         assert body == {"ok": True}
         assert _CapturingHandler.received["method"] == "PATCH"
         assert _CapturingHandler.received["body"] == {"metadata": {"note": "x"}}
@@ -1163,15 +1164,17 @@ class TestHttpRequestJsonMethodDispatch:
         assert _CapturingHandler.received["method"] == "DELETE"
 
     def test_auth_and_mfa_tokens_are_forwarded_as_headers(self):
-        http_request_json(self._url(), method="PATCH", payload={}, auth_token="tok-123", mfa_token="mfa-456")
+        tok = _strict_token()
+        http_request_json(self._url(), method="PATCH", payload={}, auth_token=tok, mfa_token="mfa-456")
         headers = _CapturingHandler.received["headers"]
-        assert headers.get("Authorization") == "Bearer tok-123"
+        assert headers.get("Authorization") == f"Bearer {tok}"
         assert headers.get("X-Mfa-Token") == "mfa-456"
 
     def test_bearer_prefixed_auth_token_is_not_double_wrapped(self):
-        http_request_json(self._url(), method="GET", auth_token="Bearer already-prefixed")
+        tok = _strict_token()
+        http_request_json(self._url(), method="GET", auth_token=f"Bearer {tok}")
         headers = _CapturingHandler.received["headers"]
-        assert headers.get("Authorization") == "Bearer already-prefixed"
+        assert headers.get("Authorization") == f"Bearer {tok}"
 
     def test_owner_conflict_status_propagates_as_http_error(self):
         """A real 409 (CAS conflict) from the owner must raise, never be
@@ -1179,7 +1182,7 @@ class TestHttpRequestJsonMethodDispatch:
         _CapturingHandler.response_status = 409
         _CapturingHandler.response_body = {"error": "conflict"}
         with pytest.raises(urllib.error.HTTPError) as excinfo:
-            http_request_json(self._url(), method="PATCH", payload={})
+            http_request_json(self._url(), method="PATCH", payload={}, auth_token=_strict_token())
         assert excinfo.value.code == 409
 
     def test_owner_5xx_error_propagates_as_http_error(self):
