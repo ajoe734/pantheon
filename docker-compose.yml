@@ -1547,10 +1547,16 @@ services:
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
+      PERSONA_URL: ${PERSONA_URL:-http://persona:8002}
+      PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}
+      PANTHEON_PERSONA_SERVICE_ACTOR_ID: operator-bff
     volumes:
       - bff-data:/data/bff
     depends_on:
       postgres:
+        condition: service_healthy
+        required: false
+      persona:
         condition: service_healthy
         required: false
       operator-bff:
