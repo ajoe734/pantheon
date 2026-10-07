@@ -558,17 +558,47 @@ class PersonaProvisioningCoordinator:
         zero-capital bounds, updating durable coordination receipts (AC4).
         """
         symbols, _, _ = self._paper_universe(record)
-        target_market = market or record.request_payload.get("market")
-        if not target_market or not str(target_market).strip():
+
+        # 1. Trace and validate market authority from persisted owner request and caller parameter
+        persisted_raw = record.request_payload.get("market")
+        persisted_market = None
+        if persisted_raw is not None and str(persisted_raw).strip():
+            try:
+                persisted_market = canonical_market_context(str(persisted_raw), symbols=symbols)
+            except StrategyArtifactValidationError as exc:
+                raise PersonaProvisioningCoordinationError(
+                    f"Invalid persisted owner request market context: {exc}"
+                ) from exc
+
+        supplied_market = None
+        if market is not None:
+            if not str(market).strip():
+                raise PersonaProvisioningCoordinationError(
+                    "Supplied market parameter must not be empty or whitespace"
+                )
+            try:
+                supplied_market = canonical_market_context(str(market), symbols=symbols)
+            except StrategyArtifactValidationError as exc:
+                raise PersonaProvisioningCoordinationError(
+                    f"Invalid supplied market context: {exc}"
+                ) from exc
+
+        # Fail closed on contradictory market contexts between persisted request and caller
+        if persisted_market is not None and supplied_market is not None:
+            if supplied_market != persisted_market:
+                raise PersonaProvisioningCoordinationError(
+                    f"Contradictory market context: supplied market '{supplied_market}' "
+                    f"differs from persisted owner request '{persisted_market}'"
+                )
+            canonical_market = persisted_market
+        elif persisted_market is not None:
+            canonical_market = persisted_market
+        elif supplied_market is not None:
+            canonical_market = supplied_market
+        else:
             raise PersonaProvisioningCoordinationError(
                 "No authoritative owner market context found for legacy persona transition"
             )
-        try:
-            canonical_market = canonical_market_context(str(target_market), symbols=symbols)
-        except StrategyArtifactValidationError as exc:
-            raise PersonaProvisioningCoordinationError(
-                f"Invalid market context for transition: {exc}"
-            ) from exc
 
         parent_receipt = record.references.get("strategy_artifact_approved")
         if not parent_receipt:
@@ -582,8 +612,20 @@ class PersonaProvisioningCoordinator:
                 "Legacy strategy artifact receipt is missing metadata.strategy_artifact"
             )
         parent_parameters = parent_artifact.get("parameters") or {}
-        if parent_parameters.get("market") == canonical_market:
-            return record
+        parent_market_raw = parent_parameters.get("market")
+        if parent_market_raw:
+            try:
+                parent_market = canonical_market_context(str(parent_market_raw), symbols=symbols)
+            except StrategyArtifactValidationError as exc:
+                raise PersonaProvisioningCoordinationError(
+                    f"Invalid parent strategy artifact market context: {exc}"
+                ) from exc
+            if parent_market == canonical_market:
+                return record
+            raise PersonaProvisioningCoordinationError(
+                f"Contradictory market context: target market '{canonical_market}' "
+                f"contradicts parent artifact market '{parent_market}'"
+            )
 
         active = self.store.acquire(
             record.tenant_id,
@@ -795,12 +837,13 @@ class PersonaProvisioningCoordinator:
             if "legacy_strategy_artifact_approved" not in active.references:
                 active.references["legacy_strategy_artifact_approved"] = deepcopy(parent_receipt)
             active.references["strategy_artifact_approved"] = deepcopy(approved_receipt)
-            if active.result is not None:
-                active.result["strategy_artifact_id"] = child_artifact_id
-                active.result["registry_id"] = child_artifact_id
-                active.result["approval_decision_id"] = child_decision_id
-                active.result["legacy_strategy_artifact_id"] = parent_id
-                active.result["market"] = canonical_market
+            if active.result is None:
+                active.result = {}
+            active.result["strategy_artifact_id"] = child_artifact_id
+            active.result["registry_id"] = child_artifact_id
+            active.result["approval_decision_id"] = child_decision_id
+            active.result["legacy_strategy_artifact_id"] = parent_id
+            active.result["market"] = canonical_market
             active = self._checkpoint(active)
             return active
         finally:

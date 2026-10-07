@@ -511,21 +511,24 @@ class FakeOwnerTransport:
         raise AssertionError(f"unexpected mutation: {owner} {path}")
 
 
-def _record_and_store() -> tuple[TrackingStore, ProvisioningRecord]:
+def _record_and_store(request_payload: dict[str, Any] | None = None) -> tuple[TrackingStore, ProvisioningRecord]:
     store = TrackingStore()
+    payload = {
+        "name": "Trader A",
+        "requested_by": "operator-a",
+        "mandate": "Paper-only momentum research",
+        "traits": {"risk_appetite": "low"},
+        "budget": 25000,
+    }
+    if request_payload:
+        payload.update(request_payload)
     record, created = store.reserve(
         tenant_id="tenant-a",
         idempotency_key="create-persona-a",
         request_hash="sha256:persona-request",
         normalized_name="trader a",
         persona_id="persona-a",
-        request_payload={
-            "name": "Trader A",
-            "requested_by": "operator-a",
-            "mandate": "Paper-only momentum research",
-            "traits": {"risk_appetite": "low"},
-            "budget": 25000,
-        },
+        request_payload=payload,
     )
     assert created
     return store, record
@@ -1801,18 +1804,79 @@ def test_transition_legacy_persona_market_fails_closed_when_market_missing_or_co
     result = coordinator.coordinate(record)
     assert result.state == "provisioning"
 
-    # Missing market fails closed
+    # 1. Missing market fails closed when neither request_payload nor parameter provides it
     with pytest.raises(
         PersonaProvisioningCoordinationError,
         match="No authoritative owner market context found",
     ):
         coordinator.transition_legacy_persona_market(result, market=None)
 
-    # Invalid market fails closed
+    # 2. Empty/whitespace market parameter fails closed
+    with pytest.raises(
+        PersonaProvisioningCoordinationError,
+        match="Supplied market parameter must not be empty or whitespace",
+    ):
+        coordinator.transition_legacy_persona_market(result, market="   ")
+
+    # 3. Invalid market fails closed
     with pytest.raises(
         PersonaProvisioningCoordinationError,
         match="unsupported market context 'INVALID'",
     ):
         coordinator.transition_legacy_persona_market(result, market="INVALID")
+
+    # 4. Contradiction between caller-supplied market and persisted owner request fails closed
+    record_with_us_request = store.get(record.tenant_id, record.idempotency_key)
+    record_with_us_request.request_payload["market"] = "US"
+
+    with pytest.raises(
+        PersonaProvisioningCoordinationError,
+        match="Contradictory market context: supplied market 'TW' differs from persisted owner request 'US'",
+    ):
+        coordinator.transition_legacy_persona_market(record_with_us_request, market="TW")
+
+    # 5. Caller market matching persisted request succeeds
+    transitioned_consistent = coordinator.transition_legacy_persona_market(
+        record_with_us_request, market="US"
+    )
+    assert transitioned_consistent.result["market"] == "US"
+
+    # 6. Idempotent return when parent artifact already has the target market
+    idempotent_return = coordinator.transition_legacy_persona_market(
+        transitioned_consistent, market="US"
+    )
+    assert idempotent_return == transitioned_consistent
+
+    # 7. Contradiction between target market and already-set parent artifact market fails closed
+    with pytest.raises(
+        PersonaProvisioningCoordinationError,
+        match="Contradictory market context: target market 'TW' contradicts parent artifact market 'US'",
+    ):
+        coordinator.transition_legacy_persona_market(
+            transitioned_consistent, market="TW"
+        )
+
+
+def test_transition_legacy_persona_market_uses_persisted_owner_request_when_market_param_omitted() -> None:
+    store, record = _record_and_store()
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+    assert result.state == "provisioning"
+
+    # Add market 'US' to the persisted owner request payload
+    record_with_market = store.get(record.tenant_id, record.idempotency_key)
+    record_with_market.request_payload["market"] = "US"
+
+    # Calling with market=None automatically uses persisted owner request 'US'
+    transitioned = coordinator.transition_legacy_persona_market(record_with_market, market=None)
+    assert transitioned.result["market"] == "US"
+    ids = deterministic_provisioning_ids(record)
+    child_id = f"{ids.strategy_artifact_id}-rev1"
+    child_path = f"/api/registry/strategy-artifacts/{child_id}"
+    child_entry = transport.objects[("registry", child_path)]["entry"]
+    assert child_entry["metadata"]["strategy_artifact"]["parameters"]["market"] == "US"
+
 
 

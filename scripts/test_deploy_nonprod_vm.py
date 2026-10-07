@@ -1732,4 +1732,56 @@ verify_exact_component_deployment paper-signal-producer || printf 'rollback\\n' 
     assert receipt_data2["services"]["paper-signal-producer"]["health"] == "healthy"
 
 
+def test_bootstrap_dev_paper_baseline_transition_legacy_persona_caller() -> None:
+    from scripts.bootstrap_dev_paper_baseline import (
+        transition_legacy_persona_market_record,
+    )
+
+    class _FakeStore:
+        def __init__(self, record):
+            self.record = record
+
+        def get(self, tenant_id, key):
+            if tenant_id == "tenant-test" and key == "key-legacy-1":
+                return self.record
+            return None
+
+    class _FakeRecord:
+        def __init__(self):
+            self.tenant_id = "tenant-test"
+            self.persona_id = "persona-test-1"
+            self.idempotency_key = "key-legacy-1"
+            self.result = {
+                "strategy_artifact_id": "art-rev1",
+                "legacy_strategy_artifact_id": "art-parent",
+                "market": "US",
+            }
+
+    fake_rec = _FakeRecord()
+
+    class _FakeCoordinator:
+        def __init__(self):
+            self.store = _FakeStore(fake_rec)
+            self.calls = []
+
+        def transition_legacy_persona_market(self, record, *, market=None, new_version="1.0.1"):
+            self.calls.append((record, market, new_version))
+            return record
+
+    coord = _FakeCoordinator()
+    res = transition_legacy_persona_market_record(
+        idempotency_key="key-legacy-1",
+        tenant_id="tenant-test",
+        market="US",
+        coordinator=coord,
+    )
+    assert res["status"] == "ok"
+    assert res["strategy_artifact_id"] == "art-rev1"
+    assert res["legacy_strategy_artifact_id"] == "art-parent"
+    assert res["market"] == "US"
+    assert len(coord.calls) == 1
+    assert coord.calls[0][1] == "US"
+
+
+
 
