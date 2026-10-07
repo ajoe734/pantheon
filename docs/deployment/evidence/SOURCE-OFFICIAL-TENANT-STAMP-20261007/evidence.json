@@ -1,0 +1,25 @@
+{
+  "task_id": "SOURCE-OFFICIAL-TENANT-STAMP-20261007",
+  "change_class": "corrective",
+  "summary": "Stamp controller-owned official evidence (tw-twse-tpex-official-market) with the requirement tenant (PANTHEON_TENANT_ID / PANTHEON_BFF_TENANT_ID) and maintain strict tenant isolation on reads (no public or untenanted fallback).",
+  "incident_context": {
+    "symptom": "In isolated L12 stack after bounded Taiwan pull, official run's latest_source_record had metadata.tenant_id None and GET /api/source-ingest/evidence/bundles with tenant-dev source_ingest_reader token returned only research suite's own bundle; training failed 'exactly one source evidence bundle must bind the selected connector run'.",
+    "root_cause": "Reconciled official connector and ingested SourceRecords/bundles lacked requirement tenant identity; read endpoints strictly enforce tenant isolation so untenanted records were invisible to tenant-scoped readers.",
+    "resolution": "Persona reconciler resolves requirement tenant from PANTHEON_TENANT_ID / PANTHEON_BFF_TENANT_ID and stamps desired state and connector metadata; pipeline and persist_source_evidence_refs stamp SourceRecords, evidence bundles, and evidence items with connector tenant; runtime readback includes tenant_id in provenance and metadata."
+  },
+  "acceptance_verification": {
+    "ac1_connector_and_records_stamped": "passed: connectors provisioned by persona reconciler carry metadata.tenant_id set to the requirement tenant; IngestPipelineService and persist_source_evidence_refs stamp SourceRecord, evidence items, and evidence bundles with the connector's requirement tenant",
+    "ac2_strict_tenant_reads": "passed: untenanted, mismatched-tenant, and anonymous reads of source records, bundles, and items fail closed (401/404); no public or untenanted fallback is added",
+    "ac3_admitted_tenant_read": "passed: reader admitted for the requirement tenant (tenant-dev) reads tw_price_daily source records, evidence bundle, and evidence items; other tenants receive 404 or empty list",
+    "ac4_untenanted_paths_preserved": "passed: ingest paths not driven by tenant-bearing requirement keep existing behavior; all 181 test_service, 52 reconciler, and 105 controller worker tests pass",
+    "ac5_test_coverage": "passed: comprehensive unit and integration tests added in test_persona_source_reconciler.py, test_controller_worker.py, and test_service.py"
+  },
+  "local_verification": {
+    "commands": [
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest -q services/source_ingestion/tests/test_persona_source_reconciler.py",
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest -q services/source_ingestion/tests/test_controller_worker.py",
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest -q services/source_ingestion/test_service.py"
+    ],
+    "result": "passed (52 reconciler tests, 105 controller worker tests, 181 service integration tests passed)"
+  }
+}

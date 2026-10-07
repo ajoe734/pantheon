@@ -1373,3 +1373,123 @@ def test_controller_readback_thread_safety(client, monkeypatch: pytest.MonkeyPat
     response = test_client.get("/api/source-ingest/controller/readback")
     assert response.status_code == 200
     assert lock_acquired is True
+
+
+def test_controller_provisioned_official_connector_stamps_requirement_tenant_and_enforces_strict_tenant_reads(
+    client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    test_client, _, module = client
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+
+    # 1. Controller provisions connector from persona requirement snapshot
+    persona = {
+        "persona_id": "persona-tw-momentum",
+        "name": "TW Momentum",
+        "mandate": "Trade TW daily momentum",
+        "lifecycle_state": "research_only",
+        "created_at": "2026-06-01T00:00:00Z",
+        "required_data_sources": [
+            {
+                "dataset": "tw_price_daily",
+                "market": "TW",
+                "cadence": "daily",
+                "source_class": "live_pull",
+                "connector_candidates": ["tw-twse-tpex-official-market"],
+                "policy_gates": ["require_connector_approved", "require_schedule_active"],
+            }
+        ],
+    }
+    controller_headers = {"Authorization": f"Bearer {module.controller_token}"}
+    reconcile_res = test_client.post(
+        "/api/source-ingest/persona-source-provisioning/reconcile",
+        headers=controller_headers,
+        json={"persona": persona},
+    )
+    assert reconcile_res.status_code == 200, reconcile_res.text
+
+    # Provisioned connector carries requirement tenant
+    config = module.connector_store.get_config("tw-twse-tpex-official-market")
+    assert config is not None
+    assert config.connector.metadata.get("tenant_id") == "tenant-dev"
+
+    # 2. Trigger ingest job for the provisioned connector
+    job_res = test_client.post(
+        "/api/source-ingest/jobs",
+        headers=controller_headers,
+        json={
+            "connector_id": "tw-twse-tpex-official-market",
+            "trace_id": "trace-official-tw-run-test",
+            "trigger_type": "scheduled",
+            "records": [
+                {
+                    "source_id": "tw-official:tw_price_daily:TWSE:2330:2026-10-07",
+                    "connector_id": "tw-twse-tpex-official-market",
+                    "source_type": "market",
+                    "title": "2330 Daily Close",
+                    "content_ref": "tw-official://tw_price_daily/TWSE/2330/2026-10-07",
+                    "status": "normalized",
+                    "metadata": {
+                        "provider": "TWSE OpenAPI",
+                        "dataset": "tw_price_daily",
+                        "market": "TW",
+                        "venue": "TWSE",
+                        "symbol": "2330",
+                        "available_time": "2026-10-07T05:30:00Z",
+                        "event_time": "2026-10-07T05:30:00Z",
+                    },
+                }
+            ],
+        },
+    )
+    assert job_res.status_code == 201, job_res.text
+    body = job_res.json()
+    refs = body["evidence_refs"]
+    bundle_id = refs["evidence_bundle_id"]
+    item_id = refs["evidence_item_ids"][0]
+
+    # 3. Controller readback reflects requirement tenant in latest_source_record
+    readback = test_client.get("/api/source-ingest/controller/readback")
+    assert readback.status_code == 200
+    conn_readback = next(c for c in readback.json()["connectors"] if c["connector_id"] == "tw-twse-tpex-official-market")
+    assert conn_readback["latest_source_record"]["metadata"]["tenant_id"] == "tenant-dev"
+    assert conn_readback["latest_source_record"]["provenance"]["tenant_id"] == "tenant-dev"
+
+    # 4. Strict tenant-scoped reads: admitted tenant (tenant-dev) can read
+    dev_headers = _read_headers(tenant="tenant-dev")
+
+    # Source record read
+    rec_dev = test_client.get("/api/source-ingest/source-records/tw-official:tw_price_daily:TWSE:2330:2026-10-07", headers=dev_headers)
+    assert rec_dev.status_code == 200
+    assert rec_dev.json()["source_record"]["metadata"]["tenant_id"] == "tenant-dev"
+
+    # Evidence bundle read & list
+    bundle_dev = test_client.get(f"/api/source-ingest/evidence/bundles/{bundle_id}", headers=dev_headers)
+    assert bundle_dev.status_code == 200
+    assert bundle_dev.json()["bundle"]["evidence_bundle_id"] == bundle_id
+    assert bundle_dev.json()["bundle"]["metadata"]["tenant_id"] == "tenant-dev"
+
+    bundles_dev = test_client.get("/api/source-ingest/evidence/bundles", headers=dev_headers)
+    assert bundles_dev.status_code == 200
+    assert bundle_id in [b["evidence_bundle_id"] for b in bundles_dev.json()["bundles"]]
+
+    # Evidence item read
+    item_dev = test_client.get(f"/api/source-ingest/evidence/items/{item_id}", headers=dev_headers)
+    assert item_dev.status_code == 200
+    assert item_dev.json()["item"]["metadata"]["tenant_id"] == "tenant-dev"
+
+    # 5. Strict tenant isolation: other tenant (tenant-other) gets 404 / empty list
+    other_headers = _read_headers(tenant="tenant-other")
+    assert test_client.get("/api/source-ingest/source-records/tw-official:tw_price_daily:TWSE:2330:2026-10-07", headers=other_headers).status_code == 404
+    assert test_client.get(f"/api/source-ingest/evidence/bundles/{bundle_id}", headers=other_headers).status_code == 404
+    assert test_client.get(f"/api/source-ingest/evidence/items/{item_id}", headers=other_headers).status_code == 404
+    bundles_other = test_client.get("/api/source-ingest/evidence/bundles", headers=other_headers)
+    assert bundles_other.status_code == 200
+    assert bundle_id not in [b["evidence_bundle_id"] for b in bundles_other.json()["bundles"]]
+
+    # 6. Strict tenant isolation: untenanted / anonymous requests rejected
+    assert test_client.get("/api/source-ingest/source-records/tw-official:tw_price_daily:TWSE:2330:2026-10-07").status_code == 401
+    assert test_client.get(f"/api/source-ingest/evidence/bundles/{bundle_id}").status_code == 401
+    assert test_client.get(f"/api/source-ingest/evidence/items/{item_id}").status_code == 401
+    assert test_client.get("/api/source-ingest/evidence/bundles").status_code == 401
+
