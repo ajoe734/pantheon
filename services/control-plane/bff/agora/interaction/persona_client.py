@@ -13,7 +13,11 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
-from services.control_plane.bff.ports import ReadSurfacePorts, create_read_surface_ports
+from services.control_plane.bff.ports import (
+    ReadSurfacePorts,
+    create_persona_registry_write_owner,
+    create_read_surface_ports,
+)
 
 
 @runtime_checkable
@@ -37,7 +41,10 @@ def _bool_from_env(name: str, *, default: bool = False) -> bool:
 def build_canonical_persona_client() -> PersonaReadPort:
     """Construct the canonical Persona read client.
 
-    Constructs a canonical read surface port client; callers must propagate
+    Constructs a canonical read surface port client wired to the canonical Persona
+    write owner without an unconfigured empty fallback; callers must propagate
     any failure instead of substituting an empty Persona discovery implementation.
     """
-    return create_read_surface_ports()
+    return create_read_surface_ports(
+        persona_registry_store=create_persona_registry_write_owner(),
+    )

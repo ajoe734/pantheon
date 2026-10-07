@@ -19,17 +19,7 @@ for path in (
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from agora.governance.store import ProposalStore
 from agora.interaction.persona_client import build_canonical_persona_client
-from agora.interaction.store import InteractionLifecycleStore
-from agora.interaction.worker import AgoraInteractionWorker
-from agora.research.routes.common import publish_research_progress
-from agora.research.store import (
-    MemoryResearchPlanStore,
-    PostgresResearchPlanStore,
-    make_research_plan_store,
-)
-from agora.strategy_workshop.store import MemoryWorkshopStore, PostgresWorkshopStore
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,12 +39,33 @@ def main() -> int:
 
     if args.healthcheck:
         try:
-            build_canonical_persona_client()
+            client = build_canonical_persona_client()
+            status = getattr(client, "get_surface_status", None)
+            if callable(status):
+                diag = status()
+                pcr = diag.get("persona_capital_runtime") if isinstance(diag, dict) else None
+                persona_status = (pcr.get("persona") if isinstance(pcr, dict) else None) or {}
+                if persona_status.get("status") != "ok":
+                    raise RuntimeError(
+                        f"Persona dependency unhealthy: {persona_status.get('message') or persona_status.get('source')}"
+                    )
+            else:
+                client.list_personas()
         except Exception:
-            logger.exception("Healthcheck failed: could not construct the Persona client")
+            logger.exception("Healthcheck failed: Persona dependency is unavailable or unconfigured")
             return 1
         logger.info("Healthcheck OK")
         return 0
+
+    from agora.governance.store import ProposalStore
+    from agora.interaction.store import InteractionLifecycleStore
+    from agora.interaction.worker import AgoraInteractionWorker
+    from agora.research.store import (
+        MemoryResearchPlanStore,
+        PostgresResearchPlanStore,
+        make_research_plan_store,
+    )
+    from agora.strategy_workshop.store import MemoryWorkshopStore, PostgresWorkshopStore
 
     workshop_backend = os.getenv("AGORA_WORKSHOP_STORE_BACKEND", "postgres")
     dsn = (
