@@ -1,0 +1,99 @@
+{
+  "schema_version": "pantheon.ops-archive-resurrection-relaxation-revert.v1",
+  "task": {
+    "id": "OPS-ARCHIVE-RESURRECTION-RELAXATION-REVERT-20261007",
+    "title": "Revert the one-off PPL-ALLOC-007 stale-archive-resurrection verifier relaxations (#5856 idle operator reopen; #5874 archive reviewer hop)",
+    "owner": "Antigravity2",
+    "reviewer": "Claude",
+    "change_class": "simplify",
+    "base_branch": "dev",
+    "base_sha": "7b3bbb2164aef25c13e54b66df8c3f58e1c6aaec",
+    "task_branch": "task/OPS-ARCHIVE-RESURRECTION-RELAXATION-REVERT-20261007"
+  },
+  "pre_dispatch_evidence": {
+    "planner_verification_commit": "82813ad67",
+    "stale_archive_resurrection_retired_events": 0,
+    "archive_resurrection_proof_or_retired_stale_active_row_events": 0,
+    "activity_sources_covered": 4049,
+    "activity_events_covered": 205900,
+    "activity_time_range": "2026-09-02T03:57Z to 2026-10-07T16:37Z",
+    "live_task_rows_with_archive_snapshot": 0,
+    "ppl_alloc_007_status": "not live; terminal fact is generation 1, completed, recorded 2026-07-20T09:57:01Z"
+  },
+  "baseline_regression_reproduction": {
+    "command": "python3 -m unittest scripts.test_ai_status.TestStaleArchiveResurrectionContract.test_negative_authenticated_operator_reopen_after_archive",
+    "unreverted_exit_code": 1,
+    "unreverted_failure": "AssertionError: 0 == 0",
+    "detail": "On the unreverted tree, _assert_cli_retirement_refused failed because the relaxed verifier path let reconcile_merged_done exit 0 instead of refusing retirement when an authenticated local operator reopen was present."
+  },
+  "post_revert_regression_verification": {
+    "command": "python3 -m unittest scripts.test_ai_status.TestStaleArchiveResurrectionContract.test_negative_authenticated_operator_reopen_after_archive",
+    "head_exit_code": 0,
+    "result": "Ran 1 test in 2.876s, OK",
+    "detail": "After reverting the relaxations, reconcile_merged_done is refused with 'intervening reopen event detected' and leaves state, journal, audit log, and archive unchanged."
+  },
+  "acceptance_clauses_audit": {
+    "clause_1_reviewer_reassignment_restored": {
+      "status": "satisfied",
+      "detail": "_verified_archive_reviewer_reassignment is deleted from scripts/ai_status.py; _verified_reviewer_reassignment is textually identical to 1bad1e904 (c446c3c87^) with a direct return of _verified_reassignment_chain and no SystemExit fallback."
+    },
+    "clause_2_stale_archive_resurrection_verifier_restored": {
+      "status": "satisfied",
+      "detail": "verify_stale_archive_resurrection_proof in scripts/ai_status.py is textually identical to 1bad1e904. Identifiers has_reopen, reopen_events, transition_events, pre_reopen_allowed_types, post_reopen_allowed_types, and reopen_event_id have 0 occurrences across scripts/ai_status.py."
+    },
+    "clause_3_test_class_restored_except_new_test": {
+      "status": "satisfied",
+      "detail": "TestStaleArchiveResurrectionContract in scripts/test_ai_status.py is textually identical to 1bad1e904 except for the single new test test_negative_authenticated_operator_reopen_after_archive. The 7 zero_delivery_reopen tests, 6 archive_reviewer_hop tests, helper, and relaxed fixture parameters/branches were removed."
+    },
+    "clause_4_outside_lines_and_kept_methods_byte_identical": {
+      "status": "satisfied",
+      "detail": "Every line in scripts/test_ai_status.py outside TestStaleArchiveResurrectionContract is byte-identical to merge-base. Every kept method of TestStaleArchiveResurrectionContract other than _build_fixture is byte-identical to merge-base."
+    },
+    "clause_5_regression_test_coverage": {
+      "status": "satisfied",
+      "detail": "test_negative_authenticated_operator_reopen_after_archive was added, confirmed failing on unreverted base, and confirmed passing on head."
+    },
+    "clause_6_test_suites_passed": {
+      "status": "satisfied",
+      "detail": "TestStaleArchiveResurrectionContract ran 37 tests (base 49 - 13 removed + 1 new), passed 37, exit 0, in 182.093s. Full scripts.test_ai_status ran 529 tests (base 541 - 13 removed + 1 new), passed 529, exit 0, 0 failures, 0 errors, in 274.879s."
+    },
+    "clause_7_narrow_scope_preserved": {
+      "status": "satisfied",
+      "detail": "PR touches only scripts/ai_status.py, scripts/test_ai_status.py, and this evidence manifest. Historical evidence manifests and management-ai-openclaw-dev-bridge.md are untouched. No new symbols, flags, or configuration keys were introduced."
+    },
+    "clause_8_diff_budget_and_lint_clean": {
+      "status": "satisfied",
+      "detail": "git diff --check is clean. diff_budget.py passes with exit code 0 under simplify class."
+    }
+  },
+  "verification": {
+    "suites": [
+      {
+        "name": "contract_suite",
+        "command": "python3 -m unittest scripts.test_ai_status.TestStaleArchiveResurrectionContract",
+        "tests_ran": 37,
+        "passed": 37,
+        "failed": 0,
+        "errors": 0,
+        "exit_code": 0,
+        "duration_seconds": 182.093
+      },
+      {
+        "name": "full_module_suite",
+        "command": "python3 -m unittest scripts.test_ai_status",
+        "tests_ran": 529,
+        "passed": 529,
+        "failed": 0,
+        "errors": 0,
+        "exit_code": 0,
+        "duration_seconds": 274.879
+      }
+    ],
+    "diff_budget_table": "| class | added | deleted | net |\n|---|---|---|---|\n| production | +173 | -534 | -361 |\n| test | +16 | -515 | -499 |\n| docs/evidence | +99 | -0 | +99 |",
+    "git_diff_check": "clean"
+  },
+  "known_limitation": {
+    "topic": "CONTRACT-001 stale-resurrection path usability follow-up",
+    "detail": "verify_stale_archive_resurrection_proof requires the archive's review_evidence file, commit, merge_target_ref, and merge_target_sha to equal the current ones (scripts/ai_status.py:7540-7555). But validate_merged_done_evidence records merge_target_sha as the current tip of merge_target_ref via _merged_commit. Any commit to that ref after archival breaks equality. _validated_same_delivery_archive_recovery applies the same four-field equality, and command_retire_archive_collision refuses any row that already has a terminal fact. A row shaped like PPL-ALLOC-007 has no working exit today without a drain marker. Whether to remove or redesign the path is reserved as a separate operator decision."
+  }
+}
