@@ -697,9 +697,47 @@ def test_projection_store_contiguous_checkpoint_advancement(postgres_dsn: str) -
     )
     assert ctrl4.checkpoint_seq == 5
 
+    # A source-fenced snapshot can prove that sequence 1 was consumed by an
+    # aborted insert. The durable disposition for extant row 2 is still required.
+    hole_receipt = EventReceiptRow(
+        "evt-after-sequence-hole", 7, "fp-7", "t-1", "paper", "j-1", "",
+        "opened", now, "applied", 4,
+    )
+    fenced = store.execute_batch_transaction(
+        "ctrl-hole", "t-1", "paper",
+        BatchProjectionMutation(
+            receipts=[hole_receipt],
+            source_high_watermark=7,
+            source_frontier_seq=7,
+        ),
+    )
+    assert fenced.checkpoint_seq == 7
+    # Without a source proof, an extant row at 9 remains a protected missing
+    # receipt and cannot be crossed merely because a later receipt is present.
+    protected_schema = f"test_protected_{uuid4().hex[:8]}"
+    protected_store = ProjectionStore(postgres_dsn, schema=protected_schema, bootstrap=True)
+    protected = protected_store.execute_batch_transaction(
+        "ctrl-protected", "t-1", "paper",
+        BatchProjectionMutation(
+            receipts=[
+                EventReceiptRow(
+                    "evt-protected-1", 1, "fp-p1", "t-1", "paper", "j-1", "",
+                    "opened", now, "applied", 1,
+                ),
+                EventReceiptRow(
+                    "evt-protected-3", 3, "fp-p3", "t-1", "paper", "j-1", "",
+                    "opened", now, "applied", 1,
+                ),
+            ],
+            source_high_watermark=3,
+        ),
+    )
+    assert protected.checkpoint_seq == 1
+
     import psycopg
     with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
         cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+        cur.execute(f"DROP SCHEMA IF EXISTS {protected_schema} CASCADE")
 
 
 def test_projection_store_mode_freshness_timestamps(postgres_dsn: str) -> None:
