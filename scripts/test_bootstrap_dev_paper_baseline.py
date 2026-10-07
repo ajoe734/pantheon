@@ -1253,6 +1253,25 @@ def test_source_provisioning_sends_authoritative_reconcile_request() -> None:
     assert captured["headers"]["Authorization"] == "Bearer controller-token-test"
 
 
+def test_source_provisioning_defaults_to_deployment_requirement_holder() -> None:
+    captured = {}
+
+    def fake_post_json(url, payload=None, **kwargs):
+        captured["url"] = url
+        captured["payload"] = payload
+        return RECONCILE_OK_RESPONSE
+
+    with patch.object(bootstrap, "_post_json", side_effect=fake_post_json):
+        result = bootstrap.ensure_source_provisioning(
+            source_ingest_url="http://mock-source:8097",
+            required_data_sources=list(bootstrap.DEV_US_REQUIRED_DATA_SOURCES),
+            controller_token="controller-token-test",
+        )
+
+    assert result == RECONCILE_OK_RESPONSE[1]
+    assert captured["payload"]["persona"]["persona_id"] == bootstrap.DEPLOYMENT_REQUIREMENT_HOLDER_ID
+
+
 def test_source_provisioning_raises_on_unsupported_requirement() -> None:
     with patch.object(
         bootstrap,
