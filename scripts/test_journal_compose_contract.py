@@ -37,7 +37,7 @@ def render_compose(control: bool = False, overrides=None) -> dict:
            "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN": "local-render-fixture-only",
            "PANTHEON_PERSONA_SERVICE_TOKEN": "local-render-fixture-only"}
     env.update(overrides or {})
-    args = ["docker", "compose", "--env-file", "/dev/null", "-f", "docker-compose.yml"]
+    args = ["docker", "compose", "--profile", "root", "--env-file", "/dev/null", "-f", "docker-compose.yml"]
     if control:
         args += ["-f", "docker-compose.control.yml"]
     return json.loads(run(*args, "config", "--format", "json", env=env))

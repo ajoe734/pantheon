@@ -37,6 +37,7 @@ from services.control_plane.bff.governance.decision_journal_write_owner import (
     resolve_decision_journal_data_dir,
 )
 from services.control_plane.bff.bootstrap.dependencies import AppDependencies
+from services.control_plane.bff.tests.bff_compose_stand_ins import resolve_with_stand_ins
 
 
 class TestJournalRuntimeContract(unittest.TestCase):
@@ -311,7 +312,6 @@ class TestJournalRuntimeContract(unittest.TestCase):
         decision_journal_write_owner=injected)) returned selected owner injected=False and
         selected path default-journal instead of injected-journal.
         """
-        from services.control_plane.bff.tests.bff_compose_stand_ins import resolve_with_stand_ins
         from services.control_plane.bff.core.app_factory import compose_bff_app
 
         with tempfile.TemporaryDirectory() as sentinel_dir:
@@ -435,6 +435,9 @@ def paper_factory_probe(phase: str) -> None:
     import errno
     import json
     from fastapi.testclient import TestClient
+    # Production resolves composition dependencies from the loaded main module;
+    # importing it (not a stand-in resolver) makes a missing dependency fail the probe.
+    import services.control_plane.bff.main  # noqa: F401
     from services.control_plane.bff.core.app_factory import compose_bff_app
     from services.control_plane.bff.models import OperatorIdentity
     from services.governance.record_store import PostgresGovernanceRecordStore
@@ -448,7 +451,7 @@ def paper_factory_probe(phase: str) -> None:
 
     deps = AppDependencies.create_default()
     owner = deps.decision_journal_write_owner
-    app = compose_bff_app(dependency_resolver=resolve_with_stand_ins, app_deps=deps, _extract_identity=identity)
+    app = compose_bff_app(app_deps=deps, _extract_identity=identity)
     assert app.state.decision_journal_write_owner is owner
     if phase != "unavailable":
         assert app.state.agora_router.agora_service.journal_write_owner is owner
