@@ -48,6 +48,7 @@ from .connectors import (
     SourceRecordStatus,
 )
 from .configured import ConfiguredConnectorFetcher, JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
+from .controller_state import read_controller_state
 from .distillation_worker import DistillationJobQueue
 from .external_sources import (
     external_source_bundle_metadata,
@@ -224,6 +225,24 @@ def stamp_source_record_tenant(record: SourceRecord, tenant_id: str) -> SourceRe
     )
 
 
+def _resolve_connector_tenant(
+    connector: SourceConnector | None,
+    runtime: Any = None,
+) -> str | None:
+    if connector and isinstance(connector.metadata, Mapping) and connector.metadata.get("tenant_id"):
+        return str(connector.metadata["tenant_id"]).strip() or None
+    if connector and runtime is not None and hasattr(runtime, "_is_controller_owned") and runtime._is_controller_owned(connector):
+        env_tenant = os.getenv("PANTHEON_TENANT_ID") or os.getenv("PANTHEON_BFF_TENANT_ID") or ""
+        if env_tenant.strip():
+            return env_tenant.strip()
+        state_path = getattr(runtime, "CONTROLLER_STATE_PATH", None)
+        if state_path:
+            state = read_controller_state(state_path)
+            if state and isinstance(state, Mapping) and state.get("tenant_id"):
+                return str(state["tenant_id"]).strip() or None
+    return None
+
+
 def persist_source_evidence_refs(
     manager: IngestManager,
     evidence_repository: Any,
@@ -233,12 +252,7 @@ def persist_source_evidence_refs(
     storage_refs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     connector = manager.get_connector(result.run.connector_id)
-    connector_tenant = None
-    if connector and isinstance(connector.metadata, Mapping) and connector.metadata.get("tenant_id"):
-        connector_tenant = str(connector.metadata["tenant_id"]).strip() or None
-    elif connector and hasattr(manager, "runtime") and hasattr(manager.runtime, "_is_controller_owned") and manager.runtime._is_controller_owned(connector):
-        env_tenant = os.getenv("PANTHEON_TENANT_ID") or os.getenv("PANTHEON_BFF_TENANT_ID") or ""
-        connector_tenant = env_tenant.strip() or None
+    connector_tenant = _resolve_connector_tenant(connector, runtime=getattr(manager, "runtime", None))
 
     source_records = [
         with_source_ingest_run(
@@ -864,12 +878,7 @@ class IngestPipelineService:
         frontier_id: str | None = None,
     ) -> tuple[Any, dict[str, Any], dict[str, Any] | None]:
         self.runtime._assert_connector_lifecycle_allows_run(connector)
-        connector_tenant = None
-        if isinstance(connector.metadata, Mapping) and connector.metadata.get("tenant_id"):
-            connector_tenant = str(connector.metadata["tenant_id"]).strip() or None
-        elif hasattr(self.runtime, "_is_controller_owned") and self.runtime._is_controller_owned(connector):
-            env_tenant = os.getenv("PANTHEON_TENANT_ID") or os.getenv("PANTHEON_BFF_TENANT_ID") or ""
-            connector_tenant = env_tenant.strip() or None
+        connector_tenant = _resolve_connector_tenant(connector, runtime=self.runtime)
 
         effective_fetch_batch = fetch_batch
         if connector_tenant:

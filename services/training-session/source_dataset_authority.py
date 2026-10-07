@@ -798,8 +798,22 @@ def _select_evidence_bundles(
             }
         )
     if len(matches) != 1:
+        observed_summaries: list[str] = []
+        for raw in bundles[:5]:
+            if isinstance(raw, Mapping):
+                meta = raw.get("metadata") if isinstance(raw.get("metadata"), Mapping) else {}
+                bundle_id = str(raw.get("evidence_bundle_id") or "")
+                c_id = str(meta.get("connector_id") or "")
+                r_id = str(meta.get("ingest_run_id") or "")
+                t_id = str(meta.get("tenant_id") or "")
+                observed_summaries.append(f"id={bundle_id}:connector={c_id}:run={r_id}:tenant={t_id}")
+            else:
+                observed_summaries.append("non_object")
+        observed_info = f", observed_bundles_sample=[{', '.join(observed_summaries)}]" if bundles else ""
         raise SourceDatasetAuthorityError(
-            "exactly one source evidence bundle must bind the selected connector run"
+            f"exactly one source evidence bundle must bind the selected connector run "
+            f"(matching_count={len(matches)}, selected connector={connector_id}, run={run_id}; "
+            f"observed_count={len(bundles)}{observed_info})"
         )
     return matches
 

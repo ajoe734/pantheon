@@ -1,0 +1,32 @@
+{
+  "task_id": "L4-SOURCE-BUNDLE-AUTHORITY-DIAGNOSIS-20261007",
+  "change_class": "corrective",
+  "summary": "Diagnose exact L4 Source evidence bundle binding failure in run 37689932878 and correct controller-owned scheduled tenant resolution in pipeline producer binding.",
+  "diagnosis": {
+    "run_id": "37689932878",
+    "failure_sha": "8764ad85",
+    "observed_error": "RuntimeError: Teaching evaluation job failed: evaluation_admission_rejected: source DatasetVersion authority rejected: exactly one source evidence bundle must bind the selected connector run",
+    "root_cause_analysis": "In qualification run 37689932878, the PostgreSQL cache fix (PR 6320/6322) did not cause nor resolve the L4 failure. The consumer (training-session) queries GET /api/source-ingest/evidence/bundles with header X-Tenant-Id: tenant-dev, which filters bundles in PostgreSQL by payload->'metadata'->>'tenant_id' = 'tenant-dev'. On the producer side, source-ingest ran scheduled connector tw_official_pull without PANTHEON_TENANT_ID in the container environment, and connector.metadata had no explicit tenant_id. Consequently, pipeline.py resolved connector_tenant to None, omitting the tenant stamp on source records and resulting in evidence bundles stored with payload->'metadata'->>'tenant_id' as None (untenanted). When training-session queried for tenant-dev bundles, PostgreSQL returned matching_count=0 (observed_count=0 matching tenant-dev), causing _select_evidence_bundles to fail closed.",
+    "causal_link": "Producer pipeline did not resolve tenant from authoritative persisted controller state when container environment variable PANTHEON_TENANT_ID was unset, creating an untenanted bundle invisible to tenant-scoped consumer queries."
+  },
+  "fix": {
+    "producer": "In services/source_ingestion/pipeline.py, introduce _resolve_connector_tenant(connector, runtime) helper. When connector is controller-owned (reconciliation managed by persona_source_provisioning_reconciler) and env vars are unset, fall back to reading tenant_id from runtime.CONTROLLER_STATE_PATH. Apply consistently in both run_job and persist_source_evidence_refs.",
+    "consumer_diagnostics": "In services/training-session/source_dataset_authority.py, enhance _select_evidence_bundles failure message when matching_count != 1 with bounded, redacted diagnostics (matching_count, selected connector, run_id, observed_count, and sample bundle metadata [id, connector, run, tenant]) without exposing tokens, auth headers, or raw payload content.",
+    "fail_closed_invariants": "Strict single bundle requirement, exact connector/run match, tenant isolation, future timestamp rejection, and SHA-256 integrity remain strictly enforced."
+  },
+  "acceptance_verification": {
+    "ac1_actual_failure_retained": "passed: Retained actual 37689932878 failure evidence at 8764 and PG_VISIBILITY_SCOPE_CORRECTION audit; confirmed cache fix did not resolve GHA failure",
+    "ac2_exact_cardinality_and_provenance": "passed: Identified observed matching_count=0 due to missing tenant stamp on producer bundles vs X-Tenant-Id: tenant-dev query filter",
+    "ac3_bounded_redacted_diagnostics": "passed: _select_evidence_bundles includes bounded redacted diagnostics (matching_count, selected connector/run, observed_count, sample bundle headers) with zero secrets or raw corpus",
+    "ac4_minimal_producer_consumer_binding": "passed: Minimal change in pipeline.py and source_dataset_authority.py; 2 files changed, 36 insertions, 13 deletions (net +23 prod lines <= 100 net budget)",
+    "ac5_regression_reader_writer_tests": "passed: 51 tests passed in test_source_dataset_authority.py; 29 tests passed in test_service.py covering controller-state tenant resolution, tenant-scoped readback, and fail-closed negative checks (wrong tenant 404/empty, future timestamp rejected, duplicate matching bundles rejected)",
+    "ac6_head_review_ready": "passed: Clean git working tree on per-task branch task/L4-SOURCE-BUNDLE-AUTHORITY-DIAGNOSIS-20261007"
+  },
+  "verification": {
+    "commands": [
+      "PYTHONPATH=. /tmp/l12venv/bin/pytest services/training-session/tests/test_source_dataset_authority.py",
+      "PYTHONPATH=. /tmp/l12venv/bin/pytest services/source_ingestion/test_service.py"
+    ],
+    "result": "passed (51 tests passed in test_source_dataset_authority.py; 29 tests passed in test_service.py; total 80 passed, 0 failures)"
+  }
+}

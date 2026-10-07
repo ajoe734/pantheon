@@ -1713,4 +1713,95 @@ def test_postgres_backend_adversarial_db_failure_cannot_return_stale_cache_via_a
                 conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
 
 
+def test_controller_owned_connector_resolves_tenant_from_controller_state(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    test_client, data_dir, module = client
+    monkeypatch.delenv("PANTHEON_TENANT_ID", raising=False)
+    monkeypatch.delenv("PANTHEON_BFF_TENANT_ID", raising=False)
+
+    from services.source_ingestion.controller_state import ControllerState, ControllerStateStore
+
+    state = ControllerState(
+        controller_id="ctrl-test-state-1",
+        controller_name="test-controller",
+        environment="test",
+        tenant_id="tenant-dev",
+        deployment={},
+    )
+    ControllerStateStore(module.runtime.CONTROLLER_STATE_PATH).save(state)
+
+    from services.source_ingestion.persona_source_reconciler import RECONCILIATION_METADATA_KEY
+
+    controller_headers = {"Authorization": f"Bearer {module.controller_token}"}
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        headers=controller_headers,
+        json={
+            "connector": {
+                "connector_id": "conn-reconciled-managed",
+                "source_type": "market",
+                "provider": "TW_OFFICIAL",
+                "license_scope": "official",
+                "metadata": {
+                    RECONCILIATION_METADATA_KEY: {
+                        "managed_by": "persona_source_provisioning_reconciler",
+                    },
+                },
+            },
+            "fetch": {
+                "mode": "static_records",
+                "next_watermark": "2026-10-07T12:00:00Z",
+                "records": [
+                    {
+                        "source_id": "src-managed-reconciled-1",
+                        "title": "Managed test record",
+                        "content_ref": "memory://managed/1",
+                        "metadata": {
+                            "body": "Reconciled market payload",
+                            "access_scope": ["internal"],
+                        },
+                    }
+                ],
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+
+    response = test_client.post(
+        "/api/source-ingest/jobs",
+        headers=controller_headers,
+        json={
+            "connector_id": "conn-reconciled-managed",
+            "trace_id": "trace-controller-state-tenant",
+            "trigger_type": "scheduled",
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["run"]["status"] == "completed"
+    assert body["records"][0]["metadata"]["tenant_id"] == "tenant-dev"
+    bundle_id = body["evidence_refs"]["evidence_bundle_id"]
+    assert bundle_id
+
+    dev_headers = _read_headers("tenant-dev")
+    dev_headers["X-Tenant-Id"] = "tenant-dev"
+    bundle_res = test_client.get(f"/api/source-ingest/evidence/bundles/{bundle_id}", headers=dev_headers)
+    assert bundle_res.status_code == 200
+    assert bundle_res.json()["bundle"]["metadata"]["tenant_id"] == "tenant-dev"
+
+    list_res = test_client.get("/api/source-ingest/evidence/bundles", headers=dev_headers)
+    assert list_res.status_code == 200
+    bundle_ids = [b["evidence_bundle_id"] for b in list_res.json()["bundles"]]
+    assert bundle_id in bundle_ids
+
+    wrong_headers = _read_headers("tenant-wrong")
+    wrong_headers["X-Tenant-Id"] = "tenant-wrong"
+    wrong_res = test_client.get(f"/api/source-ingest/evidence/bundles/{bundle_id}", headers=wrong_headers)
+    assert wrong_res.status_code == 404
+
+    wrong_list_res = test_client.get("/api/source-ingest/evidence/bundles", headers=wrong_headers)
+    assert wrong_list_res.status_code == 200
+    assert bundle_id not in [b["evidence_bundle_id"] for b in wrong_list_res.json()["bundles"]]
+
+
+
 
