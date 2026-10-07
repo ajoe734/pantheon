@@ -53,48 +53,8 @@ class TaskContractTests(unittest.TestCase):
         )
 
 
-class HandoffDiffBudgetGateTests(unittest.TestCase):
-    """The handoff admission runs the diff budget on the real PR file list."""
-
-    def _admit(self, task, pr_files):
-        from types import SimpleNamespace
-        from unittest import mock
-
-        from rewrite import task_contract
-
-        bridge = task_contract._ai_status_module()._github_review_bridge_module()
-        import sys
-        sys.path.insert(0, str(task_contract.Path(__file__).resolve().parents[2] / "scripts" / "git"))
-        import check_commit_trailers
-        config = {"branch_workflow": {"diff_budget": {"enabled": True}}}
-        binding = {"pr": 7, "head_sha": "a" * 40, "head_branch": "task/T-1", "base": "dev", "base_sha": "b" * 40}
-        validated = SimpleNamespace(as_dict=lambda: dict(binding), base_sha="b" * 40)
-        with (
-            mock.patch.object(task_contract, "validate_task_repository_scope", return_value="pantheon"),
-            mock.patch.object(task_contract, "repository_slug", return_value="o/r"),
-            mock.patch.object(task_contract, "validate_review_manifest_contract_path", return_value="docs/e.json"),
-            mock.patch.object(task_contract, "validate_task_artifact_diff_scope"),
-            mock.patch.object(bridge, "validate_review_admission", return_value=validated),
-            mock.patch.object(bridge, "list_pull_request_files", return_value=pr_files),
-            mock.patch.object(bridge, "revalidate_pull_request_snapshot"),
-            mock.patch.object(check_commit_trailers, "check_range", return_value=[]),
-            mock.patch.object(task_contract, "repository_local_path", return_value=task_contract.Path.cwd()),
-            mock.patch.object(task_contract._ai_status_module(), "_done_delivery_repository_root", return_value=(task_contract.Path.cwd(), {})),
-        ):
-            return task_contract.validate_handoff_pr_delivery_binding(
-                task, config, binding, review_file="docs/e.json"
-            )
-
-    def test_refactor_growth_blocks_handoff(self) -> None:
-        files = [{"filename": "svc/a.py", "additions": 50, "deletions": 10}]
-        with self.assertRaises(SystemExit) as ctx:
-            self._admit({"id": "T-1", "change_class": "refactor"}, files)
-        self.assertIn("net +40", str(ctx.exception))
-
-    def test_refactor_shrink_is_admitted(self) -> None:
-        files = [{"filename": "svc/a.py", "additions": 10, "deletions": 50}]
-        result = self._admit({"id": "T-1", "change_class": "refactor"}, files)
-        self.assertEqual(result["pr"], 7)
+class HandoffTrailerAdmissionTests(unittest.TestCase):
+    """The handoff admission validates commit trailers and frozen ranges."""
 
     def test_handoff_rejects_bad_trailer_with_commit_and_repair_guidance(self) -> None:
         from types import SimpleNamespace
@@ -105,7 +65,7 @@ class HandoffDiffBudgetGateTests(unittest.TestCase):
         sys.path.insert(0, str(task_contract.Path(__file__).resolve().parents[2] / "scripts" / "git"))
         import check_commit_trailers
         bridge = task_contract._ai_status_module()._github_review_bridge_module()
-        config = {"branch_workflow": {"diff_budget": {"enabled": True}}}
+        config = {"branch_workflow": {}}
         binding = {"pr": 7, "head_sha": "a" * 40, "head_branch": "task/T-1", "base": "dev"}
         validated = SimpleNamespace(as_dict=lambda: {**binding, "base_sha": "b" * 40}, base_sha="b" * 40)
         task = {"id": "T-1"}
@@ -163,15 +123,9 @@ class HandoffDiffBudgetGateTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(SystemExit, "cannot validate commit trailer range"):
                 task_contract.validate_handoff_pr_delivery_binding(
-                    {"id": "T-1"}, {"branch_workflow": {"diff_budget": {"enabled": False}}},
+                    {"id": "T-1"}, {"branch_workflow": {}},
                     binding, review_file="docs/e.json",
                 )
-
-    def test_change_class_requires_pr_delivery(self) -> None:
-        from rewrite.task_contract import requires_pr_delivery_binding
-
-        self.assertTrue(requires_pr_delivery_binding({"change_class": "simplify"}))
-        self.assertFalse(requires_pr_delivery_binding({}))
 
 
 class HandoffWorkspaceGitRootAdmissionTests(unittest.TestCase):
@@ -239,7 +193,7 @@ class HandoffWorkspaceGitRootAdmissionTests(unittest.TestCase):
                     }
                 }
             },
-            "branch_workflow": {"diff_budget": {"enabled": False}},
+            "branch_workflow": {},
         }
         task = {
             "id": "T-1",

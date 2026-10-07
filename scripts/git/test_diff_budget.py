@@ -16,9 +16,6 @@ import diff_budget
 CONFIG = {
     "branch_workflow": {
         "diff_budget": {
-            "enabled": True,
-            "change_classes": ["refactor", "simplify", "corrective"],
-            "default_net_prod_line_budget": 0,
             "evidence_max_added_lines": 400,
         }
     }
@@ -46,56 +43,19 @@ class ClassifyTest(unittest.TestCase):
             self.assertEqual(diff_budget.classify(path), expected, path)
 
 
-class HandoffGateTest(unittest.TestCase):
-    def test_refactor_growth_is_rejected_with_numbers(self) -> None:
-        task = {"id": "T-1", "change_class": "refactor"}
-        files = [f("svc/a.py", 120, 20), f("svc/b.py", 5, 50), f("svc/tests/test_a.py", 300, 0)]
-        with self.assertRaises(SystemExit) as ctx:
-            diff_budget.enforce_handoff(task, CONFIG, files)
-        message = str(ctx.exception)
-        self.assertIn("net +55", message)
-        self.assertIn("tests +300", message)
-        self.assertIn("svc/a.py (+120/-20)", message)
-
-    def test_refactor_that_deletes_code_passes(self) -> None:
-        task = {"id": "T-1", "change_class": "simplify"}
-        diff_budget.enforce_handoff(task, CONFIG, [f("svc/a.py", 10, 200), f("svc/tests/test_a.py", 90, 0)])
-
-    def test_explicit_budget_is_respected(self) -> None:
-        task = {"id": "T-1", "change_class": "corrective", "net_prod_line_budget": 60}
-        diff_budget.enforce_handoff(task, CONFIG, [f("svc/a.py", 80, 30)])
-        task["net_prod_line_budget"] = 40
-        with self.assertRaises(SystemExit):
-            diff_budget.enforce_handoff(task, CONFIG, [f("svc/a.py", 80, 30)])
-
+class EvidenceCapTest(unittest.TestCase):
     def test_unclassified_task_only_gets_evidence_cap(self) -> None:
-        task = {"id": "T-1"}
-        diff_budget.enforce_handoff(task, CONFIG, [f("svc/a.py", 5000, 0)])
-        with self.assertRaises(SystemExit) as ctx:
-            diff_budget.enforce_handoff(task, CONFIG, [f("docs/deployment/evidence/T-1/evidence.json", 401, 0)])
-        self.assertIn("cap 400", str(ctx.exception))
+        summary_ok = diff_budget.summarize([f("svc/a.py", 5000, 0)])
+        self.assertEqual(diff_budget.violations(summary_ok, CONFIG, label="T-1"), [])
 
-    def test_disabled_config_is_a_no_op(self) -> None:
-        diff_budget.enforce_handoff({"id": "T-1", "change_class": "refactor"}, {}, [f("svc/a.py", 999, 0)])
+        summary_bad = diff_budget.summarize([f("docs/deployment/evidence/T-1/evidence.json", 401, 0)])
+        problems = diff_budget.violations(summary_bad, CONFIG, label="T-1")
+        self.assertTrue(any("cap 400" in p for p in problems))
 
     def test_missing_line_counts_fail_closed(self) -> None:
         with self.assertRaises(SystemExit) as ctx:
-            diff_budget.enforce_handoff({"id": "T-1"}, CONFIG, [{"filename": "svc/a.py"}])
+            diff_budget.summarize([{"filename": "svc/a.py"}])
         self.assertIn("line counts unavailable", str(ctx.exception))
-
-
-class MetadataTest(unittest.TestCase):
-    def test_validation(self) -> None:
-        diff_budget.validate_task_metadata({})
-        diff_budget.validate_task_metadata({"change_class": "refactor", "net_prod_line_budget": -500})
-        for bad in (
-            {"change_class": "feature"},
-            {"net_prod_line_budget": 0},
-            {"change_class": "refactor", "net_prod_line_budget": "0"},
-            {"change_class": "refactor", "net_prod_line_budget": True},
-        ):
-            with self.assertRaises(SystemExit, msg=repr(bad)):
-                diff_budget.validate_task_metadata(bad)
 
 
 class CliTest(unittest.TestCase):
@@ -122,9 +82,17 @@ class CliTest(unittest.TestCase):
             cwd = Path.cwd()
             try:
                 os.chdir(root)
-                self.assertEqual(diff_budget.main([*argv, "--change-class", "refactor"]), 0)
+                self.assertEqual(diff_budget.main(argv), 0)
                 self.assertIn("| production | +0 | -8 | -8 |", summary.read_text())
-                self.assertEqual(diff_budget.main([*argv, "--change-class", "refactor", "--budget", "-9"]), 1)
+                evidence_dir = root / "docs" / "deployment" / "evidence" / "T-1"
+                evidence_dir.mkdir(parents=True)
+                (evidence_dir / "evidence.json").write_text("z\n" * 401)
+                git("add", ".")
+                git("commit", "-qm", "add evidence over cap")
+                self.assertEqual(
+                    diff_budget.main(["--base", "HEAD~1", "--head", "HEAD", "--config", str(config)]),
+                    1,
+                )
             finally:
                 os.chdir(cwd)
 
