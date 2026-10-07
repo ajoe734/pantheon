@@ -18,64 +18,18 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 
 
 
-def _pm12_semantic_json_value(value: Any) -> Any:
-    """Canonicalize JSON values without treating booleans as numbers."""
-    if value is None:
-        return ["null"]
-    if isinstance(value, bool):
-        return ["boolean", value]
-    if isinstance(value, str):
-        return ["string", value]
-    if isinstance(value, (int, float, Decimal)):
-        try:
-            numeric = (
-                value
-                if isinstance(value, Decimal)
-                else Decimal(str(value))
-            )
-        except (InvalidOperation, TypeError, ValueError) as exc:
-            raise ValueError("allocation line contains an invalid number") from exc
-        if not numeric.is_finite():
-            raise ValueError("allocation line contains a non-finite number")
-        if numeric == 0:
-            numeric = Decimal(0)
-        return ["number", format(numeric.normalize(), "f")]
-    if isinstance(value, list):
-        return ["array", [_pm12_semantic_json_value(item) for item in value]]
-    if isinstance(value, dict):
-        if any(not isinstance(key, str) for key in value):
-            raise ValueError("allocation line contains a non-string object key")
-        return [
-            "object",
-            [
-                [key, _pm12_semantic_json_value(value[key])]
-                for key in sorted(value)
-            ],
-        ]
-    raise ValueError(
-        f"allocation line contains unsupported JSON value {type(value).__name__}"
+try:
+    from ..pm12.service import (
+        _pm12_semantic_json_value,
+        _pm12_semantic_values_match,
+        _pm12_allocation_line_assertion_hash,
     )
-
-
-def _pm12_semantic_values_match(asserted: Any, authoritative: Any) -> bool:
-    """Compare an asserted value against its admitted authoritative value using the
-    numeric/bool/order-safe semantic canonical form so benign browser JSON
-    round-trips (for example 1.0 -> 1, or object key reordering) do not read as an
-    assertion mismatch. Values that cannot be canonicalized stay fail-closed by
-    returning False, preserving the strict-by-default posture for malformed input."""
-    try:
-        return (
-            _pm12_semantic_json_value(asserted)
-            == _pm12_semantic_json_value(authoritative)
-        )
-    except ValueError:
-        return False
-
-
-def _pm12_allocation_line_assertion_hash(line: Dict[str, Any]) -> str:
-    canonical = _pm12_semantic_json_value(line)
-    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return sha256(encoded.encode("utf-8")).hexdigest()
+except (ImportError, ValueError):
+    from services.control_plane.bff.pm12.service import (
+        _pm12_semantic_json_value,
+        _pm12_semantic_values_match,
+        _pm12_allocation_line_assertion_hash,
+    )
 
 
 

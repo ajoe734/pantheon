@@ -34,6 +34,51 @@ from .service import (
     stable_digest,
 )
 
+try:
+    from ..pm12.service import (
+        _pm12_board_pack_response,
+        _pm12_capital_flow_response,
+        _pm12_portfolio_book_exposure_response,
+        _pm12_portfolio_book_holdings_response,
+        _pm12_portfolio_book_pools_response,
+        _pm12_portfolio_book_positions_response,
+        _pm12_portfolio_book_response,
+        _pm12_strategy_allocation_response,
+    )
+except (ImportError, ValueError):
+    try:
+        from services.control_plane.bff.pm12.service import (
+            _pm12_board_pack_response,
+            _pm12_capital_flow_response,
+            _pm12_portfolio_book_exposure_response,
+            _pm12_portfolio_book_holdings_response,
+            _pm12_portfolio_book_pools_response,
+            _pm12_portfolio_book_positions_response,
+            _pm12_portfolio_book_response,
+            _pm12_strategy_allocation_response,
+        )
+    except (ImportError, ValueError):
+        from pm12.service import (
+            _pm12_board_pack_response,
+            _pm12_capital_flow_response,
+            _pm12_portfolio_book_exposure_response,
+            _pm12_portfolio_book_holdings_response,
+            _pm12_portfolio_book_pools_response,
+            _pm12_portfolio_book_positions_response,
+            _pm12_portfolio_book_response,
+            _pm12_strategy_allocation_response,
+        )
+
+
+def _pm12_params(request: Request) -> Tuple[Dict[str, Any], Optional[str], int]:
+    qp = dict(request.query_params)
+    page_token = qp.get("page_token") or qp.get("pageToken")
+    try:
+        page_size = int(qp.get("page_size") or qp.get("pageSize") or 50)
+    except (TypeError, ValueError):
+        page_size = 50
+    return qp, page_token, page_size
+
 PageSlice = Callable[[Sequence[Any], Optional[str], int], Tuple[List[Any], Optional[str]]]
 SnapshotMeta = Callable[[str], Dict[str, Any]]
 SurfaceStatus = Callable[..., Dict[str, Any]]
@@ -539,18 +584,28 @@ def create_capital_router(
     # 16. Strategy allocation projection.
     @router.get("/bff/management/strategy-allocation")
     async def bff_management_strategy_allocation(
+        request: Request,
         capital_pool_id: Optional[str] = None, authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
         _require_read(authorization)
+        st = resolved_get_read_store()
+        if st is not None and hasattr(st, "list_runtime_bindings"):
+            qp, page_token, page_size = _pm12_params(request)
+            return _pm12_strategy_allocation_response(st, query_params=qp, page_token=page_token, page_size=page_size, utc_now_fn=utc_now)
         allocations = _project_allocations(capital_pool_id, include_risk_limits=True)
         return _readback_response(allocations, meta={"snapshot_at": utc_now(), "total": len(allocations), "policy": "read_only_strategy_allocation"}, items=allocations)
 
     # 17. Capital flow projection from rebalance records.
     @router.get("/bff/management/capital-flow")
     async def bff_management_capital_flow(
+        request: Request,
         capital_pool_id: Optional[str] = None, authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
         _require_read(authorization)
+        st = resolved_get_read_store()
+        if st is not None and hasattr(st, "list_runtime_bindings"):
+            qp, page_token, page_size = _pm12_params(request)
+            return _pm12_capital_flow_response(st, query_params=qp, page_token=page_token, page_size=page_size, utc_now_fn=utc_now)
         try:
             rows = service.list_rebalances(capital_pool_id_value=capital_pool_id)
         except Exception as exc:
@@ -567,18 +622,28 @@ def create_capital_router(
     # 18. Portfolio book root.
     @router.get("/bff/management/portfolio-book")
     async def bff_management_portfolio_book(
+        request: Request,
         authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
         _require_read(authorization)
+        st = resolved_get_read_store()
+        if st is not None and hasattr(st, "list_runtime_bindings"):
+            qp, page_token, page_size = _pm12_params(request)
+            return _pm12_portfolio_book_response(st, query_params=qp, page_token=page_token, page_size=page_size, utc_now_fn=utc_now)
         rows = _portfolio_or_error()
         return _readback_response({"pools": rows, "pool_count": len(rows)}, meta={"snapshot_at": utc_now(), "policy": "read_only_portfolio_book"})
 
     # 19. Portfolio pool cards.
     @router.get("/bff/management/portfolio-book/pools")
     async def bff_management_portfolio_book_pools(
+        request: Request,
         authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
         _require_read(authorization)
+        st = resolved_get_read_store()
+        if st is not None and hasattr(st, "list_runtime_bindings"):
+            qp, page_token, page_size = _pm12_params(request)
+            return _pm12_portfolio_book_pools_response(st, query_params=qp, page_token=page_token, page_size=page_size, utc_now_fn=utc_now)
         rows = _portfolio_or_error()
         pools = [row["pool"] for row in rows]
         return _readback_response(pools, meta={"snapshot_at": utc_now(), "total": len(pools)}, items=pools)
@@ -586,9 +651,14 @@ def create_capital_router(
     # 20. Portfolio exposure projection.
     @router.get("/bff/management/portfolio-book/exposure")
     async def bff_management_portfolio_book_exposure(
+        request: Request,
         authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
         _require_read(authorization)
+        st = resolved_get_read_store()
+        if st is not None and hasattr(st, "list_runtime_bindings"):
+            qp, page_token, page_size = _pm12_params(request)
+            return _pm12_portfolio_book_exposure_response(st, query_params=qp, page_token=page_token, page_size=page_size, utc_now_fn=utc_now)
         rows = _portfolio_or_error()
         exposure = [{
             "capital_pool_id": row["capital_pool_id"],
@@ -601,18 +671,28 @@ def create_capital_router(
     # 21. Portfolio holdings are the allocation rows with a durable pool identity.
     @router.get("/bff/management/portfolio-book/holdings")
     async def bff_management_portfolio_book_holdings(
+        request: Request,
         capital_pool_id: Optional[str] = None, authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
         _require_read(authorization)
+        st = resolved_get_read_store()
+        if st is not None and hasattr(st, "list_runtime_bindings"):
+            qp, page_token, page_size = _pm12_params(request)
+            return _pm12_portfolio_book_holdings_response(st, query_params=qp, page_token=page_token, page_size=page_size, utc_now_fn=utc_now)
         holdings = _project_allocations(capital_pool_id)
         return _readback_response(holdings, meta={"snapshot_at": utc_now(), "total": len(holdings)}, items=holdings)
 
     # 22. Positions reuse allocation facts but retain the capital risk boundary.
     @router.get("/bff/management/portfolio-book/positions")
     async def bff_management_portfolio_book_positions(
+        request: Request,
         capital_pool_id: Optional[str] = None, authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
         _require_read(authorization)
+        st = resolved_get_read_store()
+        if st is not None and hasattr(st, "list_runtime_bindings"):
+            qp, page_token, page_size = _pm12_params(request)
+            return _pm12_portfolio_book_positions_response(st, query_params=qp, page_token=page_token, page_size=page_size, utc_now_fn=utc_now)
         positions = _project_allocations(capital_pool_id, include_risk_limits=True)
         return _readback_response(positions, meta={"snapshot_at": utc_now(), "total": len(positions)}, items=positions)
 
@@ -632,9 +712,14 @@ def create_capital_router(
     # 24. Compact operator board pack assembled solely from capital readbacks.
     @router.get("/bff/management/board-pack")
     async def bff_management_board_pack(
+        request: Request,
         authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
         _require_read(authorization)
+        st = resolved_get_read_store()
+        if st is not None and hasattr(st, "list_runtime_bindings"):
+            qp = dict(request.query_params)
+            return await _pm12_board_pack_response(st, query_params=qp, authorization=authorization, utc_now_fn=utc_now)
         rows = _portfolio_or_error()
         try:
             rebalances = service.list_rebalances()
