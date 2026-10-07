@@ -39,6 +39,7 @@ READERS = {
     "EVOLUTION_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-evolution-approval-reader", "approval_reader"),
     "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-registry-reader", "registry-reader"),
     "PERSONA_EVALUATOR_BFF_TOKEN": ("pantheon-dev-persona-evaluator-bff-reader", "viewer"),
+    "TRAINING_SESSION_SOURCE_READ_TOKEN": ("pantheon-dev-training-session-source-reader", "source_ingest_reader"),
 }
 WRITERS = {
     "DISTILLATION_REGISTRY_SERVICE_TOKEN": (
@@ -69,6 +70,7 @@ CONSUMER_FILES = {
     "strategy-distillation-worker": ("DISTILLATION_REGISTRY_SERVICE_TOKEN",),
     "alpha-replication-worker": ("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN",),
     "persona-evaluator-agent": ("PERSONA_EVALUATOR_BFF_TOKEN", "PERSONA_EVALUATOR_GOVERNANCE_TOKEN"),
+    "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN",),
 }
 REFRESH_SECONDS = 60 * 60
 

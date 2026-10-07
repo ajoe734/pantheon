@@ -50,6 +50,7 @@ from persona_target import (
 from source_dataset_authority import (
     SourceDatasetAuthorityError,
     materialize_source_dataset_version,
+    source_read_headers,
     urllib_json_get,
 )
 from policy_lineage import (
@@ -858,8 +859,14 @@ def _load_authority_snapshot(*, trusted_now: datetime, strategy_id: str) -> Eval
             )
         try:
             timeout = float(os.getenv("TRAINING_SESSION_SOURCE_AUTHORITY_TIMEOUT_SECONDS", "5"))
+            read_headers = source_read_headers(
+                os.getenv("TRAINING_SESSION_SOURCE_READ_TOKEN_FILE"),
+                os.getenv("TRAINING_SESSION_SOURCE_READ_TENANT_ID"),
+            )
             materialized = materialize_source_dataset_version(
-                http_get=lambda url: urllib_json_get(url, timeout_seconds=timeout),
+                http_get=lambda url: urllib_json_get(
+                    url, timeout_seconds=timeout, headers=read_headers
+                ),
                 source_api_url=source_api_url,
                 connector_id=connector_id,
                 dataset_id=dataset_id,

@@ -779,3 +779,89 @@ def test_tw_symbol_canonical_disagreement_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(SourceDatasetAuthorityError, match="symbol_canonical"):
         _materialize(case)
+
+
+def test_list_access_scope_is_accepted(tmp_path: Path) -> None:
+    case = _make_tw_case(tmp_path)
+    case.responses[READBACK_URL]["connectors"][0]["latest_source_record"]["provenance"][
+        "access_scope"
+    ] = ["public", "research"]
+
+    assert _materialize(case).path.exists()
+
+
+@pytest.mark.parametrize("scope", [[], [""], ["public", 1], None, "", 7, {"a": "b"}])
+def test_invalid_access_scope_fails_closed(tmp_path: Path, scope: Any) -> None:
+    case = _make_tw_case(tmp_path)
+    case.responses[READBACK_URL]["connectors"][0]["latest_source_record"]["provenance"][
+        "access_scope"
+    ] = scope
+
+    with pytest.raises(SourceDatasetAuthorityError, match="access_scope"):
+        _materialize(case)
+
+
+def test_source_read_headers_send_bearer_and_tenant(tmp_path: Path) -> None:
+    token = tmp_path / "token"
+    token.write_text("aaa.bbb.ccc\n", encoding="utf-8")
+    token.chmod(0o600)
+
+    assert AUTHORITY.source_read_headers(str(token), "tenant-dev") == {
+        "Authorization": "Bearer aaa.bbb.ccc",
+        "X-Tenant-Id": "tenant-dev",
+    }
+
+
+@pytest.mark.parametrize("variant", ["unset", "missing", "empty", "bad_tenant", "wildcard", "unsafe_mode", "symlink", "whitespace"])
+def test_source_read_headers_fail_closed(tmp_path: Path, variant: str) -> None:
+    token = tmp_path / "token"
+    token.write_text(
+        "" if variant == "empty" else "aaa bbb" if variant == "whitespace" else "aaa.bbb.ccc",
+        encoding="utf-8",
+    )
+    token.chmod(0o644 if variant == "unsafe_mode" else 0o600)
+    path: Any = str(token)
+    tenant = "tenant-dev"
+    if variant == "unset":
+        path = None
+    elif variant == "missing":
+        path = str(tmp_path / "absent")
+    elif variant == "symlink":
+        link = tmp_path / "link"
+        link.symlink_to(token)
+        path = str(link)
+    elif variant == "bad_tenant":
+        tenant = ""
+    elif variant == "wildcard":
+        tenant = "*"
+
+    with pytest.raises(SourceDatasetAuthorityError):
+        AUTHORITY.source_read_headers(path, tenant)
+
+
+def test_urllib_json_get_sends_supplied_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, _n: int) -> bytes:
+            return b'{"ok": true}'
+
+    def fake_urlopen(request, timeout):
+        seen["headers"] = {k.lower(): v for k, v in request.header_items()}
+        return _Response()
+
+    monkeypatch.setattr(AUTHORITY.urllib.request, "urlopen", fake_urlopen)
+
+    payload = AUTHORITY.urllib_json_get(
+        BASE_URL + "/x", headers={"Authorization": "Bearer t", "X-Tenant-Id": "tenant-dev"}
+    )
+
+    assert payload == {"ok": True}
+    assert seen["headers"]["authorization"] == "Bearer t"
+    assert seen["headers"]["x-tenant-id"] == "tenant-dev"
