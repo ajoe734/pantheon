@@ -1014,6 +1014,15 @@ def _validate_terminal_readback(
     return validated_frontier_backlog
 
 
+_SOURCE_HEALTH_DERIVED_FIELDS = frozenset({"staleness_seconds"})
+
+
+def _persisted_source_health(health: Any) -> Any:
+    if isinstance(health, Mapping):
+        return {k: v for k, v in health.items() if k not in _SOURCE_HEALTH_DERIVED_FIELDS}
+    return health
+
+
 def _validate_due_state_readback(
     *,
     reconcile: Mapping[str, Any],
@@ -1135,7 +1144,9 @@ def _validate_due_state_readback(
                             reconcile=reconcile,
                             actual_readback=actual,
                         )
-                    if pre_c.get("source_health") != act_c.get("source_health"):
+                    pre_health = _persisted_source_health(pre_c.get("source_health"))
+                    act_health = _persisted_source_health(act_c.get("source_health"))
+                    if pre_health != act_health:
                         raise ControllerTickError(
                             "provider_boundary",
                             f"reconcile-only tick mutated source_health for non-executed connector {cid}",

@@ -1066,6 +1066,43 @@ def test_due_state_readback_rejects_mutating_non_executed_connector_health() -> 
     assert raised.value.stage == "provider_boundary"
 
 
+def test_due_state_readback_accepts_staleness_seconds_drift_for_non_executed_connector() -> None:
+    pre_actual = _simulation_actual_readback(record_count=1, has_sim_record=False, include_official=True)
+    actual = _simulation_actual_readback(record_count=6, has_sim_record=True, include_official=True)
+    pre_actual["connectors"][0]["source_health"]["staleness_seconds"] = 186381
+    actual["connectors"][0]["source_health"]["staleness_seconds"] = 186386
+
+    _validate_due_state_readback(
+        reconcile=_simulation_reconcile(),
+        pre_actual=pre_actual,
+        actual=actual,
+        expected_controller_id="source-ingestion-test:generation-test",
+        expected_sequence_no=1,
+        expected_deployment=_deployment(),
+        executed_connector_ids=(SIMULATION_CONNECTOR_ID,),
+    )
+
+
+def test_due_state_readback_rejects_mutating_non_executed_connector_last_failure_at() -> None:
+    pre_actual = _simulation_actual_readback(record_count=1, has_sim_record=False, include_official=True)
+    actual = _simulation_actual_readback(record_count=6, has_sim_record=True, include_official=True)
+    pre_actual["connectors"][0]["source_health"]["last_failure_at"] = None
+    actual["connectors"][0]["source_health"]["last_failure_at"] = "2026-10-07T12:00:00Z"
+
+    with pytest.raises(ControllerTickError, match="mutated source_health for non-executed connector") as raised:
+        _validate_due_state_readback(
+            reconcile=_simulation_reconcile(),
+            pre_actual=pre_actual,
+            actual=actual,
+            expected_controller_id="source-ingestion-test:generation-test",
+            expected_sequence_no=1,
+            expected_deployment=_deployment(),
+            executed_connector_ids=(SIMULATION_CONNECTOR_ID,),
+        )
+    assert raised.value.stage == "provider_boundary"
+
+
+
 def test_terminal_readback_accepts_resolved_historical_dead_letters() -> None:
     actual = _actual_readback()
     actual["dlq_count"] = 1
@@ -1711,6 +1748,137 @@ def test_run_controller_tick_mixed_connectors_only_executes_egress_free_in_recon
     assert call["exclusive_connector_ids"] == [SIMULATION_CONNECTOR_ID]
     assert CONNECTOR_ID not in call["force_connector_ids"]
     assert CONNECTOR_ID not in call["exclusive_connector_ids"]
+
+
+def test_run_controller_tick_reconcile_only_accepts_staleness_seconds_drift_for_non_executed_connector(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    config = _config(
+        tmp_path,
+        truth_level="scheduled_tick",
+        mode=RECONCILE_ONLY_MODE,
+    )
+    state = _state()
+    store = RecordingStateStore(config.state_path, events)
+    writer = RecordingWriter(events)
+
+    def load_desired_state(*, timeout_seconds: float) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
+        return (*_personas(), *_simulation_personas()), _desired_meta()
+
+    def reconcile_desired_state(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "desired_state_sha256": "desired-state-sha",
+            "summary": {"total": 2, "satisfied": 2},
+            "results": [
+                {
+                    "persona_id": "persona-source-test",
+                    "actions": [{"dataset": DATASET, "connector_id": CONNECTOR_ID, "status": "satisfied"}],
+                },
+                {
+                    "persona_id": "persona-sim-test",
+                    "actions": [{"dataset": SIMULATION_DATASET, "connector_id": SIMULATION_CONNECTOR_ID, "status": "satisfied"}],
+                },
+            ],
+        }
+
+    read_count = 0
+
+    def read_actual_state(**kwargs: Any) -> dict[str, Any]:
+        nonlocal read_count
+        read_count += 1
+        base = _actual_readback()
+        base["connectors"][0]["source_health"]["staleness_seconds"] = 186381 if read_count == 1 else 186386
+        base["connectors"].append(_simulation_connector_readback(has_record=(read_count > 1)))
+        base["connector_count"] = 2
+        base["source_record_count"] = 1 if read_count == 1 else 6
+        return base
+
+    def run_schedule_tick(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "summary": {
+                "total_ran": 1,
+                "total_skipped": 0,
+                "total_failed": 0,
+                "total_enqueued": 1,
+            }
+        }
+
+    monkeypatch.setattr(controller_worker, "load_desired_state", load_desired_state)
+    monkeypatch.setattr(controller_worker, "reconcile_desired_state", reconcile_desired_state)
+    monkeypatch.setattr(controller_worker, "read_actual_state", read_actual_state)
+    monkeypatch.setattr(controller_worker, "run_schedule_tick", run_schedule_tick)
+
+    result = run_controller_tick(config=config, state=state, store=store, writer=writer)
+    assert result["status"] == "ok"
+
+
+def test_run_controller_tick_reconcile_only_rejects_last_failure_at_drift_for_non_executed_connector(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    config = _config(
+        tmp_path,
+        truth_level="scheduled_tick",
+        mode=RECONCILE_ONLY_MODE,
+    )
+    state = _state()
+    store = RecordingStateStore(config.state_path, events)
+    writer = RecordingWriter(events)
+
+    def load_desired_state(*, timeout_seconds: float) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
+        return (*_personas(), *_simulation_personas()), _desired_meta()
+
+    def reconcile_desired_state(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "desired_state_sha256": "desired-state-sha",
+            "summary": {"total": 2, "satisfied": 2},
+            "results": [
+                {
+                    "persona_id": "persona-source-test",
+                    "actions": [{"dataset": DATASET, "connector_id": CONNECTOR_ID, "status": "satisfied"}],
+                },
+                {
+                    "persona_id": "persona-sim-test",
+                    "actions": [{"dataset": SIMULATION_DATASET, "connector_id": SIMULATION_CONNECTOR_ID, "status": "satisfied"}],
+                },
+            ],
+        }
+
+    read_count = 0
+
+    def read_actual_state(**kwargs: Any) -> dict[str, Any]:
+        nonlocal read_count
+        read_count += 1
+        base = _actual_readback()
+        if read_count > 1:
+            base["connectors"][0]["source_health"]["last_failure_at"] = "2026-10-07T12:00:00Z"
+        base["connectors"].append(_simulation_connector_readback(has_record=(read_count > 1)))
+        base["connector_count"] = 2
+        base["source_record_count"] = 1 if read_count == 1 else 6
+        return base
+
+    def run_schedule_tick(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "summary": {
+                "total_ran": 1,
+                "total_skipped": 0,
+                "total_failed": 0,
+                "total_enqueued": 1,
+            }
+        }
+
+    monkeypatch.setattr(controller_worker, "load_desired_state", load_desired_state)
+    monkeypatch.setattr(controller_worker, "reconcile_desired_state", reconcile_desired_state)
+    monkeypatch.setattr(controller_worker, "read_actual_state", read_actual_state)
+    monkeypatch.setattr(controller_worker, "run_schedule_tick", run_schedule_tick)
+
+    with pytest.raises(ControllerTickError, match="mutated source_health for non-executed connector") as raised:
+        run_controller_tick(config=config, state=state, store=store, writer=writer)
+    assert raised.value.stage == "provider_boundary"
+
 
 
 def test_run_controller_tick_reconcile_only_fails_when_egress_free_schedule_fails(

@@ -1,0 +1,33 @@
+{
+  "task_id": "SOURCE-CONTROLLER-HEALTH-BOUNDARY-20261007",
+  "change_class": "corrective",
+  "net_prod_line_budget": 30,
+  "summary": "Stop the reconcile-only provider boundary check from failing on read-time derived source health fields (staleness_seconds) while preserving strict equality on all persisted source health fields.",
+  "incident_context": {
+    "hosted_deploy_run": "37614660335",
+    "deploy_sha": "857d3e5d89b5726b6ddb28cbacf9bbe776121bc7",
+    "included_pr": "https://github.com/ajoe734/pantheon/pull/6283",
+    "operator_readback_time": "2026-10-07T12:01:00Z",
+    "symptom": "pantheon-source-ingest-scheduler-1 running restarts=0 health=unhealthy, logging 'ControllerTickError: reconcile-only tick mutated source_health for non-executed connector tw-twse-tpex-official-market' stage provider_boundary on ticks 6..10",
+    "root_cause": "Two GET /api/source-ingest/controller/readback calls 5s apart differ in source_health.staleness_seconds (tw-twse-tpex-official-market 186381 -> 186386) because staleness_seconds is dynamically computed at read time from freshness.staleness_seconds; the provider boundary check compared pre_c.get('source_health') != act_c.get('source_health') directly",
+    "resolution": "Define _SOURCE_HEALTH_DERIVED_FIELDS = frozenset({'staleness_seconds'}) and _persisted_source_health() helper next to the check in services/source_ingestion/controller_worker.py, ignoring read-time derived fields while strictly comparing all persisted source health fields (status, last_success_at, last_failure_at, updated_at, row and error counts, latest_source_record)"
+  },
+  "acceptance_verification": {
+    "ac1_persisted_health_mutation_fails_derived_ignored": "passed: _persisted_source_health strips _SOURCE_HEALTH_DERIVED_FIELDS ('staleness_seconds') before comparison, preserving checks on status, last_success_at, last_failure_at, updated_at, and counts",
+    "ac2_derived_exclusion_defined_once_next_to_check": "passed: _SOURCE_HEALTH_DERIVED_FIELDS = frozenset({'staleness_seconds'}) defined once directly preceding _validate_due_state_readback in services/source_ingestion/controller_worker.py",
+    "ac3_test_staleness_drift_succeeds_last_failure_at_fails": "passed: test_due_state_readback_accepts_staleness_seconds_drift_for_non_executed_connector, test_due_state_readback_rejects_mutating_non_executed_connector_last_failure_at, and matching run_controller_tick tests pass",
+    "ac4_hosted_dev_external_wait": "recorded: hosted dev source-ingest-scheduler verification recorded as external_wait pending automated dev pair release",
+    "ac5_no_compressed_code_line_budget": "passed: net production code diff is +11 lines in controller_worker.py (under the 30-line budget) with no compressed syntax"
+  },
+  "local_verification": {
+    "commands": [
+      "uv run --with pytest --with-requirements services/source_ingestion/requirements.txt pytest services/source_ingestion/tests/test_controller_worker.py",
+      "python3 $PANTHEON_COMMAND_ROOT/scripts/git/diff_budget.py --base origin/dev --budget 30 --change-class corrective"
+    ],
+    "result": "passed (all 104 controller worker tests pass; net prod line budget satisfied: +11 <= 30)"
+  },
+  "hosted_track": {
+    "status": "external_wait",
+    "detail": "Hosted dev source-ingest-scheduler container health will be verified healthy (ticks 11+ pass) after the next automatic dev pair release deploys this fix"
+  }
+}
