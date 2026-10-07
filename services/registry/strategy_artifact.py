@@ -94,9 +94,6 @@ _FX_MARKET_TOKENS: frozenset[str] = frozenset({
     "OANDA",
 })
 
-_CRYPTO_QUOTE_SUFFIXES: tuple[str, ...] = ("USDT", "USD", "BTC", "ETH", "BNB", "USDC")
-
-
 def classify_market_token(token: Any) -> str | None:
     """Classify a market token or venue string into a canonical market category."""
     if not token or not isinstance(token, str):
@@ -116,15 +113,11 @@ def classify_market_token(token: Any) -> str | None:
 
 
 def intrinsic_symbol_market(symbol: str) -> str | None:
-    """Detect intrinsic market from dotted suffix or known crypto pair format."""
+    """Detect intrinsic market from dotted suffix."""
     s = str(symbol or "").strip()
     if "." in s:
         suffix = s.rsplit(".", 1)[1]
         return classify_market_token(suffix)
-    upper = s.upper().replace("/", "")
-    for quote in _CRYPTO_QUOTE_SUFFIXES:
-        if upper.endswith(quote) and len(upper) > len(quote):
-            return "CRYPTO"
     return None
 
 

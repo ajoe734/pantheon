@@ -9,6 +9,49 @@
     "observed_issue": "In dev-paper-release-37553990288-1 (source-context-2.json), bff.persona_provisioning request contained market 'US', but PersonaProvisioningCoordinator._strategy_artifact_payload and deployment metadata dropped record.request_payload.market. Registry artifact approved bundle parameters contained symbols ['SPY'] with no market field. PaperSignalProducer with CurrentArtifactStrategy correctly failed closed with market_context_missing under #6232 rather than guessing from dataset strings.",
     "repair_strategy": "Propagate explicit market from record.request_payload upfront before checksum, immutable parameters, and governance approval. Zero in-place mutation of old approved bundles; reject contradictory or unsupported contexts; do not guess when market is absent."
   },
+  "counterexamples_remediation": {
+    "issue_description": "Initial implementation at head 8065b36d used bare quote suffixes (_CRYPTO_QUOTE_SUFFIXES) to guess crypto market, causing canonical_market_context('US', ['ABNB']) to reject Airbnb as CRYPTO (due to BNB suffix), ('US', ['GBTC']) to reject GBTC as CRYPTO (due to BTC suffix), and ('FX', ['EURUSD']) to reject bare EURUSD as CRYPTO (due to USD suffix).",
+    "remediation": "Removed guessed instrument classification from bare quote suffixes in services/registry/strategy_artifact.py. Intrinsic market is now detected strictly from dotted suffixes (e.g. .TW, .US, .CRYPTO, .FX). Bare symbols defer to explicit authoritative owner market without guessing.",
+    "verified_counterexamples": [
+      {
+        "market": "US",
+        "symbol": "ABNB",
+        "result": "US"
+      },
+      {
+        "market": "US",
+        "symbol": "GBTC",
+        "result": "US"
+      },
+      {
+        "market": "FX",
+        "symbol": "EURUSD",
+        "result": "FX"
+      },
+      {
+        "market": "US",
+        "symbol": "SPY",
+        "result": "US"
+      }
+    ],
+    "retained_dotted_contradictions": [
+      {
+        "market": "US",
+        "symbol": "2330.TW",
+        "error": "symbol '2330.TW' intrinsic market 'TW' contradicts explicit market 'US'"
+      },
+      {
+        "market": "TW",
+        "symbol": "SPY.US",
+        "error": "symbol 'SPY.US' intrinsic market 'US' contradicts explicit market 'TW'"
+      },
+      {
+        "market": "US",
+        "symbol": "BTCUSD.CRYPTO",
+        "error": "symbol 'BTCUSD.CRYPTO' intrinsic market 'CRYPTO' contradicts explicit market 'US'"
+      }
+    ]
+  },
   "acceptance_verification": {
     "criteria_1_pre_approval_authority": {
       "statement": "Use existing persisted explicit market as source of authority before artifact checksum and governance approval",
@@ -38,15 +81,15 @@
     "criteria_6_review_and_canonical_integration": {
       "statement": "Independent exact-head review and canonical integration followed by separately coordinated natural hosted evidence",
       "status": "READY_FOR_REVIEW",
-      "detail": "Exact-head task commit, push, PR creation, and governed handoff to Claude."
+      "detail": "Exact-head task commit, push, PR update, and governed handoff to Claude."
     }
   },
   "validation_results": {
-    "services/registry/test_strategy_artifact.py": "41 passed",
-    "services/control-plane/bff/test_persona_provisioning_coordinator.py": "20 passed",
+    "services/registry/test_strategy_artifact.py": "44 passed",
+    "services/control-plane/bff/test_persona_provisioning_coordinator.py": "21 passed",
     "services/control-plane/bff/test_persona_provisioning_readback.py": "54 passed",
     "services/execution/lean_runtime/test_current_artifact_signal.py": "10 passed",
-    "total_passed": 125,
+    "total_passed": 129,
     "total_failed": 0
   },
   "scoped_artifacts": [

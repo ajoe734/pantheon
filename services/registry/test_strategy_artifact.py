@@ -19,6 +19,7 @@ from .strategy_artifact import (
     BUILTIN_STRATEGY_ARTIFACT_PATHS,
     StrategyArtifactValidationError,
     build_strategy_artifact_registry_payload,
+    canonical_market_context,
     evaluate_strategy_action,
     load_strategy_artifact_registration,
     mutate_strategy_artifact,
@@ -601,5 +602,46 @@ def test_strategy_artifact_mutation_cannot_modify_immutable_market():
             parameter_updates={"market": "TW"},
             source_run_ids=["training-session-market"],
         )
+
+
+def test_canonical_market_context_bare_quote_suffixes_do_not_override_owner_market():
+    # ABNB ends in BNB, GBTC ends in BTC, EURUSD ends in USD - none should guess CRYPTO
+    assert canonical_market_context("US", ["ABNB"]) == "US"
+    assert canonical_market_context("US", ["GBTC"]) == "US"
+    assert canonical_market_context("FX", ["EURUSD"]) == "FX"
+    assert canonical_market_context("US", ["SPY"]) == "US"
+
+
+def test_canonical_market_context_retains_real_dotted_market_contradictions():
+    with pytest.raises(StrategyArtifactValidationError, match="symbol '2330.TW' intrinsic market 'TW' contradicts explicit market 'US'"):
+        canonical_market_context("US", ["2330.TW"])
+
+    with pytest.raises(StrategyArtifactValidationError, match="symbol 'SPY.US' intrinsic market 'US' contradicts explicit market 'TW'"):
+        canonical_market_context("TW", ["SPY.US"])
+
+    with pytest.raises(StrategyArtifactValidationError, match="symbol 'BTCUSD.CRYPTO' intrinsic market 'CRYPTO' contradicts explicit market 'US'"):
+        canonical_market_context("US", ["BTCUSD.CRYPTO"])
+
+    with pytest.raises(StrategyArtifactValidationError, match="symbol 'ETH.US' intrinsic market 'US' contradicts explicit market 'CRYPTO'"):
+        canonical_market_context("CRYPTO", ["ETH.US"])
+
+    with pytest.raises(StrategyArtifactValidationError, match="symbol 'EURUSD.CRYPTO' intrinsic market 'CRYPTO' contradicts explicit market 'FX'"):
+        canonical_market_context("FX", ["EURUSD.CRYPTO"])
+
+
+def test_strategy_artifact_accepts_bare_symbols_with_explicit_market():
+    # US equity artifact with ABNB and GBTC
+    us_artifact = copy.deepcopy(_artifact())
+    us_artifact["parameters"]["symbols"] = ["ABNB", "GBTC", "SPY"]
+    us_artifact["parameters"]["market"] = "US"
+    us_artifact["mutation_surface"]["immutable_parameters"].append("market")
+    validate_strategy_artifact(us_artifact)
+
+    # FX artifact with EURUSD
+    fx_artifact = copy.deepcopy(_artifact())
+    fx_artifact["parameters"]["symbols"] = ["EURUSD"]
+    fx_artifact["parameters"]["market"] = "FX"
+    fx_artifact["mutation_surface"]["immutable_parameters"].append("market")
+    validate_strategy_artifact(fx_artifact)
 
 

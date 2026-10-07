@@ -1674,3 +1674,57 @@ def test_coordinator_omits_market_when_unspecified_preserving_legacy_behavior() 
     assert "market" not in forward_artifact["mutation_surface"]["immutable_parameters"]
     assert "market" not in forward_entry["metadata"]
 
+
+def test_coordinator_accepts_bare_symbols_with_explicit_market_without_guessing() -> None:
+    # ABNB / GBTC in US market
+    store = TrackingStore()
+    record, created = store.reserve(
+        tenant_id="tenant-us-bare",
+        idempotency_key="create-persona-us-bare",
+        request_hash="sha256:persona-us-bare-request",
+        normalized_name="trader us bare",
+        persona_id="persona-us-bare",
+        request_payload={
+            "name": "Trader US Bare",
+            "market": "US",
+            "symbols": ["ABNB", "GBTC"],
+            "requested_by": "operator-us",
+            "mandate": "US paper momentum bare symbols",
+        },
+    )
+    assert created
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+    assert result.state == "provisioning"
+    ids = deterministic_provisioning_ids(record)
+    artifact_view = transport.objects[("registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}")]
+    forward_artifact = artifact_view["entry"]["metadata"]["strategy_artifact"]
+    assert forward_artifact["parameters"]["market"] == "US"
+    assert forward_artifact["parameters"]["symbols"] == ["ABNB", "GBTC"]
+
+    # EURUSD in FX market
+    record_fx, created_fx = store.reserve(
+        tenant_id="tenant-fx-bare",
+        idempotency_key="create-persona-fx-bare",
+        request_hash="sha256:persona-fx-bare-request",
+        normalized_name="trader fx bare",
+        persona_id="persona-fx-bare",
+        request_payload={
+            "name": "Trader FX Bare",
+            "market": "FX",
+            "symbols": ["EURUSD"],
+            "requested_by": "operator-fx",
+            "mandate": "FX paper momentum bare symbols",
+        },
+    )
+    assert created_fx
+    result_fx = coordinator.coordinate(record_fx)
+    assert result_fx.state == "provisioning"
+    ids_fx = deterministic_provisioning_ids(record_fx)
+    artifact_view_fx = transport.objects[("registry", f"/api/registry/strategy-artifacts/{ids_fx.strategy_artifact_id}")]
+    forward_artifact_fx = artifact_view_fx["entry"]["metadata"]["strategy_artifact"]
+    assert forward_artifact_fx["parameters"]["market"] == "FX"
+    assert forward_artifact_fx["parameters"]["symbols"] == ["EURUSD"]
+
