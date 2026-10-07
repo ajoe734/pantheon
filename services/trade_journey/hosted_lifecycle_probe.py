@@ -13,6 +13,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -27,7 +28,15 @@ from services.execution.market_snapshot_admission import (
     is_taiwan_symbol,
     parse_rfc3339,
 )
-from services.source_ingestion.requirement_state import LatestMarketSnapshotStore, _checksum
+from services.source_ingestion.requirement_state import (
+    MARKET_SNAPSHOT_SCHEMA_VERSION,
+    LatestMarketSnapshot,
+    LatestMarketSnapshotStore,
+    MarketSnapshotStateError,
+    _MARKET_SNAPSHOT_STATE_OPTIONAL_FIELDS,
+    _MARKET_SNAPSHOT_STATE_REQUIRED_FIELDS,
+    _checksum,
+)
 from services.trade_journey.telemetry_rows import decode_event_payload
 from services.trade_journey.lifecycle_projector import (
     JOURNEY_STORE_SCHEMA,
@@ -43,6 +52,7 @@ TASK_ID = "LIFECYCLE-PROJ-CUTOVER-001"
 NATURAL_PRODUCER = "paper-signal-producer"
 NATURAL_INTERPRETER = "services.registry.strategy_artifact:evaluate_strategy_action"
 _SNAPSHOT_ID_RE = re.compile(r"^mss-[0-9a-fA-F]{24}$")
+_SNAPSHOT_STATE_FIELDS = _MARKET_SNAPSHOT_STATE_REQUIRED_FIELDS | _MARKET_SNAPSHOT_STATE_OPTIONAL_FIELDS
 REQUIRED_EVENT_TYPES = (
     "signal_generation",
     "trade_decision",
@@ -479,33 +489,69 @@ def _complete_candidates(
 
 
 def _bind_source_snapshot(snap: Mapping[str, Any], prov: Mapping[str, Any]) -> None:
+    if not isinstance(snap, Mapping):
+        raise ProbeError("invalid_snapshot_schema", "snapshot must be a mapping")
+    s_schema = str(snap.get("schema_version") or "").strip()
+    if s_schema != MARKET_SNAPSHOT_SCHEMA_VERSION:
+        raise ProbeError("invalid_snapshot_schema", f"unsupported snapshot schema version: {s_schema!r}")
     snap_id = str(prov.get("market_input_snapshot_id") or "").strip()
     s_snap_id = str(snap.get("snapshot_id") or "").strip()
-    if not s_snap_id or s_snap_id != snap_id:
+    if not s_snap_id or not _SNAPSHOT_ID_RE.match(s_snap_id) or s_snap_id != snap_id:
         raise ProbeError("invalid_snapshot_id", f"snapshot ID mismatch: {s_snap_id!r} != {snap_id!r}")
     ref = str(prov.get("market_input_ref") or "").strip()
-    s_ref = str(snap.get("source_ref") or f"source-ingest://snapshots/{s_snap_id}").strip()
-    if s_ref != ref:
+    s_ref = str(snap.get("source_ref") or "").strip()
+    if not s_ref or s_ref != f"source-ingest://snapshots/{s_snap_id}" or s_ref != ref:
         raise ProbeError("invalid_lineage", f"snapshot ref mismatch: {s_ref!r} != {ref!r}")
+    s_sym = str(snap.get("symbol") or "").strip()
+    p_sym = str(prov.get("raw_symbol") or "").strip()
+    if not s_sym or (p_sym and s_sym != p_sym):
+        raise ProbeError("invalid_lineage", f"snapshot symbol mismatch: {s_sym!r} != {p_sym!r}")
     s_evt = str(snap.get("event_time") or "").strip()
     p_evt = str(prov.get("market_input_event_time") or "").strip()
-    if s_evt and p_evt and s_evt != p_evt:
+    if not s_evt or not p_evt or s_evt != p_evt:
         raise ProbeError("invalid_freshness", f"snapshot event_time mismatch: {s_evt!r} != {p_evt!r}")
+    s_evt_dt, err_e = parse_rfc3339(s_evt, field_name="snapshot event_time")
+    if err_e or s_evt_dt is None:
+        raise ProbeError("invalid_freshness", f"snapshot event_time invalid: {err_e}")
     s_obs = str(snap.get("observed_at") or "").strip()
     p_obs = str(prov.get("market_input_observed_at") or "").strip()
-    if s_obs and p_obs and s_obs != p_obs:
+    if not s_obs or not p_obs or s_obs != p_obs:
         raise ProbeError("invalid_freshness", f"snapshot observed_at mismatch: {s_obs!r} != {p_obs!r}")
+    s_obs_dt, err_o = parse_rfc3339(s_obs, field_name="snapshot observed_at")
+    if err_o or s_obs_dt is None:
+        raise ProbeError("invalid_freshness", f"snapshot observed_at invalid: {err_o}")
+    closes = snap.get("closes")
+    if not isinstance(closes, Sequence) or isinstance(closes, (str, bytes)) or len(closes) < 2:
+        raise ProbeError("invalid_lineage", "snapshot closes must contain at least 2 entries")
+    for i, c in enumerate(closes):
+        try:
+            val = float(c)
+            if not math.isfinite(val) or val <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ProbeError("invalid_lineage", f"snapshot close at index {i} is invalid ({c!r})")
     s_lin = snap.get("lineage")
     p_lin = prov.get("market_input_lineage")
-    if isinstance(s_lin, Mapping) and isinstance(p_lin, Mapping):
-        for k in ("source_ids", "connector_ids", "content_refs", "ingest_run_ids"):
-            s_items = [str(x).strip() for x in s_lin.get(k) or () if str(x).strip()]
-            p_items = [str(x).strip() for x in p_lin.get(k) or () if str(x).strip()]
-            if s_items and p_items and sorted(s_items) != sorted(p_items):
-                raise ProbeError("invalid_lineage", f"snapshot lineage {k} mismatch")
+    if not isinstance(s_lin, Mapping) or not isinstance(p_lin, Mapping):
+        raise ProbeError("invalid_lineage", "snapshot lineage mapping is required")
+    for k in ("source_ids", "connector_ids", "content_refs", "ingest_run_ids"):
+        s_items = [str(x).strip() for x in s_lin.get(k) or () if str(x).strip()]
+        p_items = [str(x).strip() for x in p_lin.get(k) or () if str(x).strip()]
+        if not s_items:
+            raise ProbeError("invalid_lineage", f"snapshot lineage {k} is empty")
+        if not p_items or sorted(s_items) != sorted(p_items):
+            raise ProbeError("invalid_lineage", f"snapshot lineage {k} mismatch")
+    if snap.get("points") is not None:
+        try:
+            snap_dict = {k: v for k, v in snap.items() if k in _SNAPSHOT_STATE_FIELDS}
+            snap_obj = LatestMarketSnapshot.from_dict(snap_dict)
+        except Exception as exc:
+            raise ProbeError("invalid_lineage", f"snapshot points validation failed: {exc}") from exc
+        if snap_obj.snapshot_id != s_snap_id:
+            raise ProbeError("invalid_snapshot_id", f"snapshot ID mismatch with derived SHA24: {s_snap_id!r} != {snap_obj.snapshot_id!r}")
     s_chk = str(snap.get("checksum") or snap.get("data_checksum") or "").strip()
-    if not s_chk:
-        raise ProbeError("invalid_checksum", "snapshot data checksum is missing")
+    if not s_chk or s_chk == s_snap_id:
+        raise ProbeError("invalid_checksum", "snapshot data checksum is missing or invalid placeholder")
     p_chk = str(
         prov.get("market_input_checksum")
         or (p_lin.get("checksum") if isinstance(p_lin, Mapping) else "")
@@ -680,6 +726,7 @@ class AsyncpgCaseSource:
             source_base_url
             or os.getenv("PANTHEON_SOURCE_INGEST_URL")
             or os.getenv("PANTHEON_SOURCE_INGEST_API_URL")
+            or os.getenv("SOURCE_INGEST_URL")
             or os.getenv("SOURCE_INGEST_BASE_URL")
             or ""
         ).rstrip("/")
@@ -765,12 +812,54 @@ class AsyncpgCaseSource:
                 req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
                 with urllib.request.urlopen(req, timeout=5) as resp:
                     payload = json.loads(resp.read().decode("utf-8"))
-                if isinstance(payload, Mapping) and payload.get("snapshot_id") == snapshot_id:
-                    res = dict(payload)
-                    if not res.get("checksum") and not res.get("data_checksum"):
-                        res["checksum"] = snapshot_id
-                        res["data_checksum"] = snapshot_id
-                    return res
+                if not isinstance(payload, Mapping):
+                    raise ProbeError("source_snapshot_api_error", "source snapshot API returned non-object")
+                if payload.get("snapshot_id") != snapshot_id:
+                    return None
+                if str(payload.get("schema_version") or "").strip() != MARKET_SNAPSHOT_SCHEMA_VERSION:
+                    raise ProbeError("source_snapshot_api_error", "source snapshot API invalid schema_version")
+                p_sym = str(payload.get("symbol") or "").strip()
+                if not p_sym or p_sym != symbol:
+                    raise ProbeError("source_snapshot_api_error", "source snapshot API symbol mismatch")
+                for tf in ("event_time", "observed_at"):
+                    t_val = str(payload.get(tf) or "").strip()
+                    if not t_val:
+                        raise ProbeError("source_snapshot_api_error", f"source snapshot API missing {tf}")
+                    t_dt, err_t = parse_rfc3339(t_val, field_name=tf)
+                    if err_t or t_dt is None:
+                        raise ProbeError("source_snapshot_api_error", f"source snapshot API invalid {tf}: {err_t}")
+                closes = payload.get("closes")
+                if not isinstance(closes, Sequence) or isinstance(closes, (str, bytes)) or len(closes) < 2:
+                    raise ProbeError("source_snapshot_api_error", "source snapshot API invalid closes")
+                if any(not isinstance(c, (int, float)) or not math.isfinite(c) or c <= 0 for c in closes):
+                    raise ProbeError("source_snapshot_api_error", "source snapshot API closes non-positive")
+                lin = payload.get("lineage")
+                if not isinstance(lin, Mapping):
+                    raise ProbeError("source_snapshot_api_error", "source snapshot API missing lineage")
+                for k in ("source_ids", "connector_ids", "content_refs", "ingest_run_ids"):
+                    items = [str(x).strip() for x in lin.get(k) or () if str(x).strip()]
+                    if not items:
+                        raise ProbeError("source_snapshot_api_error", f"source snapshot API lineage missing {k}")
+                res = dict(payload)
+                if payload.get("points") is not None:
+                    try:
+                        snap_dict = {k: v for k, v in payload.items() if k in _SNAPSHOT_STATE_FIELDS}
+                        snap_obj = LatestMarketSnapshot.from_dict(snap_dict)
+                    except Exception as exc:
+                        raise ProbeError("source_snapshot_api_error", f"source snapshot points invalid: {exc}") from exc
+                    if snap_obj.snapshot_id != snapshot_id:
+                        raise ProbeError("source_snapshot_api_error", "snapshot ID does not match canonical points derived SHA24")
+                    res["checksum"] = _checksum(snap_obj.to_dict())
+                else:
+                    chk = str(payload.get("checksum") or payload.get("data_checksum") or "").strip()
+                    if chk == snapshot_id:
+                        raise ProbeError("source_snapshot_api_error", "source snapshot API returned ID-derived checksum placeholder")
+                    res["checksum"] = chk or _checksum(payload)
+                res["data_checksum"] = res["checksum"]
+                res.setdefault("source_ref", f"source-ingest://snapshots/{snapshot_id}")
+                return res
+            except ProbeError:
+                raise
             except Exception as exc:  # noqa: BLE001
                 raise ProbeError("source_snapshot_api_error", f"source snapshot API lookup failed: {exc}") from exc
 

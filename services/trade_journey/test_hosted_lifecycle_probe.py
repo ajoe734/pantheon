@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import os
 from pathlib import Path
@@ -130,22 +131,38 @@ def test_asyncpg_telemetry_source_filters_watermark_and_snapshot(monkeypatch):
     assert fetch[4] == 17
 
 
+from services.source_ingestion.requirement_state import (
+    LatestMarketSnapshot,
+    MarketSnapshotPoint,
+    _checksum,
+)
+
 DEFAULT_TEST_CASE_KEY = "dev-paper-release-37647100516-1"
-DEFAULT_TEST_SNAPSHOT = {
-    "snapshot_id": "mss-000000000000000000000001",
-    "source_ref": "source-ingest://snapshots/mss-000000000000000000000001",
-    "symbol": "BTC-USDT",
-    "event_time": "2026-07-15T00:00:00Z",
-    "observed_at": "2026-07-15T00:00:01Z",
-    "lineage": {
-        "source_ids": ["src-binance"],
-        "connector_ids": ["conn-binance-spot"],
-        "content_refs": ["sha256:abcd"],
-        "ingest_run_ids": ["run-001"],
-    },
-    "checksum": "sha256-approved-test-snapshot-checksum",
-    "data_checksum": "sha256-approved-test-snapshot-checksum",
-}
+_CANONICAL_P1 = MarketSnapshotPoint(
+    event_time="2026-07-14T00:00:00Z",
+    close=49000.0,
+    source_id="src-binance",
+    connector_id="conn-binance-spot",
+    content_ref="sha256:abcd",
+    ingest_run_id="run-001",
+)
+_CANONICAL_P2 = MarketSnapshotPoint(
+    event_time="2026-07-15T00:00:00Z",
+    close=50000.0,
+    source_id="src-binance",
+    connector_id="conn-binance-spot",
+    content_ref="sha256:abcd",
+    ingest_run_id="run-001",
+)
+_CANONICAL_SNAPSHOT = LatestMarketSnapshot(
+    symbol="BTC-USDT",
+    points=(_CANONICAL_P1, _CANONICAL_P2),
+    observed_at="2026-07-15T00:00:01Z",
+)
+DEFAULT_TEST_SNAPSHOT = _CANONICAL_SNAPSHOT.to_dict()
+DEFAULT_TEST_SNAPSHOT["source_ref"] = f"source-ingest://snapshots/{_CANONICAL_SNAPSHOT.snapshot_id}"
+DEFAULT_TEST_SNAPSHOT["checksum"] = _checksum(_CANONICAL_SNAPSHOT.to_dict())
+DEFAULT_TEST_SNAPSHOT["data_checksum"] = DEFAULT_TEST_SNAPSHOT["checksum"]
 DEFAULT_TEST_CASE = {
     "tenant_id": "tenant-a",
     "persona_id": "persona-paper-001",
@@ -271,16 +288,12 @@ def _natural_lifecycle_rows() -> list[dict]:
             event["plan_id"] = DEFAULT_TEST_CASE["deployment_plan_id"]
             event["persona_capital_binding_id"] = DEFAULT_TEST_CASE["persona_capital_binding_id"]
             event["raw_symbol"] = "BTC-USDT"
-            event["market_input_ref"] = "source-ingest://snapshots/mss-000000000000000000000001"
-            event["market_input_snapshot_id"] = "mss-000000000000000000000001"
-            event["market_input_observed_at"] = "2026-07-15T00:00:01Z"
-            event["market_input_event_time"] = "2026-07-15T00:00:00Z"
-            event["market_input_lineage"] = {
-                "source_ids": ["src-binance"],
-                "connector_ids": ["conn-binance-spot"],
-                "content_refs": ["sha256:abcd"],
-                "ingest_run_ids": ["run-001"],
-            }
+            event["market_input_ref"] = DEFAULT_TEST_SNAPSHOT["source_ref"]
+            event["market_input_snapshot_id"] = DEFAULT_TEST_SNAPSHOT["snapshot_id"]
+            event["market_input_observed_at"] = DEFAULT_TEST_SNAPSHOT["observed_at"]
+            event["market_input_event_time"] = DEFAULT_TEST_SNAPSHOT["event_time"]
+            event["market_input_lineage"] = DEFAULT_TEST_SNAPSHOT["lineage"]
+            event["market_input_checksum"] = DEFAULT_TEST_SNAPSHOT["checksum"]
             event["is_real_capital"] = False
             event["is_real_order"] = False
         if event_type == "reconciliation_completed":
@@ -1576,6 +1589,93 @@ def test_case_blob_cannot_bypass_independent_source_snapshot_lookup(tmp_path):
     assert code == 1
     assert artifact["outcome"] == "failed"
     assert artifact["failure"]["code"] == "source_snapshot_missing"
+
+
+def test_adversarial_qa_28ab_snapshot_only_id_strictly_rejected(monkeypatch):
+    """Preserve 28ab counterexample: patched urlopen returning only snapshot_id must fail closed."""
+    candidate = probe._complete_candidates(
+        _natural_lifecycle_rows(), mode="natural", case=DEFAULT_TEST_CASE
+    )[0]
+    prov = candidate["signal_provenance"]
+    fake_response = io.BytesIO(
+        json.dumps({"snapshot_id": prov["market_input_snapshot_id"]}).encode("utf-8")
+    )
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=5: fake_response)
+    src = probe.AsyncpgCaseSource("unused-dsn", source_base_url="http://mock-source-ingest:8097")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(src.get_source_snapshot(prov["market_input_snapshot_id"], "tenant-a", symbol="BTC-USDT"))
+    assert exc_info.value.code == "source_snapshot_api_error"
+
+
+def test_bind_source_snapshot_rejects_snapshot_only_id():
+    candidate = probe._complete_candidates(
+        _natural_lifecycle_rows(), mode="natural", case=DEFAULT_TEST_CASE
+    )[0]
+    prov = candidate["signal_provenance"]
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._bind_source_snapshot({"snapshot_id": prov["market_input_snapshot_id"]}, prov)
+    assert exc_info.value.code in {"invalid_snapshot_schema", "invalid_lineage", "invalid_freshness"}
+
+
+def test_bind_source_snapshot_rejects_id_derived_checksum_placeholder():
+    candidate = probe._complete_candidates(
+        _natural_lifecycle_rows(), mode="natural", case=DEFAULT_TEST_CASE
+    )[0]
+    prov = candidate["signal_provenance"]
+    placeholder_snap = dict(DEFAULT_TEST_SNAPSHOT, checksum=prov["market_input_snapshot_id"], data_checksum=prov["market_input_snapshot_id"])
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._bind_source_snapshot(placeholder_snap, prov)
+    assert exc_info.value.code == "invalid_checksum"
+
+
+def test_bind_source_snapshot_rejects_unsupported_schema_version():
+    candidate = probe._complete_candidates(
+        _natural_lifecycle_rows(), mode="natural", case=DEFAULT_TEST_CASE
+    )[0]
+    prov = candidate["signal_provenance"]
+    bad_schema_snap = dict(DEFAULT_TEST_SNAPSHOT, schema_version="source_ingest_snapshot.v999")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._bind_source_snapshot(bad_schema_snap, prov)
+    assert exc_info.value.code == "invalid_snapshot_schema"
+
+
+def test_bind_source_snapshot_rejects_insufficient_closes():
+    candidate = probe._complete_candidates(
+        _natural_lifecycle_rows(), mode="natural", case=DEFAULT_TEST_CASE
+    )[0]
+    prov = candidate["signal_provenance"]
+    bad_closes_snap = dict(DEFAULT_TEST_SNAPSHOT, closes=[50000.0])
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._bind_source_snapshot(bad_closes_snap, prov)
+    assert exc_info.value.code == "invalid_lineage"
+
+
+def test_bind_source_snapshot_rejects_corrupted_points_derived_sha():
+    candidate = probe._complete_candidates(
+        _natural_lifecycle_rows(), mode="natural", case=DEFAULT_TEST_CASE
+    )[0]
+    prov = candidate["signal_provenance"]
+    corrupted_points = list(DEFAULT_TEST_SNAPSHOT["points"])
+    corrupted_points[0] = dict(corrupted_points[0], close=99999.0)
+    bad_points_snap = dict(DEFAULT_TEST_SNAPSHOT, points=corrupted_points)
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._bind_source_snapshot(bad_points_snap, prov)
+    assert exc_info.value.code in {"invalid_snapshot_id", "invalid_lineage"}
+
+
+def test_source_api_full_dto_producer_to_verifier(monkeypatch):
+    candidate = probe._complete_candidates(
+        _natural_lifecycle_rows(), mode="natural", case=DEFAULT_TEST_CASE
+    )[0]
+    prov = candidate["signal_provenance"]
+    fake_response = io.BytesIO(json.dumps(DEFAULT_TEST_SNAPSHOT).encode("utf-8"))
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=5: fake_response)
+    src = probe.AsyncpgCaseSource("unused-dsn", source_base_url="http://source-ingest:8097")
+    snap = asyncio.run(src.get_source_snapshot(prov["market_input_snapshot_id"], "tenant-a", symbol="BTC-USDT"))
+    assert snap is not None
+    assert snap["snapshot_id"] == prov["market_input_snapshot_id"]
+    assert snap["checksum"] == DEFAULT_TEST_SNAPSHOT["checksum"]
+    probe._bind_source_snapshot(snap, prov)
 
 
 
