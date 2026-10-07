@@ -1,6 +1,6 @@
 {
   "task_id": "DEV-DEPLOY-ENV-PARITY-20261006",
-  "base_sha": "c18a4640a40c0d1023defbef2a08c076e184f26c",
+  "base_sha": "5160541e2a3b11b386d86c06dd0eeae395cd94f1",
   "change_class": "corrective",
   "net_prod_line_budget": 20,
   "summary": "Restore dropped PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED=true in dev deploy root rollout and establish per-path environment parity behavioral tests.",
