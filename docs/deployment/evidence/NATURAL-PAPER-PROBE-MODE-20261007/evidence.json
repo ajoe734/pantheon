@@ -18,8 +18,8 @@
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -v services/trade_journey/test_hosted_lifecycle_probe.py",
       "exit_code": 0,
-      "test_count": 54,
-      "output": "54 passed"
+      "test_count": 83,
+      "output": "83 passed"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -v scripts/test_run_loop_prod_tel_002_hosted_probe.py",
@@ -30,13 +30,13 @@
     {
       "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD --change-class corrective --budget 160",
       "exit_code": 0,
-      "diff_budget_table": "| class | added | deleted | net |\n|---|---|---|---|\n| production | +248 | -94 | +154 |\n| test | +483 | -0 | +483 |\n| docs/evidence | +42 | -0 | +42 |"
+      "diff_budget_table": "| class | added | deleted | net |\n|---|---|---|---|\n| production | +353 | -206 | +147 |\n| test | +608 | -0 | +608 |\n| docs/evidence | +42 | -0 | +42 |"
     }
   ],
   "diff_budget": {
     "change_class": "corrective",
     "budget": 160,
-    "net_production_lines": 154,
+    "net_production_lines": 147,
     "status": "passed"
   }
 }
