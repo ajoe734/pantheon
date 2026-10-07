@@ -1056,3 +1056,227 @@ def test_tdcc_and_taifex_evidence_and_search_canary_readback(tmp_path) -> None:
     assert taifex_res["index_adapter"]["adapter_state"] == "durable"
     assert len(taifex_res["results"]) >= 1
     assert any("TAIFEX" in str(r.get("citations", [])) or "foreign" in str(r.get("citations", [])) for r in taifex_res["results"])
+
+
+def test_tw_history_trading_days_resolution_and_month_derivation(monkeypatch) -> None:
+    from services.source_ingestion.connectors.taiwan_official import (
+        derive_tw_history_max_months,
+        resolve_tw_history_trading_days,
+    )
+
+    monkeypatch.delenv("SOURCE_INGEST_TW_HISTORY_TRADING_DAYS", raising=False)
+    assert resolve_tw_history_trading_days() == 40
+    assert resolve_tw_history_trading_days(30) == 30
+    assert resolve_tw_history_trading_days("45") == 45
+    assert resolve_tw_history_trading_days(-5) == 40
+    assert resolve_tw_history_trading_days("invalid") == 40
+
+    monkeypatch.setenv("SOURCE_INGEST_TW_HISTORY_TRADING_DAYS", "50")
+    assert resolve_tw_history_trading_days() == 50
+    assert resolve_tw_history_trading_days(25) == 25
+
+    # Month derivation bounds
+    assert derive_tw_history_max_months(1) == 2
+    assert derive_tw_history_max_months(2) == 2
+    assert derive_tw_history_max_months(30) == 3
+    assert derive_tw_history_max_months(40) == 4
+    assert derive_tw_history_max_months(60) == 5
+    assert derive_tw_history_max_months(200) == 12
+
+
+def test_tw_official_egress_allowlist_contains_twse_web_host() -> None:
+    from services.source_ingestion.connector_definitions import get_connector_definition
+
+    definition = get_connector_definition("tw-twse-tpex-official-market")
+    assert "www.twse.com.tw" in definition.allowed_host_patterns
+    assert "openapi.twse.com.tw" in definition.allowed_host_patterns
+    assert "www.tpex.org.tw" in definition.allowed_host_patterns
+
+
+def test_tw_official_records_and_rows_guarantee_aware_available_time() -> None:
+    import re
+    from services.source_ingestion.connectors.taiwan_official import _tw_price_available_time
+
+    aware_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$")
+
+    # Direct helper normalization
+    assert _tw_price_available_time("2026-06-10", "2026-06-10") == "2026-06-10T14:30:00+08:00"
+    assert _tw_price_available_time(None, "115/06/10") == "2026-06-10T14:30:00+08:00"
+    assert _tw_price_available_time("2026-06-10T14:30:00+08:00", "2026-06-10") == "2026-06-10T14:30:00+08:00"
+    assert aware_pattern.match(_tw_price_available_time("2026-06-10", "2026-06-10"))
+
+    # Adapter records guarantee aware available_time on metadata and normalized_row
+    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=10)
+    records = adapter.records_from_price_history_payload(
+        "2330.TWSE",
+        "TWSE",
+        TWSE_PRICE_HISTORY_PAYLOAD,
+        available_time="2026-06-10",
+    )
+    assert len(records) == 2
+    for record in records:
+        avail = record.metadata.get("available_time")
+        assert avail is not None
+        assert aware_pattern.match(avail), f"available_time is not aware: {avail}"
+        assert not re.match(r"^\d{4}-\d{2}-\d{2}$", avail), "available_time must not be a bare date"
+        row = record.metadata.get("normalized_row")
+        assert isinstance(row, dict)
+        row_avail = row.get("available_time")
+        assert aware_pattern.match(row_avail), f"row.available_time is not aware: {row_avail}"
+        assert not re.match(r"^\d{4}-\d{2}-\d{2}$", row_avail), "row.available_time must not be a bare date"
+
+
+def test_bounded_official_refresh_unions_active_paper_and_history_symbols(monkeypatch) -> None:
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TW")
+    monkeypatch.setenv("SOURCE_INGEST_TW_HISTORY_SYMBOLS", "2317.TW")
+
+    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=10)
+    connector = adapter.connector()
+
+    twse_today = [
+        {
+            "Date": "1150610",
+            "Code": "2330",
+            "Name": "台積電",
+            "TradeVolume": "30000000",
+            "TradeValue": "28500000000",
+            "OpeningPrice": "950.00",
+            "HighestPrice": "960.00",
+            "LowestPrice": "945.00",
+            "ClosingPrice": "955.00",
+            "Change": "+5.00",
+            "Transaction": "18000",
+        },
+        {
+            "Date": "1150610",
+            "Code": "2317",
+            "Name": "鴻海",
+            "TradeVolume": "25000000",
+            "TradeValue": "5000000000",
+            "OpeningPrice": "200.00",
+            "HighestPrice": "205.00",
+            "LowestPrice": "198.00",
+            "ClosingPrice": "202.00",
+            "Change": "+2.00",
+            "Transaction": "12000",
+        },
+    ]
+
+    twse_2317_history = {
+        "stat": "OK",
+        "date": "20260610",
+        "title": "115年06月 2317 鴻海 各日成交資訊",
+        "fields": TWSE_PRICE_HISTORY_PAYLOAD["fields"],
+        "data": [
+            ["115/06/09", "15,000,000", "3,000,000,000", "198.00", "201.00", "197.00", "200.00", "+1.00", "10,000", ""],
+            ["115/06/10", "25,000,000", "5,000,000,000", "200.00", "205.00", "198.00", "202.00", "+2.00", "12,000", ""],
+        ],
+    }
+
+    records = execute_provider_owned_adapter(
+        connector=connector,
+        fetch={
+            "mode": "provider_owned_adapter",
+            "adapter": "TaiwanOfficialMarketDatasetAdapter",
+            "adapter_config": {"max_records": 10},
+            "request": {
+                "dataset": "tw_price_daily",
+                "venues": ["TWSE"],
+                "payloads": {"TWSE": twse_today},
+                "history_payloads": {
+                    "2330.TWSE": TWSE_PRICE_HISTORY_PAYLOAD,
+                    "2317.TWSE": twse_2317_history,
+                },
+            },
+            "max_records": 10,
+        },
+        trace_id="trace-union-symbols",
+    )
+
+    symbols = {record.metadata["symbol_canonical"] for record in records}
+    assert symbols == {"2330.TWSE", "2317.TWSE"}
+    assert len([r for r in records if r.metadata["symbol_canonical"] == "2330.TWSE"]) == 2
+    assert len([r for r in records if r.metadata["symbol_canonical"] == "2317.TWSE"]) == 2
+
+
+def test_bounded_official_refresh_retains_configured_history_depth(monkeypatch) -> None:
+    import re
+    aware_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$")
+
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TW")
+    monkeypatch.delenv("SOURCE_INGEST_TW_HISTORY_SYMBOLS", raising=False)
+
+    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=100)
+    connector = adapter.connector()
+
+    # Generate 45 trading days across two months: May (22 days) and June (23 days)
+    may_data = [
+        [f"115/05/{day:02d}", "10,000,000", "9,000,000,000", "900.00", "920.00", "890.00", f"{900.0 + day:.2f}", "+1.00", "8,000", ""]
+        for day in range(1, 23)
+    ]
+    june_data = [
+        [f"115/06/{day:02d}", "10,000,000", "9,000,000,000", "920.00", "940.00", "910.00", f"{920.0 + day:.2f}", "+1.00", "8,000", ""]
+        for day in range(1, 24)
+    ]
+    all_history_data = may_data + june_data  # 45 distinct trading days
+
+    multi_month_history = {
+        "stat": "OK",
+        "date": "20260623",
+        "title": "115年06月 2330 台積電 各日成交資訊",
+        "fields": TWSE_PRICE_HISTORY_PAYLOAD["fields"],
+        "data": all_history_data,
+    }
+
+    twse_today = [
+        {
+            "Date": "1150623",
+            "Code": "2330",
+            "Name": "台積電",
+            "TradeVolume": "10000000",
+            "TradeValue": "9000000000",
+            "OpeningPrice": "920.00",
+            "HighestPrice": "940.00",
+            "LowestPrice": "910.00",
+            "ClosingPrice": "943.00",
+            "Change": "+1.00",
+            "Transaction": "8000",
+        }
+    ]
+
+    records = execute_provider_owned_adapter(
+        connector=connector,
+        fetch={
+            "mode": "provider_owned_adapter",
+            "adapter": "TaiwanOfficialMarketDatasetAdapter",
+            "adapter_config": {"max_records": 100},
+            "request": {
+                "dataset": "tw_price_daily",
+                "venues": ["TWSE"],
+                "payloads": {"TWSE": twse_today},
+                "history_payloads": {
+                    "2330.TWSE": multi_month_history,
+                },
+                "history_trading_days": 40,
+            },
+            "max_records": 100,
+        },
+        trace_id="trace-depth-40",
+    )
+
+    # 40 distinct closes retained (instead of previous 2)
+    assert len(records) == 40
+    distinct_dates = [record.metadata["event_time"] for record in records]
+    assert len(set(distinct_dates)) == 40
+    # Chronologically sorted
+    assert distinct_dates == sorted(distinct_dates)
+
+    # Every record guarantees finite positive close and aware available_time
+    for record in records:
+        assert record.metadata["symbol_canonical"] == "2330.TWSE"
+        norm = record.metadata["normalized_row"]
+        assert isinstance(norm["close"], (int, float)) and norm["close"] > 0
+        assert aware_pattern.match(record.metadata["available_time"])
+        assert aware_pattern.match(norm["available_time"])
+        assert not re.match(r"^\d{4}-\d{2}-\d{2}$", record.metadata["available_time"])
+
