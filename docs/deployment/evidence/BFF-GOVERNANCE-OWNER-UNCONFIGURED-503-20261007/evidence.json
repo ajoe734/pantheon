@@ -1,0 +1,75 @@
+{
+  "schema_version": "pantheon.corrective-source-evidence.v1",
+  "task_id": "BFF-GOVERNANCE-OWNER-UNCONFIGURED-503-20261007",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "title": "Return 503 when the Governance approval owner is not configured",
+  "timestamp": "2026-10-07T09:05:00Z",
+  "summary": "Fixed 500 INTERNAL_ERROR when no Governance approval owner URL is configured (neither PANTHEON_GOVERNANCE_APPROVAL_API_URL nor PANTHEON_GOVERNANCE_SERVICE_URL). Updated ActionUnavailableError in command_adapters/base.py to inherit from both HTTPException and ValueError, and updated governance_approval_url to catch RuntimeError from unconfigured backend and raise ActionUnavailableError with downstream_status=503, error_code='DEPENDENCY_UNAVAILABLE', and retryable=True. In command_executor.py, unified _governance_approval_url to delegate to governance_approval_url, eliminating duplicate resolution logic. Both command route (POST /bff/v1/commands) and approval list reads (GET /bff/approvals, GET /api/v1/approval-decisions) now return standard 503 DEPENDENCY_UNAVAILABLE envelopes with retryable=True. Net production line count change is +12 lines (well within the 15-line budget).",
+  "acceptance_criteria_verification": {
+    "evidence_reproduction": {
+      "satisfied": true,
+      "evidence": "Prior to fix, submitting a command carrying approval evidence (e.g. ApproveDeployment with approvalId='appr-dp-001') to POST /bff/v1/commands with Governance owner unconfigured caused RuntimeError from governance_approval_url to escape submit_command_admission, resulting in 500 INTERNAL_ERROR with retryable=False."
+    },
+    "unconfigured_or_unreachable_governance_owner_503": {
+      "satisfied": true,
+      "evidence": "With ActionUnavailableError inheriting from HTTPException and ValueError, an unconfigured Governance approval owner yields 503 DEPENDENCY_UNAVAILABLE retryable=True on both POST /bff/v1/commands and GET /bff/approvals / GET /api/v1/approval-decisions. Direct execution via command_executor also yields 503 DEPENDENCY_UNAVAILABLE retryable. A configured owner answering normally continues to return 200 on approvals list and admits commands with 202."
+    },
+    "test_suite_drives_real_routes": {
+      "satisfied": true,
+      "evidence": "services/control-plane/bff/tests/test_governance_owner_unconfigured_503.py drives POST /bff/v1/commands and GET /bff/approvals / GET /api/v1/approval-decisions with unconfigured owner and asserts the 503 envelope (code='DEPENDENCY_UNAVAILABLE', retryable=True, meta.correlationId)."
+    },
+    "all_scoped_tests_pass_without_regression": {
+      "satisfied": true,
+      "evidence": "All 4 tests in test_governance_owner_unconfigured_503.py pass. Related suites pass without regression: test_command_executor.py (22 passed), test_governance_router.py (8 passed), test_bff_approvals_surface_contract.py (11 passed), test_tenant_fallback_audit.py (124 passed, 1 skipped), test_bff_test_architecture.py (39 passed), http_smoke_test.py (1 passed)."
+    },
+    "classification_of_changed_test_expectations": {
+      "satisfied": true,
+      "classifications": [
+        {
+          "artifact": "services/control-plane/bff/command_adapters/base.py",
+          "classification": "real_regression_fixed_in_production",
+          "rationale": "RuntimeError escaped get_base_url when Governance approval owner was unconfigured; fixed by raising typed ActionUnavailableError(503, DEPENDENCY_UNAVAILABLE, retryable=True)."
+        },
+        {
+          "artifact": "services/control-plane/bff/command_executor.py",
+          "classification": "real_regression_fixed_in_production",
+          "rationale": "Unified _governance_approval_url with base.py governance_approval_url to align error handling and eliminate duplicate resolution."
+        },
+        {
+          "artifact": "services/control-plane/bff/tests/test_governance_owner_unconfigured_503.py",
+          "classification": "intended_change",
+          "rationale": "Added test suite verifying 503 DEPENDENCY_UNAVAILABLE envelope across command route, approval list routes, and command executor."
+        }
+      ]
+    },
+    "net_prod_line_budget": {
+      "satisfied": true,
+      "evidence": "Production code changes in command_adapters/base.py (+28, -3) and command_executor.py (+9, -22) yield a net change of +12 lines, strictly under the 15 net production line budget for change_class=corrective. No compressed code used."
+    }
+  },
+  "scoped_files": [
+    "services/control-plane/bff/command_adapters/base.py",
+    "services/control-plane/bff/command_executor.py",
+    "services/control-plane/bff/tests/test_governance_owner_unconfigured_503.py",
+    "docs/deployment/evidence/BFF-GOVERNANCE-OWNER-UNCONFIGURED-503-20261007/evidence.json"
+  ],
+  "verification_commands": [
+    "python3 -m pytest services/control-plane/bff/tests/test_governance_owner_unconfigured_503.py",
+    "python3 -m pytest services/control-plane/bff/test_command_executor.py",
+    "python3 -m pytest services/control-plane/bff/tests/test_governance_router.py",
+    "python3 -m pytest services/control-plane/bff/tests/test_bff_approvals_surface_contract.py",
+    "python3 -m pytest services/control-plane/bff/http_smoke_test.py"
+  ],
+  "verification_results": {
+    "test_governance_owner_unconfigured_503": "4 passed in 3.04s",
+    "test_command_executor": "22 passed in 7.54s",
+    "test_governance_router": "8 passed in 5.21s",
+    "test_bff_approvals_surface_contract": "11 passed in 7.44s",
+    "http_smoke_test": "1 passed in 13.82s"
+  },
+  "review": {
+    "reviewer": "Claude",
+    "decision": "pending independent exact-head review"
+  }
+}
