@@ -243,7 +243,6 @@ def materialize_source_dataset_version(
         run_id=run_id,
         expected_market=market,
         trusted_now=observe_now(),
-        features_required=_connector_declares_features(connector_readback),
     )
     records = storage["records"]
     canonical_bytes = b"".join(_canonical_json_bytes(record) + b"\n" for record in records)
@@ -827,7 +826,6 @@ def _validate_and_read_storage_manifest(
     run_id: str,
     expected_market: str,
     trusted_now: datetime,
-    features_required: bool = True,
 ) -> dict[str, Any]:
     if manifest.get("schema_version") != _STORAGE_SCHEMA or manifest.get("ingest_run_id") != run_id:
         raise SourceDatasetAuthorityError("storage manifest identity mismatch")
@@ -836,19 +834,14 @@ def _validate_and_read_storage_manifest(
         raise SourceDatasetAuthorityError("storage manifest created_at is in the future")
     raw_refs = _storage_ref_array(manifest.get("raw_refs"), "raw_refs")
     normalized_refs = _storage_ref_array(manifest.get("normalized_refs"), "normalized_refs")
-    raw_feature_refs = manifest.get("feature_refs")
-    if features_required or raw_feature_refs not in (None, []):
-        feature_refs = _storage_ref_array(raw_feature_refs, "feature_refs")
-    else:
-        feature_refs = []
+    feature_refs = _storage_ref_array(manifest.get("feature_refs"), "feature_refs")
     summary = _required_mapping(manifest.get("summary"), "storage_manifest.summary")
     for label, refs in (
         ("raw_ref_count", raw_refs),
         ("normalized_ref_count", normalized_refs),
         ("feature_ref_count", feature_refs),
     ):
-        minimum = 0 if label == "feature_ref_count" and not feature_refs else 1
-        if _strict_int(summary.get(label), f"storage_manifest.summary.{label}", minimum=minimum) != len(refs):
+        if _strict_int(summary.get(label), f"storage_manifest.summary.{label}", minimum=1) != len(refs):
             raise SourceDatasetAuthorityError(f"storage manifest {label} does not match refs")
 
     checked_raw: list[dict[str, Any]] = []
@@ -1046,15 +1039,6 @@ def _ohlcv_from_wrapper(
         raise SourceDatasetAuthorityError(f"{label} low is inconsistent with OHLC")
     market = _required_text(market_value, f"{value_label}.market") if market_value not in (None, "") else None
     return {"instrument": instrument, "date": date_text, **values}, market
-
-
-def _connector_declares_features(connector_readback: Mapping[str, Any]) -> bool:
-    connector = connector_readback.get("connector")
-    metadata = connector.get("metadata") if isinstance(connector, Mapping) else None
-    if not isinstance(metadata, Mapping):
-        return False
-    targets = metadata.get("feature_targets")
-    return isinstance(targets, Sequence) and not isinstance(targets, (str, bytes)) and bool(targets)
 
 
 def _storage_ref_array(value: Any, label: str) -> list[Mapping[str, Any]]:
