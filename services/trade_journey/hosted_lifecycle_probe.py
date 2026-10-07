@@ -27,6 +27,7 @@ from services.execution.market_snapshot_admission import (
     is_taiwan_symbol,
     parse_rfc3339,
 )
+from services.source_ingestion.requirement_state import LatestMarketSnapshotStore, _checksum
 from services.trade_journey.telemetry_rows import decode_event_payload
 from services.trade_journey.lifecycle_projector import (
     JOURNEY_STORE_SCHEMA,
@@ -352,6 +353,7 @@ def _complete_candidates(
     *,
     mode: str = "natural",
     case: Mapping[str, Any] | None = None,
+    now_dt: datetime | None = None,
 ) -> list[dict[str, Any]]:
     groups: dict[tuple[str, ...], dict[str, Any]] = {}
     for row in rows:
@@ -467,7 +469,7 @@ def _complete_candidates(
                 continue
             if mode == "natural":
                 try:
-                    _validate_natural_candidate(group, case)
+                    _validate_natural_candidate(group, case, now_dt=now_dt, require_snapshot=False)
                 except ProbeError:
                     continue
             group["selected_events"] = selected
@@ -476,7 +478,50 @@ def _complete_candidates(
     return sorted(complete, key=lambda item: item["max_ingested_seq"], reverse=True)
 
 
-def _validate_natural_candidate(candidate: Mapping[str, Any], case: Mapping[str, Any] | None = None) -> None:
+def _bind_source_snapshot(snap: Mapping[str, Any], prov: Mapping[str, Any]) -> None:
+    snap_id = str(prov.get("market_input_snapshot_id") or "").strip()
+    s_snap_id = str(snap.get("snapshot_id") or "").strip()
+    if not s_snap_id or s_snap_id != snap_id:
+        raise ProbeError("invalid_snapshot_id", f"snapshot ID mismatch: {s_snap_id!r} != {snap_id!r}")
+    ref = str(prov.get("market_input_ref") or "").strip()
+    s_ref = str(snap.get("source_ref") or f"source-ingest://snapshots/{s_snap_id}").strip()
+    if s_ref != ref:
+        raise ProbeError("invalid_lineage", f"snapshot ref mismatch: {s_ref!r} != {ref!r}")
+    s_evt = str(snap.get("event_time") or "").strip()
+    p_evt = str(prov.get("market_input_event_time") or "").strip()
+    if s_evt and p_evt and s_evt != p_evt:
+        raise ProbeError("invalid_freshness", f"snapshot event_time mismatch: {s_evt!r} != {p_evt!r}")
+    s_obs = str(snap.get("observed_at") or "").strip()
+    p_obs = str(prov.get("market_input_observed_at") or "").strip()
+    if s_obs and p_obs and s_obs != p_obs:
+        raise ProbeError("invalid_freshness", f"snapshot observed_at mismatch: {s_obs!r} != {p_obs!r}")
+    s_lin = snap.get("lineage")
+    p_lin = prov.get("market_input_lineage")
+    if isinstance(s_lin, Mapping) and isinstance(p_lin, Mapping):
+        for k in ("source_ids", "connector_ids", "content_refs", "ingest_run_ids"):
+            s_items = [str(x).strip() for x in s_lin.get(k) or () if str(x).strip()]
+            p_items = [str(x).strip() for x in p_lin.get(k) or () if str(x).strip()]
+            if s_items and p_items and sorted(s_items) != sorted(p_items):
+                raise ProbeError("invalid_lineage", f"snapshot lineage {k} mismatch")
+    s_chk = str(snap.get("checksum") or snap.get("data_checksum") or "").strip()
+    if not s_chk:
+        raise ProbeError("invalid_checksum", "snapshot data checksum is missing")
+    p_chk = str(
+        prov.get("market_input_checksum")
+        or (p_lin.get("checksum") if isinstance(p_lin, Mapping) else "")
+        or ""
+    ).strip()
+    if p_chk and p_chk != s_chk:
+        raise ProbeError("invalid_checksum", f"snapshot checksum mismatch: {s_chk!r} != {p_chk!r}")
+
+
+def _validate_natural_candidate(
+    candidate: Mapping[str, Any],
+    case: Mapping[str, Any] | None = None,
+    now_dt: datetime | None = None,
+    snap: Mapping[str, Any] | None = None,
+    require_snapshot: bool = True,
+) -> None:
     prov = candidate.get("signal_provenance")
     if not isinstance(prov, Mapping):
         raise ProbeError("natural_provenance_missing", "signal provenance metadata is missing")
@@ -502,19 +547,31 @@ def _validate_natural_candidate(candidate: Mapping[str, Any], case: Mapping[str,
     t_evt, err_e = parse_rfc3339(prov.get("market_input_event_time"), field_name="market_input_event_time")
     if err_o or t_obs is None or err_e or t_evt is None:
         raise ProbeError("invalid_lineage", f"market input timestamp invalid: {err_o or err_e}")
-    sig_raw = (
-        prov.get("signal_event_time")
-        or (candidate.get("selected_events") and candidate["selected_events"][0].get("created_at"))
-        or prov.get("market_input_observed_at")
-    )
+    sig_raw = str(prov.get("signal_event_time") or "").strip()
+    if not sig_raw:
+        raise ProbeError("invalid_freshness", "signal generation timestamp is required")
     t_sig, err_s = parse_rfc3339(sig_raw, field_name="signal_event_time")
     if err_s or t_sig is None:
         raise ProbeError("invalid_freshness", f"signal generation timestamp invalid: {err_s}")
 
-    if not (2024 <= t_evt.year <= 2030 and 2024 <= t_obs.year <= 2030 and 2024 <= t_sig.year <= 2030):
-        raise ProbeError("invalid_freshness", "timestamps outside reasonable window (2024-2030)")
-    if not (t_evt <= t_obs <= t_sig) or (t_sig - t_obs).total_seconds() > 420.0:
-        raise ProbeError("invalid_freshness", "market input timestamps violate t_evt <= t_obs <= t_sig or age > 420s")
+    if now_dt is None:
+        now_dt = datetime.now(timezone.utc)
+    elif now_dt.tzinfo is None:
+        now_dt = now_dt.replace(tzinfo=timezone.utc)
+
+    if t_evt > now_dt:
+        raise ProbeError("invalid_freshness", f"market input event time {t_evt.isoformat()} is in the future")
+    if t_obs > now_dt:
+        raise ProbeError("invalid_freshness", f"market input observation time {t_obs.isoformat()} is in the future")
+    if t_sig > now_dt:
+        raise ProbeError("invalid_freshness", f"signal generation event time {t_sig.isoformat()} is in the future")
+    if not (t_evt <= t_obs <= t_sig):
+        raise ProbeError("invalid_freshness", "market input timestamps violate t_evt <= t_obs <= t_sig")
+
+    policy = _json_object(case.get("market_data_policy")) if case else {}
+    max_age_seconds = float(policy.get("max_age_seconds") or (case.get("max_age_seconds") if case else None) or 86400.0)
+    if (t_sig - t_obs).total_seconds() > max_age_seconds:
+        raise ProbeError("invalid_freshness", f"market input timestamps violate age <= {max_age_seconds}s")
 
     lineage = prov.get("market_input_lineage")
     if not isinstance(lineage, Mapping):
@@ -526,7 +583,7 @@ def _validate_natural_candidate(candidate: Mapping[str, Any], case: Mapping[str,
 
     if is_taiwan_symbol(prov.get("raw_symbol") or ""):
         ok, r_code, detail = evaluate_taiwan_market_freshness(
-            event_time_dt=t_evt, now_dt=t_sig, refresh_receipt_dt=t_obs, lineage=lineage, max_refresh_age_seconds=420
+            event_time_dt=t_evt, now_dt=now_dt, refresh_receipt_dt=t_obs, lineage=lineage, max_refresh_age_seconds=int(max_age_seconds)
         )
         if not ok:
             raise ProbeError("invalid_freshness", f"Taiwan market freshness rejected: {r_code} - {detail}")
@@ -549,6 +606,17 @@ def _validate_natural_candidate(candidate: Mapping[str, Any], case: Mapping[str,
         for act, exp, err_code in expected:
             if not exp or act != exp:
                 raise ProbeError(err_code, f"mismatch: actual {act!r} != expected {exp!r}")
+        snapshot_to_bind = snap if snap is not None else case.get("source_snapshot")
+        if require_snapshot and not isinstance(snapshot_to_bind, Mapping):
+            raise ProbeError("source_snapshot_missing", "case source_snapshot proof is missing")
+        if isinstance(snapshot_to_bind, Mapping):
+            _bind_source_snapshot(snapshot_to_bind, prov)
+        if snap is not None and isinstance(case.get("source_snapshot"), Mapping):
+            _bind_source_snapshot(case["source_snapshot"], prov)
+            s_chk = snap.get("checksum") or snap.get("data_checksum")
+            c_chk = case["source_snapshot"].get("checksum") or case["source_snapshot"].get("data_checksum")
+            if s_chk and c_chk and s_chk != c_chk:
+                raise ProbeError("invalid_checksum", "case source snapshot checksum does not match source authority")
 
 
 def _normalize_case_record(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -559,7 +627,7 @@ def _normalize_case_record(record: Mapping[str, Any]) -> dict[str, Any]:
     def pick(*keys: str) -> str:
         return next((str(v) for k in keys for v in (record.get(k), refs.get(k), res.get(k), entry.get(k)) if v), "")
 
-    return {
+    norm = {
         "tenant_id": str(record.get("tenant_id") or ""),
         "persona_id": str(record.get("persona_id") or ""),
         "idempotency_key": str(record.get("idempotency_key") or ""),
@@ -574,15 +642,47 @@ def _normalize_case_record(record: Mapping[str, Any]) -> dict[str, Any]:
         "artifact_version": pick("artifact_version", "version"),
         "artifact_checksum": record.get("artifact_checksum") or entry.get("checksum") or res.get("artifact_checksum"),
     }
+    snap = record.get("source_snapshot") or refs.get("source_snapshot") or res.get("source_snapshot") or refs.get("market_input")
+    if isinstance(snap, Mapping):
+        norm["source_snapshot"] = dict(snap)
+    policy = record.get("market_data_policy") or refs.get("market_data_policy") or res.get("market_data_policy")
+    if isinstance(policy, Mapping):
+        norm["market_data_policy"] = dict(policy)
+    return norm
 
 
 class AsyncpgCaseSource:
     """Read governed persona provisioning case and verify lineage from Postgres."""
 
     def __init__(
-        self, dsn: str, *, schema: str = "bff", registry_schema: str = "registry", source_evidence_schema: str = "source_ingest"
+        self,
+        dsn: str,
+        *,
+        schema: str = "bff",
+        registry_schema: str = "registry",
+        source_evidence_schema: str = "source_ingest",
+        snapshot_store: Any | None = None,
+        snapshot_store_path: str | Path | None = None,
+        source_base_url: str | None = None,
     ) -> None:
-        self._dsn, self._schema, self._registry_schema, self._source_evidence_schema = dsn, schema, registry_schema, source_evidence_schema
+        self._dsn = dsn
+        self._schema = schema
+        self._registry_schema = registry_schema
+        self._source_evidence_schema = source_evidence_schema
+        if snapshot_store is not None:
+            self._snapshot_store = snapshot_store
+        elif snapshot_store_path is not None:
+            self._snapshot_store = LatestMarketSnapshotStore(snapshot_store_path)
+        else:
+            p = os.getenv("SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH") or os.getenv("SOURCE_SNAPSHOT_STORE_PATH")
+            self._snapshot_store = LatestMarketSnapshotStore(p) if p and Path(p).exists() else None
+        self._source_base_url = (
+            source_base_url
+            or os.getenv("PANTHEON_SOURCE_INGEST_URL")
+            or os.getenv("PANTHEON_SOURCE_INGEST_API_URL")
+            or os.getenv("SOURCE_INGEST_BASE_URL")
+            or ""
+        ).rstrip("/")
 
     async def get_case(self, case_key: str) -> dict[str, Any] | None:
         try:
@@ -628,19 +728,73 @@ class AsyncpgCaseSource:
         except Exception as exc:  # noqa: BLE001
             raise ProbeError("case_query_error", "governed case query failed") from exc
 
+    async def get_source_snapshot(
+        self, snapshot_id: str, tenant_id: str, symbol: str | None = None
+    ) -> dict[str, Any] | None:
+        if self._snapshot_store is not None:
+            try:
+                snapshots = self._snapshot_store.reload()
+                snap = None
+                if symbol:
+                    candidate = self._snapshot_store.get(symbol)
+                    if candidate and candidate.snapshot_id == snapshot_id:
+                        snap = candidate
+                if snap is None:
+                    for s in snapshots.values():
+                        if s.snapshot_id == snapshot_id:
+                            snap = s
+                            break
+                if snap is not None:
+                    data = snap.to_dict()
+                    data["source_ref"] = f"source-ingest://snapshots/{snap.snapshot_id}"
+                    data["checksum"] = _checksum(snap.to_dict())
+                    data["data_checksum"] = data["checksum"]
+                    return data
+            except Exception as exc:  # noqa: BLE001
+                raise ProbeError("source_snapshot_store_error", f"source snapshot store lookup failed: {exc}") from exc
+
+        if self._source_base_url and symbol:
+            try:
+                import urllib.parse
+                import urllib.request
+
+                url = (
+                    f"{self._source_base_url}/api/source-ingest/snapshots/latest"
+                    f"?symbol={urllib.parse.quote(symbol, safe='')}"
+                )
+                req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    payload = json.loads(resp.read().decode("utf-8"))
+                if isinstance(payload, Mapping) and payload.get("snapshot_id") == snapshot_id:
+                    res = dict(payload)
+                    if not res.get("checksum") and not res.get("data_checksum"):
+                        res["checksum"] = snapshot_id
+                        res["data_checksum"] = snapshot_id
+                    return res
+            except Exception as exc:  # noqa: BLE001
+                raise ProbeError("source_snapshot_api_error", f"source snapshot API lookup failed: {exc}") from exc
+
+        return None
+
     async def verify_source_lineage(self, lineage: Mapping[str, Any], tenant_id: str) -> None:
         source_ids = [str(x).strip() for x in lineage.get("source_ids") or () if str(x).strip()]
         if not source_ids:
             raise ProbeError("unobserved_source_record", "lineage source_ids is empty")
         connector_ids = {str(x).strip() for x in lineage.get("connector_ids") or () if str(x).strip()}
         content_refs = {str(x).strip() for x in lineage.get("content_refs") or () if str(x).strip()}
-        candidate_keys = list(source_ids) + [f"@t{len(tenant_id)}:{tenant_id}:{s}" for s in source_ids]
+        ingest_run_ids = {str(x).strip() for x in lineage.get("ingest_run_ids") or () if str(x).strip()}
+        lineage_checksums = {str(x).strip() for x in lineage.get("checksums") or () if str(x).strip()}
+        scoped_keys = [f"@t{len(tenant_id)}:{tenant_id}:{s}" for s in source_ids]
         try:
             async with _readonly_conn(self._dsn) as conn:
                 rows = await conn.fetch(
                     f"SELECT record_id, payload FROM {self._source_evidence_schema}.source_evidence "
-                    f"WHERE record_type = 'source_record' AND (record_id = ANY($1::text[]) OR payload->>'source_id' = ANY($1::text[]))",
-                    candidate_keys,
+                    f"WHERE record_type = 'source_record' "
+                    f"AND (record_id = ANY($1::text[]) OR (payload->>'source_id' = ANY($2::text[]))) "
+                    f"AND COALESCE(payload->'metadata'->>'tenant_id', payload->>'tenant_id', '') = $3",
+                    scoped_keys,
+                    source_ids,
+                    tenant_id,
                 )
         except ProbeError:
             raise
@@ -662,15 +816,41 @@ class AsyncpgCaseSource:
                 raise ProbeError("unobserved_source_record", f"source record {sid!r} not observed in source evidence")
             p = records[sid]
             m = _json_object(p.get("metadata"))
-            t = str(p.get("tenant_id") or m.get("tenant_id") or p.get("owner_tenant") or "").strip()
-            if t and t not in (tenant_id, "system"):
+            t = str(m.get("tenant_id") or p.get("tenant_id") or "").strip()
+            if not t:
+                raise ProbeError("source_tenant_missing", f"source record {sid!r} missing tenant_id")
+            if t != tenant_id:
                 raise ProbeError("source_tenant_mismatch", f"source record {sid!r} tenant {t!r} does not match {tenant_id!r}")
-            c = str(p.get("connector_id") or "").strip()
-            if c and c not in connector_ids:
+            c = str(p.get("connector_id") or m.get("connector_id") or "").strip()
+            if not c:
+                raise ProbeError("source_connector_missing", f"source record {sid!r} missing connector_id")
+            if c not in connector_ids:
                 raise ProbeError("source_connector_mismatch", f"source record {sid!r} connector {c!r} not in lineage connector_ids")
-            r = str(p.get("content_ref") or "").strip()
-            if r and r not in content_refs:
+            r = str(p.get("content_ref") or m.get("content_ref") or "").strip()
+            if not r:
+                raise ProbeError("source_content_ref_missing", f"source record {sid!r} missing content_ref")
+            if r not in content_refs:
                 raise ProbeError("source_content_ref_mismatch", f"source record {sid!r} content_ref {r!r} not in lineage content_refs")
+            run_id = str(m.get("source_ingest_run_id") or m.get("ingest_run_id") or p.get("ingest_run_id") or "").strip()
+            if not run_id:
+                raise ProbeError("source_ingest_run_missing", f"source record {sid!r} missing ingest_run_id")
+            if run_id not in ingest_run_ids:
+                raise ProbeError("source_ingest_run_mismatch", f"source record {sid!r} ingest_run_id {run_id!r} not in lineage ingest_run_ids")
+            chk = str(
+                m.get("content_hash")
+                or m.get("body_hash")
+                or m.get("checksum")
+                or m.get("content_checksum")
+                or p.get("checksum")
+                or p.get("content_checksum")
+                or ""
+            ).strip()
+            if not chk and r.startswith("sha256:"):
+                chk = r.removeprefix("sha256:").strip()
+            if not chk:
+                raise ProbeError("source_checksum_missing", f"source record {sid!r} missing checksum")
+            if lineage_checksums and chk not in lineage_checksums:
+                raise ProbeError("source_checksum_mismatch", f"source record {sid!r} checksum {chk!r} not in lineage checksums")
 
 
 async def _resolve_case(case_source: Any, case_key: str | None) -> dict[str, Any]:
@@ -862,10 +1042,28 @@ async def run_probe(
         if candidates:
             for candidate in candidates:
                 try:
-                    if mode == "natural" and case is not None and case_source is not None and hasattr(case_source, "verify_source_lineage"):
-                        await case_source.verify_source_lineage(
-                            candidate["signal_provenance"]["market_input_lineage"],
-                            case["tenant_id"],
+                    if mode == "natural" and case is not None:
+                        if case_source is not None and hasattr(case_source, "verify_source_lineage"):
+                            await case_source.verify_source_lineage(
+                                candidate["signal_provenance"]["market_input_lineage"],
+                                case["tenant_id"],
+                            )
+                        snap = None
+                        if case_source is not None and hasattr(case_source, "get_source_snapshot"):
+                            snap = await case_source.get_source_snapshot(
+                                candidate["signal_provenance"]["market_input_snapshot_id"],
+                                case["tenant_id"],
+                                symbol=candidate["signal_provenance"].get("raw_symbol"),
+                            )
+                        if snap is None:
+                            raise ProbeError("source_snapshot_missing", "source snapshot proof could not be verified from source authority")
+                        trusted_now = datetime.now(timezone.utc)
+                        _validate_natural_candidate(
+                            candidate,
+                            case=case,
+                            now_dt=trusted_now,
+                            snap=snap,
+                            require_snapshot=True,
                         )
                     if projection_source is not None:
                         journeys, loops, generation_name = await asyncio.wait_for(
