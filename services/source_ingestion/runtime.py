@@ -567,6 +567,19 @@ class SourceIngestionRuntime:
             and marker.get("managed_by") == "persona_source_provisioning_reconciler"
         )
 
+    def _is_operator_stopped(self, connector: SourceConnector | None) -> bool:
+        if connector is None:
+            return False
+        metadata = dict(connector.metadata or {})
+        if metadata.get("operator_stop"):
+            return True
+        if connector.status == ConnectorStatus.DISABLED:
+            reconciliation = metadata.get(RECONCILIATION_METADATA_KEY)
+            if isinstance(reconciliation, Mapping) and reconciliation.get("retired_by_authoritative_snapshot") is True:
+                return False
+            return True
+        return False
+
     def _fence_managed_connector_mutation(
         self,
         connector_id: str,

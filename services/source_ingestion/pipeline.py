@@ -1204,9 +1204,22 @@ class IngestPipelineService:
                 continue
             if not sched.enabled or sched.interval_seconds <= 0:
                 if sched.connector_id in exclusive_connector_ids:
+                    config = self.connector_store.get_config(sched.connector_id)
+                    is_op_stop = False
+                    if (
+                        config is not None
+                        and config.connector.status == ConnectorStatus.DISABLED
+                        and hasattr(self.runtime, "_is_operator_stopped")
+                    ):
+                        is_op_stop = self.runtime._is_operator_stopped(config.connector)
+                    err_msg = (
+                        "exclusively selected connector is disabled by explicit operator stop"
+                        if is_op_stop
+                        else "exclusively selected connector schedule is disabled"
+                    )
                     failed.append({
                         "connector_id": sched.connector_id,
-                        "error": "exclusively selected connector schedule is disabled",
+                        "error": err_msg,
                     })
                 else:
                     skipped.append(sched.connector_id)
@@ -1229,10 +1242,18 @@ class IngestPipelineService:
                 failed.append({"connector_id": sched.connector_id, "error": "connector config not found"})
                 continue
             if config.connector.status == ConnectorStatus.DISABLED:
+                is_op_stop = False
+                if hasattr(self.runtime, "_is_operator_stopped"):
+                    is_op_stop = self.runtime._is_operator_stopped(config.connector)
+                err_msg = (
+                    "exclusively selected connector is disabled by explicit operator stop"
+                    if is_op_stop
+                    else "exclusively selected connector is disabled"
+                )
                 if sched.connector_id in exclusive_connector_ids:
                     failed.append({
                         "connector_id": sched.connector_id,
-                        "error": "exclusively selected connector is disabled",
+                        "error": err_msg,
                     })
                 else:
                     skipped.append(sched.connector_id)

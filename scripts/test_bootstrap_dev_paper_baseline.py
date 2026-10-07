@@ -179,6 +179,7 @@ def test_market_snapshot_wait_runs_after_persona_creation_never_provisioned_firs
         "symbol": "SPY",
         "event_time": now_iso,
         "observed_at": now_iso,
+        "market": "US",
         "closes": [500.0, 501.5],
     }
 
@@ -298,6 +299,7 @@ def test_market_snapshot_already_fresh_steady_state_does_not_delay_reconcile() -
         "symbol": "SPY",
         "event_time": now_iso,
         "observed_at": now_iso,
+        "market": "US",
         "closes": [500.0, 501.5],
     }
 
@@ -796,6 +798,7 @@ def test_replay_with_stale_snapshot_still_raises_market_input_stale() -> None:
         "symbol": "SPY",
         "event_time": "2020-01-01T00:00:00Z",
         "observed_at": "2020-01-01T00:00:00Z",
+        "market": "US",
         "closes": [500.0, 501.5],
     }
     post_queue = _replay_post_queue()
@@ -849,6 +852,7 @@ def test_market_snapshot_wait_nudges_stale_existing_snapshot_then_succeeds() -> 
         "symbol": "SPY",
         "event_time": "2020-01-01T00:00:00Z",
         "observed_at": "2020-01-01T00:00:00Z",
+        "market": "US",
         "closes": [500.0, 501.5],
     }
     fresh_snapshot = {
@@ -857,6 +861,7 @@ def test_market_snapshot_wait_nudges_stale_existing_snapshot_then_succeeds() -> 
         "symbol": "SPY",
         "event_time": now_iso,
         "observed_at": now_iso,
+        "market": "US",
         "closes": [500.0, 501.5],
     }
 
@@ -902,6 +907,7 @@ def test_market_snapshot_wait_surfaces_nudge_authorization_denial() -> None:
         "symbol": "SPY",
         "event_time": "2020-01-01T00:00:00Z",
         "observed_at": "2020-01-01T00:00:00Z",
+        "market": "US",
         "closes": [500.0, 501.5],
     }
 
@@ -947,6 +953,7 @@ def test_market_snapshot_wait_surfaces_nudge_transport_error() -> None:
         "symbol": "SPY",
         "event_time": "2020-01-01T00:00:00Z",
         "observed_at": "2020-01-01T00:00:00Z",
+        "market": "US",
         "closes": [500.0, 501.5],
     }
 
@@ -990,6 +997,7 @@ def test_market_snapshot_wait_surfaces_nudge_connector_provider_failure() -> Non
         "symbol": "SPY",
         "event_time": "2020-01-01T00:00:00Z",
         "observed_at": "2020-01-01T00:00:00Z",
+        "market": "US",
         "closes": [500.0, 501.5],
     }
 
@@ -1048,6 +1056,7 @@ def test_market_snapshot_wait_preserves_nudge_failure_across_skipped_poll() -> N
         "symbol": "SPY",
         "event_time": "2020-01-01T00:00:00Z",
         "observed_at": "2020-01-01T00:00:00Z",
+        "market": "US",
         "closes": [500.0, 501.5],
     }
 
@@ -1170,6 +1179,7 @@ def test_replay_with_fresh_snapshot_returns_ok_after_one_get() -> None:
         "symbol": "SPY",
         "event_time": now_iso,
         "observed_at": now_iso,
+        "market": "US",
         "closes": [500.0, 501.5],
     }
     post_queue = _replay_post_queue()
@@ -2035,3 +2045,33 @@ def test_source_ingest_owner_read_auth_boundary_with_runtime_verifier(monkeypatc
         _source_read_tenant(f"Bearer {token}", "other-tenant")
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail["code"] == "TENANT_SCOPE_DENIED"
+
+def test_market_snapshot_wait_rejects_missing_market_context() -> None:
+    """DEV-PAPER-SOURCE-SCHEDULE-PREREQUISITE-20261007: market context must be
+    present and non-empty in latest snapshot before readiness is declared."""
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    missing_market_snapshot = {
+        "schema_version": 1,
+        "snapshot_id": "snap-no-market",
+        "symbol": "SPY",
+        "event_time": now_iso,
+        "observed_at": now_iso,
+        "closes": [500.0, 501.5],
+    }
+
+    times = [0.0, 100.0]
+    with patch.object(bootstrap, "_get_json", return_value=(200, missing_market_snapshot)), patch.object(
+        bootstrap, "_post_json", return_value=(200, {"status": "ok"})
+    ), pytest.raises(bootstrap.BootstrapError) as exc_info:
+        bootstrap.ensure_dev_market_snapshot_ready(
+            source_ingest_url="http://mock-source:8097",
+            symbol="SPY",
+            timeout_seconds=5.0,
+            poll_seconds=0.01,
+            monotonic=lambda: times.pop(0) if times else 999.0,
+            sleep=lambda _seconds: None,
+        )
+
+    message = str(exc_info.value)
+    assert "symbol 'SPY'" in message
+    assert "market_context_missing" in message
