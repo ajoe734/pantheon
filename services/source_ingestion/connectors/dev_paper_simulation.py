@@ -189,6 +189,7 @@ class DevPaperUsEquitySimulationAdapter(SourceConnectorProvider):
         event_time_iso = _iso(event_time)
         observed_at_iso = _iso(now)
         records: list[SourceRecord] = []
+        market = str(dict(self.connector_metadata).get("market") or "US").strip().upper()
         for raw_symbol in symbols or self.symbols:
             symbol = str(raw_symbol).strip().upper()
             if not symbol:
@@ -200,6 +201,7 @@ class DevPaperUsEquitySimulationAdapter(SourceConnectorProvider):
                 "event_time": event_time_iso,
                 "is_real": False,
                 "provenance": "simulation",
+                "market": market,
             }
             row_hash = _stable_row_hash({"symbol": symbol, "event_time": event_time_iso, "close": close})
             records.append(
@@ -219,6 +221,7 @@ class DevPaperUsEquitySimulationAdapter(SourceConnectorProvider):
                         "observed_at": observed_at_iso,
                         "normalized_row": normalized_row,
                         "dev_only": True,
+                        "market": market,
                     },
                     trace_id=trace_id,
                 )
