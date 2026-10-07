@@ -454,6 +454,9 @@ class DeployedResearchHarness:
                                 "Controlled research evidence for the deployed owner chain. "
                                 f"run_token={self.run_token}"
                             ),
+                            # Source evidence reads are tenant-scoped; the record's
+                            # tenant claim is what makes it readable at all.
+                            "tenant_id": self.tenant_id,
                             "access_scope": ["research"],
                             "license_scope": "internal",
                             "available_time": available_time,
