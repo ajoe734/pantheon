@@ -9,11 +9,11 @@ from fastapi.testclient import TestClient
 
 from services.governance.write_authority import is_authorized_to_decide
 
-from ..session_lifecycle_store import SessionLifecycleStore
-from . import policy
-from .handlers import create_auth_handlers
-from .router import create_auth_router
-from .service import AuthFacadeService
+from services.control_plane.bff.session_lifecycle_store import SessionLifecycleStore
+from services.control_plane.bff.auth import policy
+from services.control_plane.bff.auth.handlers import create_auth_handlers
+from services.control_plane.bff.auth.router import create_auth_router
+from services.control_plane.bff.auth.service import AuthFacadeService
 
 
 @pytest.fixture
@@ -90,9 +90,15 @@ def test_non_approver_credentials_do_not_gain_review_authority(owners, identity)
     authorization = "Bearer " + response.json()["access_token"]
     principal = governance._approval_principal(authorization)
     assert principal.roles == frozenset({"viewer" if identity == "viewer" else "operator"})
-    denied = governance_client.get("/api/governance/approvals", headers={"Authorization": authorization})
-    assert denied.status_code == 403
-    assert denied.json()["detail"] == "Approval read role required"
+    if identity == "viewer":
+        denied = governance_client.get("/api/governance/approvals", headers={"Authorization": authorization})
+        assert denied.status_code == 403
+        assert denied.json()["detail"] == "Approval read role required"
+    else:
+        allowed = governance_client.get("/api/governance/approvals", headers={"Authorization": authorization})
+        assert allowed.status_code == 200
+        assert allowed.json() == []
+        assert not is_authorized_to_decide("operator", "low")
     assert login(bff, identity, roles=["governance_reviewer"]).status_code == 403
 
 

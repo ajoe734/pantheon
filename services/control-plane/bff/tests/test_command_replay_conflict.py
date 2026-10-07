@@ -275,9 +275,9 @@ def test_final_command_missing_approval_evidence_returns_typed_error() -> None:
             "/bff/v1/commands",
             headers={**HEADERS, "Idempotency-Key": "bff-consol-021-missing-approval"},
             json={
-                "command": "ApproveDecision",
-                "target": {"type": "ApprovalDecision", "id": "appr-bff-consol-021"},
-                "params": {"decision_id": "appr-bff-consol-021"},
+                "command": "ApproveEvolutionDecision",
+                "target": {"type": "EvolutionDecision", "id": "evo-bff-consol-021"},
+                "params": {"evolution_decision_id": "evo-bff-consol-021", "approval_action": "approve"},
                 "audit_context": {"reason": "missing approval evidence should block"},
             },
         )
