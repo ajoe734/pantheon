@@ -153,22 +153,17 @@ if [[ "${mode}" == "controlled-stimulus" ]]; then
   fi
 fi
 
-probe_args=(
-  python -m services.trade_journey.hosted_lifecycle_probe
-  --expected-sha "${expected_sha}"
-  --baseline-high-watermark "${baseline}"
-  --output "${container_output}"
-  --timeout-seconds "${timeout_seconds}"
-  --poll-seconds "${poll_seconds}"
-  --mode "${mode}"
-)
-if [[ -n "${case_key}" ]]; then
-  probe_args+=(--case-key "${case_key}")
-fi
-
 probe_status=0
 set +e
-"${compose[@]}" exec -T loop-run-projector-scheduler "${probe_args[@]}"
+"${compose[@]}" exec -T loop-run-projector-scheduler \
+  python -m services.trade_journey.hosted_lifecycle_probe \
+    --expected-sha "${expected_sha}" \
+    --baseline-high-watermark "${baseline}" \
+    --output "${container_output}" \
+    --timeout-seconds "${timeout_seconds}" \
+    --poll-seconds "${poll_seconds}" \
+    --mode "${mode}" \
+    ${case_key:+--case-key "${case_key}"}
 probe_status=$?
 set -e
 

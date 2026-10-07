@@ -1081,6 +1081,8 @@ def test_asyncpg_case_source_anchors_checksum_from_registry(monkeypatch):
         (None, "registry_artifact_missing"),
         ({"payload": json.dumps({"artifact_state": "draft", "owner_tenant": "tenant-a", "checksum": "cs", "version": "1"})}, "registry_artifact_not_approved"),
         ({"payload": json.dumps({"artifact_state": "approved", "owner_tenant": "other-tenant", "checksum": "cs", "version": "1"})}, "registry_tenant_mismatch"),
+        ({"payload": json.dumps({"artifact_state": "approved", "owner_tenant": "", "checksum": "cs", "version": "1"})}, "registry_tenant_mismatch"),
+        ({"payload": json.dumps({"artifact_state": "approved", "checksum": "cs", "version": "1"})}, "registry_tenant_mismatch"),
         ({"payload": json.dumps({"artifact_state": "approved", "owner_tenant": "tenant-a", "checksum": "", "version": "1"})}, "registry_checksum_missing"),
         ({"payload": json.dumps({"artifact_state": "approved", "owner_tenant": "tenant-a", "checksum": "different-cs", "version": "1"})}, "case_checksum_mismatch"),
         ({"payload": json.dumps({"artifact_state": "approved", "owner_tenant": "tenant-a", "checksum": "sha256-from-case", "version": ""})}, "registry_version_missing"),
@@ -1152,6 +1154,11 @@ def test_asyncpg_case_source_registry_adversarial_rejections(monkeypatch, regist
         (lambda p: p.pop("market_input_event_time"), "invalid_lineage"),
         (lambda p: p.update(market_input_observed_at="bad-iso"), "invalid_lineage"),
         (lambda p: p.update(market_input_event_time="2026-07-15T00:00:10Z", market_input_observed_at="2026-07-15T00:00:01Z"), "invalid_freshness"),
+        (lambda p: p.update(market_input_observed_at="2026-07-15T00:00:10Z", signal_event_time="2026-07-15T00:00:01Z"), "invalid_freshness"),
+        (lambda p: p.update(market_input_observed_at="2000-01-01T00:00:00Z", market_input_event_time="2000-01-01T00:00:00Z", signal_event_time="2000-01-01T00:00:01Z"), "invalid_freshness"),
+        (lambda p: p.update(market_input_observed_at="2400-01-01T00:00:00Z", market_input_event_time="2400-01-01T00:00:00Z", signal_event_time="2400-01-01T00:00:01Z"), "invalid_freshness"),
+        (lambda p: p.update(market_input_observed_at="2026-07-15T00:00:00Z", market_input_event_time="2026-07-15T00:00:00Z", signal_event_time="2026-07-15T00:10:00Z"), "invalid_freshness"),
+        (lambda p: p.update(raw_symbol="2330.TW", market_input_lineage={"source_ids": ["s"], "connector_ids": ["c"], "content_refs": ["r"], "ingest_run_ids": ["i"]}), "invalid_freshness"),
         (lambda p: p.pop("market_input_lineage"), "invalid_lineage"),
         (lambda p: p.update(market_input_lineage={"source_ids": []}), "invalid_lineage"),
         (lambda p: p.update(market_input_lineage={"source_ids": ["s"], "connector_ids": []}), "invalid_lineage"),
@@ -1174,4 +1181,161 @@ def test_validate_natural_candidate_rejects_non_approved_case():
     with pytest.raises(probe.ProbeError) as exc_info:
         probe._validate_natural_candidate(cands[0], case)
     assert exc_info.value.code == "artifact_not_approved"
+
+
+def test_asyncpg_case_source_verify_source_lineage_unit_rejections(monkeypatch):
+    class Connection:
+        async def fetch(self, query: str, *args):
+            return [
+                {
+                    "record_id": "src-1",
+                    "payload": json.dumps({
+                        "source_id": "src-1",
+                        "connector_id": "conn-1",
+                        "content_ref": "ref-1",
+                        "metadata": {"tenant_id": "tenant-a"},
+                    }),
+                }
+            ]
+
+        async def close(self):
+            pass
+
+    class TransactionContext:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    conn = Connection()
+    conn.transaction = lambda **kwargs: TransactionContext(conn)
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=lambda dsn: asyncio.sleep(0, result=conn)))
+    src = probe.AsyncpgCaseSource("postgresql://unit")
+
+    good_lineage = {
+        "source_ids": ["src-1"],
+        "connector_ids": ["conn-1"],
+        "content_refs": ["ref-1"],
+        "ingest_run_ids": ["run-1"],
+    }
+    asyncio.run(src.verify_source_lineage(good_lineage, "tenant-a"))
+
+    bad_source = dict(good_lineage, source_ids=["src-unobserved"])
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(src.verify_source_lineage(bad_source, "tenant-a"))
+    assert exc_info.value.code == "unobserved_source_record"
+
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(src.verify_source_lineage(good_lineage, "tenant-b"))
+    assert exc_info.value.code == "source_tenant_mismatch"
+
+    bad_conn = dict(good_lineage, connector_ids=["conn-other"])
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(src.verify_source_lineage(bad_conn, "tenant-a"))
+    assert exc_info.value.code == "source_connector_mismatch"
+
+    bad_ref = dict(good_lineage, content_refs=["ref-other"])
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(src.verify_source_lineage(bad_ref, "tenant-a"))
+    assert exc_info.value.code == "source_content_ref_mismatch"
+
+
+def test_asyncpg_case_source_live_postgres_queries():
+    import asyncpg
+
+    dsn = "postgresql://postgres:postgres@127.0.0.1:15432/postgres"
+    schema = "test_bff_live"
+    reg_schema = "test_reg_live"
+    source_schema = "test_src_live"
+
+    async def run_live():
+        conn = await asyncpg.connect(dsn)
+        try:
+            await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+            await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {reg_schema}")
+            await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {source_schema}")
+
+            await conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {schema}.persona_provisioning (
+                    idempotency_key TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL,
+                    persona_id TEXT NOT NULL,
+                    "references" JSONB NOT NULL,
+                    result JSONB NOT NULL,
+                    state TEXT NOT NULL
+                )
+            """)
+            await conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {reg_schema}.entries (
+                    record_id TEXT PRIMARY KEY,
+                    payload JSONB NOT NULL
+                )
+            """)
+            await conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {source_schema}.source_evidence (
+                    record_id TEXT NOT NULL,
+                    record_type TEXT NOT NULL,
+                    payload JSONB NOT NULL
+                )
+            """)
+
+            await conn.execute(f"""
+                INSERT INTO {schema}.persona_provisioning (idempotency_key, tenant_id, persona_id, "references", result, state)
+                VALUES ('case-live-01', 'tenant-live', 'persona-01', '{{"runtime_binding_id": "rb-1", "runtime_id": "rt-1", "strategy_artifact_approved": {{"entry": {{"registry_id": "art-live-01", "version": "1.0.0"}}}}}}'::jsonb, '{{"capital_pool_id": "pool-1", "deployment_plan_id": "plan-1", "persona_capital_binding_id": "pcb-1"}}'::jsonb, 'succeeded')
+                ON CONFLICT (idempotency_key) DO UPDATE SET state = 'succeeded'
+            """)
+
+            await conn.execute(f"""
+                INSERT INTO {reg_schema}.entries (record_id, payload)
+                VALUES ('art-live-01', '{{"checksum": "sha256-live-checksum", "version": "1.0.0", "artifact_state": "approved", "owner_tenant": "tenant-live"}}'::jsonb)
+                ON CONFLICT (record_id) DO UPDATE SET payload = EXCLUDED.payload
+            """)
+
+            await conn.execute(f"""
+                INSERT INTO {source_schema}.source_evidence (record_id, record_type, payload)
+                VALUES ('src-live-01', 'source_record', '{{"source_id": "src-live-01", "connector_id": "conn-live-01", "content_ref": "ref-live-01", "metadata": {{"tenant_id": "tenant-live"}}}}'::jsonb)
+            """)
+
+            src = probe.AsyncpgCaseSource(
+                dsn,
+                schema=schema,
+                registry_schema=reg_schema,
+                source_evidence_schema=source_schema,
+            )
+
+            case = await src.get_case("case-live-01")
+            assert case is not None
+            assert case["tenant_id"] == "tenant-live"
+            assert case["artifact_checksum"] == "sha256-live-checksum"
+            assert case["artifact_version"] == "1.0.0"
+            assert case["artifact_state"] == "approved"
+
+            lineage = {
+                "source_ids": ["src-live-01"],
+                "connector_ids": ["conn-live-01"],
+                "content_refs": ["ref-live-01"],
+                "ingest_run_ids": ["run-01"],
+            }
+            await src.verify_source_lineage(lineage, "tenant-live")
+
+            bad_lineage = dict(lineage, source_ids=["src-nonexistent"])
+            with pytest.raises(probe.ProbeError) as exc_info:
+                await src.verify_source_lineage(bad_lineage, "tenant-live")
+            assert exc_info.value.code == "unobserved_source_record"
+
+            with pytest.raises(probe.ProbeError) as exc_info:
+                await src.verify_source_lineage(lineage, "wrong-tenant")
+            assert exc_info.value.code == "source_tenant_mismatch"
+        finally:
+            await conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+            await conn.execute(f"DROP SCHEMA IF EXISTS {reg_schema} CASCADE")
+            await conn.execute(f"DROP SCHEMA IF EXISTS {source_schema} CASCADE")
+            await conn.close()
+
+    asyncio.run(run_live())
+
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import json
 import os
@@ -21,6 +22,11 @@ import time
 from typing import Any, Awaitable, Callable, Mapping, Sequence
 import uuid
 
+from services.execution.market_snapshot_admission import (
+    evaluate_taiwan_market_freshness,
+    is_taiwan_symbol,
+    parse_rfc3339,
+)
 from services.trade_journey.telemetry_rows import decode_event_payload
 from services.trade_journey.lifecycle_projector import (
     JOURNEY_STORE_SCHEMA,
@@ -35,6 +41,7 @@ SCHEMA_VERSION = "pantheon.lifecycle-proj-cutover-hosted-proof.v1"
 TASK_ID = "LIFECYCLE-PROJ-CUTOVER-001"
 NATURAL_PRODUCER = "paper-signal-producer"
 NATURAL_INTERPRETER = "services.registry.strategy_artifact:evaluate_strategy_action"
+_SNAPSHOT_ID_RE = re.compile(r"^mss-[0-9a-fA-F]{24}$")
 REQUIRED_EVENT_TYPES = (
     "signal_generation",
     "trade_decision",
@@ -68,8 +75,6 @@ PAPER_LIFECYCLE_UUID_NAMESPACE = uuid.UUID("1760784c-c9e0-47eb-b0aa-d37f58d892df
 DEFAULT_PROJECTION_SCHEMA = "trade_journey_projection"
 DEFAULT_CONTROLLER_ID = "canonical-lifecycle-projector"
 _SCHEMA_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
-_SNAPSHOT_REF_RE = re.compile(r"^source-ingest://snapshots/(mss-[0-9a-zA-Z._-]+)$")
-_SNAPSHOT_ID_RE = re.compile(r"^mss-[0-9a-zA-Z._-]+$")
 
 
 class ProbeError(RuntimeError):
@@ -123,29 +128,7 @@ class AsyncpgTelemetrySource:
         self._row_limit = row_limit
         self._query_types = tuple(query_types)
 
-    async def high_watermark(self) -> int:
-        try:
-            import asyncpg  # type: ignore[import]
-
-            conn = await asyncpg.connect(self._dsn)
-            try:
-                async with conn.transaction(isolation="repeatable_read", readonly=True):
-                    return int(
-                        await conn.fetchval(
-                            "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events "
-                            "WHERE event_type = ANY($1::text[])",
-                            list(self._query_types),
-                        )
-                        or 0
-                    )
-            finally:
-                await conn.close()
-        except Exception as exc:  # noqa: BLE001 - never include DSN/error text
-            raise ProbeError(
-                "source_query_error", "committed telemetry snapshot query failed"
-            ) from exc
-
-    async def snapshot_after(self, baseline_high_watermark: int) -> tuple[int, list[dict[str, Any]]]:
+    async def _fetch(self, baseline: int | None) -> tuple[int, list[dict[str, Any]]]:
         try:
             import asyncpg  # type: ignore[import]
 
@@ -160,15 +143,17 @@ class AsyncpgTelemetrySource:
                         )
                         or 0
                     )
-                    records = await conn.fetch(
-                        "SELECT ingested_seq, ingested_at, event_id, event_type, "
-                        "created_at, payload FROM telemetry_events "
-                        "WHERE ingested_seq > $1 AND event_type = ANY($2::text[]) "
-                        "ORDER BY ingested_seq ASC LIMIT $3",
-                        int(baseline_high_watermark),
-                        list(self._query_types),
-                        self._row_limit,
-                    )
+                    records = []
+                    if baseline is not None:
+                        records = await conn.fetch(
+                            "SELECT ingested_seq, ingested_at, event_id, event_type, "
+                            "created_at, payload FROM telemetry_events "
+                            "WHERE ingested_seq > $1 AND event_type = ANY($2::text[]) "
+                            "ORDER BY ingested_seq ASC LIMIT $3",
+                            int(baseline),
+                            list(self._query_types),
+                            self._row_limit,
+                        )
             finally:
                 await conn.close()
         except Exception as exc:  # noqa: BLE001 - never include DSN/error text
@@ -194,6 +179,13 @@ class AsyncpgTelemetrySource:
                 "source_decode_error", "committed telemetry snapshot could not be normalized"
             ) from exc
         return high, rows
+
+    async def high_watermark(self) -> int:
+        high, _ = await self._fetch(None)
+        return high
+
+    async def snapshot_after(self, baseline_high_watermark: int) -> tuple[int, list[dict[str, Any]]]:
+        return await self._fetch(baseline_high_watermark)
 
     async def snapshot(self) -> tuple[int, list[dict[str, Any]]]:
         return await self.snapshot_after(0)
@@ -301,46 +293,68 @@ class AsyncpgRelationalProjectionSource:
         controller = {
             "controller_id": controller_data.get("controller_id"),
             "checkpoint": int(controller_data.get("checkpoint_seq") or 0),
-            "source_high_watermark": int(controller_data.get("source_high_watermark") or 0),
+            "source_high_watermark": int(
+                controller_data.get("source_high_watermark") or 0
+            ),
             "backlog": int(controller_data.get("backlog_count") or 0),
             "generation": int(controller_data.get("projection_revision") or 0),
             "deployment_sha": controller_data.get("deployment_sha"),
             "mode": controller_data.get("mode"),
-            "status": "ready" if str(controller_data.get("status") or "").lower() in {"ok", "ready"} else controller_data.get("status"),
+            "status": (
+                "ready"
+                if str(controller_data.get("status") or "").lower()
+                in {"ok", "ready"}
+                else controller_data.get("status")
+            ),
             "accepted_live": bool(controller_data.get("accepted_live")),
-            "truth_level": "canonical_live" if controller_data.get("mode") == "live" and controller_data.get("accepted_live") is True else "not_accepted_live",
+            "truth_level": (
+                "canonical_live"
+                if controller_data.get("mode") == "live"
+                and controller_data.get("accepted_live") is True
+                else "not_accepted_live"
+            ),
             "last_poll_at": str(controller_data.get("last_poll_at") or ""),
             "last_error": controller_data.get("last_error_message") or None,
-            "quarantine_count": int(controller_data.get("unresolved_quarantine_count") or 0),
+            "quarantine_count": int(
+                controller_data.get("unresolved_quarantine_count") or 0
+            ),
         }
 
-        projected_events = [
-            {
-                **_json_object(row.get("contract_fields")),
-                "canonical_event_id": str(row.get("source_event_id") or ""),
-                "stage": str(row.get("stage_name") or ""),
-                "stage_status": str(row.get("stage_status") or ""),
-                "source_offset": int(row.get("source_ingested_seq") or 0),
-            }
-            for row in stage_rows
-        ]
+        projected_events: list[dict[str, Any]] = []
+        for row in stage_rows:
+            stage = _json_object(row.get("contract_fields"))
+            stage.update(
+                {
+                    "canonical_event_id": str(row.get("source_event_id") or ""),
+                    "stage": str(row.get("stage_name") or ""),
+                    "stage_status": str(row.get("stage_status") or ""),
+                    "source_offset": int(row.get("source_ingested_seq") or 0),
+                }
+            )
+            projected_events.append(stage)
 
         loop: dict[str, Any] | None = None
         if loop_row is not None:
             loop_data = dict(loop_row)
-            freshness = _json_object(loop_data.get("freshness_lineage"))
             loop = {
                 **_json_object(loop_data.get("contract_payload")),
                 **_json_object(loop_data.get("lifecycle_summary")),
-                "tenant_id": loop_data.get("tenant_id"),
-                "environment": loop_data.get("environment"),
-                "loop_run_id": loop_data.get("loop_run_id"),
-                "journey_id": loop_data.get("journey_id"),
-                "status": loop_data.get("status"),
-                "accepted_live": bool(freshness.get("accepted_live")),
-                "projection_mode": freshness.get("mode"),
-                "projection_revision": int(loop_data.get("projection_revision") or 0),
             }
+            freshness = _json_object(loop_data.get("freshness_lineage"))
+            loop.update(
+                {
+                    "tenant_id": loop_data.get("tenant_id"),
+                    "environment": loop_data.get("environment"),
+                    "loop_run_id": loop_data.get("loop_run_id"),
+                    "journey_id": loop_data.get("journey_id"),
+                    "status": loop_data.get("status"),
+                    "accepted_live": bool(freshness.get("accepted_live")),
+                    "projection_mode": freshness.get("mode"),
+                    "projection_revision": int(
+                        loop_data.get("projection_revision") or 0
+                    ),
+                }
+            )
 
         generation = int(controller.get("generation") or 0)
         journeys = {
@@ -348,7 +362,11 @@ class AsyncpgRelationalProjectionSource:
             "generation": generation,
             "controller": controller,
             "journey_present": journey_row is not None,
-            "journey_projection_revision": int(dict(journey_row).get("projection_revision") or 0) if journey_row is not None else None,
+            "journey_projection_revision": int(
+                dict(journey_row).get("projection_revision") or 0
+            )
+            if journey_row is not None
+            else None,
         }
         loops = {
             "records": {loop_run_id: loop} if loop is not None else {},
@@ -457,6 +475,9 @@ def _complete_candidates(
                     "is_real_order", "is_real_capital",
                 )
             }
+            group["signal_provenance"]["signal_event_time"] = (
+                src.get("created_at") or envelope.get("event_time") or ""
+            )
     complete: list[dict[str, Any]] = []
     for group in groups.values():
         selected = sorted(group["events"], key=lambda item: item["sequence_no"])
@@ -539,21 +560,18 @@ def _complete_candidates(
             )
         ):
             continue
-        group["selected_events"] = selected
-        group["max_ingested_seq"] = max(item["ingested_seq"] for item in selected)
         if mode == "natural":
             try:
                 _validate_natural_candidate(group, case)
             except ProbeError:
                 continue
+        group["selected_events"] = selected
+        group["max_ingested_seq"] = max(item["ingested_seq"] for item in selected)
         complete.append(group)
     return sorted(complete, key=lambda item: item["max_ingested_seq"], reverse=True)
 
 
-def _validate_natural_candidate(
-    candidate: Mapping[str, Any],
-    case: Mapping[str, Any] | None = None,
-) -> None:
+def _validate_natural_candidate(candidate: Mapping[str, Any], case: Mapping[str, Any] | None = None) -> None:
     prov = candidate.get("signal_provenance")
     if not isinstance(prov, Mapping):
         raise ProbeError("natural_provenance_missing", "signal provenance metadata is missing")
@@ -568,25 +586,34 @@ def _validate_natural_candidate(
     if prov.get("is_real_capital") is not False or prov.get("is_real_order") is not False:
         raise ProbeError("invalid_capital_mode", "safe paper flags violated")
 
-    ref = str(prov.get("market_input_ref") or "").strip()
-    match = _SNAPSHOT_REF_RE.match(ref)
-    if not match:
+    ref, pfx = str(prov.get("market_input_ref") or "").strip(), "source-ingest://snapshots/"
+    if not ref.startswith(pfx):
         raise ProbeError("invalid_lineage", "market input lineage ref is invalid or missing")
-    snapshot_id = str(prov.get("market_input_snapshot_id") or "").strip()
-    if not snapshot_id or not _SNAPSHOT_ID_RE.match(snapshot_id) or snapshot_id != match.group(1):
+    snap_id = str(prov.get("market_input_snapshot_id") or "").strip()
+    if not snap_id or not _SNAPSHOT_ID_RE.match(snap_id) or snap_id != ref.removeprefix(pfx):
         raise ProbeError("invalid_snapshot_id", "market input snapshot ID does not match ref")
 
-    observed_at = str(prov.get("market_input_observed_at") or "").strip()
-    event_time = str(prov.get("market_input_event_time") or "").strip()
-    if not observed_at or not event_time:
-        raise ProbeError("invalid_lineage", "market input observation timestamps missing")
-    try:
-        t_obs = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
-        t_evt = datetime.fromisoformat(event_time.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise ProbeError("invalid_lineage", "market input timestamps malformed") from exc
-    if t_evt > t_obs:
-        raise ProbeError("invalid_freshness", "market input event_time cannot follow observed_at")
+    t_obs, err = parse_rfc3339(prov.get("market_input_observed_at"), field_name="market_input_observed_at")
+    if err or t_obs is None:
+        raise ProbeError("invalid_lineage", f"market input observed_at invalid: {err}")
+    t_evt, err = parse_rfc3339(prov.get("market_input_event_time"), field_name="market_input_event_time")
+    if err or t_evt is None:
+        raise ProbeError("invalid_lineage", f"market input event_time invalid: {err}")
+    sig_raw = (
+        prov.get("signal_event_time")
+        or (candidate.get("selected_events") and candidate["selected_events"][0].get("created_at"))
+        or prov.get("market_input_observed_at")
+    )
+    t_sig, err = parse_rfc3339(sig_raw, field_name="signal_event_time")
+    if err or t_sig is None:
+        raise ProbeError("invalid_freshness", f"signal generation timestamp invalid: {err}")
+
+    if not (2024 <= t_evt.year <= 2030 and 2024 <= t_obs.year <= 2030 and 2024 <= t_sig.year <= 2030):
+        raise ProbeError("invalid_freshness", "timestamps outside reasonable window (2024-2030)")
+    if not (t_evt <= t_obs <= t_sig):
+        raise ProbeError("invalid_freshness", "market input timestamps violate t_evt <= t_obs <= t_sig")
+    if (t_sig - t_obs).total_seconds() > 420.0:
+        raise ProbeError("invalid_freshness", "market input observed age exceeds 420s max")
 
     lineage = prov.get("market_input_lineage")
     if not isinstance(lineage, Mapping):
@@ -595,6 +622,13 @@ def _validate_natural_candidate(
         items = lineage.get(key)
         if not isinstance(items, (list, tuple)) or not items or not all(isinstance(x, str) and x.strip() for x in items):
             raise ProbeError("invalid_lineage", f"market input lineage {key} is incomplete")
+
+    if is_taiwan_symbol(prov.get("raw_symbol") or ""):
+        ok, r_code, detail = evaluate_taiwan_market_freshness(
+            event_time_dt=t_evt, now_dt=t_sig, refresh_receipt_dt=t_obs, lineage=lineage, max_refresh_age_seconds=420
+        )
+        if not ok:
+            raise ProbeError("invalid_freshness", f"Taiwan market freshness rejected: {r_code} - {detail}")
 
     if case is not None:
         if case.get("state") != "succeeded":
@@ -643,82 +677,134 @@ def _normalize_case_record(record: Mapping[str, Any]) -> dict[str, Any]:
 
 
 class AsyncpgCaseSource:
-    """Read one governed persona provisioning case from Postgres."""
+    """Read governed persona provisioning case and verify lineage from Postgres."""
 
-    def __init__(self, dsn: str, *, schema: str = "bff", registry_schema: str = "registry") -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        schema: str = "bff",
+        registry_schema: str = "registry",
+        source_evidence_schema: str = "source_ingest",
+    ) -> None:
         self._dsn = dsn
         self._schema = schema
         self._registry_schema = registry_schema
+        self._source_evidence_schema = source_evidence_schema
+
+    @asynccontextmanager
+    async def _readonly_tx(self):
+        import asyncpg  # type: ignore[import]
+
+        conn = await asyncpg.connect(self._dsn)
+        try:
+            async with conn.transaction(isolation="repeatable_read", readonly=True):
+                yield conn
+        finally:
+            await conn.close()
 
     async def get_case(self, case_key: str) -> dict[str, Any] | None:
         try:
-            import asyncpg  # type: ignore[import]
-
-            conn = await asyncpg.connect(self._dsn)
-            try:
-                async with conn.transaction(isolation="repeatable_read", readonly=True):
-                    row = await conn.fetchrow(
-                        f'SELECT tenant_id, idempotency_key, persona_id, "references", result, state '
-                        f'FROM {self._schema}.persona_provisioning WHERE idempotency_key = $1 LIMIT 1',
-                        case_key,
-                    )
-                    if row is None:
-                        return None
-                    case = _normalize_case_record(dict(row))
-                    artifact_id = case.get("artifact_id")
-                    if not artifact_id:
-                        raise ProbeError("case_artifact_missing", "case artifact ID is missing")
-
-                    reg_row = await conn.fetchrow(
-                        f"SELECT payload FROM {self._registry_schema}.entries WHERE record_id = $1 LIMIT 1",
-                        artifact_id,
-                    )
-                    if reg_row is None:
-                        raise ProbeError("registry_artifact_missing", f"artifact {artifact_id!r} not found in registry")
-                    payload = _json_object(reg_row["payload"])
-                    reg_state = str(payload.get("artifact_state") or "")
-                    if reg_state != "approved":
-                        raise ProbeError("registry_artifact_not_approved", f"registry artifact state {reg_state!r}")
-                    reg_tenant = str(payload.get("owner_tenant") or "")
-                    if reg_tenant and reg_tenant != case.get("tenant_id") and reg_tenant != "system":
-                        raise ProbeError("registry_tenant_mismatch", "registry artifact tenant mismatch")
-                    reg_checksum = str(payload.get("checksum") or "")
-                    if not reg_checksum:
-                        raise ProbeError("registry_checksum_missing", "registry artifact checksum is missing")
-                    if case.get("artifact_checksum") and case["artifact_checksum"] != reg_checksum:
-                        raise ProbeError("case_checksum_mismatch", "case checksum mismatch")
-                    case["artifact_checksum"] = reg_checksum
-
-                    reg_version = str(payload.get("version") or "")
-                    if not reg_version:
-                        raise ProbeError("registry_version_missing", "registry artifact version is missing")
-                    if case.get("artifact_version") and case["artifact_version"] != reg_version:
-                        raise ProbeError("case_version_mismatch", "case version mismatch")
-                    case["artifact_version"] = reg_version
-                    case["artifact_state"] = "approved"
-                    return case
-            finally:
-                await conn.close()
+            async with self._readonly_tx() as conn:
+                row = await conn.fetchrow(
+                    f'SELECT tenant_id, idempotency_key, persona_id, "references", result, state '
+                    f'FROM {self._schema}.persona_provisioning WHERE idempotency_key = $1 LIMIT 1',
+                    case_key,
+                )
+                if row is None:
+                    return None
+                case = _normalize_case_record(dict(row))
+                artifact_id = case.get("artifact_id")
+                if not artifact_id:
+                    raise ProbeError("case_artifact_missing", "case artifact ID is missing")
+                reg_row = await conn.fetchrow(
+                    f"SELECT payload FROM {self._registry_schema}.entries WHERE record_id = $1 LIMIT 1",
+                    artifact_id,
+                )
+                if reg_row is None:
+                    raise ProbeError("registry_artifact_missing", f"artifact {artifact_id!r} not found in registry")
+                payload = _json_object(reg_row["payload"])
+                reg_state = str(payload.get("artifact_state") or "")
+                if reg_state != "approved":
+                    raise ProbeError("registry_artifact_not_approved", f"registry artifact state {reg_state!r}")
+                reg_tenant = str(payload.get("owner_tenant") or payload.get("tenant_id") or "").strip()
+                if not reg_tenant or (reg_tenant != case.get("tenant_id") and reg_tenant != "system"):
+                    raise ProbeError("registry_tenant_mismatch", "registry artifact tenant mismatch")
+                reg_checksum = str(payload.get("checksum") or "")
+                if not reg_checksum:
+                    raise ProbeError("registry_checksum_missing", "registry artifact checksum is missing")
+                if case.get("artifact_checksum") and case["artifact_checksum"] != reg_checksum:
+                    raise ProbeError("case_checksum_mismatch", "case checksum mismatch")
+                reg_version = str(payload.get("version") or "")
+                if not reg_version:
+                    raise ProbeError("registry_version_missing", "registry artifact version is missing")
+                if case.get("artifact_version") and case["artifact_version"] != reg_version:
+                    raise ProbeError("case_version_mismatch", "case version mismatch")
+                case.update(artifact_checksum=reg_checksum, artifact_version=reg_version, artifact_state="approved")
+                return case
         except ProbeError:
             raise
         except Exception as exc:  # noqa: BLE001
             raise ProbeError("case_query_error", "governed case query failed") from exc
 
+    async def verify_source_lineage(self, lineage: Mapping[str, Any], tenant_id: str) -> None:
+        source_ids = [str(x).strip() for x in lineage.get("source_ids") or () if str(x).strip()]
+        if not source_ids:
+            raise ProbeError("unobserved_source_record", "lineage source_ids is empty")
+        connector_ids = {str(x).strip() for x in lineage.get("connector_ids") or () if str(x).strip()}
+        content_refs = {str(x).strip() for x in lineage.get("content_refs") or () if str(x).strip()}
+        candidate_keys = list(source_ids) + [f"@t{len(tenant_id)}:{tenant_id}:{s}" for s in source_ids]
+        try:
+            async with self._readonly_tx() as conn:
+                rows = await conn.fetch(
+                    f"SELECT record_id, payload FROM {self._source_evidence_schema}.source_evidence "
+                    f"WHERE record_type = 'source_record' AND (record_id = ANY($1::text[]) OR payload->>'source_id' = ANY($1::text[]))",
+                    candidate_keys,
+                )
+        except ProbeError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise ProbeError("source_evidence_query_error", "source evidence query failed") from exc
 
-async def _resolve_case(case_source: Any, case_key: str) -> dict[str, Any]:
+        records: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            payload = _json_object(row["payload"])
+            sid = str(payload.get("source_id") or "")
+            if not sid:
+                rid = str(row["record_id"] or "")
+                sid = rid.split(":", 2)[-1] if (rid.startswith("@t") and ":" in rid) else rid
+            if sid:
+                records[sid] = payload
+
+        for sid in source_ids:
+            payload = records.get(sid)
+            if payload is None:
+                raise ProbeError("unobserved_source_record", f"source record {sid!r} not observed in source evidence")
+            meta = _json_object(payload.get("metadata"))
+            rec_tenant = str(payload.get("tenant_id") or meta.get("tenant_id") or payload.get("owner_tenant") or "").strip()
+            if rec_tenant and rec_tenant != tenant_id and rec_tenant != "system":
+                raise ProbeError("source_tenant_mismatch", f"source record {sid!r} tenant {rec_tenant!r} does not match {tenant_id!r}")
+            rec_connector = str(payload.get("connector_id") or "").strip()
+            if rec_connector and rec_connector not in connector_ids:
+                raise ProbeError("source_connector_mismatch", f"source record {sid!r} connector {rec_connector!r} not in lineage connector_ids")
+            rec_content = str(payload.get("content_ref") or "").strip()
+            if rec_content and rec_content not in content_refs:
+                raise ProbeError("source_content_ref_mismatch", f"source record {sid!r} content_ref {rec_content!r} not in lineage content_refs")
+
+
+async def _resolve_case(case_source: Any, case_key: str | None) -> dict[str, Any]:
+    if not case_key:
+        raise ProbeError("case_key_missing", "a concrete governed case key is required in natural mode")
     if case_source is None:
         raise ProbeError("case_source_missing", "governed case source is required in natural mode")
-    get_fn = getattr(case_source, "get_case", None) or getattr(case_source, "get", None)
-    if not callable(get_fn):
-        raise ProbeError("case_source_invalid", "case source is unavailable")
-    res = get_fn(case_key)
-    if asyncio.iscoroutine(res):
-        res = await res
-    if res is None:
-        raise ProbeError("case_not_found", f"governed case {case_key!r} not found in provisioning")
-    case = _normalize_case_record(res)
-    if not case.get("artifact_state") and isinstance(res, Mapping):
-        case["artifact_state"] = str(res.get("artifact_state") or "")
+    if hasattr(case_source, "get_case"):
+        case = await case_source.get_case(case_key)
+    elif isinstance(case_source, Mapping):
+        case = case_source.get(case_key)
+    else:
+        raise ProbeError("case_source_invalid", "unsupported case source type")
+    if case is None:
+        raise ProbeError("case_not_found", f"governed case {case_key!r} was not found")
     return case
 
 
@@ -820,7 +906,7 @@ def _correlate(
     if loop.get("status") not in {"completed", "completed_with_variance"}:
         raise ProbeError("loop_run_not_terminal", "loop-run is not reconciled terminal truth")
 
-    return {
+    proof = {
         "source": {
             "store": "telemetry_events",
             "read_only": True,
@@ -830,9 +916,6 @@ def _correlate(
         },
         "identity": {field: identity[field] for field in STABLE_IDENTITY_FIELDS},
         "events": list(candidate["selected_events"]),
-        "mode": mode,
-        "governed_case_key": case_key,
-        "signal_provenance": candidate.get("signal_provenance"),
         "projection": {
             "backend": projection_backend,
             "generation": loops.get("generation"),
@@ -848,6 +931,11 @@ def _correlate(
             "journey_id": identity["journey_id"],
         },
     }
+    if case_key:
+        proof["governed_case_key"] = case_key
+    if "signal_provenance" in candidate:
+        proof["signal_provenance"] = candidate["signal_provenance"]
+    return proof
 
 
 async def run_probe(
@@ -869,20 +957,11 @@ async def run_probe(
         raise ProbeError("invalid_expected_sha", "a concrete expected deployment SHA is required")
     if baseline_high_watermark is not None and baseline_high_watermark < 0:
         raise ProbeError("invalid_baseline_high_watermark", "baseline high watermark must be non-negative")
-    if mode not in ("natural", "controlled-stimulus"):
-        raise ProbeError("invalid_mode", f"unsupported probe mode {mode!r}")
-    case = None
-    if mode == "natural":
-        if not case_key:
-            raise ProbeError("case_key_missing", "governed case key is required in natural mode")
-        case = await _resolve_case(case_source, case_key)
+    if mode not in {"natural", "controlled-stimulus"}:
+        raise ProbeError("invalid_probe_mode", f"unsupported probe mode: {mode!r}")
+    case = await _resolve_case(case_source, case_key) if mode == "natural" else None
     deadline = monotonic() + max(0.0, timeout_seconds)
-    last_error = ProbeError(
-        "no_complete_paper_aggregate",
-        "no complete committed paper lifecycle aggregate matched governed case"
-        if mode == "natural"
-        else "no complete committed paper lifecycle aggregate matched",
-    )
+    last_error = ProbeError("no_complete_paper_aggregate", "no complete committed paper lifecycle aggregate matched")
     observed_baseline_high_watermark = baseline_high_watermark
     while True:
         remaining = deadline - monotonic()
@@ -913,17 +992,29 @@ async def run_probe(
         if candidates:
             for candidate in candidates:
                 try:
+                    if mode == "natural" and case is not None and case_source is not None and hasattr(case_source, "verify_source_lineage"):
+                        await case_source.verify_source_lineage(
+                            candidate["signal_provenance"]["market_input_lineage"],
+                            case["tenant_id"],
+                        )
                     if projection_source is not None:
                         journeys, loops, generation_name = await asyncio.wait_for(
                             projection_source.current_projection(candidate),
                             timeout=max(0.001, deadline - monotonic()),
                         )
-                        projection_backend = str(getattr(projection_source, "backend", "postgres"))
-                    elif projection_root is not None:
-                        journeys, loops, generation_name = _current_projection(projection_root)
-                        projection_backend = "json_generation"
+                        projection_backend = str(
+                            getattr(projection_source, "backend", "postgres")
+                        )
                     else:
-                        raise ProbeError("configuration_missing", "projection root or relational projection DSN is required")
+                        if projection_root is None:
+                            raise ProbeError(
+                                "configuration_missing",
+                                "projection root or relational projection DSN is required",
+                            )
+                        journeys, loops, generation_name = _current_projection(
+                            projection_root
+                        )
+                        projection_backend = "json_generation"
                     proof = _correlate(
                         candidate=candidate,
                         baseline_high_watermark=observed_baseline_high_watermark,
@@ -936,17 +1027,19 @@ async def run_probe(
                         mode=mode,
                         case_key=case_key,
                     )
-                    return {
+                    res = {
                         "schema_version": SCHEMA_VERSION,
                         "task_id": TASK_ID,
-                        "mode": mode,
-                        "governed_case_key": case_key,
                         "outcome": "passed",
+                        "mode": mode,
                         "observed_at": _utc_now(),
                         "expected_deployment_sha": expected_sha,
                         "proof": proof,
                         "redaction": {"dsn_included": False, "payloads_included": False},
                     }
+                    if case_key:
+                        res["governed_case_key"] = case_key
+                    return res
                 except asyncio.TimeoutError:
                     last_error = ProbeError(
                         "projection_query_timeout",
@@ -963,52 +1056,103 @@ async def run_probe(
 
 
 def _failure_artifact(
-    *, expected_sha: str, code: str, message: str,
-    mode: str = "natural", case_key: str | None = None, timed_out: bool | None = None,
+    *,
+    expected_sha: str,
+    code: str,
+    message: str,
+    mode: str = "natural",
+    case_key: str | None = None,
+    timed_out: bool | None = None,
 ) -> dict[str, Any]:
     failure: dict[str, Any] = {"code": code, "message": message}
     if timed_out is not None:
         failure["timed_out"] = timed_out
-    result = {
-        "schema_version": SCHEMA_VERSION, "task_id": TASK_ID, "mode": mode,
-        "outcome": "failed", "observed_at": _utc_now(), "expected_deployment_sha": expected_sha,
-        "failure": failure, "redaction": {"dsn_included": False, "payloads_included": False},
+    res = {
+        "schema_version": SCHEMA_VERSION,
+        "task_id": TASK_ID,
+        "outcome": "failed",
+        "mode": mode,
+        "observed_at": _utc_now(),
+        "expected_deployment_sha": expected_sha,
+        "failure": failure,
+        "redaction": {"dsn_included": False, "payloads_included": False},
     }
     if case_key:
-        result["governed_case_key"] = case_key
-    return result
+        res["governed_case_key"] = case_key
+    return res
 
 
 def write_failure_artifact(
-    output: Path, *, expected_sha: str, code: str, message: str,
-    mode: str = "natural", case_key: str | None = None,
+    output: Path,
+    *,
+    expected_sha: str,
+    code: str,
+    message: str,
+    mode: str = "natural",
+    case_key: str | None = None,
 ) -> dict[str, Any]:
     """Write a redacted failure artifact when hosted transport fails."""
-    artifact = _failure_artifact(expected_sha=expected_sha, code=code, message=message, mode=mode, case_key=case_key)
+    artifact = _failure_artifact(
+        expected_sha=expected_sha,
+        code=code,
+        message=message,
+        mode=mode,
+        case_key=case_key,
+    )
     _atomic_write_json(output, artifact)
     return artifact
 
 
 async def execute(
-    *, source: Any, projection_root: Path | None, projection_source: Any | None = None,
-    case_source: Any | None = None, expected_sha: str, output: Path, timeout_seconds: float,
-    poll_seconds: float, baseline_high_watermark: int | None = None, mode: str = "natural",
-    case_key: str | None = None, sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    *,
+    source: Any,
+    projection_root: Path | None,
+    projection_source: Any | None = None,
+    case_source: Any | None = None,
+    expected_sha: str,
+    output: Path,
+    timeout_seconds: float,
+    poll_seconds: float,
+    baseline_high_watermark: int | None = None,
+    mode: str = "natural",
+    case_key: str | None = None,
+    sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> tuple[int, dict[str, Any]]:
-    kwargs = dict(expected_sha=expected_sha, mode=mode, case_key=case_key)
     try:
         artifact = await run_probe(
-            source=source, projection_root=projection_root, projection_source=projection_source,
-            case_source=case_source, timeout_seconds=timeout_seconds, poll_seconds=poll_seconds,
-            baseline_high_watermark=baseline_high_watermark, sleeper=sleeper, monotonic=monotonic, **kwargs,
+            source=source,
+            projection_root=projection_root,
+            projection_source=projection_source,
+            case_source=case_source,
+            expected_sha=expected_sha,
+            timeout_seconds=timeout_seconds,
+            poll_seconds=poll_seconds,
+            baseline_high_watermark=baseline_high_watermark,
+            mode=mode,
+            case_key=case_key,
+            sleeper=sleeper,
+            monotonic=monotonic,
         )
         code = 0
     except ProbeError as exc:
-        artifact = _failure_artifact(code=exc.code, message=exc.safe_message, timed_out=exc.timed_out, **kwargs)
+        artifact = _failure_artifact(
+            expected_sha=expected_sha,
+            code=exc.code,
+            message=exc.safe_message,
+            mode=mode,
+            case_key=case_key,
+            timed_out=exc.timed_out,
+        )
         code = 1
     except Exception:  # noqa: BLE001 - keep unexpected failures redacted and durable
-        artifact = _failure_artifact(code="unexpected_probe_error", message="hosted lifecycle probe failed unexpectedly", **kwargs)
+        artifact = _failure_artifact(
+            expected_sha=expected_sha,
+            code="unexpected_probe_error",
+            message="hosted lifecycle probe failed unexpectedly",
+            mode=mode,
+            case_key=case_key,
+        )
         code = 1
     _atomic_write_json(output, artifact)
     return code, artifact
@@ -1020,41 +1164,111 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--baseline-high-watermark", type=int)
     parser.add_argument("--print-high-watermark", action="store_true")
-    parser.add_argument("--timeout-seconds", "--timeout", dest="timeout", type=float, default=300.0)
-    parser.add_argument("--poll-seconds", "--poll", dest="poll", type=float, default=2.0)
-    parser.add_argument("--mode", choices=["natural", "controlled-stimulus"], default="natural")
-    parser.add_argument("--case-key", help="Fresh governed case key (required in natural mode)")
+    parser.add_argument(
+        "--timeout-seconds", "--timeout", dest="timeout", type=float, default=300.0
+    )
+    parser.add_argument(
+        "--poll-seconds", "--poll", dest="poll", type=float, default=2.0
+    )
+    parser.add_argument(
+        "--mode", choices=["natural", "controlled-stimulus"], default="natural"
+    )
+    parser.add_argument("--case-key")
     args = parser.parse_args(argv)
     dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
     root = os.getenv("LIFECYCLE_PROJECTION_ROOT", "").strip()
     projection_dsn = os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_DSN", "").strip()
     if args.print_high_watermark:
         if not dsn:
-            err = {"code": "configuration_missing", "message": "telemetry DSN is required"}
-            print(json.dumps({"outcome": "failed", "failure": err, "redaction": {"dsn_included": False}}, sort_keys=True), file=sys.stderr)
+            print(
+                json.dumps(
+                    {
+                        "outcome": "failed",
+                        "failure": {
+                            "code": "configuration_missing",
+                            "message": "telemetry DSN is required",
+                        },
+                        "redaction": {"dsn_included": False},
+                    },
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
             return 1
         try:
-            print(asyncio.run(_source_high_watermark(AsyncpgTelemetrySource(dsn))))
-            return 0
+            high_watermark = asyncio.run(
+                _source_high_watermark(AsyncpgTelemetrySource(dsn))
+            )
         except ProbeError as exc:
-            err = {"code": exc.code, "message": exc.safe_message, "timed_out": exc.timed_out}
-            print(json.dumps({"outcome": "failed", "failure": err, "redaction": {"dsn_included": False}}, sort_keys=True), file=sys.stderr)
+            print(
+                json.dumps(
+                    {
+                        "outcome": "failed",
+                        "failure": {
+                            "code": exc.code,
+                            "message": exc.safe_message,
+                            "timed_out": exc.timed_out,
+                        },
+                        "redaction": {"dsn_included": False},
+                    },
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
             return 1
+        print(high_watermark)
+        return 0
     if args.output is None:
         parser.error("--output is required unless --print-high-watermark is used")
     if args.mode == "natural" and not args.case_key:
-        write_failure_artifact(args.output, expected_sha=args.expected_sha, code="case_key_missing", message="governed case key is required in natural mode", mode=args.mode)
+        write_failure_artifact(
+            args.output,
+            expected_sha=args.expected_sha,
+            code="case_key_missing",
+            message="a concrete governed case key is required in natural mode",
+            mode=args.mode,
+            case_key=args.case_key,
+        )
         return 1
     if not dsn or (not root and not projection_dsn):
-        write_failure_artifact(args.output, expected_sha=args.expected_sha, code="configuration_missing", message="telemetry DSN and either projection root or relational projection DSN are required", mode=args.mode, case_key=args.case_key)
+        write_failure_artifact(
+            args.output,
+            expected_sha=args.expected_sha,
+            code="configuration_missing",
+            message=(
+                "telemetry DSN and either projection root or relational projection DSN "
+                "are required"
+            ),
+            mode=args.mode,
+            case_key=args.case_key,
+        )
         return 1
-    proj_schema = os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA", DEFAULT_PROJECTION_SCHEMA)
+    case_source = (
+        AsyncpgCaseSource(
+            os.getenv("CASE_SOURCE_DSN") or dsn,
+            schema=os.getenv("CASE_SOURCE_SCHEMA", "bff"),
+            registry_schema=os.getenv("REGISTRY_SCHEMA", "registry"),
+            source_evidence_schema=os.getenv("SOURCE_EVIDENCE_SCHEMA", "source_ingest"),
+        )
+        if args.mode == "natural"
+        else None
+    )
     code, artifact = asyncio.run(
         execute(
             source=AsyncpgTelemetrySource(dsn),
             projection_root=Path(root) if root else None,
-            projection_source=AsyncpgRelationalProjectionSource(projection_dsn, schema=proj_schema) if projection_dsn else None,
-            case_source=AsyncpgCaseSource(dsn) if dsn else None,
+            projection_source=(
+                AsyncpgRelationalProjectionSource(
+                    projection_dsn,
+                    schema=os.getenv(
+                        "LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA",
+                        DEFAULT_PROJECTION_SCHEMA,
+                    ),
+                )
+                if projection_dsn
+                else None
+            ),
+            case_source=case_source,
             expected_sha=args.expected_sha,
             output=args.output,
             timeout_seconds=args.timeout,
