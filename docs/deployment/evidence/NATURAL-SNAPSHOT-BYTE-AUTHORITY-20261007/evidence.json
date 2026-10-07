@@ -1,0 +1,35 @@
+{
+  "task_id": "NATURAL-SNAPSHOT-BYTE-AUTHORITY-20261007",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 150,
+  "title": "Reject incomplete or unverified Source snapshot authority",
+  "summary": "Eliminated false-positive acceptance reproduced from PR #6325 (28ab81a03 / 086c5aa70) where get_source_snapshot accepted snapshot-only-ID responses ({snapshot_id: 'mss-aaaaaaaaaaaaaaaaaaaaaaaa'}) by fabricating an ID-derived placeholder checksum (checksum = snapshot_id), and _bind_source_snapshot accepted it via truthy skips: 1) _bind_source_snapshot strictly validates full snapshot DTO schema: schema_version, snapshot_id, source_ref, symbol, event_time, observed_at, closes (min 2 positive finite numbers), lineage mapping (source_ids, connector_ids, content_refs, ingest_run_ids), points (validated via canonical LatestMarketSnapshot model and derived SHA24), and rejects ID-derived placeholder checksums; 2) get_source_snapshot API response handler validates full DTO from Source API, verifies canonical points against derived SHA24 via LatestMarketSnapshot.from_dict(), and strictly rejects placeholder checksums; 3) docker compose exec in run_loop_prod_tel_002_hosted_probe.sh wires PANTHEON_SOURCE_INGEST_URL to loop-run-projector-scheduler; 4) All 111 unit, integration, and adversarial QA tests pass with 100% success rate.",
+  "counterexamples_eliminated": {
+    "snapshot_only_id_28ab": "Rejected with source_snapshot_api_error; fail-closed when API returns only snapshot_id",
+    "id_derived_checksum_placeholder": "Rejected with invalid_checksum when checksum equals snapshot_id",
+    "unsupported_schema_version": "Rejected with invalid_snapshot_schema when schema_version != source_ingest_latest_market_snapshot.v1",
+    "insufficient_closes": "Rejected with invalid_lineage when closes has < 2 entries or non-positive values",
+    "corrupted_points_derived_sha": "Rejected with invalid_snapshot_id when canonical points do not derive matching snapshot_id"
+  },
+  "verification": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_hosted_lifecycle_probe.py scripts/test_run_loop_prod_tel_002_hosted_probe.py",
+      "exit_code": 0,
+      "test_count": 111,
+      "output": "111 passed in 17.84s"
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
+      "exit_code": 0,
+      "status": "passed"
+    }
+  ],
+  "diff_budget": {
+    "change_class": "corrective",
+    "budget": 150,
+    "status": "passed",
+    "note": "Net production line budget <= 150 strictly satisfied with bounded, readable corrective implementation (+90 net lines)."
+  }
+}

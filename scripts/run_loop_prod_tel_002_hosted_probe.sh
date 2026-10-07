@@ -73,6 +73,7 @@ if [[ -z "${expected_sha}" || -z "${container_output}" || -z "${remote_output}" 
 fi
 
 compose=(docker compose -p pantheon -f docker-compose.yml)
+source_ingest_url="${PANTHEON_SOURCE_INGEST_URL:-${PANTHEON_SOURCE_INGEST_API_URL:-${SOURCE_INGEST_URL:-http://source-ingest:8097}}}"
 
 write_probe_failure() {
   local code="$1"
@@ -128,7 +129,7 @@ fi
 
 probe_status=0
 set +e
-"${compose[@]}" exec -T loop-run-projector-scheduler \
+"${compose[@]}" exec -T -e PANTHEON_SOURCE_INGEST_URL="${source_ingest_url}" loop-run-projector-scheduler \
   python -m services.trade_journey.hosted_lifecycle_probe \
     --expected-sha "${expected_sha}" \
     --baseline-high-watermark "${baseline}" \

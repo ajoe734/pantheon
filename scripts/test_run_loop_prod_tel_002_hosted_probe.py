@@ -118,6 +118,7 @@ def test_probe_wrapper_natural_mode_skips_stimulus(tmp_path: Path, mock_docker):
     assert len(probe_call) == 1
     assert "--mode natural" in probe_call[0]
     assert "--case-key dev-paper-release-42-1" in probe_call[0]
+    assert "-e PANTHEON_SOURCE_INGEST_URL=" in probe_call[0]
 
 
 def test_probe_wrapper_controlled_stimulus_runs_stimulus(tmp_path: Path, mock_docker):
