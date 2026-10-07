@@ -241,10 +241,13 @@ def authoritative_approval(*, approval_id="approval-risk-1", reviewer="risk-revi
 
 
 def test_tenantless_jwt_scope_denial_is_403(monkeypatch):
-    c = client(monkeypatch)
+    c = strict_client(monkeypatch)
     auth = jwt_authorization("proposal-owner", ["operator"], tenant_id=None)
     denied = c.post("/bff/agora/proposals", headers={**HEADERS, "Authorization": auth}, json=payload())
     assert denied.status_code == 403, denied.text
+    error = error_payload(denied)
+    assert error["details"]["reason"] == "AGORA_SCOPE_TENANT_DENIED", denied.text
+    assert error["details"]["precondition_failed"] == "agora_user_scope", denied.text
 
 
 def test_revision_history_etag_and_governed_link(monkeypatch):

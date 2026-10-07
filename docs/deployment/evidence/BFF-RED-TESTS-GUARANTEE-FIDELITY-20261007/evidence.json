@@ -1,0 +1,42 @@
+{
+  "task_id": "BFF-RED-TESTS-GUARANTEE-FIDELITY-20261007",
+  "change_class": "corrective",
+  "net_prod_line_budget": 0,
+  "summary": "Strengthen five BFF regression tests that passed without proving the guarantee they name. Test-only; no production file touched and no assertion weakened. Every strengthened assertion passes on current dev, so no production regression was found.",
+  "classifications": {
+    "agora_tenantless_jwt_scope_denial": {
+      "file": "services/control-plane/bff/tests/test_agora_governed_proposals.py",
+      "classification": "stale_sample",
+      "deciding_commit": "a5e9396c7 (PR #6263, 194737a72e)",
+      "decision": "The test used the permissive stub client, where a JWT bearer is parsed as a stub token with no roles and returns 403 AUTH_STUB_TOKEN_NO_ROLES before scope resolution, so it also passed without the fix. It now uses strict_client and asserts 403 with details.reason AGORA_SCOPE_TENANT_DENIED and details.precondition_failed agora_user_scope.",
+      "mutation_check": "With agora/governance/router.py restored to its pre-a5e9396c7 content the test fails (500 != 403); restored afterwards."
+    },
+    "research_notes_cutover": {
+      "file": "services/control-plane/bff/tests/test_read_surface_port_cutover.py",
+      "classification": "stale_sample",
+      "deciding_commit": "e194571a1",
+      "decision": "CORRECTION of the BFF-RED-TESTS-COMPOSITION-20261007 entry read_surface_cutover_notes: it said the research owner answers experiment reads only and that the double should hide note methods. That was wrong. e194571a1 routed note list/get/create to the research owner and research/client.py ResearchServiceClient implements them, so hiding them made list_research_notes fall back to the in-memory _notes dict. The owner double now provides list_research_notes returning two notes and the test asserts those two ids, which the one-note in-memory store cannot produce."
+    },
+    "registry_timeout": {
+      "file": "services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py",
+      "classification": "stale_sample",
+      "decision": "The PATCH carried no token, so _headers raised TENANT_MISMATCH in about 2 ms before any socket I/O and urlopen(timeout=...) was never reached. The request now passes auth_token=_strict_token() like the sibling tests, and asserts a socket timeout reason with elapsed time between 0.8 s and 1.9 s for timeout=1, instead of pytest.raises(Exception)."
+    },
+    "persona_router_not_found_and_unavailable": {
+      "file": "services/control-plane/bff/tests/test_persona_router.py",
+      "classification": "stale_sample",
+      "deciding_commit": "e32ab2785",
+      "decision": "A removed route also returns 404, so the five not-found tests now assert the RESOURCE_NOT_FOUND error code. The owner-unavailable test clears PERSONA_URL, PANTHEON_PERSONA_URL and PANTHEON_PERSONA_API_URL with monkeypatch and asserts 503 DEPENDENCY_UNAVAILABLE with retryable true."
+    },
+    "path_dedupe_ranking_formula_action": {
+      "file": "services/control-plane/bff/tests/test_bff_path_dedupe.py",
+      "classification": "retired",
+      "deciding_commits": ["dab9aa6c2", "e87c896fd"],
+      "decision": "RankingFormulaAction was retired by dab9aa6c2 and e87c896fd (git log -S). The 410 ACTION_RETIRED check now also asserts error.details.replacement is present."
+    }
+  },
+  "local_verification": {
+    "command": "python -m pytest tests/test_agora_governed_proposals.py tests/test_read_surface_port_cutover.py tests/test_bff_path_dedupe.py tests/test_strategy_registry_owner_prerequisite.py tests/test_persona_router.py (repo root, PYTHONPATH=.)",
+    "result": "134 passed before the persona edits; test_persona_router.py alone 42 passed after them"
+  }
+}
