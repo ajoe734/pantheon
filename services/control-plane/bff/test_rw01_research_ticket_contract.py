@@ -77,7 +77,7 @@ class _TicketPortDouble(DefaultResearchKnowledgeSourcePort):
     ) -> None:
         super().__init__(
             research_tickets_store=records,
-            research_write_owner=JsonFileResearchWriteOwner(
+            research_write_owner=build_json_file_research_write_owner(
                 tickets=records,
                 tickets_path=persistence_path,
             ),
@@ -105,7 +105,7 @@ class _TicketPortDouble(DefaultResearchKnowledgeSourcePort):
 
 
 from services.control_plane.bff.tests.knowledge_read_port_fixtures import (
-    JsonFileResearchWriteOwner,
+    build_json_file_research_write_owner,
     create_research_test_app,
 )
 

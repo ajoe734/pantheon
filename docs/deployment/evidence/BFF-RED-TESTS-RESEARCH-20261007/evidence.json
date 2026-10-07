@@ -7,7 +7,7 @@
     {
       "tests": "test_rw01_research_ticket_contract.py (create/patch x2), test_kw02_research_notes_contract.py (create round trip, empty filter)",
       "class": "intended change",
-      "decision": "92d9f52dc removed the BFF fallback writers; tickets and notes writes now fail closed with 503 DEPENDENCY_UNAVAILABLE without an owner. Tests inject JsonFileResearchWriteOwner (tests/knowledge_read_port_fixtures.py), persisting to the env JSON stores. Assertions unchanged."
+      "decision": "92d9f52dc removed the BFF fallback writers; tickets and notes writes now fail closed with 503 DEPENDENCY_UNAVAILABLE without an owner. Tests inject the production services.research.write_owner.ResearchWriteOwner backed by JsonFileOwnerStore JSON-file stores (tests/knowledge_read_port_fixtures.py, same paths the env fixtures read); the JsonFileResearchWriteOwner re-implementation was deleted. Ticket id format (rt-YYYYMMDD-NNN) and lifecycle fields match the real owner, so no rw01/kw02 expectation changed."
     },
     {
       "tests": "tests/test_receipt_research_routes.py (both)",

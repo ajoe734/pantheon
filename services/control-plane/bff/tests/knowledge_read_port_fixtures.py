@@ -18,6 +18,7 @@ from services.control_plane.bff.ports import (
     ReadSurfacePorts,
     create_in_memory_persona_capital_runtime_port,
 )
+from services.research.write_owner import ResearchWriteOwner
 
 
 class _InstitutionalMemoryStoreDouble:
@@ -35,122 +36,43 @@ class _InstitutionalMemoryStoreDouble:
         return _clone(record) if record is not None else None
 
 
-class JsonFileResearchWriteOwner:
-    """Stand-in for ``services.research.write_owner.ResearchWriteOwner`` writes.
-
-    92d9f52dc removed the BFF fallback writers, so ticket and note mutations
-    only succeed through an injected owner.  This double persists them to the
-    same JSON files the environment fixtures read; reads stay on the port.
-    """
+class JsonFileOwnerStore:
+    """Owner-store (put/get/list_all) persisting to the JSON file fixtures read."""
 
     def __init__(
         self,
-        *,
-        tickets: Optional[Mapping[str, Dict[str, Any]]] = None,
-        tickets_path: Optional[Path] = None,
-        notes: Optional[Mapping[str, Dict[str, Any]]] = None,
-        notes_path: Optional[Path] = None,
+        records: Optional[Mapping[str, Dict[str, Any]]] = None,
+        path: Optional[Path] = None,
     ) -> None:
-        self._tickets = _clone_records(tickets or {})
-        self._tickets_path = tickets_path
-        self._notes = _clone_records(notes or {})
-        self._notes_path = notes_path
+        self._records = _clone_records(records or {})
+        self._path = path
 
-    @staticmethod
-    def _persist(records: Dict[str, Dict[str, Any]], path: Optional[Path]) -> None:
-        if path is not None:
-            path.write_text(json.dumps(records, indent=2), encoding="utf-8")
+    def put(self, key: str, payload: Dict[str, Any]) -> None:
+        self._records[str(key)] = _clone(payload)
+        if self._path is not None:
+            self._path.write_text(json.dumps(self._records, indent=2), encoding="utf-8")
 
-    def create_research_ticket(
-        self,
-        *,
-        title: str,
-        description: str,
-        priority: str,
-        owner: str,
-        actor_id: str,
-        created_at: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        timestamp = created_at or "2026-05-23T00:00:00Z"
-        day = timestamp[:10].replace("-", "")
-        sequence = len(self._tickets) + 1
-        while f"rt-{day}-{sequence:03d}" in self._tickets:
-            sequence += 1
-        ticket_id = f"rt-{day}-{sequence:03d}"
-        ticket = {
-            "ticket_id": ticket_id,
-            "title": title,
-            "description": description,
-            "status": "open",
-            "priority": priority,
-            "owner": owner,
-            "created_at": timestamp,
-            "updated_at": timestamp,
-            "closed_at": None,
-            "archived_at": None,
-            "lifecycle_history": [
-                {
-                    "from_status": None,
-                    "to_status": "open",
-                    "transitioned_at": timestamp,
-                    "transitioned_by": actor_id,
-                }
-            ],
-            "linked_experiments": [],
-            "linked_artifacts": [],
-        }
-        self._tickets[ticket_id] = ticket
-        self._persist(self._tickets, self._tickets_path)
-        return _clone(ticket)
+    def get(self, key: str) -> Optional[Dict[str, Any]]:
+        record = self._records.get(str(key))
+        return _clone(record) if record is not None else None
 
-    def patch_research_ticket(
-        self,
-        ticket_id: str,
-        *,
-        patch: Dict[str, Any],
-        actor_id: str,
-        updated_at: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        ticket = self._tickets.get(str(ticket_id))
-        if ticket is None:
-            return None
-        timestamp = updated_at or "2026-05-23T00:00:00Z"
-        for field in ("title", "description", "priority", "owner"):
-            if field in patch:
-                ticket[field] = patch[field]
-        next_status = patch.get("status")
-        if next_status is not None and next_status != ticket.get("status"):
-            previous = ticket.get("status")
-            ticket["status"] = next_status
-            if next_status == "closed":
-                ticket["closed_at"] = timestamp
-                ticket["archived_at"] = None
-            elif next_status == "archived":
-                ticket["archived_at"] = timestamp
-                ticket["closed_at"] = ticket.get("closed_at") or timestamp
-            else:
-                ticket["archived_at"] = None
-                if next_status in {"open", "in_progress"}:
-                    ticket["closed_at"] = None
-            ticket.setdefault("lifecycle_history", []).append(
-                {
-                    "from_status": previous,
-                    "to_status": next_status,
-                    "transitioned_at": timestamp,
-                    "transitioned_by": actor_id,
-                }
-            )
-        ticket["updated_at"] = timestamp
-        self._persist(self._tickets, self._tickets_path)
-        return _clone(ticket)
+    def list_all(self, **_: Any) -> list[Dict[str, Any]]:
+        return [_clone(record) for record in self._records.values()]
 
-    def create_research_note(self, note: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        note_id = str(note.get("note_id") or "").strip()
-        if not note_id:
-            return None
-        self._notes[note_id] = _clone(note)
-        self._persist(self._notes, self._notes_path)
-        return _clone(note)
+
+def build_json_file_research_write_owner(
+    *,
+    tickets: Optional[Mapping[str, Dict[str, Any]]] = None,
+    tickets_path: Optional[Path] = None,
+    notes: Optional[Mapping[str, Dict[str, Any]]] = None,
+    notes_path: Optional[Path] = None,
+) -> ResearchWriteOwner:
+    """Production ``ResearchWriteOwner`` backed by JSON-file owner stores."""
+    return ResearchWriteOwner(
+        tickets_store=JsonFileOwnerStore(tickets, tickets_path),
+        experiments_store=JsonFileOwnerStore(),
+        notes_store=JsonFileOwnerStore(notes, notes_path),
+    )
 
 
 class KnowledgeReadPortsDouble(ReadSurfacePorts):
@@ -274,7 +196,7 @@ def create_environment_knowledge_read_ports() -> KnowledgeReadPortsDouble:
 
     notes_path = os.getenv("PANTHEON_BFF_RESEARCH_NOTES_STORE")
     tickets_path = os.getenv("PANTHEON_BFF_RESEARCH_TICKET_STORE")
-    write_owner = JsonFileResearchWriteOwner(
+    write_owner = build_json_file_research_write_owner(
         tickets=datasets.get("research_tickets"),
         tickets_path=Path(tickets_path) if tickets_path else None,
         notes=datasets.get("research_notes"),
