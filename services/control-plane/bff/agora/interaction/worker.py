@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient
@@ -306,8 +307,13 @@ class AgoraInteractionWorker:
         max_ticks: int = 0,
         stop_event: Optional[threading.Event] = None,
         tenant_id: Optional[str] = None,
+        heartbeat_path: Optional[Path] = None,
     ) -> None:
-        """Continuous polling loop for processing interactions."""
+        """Continuous polling loop for processing interactions.
+
+        When ``heartbeat_path`` is set the file is touched every tick so an
+        external probe can tell a live loop from a stalled one.
+        """
         logger.info(
             "Agora interaction worker %s starting loop (poll=%.1fs, max_ticks=%d, tenant=%s)",
             self.worker_id, poll_interval, max_ticks, tenant_id or "all"
@@ -322,6 +328,8 @@ class AgoraInteractionWorker:
                 break
 
             ticks += 1
+            if heartbeat_path is not None:
+                heartbeat_path.touch()
             try:
                 processed = self.run_once(limit=25, tenant_id=tenant_id)
                 if processed == 0:
