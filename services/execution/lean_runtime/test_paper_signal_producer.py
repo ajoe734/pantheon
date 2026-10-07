@@ -1384,15 +1384,61 @@ class TestExecutableSymbolContract(unittest.TestCase):
         [sig2] = store2.get_pending()
         self.assertEqual(sig2["symbol"], "SPY.ARCA")
 
-        # Bare SPY with artifact data_source containing "us-equity-price"
+        # Bare SPY with artifact.parameters.market="US"
         b3, store3, producer3 = self._make_fixture(
             symbol="SPY",
-            artifact_data_source="source-ingest:normalized/us-equity-price/daily",
-            binding_id="rb-ds",
+            artifact_market="US",
+            binding_id="rb-art-market",
         )
         self.assertEqual(producer3.produce(b3, _NOW), 1)
         [sig3] = store3.get_pending()
         self.assertEqual(sig3["symbol"], "SPY.US")
+
+    def test_counterexample_1_approved_foreign_suffix_membership_rejected(self) -> None:
+        # Counterexample 1: approved [SPY.TW] plus requested SPY/binding US -> market_input_invalid
+        b, store, producer = self._make_fixture(
+            symbol="SPY",
+            artifact_symbols=["SPY.TW"],
+            binding_market="US",
+            market_input_symbol="SPY",
+            binding_id="rb-counterexample-1",
+        )
+        self.assertEqual(producer.produce(b, _NOW), 0)
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertEqual(
+            producer.degraded_bindings[b["binding_id"]].split(":")[0],
+            "market_input_invalid",
+        )
+
+    def test_counterexample_2_dataset_hint_without_explicit_market_fails_closed(self) -> None:
+        # Counterexample 2: No explicit market, binding data_source='dataset://not-us-price/unverified', raw SPY -> market_context_missing
+        b, store, producer = self._make_fixture(
+            symbol="SPY",
+            artifact_symbols=["SPY"],
+            binding_id="rb-counterexample-2",
+        )
+        b["data_source"] = "dataset://not-us-price/unverified"
+        self.assertEqual(producer.produce(b, _NOW), 0)
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertEqual(
+            producer.degraded_bindings[b["binding_id"]].split(":")[0],
+            "market_context_missing",
+        )
+
+    def test_counterexample_3_unsupported_explicit_market_fails_closed(self) -> None:
+        # Counterexample 3: Explicit market='not-us-price', raw/approved SPY -> market_context_unsupported
+        b, store, producer = self._make_fixture(
+            symbol="SPY",
+            artifact_symbols=["SPY"],
+            binding_market="not-us-price",
+            binding_id="rb-counterexample-3",
+        )
+        self.assertEqual(producer.produce(b, _NOW), 0)
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertEqual(
+            producer.degraded_bindings[b["binding_id"]].split(":")[0],
+            "market_context_unsupported",
+        )
 
     def test_bare_ticker_missing_market_context_fails_closed(self) -> None:
         # Bare SPY with NO market context anywhere -> fail closed with market_context_missing

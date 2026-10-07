@@ -524,58 +524,20 @@ _FX_MARKET_TOKENS = {
 
 
 def _classify_market_token(token: Any) -> str | None:
-    """Classify a market token, venue, or lineage reference into a canonical market category."""
+    """Classify an explicit market token or venue into a canonical market category."""
     if not token or not isinstance(token, str):
         return None
-    raw = token.strip()
+    raw = token.strip().lstrip(".").upper()
     if not raw:
         return None
-    upper = raw.upper()
-    if upper in _US_MARKET_TOKENS:
+    if raw in _US_MARKET_TOKENS:
         return "US"
-    if upper in _TW_MARKET_TOKENS:
+    if raw in _TW_MARKET_TOKENS:
         return "TW"
-    if upper in _CRYPTO_MARKET_TOKENS:
+    if raw in _CRYPTO_MARKET_TOKENS:
         return "CRYPTO"
-    if upper in _FX_MARKET_TOKENS:
+    if raw in _FX_MARKET_TOKENS:
         return "FX"
-
-    lower = raw.lower()
-    if any(
-        h in lower
-        for h in (
-            "us-equity",
-            "us-price",
-            "us_equity",
-            "us_price",
-            "us-stock",
-            "us_stock",
-            "/us-",
-            ":us-",
-        )
-    ):
-        return "US"
-    if any(
-        h in lower
-        for h in (
-            "taiwan",
-            "tw_price",
-            "tw-price",
-            "twstock",
-            "taiwanstockprice",
-            "twse",
-            "tpex",
-            "taifex",
-            "tw-twse",
-            "tw-official",
-        )
-    ):
-        return "TW"
-    if any(h in lower for h in ("crypto", "kraken", "binance", "coinbase")):
-        return "CRYPTO"
-    if any(h in lower for h in ("forex", "fx", "oanda")):
-        return "FX"
-
     return None
 
 
@@ -596,40 +558,6 @@ def _intrinsic_symbol_market(symbol: str) -> str | None:
             return "CRYPTO"
 
     return None
-
-
-def _symbols_compatible(sym1: str, sym2: str) -> bool:
-    """Return True if sym1 and sym2 refer to the same underlying instrument."""
-    s1 = str(sym1 or "").strip().upper()
-    s2 = str(sym2 or "").strip().upper()
-    if not s1 or not s2:
-        return False
-    if s1 == s2:
-        return True
-
-    clean1 = s1.replace("/", "")
-    clean2 = s2.replace("/", "")
-    if clean1 == clean2:
-        return True
-
-    root1, suffix1 = s1.rsplit(".", 1) if "." in s1 else (s1, None)
-    root2, suffix2 = s2.rsplit(".", 1) if "." in s2 else (s2, None)
-
-    root1 = root1.replace("/", "")
-    root2 = root2.replace("/", "")
-
-    if root1 != root2:
-        return False
-
-    if suffix1 is None or suffix2 is None:
-        return True
-
-    m1 = _classify_market_token(suffix1)
-    m2 = _classify_market_token(suffix2)
-    if m1 and m2 and m1 == m2:
-        return True
-
-    return False
 
 
 def _extract_explicit_venue(*sources: Mapping[str, Any] | None) -> str | None:
@@ -660,96 +588,63 @@ def _collect_explicit_market_contexts(
     binding: Mapping[str, Any],
     strategy_artifact: Mapping[str, Any],
     market_input: Mapping[str, Any],
+    *,
+    binding_id: str = "<unknown>",
 ) -> tuple[dict[str, list[str]], str | None]:
     """Collect authoritative explicit market fields ('market', 'venue', 'market_code', 'exchange', 'country')."""
     market_origins: dict[str, list[str]] = {}
 
-    def _add_context(market_cat: str | None, origin_desc: str) -> None:
-        if market_cat:
-            market_origins.setdefault(market_cat, []).append(origin_desc)
+    def _process_field(val: Any, origin_desc: str) -> None:
+        if val is None:
+            return
+        if isinstance(val, str):
+            clean = val.strip()
+            if not clean:
+                return
+            market_cat = _classify_market_token(clean)
+            if market_cat is None:
+                raise SignalDecisionUnavailable(
+                    "market_context_unsupported",
+                    f"binding {binding_id} has unsupported explicit market context: {origin_desc}={clean!r}",
+                )
+            market_origins.setdefault(market_cat, []).append(f"{origin_desc}={clean!r}")
+        else:
+            raise SignalDecisionUnavailable(
+                "market_context_unsupported",
+                f"binding {binding_id} has invalid explicit market context: {origin_desc}={val!r}",
+            )
 
     # 1. From binding (top-level and metadata)
     for k in ("market", "venue", "market_code", "exchange", "country"):
-        val = binding.get(k)
-        if isinstance(val, str) and val.strip():
-            _add_context(_classify_market_token(val), f"binding.{k}={val.strip()!r}")
+        if k in binding:
+            _process_field(binding.get(k), f"binding.{k}")
 
     b_meta = binding.get("metadata")
     if isinstance(b_meta, Mapping):
         for k in ("market", "venue", "market_code", "exchange", "country"):
-            val = b_meta.get(k)
-            if isinstance(val, str) and val.strip():
-                _add_context(_classify_market_token(val), f"binding.metadata.{k}={val.strip()!r}")
+            if k in b_meta:
+                _process_field(b_meta.get(k), f"binding.metadata.{k}")
 
     # 2. From strategy_artifact (parameters and metadata)
     params = strategy_artifact.get("parameters")
     if isinstance(params, Mapping):
         for k in ("market", "venue", "market_code", "exchange", "country"):
-            val = params.get(k)
-            if isinstance(val, str) and val.strip():
-                _add_context(_classify_market_token(val), f"artifact.parameters.{k}={val.strip()!r}")
+            if k in params:
+                _process_field(params.get(k), f"artifact.parameters.{k}")
 
     art_meta = strategy_artifact.get("metadata")
     if isinstance(art_meta, Mapping):
         for k in ("market", "venue", "market_code", "exchange", "country"):
-            val = art_meta.get(k)
-            if isinstance(val, str) and val.strip():
-                _add_context(_classify_market_token(val), f"artifact.metadata.{k}={val.strip()!r}")
+            if k in art_meta:
+                _process_field(art_meta.get(k), f"artifact.metadata.{k}")
 
     # 3. From market_input (top-level)
     for k in ("market", "venue", "market_code", "exchange", "country"):
-        val = market_input.get(k)
-        if isinstance(val, str) and val.strip():
-            _add_context(_classify_market_token(val), f"market_input.{k}={val.strip()!r}")
+        if k in market_input:
+            _process_field(market_input.get(k), f"market_input.{k}")
 
     explicit_venue = _extract_explicit_venue(market_input, binding, params, b_meta, art_meta)
     return market_origins, explicit_venue
-
-
-def _collect_market_dataset_hints(
-    binding: Mapping[str, Any],
-    strategy_artifact: Mapping[str, Any],
-    market_input: Mapping[str, Any],
-) -> dict[str, list[str]]:
-    """Collect dataset URI / lineage hints when explicit market fields are absent."""
-    hint_origins: dict[str, list[str]] = {}
-
-    def _add_hint(market_cat: str | None, origin_desc: str) -> None:
-        if market_cat:
-            hint_origins.setdefault(market_cat, []).append(origin_desc)
-
-    # From binding
-    ds = binding.get("data_source")
-    if isinstance(ds, str) and ds.strip():
-        _add_hint(_classify_market_token(ds), f"binding.data_source={ds.strip()!r}")
-
-    b_meta = binding.get("metadata")
-    if isinstance(b_meta, Mapping):
-        bds = b_meta.get("data_source")
-        if isinstance(bds, str) and bds.strip():
-            _add_hint(_classify_market_token(bds), f"binding.metadata.data_source={bds.strip()!r}")
-
-    # From artifact parameters and lineage
-    params = strategy_artifact.get("parameters")
-    if isinstance(params, Mapping):
-        ads = params.get("data_source")
-        if isinstance(ads, str) and ads.strip():
-            _add_hint(_classify_market_token(ads), f"artifact.parameters.data_source={ads.strip()!r}")
-
-    lineage = strategy_artifact.get("lineage")
-    if isinstance(lineage, Mapping):
-        refs = lineage.get("source_dataset_refs")
-        if isinstance(refs, Sequence) and not isinstance(refs, (str, bytes)):
-            for ref in refs:
-                if isinstance(ref, str) and ref.strip():
-                    _add_hint(_classify_market_token(ref), f"artifact.lineage.source_dataset_refs={ref.strip()!r}")
-
-    # From market_input source_ref
-    source_ref = market_input.get("source_ref")
-    if isinstance(source_ref, str) and source_ref.strip():
-        _add_hint(_classify_market_token(source_ref), f"market_input.source_ref={source_ref.strip()!r}")
-
-    return hint_origins
 
 
 def _market_input_for_binding(
@@ -872,18 +767,15 @@ def _market_input_for_binding(
             if isinstance(syms, Sequence) and not isinstance(syms, (str, bytes)) and syms:
                 requested_symbol = str(syms[0]).strip()
     snapshot_symbol = str(raw.get("symbol") or requested_symbol).strip()
-    if requested_symbol and snapshot_symbol and not _symbols_compatible(requested_symbol, snapshot_symbol):
+    if requested_symbol and snapshot_symbol and snapshot_symbol != requested_symbol:
         raise SignalDecisionUnavailable(
             "market_input_invalid",
             f"Source snapshot symbol {snapshot_symbol!r} does not match binding symbol {requested_symbol!r}",
         )
     if policy is not None:
-        expected = requested_symbol or None
-        if expected and snapshot_symbol and _symbols_compatible(expected, snapshot_symbol):
-            expected = snapshot_symbol
         decision = admit_market_snapshot(
             raw,
-            expected_symbol=expected,
+            expected_symbol=requested_symbol or None,
             max_age_seconds=policy["max_age_seconds"],
             minimum_closes=policy["minimum_closes"],
             now_iso=now_iso,
@@ -981,8 +873,7 @@ def _strategy_symbol(
 
     # 2. Raw symbol membership check against approved artifact parameters.symbols
     if isinstance(symbols, Sequence) and not isinstance(symbols, (str, bytes)):
-        symbol_matched = (symbol in symbols) or any(_symbols_compatible(s, symbol) for s in symbols)
-        if not symbol_matched:
+        if symbol not in symbols:
             raise SignalDecisionUnavailable(
                 "market_input_invalid",
                 f"binding {binding_id} market symbol {symbol!r} is outside artifact symbols {list(symbols)!r}",
@@ -990,7 +881,9 @@ def _strategy_symbol(
 
     # 3. Check intrinsic symbol market and collect explicit market contexts
     intrinsic_market = _intrinsic_symbol_market(symbol)
-    explicit_origins, explicit_venue = _collect_explicit_market_contexts(binding, strategy_artifact, market_input)
+    explicit_origins, explicit_venue = _collect_explicit_market_contexts(
+        binding, strategy_artifact, market_input, binding_id=binding_id
+    )
 
     if len(explicit_origins) > 1:
         details = "; ".join(f"{cat}: [{', '.join(origins)}]" for cat, origins in sorted(explicit_origins.items()))
@@ -1011,25 +904,14 @@ def _strategy_symbol(
             )
         target_market = intrinsic_market
     else:
-        # Bare symbol (no intrinsic market suffix): check explicit context, then fallback to dataset hints
-        if explicit_l1:
-            target_market = explicit_l1
-        else:
-            hint_origins = _collect_market_dataset_hints(binding, strategy_artifact, market_input)
-            if len(hint_origins) > 1:
-                details = "; ".join(f"{cat}: [{', '.join(origins)}]" for cat, origins in sorted(hint_origins.items()))
-                raise SignalDecisionUnavailable(
-                    "market_context_contradictory",
-                    f"binding {binding_id} has contradictory market contexts: {details}",
-                )
-            target_market = next(iter(hint_origins.keys())) if hint_origins else None
-
-        if not target_market:
+        # Bare symbol (no intrinsic market suffix): check explicit context
+        if not explicit_l1:
             # Bare ticker with no explicit market context anywhere -> fail closed!
             raise SignalDecisionUnavailable(
                 "market_context_missing",
                 f"binding {binding_id} symbol {symbol!r} has no explicit market context and no intrinsic market suffix",
             )
+        target_market = explicit_l1
 
     # 5. Normalize symbol based on target market using existing adapters
     resolved_symbol = symbol
