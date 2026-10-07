@@ -4,11 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${PORT:-4173}"
 HOST="${HOST:-127.0.0.1}"
-SYNC_TIMEOUT_SECONDS="${PANTHEON_DASHBOARD_SYNC_TIMEOUT_SECONDS:-45}"
-LOG_DIR="${ROOT_DIR}/.orchestrator/logs"
-SYNC_LOG="${LOG_DIR}/dashboard-sync.log"
-
-mkdir -p "${LOG_DIR}"
 
 if lsof -iTCP:"$PORT" -sTCP:LISTEN -n -P >/dev/null 2>&1; then
   if curl -fsS "http://${HOST}:${PORT}/index.html" >/tmp/pantheon-dashboard-check.$$ 2>/dev/null; then
@@ -23,18 +18,9 @@ if lsof -iTCP:"$PORT" -sTCP:LISTEN -n -P >/dev/null 2>&1; then
   exit 1
 fi
 
-# Keep the dashboard available even when state sync is slow or temporarily noisy.
-# Serve immediately from the last successful snapshot and refresh state in the background.
-(
-  if ! AI_NAME="${PANTHEON_DASHBOARD_REFRESH_ACTOR:-Human/ops}" \
-    PANTHEON_STATUS_ROOT="${ROOT_DIR}" \
-    timeout --foreground "${SYNC_TIMEOUT_SECONDS}" \
-    bash "$ROOT_DIR/scripts/sync-state.sh" >"${SYNC_LOG}" 2>&1; then
-    {
-      echo "Warning: sync-state.sh failed or timed out after ${SYNC_TIMEOUT_SECONDS}s; serving the last synced dashboard snapshot."
-      tail -n 20 "${SYNC_LOG}" || true
-    } >>"${SYNC_LOG}" 2>&1
-  fi
-) &
+source "$ROOT_DIR/scripts/canonical-task-state-binding.sh"
+if bind_canonical_task_state "$ROOT_DIR/.orchestrator"; then STATUS_ROOT="$PANTHEON_STATUS_ROOT"; else STATUS_ROOT="$ROOT_DIR"; fi
+unset PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON PANTHEON_STATUS_ROOT PANTHEON_TASK_STATE_EVENT_LOG PANTHEON_TASK_STATE_STORE_MODE
+
 echo "Dashboard available at http://${HOST}:${PORT}/index.html"
-exec python3 "$ROOT_DIR/scripts/dashboard_server.py" --host "$HOST" --port "$PORT" --directory "$ROOT_DIR/docs-site"
+exec python3 "$ROOT_DIR/scripts/dashboard_server.py" --host "$HOST" --port "$PORT" --directory "$ROOT_DIR/docs-site" --repo-root "$STATUS_ROOT"

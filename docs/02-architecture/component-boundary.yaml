@@ -43,6 +43,7 @@ components:
       - .orchestrator/
       - scripts/ai_status.py
       - scripts/human-ops-status.sh
+      - scripts/canonical-task-state-binding.sh
       - scripts/test_human_ops_status.py
       - AGENTS.md
       - scripts/component_boundary.py
