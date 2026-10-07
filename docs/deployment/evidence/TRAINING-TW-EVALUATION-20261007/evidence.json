@@ -1,0 +1,23 @@
+{
+  "task_id": "TRAINING-TW-EVALUATION-20261007",
+  "owner": "Claude",
+  "summary": "Training-session evaluation moved to dev's Taiwan official tw_price_daily source.",
+  "notes": [
+    "Built on 665878074 (connector desired_state_sha256 checked against the connector's own desired state; snapshot digest independent)."
+  ],
+  "changes": [
+    "financial-catalog owner mapping accepts fetch.datasets list or fetch.dataset; exactly one template must bind dataset+connector",
+    "materializer reads Taiwan normalized_row (instrument=symbol_canonical, OHLCV in normalized_row, market TW); crypto path unchanged",
+    "feature refs required only when connector metadata declares feature_targets",
+    "threshold_policy.json v3.0.0: 2330.TWSE/2317.TWSE, staleness_basis taiwan_trading_days via services.execution.market_snapshot_admission.evaluate_taiwan_market_freshness; effective until 2027-01-15",
+    "docker-compose training-session defaults: tw-twse-tpex-official-market / tw_price_daily"
+  ],
+  "verification": {
+    "command": "PYTHONPATH=<repo>:<repo>/services/training-session pytest services/training-session -q",
+    "result": "155 passed, 2 skipped",
+    "live_stack_repro": "not run in this worker; recorded fixtures only"
+  },
+  "limits": [
+    "Governed Taiwan calendar evidence currently covers only the 2026 LNY window; any completed weekday gap outside it fails closed."
+  ]
+}

@@ -24,10 +24,10 @@ def test_compose_wires_training_session_service_and_bff_normal_path() -> None:
         "${SOURCE_INGEST_API_URL:-http://source-ingest:8097}"
     )
     assert training["environment"]["TRAINING_SESSION_SOURCE_CONNECTOR_ID"] == (
-        "${TRAINING_SESSION_SOURCE_CONNECTOR_ID:-crypto-coingecko-spot}"
+        "${TRAINING_SESSION_SOURCE_CONNECTOR_ID:-tw-twse-tpex-official-market}"
     )
     assert training["environment"]["TRAINING_SESSION_SOURCE_DATASET_ID"] == (
-        "${TRAINING_SESSION_SOURCE_DATASET_ID:-ds-coingecko-crypto-spot}"
+        "${TRAINING_SESSION_SOURCE_DATASET_ID:-tw_price_daily}"
     )
     assert "training-session-data:/data/training-session" in training["volumes"]
     assert "source-ingest-data:/data/source-ingest:ro" in training["volumes"]
