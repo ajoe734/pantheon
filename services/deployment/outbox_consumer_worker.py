@@ -41,7 +41,10 @@ from runtime_manager_dispatch_adapter import (
     DispatchResult,
     validate_authoritative_readback,
 )
-from runtime_manager_client import RuntimeManagerClient
+from runtime_manager_client import (
+    RuntimeManagerClient,
+    RuntimeManagerClientError,
+)
 from deploy_authority import (
     DeployAuthorityError,
     DeployAuthorityUnavailableError,
@@ -799,7 +802,6 @@ def _incident_payload(
         "evidence_summary": (
             f"event_id={event_id}; saga_id={saga_id}; fail-closed containment: {reason}"
         ),
-        "lineage_ref": f"{binding.get('artifact_id')}@{binding.get('artifact_version')}",
     }
 
 
@@ -1252,33 +1254,54 @@ def _execute_rollback_compensation(
                 reason=f"rollback current authority rejected: {exc}",
                 timeout_seconds=timeout_seconds,
             )
-        result = client.rollback(
-            {
-                "current_binding_id": binding.get("binding_id"),
-                "action_type": action_type,
-                "replacement_plan_id": target_plan.get("plan_id"),
-                "replacement_plan_status": target_plan.get("status"),
-                "replacement_artifact_id": rollback.get("target_artifact_id"),
-                "replacement_artifact_version": rollback.get("target_version"),
-                "replacement_persona_capital_binding_id": binding.get(
-                    "persona_capital_binding_id"
-                ),
-                "replacement_persona_capital_binding_status": "active",
-                "replacement_allowed_deployment_scope": prior_attestation[
-                    "allowed_deployment_scope"
-                ],
-                "replacement_deployment_mode": binding.get("deployment_mode"),
-                "opened_by_artifact_id": binding.get("artifact_id"),
-                "replacement_strategy_id": prior_attestation["strategy_id"],
-                "replacement_authority_attestation": current_rollback_authority,
-                "replacement_metadata": {
-                    "compensation_event_id": event_id,
-                    "compensation_idempotency_key": event_idempotency_key,
-                    "deployment_saga_id": saga.get("saga_id"),
-                    "rollback_source_plan_id": saga.get("plan_id"),
-                },
-            }
+        rollback_payload: dict[str, Any] = {
+            "current_binding_id": binding.get("binding_id"),
+            "action_type": action_type,
+            "replacement_plan_id": target_plan.get("plan_id"),
+            "replacement_plan_status": target_plan.get("status"),
+            "replacement_artifact_id": rollback.get("target_artifact_id"),
+            "replacement_artifact_version": rollback.get("target_version"),
+            "replacement_persona_capital_binding_id": binding.get(
+                "persona_capital_binding_id"
+            ),
+            "replacement_persona_capital_binding_status": "active",
+            "replacement_allowed_deployment_scope": prior_attestation[
+                "allowed_deployment_scope"
+            ],
+            "replacement_deployment_mode": binding.get("deployment_mode"),
+            "opened_by_artifact_id": binding.get("artifact_id"),
+            "replacement_strategy_id": prior_attestation["strategy_id"],
+            "replacement_authority_attestation": current_rollback_authority,
+            "replacement_metadata": {
+                "compensation_event_id": event_id,
+                "compensation_idempotency_key": event_idempotency_key,
+                "deployment_saga_id": saga.get("saga_id"),
+                "rollback_source_plan_id": saga.get("plan_id"),
+            },
+        }
+        human_gate_decision = (
+            rollback.get("human_gate_decision")
+            or (
+                plan.get("metadata", {}).get("rollback_human_gate_decision")
+                if isinstance(plan.get("metadata"), Mapping)
+                else None
+            )
         )
+        if human_gate_decision is not None:
+            rollback_payload["human_gate_decision"] = human_gate_decision
+        try:
+            result = client.rollback(rollback_payload)
+        except (RuntimeManagerClientError, RuntimeError) as exc:
+            return _contain_and_raise_incident(
+                client=client,
+                saga=saga,
+                binding=binding,
+                event_id=event_id,
+                event_idempotency_key=event_idempotency_key,
+                incident_url=incident_url,
+                reason=f"rollback execution rejected: {exc}",
+                timeout_seconds=timeout_seconds,
+            )
         new_binding = result.get("new_binding")
         if not isinstance(new_binding, Mapping):
             raise RuntimeError("runtime-manager rollback response omitted new_binding")
