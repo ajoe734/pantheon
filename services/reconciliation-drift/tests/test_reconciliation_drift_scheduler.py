@@ -1408,3 +1408,103 @@ def test_telemetry_lifecycle_delivery_classifies_terminal_and_retryable_outcomes
         assert unavailable["outcome"] == "failed"
         assert unavailable["terminal"] is False
         assert unavailable["retryable"] is True
+
+
+def test_scheduled_reconcile_incident_dispatch_bounded_and_completes_within_sla() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+
+        persona_summary = _paper_lifecycle_summary(queue_lag_ms=25_000)
+        persona_binding = persona_summary["binding_id"]
+        summaries = [persona_summary]
+        for i in range(1, 15):
+            summaries.append(
+                _healthy_runtime_summary(
+                    binding_id=f"rb-other-active-{i:03d}",
+                    runtime_id=f"rt-other-{i:03d}",
+                    queue_lag_ms=20_000 if i % 2 == 0 else 10,
+                )
+            )
+        assert len(summaries) == 15
+
+        observed_incident_timeouts: list[float] = []
+
+        def mock_urlopen(req, timeout=None):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "consume-drift-report" in url:
+                observed_incident_timeouts.append(timeout)
+                raise TimeoutError("incidents service timed out")
+            return io.BytesIO(b'{"status":"accepted","event_id":"evt-lifecycle-8"}')
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "PANTHEON_INCIDENTS_API_URL": "http://incidents:8090",
+                    "PANTHEON_INCIDENTS_API_TIMEOUT_SECONDS": "110",
+                },
+            ),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=summaries),
+            mock.patch.object(svc.urllib.request, "urlopen", side_effect=mock_urlopen),
+            mock.patch.object(
+                svc,
+                "_append_telemetry_lifecycle_event",
+                return_value={
+                    "status": "accepted",
+                    "terminal": True,
+                    "retryable": False,
+                    "outcome": "accepted",
+                    "http_status": 202,
+                    "event_id": "evt-recon-8",
+                    "response": {"status": "accepted"},
+                    "error": None,
+                },
+            ) as mock_append,
+        ):
+            resp = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={
+                    "tick_id": "tick-multi-binding-sla-001",
+                    "sla_seconds": 60.0,
+                },
+            )
+
+        assert resp.status_code == 201
+        payload = resp.json()
+        assert payload["within_sla"] is True
+        assert payload["sla_status"] == "met"
+        assert payload["evaluated_binding_count"] == 15
+        assert len(payload["evaluation_ids"]) == 15
+
+        assert len(observed_incident_timeouts) > 0
+        for to in observed_incident_timeouts:
+            assert to is not None and to <= 5.0
+
+        assert len(payload["incident_delivery_errors"]) > 0
+
+        persona_append = next(
+            r for r in payload["lifecycle_append_results"]
+            if r["binding_id"] == persona_binding
+        )
+        assert persona_append["status"] == "accepted"
+        assert "evt-recon-8" in payload["lifecycle_accepted_event_ids"]
+        mock_append.assert_called()
+
+        scheduler = _load_scheduler_module()
+        with mock.patch.object(
+            scheduler.urllib.request,
+            "urlopen",
+            return_value=io.BytesIO(resp.content),
+        ):
+            tick_result = scheduler.run_tick(
+                api_url="http://reconciliation-drift-svc:8102",
+                tick_id="tick-multi-binding-sla-001",
+                timeout_seconds=90.0,
+                sla_seconds=60.0,
+            )
+        assert tick_result["tick_id"] == "tick-multi-binding-sla-001"
+        assert tick_result["within_sla"] is True
+        assert tick_result["attempt_count"] == 1
