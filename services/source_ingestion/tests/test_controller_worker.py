@@ -2228,11 +2228,23 @@ def _make_stub_persona_server():
 def test_load_desired_state_merges_default_and_active_personas(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     server, port = _make_stub_persona_server()
     try:
-        active_persona = {
-            "persona_id": "persona-paper-active",
+        active_persona_1 = {
+            "persona_id": "persona-paper-1",
             "lifecycle_state": "paper_running",
             "status": "active",
             "required_data_sources": [_simulation_requirement()],
+        }
+        active_persona_2 = {
+            "persona_id": "persona-paper-2",
+            "lifecycle_state": "paper_running",
+            "status": "active",
+            "required_data_sources": [_simulation_requirement()],
+        }
+        active_persona_no_req = {
+            "persona_id": "persona-no-req",
+            "lifecycle_state": "paper_running",
+            "status": "active",
+            "required_data_sources": [],
         }
         retired_persona = {
             "persona_id": "persona-retired",
@@ -2248,18 +2260,27 @@ def test_load_desired_state_merges_default_and_active_personas(tmp_path: Path, m
         }
         _StubPersonaOwnerHandler.status_code = 200
         _StubPersonaOwnerHandler.raw_body = None
-        _StubPersonaOwnerHandler.personas = [active_persona, retired_persona, archived_persona]
+        _StubPersonaOwnerHandler.personas = [
+            active_persona_1,
+            active_persona_2,
+            active_persona_no_req,
+            retired_persona,
+            archived_persona,
+        ]
 
         monkeypatch.setenv("SOURCE_INGEST_DESIRED_STATE_URL", f"http://127.0.0.1:{port}/api/personas")
         monkeypatch.delenv("SOURCE_INGEST_DESIRED_STATE_PATH", raising=False)
 
         personas, meta = controller_worker.load_desired_state(timeout_seconds=5.0)
         pids = [p["persona_id"] for p in personas]
-        assert "persona-source-ingest-public-market" in pids
-        assert "persona-paper-active" in pids
-        assert "persona-retired" not in pids
-        assert "persona-archived" not in pids
-        assert meta["persona_count"] == 2
+        assert pids == ["persona-source-ingest-public-market"]
+        holder = personas[0]
+        req_datasets = [r["dataset"] for r in (holder.get("required_data_sources") or [])]
+        assert "tw_price_daily" in req_datasets
+        assert "us_price_daily" in req_datasets
+        assert req_datasets.count("us_price_daily") == 1
+        assert meta["persona_count"] == 1
+        assert meta["requirement_count"] == 2
         assert meta["transport"] == "internal_http"
     finally:
         server.shutdown()
@@ -2336,26 +2357,48 @@ def test_two_controller_ticks_preserve_active_persona_simulation_schedule(tmp_pa
 
     persona_server, persona_port = _make_stub_persona_server()
 
-    active_persona = {
-        "persona_id": "dev-paper-active-persona",
+    req_spec = [
+        {
+            "dataset": SIMULATION_DATASET,
+            "market": "US",
+            "cadence": "daily",
+            "source_class": "live_pull",
+            "connector_candidates": [SIMULATION_CONNECTOR_ID],
+            "policy_gates": ["require_connector_approved", "require_schedule_active", "require_source_health_ok"],
+        }
+    ]
+    active_persona_1 = {
+        "persona_id": "dev-paper-active-1",
         "lifecycle_state": "paper_running",
         "status": "active",
-        "name": "Dev Paper Active Persona",
-        "mandate": "Testing",
-        "required_data_sources": [
-            {
-                "dataset": SIMULATION_DATASET,
-                "market": "US",
-                "cadence": "daily",
-                "source_class": "live_pull",
-                "connector_candidates": [SIMULATION_CONNECTOR_ID],
-                "policy_gates": ["require_connector_approved", "require_schedule_active", "require_source_health_ok"],
-            }
-        ],
+        "name": "Dev Paper Active 1",
+        "required_data_sources": list(req_spec),
     }
+    active_persona_2 = {
+        "persona_id": "dev-paper-active-2",
+        "lifecycle_state": "paper_running",
+        "status": "active",
+        "name": "Dev Paper Active 2",
+        "required_data_sources": list(req_spec),
+    }
+    active_persona_3 = {
+        "persona_id": "dev-paper-active-3",
+        "lifecycle_state": "paper_running",
+        "status": "active",
+        "name": "Dev Paper Active 3",
+        "required_data_sources": list(req_spec),
+    }
+    persona_no_req = {
+        "persona_id": "dev-paper-no-req",
+        "lifecycle_state": "paper_running",
+        "status": "active",
+        "name": "Dev Paper No Req",
+        "required_data_sources": [],
+    }
+    all_personas = [active_persona_1, active_persona_2, active_persona_3, persona_no_req]
     _StubPersonaOwnerHandler.status_code = 200
     _StubPersonaOwnerHandler.raw_body = None
-    _StubPersonaOwnerHandler.personas = [active_persona]
+    _StubPersonaOwnerHandler.personas = all_personas
 
     for _ in range(50):
         try:
@@ -2405,24 +2448,32 @@ def test_two_controller_ticks_preserve_active_persona_simulation_schedule(tmp_pa
         writer = DummyWriter()
         monkeypatch.setenv("SOURCE_INGEST_DESIRED_STATE_URL", f"http://127.0.0.1:{persona_port}/api/personas")
 
-        # Tick 1: Provisions and enables the simulation connector schedule
+        # Tick 1: Provisions and enables the simulation connector schedule with exactly one binding
         run_controller_tick(config=config, state=state, store=store, writer=writer)
         sched1 = runtime.schedule_config_store.get_schedule(SIMULATION_CONNECTOR_ID)
         assert sched1 is not None
         assert sched1.enabled is True
+        bindings1 = [k for k, v in runtime.requirement_snapshot_store.latest.bindings.items() if v == SIMULATION_CONNECTOR_ID]
+        assert len(bindings1) == 1
 
-        # Tick 2: Second tick preserves the simulation connector schedule enabled
+        # Tick 2: Second tick preserves the simulation connector schedule enabled with exactly one binding
         run_controller_tick(config=config, state=state, store=store, writer=writer)
         sched2 = runtime.schedule_config_store.get_schedule(SIMULATION_CONNECTOR_ID)
         assert sched2 is not None
         assert sched2.enabled is True
+        bindings2 = [k for k, v in runtime.requirement_snapshot_store.latest.bindings.items() if v == SIMULATION_CONNECTOR_ID]
+        assert len(bindings2) == 1
+        assert bindings1 == bindings2
 
-        # Tick 3: Persona transitions to retired -> connector schedule is retired
-        _StubPersonaOwnerHandler.personas = [{**active_persona, "lifecycle_state": "retired"}]
+        # Tick 3: Retire all personas -> connector schedule and connector are retired
+        _StubPersonaOwnerHandler.personas = [{**p, "lifecycle_state": "retired"} for p in all_personas]
         run_controller_tick(config=config, state=state, store=store, writer=writer)
         sched3 = runtime.schedule_config_store.get_schedule(SIMULATION_CONNECTOR_ID)
         assert sched3 is not None
         assert sched3.enabled is False
+        connector_cfg = runtime.connector_store.get_config(SIMULATION_CONNECTOR_ID)
+        assert connector_cfg is not None
+        assert connector_cfg.connector.status.value == "disabled"
     finally:
         ingest_server.should_exit = True
         persona_server.shutdown()

@@ -62,6 +62,7 @@ DEV_US_REQUIRED_DATA_SOURCES: tuple[dict[str, Any], ...] = (
         ],
     },
 )
+DEPLOYMENT_REQUIREMENT_HOLDER_ID = "persona-source-ingest-public-market"
 
 
 class BootstrapError(RuntimeError):
@@ -427,7 +428,7 @@ def source_ingest_controller_token(environ: Mapping[str, str] | None = None) -> 
 def ensure_source_provisioning(
     *,
     source_ingest_url: str,
-    persona_id: str,
+    persona_id: str = DEPLOYMENT_REQUIREMENT_HOLDER_ID,
     required_data_sources: Sequence[Mapping[str, Any]],
     controller_token: str,
     request_timeout_seconds: float = 10.0,
@@ -437,10 +438,11 @@ def ensure_source_provisioning(
     This direct reconcile is a first-tick shortcut so a fresh deploy
     converges immediately without waiting for the controller's scheduled
     tick. The source-ingest controller is the single authoritative desired-state
-    owner; its authoritative desired state includes active persona requirements
-    read from the persona owner, preserving this provisioned connector on
-    subsequent controller ticks. This shortcut is not a second desired-state
-    authority.
+    owner; its authoritative desired state derives active persona requirements
+    from the persona owner and submits them under the deployment requirement holder
+    identity (DEPLOYMENT_REQUIREMENT_HOLDER_ID), preserving this provisioned connector
+    on subsequent controller ticks. Both paths converge on this single holder identity,
+    ensuring this shortcut is not a second desired-state authority.
     """
 
     if not required_data_sources:
@@ -677,7 +679,7 @@ def ensure_paper_baseline(
         provisioning_controller_token = source_ingest_controller_token(env)
         ensure_source_provisioning(
             source_ingest_url=effective_source_url,
-            persona_id=persona_id,
+            persona_id=DEPLOYMENT_REQUIREMENT_HOLDER_ID,
             required_data_sources=required_data_sources,
             controller_token=provisioning_controller_token,
             request_timeout_seconds=request_timeout_seconds,

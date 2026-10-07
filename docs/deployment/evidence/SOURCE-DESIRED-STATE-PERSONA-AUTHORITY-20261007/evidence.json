@@ -7,18 +7,28 @@
     "hosted_deploy_run": "37604190265",
     "failure_stage": "stage_dev_paper_prerequisite_readiness",
     "symptom": "Connector schedule for dev-paper-us-equity-simulation toggled enabled=true then enabled=false within 7-45s across 2026-10-05 to 2026-10-07 deploys",
-    "root_cause": "The source-ingestion controller tick read only static default_desired_state.json as desired state authority; active persona connector requirements provisioned by bootstrap were missing from the static file, causing the controller's next periodic tick to classify them as unwanted and retire the connector schedule"
+    "root_cause": "The source-ingestion controller tick read only static default_desired_state.json as desired state authority; active persona connector requirements provisioned by bootstrap were missing from the static file, causing the controller's next periodic tick to classify them as unwanted and retire the connector schedule",
+    "hosted_dry_run_finding": {
+      "timestamp": "2026-10-07T11:00:00Z",
+      "persona_count": 32,
+      "personas_with_simulation_requirement": 22,
+      "personas_without_requirements": 10,
+      "simulation_requirement": "US us_price_daily daily live_pull [dev-paper-us-equity-simulation]",
+      "reconcile_dry_run_http_status": 400,
+      "reconcile_error_detail": "singleton connector cannot prove multiple persona data requirements: dev-paper-us-equity-simulation (persona-070a7b24589fb129f052:US:us_price_daily:daily:live_pull:dev-paper-us-equity-simulation, persona-0a1283ddf9a0fdb7ad33:...)",
+      "resolution": "Derive distinct live requirements from active personas and attach them once to deployment requirement holder persona-source-ingest-public-market; align bootstrap first-tick shortcut to the same holder identity so both converge on one binding key"
+    }
   },
   "acceptance_verification": {
-    "ac1_authoritative_desired_state_merges_personas": "passed: controller_worker.load_desired_state merges static default_desired_state.json with active persona requirements retrieved from SOURCE_INGEST_DESIRED_STATE_URL",
+    "ac1_authoritative_desired_state_merges_personas": "passed: controller_worker.load_desired_state derives distinct live requirements from active personas and attaches them to deployment holder persona-source-ingest-public-market alongside static defaults",
     "ac2_retired_personas_retire_connectors": "passed: _is_active_persona excludes personas with lifecycle_state == 'retired' or status in {'retired', 'archived'}; retiring the persona causes the reconciler to disable its schedule on the next tick",
     "ac3_fail_closed_on_persona_owner_read_failure": "passed: persona owner read failure, non-200 HTTP status, or malformed list payload raises ControllerTickError with stage='persona_owner_read' and retires nothing (never falls back to static default file alone)",
     "ac4_docker_compose_wiring": "passed: docker-compose.yml configures source-ingest-scheduler with SOURCE_INGEST_DESIRED_STATE_URL=${SOURCE_INGEST_DESIRED_STATE_URL:-http://persona:8002/api/personas} and SOURCE_INGEST_DESIRED_STATE_BEARER_TOKEN=${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}, verified by scripts/test_deploy_nonprod_vm.py",
-    "ac5_two_controller_ticks_preserve_schedule": "passed: test_two_controller_ticks_preserve_active_persona_simulation_schedule asserts schedule for dev-paper-us-equity-simulation stays enabled across consecutive ticks when required by an active persona",
+    "ac5_two_controller_ticks_preserve_schedule": "passed: test_two_controller_ticks_preserve_active_persona_simulation_schedule asserts schedule for dev-paper-us-equity-simulation stays enabled across consecutive ticks with exactly one binding when 3 active personas share the requirement, and retires connector when all are retired",
     "ac6_read_failure_preserves_connectors_and_schedules": "passed: test_persona_owner_read_failure_leaves_every_connector_and_schedule_unchanged asserts controller tick fails closed with stage='persona_owner_read' and preserves connector configs and schedules exactly",
-    "ac7_bootstrap_docstring_clarification": "passed: scripts/bootstrap_dev_paper_baseline.py docstring updated to clarify ensure_source_provisioning is a first-tick shortcut preserved by the controller, not a competing desired-state authority",
-    "ac8_connector_schedule_history_recorded": "passed: incident context and root cause recorded in evidence.json documenting toggle history and controller tick retirement",
-    "ac9_net_prod_line_budget": "passed: net production code diff is <= 120 lines (+26 net lines across controller_worker.py, docker-compose.yml, bootstrap_dev_paper_baseline.py)",
+    "ac7_bootstrap_docstring_clarification": "passed: scripts/bootstrap_dev_paper_baseline.py uses DEPLOYMENT_REQUIREMENT_HOLDER_ID for ensure_source_provisioning first-tick shortcut so it converges with the controller's authoritative binding key",
+    "ac8_connector_schedule_history_recorded": "passed: incident context, root cause, and hosted dry-run 400 error recorded in evidence.json documenting toggle history and singleton connector resolution",
+    "ac9_net_prod_line_budget": "passed: net production code diff is <= 120 lines (+44 net lines across controller_worker.py, docker-compose.yml, bootstrap_dev_paper_baseline.py)",
     "ac10_hosted_track_external_wait": "recorded: hosted track recorded as external_wait pending non-prod deployment verification"
   },
   "local_verification": {
@@ -28,7 +38,7 @@
       "$PANTHEON_DEPENDENCY_PYTHON -m pytest scripts/test_bootstrap_dev_paper_baseline.py",
       "python3 $PANTHEON_COMMAND_ROOT/scripts/git/diff_budget.py --base origin/dev --budget 120 --change-class corrective"
     ],
-    "result": "passed (all 100 controller worker tests, deploy compose tests, and 49 bootstrap tests pass; net prod line budget satisfied)"
+    "result": "passed (all 100 controller worker tests, deploy compose tests, and 50 bootstrap tests pass; net prod line budget satisfied)"
   },
   "hosted_track": {
     "status": "external_wait",

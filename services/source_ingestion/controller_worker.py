@@ -96,6 +96,7 @@ def _request_json(
     payload: Mapping[str, Any] | None = None,
     bearer_token: str | None = None,
     timeout_seconds: float = 30.0,
+    allow_list: bool = False,
 ) -> Any:
     body = _canonical_json(payload).encode("utf-8") if payload is not None else None
     headers = {"Accept": "application/json"}
@@ -107,8 +108,12 @@ def _request_json(
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         raw = response.read().decode("utf-8")
     parsed = json.loads(raw) if raw else {}
-    if not isinstance(parsed, (dict, list)):
-        raise ControllerTickError("http_contract", f"expected JSON object or list from {url}")
+    if allow_list:
+        if not isinstance(parsed, (dict, list)):
+            raise ControllerTickError("http_contract", f"expected JSON object or list from {url}")
+    else:
+        if not isinstance(parsed, dict):
+            raise ControllerTickError("http_contract", f"expected JSON object from {url}")
     return parsed
 
 
@@ -214,10 +219,24 @@ def _personas_from_payload(payload: Any) -> tuple[dict[str, Any], ...]:
     return personas
 
 
+DEPLOYMENT_REQUIREMENT_HOLDER_ID = "persona-source-ingest-public-market"
+
+
 def _is_active_persona(persona: Mapping[str, Any]) -> bool:
     lifecycle = str(persona.get("lifecycle_state") or persona.get("state") or "").strip().lower()
     status = str(persona.get("status") or "active").strip().lower()
     return lifecycle != "retired" and status not in {"retired", "archived"}
+
+
+def _requirement_key(req: Mapping[str, Any]) -> tuple:
+    candidates = tuple(str(c).strip() for c in (req.get("connector_candidates") or []))
+    return (
+        str(req.get("market") or "").strip().upper(),
+        str(req.get("dataset") or "").strip().lower(),
+        str(req.get("cadence") or "").strip().lower(),
+        str(req.get("source_class") or "").strip().lower(),
+        candidates,
+    )
 
 
 def load_desired_state(*, timeout_seconds: float = 30.0) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
@@ -237,6 +256,7 @@ def load_desired_state(*, timeout_seconds: float = 30.0) -> tuple[tuple[dict[str
                 url,
                 bearer_token=_load_bearer_token(),
                 timeout_seconds=timeout_seconds,
+                allow_list=True,
             )
             owner_personas = _personas_from_payload(owner_payload)
         except ControllerTickError as exc:
@@ -245,14 +265,28 @@ def load_desired_state(*, timeout_seconds: float = 30.0) -> tuple[tuple[dict[str
             raise ControllerTickError("persona_owner_read", f"persona owner read failed: {exc}") from exc
 
         active_personas = [p for p in owner_personas if _is_active_persona(p)]
-        combined: list[dict[str, Any]] = list(default_personas)
-        default_ids = {str(p["persona_id"]) for p in default_personas}
-        for p in active_personas:
-            pid = str(p["persona_id"])
-            if pid in default_ids:
-                combined = [p if str(x["persona_id"]) == pid else x for x in combined]
-            else:
-                combined.append(p)
+        combined: list[dict[str, Any]] = [dict(p) for p in default_personas]
+        holder_idx = next(
+            (i for i, p in enumerate(combined) if str(p.get("persona_id")) == DEPLOYMENT_REQUIREMENT_HOLDER_ID),
+            0 if combined else None,
+        )
+        if holder_idx is not None:
+            holder = dict(combined[holder_idx])
+            holder_reqs = [dict(r) for r in (holder.get("required_data_sources") or [])]
+            seen_req_keys = {_requirement_key(r) for r in holder_reqs}
+            for p in active_personas:
+                for req in (p.get("required_data_sources") or []):
+                    if not isinstance(req, Mapping):
+                        continue
+                    source_class = str(req.get("source_class") or "").strip().lower()
+                    if source_class not in {"live_pull", "live_push"}:
+                        continue
+                    key = _requirement_key(req)
+                    if key not in seen_req_keys:
+                        seen_req_keys.add(key)
+                        holder_reqs.append(dict(req))
+            holder["required_data_sources"] = holder_reqs
+            combined[holder_idx] = holder
         personas = tuple(combined)
         authority = url.split("?", 1)[0]
         transport = "https" if url.startswith("https://") else "internal_http"
