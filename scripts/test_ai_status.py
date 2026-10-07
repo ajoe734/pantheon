@@ -1515,6 +1515,8 @@ ISOLATED_ENV_KEYS = (
     "ORCH_AGENT_ID",
     "ORCH_PROVIDER",
     "ORCH_SESSION_ID",
+    "PANTHEON_LIVE_SUPERVISOR_CONFIG",
+    "PANTHEON_DEPLOY_ROOT",
 )
 
 
@@ -1532,6 +1534,9 @@ def _setup_test_isolation(test_case):
     (test_case._test_root / ".orchestrator").mkdir()
     test_case._test_status_file.write_text("{}\n", encoding="utf-8")
     test_case._test_log_file.write_text("", encoding="utf-8")
+    live_config_path = test_case._test_root / "live-supervisor-config.json"
+    live_config_path.write_text("{}\n", encoding="utf-8")
+    os.environ["PANTHEON_LIVE_SUPERVISOR_CONFIG"] = str(live_config_path)
 
     test_case._orig_paths = {
         "STATUS_ROOT": ai_status.STATUS_ROOT,
@@ -10694,10 +10699,19 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
                     }
                 },
             }
+            live_config_file = root / "live-supervisor-config.json"
+            live_config_file.write_text(
+                json.dumps({"coordination": config["coordination"]}),
+                encoding="utf-8",
+            )
             task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
             with (
                 mock.patch.object(ai_status, "STATUS_ROOT", status_root),
-                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(live_config_file)},
+                    clear=True,
+                ),
             ):
                 selected, metadata = ai_status._done_delivery_repository_root(
                     config, task, "pantheon", action="handoff"
@@ -10737,10 +10751,19 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
                     }
                 },
             }
+            live_config_file = root / "live-supervisor-config.json"
+            live_config_file.write_text(
+                json.dumps({"coordination": config["coordination"]}),
+                encoding="utf-8",
+            )
             task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
             with (
                 mock.patch.object(ai_status, "STATUS_ROOT", status_root),
-                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(live_config_file)},
+                    clear=True,
+                ),
             ):
                 selected, metadata = ai_status._done_delivery_repository_root(
                     config, task, "pantheon", action="handoff"
@@ -10775,10 +10798,19 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
                     }
                 },
             }
+            live_config_file = root / "live-supervisor-config.json"
+            live_config_file.write_text(
+                json.dumps({"coordination": config["coordination"]}),
+                encoding="utf-8",
+            )
             task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
             with (
                 mock.patch.object(ai_status, "STATUS_ROOT", status_root),
-                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(live_config_file)},
+                    clear=True,
+                ),
                 self.assertRaisesRegex(
                     SystemExit, "(origin|repository|remote)"
                 ),
@@ -10805,10 +10837,19 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
                     }
                 },
             }
+            live_config_file = root / "live-supervisor-config.json"
+            live_config_file.write_text(
+                json.dumps({"coordination": config["coordination"]}),
+                encoding="utf-8",
+            )
             task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
             with (
                 mock.patch.object(ai_status, "STATUS_ROOT", status_root),
-                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(live_config_file)},
+                    clear=True,
+                ),
                 self.assertRaisesRegex(
                     SystemExit, "must be a git repository root"
                 ),
@@ -10834,10 +10875,19 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
                     }
                 },
             }
+            live_config_file = root / "live-supervisor-config.json"
+            live_config_file.write_text(
+                json.dumps({"coordination": config["coordination"]}),
+                encoding="utf-8",
+            )
             task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
             with (
                 mock.patch.object(ai_status, "STATUS_ROOT", status_root),
-                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(live_config_file)},
+                    clear=True,
+                ),
                 self.assertRaisesRegex(
                     SystemExit, "registered delivery repository does not exist"
                 ),
@@ -10863,9 +10913,18 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
                     }
                 },
             }
+            rel_live_file = root / "live-supervisor-rel-config.json"
+            rel_live_file.write_text(
+                json.dumps({"coordination": rel_config["coordination"]}),
+                encoding="utf-8",
+            )
             with (
                 mock.patch.object(ai_status, "STATUS_ROOT", status_root),
-                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(rel_live_file)},
+                    clear=True,
+                ),
                 self.assertRaisesRegex(
                     SystemExit, "integration_path must be absolute"
                 ),
@@ -10890,9 +10949,18 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
                     }
                 },
             }
+            symlink_live_file = root / "live-supervisor-symlink-config.json"
+            symlink_live_file.write_text(
+                json.dumps({"coordination": symlink_config["coordination"]}),
+                encoding="utf-8",
+            )
             with (
                 mock.patch.object(ai_status, "STATUS_ROOT", status_root),
-                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(symlink_live_file)},
+                    clear=True,
+                ),
                 self.assertRaisesRegex(
                     SystemExit, "cannot include a symlink component"
                 ),
@@ -10900,6 +10968,150 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
                 ai_status._done_delivery_repository_root(
                     symlink_config, task, "pantheon", action="handoff"
                 )
+
+    def test_operator_handoff_prefers_live_config_over_repo_config_integration_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon-status"
+            live_integration_root = root / "pantheon-live-integration"
+            status_root.mkdir()
+            live_integration_root.mkdir()
+            self._git(live_integration_root, "init", "-b", "dev")
+            self._git(live_integration_root, "config", "user.name", "Test")
+            self._git(live_integration_root, "config", "user.email", "test@example.com")
+            (live_integration_root / "README.md").write_text("pantheon\n", encoding="utf-8")
+            self._git(live_integration_root, "add", "README.md")
+            self._git(live_integration_root, "commit", "-m", "initial")
+            self._git(
+                live_integration_root,
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/ajoe734/pantheon.git",
+            )
+            passed_config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "repo": "ajoe734/pantheon",
+                            "integration_path": str(root / "nonexistent-dead-runtime"),
+                        }
+                    }
+                },
+            }
+            live_config_file = root / "live-supervisor-config.json"
+            live_config_file.write_text(
+                json.dumps(
+                    {
+                        "coordination": {
+                            "repositories": {
+                                "pantheon": {
+                                    "repo": "ajoe734/pantheon",
+                                    "integration_path": str(live_integration_root),
+                                }
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(live_config_file)},
+                    clear=True,
+                ),
+            ):
+                selected, metadata = ai_status._done_delivery_repository_root(
+                    passed_config, task, "pantheon", action="handoff"
+                )
+
+        self.assertEqual(selected, live_integration_root.resolve())
+        self.assertEqual(metadata["repository_path_source"], "repository_registry")
+
+    def test_operator_handoff_fails_closed_when_live_supervisor_config_unreadable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon-status"
+            status_root.mkdir()
+            local_root = root / "pantheon-local"
+            local_root.mkdir()
+            self._git(local_root, "init", "-b", "dev")
+            self._git(local_root, "config", "user.name", "Test")
+            self._git(local_root, "config", "user.email", "test@example.com")
+            (local_root / "README.md").write_text("pantheon\n", encoding="utf-8")
+            self._git(local_root, "add", "README.md")
+            self._git(local_root, "commit", "-m", "initial")
+            self._git(
+                local_root,
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/ajoe734/pantheon.git",
+            )
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "repo": "ajoe734/pantheon",
+                            "local_path": str(local_root),
+                        }
+                    }
+                },
+            }
+            task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
+
+            missing_path = root / "nonexistent-live-config.json"
+            dir_path = root / "dir-live-config"
+            dir_path.mkdir()
+            invalid_json_path = root / "invalid-json.json"
+            invalid_json_path.write_text("{not valid json", encoding="utf-8")
+            json_array_path = root / "array.json"
+            json_array_path.write_text("[1, 2, 3]", encoding="utf-8")
+
+            cases = [
+                ("missing_file", missing_path),
+                ("directory", dir_path),
+                ("invalid_json", invalid_json_path),
+                ("json_array", json_array_path),
+            ]
+
+            for case_name, path in cases:
+                with self.subTest(case=case_name):
+                    with (
+                        mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                        mock.patch.dict(
+                            os.environ,
+                            {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(path)},
+                            clear=True,
+                        ),
+                        self.assertRaisesRegex(
+                            SystemExit,
+                            r"^Cannot handoff task: live supervisor config is unreadable",
+                        ),
+                    ):
+                        ai_status._done_delivery_repository_root(
+                            config, task, "pantheon", action="handoff"
+                        )
+
+            # In the missing-file case, the same call with action="finalize" and a local_path config still returns the local_path root.
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(missing_path)},
+                    clear=True,
+                ),
+            ):
+                selected, metadata = ai_status._done_delivery_repository_root(
+                    config, task, "pantheon", action="finalize"
+                )
+            self.assertEqual(selected, local_root.resolve())
+            self.assertEqual(metadata["repository_path_source"], "repository_registry")
 
 
 class DeliveryMetadataValidationTests(unittest.TestCase):

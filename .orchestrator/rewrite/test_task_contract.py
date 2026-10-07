@@ -303,6 +303,7 @@ class HandoffWorkspaceGitRootAdmissionTests(unittest.TestCase):
                     ai_status._clear_status_command_lease_binding()
 
     def test_handoff_valid_normal_operator_path_with_integration_path(self) -> None:
+        import json
         import os
         import tempfile
         from pathlib import Path
@@ -330,7 +331,17 @@ class HandoffWorkspaceGitRootAdmissionTests(unittest.TestCase):
             bridge = task_contract._ai_status_module()._github_review_bridge_module()
             ai_status = task_contract._ai_status_module()
 
-            with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+            live_config_file = Path(td) / "live-supervisor-config.json"
+            live_config_file.write_text(
+                json.dumps({"coordination": config["coordination"]}),
+                encoding="utf-8",
+            )
+
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(live_config_file)},
+                clear=True,
+            ), mock.patch.object(
                 ai_status, "STATUS_ROOT", coord
             ):
                 with mock.patch.object(
