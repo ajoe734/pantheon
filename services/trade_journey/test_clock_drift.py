@@ -34,3 +34,19 @@ def test_clock_drift_uses_recorded_time_for_stable_rebuild_and_emits_incident() 
     assert metrics.clock_drift_max_abs_seconds == 31
     incidents = evaluate_data_quality(metrics, load_slo_targets("paper"), [p1], now=now)
     assert any(i.code == "clock_drift" and i.journey_id == "tj-drift" for i in incidents)
+
+
+def test_drifted_envelope_is_bounded_without_falsifying_causal_order() -> None:
+    events = [
+        event("first", "2026-07-13T00:00:30Z", "2026-07-13T00:00:01Z", 1),
+        event("second", "2026-07-13T00:00:24Z", "2026-07-13T00:00:02Z", 2),
+    ]
+    m = JourneyMaterializer()
+    m.rebuild(events)
+    p = m.get("tj-drift", tenant_id="tenant-a", environment="paper")
+    assert [e["event_id"] for e in p.timeline] == ["first", "second"]
+    seconds = [datetime.fromisoformat(e["occurred_at"].replace("Z", "+00:00")).second for e in p.timeline]
+    assert seconds == [30, 24]
+    created = datetime.fromisoformat(p.snapshot["created_at"].replace("Z", "+00:00"))
+    updated = datetime.fromisoformat(p.snapshot["updated_at"].replace("Z", "+00:00"))
+    assert (created.second, updated.second) == (24, 30)
