@@ -10,7 +10,7 @@ from typing import Any, Callable, Dict, Iterable, Literal, Optional
 from fastapi import APIRouter, Header, HTTPException, Response
 from pydantic import BaseModel, Field, model_validator
 
-from ..identity.scope import resolve_agora_user_scope
+from ..identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
 from .store import ProposalConflict, ProposalStore
 
 ProposalType = Literal[
@@ -408,7 +408,12 @@ def create_governance_router(
         require_read_role(identity)
         if write:
             require_write_role(identity)
-        return identity, resolve_agora_user_scope(identity, utc_now=utc_now)
+        try:
+            return identity, resolve_agora_user_scope(identity, utc_now=utc_now)
+        except AgoraScopeResolutionError as exc:
+            from ..router import _raise_scope_error
+
+            _raise_scope_error(exc, bff_error)
 
     def envelope(row: Dict[str, Any], response: Response) -> Dict[str, Any]:
         response.headers["ETag"] = proposals.etag(row)
