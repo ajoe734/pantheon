@@ -130,6 +130,25 @@ def test_asyncpg_telemetry_source_filters_watermark_and_snapshot(monkeypatch):
     assert fetch[4] == 17
 
 
+DEFAULT_TEST_CASE_KEY = "dev-paper-release-37647100516-1"
+DEFAULT_TEST_CASE = {
+    "tenant_id": "tenant-a",
+    "persona_id": "persona-paper-001",
+    "idempotency_key": DEFAULT_TEST_CASE_KEY,
+    "runtime_binding_id": "10000000-0000-0000-0000-000000000001",
+    "runtime_id": "runtime-paper-001",
+    "capital_pool_id": "pool-paper-001",
+    "deployment_plan_id": "plan-paper-001",
+    "persona_capital_binding_id": "pcb-paper-001",
+    "artifact_id": "artifact-paper-001",
+    "artifact_version": "1.2.3",
+    "artifact_checksum": "sha256-approved-test-checksum",
+    "artifact_state": "approved",
+    "state": "succeeded",
+}
+DEFAULT_CASE_SOURCE = {DEFAULT_TEST_CASE_KEY: DEFAULT_TEST_CASE}
+
+
 def _natural_lifecycle_rows() -> list[dict]:
     by_type = {row["event_type"]: row for row in lifecycle_rows()}
     event_types = [*probe.REQUIRED_EVENT_TYPES, "reconciliation_completed"]
@@ -196,6 +215,30 @@ def _natural_lifecycle_rows() -> list[dict]:
         event["metadata"]["sequence_no"] = ingested_seq
         event["metadata"]["causal_parent_id"] = causal_parent
         event["metadata"]["source_mode"] = "live"
+        if event_type == "signal_generation":
+            event["source_worker"] = probe.NATURAL_PRODUCER
+            event["artifact_interpreter"] = probe.NATURAL_INTERPRETER
+            event["artifact_id"] = DEFAULT_TEST_CASE["artifact_id"]
+            event["artifact_version"] = DEFAULT_TEST_CASE["artifact_version"]
+            event["artifact_checksum"] = DEFAULT_TEST_CASE["artifact_checksum"]
+            event["binding_id"] = DEFAULT_TEST_CASE["runtime_binding_id"]
+            event["runtime_id"] = DEFAULT_TEST_CASE["runtime_id"]
+            event["capital_pool_id"] = DEFAULT_TEST_CASE["capital_pool_id"]
+            event["plan_id"] = DEFAULT_TEST_CASE["deployment_plan_id"]
+            event["persona_capital_binding_id"] = DEFAULT_TEST_CASE["persona_capital_binding_id"]
+            event["raw_symbol"] = "BTC-USDT"
+            event["market_input_ref"] = "source-ingest://snapshots/mss-000000000000000000000001"
+            event["market_input_snapshot_id"] = "mss-000000000000000000000001"
+            event["market_input_observed_at"] = "2026-07-15T00:00:01Z"
+            event["market_input_event_time"] = "2026-07-15T00:00:00Z"
+            event["market_input_lineage"] = {
+                "source_ids": ["src-binance"],
+                "connector_ids": ["conn-binance-spot"],
+                "content_refs": ["sha256:abcd"],
+                "ingest_run_ids": ["run-001"],
+            }
+            event["is_real_capital"] = False
+            event["is_real_order"] = False
         if event_type == "reconciliation_completed":
             event["metadata"]["reconciliation_evaluation_id"] = evaluation_id
         event["correlation_envelope"].update(
@@ -331,15 +374,21 @@ def _execute(
     root: Path,
     rows: list[dict],
     expected_sha: str = "deployed-sha",
+    mode: str = "natural",
+    case_key: str | None = DEFAULT_TEST_CASE_KEY,
+    case_source: Any | None = DEFAULT_CASE_SOURCE,
 ) -> tuple[int, dict]:
     return asyncio.run(
         probe.execute(
             source=FakeSource(len(rows), rows),
             projection_root=root,
+            case_source=case_source,
             expected_sha=expected_sha,
             output=tmp_path / "evidence.json",
             timeout_seconds=0.1,
             poll_seconds=0.001,
+            mode=mode,
+            case_key=case_key,
         )
     )
 
@@ -386,11 +435,13 @@ def test_probe_correlates_from_relational_projection_snapshot(tmp_path):
             source=BaselineSource(len(rows), rows),
             projection_root=None,
             projection_source=projection,
+            case_source=DEFAULT_CASE_SOURCE,
             expected_sha="deployed-sha",
             output=tmp_path / "relational-evidence.json",
             timeout_seconds=0.1,
             poll_seconds=0.001,
             baseline_high_watermark=0,
+            case_key=DEFAULT_TEST_CASE_KEY,
         )
     )
 
@@ -523,12 +574,14 @@ def test_probe_retries_projection_integrity_until_bundle_is_valid(tmp_path):
         probe.execute(
             source=BaselineSource(len(rows), rows),
             projection_root=root,
+            case_source=DEFAULT_CASE_SOURCE,
             expected_sha="deployed-sha",
             output=tmp_path / "retry-integrity.json",
             timeout_seconds=1,
             poll_seconds=0.001,
             baseline_high_watermark=0,
             sleeper=repair_manifest,
+            case_key=DEFAULT_TEST_CASE_KEY,
         )
     )
 
@@ -548,10 +601,12 @@ def test_probe_reads_only_rows_after_baseline_for_incremental_source(tmp_path):
         probe.execute(
             source=source,
             projection_root=root,
+            case_source=DEFAULT_CASE_SOURCE,
             expected_sha="deployed-sha",
             output=tmp_path / "incremental.json",
             timeout_seconds=0.1,
             poll_seconds=0.001,
+            case_key=DEFAULT_TEST_CASE_KEY,
         )
     )
 
@@ -575,11 +630,13 @@ def test_probe_uses_explicit_baseline_without_initial_high_watermark(tmp_path):
         probe.execute(
             source=source,
             projection_root=root,
+            case_source=DEFAULT_CASE_SOURCE,
             expected_sha="deployed-sha",
             output=tmp_path / "explicit-baseline.json",
             timeout_seconds=0.1,
             poll_seconds=0.001,
             baseline_high_watermark=200,
+            case_key=DEFAULT_TEST_CASE_KEY,
         )
     )
 
@@ -616,10 +673,12 @@ def test_probe_times_out_without_a_complete_natural_aggregate(tmp_path):
         probe.execute(
             source=FakeSource(12, []),
             projection_root=tmp_path / "missing",
+            case_source=DEFAULT_CASE_SOURCE,
             expected_sha="deployed-sha",
             output=output,
             timeout_seconds=0,
             poll_seconds=0.01,
+            case_key=DEFAULT_TEST_CASE_KEY,
         )
     )
 
@@ -706,10 +765,12 @@ def test_probe_rejects_old_lifecycle_inherited_by_expected_deployment(tmp_path):
         probe.execute(
             source=BaselineSource(9, rows),
             projection_root=root,
+            case_source=DEFAULT_CASE_SOURCE,
             expected_sha="new-sha",
             output=output,
             timeout_seconds=0,
             poll_seconds=0.001,
+            case_key=DEFAULT_TEST_CASE_KEY,
         )
     )
 
@@ -754,10 +815,12 @@ def test_source_failure_writes_only_redacted_evidence(tmp_path):
         probe.execute(
             source=BrokenSource(),
             projection_root=tmp_path / "missing",
+            case_source=DEFAULT_CASE_SOURCE,
             expected_sha="deployed-sha",
             output=output,
             timeout_seconds=1,
             poll_seconds=0.001,
+            case_key=DEFAULT_TEST_CASE_KEY,
         )
     )
 
@@ -765,3 +828,514 @@ def test_source_failure_writes_only_redacted_evidence(tmp_path):
     assert code == 1
     assert artifact["failure"]["code"] == "unexpected_probe_error"
     assert "secret" not in raw
+
+
+def _counterexample_rows() -> list[dict]:
+    rows = _natural_lifecycle_rows()
+    sig = rows[0]["payload"]
+    sig["source_worker"] = "loop-prod-tel-002-hosted-stimulus"
+    sig["artifact_interpreter"] = None
+    sig["artifact_checksum"] = None
+    sig["market_input_ref"] = None
+    sig["raw_symbol"] = None
+    sig["metadata"].pop("source_worker", None)
+    sig["metadata"].pop("artifact_interpreter", None)
+    sig["metadata"].pop("artifact_checksum", None)
+    sig["metadata"].pop("market_input_ref", None)
+    sig["metadata"].pop("raw_symbol", None)
+    return rows
+
+
+def test_counterexample_rejected_in_natural_mode(tmp_path):
+    root, rows = _publish(tmp_path, rows=_counterexample_rows())
+    code, artifact = _execute(tmp_path, root=root, rows=rows, mode="natural")
+    assert code == 1
+    assert artifact["outcome"] == "failed"
+    assert artifact["mode"] == "natural"
+    assert artifact["governed_case_key"] == DEFAULT_TEST_CASE_KEY
+    assert artifact["failure"]["code"] == "no_complete_paper_aggregate"
+
+
+def test_counterexample_accepted_in_controlled_stimulus_mode(tmp_path):
+    root, rows = _publish(tmp_path, rows=_counterexample_rows())
+    code, artifact = _execute(tmp_path, root=root, rows=rows, mode="controlled-stimulus", case_key=None, case_source=None)
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert artifact["mode"] == "controlled-stimulus"
+    assert "signal_provenance" in artifact["proof"]
+    assert artifact["proof"]["signal_provenance"]["source_worker"] == "loop-prod-tel-002-hosted-stimulus"
+
+
+@pytest.mark.parametrize(
+    "mutation,field,value,expected_error",
+    [
+        ("producer", "source_worker", "unauthorized-worker", "invalid_producer"),
+        ("interpreter", "artifact_interpreter", "unauthorized.func", "invalid_interpreter"),
+        ("checksum_none", "artifact_checksum", None, "invalid_checksum"),
+        ("checksum_empty", "artifact_checksum", "   ", "invalid_checksum"),
+        ("lineage_missing", "market_input_ref", None, "invalid_lineage"),
+        ("real_capital", "is_real_capital", True, "invalid_capital_mode"),
+        ("real_order", "is_real_order", True, "invalid_capital_mode"),
+    ],
+)
+def test_probe_natural_candidate_validation_rejections(mutation, field, value, expected_error):
+    rows = _natural_lifecycle_rows()
+    sig = rows[0]["payload"]
+    if mutation == "lineage_missing":
+        sig["market_input_ref"] = None
+    else:
+        sig[field] = value
+    cands = probe._complete_candidates(rows, mode="controlled-stimulus")
+    assert len(cands) == 1
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cands[0], DEFAULT_TEST_CASE)
+    assert exc_info.value.code == expected_error
+
+
+@pytest.mark.parametrize(
+    "case_key,case_value,expected_error",
+    [
+        ("tenant_id", "wrong-tenant", "case_identity_mismatch"),
+        ("tenant_id", None, "case_identity_mismatch"),
+        ("runtime_binding_id", "wrong-binding", "case_identity_mismatch"),
+        ("runtime_binding_id", None, "case_identity_mismatch"),
+        ("runtime_id", "wrong-runtime", "case_identity_mismatch"),
+        ("runtime_id", None, "case_identity_mismatch"),
+        ("deployment_plan_id", "wrong-plan", "case_plan_mismatch"),
+        ("deployment_plan_id", None, "case_plan_mismatch"),
+        ("capital_pool_id", "wrong-pool", "case_capital_mismatch"),
+        ("capital_pool_id", None, "case_capital_mismatch"),
+        ("artifact_id", "wrong-artifact", "case_artifact_mismatch"),
+        ("artifact_id", None, "case_artifact_mismatch"),
+        ("artifact_version", "9.9.9", "case_version_mismatch"),
+        ("artifact_version", None, "case_version_mismatch"),
+        ("artifact_checksum", "sha256-wrong-checksum", "case_checksum_mismatch"),
+        ("artifact_checksum", None, "case_checksum_mismatch"),
+        ("state", "failed", "case_state_mismatch"),
+        ("state", None, "case_state_mismatch"),
+    ],
+)
+def test_probe_natural_case_mismatch_rejections(case_key, case_value, expected_error):
+    rows = _natural_lifecycle_rows()
+    cands = probe._complete_candidates(rows, mode="controlled-stimulus")
+    assert len(cands) == 1
+    mismatched_case = dict(DEFAULT_TEST_CASE, **{case_key: case_value})
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cands[0], mismatched_case)
+    assert exc_info.value.code == expected_error
+
+
+def test_probe_natural_mode_missing_case_key(tmp_path):
+    root, rows = _publish(tmp_path)
+    code, artifact = _execute(tmp_path, root=root, rows=rows, mode="natural", case_key=None)
+    assert code == 1
+    assert artifact["outcome"] == "failed"
+    assert artifact["failure"]["code"] == "case_key_missing"
+
+
+def test_probe_natural_mode_missing_case_source(tmp_path):
+    root, rows = _publish(tmp_path)
+    code, artifact = _execute(tmp_path, root=root, rows=rows, mode="natural", case_source=None)
+    assert code == 1
+    assert artifact["outcome"] == "failed"
+    assert artifact["failure"]["code"] == "case_source_missing"
+
+
+def test_probe_natural_mode_case_not_found(tmp_path):
+    root, rows = _publish(tmp_path)
+    code, artifact = _execute(
+        tmp_path, root=root, rows=rows, mode="natural", case_key="nonexistent-key", case_source=DEFAULT_CASE_SOURCE
+    )
+    assert code == 1
+    assert artifact["outcome"] == "failed"
+    assert artifact["failure"]["code"] == "case_not_found"
+
+
+def test_normalize_case_record_from_provisioning_ledger():
+    raw_row = {
+        "tenant_id": "tenant-dev",
+        "persona_id": "persona-dev-001",
+        "idempotency_key": "dev-paper-release-1-1",
+        "references": {
+            "runtime_binding_id": "binding-rel-1",
+            "runtime_id": "runtime-rel-1",
+            "strategy_artifact_approved": {
+                "entry": {
+                    "registry_id": "art-1",
+                    "version": "2.0.0",
+                    "checksum": "sha256-approved",
+                }
+            },
+        },
+        "result": {
+            "capital_pool_id": "pool-dev-1",
+            "deployment_plan_id": "plan-dev-1",
+            "persona_capital_binding_id": "pcb-dev-1",
+        },
+    }
+    normalized = probe._normalize_case_record(raw_row)
+    assert normalized["tenant_id"] == "tenant-dev"
+    assert normalized["persona_id"] == "persona-dev-001"
+    assert normalized["idempotency_key"] == "dev-paper-release-1-1"
+    assert normalized["runtime_binding_id"] == "binding-rel-1"
+    assert normalized["runtime_id"] == "runtime-rel-1"
+    assert normalized["capital_pool_id"] == "pool-dev-1"
+    assert normalized["deployment_plan_id"] == "plan-dev-1"
+    assert normalized["persona_capital_binding_id"] == "pcb-dev-1"
+    assert normalized["artifact_id"] == "art-1"
+    assert normalized["artifact_version"] == "2.0.0"
+    assert normalized["artifact_checksum"] == "sha256-approved"
+
+
+def test_main_cli_mode_and_case_key_validation(tmp_path):
+    out_file = tmp_path / "cli_test.json"
+    ret = probe.main(["--expected-sha", "test-sha", "--output", str(out_file), "--mode", "natural"])
+    assert ret == 1
+    art = json.loads(out_file.read_text(encoding="utf-8"))
+    assert art["outcome"] == "failed"
+    assert art["mode"] == "natural"
+    assert art["failure"]["code"] == "case_key_missing"
+
+
+def test_normalize_case_record_does_not_invent_ids():
+    raw_row = {
+        "tenant_id": "tenant-dev",
+        "persona_id": "persona-dev-001",
+        "idempotency_key": "dev-paper-release-1-1",
+        "references": {},
+        "result": {},
+    }
+    normalized = probe._normalize_case_record(raw_row)
+    assert normalized["capital_pool_id"] == ""
+    assert normalized["deployment_plan_id"] == ""
+    assert normalized["persona_capital_binding_id"] == ""
+    assert normalized["artifact_id"] == ""
+    assert normalized["artifact_version"] == ""
+    assert normalized["artifact_checksum"] is None
+
+
+def test_asyncpg_case_source_anchors_checksum_from_registry(monkeypatch):
+    class Connection:
+        async def fetchrow(self, query: str, *args):
+            if "persona_provisioning" in query:
+                return {
+                    "tenant_id": "tenant-a",
+                    "persona_id": "persona-1",
+                    "idempotency_key": "key-1",
+                    "state": "succeeded",
+                    "references": {
+                        "runtime_binding_id": "rb-1",
+                        "runtime_id": "rt-1",
+                        "strategy_artifact_approved": {
+                            "entry": {"registry_id": "art-1", "version": "1.2.3"}
+                        },
+                    },
+                    "result": {
+                        "capital_pool_id": "pool-1",
+                        "deployment_plan_id": "plan-1",
+                        "persona_capital_binding_id": "pcb-1",
+                    },
+                }
+            if "entries" in query:
+                return {
+                    "payload": json.dumps({
+                        "checksum": "sha256-from-registry",
+                        "version": "1.2.3",
+                        "artifact_state": "approved",
+                        "owner_tenant": "tenant-a",
+                    })
+                }
+            return None
+
+        async def close(self):
+            pass
+
+    class TransactionContext:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    conn = Connection()
+    conn.transaction = lambda **kwargs: TransactionContext(conn)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "asyncpg",
+        types.SimpleNamespace(connect=lambda dsn: asyncio.sleep(0, result=conn)),
+    )
+    src = probe.AsyncpgCaseSource("postgresql://unit")
+    case = asyncio.run(src.get_case("key-1"))
+    assert case is not None
+    assert case["artifact_checksum"] == "sha256-from-registry"
+    assert case["artifact_version"] == "1.2.3"
+
+
+@pytest.mark.parametrize(
+    "registry_row,expected_code",
+    [
+        (None, "registry_artifact_missing"),
+        ({"payload": json.dumps({"artifact_state": "draft", "owner_tenant": "tenant-a", "checksum": "cs", "version": "1"})}, "registry_artifact_not_approved"),
+        ({"payload": json.dumps({"artifact_state": "approved", "owner_tenant": "other-tenant", "checksum": "cs", "version": "1"})}, "registry_tenant_mismatch"),
+        ({"payload": json.dumps({"artifact_state": "approved", "owner_tenant": "", "checksum": "cs", "version": "1"})}, "registry_tenant_mismatch"),
+        ({"payload": json.dumps({"artifact_state": "approved", "checksum": "cs", "version": "1"})}, "registry_tenant_mismatch"),
+        ({"payload": json.dumps({"artifact_state": "approved", "owner_tenant": "tenant-a", "checksum": "", "version": "1"})}, "registry_checksum_missing"),
+        ({"payload": json.dumps({"artifact_state": "approved", "owner_tenant": "tenant-a", "checksum": "different-cs", "version": "1"})}, "case_checksum_mismatch"),
+        ({"payload": json.dumps({"artifact_state": "approved", "owner_tenant": "tenant-a", "checksum": "sha256-from-case", "version": ""})}, "registry_version_missing"),
+        ({"payload": json.dumps({"artifact_state": "approved", "owner_tenant": "tenant-a", "checksum": "sha256-from-case", "version": "9.9.9"})}, "case_version_mismatch"),
+    ],
+)
+def test_asyncpg_case_source_registry_adversarial_rejections(monkeypatch, registry_row, expected_code):
+    class Connection:
+        async def fetchrow(self, query: str, *args):
+            if "persona_provisioning" in query:
+                return {
+                    "tenant_id": "tenant-a",
+                    "persona_id": "persona-1",
+                    "idempotency_key": "key-1",
+                    "state": "succeeded",
+                    "references": {
+                        "runtime_binding_id": "rb-1",
+                        "runtime_id": "rt-1",
+                        "strategy_artifact_approved": {
+                            "entry": {"registry_id": "art-1", "version": "1.2.3", "checksum": "sha256-from-case"}
+                        },
+                    },
+                    "result": {"capital_pool_id": "pool-1", "deployment_plan_id": "plan-1", "persona_capital_binding_id": "pcb-1"},
+                }
+            if "entries" in query:
+                return registry_row
+            return None
+
+        async def close(self):
+            pass
+
+    class TransactionContext:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    conn = Connection()
+    conn.transaction = lambda **kwargs: TransactionContext(conn)
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=lambda dsn: asyncio.sleep(0, result=conn)))
+    src = probe.AsyncpgCaseSource("postgresql://unit")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(src.get_case("key-1"))
+    assert exc_info.value.code == expected_code
+
+
+@pytest.mark.parametrize(
+    "mutator,expected_code",
+    [
+        (lambda p: p.pop("source_worker"), "invalid_producer"),
+        (lambda p: p.update(source_worker="wrong-worker"), "invalid_producer"),
+        (lambda p: p.pop("artifact_interpreter"), "invalid_interpreter"),
+        (lambda p: p.update(artifact_interpreter="wrong.interpreter:fn"), "invalid_interpreter"),
+        (lambda p: p.pop("artifact_checksum"), "invalid_checksum"),
+        (lambda p: p.update(artifact_checksum=""), "invalid_checksum"),
+        (lambda p: p.pop("artifact_version"), "invalid_version"),
+        (lambda p: p.update(artifact_version=""), "invalid_version"),
+        (lambda p: p.update(is_real_capital=True), "invalid_capital_mode"),
+        (lambda p: p.update(is_real_order=True), "invalid_capital_mode"),
+        (lambda p: p.pop("market_input_ref"), "invalid_lineage"),
+        (lambda p: p.update(market_input_ref="invalid-ref-format"), "invalid_lineage"),
+        (lambda p: p.pop("market_input_snapshot_id"), "invalid_snapshot_id"),
+        (lambda p: p.update(market_input_snapshot_id="mss-different-snapshot"), "invalid_snapshot_id"),
+        (lambda p: p.pop("market_input_observed_at"), "invalid_lineage"),
+        (lambda p: p.pop("market_input_event_time"), "invalid_lineage"),
+        (lambda p: p.update(market_input_observed_at="bad-iso"), "invalid_lineage"),
+        (lambda p: p.update(market_input_event_time="2026-07-15T00:00:10Z", market_input_observed_at="2026-07-15T00:00:01Z"), "invalid_freshness"),
+        (lambda p: p.update(market_input_observed_at="2026-07-15T00:00:10Z", signal_event_time="2026-07-15T00:00:01Z"), "invalid_freshness"),
+        (lambda p: p.update(market_input_observed_at="2000-01-01T00:00:00Z", market_input_event_time="2000-01-01T00:00:00Z", signal_event_time="2000-01-01T00:00:01Z"), "invalid_freshness"),
+        (lambda p: p.update(market_input_observed_at="2400-01-01T00:00:00Z", market_input_event_time="2400-01-01T00:00:00Z", signal_event_time="2400-01-01T00:00:01Z"), "invalid_freshness"),
+        (lambda p: p.update(market_input_observed_at="2026-07-15T00:00:00Z", market_input_event_time="2026-07-15T00:00:00Z", signal_event_time="2026-07-15T00:10:00Z"), "invalid_freshness"),
+        (lambda p: p.update(raw_symbol="2330.TW", market_input_lineage={"source_ids": ["s"], "connector_ids": ["c"], "content_refs": ["r"], "ingest_run_ids": ["i"]}), "invalid_freshness"),
+        (lambda p: p.pop("market_input_lineage"), "invalid_lineage"),
+        (lambda p: p.update(market_input_lineage={"source_ids": []}), "invalid_lineage"),
+        (lambda p: p.update(market_input_lineage={"source_ids": ["s"], "connector_ids": []}), "invalid_lineage"),
+    ],
+)
+def test_validate_natural_candidate_provenance_rejections(mutator, expected_code):
+    rows = _natural_lifecycle_rows()
+    cands = probe._complete_candidates(rows, mode="controlled-stimulus")
+    cand = json.loads(json.dumps(cands[0]))
+    mutator(cand["signal_provenance"])
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cand, DEFAULT_TEST_CASE)
+    assert exc_info.value.code == expected_code
+
+
+def test_validate_natural_candidate_rejects_non_approved_case():
+    rows = _natural_lifecycle_rows()
+    cands = probe._complete_candidates(rows, mode="controlled-stimulus")
+    case = dict(DEFAULT_TEST_CASE, artifact_state="draft")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cands[0], case)
+    assert exc_info.value.code == "artifact_not_approved"
+
+
+def test_asyncpg_case_source_verify_source_lineage_unit_rejections(monkeypatch):
+    class Connection:
+        async def fetch(self, query: str, *args):
+            return [
+                {
+                    "record_id": "src-1",
+                    "payload": json.dumps({
+                        "source_id": "src-1",
+                        "connector_id": "conn-1",
+                        "content_ref": "ref-1",
+                        "metadata": {"tenant_id": "tenant-a"},
+                    }),
+                }
+            ]
+
+        async def close(self):
+            pass
+
+    class TransactionContext:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    conn = Connection()
+    conn.transaction = lambda **kwargs: TransactionContext(conn)
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=lambda dsn: asyncio.sleep(0, result=conn)))
+    src = probe.AsyncpgCaseSource("postgresql://unit")
+
+    good_lineage = {
+        "source_ids": ["src-1"],
+        "connector_ids": ["conn-1"],
+        "content_refs": ["ref-1"],
+        "ingest_run_ids": ["run-1"],
+    }
+    asyncio.run(src.verify_source_lineage(good_lineage, "tenant-a"))
+
+    bad_source = dict(good_lineage, source_ids=["src-unobserved"])
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(src.verify_source_lineage(bad_source, "tenant-a"))
+    assert exc_info.value.code == "unobserved_source_record"
+
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(src.verify_source_lineage(good_lineage, "tenant-b"))
+    assert exc_info.value.code == "source_tenant_mismatch"
+
+    bad_conn = dict(good_lineage, connector_ids=["conn-other"])
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(src.verify_source_lineage(bad_conn, "tenant-a"))
+    assert exc_info.value.code == "source_connector_mismatch"
+
+    bad_ref = dict(good_lineage, content_refs=["ref-other"])
+    with pytest.raises(probe.ProbeError) as exc_info:
+        asyncio.run(src.verify_source_lineage(bad_ref, "tenant-a"))
+    assert exc_info.value.code == "source_content_ref_mismatch"
+
+
+def test_asyncpg_case_source_live_postgres_queries():
+    import asyncpg
+
+    dsn = "postgresql://postgres:postgres@127.0.0.1:15432/postgres"
+    schema = "test_bff_live"
+    reg_schema = "test_reg_live"
+    source_schema = "test_src_live"
+
+    async def run_live():
+        conn = await asyncpg.connect(dsn)
+        try:
+            await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+            await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {reg_schema}")
+            await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {source_schema}")
+
+            await conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {schema}.persona_provisioning (
+                    idempotency_key TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL,
+                    persona_id TEXT NOT NULL,
+                    "references" JSONB NOT NULL,
+                    result JSONB NOT NULL,
+                    state TEXT NOT NULL
+                )
+            """)
+            await conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {reg_schema}.entries (
+                    record_id TEXT PRIMARY KEY,
+                    payload JSONB NOT NULL
+                )
+            """)
+            await conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {source_schema}.source_evidence (
+                    record_id TEXT NOT NULL,
+                    record_type TEXT NOT NULL,
+                    payload JSONB NOT NULL
+                )
+            """)
+
+            await conn.execute(f"""
+                INSERT INTO {schema}.persona_provisioning (idempotency_key, tenant_id, persona_id, "references", result, state)
+                VALUES ('case-live-01', 'tenant-live', 'persona-01', '{{"runtime_binding_id": "rb-1", "runtime_id": "rt-1", "strategy_artifact_approved": {{"entry": {{"registry_id": "art-live-01", "version": "1.0.0"}}}}}}'::jsonb, '{{"capital_pool_id": "pool-1", "deployment_plan_id": "plan-1", "persona_capital_binding_id": "pcb-1"}}'::jsonb, 'succeeded')
+                ON CONFLICT (idempotency_key) DO UPDATE SET state = 'succeeded'
+            """)
+
+            await conn.execute(f"""
+                INSERT INTO {reg_schema}.entries (record_id, payload)
+                VALUES ('art-live-01', '{{"checksum": "sha256-live-checksum", "version": "1.0.0", "artifact_state": "approved", "owner_tenant": "tenant-live"}}'::jsonb)
+                ON CONFLICT (record_id) DO UPDATE SET payload = EXCLUDED.payload
+            """)
+
+            await conn.execute(f"""
+                INSERT INTO {source_schema}.source_evidence (record_id, record_type, payload)
+                VALUES ('src-live-01', 'source_record', '{{"source_id": "src-live-01", "connector_id": "conn-live-01", "content_ref": "ref-live-01", "metadata": {{"tenant_id": "tenant-live"}}}}'::jsonb)
+            """)
+
+            src = probe.AsyncpgCaseSource(
+                dsn,
+                schema=schema,
+                registry_schema=reg_schema,
+                source_evidence_schema=source_schema,
+            )
+
+            case = await src.get_case("case-live-01")
+            assert case is not None
+            assert case["tenant_id"] == "tenant-live"
+            assert case["artifact_checksum"] == "sha256-live-checksum"
+            assert case["artifact_version"] == "1.0.0"
+            assert case["artifact_state"] == "approved"
+
+            lineage = {
+                "source_ids": ["src-live-01"],
+                "connector_ids": ["conn-live-01"],
+                "content_refs": ["ref-live-01"],
+                "ingest_run_ids": ["run-01"],
+            }
+            await src.verify_source_lineage(lineage, "tenant-live")
+
+            bad_lineage = dict(lineage, source_ids=["src-nonexistent"])
+            with pytest.raises(probe.ProbeError) as exc_info:
+                await src.verify_source_lineage(bad_lineage, "tenant-live")
+            assert exc_info.value.code == "unobserved_source_record"
+
+            with pytest.raises(probe.ProbeError) as exc_info:
+                await src.verify_source_lineage(lineage, "wrong-tenant")
+            assert exc_info.value.code == "source_tenant_mismatch"
+        finally:
+            await conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+            await conn.execute(f"DROP SCHEMA IF EXISTS {reg_schema} CASCADE")
+            await conn.execute(f"DROP SCHEMA IF EXISTS {source_schema} CASCADE")
+            await conn.close()
+
+    asyncio.run(run_live())
+
+
