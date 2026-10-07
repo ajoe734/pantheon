@@ -1925,12 +1925,19 @@ def _scheduled_lifecycle_event(
 
 def _latest_accepted_lifecycle_append(
     binding_id: str,
+    *,
+    evaluations: Optional[List[Dict[str, Any]]] = None,
 ) -> tuple[Dict[str, Any], Dict[str, Any]] | None:
     """Return the latest accepted scheduled append for a runtime binding."""
     candidates: List[
         tuple[datetime, str, str, Dict[str, Any], Dict[str, Any]]
     ] = []
-    for evaluation in _tenant_scoped(store.list_evaluations()):
+    source = (
+        evaluations
+        if evaluations is not None
+        else _tenant_scoped(store.list_evaluations())
+    )
+    for evaluation in source:
         if str(evaluation.get("binding_id") or "") != binding_id:
             continue
         raw_state = evaluation.get("lifecycle_append")
@@ -1978,6 +1985,7 @@ def _accepted_append_visibility_reason(
     summary: Dict[str, Any],
     binding_id: str,
     timestamp: str,
+    evaluations: Optional[List[Dict[str, Any]]] = None,
 ) -> tuple[str | None, Dict[str, Any]]:
     """Fail closed until a prior accepted append is visible in the projector.
 
@@ -1986,7 +1994,7 @@ def _accepted_append_visibility_reason(
     to be reconciled.  This avoids both stale sequence reuse and a permanent
     deadlock after a subsequent non-reconciliation lifecycle stage arrives.
     """
-    latest = _latest_accepted_lifecycle_append(binding_id)
+    latest = _latest_accepted_lifecycle_append(binding_id, evaluations=evaluations)
     if latest is None:
         return None, {}
 
@@ -2104,6 +2112,8 @@ def _ensure_scheduled_lifecycle_append(
     evaluation: Dict[str, Any],
     telemetry_url: str,
     timestamp: str,
+    timeout_seconds: float = 5.0,
+    evaluations: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Persist-before-send and retry the same event for an idempotent evaluation."""
     raw_state = evaluation.get("lifecycle_append")
@@ -2117,6 +2127,7 @@ def _ensure_scheduled_lifecycle_append(
             summary=summary,
             binding_id=str(evaluation.get("binding_id") or "").strip(),
             timestamp=timestamp,
+            evaluations=evaluations,
         )
         if visibility_reason is not None:
             state.update(
@@ -2173,22 +2184,34 @@ def _ensure_scheduled_lifecycle_append(
         # boundary so a retry can only produce an exact duplicate.
         store.put_evaluation(evaluation)
 
-    try:
-        delivery = _append_telemetry_lifecycle_event(
-            telemetry_url,
-            event,
-            tenant_id=str(event.get("tenant_id") or "").strip() or None,
-        )
-    except Exception as exc:  # noqa: BLE001 - delivery ambiguity must remain retryable.
+    if timeout_seconds <= 0:
         delivery = {
             "status": "retryable_error",
             "terminal": False,
             "retryable": True,
             "outcome": "ambiguous",
-            "http_status": None,
+            "http_status": 504,
             "response": None,
-            "error": str(exc),
+            "error": "scheduled reconciliation SLA budget exhausted",
         }
+    else:
+        try:
+            delivery = _append_telemetry_lifecycle_event(
+                telemetry_url,
+                event,
+                tenant_id=str(event.get("tenant_id") or "").strip() or None,
+                timeout_seconds=timeout_seconds,
+            )
+        except Exception as exc:  # noqa: BLE001 - delivery ambiguity must remain retryable.
+            delivery = {
+                "status": "retryable_error",
+                "terminal": False,
+                "retryable": True,
+                "outcome": "ambiguous",
+                "http_status": None,
+                "response": None,
+                "error": str(exc),
+            }
     state.update(delivery)
     state["attempt_count"] = int(state.get("attempt_count") or 0) + 1
     state["attempted_at"] = timestamp
@@ -2676,6 +2699,7 @@ def _execute_scheduled_reconcile(
     tenant_id: str,
     timestamp: str,
     tick_id: str,
+    started: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Run a scheduled reconciliation pass over all active bindings visible in telemetry.
 
@@ -2683,9 +2707,19 @@ def _execute_scheduled_reconcile(
     have an evaluation record for that tick, so duplicate scheduler ticks do not
     create duplicate ReconciliationRecords.
     """
+    tick_start = started if started is not None else time.monotonic()
+    tick_deadline = tick_start + max(1.0, float(body.sla_seconds or 60.0) - 5.0)
+
+    def dispatch_timeout() -> float:
+        return max(0.0, min(5.0, tick_deadline - time.monotonic()))
+
     telemetry_url = os.getenv("PANTHEON_TELEMETRY_API_URL", "").rstrip("/")
     try:
-        summaries = fetch_runtime_summaries(telemetry_url, tenant_id=tenant_id)
+        summaries = fetch_runtime_summaries(
+            telemetry_url,
+            tenant_id=tenant_id,
+            timeout_seconds=min(10.0, max(1.0, tick_deadline - time.monotonic())),
+        )
     except TelemetryError as exc:
         return {
             "status": "failure",
@@ -2750,9 +2784,10 @@ def _execute_scheduled_reconcile(
             telemetry_url=telemetry_url,
         )
 
+    existing_evaluations = _tenant_scoped(store.list_evaluations())
     existing_evaluation_ids = {
         str(item.get("evaluation_id") or "")
-        for item in _tenant_scoped(store.list_evaluations())
+        for item in existing_evaluations
     }
 
     created_evaluation_ids: List[str] = []
@@ -2767,10 +2802,6 @@ def _execute_scheduled_reconcile(
     lifecycle_terminal_rejections: List[Dict[str, Any]] = []
     lifecycle_ineligible_binding_ids: List[str] = []
     dispatch_incidents = bool(body.dispatch_incidents)
-    tick_deadline = time.monotonic() + max(1.0, float(body.sla_seconds or 60.0) - 5.0)
-
-    def dispatch_timeout() -> float:
-        return max(0.0, min(5.0, tick_deadline - time.monotonic()))
 
     def record_lifecycle_append(binding_id: str, state: Dict[str, Any]) -> None:
         receipt = _lifecycle_append_receipt(binding_id, state)
@@ -2828,6 +2859,8 @@ def _execute_scheduled_reconcile(
                 evaluation=existing_evaluation,
                 telemetry_url=telemetry_url,
                 timestamp=timestamp,
+                timeout_seconds=dispatch_timeout(),
+                evaluations=existing_evaluations,
             )
             record_lifecycle_append(binding_id, lifecycle_state)
             if not dispatch_incidents:
@@ -2921,6 +2954,8 @@ def _execute_scheduled_reconcile(
             evaluation=stored,
             telemetry_url=telemetry_url,
             timestamp=timestamp,
+            timeout_seconds=dispatch_timeout(),
+            evaluations=existing_evaluations,
         )
         record_lifecycle_append(binding_id, lifecycle_state)
         if not dispatch_incidents:
@@ -3102,6 +3137,7 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
             tenant_id=tenant_id,
             timestamp=timestamp,
             tick_id=tick_id,
+            started=started,
         )
         duration_seconds = max(0.0, _monotonic() - started)
         result.update(

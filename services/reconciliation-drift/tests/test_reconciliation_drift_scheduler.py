@@ -1508,3 +1508,148 @@ def test_scheduled_reconcile_incident_dispatch_bounded_and_completes_within_sla(
         assert tick_result["tick_id"] == "tick-multi-binding-sla-001"
         assert tick_result["within_sla"] is True
         assert tick_result["attempt_count"] == 1
+
+
+def test_scheduled_reconcile_lifecycle_and_incident_budget_bounded_under_cardinality() -> None:
+    from fastapi.testclient import TestClient
+    import copy
+
+    def _make_paper_summary(idx: int) -> dict:
+        base = _paper_lifecycle_summary(queue_lag_ms=25_000)
+        s = copy.deepcopy(base)
+        b_id = f"33333333-3333-4333-8333-{idx:012d}"
+        r_id = f"runtime-paper-{idx:03d}"
+        evt_id = f"11111111-1111-4111-8111-{idx:012d}"
+        tr_id = f"22222222-2222-4222-8222-{idx:012d}"
+        s["binding_id"] = b_id
+        s["runtime_id"] = r_id
+        s["last_event_id"] = evt_id
+        s["trace_id"] = tr_id
+        s["last_lifecycle_identity"]["binding_id"] = b_id
+        s["last_lifecycle_identity"]["runtime_id"] = r_id
+        s["last_lifecycle_identity"]["event_id"] = evt_id
+        s["last_lifecycle_identity"]["trace_id"] = tr_id
+        s["last_lifecycle_identity"]["correlation_envelope"]["event_id"] = evt_id
+        s["last_lifecycle_identity"]["correlation_envelope"]["trace_id"] = tr_id
+        s["last_lifecycle_identity"]["correlation_envelope"]["journey_id"] = f"tj-paper-{idx:03d}"
+        s["last_lifecycle_identity"]["aggregate_id"] = f"tj-paper-{idx:03d}"
+        return s
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+
+        summaries = [_make_paper_summary(i) for i in range(1, 6)]
+        for i in range(6, 16):
+            summaries.append(
+                _healthy_runtime_summary(
+                    binding_id=f"rb-other-active-{i:03d}",
+                    runtime_id=f"rt-other-{i:03d}",
+                    queue_lag_ms=20_000 if i % 2 == 0 else 10,
+                )
+            )
+        assert len(summaries) == 15
+
+        observed_lifecycle_timeouts: list[float] = []
+        observed_incident_timeouts: list[float] = []
+        tracker = {"fake_time": 1000.0}
+
+        def mock_monotonic():
+            return tracker["fake_time"]
+
+        def mock_urlopen(req, timeout=None):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "telemetry" in url or "ingest" in url:
+                observed_lifecycle_timeouts.append(timeout)
+                tracker["fake_time"] += 20.0
+                raise TimeoutError("telemetry timed out")
+            elif "consume-drift-report" in url:
+                observed_incident_timeouts.append(timeout)
+                tracker["fake_time"] += 20.0
+                raise TimeoutError("incidents timed out")
+            return io.BytesIO(b'{"status":"accepted"}')
+
+        list_eval_count = 0
+        orig_list_eval = svc.store.list_evaluations
+
+        def counted_list(*args, **kwargs):
+            nonlocal list_eval_count
+            list_eval_count += 1
+            return orig_list_eval(*args, **kwargs)
+
+        svc.store.list_evaluations = counted_list
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "PANTHEON_INCIDENTS_API_URL": "http://incidents:8090",
+                    "PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083",
+                },
+            ),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=summaries),
+            mock.patch.object(svc, "_monotonic", side_effect=mock_monotonic),
+            mock.patch("time.monotonic", side_effect=mock_monotonic),
+            mock.patch.object(svc.urllib.request, "urlopen", side_effect=mock_urlopen),
+        ):
+            resp = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={
+                    "tick_id": "tick-budget-bounded-001",
+                    "sla_seconds": 60.0,
+                },
+            )
+
+        assert resp.status_code == 201
+        payload = resp.json()
+        assert payload["within_sla"] is True
+        assert payload["sla_status"] == "met"
+        assert payload["evaluated_binding_count"] == 15
+        assert len(payload["evaluation_ids"]) == 15
+
+        # All 15 bindings evaluated, store was scanned once at the tick start
+        assert list_eval_count == 1
+
+        # Timeouts passed to network were all bounded by SLA budget <= 5.0s
+        for to in observed_lifecycle_timeouts:
+            assert to is not None and to <= 5.0
+        for to in observed_incident_timeouts:
+            assert to is not None and to <= 5.0
+
+        # After budget was exhausted, remaining calls returned 504 without urlopen
+        lifecycle_retryable = payload.get("lifecycle_retryable_errors", [])
+        budget_exhausted_lifecycle = [
+            e for e in lifecycle_retryable
+            if "budget exhausted" in str(e.get("error"))
+        ]
+        assert len(budget_exhausted_lifecycle) > 0
+
+        # Scheduler client handles response without hitting 90s TimeoutError
+        scheduler = _load_scheduler_module()
+        with mock.patch.object(
+            scheduler.urllib.request,
+            "urlopen",
+            return_value=io.BytesIO(resp.content),
+        ):
+            tick_result = scheduler.run_tick(
+                api_url="http://reconciliation-drift-svc:8102",
+                tick_id="tick-budget-bounded-001",
+                timeout_seconds=90.0,
+                sla_seconds=60.0,
+            )
+        assert tick_result["tick_id"] == "tick-budget-bounded-001"
+        assert tick_result["within_sla"] is True
+        assert tick_result["attempt_count"] == 1
+        assert tick_result["controller_status"] == "unhealthy"
+
+        # Verify claim was cleanly failed so a retry does not receive deferred lease_active
+        claim_result = svc.store.claim_work(
+            tenant_id="default",
+            work_type="scheduled_reconcile",
+            window_id="tick-budget-bounded-001",
+            owner_id="reconciliation-scheduler",
+            lease_seconds=60.0,
+        )
+        assert claim_result["acquired"] is True
+        assert claim_result["reason"] in {"acquired", "recovered"}
+
