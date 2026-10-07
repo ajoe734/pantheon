@@ -45,7 +45,7 @@ def _owner_lineage_is_a_seam(monkeypatch, request):
         return
     from services.capital import allocation_lineage
 
-    monkeypatch.setattr(allocation_lineage, "verify_rebalance_lineage", lambda reader, proposal: None)
+    monkeypatch.setattr(allocation_lineage, "verify_rebalance_lineage", lambda proposal: None)
 
 
 def pytest_configure(config):

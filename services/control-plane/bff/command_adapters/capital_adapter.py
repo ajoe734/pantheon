@@ -70,8 +70,7 @@ class CapitalOwnerWriter:
         return _executor().create_capital_pool(body, auth_token=auth_token, **({"tenant_id": tenant} if tenant else {}))
 
     def evaluate_allocation(self, payload, *, auth_token=None, tenant_id=None, **_) -> Dict[str, Any]:
-        tenant = self._tenant(tenant_id, auth_token)
-        return http_request_json(capital_url("/api/allocation-evaluations"), method="POST", payload=payload, auth_token=auth_token, tenant_id=tenant)
+        return http_request_json(capital_url("/api/allocation-evaluations"), method="POST", payload=payload, auth_token=auth_token, tenant_id=self._tenant(tenant_id, auth_token))
 
     def pool_action(self, payload, *, actor_id, actor_role, target_id, auth_token=None, tenant_id=None, **_) -> Dict[str, Any]:
         action = str(payload.get("action_id") or "").strip()

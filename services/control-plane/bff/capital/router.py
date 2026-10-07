@@ -441,14 +441,11 @@ def create_capital_router(
     # 8. Evaluate one policy snapshot before a rebalance proposal is admitted.
     @router.post("/bff/management/allocation-policy/evaluate")
     async def bff_evaluate_persona_allocation_policy(
-        payload: Dict[str, Any] = Body(...),
-        authorization: Optional[str] = Header(default=None),
-        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        payload: Dict[str, Any] = Body(...), authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
         identity = _require_read(authorization)
-        tid = _resolve_tenant(identity, x_tenant_id, bff_error)
         try:
-            evaluation = service.write("evaluate_allocation", payload, actor_id=_identity_id(identity), actor_role=_owner_actor_role(identity), auth_token=authorization, tenant_id=tid)
+            evaluation = service.write("evaluate_allocation", payload, actor_id=_identity_id(identity), actor_role=_owner_actor_role(identity), auth_token=authorization)
         except Exception as exc:
             raise _error_for_capital_exception(exc, bff_error) from exc
         return _readback_response(evaluation, meta={"snapshot_at": utc_now(), "allocation_evaluation_id": evaluation.get("allocation_evaluation_id")})

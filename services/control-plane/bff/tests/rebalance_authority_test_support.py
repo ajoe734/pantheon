@@ -732,11 +732,11 @@ class CapitalBffAuthorityHarness:
         self.capital_client = TestClient(self.capital_module.app)
         from services.capital import allocation_lineage
 
-        self._lineage_original = allocation_lineage.verify_rebalance_lineage
+        self._lineage_original = (allocation_lineage.verify_rebalance_lineage, allocation_lineage.create_ranking_reader)
         if self.ranking_reader is None:
-            allocation_lineage.verify_rebalance_lineage = lambda open_reader, proposal: None
+            allocation_lineage.verify_rebalance_lineage = lambda proposal: None
         else:
-            self.capital_module.get_ranking_reader = lambda: self.ranking_reader
+            allocation_lineage.create_ranking_reader = lambda: self.ranking_reader
         command_executor._post_json = self._post_json
         command_executor._get_json = self._get_json
         self._original_urlopen = urllib.request.urlopen
@@ -796,7 +796,7 @@ class CapitalBffAuthorityHarness:
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
         from services.capital import allocation_lineage, capital_guard
 
-        allocation_lineage.verify_rebalance_lineage = self._lineage_original
+        allocation_lineage.verify_rebalance_lineage, allocation_lineage.create_ranking_reader = self._lineage_original
         for name, original in getattr(self, "_guard_originals", {}).items():
             setattr(capital_guard, name, original)
         if self.client is not None:

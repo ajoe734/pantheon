@@ -23,19 +23,11 @@ ITEM = {
 }
 
 
-class _Snapshot:
-    def __init__(self, items: List[Dict[str, Any]]) -> None:
-        self._items = items
-
-    def to_canonical_dict(self) -> Dict[str, Any]:
-        return {"ranking_snapshot_id": SNAPSHOT_ID, "surface": "quarterly", "items": self._items}
-
-
 class _RankingReader:
     """Stands in for the Rankings read store: only the admitted snapshot exists."""
 
-    def get_ranking_snapshot(self, snapshot_id: str) -> Optional[_Snapshot]:
-        return _Snapshot([ITEM]) if snapshot_id == SNAPSHOT_ID else None
+    def get_ranking_snapshot(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
+        return {"ranking_snapshot_id": SNAPSHOT_ID, "surface": "quarterly", "items": [ITEM]} if snapshot_id == SNAPSHOT_ID else None
 
 
 def _evaluate_body(**overrides: Any) -> Dict[str, Any]:
@@ -108,7 +100,9 @@ def test_owner_admits_only_the_evaluation_it_can_reproduce_from_the_snapshot(tmp
 
 def test_owner_without_a_rankings_store_is_unavailable_not_permissive(tmp_path: Path) -> None:
     with CapitalBffAuthorityHarness(tmp_path, seed_allocation=False, ranking_reader=_RankingReader()) as harness:
-        harness.capital_module.get_ranking_reader = lambda: None
+        from services.capital import allocation_lineage
+
+        allocation_lineage.create_ranking_reader = lambda: (_ for _ in ()).throw(ValueError("RANKING_STORE_DSN is required"))
         response = _evaluate(harness, _evaluate_body())
         assert response.status_code == 503, response.text
 
