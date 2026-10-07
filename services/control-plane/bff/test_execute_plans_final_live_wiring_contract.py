@@ -281,6 +281,7 @@ def _isolated_final_read_models(*, fallback: bool = True) -> Iterator[TestClient
         persona_data = {
             "id": "persona_001",
             "persona_id": "persona_001",
+            "tenant_id": "pantheon-dev",
             "name": "Persona 001",
             "status": "active",
         }
@@ -376,6 +377,11 @@ def _isolated_final_read_models(*, fallback: bool = True) -> Iterator[TestClient
             store.get_artifact = lambda aid: artifact_data if aid == "artifact-alpha" else None
             store.list_channels = lambda **kw: [channel_data]
             store.get_channel = lambda cid: channel_data if cid == "channel-001" else None
+            # Tools, skills and MCP are read through IntegrationsService from the read store.
+            store.list_tools = lambda **kw: [{"id": "tool-alpha", "tool_id": "tool-alpha", "name": "Tool Alpha", "status": "active"}]
+            store.list_skills = lambda **kw: [{"id": "skill-alpha", "skill_id": "skill-alpha", "name": "Skill Alpha", "status": "active"}]
+            store.list_mcp_servers = lambda **kw: [{"id": "server-alpha", "server_id": "server-alpha", "name": "Server Alpha", "status": "registered"}]
+            store.list_mcp_tools = lambda **kw: [{"id": "tool-alpha", "tool_id": "tool-alpha", "server_id": "server-alpha", "name": "Tool Alpha", "status": "imported"}]
             store.list_alerts = lambda **kw: [alert_data]
             store.get_alert = lambda aid: alert_data if aid == "alert-001" else None
         else:
@@ -629,14 +635,14 @@ def test_execute_plans_final_detail_unknown_ids_are_404_when_source_exists(monke
             assert response.status_code == 404, response.text
 
 
-def test_execute_plans_final_detail_missing_source_returns_degraded_dto(monkeypatch) -> None:
+def test_execute_plans_final_detail_missing_source_returns_503_dependency_unavailable(monkeypatch) -> None:
+    # Owner-unavailable detail reads return 503 (capital convention, ed2951d76), not a degraded 200 DTO.
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     with _isolated_final_read_models(fallback=False) as client:
         response = client.get("/bff/research-analyses/analysis-unavailable", headers=HEADERS)
 
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert payload["data"]["id"] == "analysis-unavailable"
-    assert payload["data"]["status"] == "degraded"
-    assert payload["meta"]["surfaces"]["research_analysis_detail"]["status"] == "unavailable"
+    assert response.status_code == 503, response.text
+    error = response.json()["error"]
+    assert error["code"] == "DEPENDENCY_UNAVAILABLE"
+    assert error["retryable"] is True

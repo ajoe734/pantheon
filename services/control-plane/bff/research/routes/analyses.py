@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Header, Query
 
-from .common import ResearchRouteContext
+from .common import ErrorCode, ResearchRouteContext
 from ..service import ResearchNotFoundError, ResearchValidationError
 
 
@@ -47,6 +47,13 @@ def build_analyses_router(ctx: ResearchRouteContext) -> APIRouter:
         try:
             return ctx.service.get_analysis(analysis_id, detail_path=detail_path)
         except (ResearchNotFoundError, ResearchValidationError) as exc:
+            if isinstance(exc, ResearchNotFoundError) and ctx.service.dataset_surface(
+                "research_analyses", snapshot_at=ctx.utc_now(), has_data=True
+            ).get("status") == "unavailable":
+                raise ctx.bff_error(
+                    503, ErrorCode.DEPENDENCY_UNAVAILABLE,
+                    "Research analysis read surface unavailable", "Downstream read source is unavailable.",
+                ) from exc
             ctx.raise_service_error(exc)
             raise AssertionError("unreachable")
 
