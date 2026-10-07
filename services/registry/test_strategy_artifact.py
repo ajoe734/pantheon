@@ -18,8 +18,10 @@ from .storage import get_store, reset_store
 from .strategy_artifact import (
     BUILTIN_STRATEGY_ARTIFACT_PATHS,
     StrategyArtifactValidationError,
+    build_market_transition_registry_payload,
     build_strategy_artifact_registry_payload,
     canonical_market_context,
+    create_market_transition_revision,
     evaluate_strategy_action,
     load_strategy_artifact_registration,
     mutate_strategy_artifact,
@@ -643,5 +645,88 @@ def test_strategy_artifact_accepts_bare_symbols_with_explicit_market():
     fx_artifact["parameters"]["market"] = "FX"
     fx_artifact["mutation_surface"]["immutable_parameters"].append("market")
     validate_strategy_artifact(fx_artifact)
+
+
+def test_create_market_transition_revision_preserves_parent_and_sets_canonical_market():
+    parent = copy.deepcopy(_artifact())
+    parent["artifact_id"] = "artifact-legacy-v1"
+    parent["version"] = "1.0.0"
+    parent["parameters"]["symbols"] = ["SPY"]
+    assert "market" not in parent["parameters"]
+    parent_checksum = strategy_artifact_checksum(parent)
+    parent_copy = copy.deepcopy(parent)
+
+    child = create_market_transition_revision(
+        parent,
+        market="US",
+        new_artifact_id="artifact-legacy-v1-rev1",
+        new_version="1.0.1",
+        source_run_ids=["transition-run-001"],
+    )
+
+    # Parent remains byte-identical and completely unmutated
+    assert parent == parent_copy
+    assert strategy_artifact_checksum(parent) == parent_checksum
+    assert "market" not in parent["parameters"]
+
+    # Child is valid, monotonic, cites parent, and carries canonical market
+    validate_strategy_artifact(child)
+    assert child["artifact_id"] == "artifact-legacy-v1-rev1"
+    assert child["version"] == "1.0.1"
+    assert child["lineage"]["parent_registry_ids"] == ["artifact-legacy-v1"]
+    assert child["lineage"]["source_run_ids"] == ["transition-run-001"]
+    assert child["parameters"]["market"] == "US"
+    assert "market" in child["mutation_surface"]["immutable_parameters"]
+    assert child["parameters"]["symbols"] == ["SPY"]
+
+
+def test_create_market_transition_revision_rejects_contradictory_or_invalid_market():
+    parent = copy.deepcopy(_artifact())
+    parent["parameters"]["symbols"] = ["2330.TW"]
+
+    with pytest.raises(StrategyArtifactValidationError, match="contradicts explicit market 'US'"):
+        create_market_transition_revision(
+            parent,
+            market="US",
+            new_artifact_id="artifact-tw-child",
+            new_version="1.0.1",
+            source_run_ids=["transition-run-002"],
+        )
+
+    with pytest.raises(StrategyArtifactValidationError, match="unsupported market context 'INVALID'"):
+        create_market_transition_revision(
+            parent,
+            market="INVALID",
+            new_artifact_id="artifact-invalid-child",
+            new_version="1.0.1",
+            source_run_ids=["transition-run-002"],
+        )
+
+
+def test_build_market_transition_registry_payload():
+    parent = copy.deepcopy(_artifact())
+    parent["artifact_id"] = "artifact-parent-001"
+    parent["version"] = "1.0.0"
+    parent["parameters"]["symbols"] = ["SPY"]
+    parent_entry = {
+        "registry_id": "artifact-parent-001",
+        "metadata": {"strategy_artifact": parent},
+    }
+
+    registry_id, payload = build_market_transition_registry_payload(
+        parent_entry,
+        market="US",
+        new_artifact_id="artifact-parent-001-rev1",
+        new_version="1.0.1",
+        source_run_ids=["transition-run-003"],
+    )
+
+    assert registry_id == "artifact-parent-001-rev1"
+    assert payload.artifact_type == ArtifactType.EXECUTION_BUNDLE
+    assert payload.version == "1.0.1"
+    assert payload.lineage.parent_registry_ids == ["artifact-parent-001"]
+    assert payload.metadata["strategy_artifact"]["parameters"]["market"] == "US"
+    assert payload.metadata["parent_registry_id"] == "artifact-parent-001"
+
 
 
