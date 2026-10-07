@@ -503,6 +503,9 @@ class ReadSurfacePorts:
             except Exception:
                 return "unavailable"
         if dataset == "telemetry_summaries":
+            telemetry = getattr(self.lifecycle_telemetry_governance, "telemetry", None)
+            if telemetry is not None and hasattr(telemetry, "dataset_source"):
+                return telemetry.dataset_source()
             try:
                 self.lifecycle_telemetry_governance.list_telemetry_summaries()
                 return "typed_store"
@@ -1379,7 +1382,11 @@ def create_read_surface_ports(
     **kwargs: Any,
 ) -> ReadSurfacePorts:
     """Factory creating a production-grade composite ReadSurfacePorts instance."""
-    from ..core.owner_reads import approval_records, create_owner_domain_ports
+    from ..core.owner_reads import approval_records, create_owner_domain_ports, telemetry_summaries
+    if lifecycle_telemetry_governance is None:
+        lifecycle_telemetry_governance = create_lifecycle_telemetry_governance_port(
+            telemetry_port=DomainTelemetryPort(telemetry_summaries_reader=telemetry_summaries),
+        )
     if persona_capital_runtime is None:
         persona_capital_runtime = create_owner_domain_ports(
             persona_registry_store, ranking_store,

@@ -1,0 +1,120 @@
+{
+  "task_id": "BFF-RED-TESTS-GOVERNANCE-20261007",
+  "title": "Refresh governance assistant HumanGate audit tests and collect the four never-run test files",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 0,
+  "summary": "Collected and passed all 4 previously never-run test files (41 tests) by migrating to absolute imports without adding __init__.py; refreshed all 7 failing governance/assistant/humangate/audit contract test files to align with canonical forwarded governance architecture and durable incident writer contracts; verified all 135 tests pass with 0 net production code changes.",
+  "acceptance_criteria": {
+    "four_never_collected_files_collected_and_passing": {
+      "status": "PASSED",
+      "no_init_py_added": true,
+      "import_mode": "default import mode with absolute services.control_plane.bff... paths",
+      "files": [
+        "services/control-plane/bff/auth/test_policy.py (14 passed)",
+        "services/control-plane/bff/auth/test_browser_session.py (8 passed)",
+        "services/control-plane/bff/auth/test_dev_approver_governance.py (10 passed)",
+        "services/control-plane/bff/assistant/tests/test_command_idempotency.py (9 passed)"
+      ]
+    },
+    "all_11_scoped_files_passing_no_regressions": {
+      "status": "PASSED",
+      "total_tests": 135,
+      "passed": 135,
+      "failed": 0,
+      "warnings": 5
+    },
+    "changed_expectations_classified": {
+      "status": "PASSED",
+      "no_assertions_weakened": true
+    },
+    "zero_net_production_code_lines": {
+      "status": "PASSED",
+      "net_prod_lines": 0
+    }
+  },
+  "expectation_classifications": [
+    {
+      "file": "services/control-plane/bff/tests/test_assistant_security.py",
+      "changed_item": "Replaced retired AuditExport command in 9 test functions with allowlisted low-risk action EscalateDiff (entity_type=EvolutionDecision, actor_roles=['operator'])",
+      "classification": "retired",
+      "citing_commits": ["4b25b31f0", "6f34d8f7f"],
+      "rationale": "AuditExport was retired and replaced by live assistant tools. AuditExport 410 rejection is explicitly verified in services/control-plane/bff/tests/test_receipt_only_retirement.py. Testing general assistant security (path traversal, secret scrubbing, boolean coercion, idempotency) requires a valid allowlisted action. No assertions weakened."
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_bff_b5_humangate_commands.py",
+      "changed_item": "Removed obsolete final_contract_idempotency keyword argument; removed retired HumanGate commands (HumanGateApprove, HumanGateReject, HumanGateRequestMoreEvidence, HumanGateExtendTtl, QuarterlyRankingRecommendationSubmit) from command catalog admission test, retaining live HumanGateRevoke",
+      "classification": "retired",
+      "citing_commits": ["4b25b31f0", "6f34d8f7f", "BFF-HUMAN-GATE-TESTS-POLICY-20261006"],
+      "rationale": "HumanGateApprove/Reject/RequestMoreEvidence/ExtendTtl were retired to /bff/approvals/{id}/decide. Rejections with 410 are covered by test_receipt_only_retirement.py:13 and test_bff_b5_001_security_hardening.py. Live command catalog only admits HumanGateRevoke. No assertions weakened."
+    },
+    {
+      "file": "services/control-plane/bff/test_aud_002_audit_action_write_engine.py",
+      "changed_item": "Removed test_audit_export_write_is_queryable_without_snapshot_fallback",
+      "classification": "retired",
+      "citing_commits": ["4b25b31f0", "6f34d8f7f"],
+      "rationale": "POST /bff/audit/export route was retired; its 410 rejection is tested in test_receipt_only_retirement.py:88. Live audit engine writing is verified by test_runtime_action_writes_audit_action_visible_in_bff_audit. No assertions weakened."
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_command_replay_conflict.py",
+      "changed_item": "Updated test_final_command_missing_approval_evidence_returns_typed_error to use ApproveEvolutionDecision (EvolutionDecision, evo-bff-consol-021)",
+      "classification": "retired",
+      "citing_commits": ["4b25b31f0", "6631736ae"],
+      "rationale": "Retired command SubmitStrategyAction/FinalDecision replaced with live governance command ApproveEvolutionDecision. Verifies exact same MISSING_APPROVAL_EVIDENCE / APPROVAL_EVIDENCE_REQUIRED typed error contract. No assertions weakened."
+    },
+    {
+      "file": "services/control-plane/bff/test_pkt004_deployment_approval_drilldowns_contract.py",
+      "changed_item": "Added autouse _owner_serves_approvals fixture stubbing approval_owner.call_owner to return seeded decisions",
+      "classification": "intended_change",
+      "citing_commits": ["6631736ae"],
+      "rationale": "Commit 6631736ae forwarded approval reads to the remote governance owner via approval_owner.call_owner rather than local read_surface. In isolated contract tests, call_owner must be stubbed. No assertions weakened."
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py",
+      "changed_item": "Added per-test stub in test_governance_ledger_includes_decision_only_approval_entry to return _APPROVAL_3_DECISION_ONLY on /approvals call_owner, and updated expected source_dataset to 'approval_queue_items'",
+      "classification": "intended_change",
+      "citing_commits": ["6631736ae"],
+      "rationale": "Under forwarded governance architecture (6631736ae), ledger entries for approvals derive from approval_queue_items fetched from the governance owner. No assertions weakened."
+    },
+    {
+      "file": "services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py",
+      "changed_item": "Added create_incident and update_incident_status to GovernanceRuntimeRiskAuditTestReadPorts, and passed durable_writer=store to create_incident_router",
+      "classification": "intended_change",
+      "citing_commits": ["82b69e4dd"],
+      "rationale": "Commit 82b69e4dd enforced that incident creation and status mutation require a durable writer instead of process-local memory. Test store now implements durable writer methods. No assertions weakened."
+    },
+    {
+      "file": "services/control-plane/bff/auth/test_policy.py",
+      "changed_item": "Converted relative imports (from .policy import ...) to absolute imports (from services.control_plane.bff.auth.policy import ...)",
+      "classification": "intended_change",
+      "citing_commits": [],
+      "rationale": "Test file could not be collected in default import mode due to relative import beyond top-level package. Fixed without adding __init__.py."
+    },
+    {
+      "file": "services/control-plane/bff/auth/test_browser_session.py",
+      "changed_item": "Converted relative imports to absolute imports (from services.control_plane.bff.auth...)",
+      "classification": "intended_change",
+      "citing_commits": [],
+      "rationale": "Test file could not be collected in default import mode due to relative imports. Fixed without adding __init__.py."
+    },
+    {
+      "file": "services/control-plane/bff/auth/test_dev_approver_governance.py",
+      "changed_item": "Converted relative imports to absolute imports; updated test_non_approver_credentials_do_not_gain_review_authority so operator* role expects 200 (empty review list) while viewer expects 403",
+      "classification": "intended_change",
+      "citing_commits": ["6631736ae"],
+      "rationale": "Per canonical services/governance/contract.md lines 362-365 and commit 6631736ae, operator roles have read visibility into reviews (returning 200 with empty list [] when none assigned) but lack review decision authority, while viewer roles receive 403. No assertions weakened."
+    },
+    {
+      "file": "services/control-plane/bff/assistant/tests/test_command_idempotency.py",
+      "changed_item": "Converted relative imports to absolute imports (from services.control_plane.bff.assistant...)",
+      "classification": "intended_change",
+      "citing_commits": [],
+      "rationale": "Test file could not be collected in default import mode due to relative imports. Fixed without adding __init__.py."
+    }
+  ],
+  "verification_results": {
+    "test_command": "pytest -v services/control-plane/bff/tests/test_assistant_security.py services/control-plane/bff/tests/test_bff_b5_humangate_commands.py services/control-plane/bff/test_aud_002_audit_action_write_engine.py services/control-plane/bff/tests/test_command_replay_conflict.py services/control-plane/bff/test_pkt004_deployment_approval_drilldowns_contract.py services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py services/control-plane/bff/auth/test_policy.py services/control-plane/bff/auth/test_browser_session.py services/control-plane/bff/auth/test_dev_approver_governance.py services/control-plane/bff/assistant/tests/test_command_idempotency.py",
+    "summary": "135 passed, 5 warnings in 190.07s"
+  }
+}

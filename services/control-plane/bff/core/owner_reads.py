@@ -1,5 +1,6 @@
 """Request-scoped owner reads; no cache or BFF copy of domain records."""
 from contextvars import ContextVar
+from http.cookies import SimpleCookie
 from typing import Optional
 
 from ..command_adapters.base import (
@@ -18,7 +19,17 @@ class OwnerReadContextMiddleware:
 
     async def __call__(self, scope, receive, send):
         headers = dict(scope.get("headers", []))
-        token = authorization.set(headers.get(b"authorization", b"").decode() or None)
+        caller_auth = headers.get(b"authorization", b"").decode().strip()
+        if not caller_auth:
+            cookie = SimpleCookie()
+            try:
+                cookie.load(headers.get(b"cookie", b"").decode())
+                session = cookie.get("pantheon_session")
+                if session and session.value:
+                    caller_auth = f"Bearer {session.value}"
+            except (UnicodeDecodeError, ValueError):
+                caller_auth = ""
+        token = authorization.set(caller_auth or None)
         tenant_token = selected_tenant.set(headers.get(b"x-tenant-id", b"").decode().strip() or None)
         try:
             await self.app(scope, receive, send)
@@ -41,6 +52,17 @@ def read_records(url_builder, path, key=None):
     return records
 
 
+def telemetry_summaries():
+    """Read the authenticated Telemetry owner projection in the current request context."""
+    from ..command_adapters.base import get_base_url
+
+    return read_records(
+        lambda path: get_base_url("PANTHEON_TELEMETRY_API_URL", "PANTHEON_TELEMETRY_URL") + path,
+        "/api/telemetry/runtime-summaries",
+        "summaries",
+    )
+
+
 def approval_records():
     if not authorization.get():
         raise RuntimeError("Governance reads require the caller's authorization")
@@ -57,6 +79,10 @@ def create_owner_domain_ports(persona_store=None, ranking_store=None):
     def rankings():
         store = ranking_store if ranking_store is not None else build_rankings_store()
         return [record.to_dict() for record in store.list_rankings()]
+
+    def ranking_formulas():
+        from ..personas.service import _pm12_quarter_formula_payload
+        return [_pm12_quarter_formula_payload()]
 
     return PersonaCapitalRuntimeDomainPort(
         persona_port=PersonaFleetPort(store=persona_store),
@@ -75,6 +101,7 @@ def create_owner_domain_ports(persona_store=None, ranking_store=None):
         ),
         ranking_port=RankingProjectionPort(
             rankings_reader=rankings,
+            ranking_formulas_reader=ranking_formulas,
             rebalances_reader=lambda: read_records(capital_url, "/api/rebalances"),
             capital_allocations_reader=lambda: read_records(capital_url, "/api/allocations", "items"),
             containments_reader=lambda: read_records(capital_url, "/api/containments"),

@@ -277,6 +277,10 @@ class BatchProjectionMutation:
     # Controller updates
     new_checkpoint_seq: int = 0
     source_high_watermark: int = 0
+    # Source-side frontier proven under the canonical writer fence. Every source
+    # row through this sequence was returned (and receives a disposition) or
+    # was absent from the committed source snapshot.
+    source_frontier_seq: int = 0
     backlog_count: int = 0
     mode: str = "live"
     status: str = "ok"
@@ -1574,7 +1578,18 @@ class ProjectionStore:
                         environment_scope,
                     ),
                 )
-                target_checkpoint_seq = cur.fetchone()[0]
+                target_checkpoint_seq = int(cur.fetchone()[0] or 0)
+                proven_frontier = int(mutation.source_frontier_seq or 0)
+                if proven_frontier < 0 or proven_frontier > int(mutation.source_high_watermark):
+                    raise ProjectionStoreException(
+                        "Source frontier must be within the observed source high watermark"
+                    )
+                # The source adapter sets this only after taking the same
+                # transaction advisory lock as canonical writers and fetching
+                # every row through the returned sequence. Missing positions in
+                # that committed snapshot are sequence holes, not missing receipts.
+                if proven_frontier >= curr_checkpoint_seq:
+                    target_checkpoint_seq = max(target_checkpoint_seq, proven_frontier)
                 next_source_high_watermark = max(
                     int(curr_source_high_watermark),
                     int(mutation.source_high_watermark),

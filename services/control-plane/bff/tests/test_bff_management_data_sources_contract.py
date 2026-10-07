@@ -5,7 +5,12 @@
 """
 from __future__ import annotations
 
+import importlib
+import sys
+import unittest.mock
 from typing import Any
+
+import pytest
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -210,22 +215,11 @@ def test_bff_management_data_sources_requires_auth() -> None:
 
 
 def test_calculate_source_allowed_actions_fails_closed_when_import_unavailable() -> None:
-    import pytest
-    import unittest.mock
-    scope: dict[str, Any] = {}
-    code = (
-        "try:\n"
-        "    from services.source_ingestion.connector_definitions import calculate_source_allowed_actions\n"
-        "except ImportError:\n"
-        "    try:\n"
-        "        from connector_definitions import calculate_source_allowed_actions\n"
-        "    except ImportError:\n"
-        "        def calculate_source_allowed_actions(*args, **kwargs):\n"
-        "            raise RuntimeError('Source action policy is unavailable')\n"
-    )
-    with unittest.mock.patch.dict("sys.modules", {"services.source_ingestion.connector_definitions": None, "connector_definitions": None}):
-        exec(code, scope)
-        fn = scope["calculate_source_allowed_actions"]
+    """Re-import the real module with the policy unavailable; a permissive fallback in it fails this test."""
+    module_name = "services.control_plane.bff.console_gap.datasources"
+    unavailable = {"services.source_ingestion.connector_definitions": None, "connector_definitions": None}
+    with unittest.mock.patch.dict("sys.modules", unavailable):  # patch.dict restores sys.modules, including the real module
+        sys.modules.pop(module_name, None)
+        module = importlib.import_module(module_name)
         with pytest.raises(RuntimeError, match="Source action policy is unavailable"):
-            fn()
-
+            module.calculate_source_allowed_actions({}, {}, {}, {})

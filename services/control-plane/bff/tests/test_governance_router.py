@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -261,13 +262,48 @@ def _submit_action(*, action_kind: str, target_id: str, action_id: str, **_: Any
     return {"status": "accepted", "data": {"action": action_id, "command_id": f"cmd-{action_kind}-{target_id}"}}
 
 
-def build_client(store: Optional[MockGovernanceStore] = None, **router_kwargs: Any) -> TestClient:
+def build_client(
+    store: Optional[MockGovernanceStore] = None,
+    *,
+    call_owner: Optional[Callable[..., Any]] = None,
+    monkeypatch: Optional[pytest.MonkeyPatch] = None,
+    **router_kwargs: Any,
+) -> TestClient:
+    from services.control_plane.bff.governance import approval_owner
+
     store = store or MockGovernanceStore()
     router_kwargs.setdefault("extract_identity", _tenant_identity)
     router_kwargs.setdefault("submit_action", _submit_action)
+
+    def _default_call_owner(method: str, path: str, authorization: Optional[str] = None, **kwargs: Any) -> Any:
+        if path == "/api/governance/approvals":
+            return [dict(v) for v in store.approval_decisions.values()]
+        if path.startswith("/api/governance/approvals/"):
+            clean_id = path.removeprefix("/api/governance/approvals/").split("/")[0]
+            if clean_id in store.approval_decisions:
+                return dict(store.approval_decisions[clean_id])
+            raise urllib.error.HTTPError(path, 404, "Not Found", {}, None)
+        return {}
+
+    effective_call_owner = call_owner or _default_call_owner
+    if monkeypatch is not None:
+        monkeypatch.setattr(approval_owner, "call_owner", effective_call_owner)
+    else:
+        approval_owner.call_owner = effective_call_owner
     app = FastAPI()
     app.include_router(create_governance_router(get_read_store=lambda: store, **router_kwargs))
     return TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_approval_owner_call_owner() -> Any:
+    from services.control_plane.bff.governance import approval_owner
+
+    original = approval_owner.call_owner
+    try:
+        yield
+    finally:
+        approval_owner.call_owner = original
 
 
 def test_router_registers_exactly_the_35_catalog_routes() -> None:
@@ -315,8 +351,8 @@ def test_consult_request_committee_memo_and_workbench_routes() -> None:
     assert client.get("/api/v1/consult/memos/memo-1").json()["memo_id"] == "memo-1"
 
 
-def test_governance_queues_audit_and_mutation_review() -> None:
-    client = build_client()
+def test_governance_queues_audit_and_mutation_review(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = build_client(monkeypatch=monkeypatch)
     review_queue = client.get("/api/v1/operator/governance/review-queue?status=pending")
     approval_queue = client.get("/api/v1/operator/governance/approval-queue")
     audit = client.get("/api/v1/operator/governance/audit")
@@ -324,7 +360,8 @@ def test_governance_queues_audit_and_mutation_review() -> None:
 
     assert review_queue.status_code == approval_queue.status_code == audit.status_code == mutation.status_code == 200
     assert review_queue.json()["items"][0]["item_id"] == "review-1"
-    assert approval_queue.json()["page_info"]["total"] == 2
+    assert approval_queue.json()["page_info"]["total"] == 1
+    assert approval_queue.json()["items"][0]["decision_id"] == "approval-1"
     assert audit.json()["items"][0]["id"] == "audit-1"
     assert mutation.json()["approval_decision"]["decision_id"] == "approval-1"
     assert client.get("/api/v1/operator/mutation-review/missing").status_code == 404
@@ -344,15 +381,13 @@ def test_consultation_session_and_policy_read_routes() -> None:
     assert detail.json()["data"]["session_id"] == "session-1"
     assert participants.json()["meta"]["total"] == 1
     assert outcome.json()["data"]["decision"] == "approve"
-    assert evidence.json()["meta"]["supporting_counts"]["redacted_evidence_count"] == 0
+    assert evidence.json()["meta"]["supporting_counts"]["redacted_evidence_count"] == 1
     assert transcript.json()["items"][0]["sequence_no"] == 1
     assert policy.json()["data"]["id"] == "policy-1"
     assert client.get("/api/v1/personas/missing/consultations").status_code == 404
 
 
-def test_review_and_governance_ledger_compatibility(monkeypatch: Any) -> None:
-    from services.control_plane.bff.governance import approval_owner
-
+def test_review_and_governance_ledger_compatibility(monkeypatch: pytest.MonkeyPatch) -> None:
     stubbed_response = {
         "decision_id": "review-1",
         "decision_state": "accepted",
@@ -361,9 +396,13 @@ def test_review_and_governance_ledger_compatibility(monkeypatch: Any) -> None:
         "tenant_id": "tenant-a",
         "version": 2,
     }
-    monkeypatch.setattr(approval_owner, "call_owner", lambda *args, **kwargs: dict(stubbed_response))
 
-    client = build_client()
+    def _stub_owner(method: str, path: str, *args: Any, **kwargs: Any) -> Any:
+        if path == "/api/governance/approvals":
+            return [dict(stubbed_response), dict(stubbed_response, decision_id="review-2")]
+        return dict(stubbed_response)
+
+    client = build_client(call_owner=_stub_owner, monkeypatch=monkeypatch)
 
     ledger = client.get("/bff/management/governance-ledger?source_type=approval")
     reviews = client.get("/bff/reviews")
@@ -384,6 +423,64 @@ def test_review_and_governance_ledger_compatibility(monkeypatch: Any) -> None:
         json={"expected_version": 1, "notes": "Evidence verified", "actor_role": "governance_reviewer"},
         headers={"Idempotency-Key": "review-action-1"},
     )
-    assert created.status_code == acted.status_code == 202
-    assert created.json()["status"] == acted.json()["status"] == "accepted"
+    assert created.status_code == 410
+    assert acted.status_code == 202
+    assert acted.json()["status"] == "accepted"
 
+
+def test_approval_queue_returns_503_on_malformed_owner_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = build_client(call_owner=lambda *args, **kwargs: {"not": "a list"}, monkeypatch=monkeypatch)
+    resp = client.get("/api/v1/operator/governance/approval-queue")
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+
+def test_approval_queue_filters_by_decision_type_and_terminal_states(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = MockGovernanceStore()
+    store.approval_decisions["approval-3"] = {
+        "id": "approval-3",
+        "decision_id": "approval-3",
+        "tenant_id": "tenant-a",
+        "target_type": "DeploymentPlan",
+        "decision_state": "proposed",
+        "risk_level": "low",
+    }
+    client = build_client(store, monkeypatch=monkeypatch)
+    resp = client.get("/api/v1/operator/governance/approval-queue?decision_type=DeploymentPlan")
+    assert resp.status_code == 200
+    ids = [item["decision_id"] for item in resp.json()["items"]]
+    assert ids == ["approval-1", "approval-3"]
+    # approval-2 was approved (terminal) and must not appear
+    assert "approval-2" not in ids
+
+
+
+
+def test_approval_projection_invents_nothing_and_keeps_legacy_fields() -> None:
+    from services.control_plane.bff.governance import approval_owner
+
+    bare = approval_owner.project({"decision_id": "a-1", "target_type": "DeploymentPlan"})
+    assert bare["submitted_by"] is None
+    assert bare["decision_context"]["risk_summary"] is None
+    assert "required_approvals" not in bare["decision_context"]
+    assert "decision_state" not in bare
+
+    owned = approval_owner.project(
+        {
+            "decision_id": "a-2",
+            "decision": "approved",
+            "decision_state": "under_review",
+            "owner_user_id": "user-7",
+            "rationale": "owner words",
+            "required_approvals": 2,
+        }
+    )
+    assert owned["submitted_by"] == "user-7"
+    assert owned["decision_context"]["risk_summary"] == "owner words"
+    assert owned["decision_context"]["required_approvals"] == 2
+    assert owned["allowedActions"] == {"canApprove": True, "canReject": True, "canRequestRevision": False}
+    # fields returned before the queue projection change stay present
+    assert (owned["id"], owned["outcome"], owned["status"], owned["state"]) == ("a-2", "approved", "pending", "pending")
+    assert owned["decision_state"] == "under_review"
+    decided = approval_owner.project({"decision_id": "a-3", "decision_state": "approved"})
+    assert (decided["status"], decided["state"]) == ("approved", "approved")

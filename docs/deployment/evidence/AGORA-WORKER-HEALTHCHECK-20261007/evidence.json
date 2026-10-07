@@ -1,0 +1,8 @@
+{
+  "task_id": "AGORA-WORKER-HEALTHCHECK-20261007",
+  "change": "--healthcheck now only checks a heartbeat file touched every tick by AgoraInteractionWorker.run_loop (stdlib-only, no read-surface import); Persona client construction still fails startup closed.",
+  "heartbeat": {"path_env": "AGORA_WORKER_HEARTBEAT_PATH", "max_age_env": "AGORA_WORKER_HEARTBEAT_MAX_AGE_SECONDS", "default_max_age_seconds": 300},
+  "compose": {"start_period": "60s", "interval": "30s", "timeout": "5s", "retries": 3},
+  "local_verification": "python -m unittest scripts.test_run_agora_interaction_worker: 9 tests OK (live, stalled, missing heartbeat, idle loop heartbeat, startup construction failure; probe asserted < 5s)",
+  "hosted_track": {"status": "external_wait", "detail": "Awaiting next automatic dev pair release to report agora-interaction-worker healthy in exact_component_deployment; paper-signal-producer is out of scope (PAPER-LEGACY-MARKET-TRANSITION-20261007)."}
+}

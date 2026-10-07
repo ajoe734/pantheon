@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -215,6 +216,25 @@ class ProjectionResult:
     loop_run_count: int
     generation: int
     mode: str
+
+
+@asynccontextmanager
+async def _source_writer_fence(conn: Any, *, timeout: float, table: str):
+    """Serialize source snapshots against the canonical telemetry writer."""
+    transaction = getattr(conn, "transaction", None)
+    if not callable(transaction):
+        # Lightweight test doubles may omit transaction support; real asyncpg
+        # connections always provide it and must take the transaction lock.
+        yield
+        return
+    async with transaction():
+        execute = getattr(conn, "execute", None)
+        if callable(execute):
+            await asyncio.wait_for(
+                execute("SELECT pg_advisory_xact_lock(hashtext($1))", table),
+                timeout=timeout,
+            )
+        yield
 
 
 def _utc_now() -> str:
@@ -864,6 +884,7 @@ class RelationalLifecycleProjector:
         *,
         mode: str,
         source_high_watermark: int | None = None,
+        source_frontier_seq: int = 0,
     ) -> ProjectionResult:
         if mode not in PROJECTION_MODES:
             raise ValueError(f"unsupported projection mode: {mode}")
@@ -1026,6 +1047,7 @@ class RelationalLifecycleProjector:
             quarantined=quarantined,
             backlog=predicted_backlog,
         )
+        mutation.source_frontier_seq = int(source_frontier_seq)
         mutation.receipts = receipts
         mutation.quarantines = quarantines
         (
@@ -1065,6 +1087,7 @@ class RelationalLifecycleProjector:
         source_high_watermark: int,
         backlog: int,
         mode: str,
+        source_frontier_seq: int = 0,
     ) -> None:
         if mode not in PROJECTION_MODES:
             raise ValueError(f"unsupported projection mode: {mode}")
@@ -1074,6 +1097,7 @@ class RelationalLifecycleProjector:
             quarantined=0,
             backlog=backlog,
         )
+        mutation.source_frontier_seq = int(source_frontier_seq)
         self._controller_state = self.store.execute_batch_transaction(
             self.controller_id,
             self.tenant_scope,
@@ -1142,8 +1166,17 @@ class PostgresLifecycleSource:
         include_non_lifecycle: bool = False,
         timeout_seconds: float | None = None,
         startup_timeout_seconds: float | None = None,
+        table: str = "telemetry_events",
     ) -> None:
+        table_parts = table.split(".")
+        if not table_parts or any(
+            not part or not (part[0].isalpha() or part[0] == "_")
+            or any(not (char.isalnum() or char == "_") for char in part)
+            for part in table_parts
+        ):
+            raise ValueError(f"invalid Postgres table identifier: {table!r}")
         self.dsn = dsn
+        self.table = table
         self.channel = channel
         self.include_non_lifecycle = bool(include_non_lifecycle)
         self.timeout_seconds = _validate_source_timeout(
@@ -1158,6 +1191,7 @@ class PostgresLifecycleSource:
         )
         self._listener: Any = None
         self._wake = asyncio.Event()
+        self.last_frontier_seq = 0
 
     async def verify_read_contract(self) -> None:
         import asyncpg  # type: ignore[import]
@@ -1180,7 +1214,7 @@ class PostgresLifecycleSource:
                 raise TimeoutError("telemetry startup read-contract query deadline exhausted")
             await asyncio.wait_for(
                 conn.fetchrow(
-                    "SELECT ingested_seq, ingested_at FROM telemetry_events LIMIT 1"
+                    f"SELECT ingested_seq, ingested_at FROM {self.table} LIMIT 1"
                 ),
                 timeout=query_timeout,
             )
@@ -1226,22 +1260,23 @@ class PostgresLifecycleSource:
             query_timeout = remaining()
             if query_timeout <= 0:
                 raise TimeoutError(f"lifecycle source high_watermark query deadline exhausted ({timeout}s)")
-            if self.include_non_lifecycle:
-                val = await asyncio.wait_for(
-                    conn.fetchval(
-                        "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events"
-                    ),
-                    timeout=query_timeout,
-                )
-            else:
-                val = await asyncio.wait_for(
-                    conn.fetchval(
-                        "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events "
-                        "WHERE event_type = ANY($1::text[])",
-                        list(LIFECYCLE_EVENT_TYPE_QUERY),
-                    ),
-                    timeout=query_timeout,
-                )
+            async with _source_writer_fence(conn, timeout=remaining(), table=self.table):
+                if self.include_non_lifecycle:
+                    val = await asyncio.wait_for(
+                        conn.fetchval(
+                            f"SELECT COALESCE(MAX(ingested_seq), 0) FROM {self.table}"
+                        ),
+                        timeout=remaining(),
+                    )
+                else:
+                    val = await asyncio.wait_for(
+                        conn.fetchval(
+                            f"SELECT COALESCE(MAX(ingested_seq), 0) FROM {self.table} "
+                            "WHERE event_type = ANY($1::text[])",
+                            list(LIFECYCLE_EVENT_TYPE_QUERY),
+                        ),
+                        timeout=remaining(),
+                    )
             return int(val or 0)
         finally:
             if conn is not None:
@@ -1276,29 +1311,35 @@ class PostgresLifecycleSource:
             query_timeout = remaining()
             if query_timeout <= 0:
                 raise TimeoutError(f"lifecycle source fetch_after query deadline exhausted ({timeout}s)")
-            if self.include_non_lifecycle:
-                rows = await asyncio.wait_for(
-                    conn.fetch(
-                        "SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload "
-                        "FROM telemetry_events WHERE ingested_seq > $1 "
-                        "ORDER BY ingested_seq ASC LIMIT $2",
-                        int(checkpoint),
-                        int(limit),
-                    ),
-                    timeout=query_timeout,
-                )
-            else:
-                rows = await asyncio.wait_for(
-                    conn.fetch(
-                        "SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload "
-                        "FROM telemetry_events WHERE ingested_seq > $1 "
-                        "AND event_type = ANY($2::text[]) "
-                        "ORDER BY ingested_seq ASC LIMIT $3",
-                        int(checkpoint),
-                        list(LIFECYCLE_EVENT_TYPE_QUERY),
-                        int(limit),
-                    ),
-                    timeout=query_timeout,
+            async with _source_writer_fence(conn, timeout=remaining(), table=self.table):
+                if self.include_non_lifecycle:
+                    rows = await asyncio.wait_for(
+                        conn.fetch(
+                            "SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload "
+                            f"FROM {self.table} WHERE ingested_seq > $1 "
+                            "ORDER BY ingested_seq ASC LIMIT $2",
+                            int(checkpoint),
+                            int(limit),
+                        ),
+                        timeout=remaining(),
+                    )
+                else:
+                    rows = await asyncio.wait_for(
+                        conn.fetch(
+                            "SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload "
+                            f"FROM {self.table} WHERE ingested_seq > $1 "
+                            "AND event_type = ANY($2::text[]) "
+                            "ORDER BY ingested_seq ASC LIMIT $3",
+                            int(checkpoint),
+                            list(LIFECYCLE_EVENT_TYPE_QUERY),
+                            int(limit),
+                        ),
+                        timeout=remaining(),
+                    )
+                self.last_frontier_seq = (
+                    int(rows[-1]["ingested_seq"])
+                    if rows
+                    else int(await conn.fetchval(f"SELECT COALESCE(MAX(ingested_seq), 0) FROM {self.table}"))
                 )
         finally:
             if conn is not None:
@@ -1533,14 +1574,28 @@ async def run_worker() -> int:
                     source_ready = True
                 high = await source.high_watermark()
                 rows = await source.fetch_after(projector.checkpoint, limit=batch_size)
+                # fetch_after holds the canonical writer fence while establishing
+                # this frontier; use its own snapshot's bound, not an earlier poll.
+                frontier = int(
+                    getattr(source, "last_frontier_seq", 0)
+                    or (max((int(row.get("ingested_seq", 0)) for row in rows), default=high)
+                        if not hasattr(source, "last_frontier_seq") else 0)
+                )
+                high = max(high, frontier)
                 mode = "recovery" if projector.checkpoint < recovery_target else "live"
                 if rows:
-                    projector.project_records(rows, mode=mode, source_high_watermark=high)
+                    projector.project_records(
+                        rows,
+                        mode=mode,
+                        source_high_watermark=high,
+                        source_frontier_seq=frontier,
+                    )
                 else:
                     projector.record_poll(
                         source_high_watermark=high,
-                        backlog=max(0, high - projector.checkpoint),
+                        backlog=max(0, high - max(projector.checkpoint, frontier)),
                         mode=mode,
+                        source_frontier_seq=frontier,
                     )
                 if projector.checkpoint >= recovery_target:
                     recovery_target = projector.checkpoint

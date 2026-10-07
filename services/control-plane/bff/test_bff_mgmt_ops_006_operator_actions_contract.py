@@ -32,6 +32,7 @@ import json
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from services.control_plane.bff import command_executor
+from services.control_plane.bff.action_catalog import get_catalog_entry
 from services.control_plane.bff.auth.policy import (
     bff_error,
     extract_identity_stub,
@@ -44,17 +45,24 @@ from services.control_plane.bff.command_adapters.preconditions import (
 from services.control_plane.bff.command_adapters.router import (
     create_command_adapters_router,
 )
-from services.control_plane.bff.command_adapters.service import CommandAdapterService
+from services.control_plane.bff.control_loops.router import (
+    create_control_loops_router,
+)
+from services.control_plane.bff.command_adapters.service import (
+    CommandAdapterService,
+    _resolve_execution_params_for_record,
+    pop_command_auth_context,
+)
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.core.errors import register_error_handlers
 from services.control_plane.bff.models import CommandType, RiskLevel, utc_now
 from services.control_plane.bff.ports import ReadSurfacePorts
 
-OPERATOR_TOKEN = "Bearer op-mgmt-ops-006:operator"
-ADMIN_TOKEN = "Bearer op-mgmt-ops-006:admin"
-REVIEWER_TOKEN = "Bearer op-mgmt-ops-006:reviewer"
-APPROVER_TOKEN = "Bearer op-mgmt-ops-006:approver"
-READONLY_TOKEN = "Bearer op-mgmt-ops-006:reader"
+OPERATOR_TOKEN = "Bearer op-mgmt-ops-006:operator:tenant-default"
+ADMIN_TOKEN = "Bearer op-mgmt-ops-006:admin:tenant-default"
+REVIEWER_TOKEN = "Bearer op-mgmt-ops-006:reviewer:tenant-default"
+APPROVER_TOKEN = "Bearer op-mgmt-ops-006:approver:tenant-default"
+READONLY_TOKEN = "Bearer op-mgmt-ops-006:reader:tenant-default"
 
 
 def _load_fallback_data() -> dict[str, Any]:
@@ -153,7 +161,7 @@ def _extract_identity_from_bearer(
     return extract_identity_stub(authorization)
 
 
-def _make_process_command_task(commands: CommandStore) -> Any:
+def _make_process_command_task(commands: CommandStore, store: Optional[Any] = None) -> Any:
     """Real synchronous command executor glue for the injected store.
 
     Fetches the submitted record and dispatches it through the real
@@ -169,9 +177,17 @@ def _make_process_command_task(commands: CommandStore) -> Any:
         if not record:
             return
         command_type = CommandType(record["type"])
-        params = dict(record.get("params") or {})
+        params = _resolve_execution_params_for_record(record, read_store=store)
+        runtime_auth = pop_command_auth_context(command_id)
+        audit = record.get("audit") or {}
+        auth_token = runtime_auth.get("auth_token") or audit.get("auth_token")
+        mfa_token = runtime_auth.get("mfa_token") or audit.get("mfa_token")
         status, result, error = command_executor.execute_command_with_status(
-            command_id, command_type, params
+            command_id,
+            command_type,
+            params,
+            auth_token=auth_token,
+            mfa_token=mfa_token,
         )
         commands.update_status(command_id, status, result=result, error=error)
 
@@ -203,10 +219,21 @@ def _mounted_app(
             bff_error_fn=bff_error,
             utc_now_fn=utc_now,
         ),
-        process_command_task=_make_process_command_task(commands),
+        process_command_task=_make_process_command_task(commands, store=store),
     )
     app = FastAPI()
     register_error_handlers(app)
+    app.include_router(
+        create_control_loops_router(
+            read_surface=store,
+            extract_identity=_extract_identity_from_bearer,
+            require_operator_role=require_operator_role,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now_fn=utc_now,
+            submit_sem_command=service.sem_command_response,
+        )
+    )
     app.include_router(create_command_adapters_router(service=service))
     app.state.command_store = commands
     return app
@@ -343,6 +370,7 @@ def test_command_idempotency() -> None:
             "metadata": {"tenant_id": "tenant-default"},
         }
     ]
+    store._data["runtime_bindings"] = {"rb-test": runtimes[0]}
     store.list_runtime_bindings = lambda **_: runtimes
     store.get_runtime_binding_by_runtime_id = lambda runtime_id: runtimes[0] if runtime_id == "runtime-test" else None
 
@@ -357,26 +385,58 @@ def test_command_idempotency() -> None:
             diagnostics=[]
         )
 
+    token_id = "token-idempotency-001"
     with _client_with_store(store, ops_read_model_fn=mock_ops_model) as client:
-        body = {
-            "command": "Observe",
-            "target": {"type": "Persona", "id": "persona-test-idempotency"},
-            "params": {"persona_id": "persona-test-idempotency"},
-            "audit_context": {"reason": "Idempotency testing"},
-        }
-        headers = {
-            "Authorization": OPERATOR_TOKEN,
-            "Idempotency-Key": "key-idempotency-ops-006",
-            "X-Correlation-Id": "corr-idempotency-ops-006",
-        }
+        ct_resp = client.post(
+            "/bff/confirm-tokens",
+            headers={"Authorization": OPERATOR_TOKEN, "Idempotency-Key": f"key-ct-{token_id}"},
+            json={
+                "tokenId": token_id,
+                "command": "PausePaperRuntime",
+                "target": {"type": "Runtime", "id": "runtime-test"},
+                "issuedForOperatorId": "op-mgmt-ops-006",
+            },
+        )
+        assert ct_resp.status_code == 201, ct_resp.text
 
-        first = client.post("/bff/v1/commands", headers=headers, json=body)
-        assert first.status_code == 202, first.text
-        assert first.json()["data"]["command_id"]
+        with patch("services.control_plane.bff.command_adapters.runtime_adapter.http_request_json") as mock_http, patch(
+            "services.control_plane.bff.command_adapters.runtime_adapter._get_runtime_manager_client"
+        ) as mock_rm, patch(
+            "services.control_plane.bff.command_adapters.runtime_adapter._get_read_store",
+            return_value=store,
+        ), patch.dict(os.environ, {"PANTHEON_INTERNAL_API_URL": "http://internal.unit.invalid"}):
+            mock_rm.return_value.get.return_value = {**runtimes[0], "status": "paused"}
+            mock_http.return_value = {
+                "status": "executed",
+                "status_after": "paused",
+                "binding_id": "rb-test",
+                "runtime_id": "runtime-test",
+                "degraded_mode": False,
+            }
 
-        second = client.post("/bff/v1/commands", headers=headers, json=body)
-        assert second.status_code == 202
-        assert second.json()["data"]["command_id"] == first.json()["data"]["command_id"]
+            body = {
+                "command": "PausePaperRuntime",
+                "target": {"type": "Runtime", "id": "runtime-test"},
+                "params": {
+                    "runtime_id": "runtime-test",
+                    "bounded_duration_minutes": 15,
+                },
+                "audit_context": {"reason": "Idempotency testing"},
+            }
+            headers = {
+                "Authorization": OPERATOR_TOKEN,
+                "Idempotency-Key": "key-idempotency-ops-006",
+                "X-Correlation-Id": "corr-idempotency-ops-006",
+                "X-Confirm-Token": token_id,
+            }
+
+            first = client.post("/bff/v1/commands", headers=headers, json=body)
+            assert first.status_code == 202, first.text
+            assert first.json()["data"]["command_id"]
+
+            second = client.post("/bff/v1/commands", headers=headers, json=body)
+            assert second.status_code == 202
+            assert second.json()["data"]["command_id"] == first.json()["data"]["command_id"]
 
 
 def test_pause_paper_runtime_distinct_binding_success() -> None:
@@ -740,6 +800,16 @@ def test_generic_enforce_ops_console_preconditions_no_runtime_from_persona_entit
     store = _fresh_store()
     store.create_persona(persona_id="persona-no-runtime", lifecycle_state="active", metadata={"tenant_id": "tenant-default"})
     # Read store has no runtime bindings for this persona
+    store._data["approval_decisions"] = {
+        "appr-containment-regression": {
+            "decision_id": "appr-containment-regression",
+            "outcome": "approved",
+            "status": "approved",
+            "target": {"type": "Persona", "id": "persona-no-runtime"},
+        }
+    }
+    store.get_approval_decision = lambda did: store._data["approval_decisions"].get(did)
+
     from operations_read_model import (
         OperationsReadModelEntry,
         OperationsIdentity,
@@ -757,42 +827,64 @@ def test_generic_enforce_ops_console_preconditions_no_runtime_from_persona_entit
         )
 
     with _client_with_store(store, ops_read_model_fn=mock_ops_model) as client:
-        # Test Observe with entity_id in params matching persona id
-        resp_obs = client.post(
-            "/bff/v1/commands",
-            headers={
-                "Authorization": OPERATOR_TOKEN,
-                "Idempotency-Key": "key-cmd-observe-regression",
-            },
+        # Create confirm token for EmergencyContainment on Persona target
+        ct_resp = client.post(
+            "/bff/confirm-tokens",
+            headers={"Authorization": OPERATOR_TOKEN, "Idempotency-Key": "key-ct-containment-regression"},
             json={
-                "command": "Observe",
+                "tokenId": "token-containment-regression",
+                "command": "EmergencyContainment",
                 "target": {"type": "Persona", "id": "persona-no-runtime"},
-                "params": {
-                    "persona_id": "persona-no-runtime",
-                    "entity_id": "persona-no-runtime",
-                },
-                "audit_context": {"reason": "Regression test for Observe entity_id"},
+                "issuedForOperatorId": "op-mgmt-ops-006",
             },
         )
-        assert resp_obs.status_code == 202, resp_obs.text
-        assert resp_obs.json()["data"]["command_id"]
+        assert ct_resp.status_code == 201, ct_resp.text
 
-        # Test RequestReview with entity_id in params matching persona id
-        resp_rev = client.post(
+        entry = get_catalog_entry("EmergencyContainment")
+        assert entry.requires_two_man is True
+
+        signature_id = "tms-containment-regression"
+        for op_id, token in (
+            ("op-mgmt-ops-006", OPERATOR_TOKEN),
+            ("op-mgmt-ops-006-second", "Bearer op-mgmt-ops-006-second:operator:tenant-default"),
+        ):
+            sign_resp = client.post(
+                f"/bff/v5/interventions/{signature_id}/two-man-sign",
+                headers={
+                    "Authorization": token,
+                    "Idempotency-Key": f"sign-ct-{op_id}",
+                },
+                json={
+                    "twoManSignatureId": signature_id,
+                    "command": "EmergencyContainment",
+                    "target": {"type": "Persona", "id": "persona-no-runtime"},
+                    "reason": "authenticated operator approved emergency containment",
+                },
+            )
+            assert sign_resp.status_code == 202, sign_resp.text
+
+        # Test EmergencyContainment with entity_id in params matching persona id
+        resp_cont = client.post(
             "/bff/v1/commands",
             headers={
                 "Authorization": OPERATOR_TOKEN,
-                "Idempotency-Key": "key-cmd-request-review-regression",
+                "Idempotency-Key": "key-cmd-containment-regression",
+                "X-Confirm-Token": "token-containment-regression",
             },
             json={
-                "command": "RequestReview",
+                "command": "EmergencyContainment",
                 "target": {"type": "Persona", "id": "persona-no-runtime"},
                 "params": {
                     "persona_id": "persona-no-runtime",
                     "entity_id": "persona-no-runtime",
+                    "action": "freeze",
+                    "trigger": "drawdown_breach",
+                    "evidence_refs": ["inc-1"],
+                    "approval_decision_id": "appr-containment-regression",
+                    "two_man_signature_id": signature_id,
                 },
-                "audit_context": {"reason": "Regression test for RequestReview entity_id"},
+                "audit_context": {"reason": "Regression test for EmergencyContainment entity_id"},
             },
         )
-        assert resp_rev.status_code == 202, resp_rev.text
-        assert resp_rev.json()["data"]["command_id"]
+        assert resp_cont.status_code == 202, resp_cont.text
+        assert resp_cont.json()["data"]["command_id"]

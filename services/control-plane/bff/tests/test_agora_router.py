@@ -736,10 +736,7 @@ def test_servant_ensure_and_eligibility_with_read_surface_ports_and_explicit_wri
 
     and eligibility returns 200 with the freshly ensured servant when write owner is explicit.
     """
-    try:
-        from ports.read_surface_ports import create_read_surface_ports
-    except ImportError:
-        from services.control_plane.bff.ports.read_surface_ports import create_read_surface_ports
+    from services.control_plane.bff.ports.read_surface_ports import create_read_surface_ports
 
     write_owner = _create_test_agora_store(allow_fallback=False)
     read_surface = create_read_surface_ports(persona_registry_store=write_owner)
@@ -800,10 +797,7 @@ def test_servant_ensure_and_eligibility_with_read_surface_ports_and_explicit_wri
 
 def test_servant_ensure_fails_if_read_surface_ports_is_used_as_write_owner(monkeypatch):
     """Verifies that servant ensure requires an explicit command-capable write owner and never treats ReadSurfacePorts as a writer."""
-    try:
-        from ports.read_surface_ports import create_in_memory_read_surface_ports
-    except ImportError:
-        from services.control_plane.bff.ports.read_surface_ports import create_in_memory_read_surface_ports
+    from services.control_plane.bff.ports.read_surface_ports import create_in_memory_read_surface_ports
 
     read_surface = create_in_memory_read_surface_ports()
     monkeypatch.setattr(_runtime, "read_store", read_surface)

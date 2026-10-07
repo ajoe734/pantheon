@@ -343,6 +343,8 @@ def persist_market_data_storage_refs(
 def persist_latest_market_snapshots(
     latest_market_snapshot_store: LatestMarketSnapshotStore,
     result: Any,
+    *,
+    connector: Any | None = None,
 ) -> dict[str, Any]:
     """Project completed normalized SourceRecords into the read-only paper API."""
     if result.run.status.value != "completed":
@@ -357,6 +359,7 @@ def persist_latest_market_snapshots(
         result.records,
         ingest_run_id=result.run.ingest_run_id,
         observed_at=run_finished_at_iso(result.run),
+        connector=connector,
     )
 
 
@@ -859,7 +862,11 @@ class IngestPipelineService:
             storage_refs = persist_market_data_storage_refs(self.manager, self.market_data_storage_writer, result)
             evidence_refs["storage_refs"] = storage_refs
             post_processing_stage = "latest_market_snapshot"
-            market_snapshots = persist_latest_market_snapshots(self.latest_market_snapshot_store, result)
+            market_snapshots = persist_latest_market_snapshots(
+                self.latest_market_snapshot_store,
+                result,
+                connector=connector,
+            )
             evidence_refs["market_snapshots"] = market_snapshots
             post_processing_stage = "source_evidence"
             evidence_refs = persist_source_evidence_refs(

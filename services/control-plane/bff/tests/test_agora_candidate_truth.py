@@ -71,7 +71,7 @@ def _utc_now_rfc3339() -> str:
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
 _OPERATOR_AUTH = "Bearer agora-truth-user:operator"
-_VIEWER_AUTH = "Bearer agora-truth-viewer:viewer"
+_VIEWER_AUTH = "Bearer agora-truth-user:viewer"
 _OTHER_OPERATOR_AUTH = "Bearer agora-truth-other:operator"
 _TRUTH_SCHEMA = (
     REPO_ROOT
@@ -457,14 +457,16 @@ def test_evidence_summaries_are_redacted_by_role_and_in_lists(
     )
 
     # Viewer-owned pool: even the detail read keeps summaries redacted.
+    # Viewers can no longer write (bb71d540d removed the viewer write carve-out),
+    # so the pool is created and scored by an operator and only read as viewer.
     viewer_created = _create_pool(
         client, "ag-cand-truth-redact-viewer-create",
-        auth=_VIEWER_AUTH, operator_id="agora-truth-viewer",
+        operator_id="agora-truth-user",
     )
     viewer_pool_id = viewer_created["data"]["pool_id"]
     _score_pool(
         client, viewer_pool_id, viewer_created["meta"]["etag"],
-        "ag-cand-truth-redact-viewer-score", auth=_VIEWER_AUTH,
+        "ag-cand-truth-redact-viewer-score",
     )
     viewer_item = _list_members(client, viewer_pool_id, auth=_VIEWER_AUTH)["items"][0]
     _assert_private_score_explanations_absent(

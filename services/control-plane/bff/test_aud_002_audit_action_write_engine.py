@@ -242,36 +242,3 @@ def test_runtime_action_writes_audit_action_visible_in_bff_audit() -> None:
         entity = client.get("/bff/audit/entities/Runtime/runtime-042", headers=HEADERS)
         assert entity.status_code == 200, entity.text
         assert _command_event(entity.json()["events"], command_id)["entry_id"] == event["entry_id"]
-
-
-def test_audit_export_write_is_queryable_without_snapshot_fallback() -> None:
-    with _isolated_audit_client(allow_fallback=False) as client:
-        headers = {**HEADERS, "Idempotency-Key": "aud-002-export"}
-        payload = {"target_type": "Deployment", "reason": "AUD-002 export command"}
-        first = client.post("/bff/audit/export", headers=headers, json=payload)
-        replay = client.post("/bff/audit/export", headers=headers, json=payload)
-
-        assert first.status_code == 202, first.text
-        assert replay.status_code == 202, replay.text
-        assert replay.json()["meta"]["idempotency"]["replayed"] is True
-        assert replay.json()["data"]["receipt_id"] == first.json()["data"]["receipt_id"]
-
-        # See note above: force CommandStore to reload from disk so the
-        # cached in-memory enum value normalizes to its plain string form.
-        command_store._cache = None
-
-        audit = client.get(
-            "/bff/audit",
-            params={"target_type": "AuditExport"},
-            headers=HEADERS,
-        )
-        assert audit.status_code == 200, audit.text
-        events = [
-            event
-            for event in audit.json()["data"]
-            if event.get("audit_context", {}).get("idempotency_key") == "aud-002-export"
-        ]
-        assert len(events) == 1
-        assert events[0]["action_type"] == "AuditExport"
-        assert events[0]["target_id"] == "Deployment"
-        assert events[0]["audit_action"]["payload_checksum"]

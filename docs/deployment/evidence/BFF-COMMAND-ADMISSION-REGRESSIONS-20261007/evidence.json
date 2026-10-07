@@ -1,0 +1,68 @@
+{
+  "task_id": "BFF-COMMAND-ADMISSION-REGRESSIONS-20261007",
+  "production_fixes": [
+    {
+      "acceptance": [1, 3],
+      "classification": "real regression fixed in production code",
+      "cause": "dab9aa6c2 routed _gov_bff_action_command to the generic submit_resource_action, skipping the route-target check in incidents/router.py",
+      "fix": "bind_incident_route_target (command_adapters/incident_adapter.py) runs in submit_resource_action: route ids win, a differing body id/action is 422 route_target_mismatch, an unsupported action is 422 unsupported_action, both before admission",
+      "test": "tests/test_main_composition_seam_extraction_003.py drives main._gov_bff_action_command with the production composition"
+    },
+    {
+      "acceptance": [2],
+      "classification": "real regression fixed in production code",
+      "cause": "4d2c8b7ec replaced the strict helper with command_adapters/service.py _resolve_final_idempotency_key, which returned '' instead of raising",
+      "fix": "deleted the lenient copy; command_adapters/service.py imports the one strict owner (personas/service.py already took the helper from there) in assistant/management_service.py (tests/test_main_composition_seam_extraction_005.py pins it there)",
+      "test": "test_bff_strategy_persona_contract.py::test_bff_personas_patch_rejects_missing_idempotency_key"
+    },
+    {
+      "acceptance": [4],
+      "classification": "real regression fixed in production code",
+      "cause": "a stub caller with no tenant claim was admitted and could only fail at execution",
+      "fix": "submit_resource_action rejects a stub identity without tenant_id/tenant_ids with 403 tenant_scope. Scoped to resource actions: the same gate inside submit_command_admission regressed about 60 passing tests that use bare stub tokens against mocked owners",
+      "test": "test_tenantless_stub_caller_is_rejected_before_admission"
+    }
+  ],
+  "test_changes": [
+    {
+      "test": "seam_003 mounted_prod_callback fixture",
+      "classification": "stale sample",
+      "decision": "main._GOV_BFF_IDEMPOTENCY was removed; owner-read middleware now carries the caller authorization; command stores point at tmp_path because shared /tmp/pantheon/bff/commands.jsonl caused cross-run 409s"
+    },
+    {
+      "test": "seam_003 test_identical_retry_returns_original_receipt",
+      "classification": "intended change",
+      "decision": "4d2c8b7ec: a retry replays the stored receipt; asserts receipt_id equality, replayed true and exactly one owner write. Assertion strengthened, not weakened"
+    },
+    {
+      "test": "seam_003 test_incident_acknowledgement_accepts_owner_uuid",
+      "classification": "intended change",
+      "decision": "the admission receipt no longer carries read_back_status; the owner result is read from the command record"
+    },
+    {
+      "test": "seam_003 test_evidence_and_approvals_routers_wire_run_management_read",
+      "classification": "retired",
+      "decision": "6631736ae BFF-APPROVALS-FORWARD-001 removed run_management_read from create_governance_router; the management router assertion is kept"
+    },
+    {
+      "test": "seam_003 incident tests",
+      "classification": "stale sample",
+      "decision": "tokens now carry tenant-dev because tenantless stub callers are rejected at admission (acceptance 4); 422 tests also assert the precondition code"
+    },
+    {
+      "test": "test_bff_strategy_persona_contract subresources_return_envelope",
+      "classification": "intended change",
+      "decision": "57bfb1b40: experiments delegate to the research write owner, so the read store injects one"
+    },
+    {
+      "test": "test_bff_strategy_persona_contract personas_create_then_subresources_round_trip",
+      "classification": "intended change",
+      "decision": "4e9b4917e: the Deployment projection is read through _PersonaOwnerHttpTransport instead of _get_json; the test serves it through that seam"
+    }
+  ],
+  "verification": {
+    "target_files": "seam_003 29 passed, test_incidents_real_source 50 passed, test_bff_strategy_persona_contract 20 passed",
+    "regression_sweep": "all 414 BFF test files run on this tree; failing test ids compared with a clean HEAD copy. No new failures. test_mgmt_load_005 timing tests are flaky under parallel load and fail the same alone on HEAD",
+    "production_net_lines": 50
+  }
+}

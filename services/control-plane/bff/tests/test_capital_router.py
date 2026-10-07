@@ -95,6 +95,13 @@ class _CapitalStore:
         self.calls.append(("pool_action", ctx))
         return {"pool_id": ctx["target_id"], "action_id": payload["action_id"], "status": "paused"}
 
+    def evaluate_allocation(self, payload: Dict[str, Any], **ctx: Any) -> Dict[str, Any]:
+        # Operator decision 2026-10-07: the Capital owner (not the BFF) evaluates against the ranking snapshot.
+        self.calls.append(("evaluate_allocation", ctx))
+        lines = [{**row, "allocation_line_digest": f"digest-{row['strategy_id']}"} for row in self.allocation_rows]
+        return {"allocation_evaluation_id": "allocation-evaluation-owner", "lines": lines,
+                "allocation_policy_version": payload["allocation_policy_version"]}
+
     def create_rebalance(self, payload: Dict[str, Any], **ctx: Any) -> Dict[str, Any]:
         self.calls.append(("create_rebalance", ctx))
         item = {"id": str(payload.get("id") or "rebalance-created"), "status": "proposed", **deepcopy(payload)}
@@ -447,3 +454,79 @@ def test_rest_mounted_tenant_resolution_coverage() -> None:
     assert resp.status_code == 201
     assert store.calls[-1][1].get("tenant_id") == "tenant-single"
 
+
+
+class _SourceReportingStore(_CapitalStore):
+    """Capital store whose dataset_source is the only availability signal it owns."""
+
+    def __init__(self, source: str, *, empty: bool = False) -> None:
+        super().__init__()
+        self.source = source
+        if empty:
+            self.pools, self.rebalances, self.allocation_rows = {}, {}, []
+
+    def dataset_source(self, dataset: str) -> str:
+        return self.source
+
+
+class _DelegatingStore:
+    """Wrapper that overrides dataset_source and delegates everything else to an inner store."""
+
+    def __init__(self, inner: Any, source: str) -> None:
+        self._inner = inner
+        self._source = source
+
+    def dataset_source(self, dataset: str) -> str:
+        return self._source
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+class _DisagreeingInner(_CapitalStore):
+    def dataset_source(self, dataset: str) -> str:
+        return "missing"
+
+    def dataset_surface_status(self, dataset: str, **_: Any) -> Dict[str, Any]:
+        return {"status": "unavailable", "source": "missing", "message": f"{dataset} inner says missing"}
+
+
+def _unknown_id_statuses(store: Any) -> List[int]:
+    client = _client(store)
+    return [
+        client.get("/bff/capital-pools/nope").status_code,
+        client.get("/bff/rebalances/nope").status_code,
+    ]
+
+
+def test_unknown_id_status_follows_the_store_dataset_source() -> None:
+    assert _unknown_id_statuses(_SourceReportingStore("local_snapshot")) == [404, 404]
+    for source in ("missing", "unavailable"):
+        assert _unknown_id_statuses(_SourceReportingStore(source)) == [503, 503]
+
+
+def test_delegating_store_gets_the_answer_of_its_own_dataset_source() -> None:
+    assert _unknown_id_statuses(_DelegatingStore(_DisagreeingInner(), "local_snapshot")) == [404, 404]
+    assert _unknown_id_statuses(_DelegatingStore(_CapitalStore(), "missing")) == [503, 503]
+
+
+def test_healthy_empty_capital_source_is_not_unavailable() -> None:
+    client = _client(_SourceReportingStore("local_snapshot", empty=True))
+
+    response = client.get("/bff/capital-pools")
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+    assert response.json()["meta"]["surfaces"]["capital_pools"]["status"] == "ok"
+    assert _unknown_id_statuses(_SourceReportingStore("local_snapshot", empty=True)) == [404, 404]
+
+
+def test_default_read_surface_ports_availability_matches_its_dataset_source() -> None:
+    from ports.read_surface_ports import ReadSurfacePorts
+
+    ports = ReadSurfacePorts()
+    datasets = ("capital_pools", "rebalances", "persona_bindings", "capital_allocations")
+    assert {ports.dataset_source(d) for d in datasets} == {"missing"}
+    client = _client(ports)  # type: ignore[arg-type]
+    listing = client.get("/bff/capital-pools")
+    assert listing.json()["meta"]["surfaces"]["capital_pools"]["status"] == "unavailable"
+    assert _unknown_id_statuses(ports) == [503, 503]

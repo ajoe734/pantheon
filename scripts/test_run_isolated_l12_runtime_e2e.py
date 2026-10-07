@@ -308,3 +308,222 @@ def test_projector_run_rebuilds_its_image() -> None:
         "--build",
         harness.STIMULUS_PROJECTOR_SERVICE,
     ]
+
+
+def test_suite_url_env_covers_every_url_the_domain_suites_read() -> None:
+    import re
+    from pathlib import Path
+
+    root = Path(harness.__file__).resolve().parents[1]
+    services = {**harness.SERVICES, **harness.STIMULUS_SERVICES}
+    provided = harness._suite_url_env({name: f"http://127.0.0.1/{name}" for name in services})
+    assert provided["PANTHEON_L12_SOURCE_URL"] == provided["PANTHEON_L12_SOURCE_INGEST_URL"]
+    for suite in (
+        "tests/integration/l12/test_current_research_loops_deployed_e2e.py",
+        "tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+        "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py",
+    ):
+        source = (root / suite).read_text(encoding="utf-8")
+        read = set(re.findall(r'getenv\(\s*"(PANTHEON_L12_[A-Z_]+_URL)"', source))
+        assert read <= set(provided), f"{suite} reads unprovided URLs: {sorted(read - set(provided))}"
+
+
+def test_isolated_reader_token_is_a_signed_tenant_scoped_reader_jwt() -> None:
+    import base64
+    import hashlib
+    import hmac
+    import json
+
+    env = {"PANTHEON_BFF_JWT_SECRET": "s3cret", "PANTHEON_BFF_JWT_ISSUER": "iss", "PANTHEON_BFF_JWT_AUDIENCE": "aud"}
+    token, tenant = harness._isolated_reader_token(env, "l12-domain-suites")
+    header, claims, signature = token.split(".")
+    pad = lambda part: part + "=" * (-len(part) % 4)
+    decoded = json.loads(base64.urlsafe_b64decode(pad(claims)))
+    assert tenant == "default"
+    assert decoded["sub"] == "l12-domain-suites"
+    assert decoded["roles"] == ["source_ingest_reader"]
+    assert decoded["tenant_id"] == "default"
+    assert (decoded["iss"], decoded["aud"]) == ("iss", "aud")
+    expected = hmac.new(b"s3cret", f"{header}.{claims}".encode(), hashlib.sha256).digest()
+    assert base64.urlsafe_b64decode(pad(signature)) == expected
+
+
+def _decoded_claims(token: str, secret: str) -> dict:
+    import base64
+    import hashlib
+    import hmac
+
+    header, claims, signature = token.split(".")
+    pad = lambda part: part + "=" * (-len(part) % 4)
+    expected = hmac.new(secret.encode(), f"{header}.{claims}".encode(), hashlib.sha256).digest()
+    assert base64.urlsafe_b64decode(pad(signature)) == expected
+    return json.loads(base64.urlsafe_b64decode(pad(claims)))
+
+
+def _isolated_signer_env() -> dict[str, str]:
+    return {
+        "PANTHEON_BFF_JWT_SECRET": "x" * 64,
+        "PANTHEON_BFF_JWT_ISSUER": harness.ISOLATED_SAFE_CONTROLS["PANTHEON_BFF_JWT_ISSUER"],
+        "PANTHEON_BFF_JWT_AUDIENCE": harness.ISOLATED_SAFE_CONTROLS["PANTHEON_BFF_JWT_AUDIENCE"],
+    }
+
+
+def test_isolated_stack_binds_owner_verifiers_and_principals_like_the_dev_deploy() -> None:
+    signer = _isolated_signer_env()
+    env = harness._isolated_dev_principal_env(signer)
+
+    assert env["PANTHEON_BFF_TENANT_ID"] == env["PANTHEON_DEPLOYMENT_TENANT_ID"] == "tenant-dev"
+    assert env["PANTHEON_REGISTRY_JWT_SECRET"] == env["PANTHEON_GOVERNANCE_JWT_SECRET"] == signer["PANTHEON_BFF_JWT_SECRET"]
+    assert env["PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED"] == "true"
+    assert env["DISTILLATION_REGISTRY_SERVICE_TOKEN_FILE"] == "/run/pantheon-principals/DISTILLATION_REGISTRY_SERVICE_TOKEN"
+    writer = _decoded_claims(env["DISTILLATION_REGISTRY_SERVICE_TOKEN"], signer["PANTHEON_BFF_JWT_SECRET"])
+    assert writer["roles"] == ["registry-writer"] and writer["tenant_id"] == "tenant-dev"
+    assert (writer["iss"], writer["aud"]) == (env["PANTHEON_REGISTRY_JWT_ISSUER"], env["PANTHEON_REGISTRY_JWT_AUDIENCE"])
+    # The evidence report records ISOLATED_SAFE_CONTROLS; no principal may leak into it.
+    assert not set(env) & set(harness.ISOLATED_SAFE_CONTROLS)
+
+
+def test_human_tokens_carry_the_identity_strict_registry_and_governance_require() -> None:
+    env = {**_isolated_signer_env()}
+    env.update(harness._isolated_dev_principal_env(env))
+    token = harness._isolated_human_token(env, "l12-reviewer", "governance_reviewer")
+
+    for owner in ("REGISTRY", "GOVERNANCE"):
+        claims = _decoded_claims(token, env[f"PANTHEON_{owner}_JWT_SECRET"])
+        assert (claims["iss"], claims["aud"]) == (
+            env.get(f"PANTHEON_{owner}_JWT_ISSUER"), env.get(f"PANTHEON_{owner}_JWT_AUDIENCE"),
+        )
+    assert claims["sub"] == "l12-reviewer" and claims["exp"] > 0
+    assert claims["roles"] == ["governance_reviewer"]
+    assert claims["tenant_id"] == "tenant-dev"
+
+
+def test_principal_issuer_starts_before_the_owner_stack() -> None:
+    from pathlib import Path
+
+    source = Path(harness.__file__).read_text(encoding="utf-8")
+    issuer = source.index("PRINCIPAL_ISSUER_SERVICE,\n")
+    owners = source.index("for name in required_services if name != TW_OFFICIAL_PULL_SERVICE]")
+    assert source.index("_bootstrap_trade_journey_projection(\n                args") < issuer < owners
+
+
+def test_tw_official_pull_env_mirrors_bounded_refresh_entrypoint() -> None:
+    env = harness._tw_official_pull_env({"KEEP": "1", "SOURCE_INGEST_TW_HISTORY_SYMBOLS": "2317.TW"})
+
+    assert env["KEEP"] == "1"
+    assert env["PANTHEON_EXTERNAL_EGRESS"] == "allowlist"
+    assert env["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == (
+        "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw"
+    )
+    assert env["SOURCE_INGEST_CONTROLLER_MODE"] == "reconcile_and_pull"
+    assert env["SOURCE_INGEST_CONTROLLER_RESTART_POLICY"] == "no"
+    assert env["SOURCE_INGEST_CONTROLLER_MAX_TICKS"] == "1"
+    assert env["SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS"] == "tw-twse-tpex-official-market"
+    assert env["SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS"] == "tw-twse-tpex-official-market"
+    # 2330.TW is always part of the history symbols the runtime suite reads.
+    assert env["SOURCE_INGEST_TW_HISTORY_SYMBOLS"] == "2317.TW,2330.TW"
+
+
+def test_tw_official_pull_commands_reuse_compose_services() -> None:
+    commands = harness._tw_official_pull_commands("proj", ["a.yml"])
+
+    assert commands["source_ingest_up"][:6] == ["docker", "compose", "-p", "proj", "-f", "a.yml"]
+    assert commands["source_ingest_up"][-1] == "source-ingest"
+    assert "--no-deps" in commands["scheduler_tick"]
+    assert commands["scheduler_tick"][-1] == "source-ingest-scheduler"
+    assert "run" in commands["scheduler_tick"]
+
+
+def _fake_pull_run(monkeypatch: pytest.MonkeyPatch, tick_rc: int, snapshot: object):
+    import subprocess
+
+    calls: list[tuple[list[str], dict]] = []
+
+    def fake_run(cmd, env=None, **_kwargs):
+        calls.append((list(cmd), dict(env or {})))
+        rc = tick_rc if "run" in cmd else 0
+        return subprocess.CompletedProcess(cmd, rc, stdout="out", stderr="err")
+
+    monkeypatch.setattr(harness.subprocess, "run", fake_run)
+    monkeypatch.setattr(harness, "_get_json", lambda url, headers=None: snapshot)
+    return calls
+
+
+def test_tw_official_pull_runs_tick_then_restores_egress(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    calls = _fake_pull_run(monkeypatch, 0, {"closes": [1.0, 2.0]})
+
+    result = harness._run_tw_official_pull(
+        "proj", ["a.yml"], {"X": "y"}, snapshot_url="http://s", reader_headers={}, diagnostics_dir=tmp_path
+    )
+
+    assert [("run" in c) for c, _ in calls] == [False, True, False]
+    assert calls[0][1]["PANTHEON_EXTERNAL_EGRESS"] == "allowlist"
+    assert calls[2][1].get("PANTHEON_EXTERNAL_EGRESS") is None
+    assert result["snapshot_closes"] == 2
+    assert (tmp_path / "tw-official-pull-scheduler.txt").exists()
+
+
+def test_tw_official_pull_fails_on_scheduler_error_and_still_restores(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    calls = _fake_pull_run(monkeypatch, 3, {"closes": [1.0, 2.0]})
+
+    with pytest.raises(RuntimeError, match="tick exited 3"):
+        harness._run_tw_official_pull(
+            "proj", ["a.yml"], {}, snapshot_url="http://s", reader_headers={}, diagnostics_dir=tmp_path
+        )
+    assert len(calls) == 3
+
+
+def test_tw_official_pull_fails_on_empty_snapshot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    _fake_pull_run(monkeypatch, 0, {"error": "404"})
+
+    with pytest.raises(RuntimeError, match="no usable 2330.TW snapshot"):
+        harness._run_tw_official_pull(
+            "proj", ["a.yml"], {}, snapshot_url="http://s", reader_headers={}, diagnostics_dir=tmp_path
+        )
+
+
+def test_tw_official_pull_takes_a_short_lease_and_builds_the_scheduler() -> None:
+    env = harness._tw_official_pull_env({})
+    commands = harness._tw_official_pull_commands("proj", ["a.yml"])
+
+    lease = str(harness.TW_OFFICIAL_PULL_LEASE_SECONDS)
+    assert env["SOURCE_INGEST_CONTROLLER_LEASE_SECONDS"] == lease
+    assert env["SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS"] == lease
+    assert "--build" in commands["scheduler_tick"]
+    assert commands["scheduler_start"][-1] == "source-ingest-scheduler"
+    assert "up" in commands["scheduler_start"] and "--wait" in commands["scheduler_start"]
+
+
+def test_resident_scheduler_starts_after_the_pull_with_steady_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    calls = _fake_pull_run(monkeypatch, 0, {"closes": [1.0, 2.0]})
+    sleeps: list[float] = []
+    monkeypatch.setattr(harness.time, "sleep", sleeps.append)
+
+    harness._run_tw_official_pull(
+        "proj", ["a.yml"], {"X": "y"}, snapshot_url="http://s", reader_headers={},
+        diagnostics_dir=tmp_path, start_resident_scheduler=True,
+    )
+
+    assert len(calls) == 4
+    start_cmd, start_env = calls[3]
+    assert start_cmd[-1] == "source-ingest-scheduler" and "up" in start_cmd
+    assert start_env.get("SOURCE_INGEST_CONTROLLER_MODE") is None
+    assert sleeps == [harness.TW_OFFICIAL_PULL_LEASE_SECONDS + 5]
+
+
+def test_initial_provisioning_leaves_the_resident_scheduler_for_after_the_pull() -> None:
+    from pathlib import Path
+
+    source = Path(harness.__file__).read_text(encoding="utf-8")
+    provision = source.index("for name in required_services if name != TW_OFFICIAL_PULL_SERVICE]")
+    pull = source.index("tw_official_pull = _run_tw_official_pull(")
+    assert provision < pull
+    assert "start_resident_scheduler=TW_OFFICIAL_PULL_SERVICE in required_services" in source

@@ -18,7 +18,10 @@ from .storage import get_store, reset_store
 from .strategy_artifact import (
     BUILTIN_STRATEGY_ARTIFACT_PATHS,
     StrategyArtifactValidationError,
+    build_market_transition_registry_payload,
     build_strategy_artifact_registry_payload,
+    canonical_market_context,
+    create_market_transition_revision,
     evaluate_strategy_action,
     load_strategy_artifact_registration,
     mutate_strategy_artifact,
@@ -528,3 +531,202 @@ def test_strategy_artifact_advance_preserves_deployment_split():
         "decision-evoloop-006"
     )
     assert approved.json()["deployment_stage"] == DeploymentStage.NONE.value
+
+
+def test_strategy_artifact_accepts_canonical_market_contexts():
+    # US market with bare symbol or .US suffix
+    us_artifact = copy.deepcopy(_artifact())
+    us_artifact["parameters"]["symbols"] = ["SPY", "AAPL.US"]
+    us_artifact["parameters"]["market"] = "US"
+    us_artifact["mutation_surface"]["immutable_parameters"].append("market")
+    validate_strategy_artifact(us_artifact)
+
+    # TW market with .TW symbols
+    tw_artifact = copy.deepcopy(_artifact())
+    tw_artifact["parameters"]["symbols"] = ["2330", "2330.TW"]
+    tw_artifact["parameters"]["market"] = "TW"
+    tw_artifact["mutation_surface"]["immutable_parameters"].append("market")
+    validate_strategy_artifact(tw_artifact)
+
+    # CRYPTO market with crypto pair
+    crypto_artifact = copy.deepcopy(_artifact())
+    crypto_artifact["parameters"]["symbols"] = ["BTCUSDT", "ETHUSD"]
+    crypto_artifact["parameters"]["market"] = "CRYPTO"
+    crypto_artifact["mutation_surface"]["immutable_parameters"].append("market")
+    validate_strategy_artifact(crypto_artifact)
+
+
+def test_strategy_artifact_rejects_unsupported_or_non_canonical_market():
+    artifact = copy.deepcopy(_artifact())
+    artifact["parameters"]["symbols"] = ["SPY"]
+    artifact["parameters"]["market"] = "MARS"
+    artifact["mutation_surface"]["immutable_parameters"].append("market")
+    with pytest.raises(StrategyArtifactValidationError, match="unsupported market context"):
+        validate_strategy_artifact(artifact)
+
+    artifact["parameters"]["market"] = "us"  # lowercase is non-canonical
+    with pytest.raises(StrategyArtifactValidationError, match="must be canonical 'US', got 'us'"):
+        validate_strategy_artifact(artifact)
+
+    artifact["parameters"]["market"] = 123
+    with pytest.raises(StrategyArtifactValidationError, match="parameter 'market' must be a string"):
+        validate_strategy_artifact(artifact)
+
+
+def test_strategy_artifact_rejects_contradictory_market_and_symbols():
+    artifact = copy.deepcopy(_artifact())
+    artifact["parameters"]["market"] = "US"
+    artifact["parameters"]["symbols"] = ["2330.TW"]
+    artifact["mutation_surface"]["immutable_parameters"].append("market")
+    with pytest.raises(StrategyArtifactValidationError, match="contradicts explicit market 'US'"):
+        validate_strategy_artifact(artifact)
+
+
+def test_strategy_artifact_requires_market_in_immutable_parameters():
+    artifact = copy.deepcopy(_artifact())
+    artifact["parameters"]["symbols"] = ["SPY"]
+    artifact["parameters"]["market"] = "US"
+    # Omit "market" from immutable_parameters
+    with pytest.raises(StrategyArtifactValidationError, match="every parameter must be classified.*market"):
+        validate_strategy_artifact(artifact)
+
+
+def test_strategy_artifact_mutation_cannot_modify_immutable_market():
+    artifact = copy.deepcopy(_artifact())
+    artifact["parameters"]["symbols"] = ["SPY"]
+    artifact["parameters"]["market"] = "US"
+    artifact["mutation_surface"]["immutable_parameters"].append("market")
+    with pytest.raises(StrategyArtifactValidationError, match="parameter 'market' is immutable"):
+        mutate_strategy_artifact(
+            artifact,
+            new_artifact_id="artifact-child-mutate-market",
+            new_version="1.1.0",
+            parameter_updates={"market": "TW"},
+            source_run_ids=["training-session-market"],
+        )
+
+
+def test_canonical_market_context_bare_quote_suffixes_do_not_override_owner_market():
+    # ABNB ends in BNB, GBTC ends in BTC, EURUSD ends in USD - none should guess CRYPTO
+    assert canonical_market_context("US", ["ABNB"]) == "US"
+    assert canonical_market_context("US", ["GBTC"]) == "US"
+    assert canonical_market_context("FX", ["EURUSD"]) == "FX"
+    assert canonical_market_context("US", ["SPY"]) == "US"
+
+
+def test_canonical_market_context_retains_real_dotted_market_contradictions():
+    with pytest.raises(StrategyArtifactValidationError, match="symbol '2330.TW' intrinsic market 'TW' contradicts explicit market 'US'"):
+        canonical_market_context("US", ["2330.TW"])
+
+    with pytest.raises(StrategyArtifactValidationError, match="symbol 'SPY.US' intrinsic market 'US' contradicts explicit market 'TW'"):
+        canonical_market_context("TW", ["SPY.US"])
+
+    with pytest.raises(StrategyArtifactValidationError, match="symbol 'BTCUSD.CRYPTO' intrinsic market 'CRYPTO' contradicts explicit market 'US'"):
+        canonical_market_context("US", ["BTCUSD.CRYPTO"])
+
+    with pytest.raises(StrategyArtifactValidationError, match="symbol 'ETH.US' intrinsic market 'US' contradicts explicit market 'CRYPTO'"):
+        canonical_market_context("CRYPTO", ["ETH.US"])
+
+    with pytest.raises(StrategyArtifactValidationError, match="symbol 'EURUSD.CRYPTO' intrinsic market 'CRYPTO' contradicts explicit market 'FX'"):
+        canonical_market_context("FX", ["EURUSD.CRYPTO"])
+
+
+def test_strategy_artifact_accepts_bare_symbols_with_explicit_market():
+    # US equity artifact with ABNB and GBTC
+    us_artifact = copy.deepcopy(_artifact())
+    us_artifact["parameters"]["symbols"] = ["ABNB", "GBTC", "SPY"]
+    us_artifact["parameters"]["market"] = "US"
+    us_artifact["mutation_surface"]["immutable_parameters"].append("market")
+    validate_strategy_artifact(us_artifact)
+
+    # FX artifact with EURUSD
+    fx_artifact = copy.deepcopy(_artifact())
+    fx_artifact["parameters"]["symbols"] = ["EURUSD"]
+    fx_artifact["parameters"]["market"] = "FX"
+    fx_artifact["mutation_surface"]["immutable_parameters"].append("market")
+    validate_strategy_artifact(fx_artifact)
+
+
+def test_create_market_transition_revision_preserves_parent_and_sets_canonical_market():
+    parent = copy.deepcopy(_artifact())
+    parent["artifact_id"] = "artifact-legacy-v1"
+    parent["version"] = "1.0.0"
+    parent["parameters"]["symbols"] = ["SPY"]
+    assert "market" not in parent["parameters"]
+    parent_checksum = strategy_artifact_checksum(parent)
+    parent_copy = copy.deepcopy(parent)
+
+    child = create_market_transition_revision(
+        parent,
+        market="US",
+        new_artifact_id="artifact-legacy-v1-rev1",
+        new_version="1.0.1",
+        source_run_ids=["transition-run-001"],
+    )
+
+    # Parent remains byte-identical and completely unmutated
+    assert parent == parent_copy
+    assert strategy_artifact_checksum(parent) == parent_checksum
+    assert "market" not in parent["parameters"]
+
+    # Child is valid, monotonic, cites parent, and carries canonical market
+    validate_strategy_artifact(child)
+    assert child["artifact_id"] == "artifact-legacy-v1-rev1"
+    assert child["version"] == "1.0.1"
+    assert child["lineage"]["parent_registry_ids"] == ["artifact-legacy-v1"]
+    assert child["lineage"]["source_run_ids"] == ["transition-run-001"]
+    assert child["parameters"]["market"] == "US"
+    assert "market" in child["mutation_surface"]["immutable_parameters"]
+    assert child["parameters"]["symbols"] == ["SPY"]
+
+
+def test_create_market_transition_revision_rejects_contradictory_or_invalid_market():
+    parent = copy.deepcopy(_artifact())
+    parent["parameters"]["symbols"] = ["2330.TW"]
+
+    with pytest.raises(StrategyArtifactValidationError, match="contradicts explicit market 'US'"):
+        create_market_transition_revision(
+            parent,
+            market="US",
+            new_artifact_id="artifact-tw-child",
+            new_version="1.0.1",
+            source_run_ids=["transition-run-002"],
+        )
+
+    with pytest.raises(StrategyArtifactValidationError, match="unsupported market context 'INVALID'"):
+        create_market_transition_revision(
+            parent,
+            market="INVALID",
+            new_artifact_id="artifact-invalid-child",
+            new_version="1.0.1",
+            source_run_ids=["transition-run-002"],
+        )
+
+
+def test_build_market_transition_registry_payload():
+    parent = copy.deepcopy(_artifact())
+    parent["artifact_id"] = "artifact-parent-001"
+    parent["version"] = "1.0.0"
+    parent["parameters"]["symbols"] = ["SPY"]
+    parent_entry = {
+        "registry_id": "artifact-parent-001",
+        "metadata": {"strategy_artifact": parent},
+    }
+
+    registry_id, payload = build_market_transition_registry_payload(
+        parent_entry,
+        market="US",
+        new_artifact_id="artifact-parent-001-rev1",
+        new_version="1.0.1",
+        source_run_ids=["transition-run-003"],
+    )
+
+    assert registry_id == "artifact-parent-001-rev1"
+    assert payload.artifact_type == ArtifactType.EXECUTION_BUNDLE
+    assert payload.version == "1.0.1"
+    assert payload.lineage.parent_registry_ids == ["artifact-parent-001"]
+    assert payload.metadata["strategy_artifact"]["parameters"]["market"] == "US"
+    assert payload.metadata["parent_registry_id"] == "artifact-parent-001"
+
+
+

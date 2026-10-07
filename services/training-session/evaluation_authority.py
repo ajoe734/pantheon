@@ -76,8 +76,11 @@ _POLICY_FIELDS = frozenset(
         "min_sharpe_ratio",
         "min_total_return",
         "max_drawdown",
+        "staleness_basis",
     }
 )
+_POLICY_REQUIRED_FIELDS = _POLICY_FIELDS - {"staleness_basis"}
+_STALENESS_BASES = frozenset({"calendar_days", "taiwan_trading_days"})
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _OHLCV_FIELDS = ("open", "high", "low", "close", "volume")
@@ -186,6 +189,7 @@ def load_evaluation_authority(
         key: normalized_policy[key]
         for key in (
             "max_staleness_days",
+            "staleness_basis",
             "max_future_skew_seconds",
             "min_bars_per_instrument",
             "min_instruments",
@@ -283,7 +287,7 @@ def _load_json_object(path_value: str | Path, label: str) -> dict[str, Any]:
 
 
 def _validate_policy(policy: Mapping[str, Any], now: datetime) -> dict[str, Any]:
-    _require_exact_fields(policy, _POLICY_FIELDS, _POLICY_FIELDS, "policy")
+    _require_exact_fields(policy, _POLICY_REQUIRED_FIELDS, _POLICY_FIELDS, "policy")
     normalized: dict[str, Any] = {
         "policy_id": _required_text(policy["policy_id"], "policy.policy_id"),
         "policy_version": _required_text(policy["policy_version"], "policy.policy_version"),
@@ -318,6 +322,12 @@ def _validate_policy(policy: Mapping[str, Any], now: datetime) -> dict[str, Any]
     normalized["max_staleness_days"] = _strict_int(
         policy["max_staleness_days"], "policy.max_staleness_days", minimum=0
     )
+    staleness_basis = policy.get("staleness_basis", "calendar_days")
+    if staleness_basis not in _STALENESS_BASES:
+        raise AuthorityValidationError(
+            "policy.staleness_basis must be one of: " + ", ".join(sorted(_STALENESS_BASES))
+        )
+    normalized["staleness_basis"] = staleness_basis
     normalized["min_bars_per_instrument"] = _strict_int(
         policy["min_bars_per_instrument"],
         "policy.min_bars_per_instrument",
@@ -478,7 +488,11 @@ def _validate_dataset(
                 f"minimum is {policy['min_bars_per_instrument']}"
             )
         latest = latest_by_instrument[instrument]
-        if now - latest > max_age:
+        if policy["staleness_basis"] == "taiwan_trading_days":
+            _require_taiwan_trading_day_freshness(
+                instrument, latest, now, metadata
+            )
+        elif now - latest > max_age:
             raise AuthorityValidationError(
                 f"dataset instrument {instrument} is stale at trusted_now; "
                 f"latest bar is {_isoformat(latest)}"
@@ -489,6 +503,45 @@ def _validate_dataset(
     normalized["bars_per_instrument"] = dict(sorted(bars_per_instrument.items()))
     normalized["latest_bar_at_by_instrument"] = latest_bar_at_by_instrument
     return normalized
+
+
+def _require_taiwan_trading_day_freshness(
+    instrument: str,
+    latest: datetime,
+    now: datetime,
+    metadata: Mapping[str, Any],
+) -> None:
+    """Trading-day staleness via the shared Taiwan session rule (no second calendar)."""
+
+    from services.execution.market_snapshot_admission import (
+        TAIPEI_TZ,
+        evaluate_taiwan_market_freshness,
+        is_taiwan_symbol,
+        _tw_session_close_utc,
+    )
+    from services.source_ingestion.connectors.taiwan_official import (
+        governed_taiwan_calendar_evidence,
+    )
+
+    if not is_taiwan_symbol(instrument):
+        raise AuthorityValidationError(
+            f"dataset instrument {instrument} is not a Taiwan instrument for trading-day staleness"
+        )
+    bar_date = latest.astimezone(TAIPEI_TZ).date()
+    evidence = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=bar_date.isoformat())
+    ok, reason, detail = evaluate_taiwan_market_freshness(
+        event_time_dt=_tw_session_close_utc(bar_date),
+        now_dt=now,
+        refresh_receipt_dt=now,
+        lineage={"connector_ids": [str(metadata.get("source_connector_id") or "")]},
+        max_refresh_age_seconds=0,
+        calendar_evidence=evidence,
+    )
+    if not ok:
+        raise AuthorityValidationError(
+            f"dataset instrument {instrument} is stale at trusted_now; "
+            f"latest bar is {_isoformat(latest)} ({reason}: {detail})"
+        )
 
 
 def _validate_storage_refs(

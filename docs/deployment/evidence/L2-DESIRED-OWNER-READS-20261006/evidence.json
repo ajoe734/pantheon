@@ -1,0 +1,41 @@
+{
+  "task_id": "L2-DESIRED-OWNER-READS-20261006",
+  "status": "implementation_evidence",
+  "owner": "PiAstra",
+  "reviewer": "Claude",
+  "scope": "Tenant-bound, read-only distillation source reads from the configured source-ingest Postgres owner; Compose backend wiring and regressions.",
+  "implementation": {
+    "reader": "services/source_ingestion/pg_store.py::read_source_records_for_tenant",
+    "tenant_binding": "Controller checkpoint tenant_id is required; Postgres SQL filters payload.metadata.tenant_id exactly; foreign and unowned rows are not materialized or adopted.",
+    "read_only": "Postgres transaction begins with SET TRANSACTION READ ONLY; this consumer does not bootstrap or mutate source-ingest storage.",
+    "existing_delivery_state": "Distillation queue, queue identity, checkpoint and Registry acknowledgement protocol are unchanged.",
+    "hosted_actions": "None. No hosted stop, restart, deploy, replay, token rotation or shared queue/checkpoint mutation."
+  },
+  "validation": {
+    "command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); $PANTHEON_PY -m pytest -q services/source_ingestion/test_postgres_store.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/test_compose_activation.py scripts/test_worker_tenant_compose_contract.py",
+    "result": "74 passed, 2 skipped",
+    "additional_command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); $PANTHEON_PY -m pytest -q scripts/test_worker_tenant_compose_contract.py services/source_ingestion/test_compose_activation.py",
+    "additional_result": "7 passed",
+    "notes": [
+      "Postgres reader fake asserts read-only transaction and tenant predicate; source fixture is persisted normalized data.",
+      "Controller regressions verify queue admission/claim and terminal Registry readback for explicit tenant scope; shared-queue regression confirms foreign and unowned jobs remain unclaimed.",
+      "Compose and tenant contract checks prove backend wiring and explicit worker tenant resolution.",
+      "Two skips are the existing optional Postgres integration cases; no live Postgres or hosted environment was exercised."
+    ]
+  },
+  "read_only_hosted_observation": {
+    "source": "/tmp/pantheon-l2-recovery-20261006/source-owner-inventory-corrected.json",
+    "observed_at": "2026-10-06T23:41:27.714084+00:00",
+    "finding": "The corrected inventory reports TWO normalized source_record rows with metadata.tenant_id=tenant-dev and 110 normalized source_record rows with metadata.tenant_id=null. This supersedes and explicitly withdraws the earlier inference that all 112 normalized records were unowned, which came from reading the wrong top-level field; the earlier statement is retained only as superseded history, not a current finding. The running distillation configuration had no explicit evidence backend, while source-ingest used postgres.",
+    "handling": "No data was relabeled, rewritten, replayed, or probed live by this source task. The scoped reader and claim path will not perform unscoped adoption of unowned records; establishing any migration/public-scope policy is outside this implementation."
+  },
+  "review": {
+    "status": "pending",
+    "exact_head": null,
+    "decision": null
+  },
+  "hosted_acceptance": {
+    "status": "not_performed",
+    "reason": "Source PR review/integration is separate from coordinated hosted acceptance."
+  }
+}

@@ -293,8 +293,12 @@ class StimulusDrivenClosureGate:
             timeout=self.settings.timeout_seconds,
         )
         if completed.returncode != 0:
+            # The report lives in a TemporaryDirectory that is removed on exit,
+            # so carry the child's output in the error to keep failures diagnosable.
             raise StimulusProofError(
-                f"{domain} stimulus suite exited {completed.returncode}; its temporary report is retained"
+                f"{domain} stimulus suite exited {completed.returncode}\n"
+                f"--- stdout tail ---\n{completed.stdout[-8000:]}\n"
+                f"--- stderr tail ---\n{completed.stderr[-4000:]}"
             )
         if not report_path.is_file():
             raise StimulusProofError(f"{domain} stimulus suite did not create a report")

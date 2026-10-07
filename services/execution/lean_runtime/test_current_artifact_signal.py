@@ -14,12 +14,21 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from services.control_plane.bff.persona_provisioning import (
+    MemoryPersonaProvisioningStore,
+    ProvisioningRecord,
+)
+from services.control_plane.bff.persona_provisioning_coordinator import (
+    PersonaProvisioningCoordinator,
+    deterministic_provisioning_ids,
+)
 from services.execution.artifact_loader import ArtifactLoader
 from services.execution.lean_runtime.paper_runtime import PaperRuntimeService
 from services.execution.lean_runtime.paper_signal_producer import (
     BoundedPaperStrategy,
     CurrentArtifactStrategy,
     PaperSignalProducer,
+    SignalDecisionUnavailable,
     SmokeStrategy,
     _runner_strategy,
     main,
@@ -28,9 +37,15 @@ from services.execution.lean_runtime.pending_signal_store import (
     InMemoryPendingSignalStore,
 )
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
+from services.execution.lean_runtime.symbol_parser import (
+    is_taiwan_venue_symbol,
+    parse as parse_executor_symbol,
+    validate_executable_symbol,
+)
 from services.registry.strategy_artifact import (
     BUILTIN_STRATEGY_ARTIFACT_PATHS,
     load_strategy_artifact_registration,
+    validate_strategy_artifact,
 )
 from services.trade_journey.correlation_envelope import propagate_envelope
 
@@ -433,6 +448,275 @@ class CurrentArtifactSignalTest(unittest.TestCase):
             if event["event_type"] == "paper_fill_simulated"
         ]
         self.assertFalse(fill["metadata"]["submitted_to_broker"])
+
+    def test_natural_spy_artifact_normalizes_to_executable_symbol_and_fills(self) -> None:
+        """A natural SPY artifact produced by PersonaProvisioningCoordinator with explicit market 'US'
+        normalizes bare symbol 'SPY' to 'SPY.US' and executes through the real executor parser without guessing.
+        """
+        record = ProvisioningRecord(
+            tenant_id="tenant-dev",
+            idempotency_key="dev-paper-release-37553990288-1",
+            request_hash="sha256:test-request-hash",
+            normalized_name="trader-natural-spy",
+            persona_id="persona-paper-6581a1d6560eaa3a3e5c",
+            request_payload={
+                "name": "Natural SPY Trader",
+                "market": "US",
+                "symbols": ["SPY"],
+                "data_source": "source-ingest:normalized/us-equity-price/daily",
+            },
+        )
+        ids = deterministic_provisioning_ids(record)
+        coordinator = PersonaProvisioningCoordinator(
+            store=MemoryPersonaProvisioningStore(),
+            transport=None,
+            schedule_registrar=lambda *_: {},
+            lease_owner="test-coordinator",
+        )
+        candidate_payload = coordinator._strategy_artifact_payload(record, ids)
+        artifact = candidate_payload["strategy_artifact"]
+
+        # Validate that the coordinator produced artifact with explicit market
+        self.assertEqual(artifact["parameters"]["market"], "US")
+        self.assertIn("market", artifact["mutation_surface"]["immutable_parameters"])
+        self.assertEqual(artifact["parameters"]["symbols"], ["SPY"])
+        validate_strategy_artifact(artifact)
+
+        # Binding references the coordinator's artifact projection WITHOUT hand-fabricated market on binding
+        binding = _binding(artifact, binding_id="rb-natural-spy-runtime", include_market_input=False)
+        binding["symbol"] = "SPY"
+        # Note: binding["market"] is NOT set - market comes strictly from artifact.parameters["market"]
+        binding["market_input"] = {
+            "symbol": "SPY",
+            "closes": [400.0, 410.0],
+            "source_ref": "source-ingest://normalized/us-price/SPY",
+            "observed_at": _NOW,
+        }
+        runtime_binding = _runtime_binding(binding)
+        now_iso = (
+            datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+        store = InMemoryPendingSignalStore()
+        producer = PaperSignalProducer(
+            store_for=lambda _: store,
+            strategy=CurrentArtifactStrategy(),
+        )
+        self.assertEqual(producer.produce(binding, now_iso), 1)
+
+        self.assertEqual(store.queue_depth(), 1)
+        signal = store._pending[0]
+        self.assertEqual(signal["symbol"], "SPY.US")
+        self.assertEqual(signal["metadata"]["raw_symbol"], "SPY")
+        self.assertEqual(signal["metadata"]["artifact_checksum"], binding["artifact_checksum"])
+
+        # Validate with real executor parser
+        parsed = parse_executor_symbol(signal["symbol"])
+        self.assertEqual(parsed.ticker, "SPY")
+        self.assertEqual(parsed.lean_market, "Market.USA")
+        self.assertEqual(parsed.lean_security_type, "SecurityType.Equity")
+        validate_executable_symbol(signal["symbol"])
+
+        telemetry = _Telemetry()
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ,
+            {
+                "PANTHEON_LIFECYCLE_OUTBOX_PATH": str(
+                    Path(directory) / "lifecycle-outbox.json"
+                )
+            },
+        ):
+            service = PaperRuntimeService(
+                store=store,
+                identity=_identity(binding),
+                runtime_manager_client=_RuntimeManager(runtime_binding),
+                telemetry_emitter=telemetry,
+                poll_interval_seconds=3600,
+            )
+            for _ in range(3):
+                snapshot = service.drain_once()
+
+        event_types = [event["event_type"] for event in telemetry.events]
+        self.assertEqual(snapshot["status"], "ok")
+        self.assertEqual(
+            snapshot["paper_state"]["processed_signal_count"],
+            1,
+            snapshot,
+        )
+        self.assertGreaterEqual(snapshot["paper_state"]["execution_event_count"], 1)
+        self.assertIn("heartbeat", event_types)
+        self.assertIn("order_submitted", event_types)
+        self.assertIn("paper_fill_simulated", event_types)
+        [fill] = [
+            event
+            for event in telemetry.events
+            if event["event_type"] == "paper_fill_simulated"
+        ]
+        self.assertFalse(fill["metadata"]["submitted_to_broker"])
+
+    def test_natural_taiwan_artifact_normalizes_to_taiwan_venue_symbol(self) -> None:
+        """A natural TW artifact with bare ticker '2330' and market 'TW' produces '2330.TW'."""
+        record = ProvisioningRecord(
+            tenant_id="tenant-dev",
+            idempotency_key="dev-paper-tw-1",
+            request_hash="sha256:tw-hash",
+            normalized_name="trader-tw",
+            persona_id="persona-tw-1",
+            request_payload={
+                "name": "Taiwan Trader",
+                "market": "TW",
+                "symbols": ["2330"],
+                "data_source": "source-ingest:normalized/tw-equity-price/daily",
+            },
+        )
+        ids = deterministic_provisioning_ids(record)
+        coordinator = PersonaProvisioningCoordinator(
+            store=MemoryPersonaProvisioningStore(),
+            transport=None,
+            schedule_registrar=lambda *_: {},
+            lease_owner="test-coordinator",
+        )
+        candidate_payload = coordinator._strategy_artifact_payload(record, ids)
+        artifact = candidate_payload["strategy_artifact"]
+        validate_strategy_artifact(artifact)
+        self.assertEqual(artifact["parameters"]["market"], "TW")
+        self.assertEqual(artifact["parameters"]["symbols"], ["2330"])
+
+        binding = _binding(artifact, binding_id="rb-natural-tw-runtime", include_market_input=False)
+        binding["symbol"] = "2330"
+        binding["market_input"] = {
+            "symbol": "2330",
+            "closes": [500.0, 520.0],
+            "source_ref": "source-ingest://normalized/tw-price/2330",
+            "observed_at": _NOW,
+        }
+        store = InMemoryPendingSignalStore()
+        producer = PaperSignalProducer(
+            store_for=lambda _: store,
+            strategy=CurrentArtifactStrategy(),
+        )
+        now_iso = (
+            datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+        self.assertEqual(producer.produce(binding, now_iso), 1)
+        signal = store._pending[0]
+        self.assertEqual(signal["symbol"], "2330.TW")
+        self.assertTrue(is_taiwan_venue_symbol(signal["symbol"]))
+        validate_executable_symbol(signal["symbol"])
+
+    def test_natural_crypto_artifact_normalizes_to_executable_crypto_symbol(self) -> None:
+        """A natural Crypto artifact with market 'CRYPTO' produces valid crypto executable symbol."""
+        record = ProvisioningRecord(
+            tenant_id="tenant-dev",
+            idempotency_key="dev-paper-crypto-1",
+            request_hash="sha256:crypto-hash",
+            normalized_name="trader-crypto",
+            persona_id="persona-crypto-1",
+            request_payload={
+                "name": "Crypto Trader",
+                "market": "CRYPTO",
+                "symbols": ["BTCUSDT"],
+                "data_source": "source-ingest:normalized/crypto-price/daily",
+            },
+        )
+        ids = deterministic_provisioning_ids(record)
+        coordinator = PersonaProvisioningCoordinator(
+            store=MemoryPersonaProvisioningStore(),
+            transport=None,
+            schedule_registrar=lambda *_: {},
+            lease_owner="test-coordinator",
+        )
+        candidate_payload = coordinator._strategy_artifact_payload(record, ids)
+        artifact = candidate_payload["strategy_artifact"]
+        validate_strategy_artifact(artifact)
+        self.assertEqual(artifact["parameters"]["market"], "CRYPTO")
+        self.assertEqual(artifact["parameters"]["symbols"], ["BTCUSDT"])
+
+        binding = _binding(artifact, binding_id="rb-natural-crypto-runtime", include_market_input=False)
+        binding["symbol"] = "BTCUSDT"
+        binding["market_input"] = {
+            "symbol": "BTCUSDT",
+            "closes": [60000.0, 61000.0],
+            "source_ref": "source-ingest://normalized/crypto-price/BTCUSDT",
+            "observed_at": _NOW,
+        }
+        store = InMemoryPendingSignalStore()
+        producer = PaperSignalProducer(
+            store_for=lambda _: store,
+            strategy=CurrentArtifactStrategy(),
+        )
+        now_iso = (
+            datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+        self.assertEqual(producer.produce(binding, now_iso), 1)
+        signal = store._pending[0]
+        self.assertEqual(signal["symbol"], "BTCUSDT")
+        parsed = parse_executor_symbol(signal["symbol"])
+        self.assertEqual(parsed.ticker, "BTCUSDT")
+        self.assertEqual(parsed.lean_market, "Market.Kraken")
+        self.assertEqual(parsed.lean_security_type, "SecurityType.Crypto")
+        validate_executable_symbol(signal["symbol"])
+
+    def test_legacy_coordinator_artifact_without_market_fails_closed_market_context_missing(self) -> None:
+        """Legacy artifact without explicit market fails closed rather than guessing market."""
+        record = ProvisioningRecord(
+            tenant_id="tenant-dev",
+            idempotency_key="dev-paper-legacy-1",
+            request_hash="sha256:legacy-hash",
+            normalized_name="trader-legacy",
+            persona_id="persona-legacy-1",
+            request_payload={
+                "name": "Legacy Trader",
+                "symbols": ["SPY"],
+            },
+        )
+        ids = deterministic_provisioning_ids(record)
+        coordinator = PersonaProvisioningCoordinator(
+            store=MemoryPersonaProvisioningStore(),
+            transport=None,
+            schedule_registrar=lambda *_: {},
+            lease_owner="test-coordinator",
+        )
+        candidate_payload = coordinator._strategy_artifact_payload(record, ids)
+        artifact = candidate_payload["strategy_artifact"]
+        self.assertNotIn("market", artifact["parameters"])
+
+        binding = _binding(artifact, binding_id="rb-legacy-runtime", include_market_input=False)
+        binding["symbol"] = "SPY"
+        binding["market_input"] = {
+            "symbol": "SPY",
+            "closes": [400.0, 410.0],
+            "source_ref": "source-ingest://normalized/us-price/SPY",
+            "observed_at": _NOW,
+        }
+        store = InMemoryPendingSignalStore()
+        producer = PaperSignalProducer(
+            store_for=lambda _: store,
+            strategy=CurrentArtifactStrategy(),
+        )
+        now_iso = (
+            datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+        strategy = CurrentArtifactStrategy()
+        with self.assertRaises(SignalDecisionUnavailable) as ctx:
+            strategy(binding, now_iso)
+        self.assertEqual(ctx.exception.code, "market_context_missing")
+
+        # Producer catches degradation and queues 0 signals
+        self.assertEqual(producer.produce(binding, now_iso), 0)
+        self.assertEqual(store.queue_depth(), 0)
+
 
 
 if __name__ == "__main__":

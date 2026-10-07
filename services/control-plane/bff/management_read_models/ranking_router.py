@@ -119,6 +119,17 @@ def create_ranking_formulas_router(
     _utc_now = utc_now or _default_utc_now
     _snapshot_meta = snapshot_meta or _default_snapshot_meta
 
+    def _require_formula_source() -> None:
+        source = getattr(get_read_store() if get_read_store is not None else None, "dataset_source", None)
+        if callable(source) and source("ranking_formulas") in ("missing", "unavailable"):
+            raise _err(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Ranking formula read surface unavailable",
+                "The quarterly ranking formula source is unavailable.",
+                precondition_failed="read_surface_unavailable",
+            )
+
     @router.get("/bff/ranking-formulas")
     async def bff_list_ranking_formulas(
         status: Optional[str] = None,
@@ -127,6 +138,7 @@ def create_ranking_formulas_router(
         """List ranking formulas from the read surface store."""
         identity = _extract_ident(authorization)
         _require_read(identity)
+        _require_formula_source()
 
         snapshot_at = _utc_now()
         records: List[Dict[str, Any]] = []
@@ -158,6 +170,7 @@ def create_ranking_formulas_router(
         identity = _extract_ident(authorization)
         _require_read(identity)
 
+        _require_formula_source()
         clean_id = str(formula_id or "").strip()
         record: Optional[Dict[str, Any]] = None
         if get_read_store is not None:

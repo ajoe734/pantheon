@@ -553,10 +553,15 @@ def test_governance_ledger_redacts_all_three_evidence_sources_for_low_capability
         assert payload["meta"]["redacted_evidence_count"] == 4
 
 
-def test_governance_ledger_includes_decision_only_approval_entry() -> None:
-    # approval-3 only exists in the approval_decisions dataset (never in
-    # approval_queue_items), so it is not shadowed by the dedup keyed on
-    # decision_id and must surface with source_dataset=approval_decisions.
+def test_governance_ledger_includes_decision_only_approval_entry(monkeypatch) -> None:
+    records = {item["decision_id"]: item for item in (_APPROVAL_1, _APPROVAL_2, _APPROVAL_3_DECISION_ONLY)}
+
+    def call_owner(method, path, authorization, **_kwargs):
+        if path.endswith("/approvals"):
+            return [copy.deepcopy(_APPROVAL_1), copy.deepcopy(_APPROVAL_2), copy.deepcopy(_APPROVAL_3_DECISION_ONLY)]
+        return copy.deepcopy(records[path.rsplit("/", 1)[1]])
+
+    monkeypatch.setattr(approval_owner, "call_owner", call_owner)
     store = _SweepStore(include_decision_only_entry=True)
 
     with _stub_auth_env():
@@ -571,7 +576,7 @@ def test_governance_ledger_includes_decision_only_approval_entry() -> None:
             item for item in low_items
             if item["source_type"] == "approval" and item["target_id"] == "approval-3"
         )
-        assert decision_only_entry["source_dataset"] == "approval_decisions"
+        assert decision_only_entry["source_dataset"] == "approval_queue_items"
         _assert_mixed_refs_redacted_for_low_capability(decision_only_entry["evidence_refs"])
 
         full_client = TestClient(_build_app(store))
@@ -585,7 +590,7 @@ def test_governance_ledger_includes_decision_only_approval_entry() -> None:
             item for item in full_items
             if item["source_type"] == "approval" and item["target_id"] == "approval-3"
         )
-        assert decision_only_entry_full["source_dataset"] == "approval_decisions"
+        assert decision_only_entry_full["source_dataset"] == "approval_queue_items"
         assert decision_only_entry_full["evidence_refs"] == _MIXED_REFS
 
 

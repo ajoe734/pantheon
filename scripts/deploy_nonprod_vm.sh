@@ -3068,6 +3068,127 @@ assert int(payload.get("total_sweeps_run") or 0) >= 1
   return 1
 }
 
+stage_dev_paper_prerequisite_readiness() {
+  local source_ingest_url="${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}"
+  local symbol="${1:-SPY}"
+  local measured_refresh_duration="${DEV_PAPER_REFRESH_DURATION_SECONDS:-5}"
+  local stated_margin="${DEV_PAPER_READINESS_MARGIN_SECONDS:-35}"
+  local budget="${2:-$(( measured_refresh_duration + stated_margin ))}"
+  local poll_interval="${3:-2}"
+  local token="${SOURCE_INGEST_CONTROLLER_TOKEN:-}"
+
+  info "checking staged dev paper prerequisite readiness for symbol ${symbol} (budget=${budget}s margin=${stated_margin}s)"
+
+  if [[ -z "$token" && -n "${SOURCE_INGEST_CONTROLLER_TOKEN_FILE:-}" && -f "${SOURCE_INGEST_CONTROLLER_TOKEN_FILE:-}" ]]; then
+    token="$(cat "$SOURCE_INGEST_CONTROLLER_TOKEN_FILE" 2>/dev/null || true)"
+  fi
+  if [[ -z "$token" ]]; then
+    local cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
+    [[ -z "$cid" ]] || token="$(docker exec "$cid" cat /data/source-ingest/controller_token 2>/dev/null || true)"
+  fi
+  token="$(printf '%s' "$token" | tr -d '\r\n[:space:]')"
+
+  local auth_header=()
+  [[ -z "$token" ]] || auth_header=(-H "Authorization: Bearer ${token}")
+
+  local deadline attempt=0 triggered=false
+  deadline=$(( $(date +%s) + budget ))
+
+  while :; do
+    attempt=$(( attempt + 1 ))
+    local snapshot_resp=""
+    snapshot_resp="$(curl -fsS "${source_ingest_url}/api/source-ingest/snapshots/latest?symbol=${symbol}" 2>/dev/null || true)"
+
+    local is_admissible=false
+    if [[ -n "$snapshot_resp" ]]; then
+      if python3 -c '
+import json, sys, math
+from datetime import datetime, timezone
+raw = sys.argv[1]
+try:
+    data = json.loads(raw)
+except Exception:
+    sys.exit(1)
+closes = data.get("closes")
+if not isinstance(closes, list) or len(closes) < 2:
+    sys.exit(1)
+if any(isinstance(c, bool) or not isinstance(c, (int, float)) or not math.isfinite(float(c)) or float(c) <= 0 for c in closes):
+    sys.exit(1)
+market = data.get("market")
+if not market or not isinstance(market, str) or not market.strip():
+    sys.exit(1)
+ev_str = str(data.get("event_time") or "")
+if ev_str:
+    try:
+        ev_dt = datetime.fromisoformat(ev_str.replace("Z", "+00:00"))
+        now_dt = datetime.now(timezone.utc)
+        age = (now_dt - ev_dt).total_seconds()
+        if age > 86400 or age < 0:
+            sys.exit(1)
+    except Exception:
+        sys.exit(1)
+sys.exit(0)
+' "$snapshot_resp" 2>/dev/null; then
+        is_admissible=true
+      fi
+    fi
+
+    if [[ "$is_admissible" == "true" ]]; then
+      info "staged dev paper prerequisite readiness satisfied for ${symbol}"
+      return 0
+    fi
+
+    if [[ "$triggered" == "false" ]]; then
+      triggered=true
+      info "staged dev paper prerequisite snapshot for ${symbol} missing, non-admissible, or lacks market; triggering run-scheduled (attempt 1)"
+      local trigger_resp http_code trigger_body
+      trigger_resp="$(curl -sS -w "\n%{http_code}" -X POST "${auth_header[@]}" \
+        -H "Content-Type: application/json" \
+        -d '{"force_connector_ids":["dev-paper-us-equity-simulation"],"exclusive_connector_ids":["dev-paper-us-equity-simulation"]}' \
+        "${source_ingest_url}/api/source-ingest/run-scheduled" 2>&1 || true)"
+      http_code="$(printf '%s\n' "$trigger_resp" | tail -n 1)"
+      trigger_body="$(printf '%s\n' "$trigger_resp" | sed '$d')"
+
+      local eval_out outcome errs diag=""
+      eval_out="$(python3 -c '
+import json, sys
+code = sys.argv[1] if len(sys.argv) > 1 else ""
+body = sys.argv[2] if len(sys.argv) > 2 else ""
+if code == "000":
+    print("transport failure\t")
+elif code in ("401", "403"):
+    print("authentication rejected\t")
+elif code != "200":
+    print("server error\t")
+else:
+    try:
+        d = json.loads(body)
+        fails = [str(f.get("connector_id")) + ": " + str(f.get("error")) for f in d.get("failed") or [] if isinstance(f, dict)]
+        ran = int((d.get("summary") or {}).get("total_ran", 1 if d.get("status") == "ok" else 0))
+        outcome = "refreshed" if not fails and ran >= 1 else "controller mode refuses refresh"
+        print(outcome + "\t" + "; ".join(fails))
+    except Exception:
+        print("controller mode refuses refresh\t")
+' "$http_code" "$trigger_body" 2>/dev/null || printf 'server error\t')"
+      outcome="${eval_out%%$'\t'*}"
+      errs="${eval_out#*$'\t'}"
+      [[ -z "$errs" ]] || diag=" failed: [${errs}]"
+
+      info "run-scheduled trigger attempt 1: http_status=${http_code} outcome=${outcome}${diag}"
+      if [[ "$outcome" != "refreshed" ]]; then
+        error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: ${outcome}"
+        return 1
+      fi
+    fi
+
+    (( $(date +%s) < deadline )) || break
+    sleep "$poll_interval"
+  done
+
+  error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: snapshot still lacks market"
+  return 1
+}
+
 verify_exact_component_deployment() {
   local target_services=("$@")
   local expected_sha="${GIT_SHA:-${PANTHEON_DEPLOY_SHA:-${DEPLOY_SHA:-}}}"
@@ -3466,8 +3587,10 @@ with_dev_bff_runtime_env() {
   local target_sha="$1"
   local proof_flag="$2"
   shift 2
+  # Preserve the caller's selection: root rollout supplies root profiles,
+  # while the explicit BFF-only branch deliberately supplies an empty value.
   COMPOSE_BAKE=false \
-  COMPOSE_PROFILES="" \
+  COMPOSE_PROFILES="${COMPOSE_PROFILES:-}" \
   GIT_SHA="${target_sha}" \
   BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   PANTHEON_ENV=dev \
@@ -4021,6 +4144,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}" \
     SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}" \
     SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
+    PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED=true \
     with_dev_bff_runtime_env "${PANTHEON_DEPLOY_SHA}" "${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
       run_dev_candidate_compose up -d \
       || rollback_dev_bff_on_failure "docker_compose_up"
@@ -4070,6 +4194,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # receipt replay before the workflow's public smokes run.
     PANTHEON_DEV_REPO="$(pwd)" bash scripts/verify_trade_journey_residual_dev.sh \
       || rollback_dev_bff_on_failure "trade_journey_residual"
+    stage_dev_paper_prerequisite_readiness \
+      || rollback_dev_bff_on_failure "paper_prerequisite_readiness"
     verify_exact_component_deployment \
       || rollback_dev_bff_on_failure "exact_component_deployment"
     ;;

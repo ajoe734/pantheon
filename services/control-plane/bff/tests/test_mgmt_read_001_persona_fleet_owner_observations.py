@@ -125,6 +125,7 @@ def _persona() -> Dict[str, Any]:
         "persona_id": "persona-under-test",
         "name": "Persona Under Test",
         "lifecycle_state": "active",
+        "tenant_id": "tenant-a",
     }
 
 
@@ -136,6 +137,7 @@ def _runtime_binding() -> Dict[str, Any]:
         "capital_pool_id": "pool-1",
         "deployment_stage": "paper",
         "status": "running",
+        "tenant_id": "tenant-a",
     }
 
 
@@ -146,6 +148,7 @@ def _persona_capital_binding() -> Dict[str, Any]:
         "persona_id": "persona-under-test",
         "capital_pool_id": "pool-1",
         "status": "active",
+        "tenant_id": "tenant-a",
     }
 
 
@@ -168,7 +171,7 @@ def test_persona_fleet_surfaces_telemetry_owner_reported_unavailable() -> None:
                 "personas": [_persona()],
                 "runtime_bindings": [_runtime_binding()],
                 "bindings": [_persona_capital_binding()],
-                "capital_pools": [{"id": "pool-1", "pool_id": "pool-1"}],
+                "capital_pools": [{"id": "pool-1", "pool_id": "pool-1", "tenant_id": "tenant-a"}],
             },
             lifecycle_telemetry_governance_kwargs={
                 "telemetry_summaries": {
@@ -178,13 +181,14 @@ def test_persona_fleet_surfaces_telemetry_owner_reported_unavailable() -> None:
                         "source_kind": "unavailable",
                         "owner": "telemetry-owner",
                         "degradation_reason": "owner offline",
+                        "tenant_id": "tenant-a",
                     }
                 },
             },
         )
         _use_store(store)
 
-        context = bff_main._mgmt_nl_collect_context("persona_fleet", NOW, None)
+        context = bff_main._mgmt_nl_collect_context("persona_fleet", NOW, "tenant-a")
 
         surface = context["surfaces"]["persona_fleet"]
         assert surface["status"] == "unavailable", surface
@@ -204,6 +208,7 @@ def test_persona_fleet_surfaces_persona_owner_reported_unavailable() -> None:
             source_kind="unavailable",
             owner="persona-owner",
             degradation_reason="owner offline",
+            tenant_id="tenant-a",
         )
         store = create_in_memory_read_surface_ports(
             persona_capital_runtime_kwargs={
@@ -215,7 +220,7 @@ def test_persona_fleet_surfaces_persona_owner_reported_unavailable() -> None:
         )
         _use_store(store)
 
-        context = bff_main._mgmt_nl_collect_context("persona_fleet", NOW, None)
+        context = bff_main._mgmt_nl_collect_context("persona_fleet", NOW, "tenant-a")
 
         surface = context["surfaces"]["persona_fleet"]
         assert surface["status"] == "unavailable", surface
@@ -234,19 +239,19 @@ def test_persona_fleet_reports_degraded_when_auxiliary_owners_lack_records() -> 
                 "personas": [_persona()],
                 "runtime_bindings": [_runtime_binding()],
                 "bindings": [_persona_capital_binding()],
-                "capital_pools": [{"id": "pool-1", "pool_id": "pool-1"}],
-                "evolution_decisions": [{"decision_id": "dec-1", "target_id": "persona-other"}],
+                "capital_pools": [{"id": "pool-1", "pool_id": "pool-1", "tenant_id": "tenant-a"}],
+                "evolution_decisions": [{"decision_id": "dec-1", "target_id": "persona-other", "tenant_id": "tenant-a"}],
             },
             lifecycle_telemetry_governance_kwargs={
                 "telemetry_summaries": {
-                    "rt-1": {"runtime_id": "rt-1", "pnl": 1.0, "collected_at": NOW},
+                    "rt-1": {"runtime_id": "rt-1", "pnl": 1.0, "collected_at": NOW, "tenant_id": "tenant-a"},
                 },
-                "incidents": {"inc-1": {"incident_id": "inc-1", "status": "resolved"}},
+                "incidents": {"inc-1": {"incident_id": "inc-1", "status": "resolved", "tenant_id": "tenant-a"}},
             },
         )
         _use_store(store)
 
-        context = bff_main._mgmt_nl_collect_context("persona_fleet", NOW, None)
+        context = bff_main._mgmt_nl_collect_context("persona_fleet", NOW, "tenant-a")
 
         surface = context["surfaces"]["persona_fleet"]
         assert surface["status"] == "degraded", surface

@@ -1,0 +1,42 @@
+{
+  "schema_version": "pantheon.lifecycle-committed-frontier-evidence.v1",
+  "task_id": "LIFECYCLE-COMMITTED-FRONTIER-20261006",
+  "status": "implementation_ready_for_independent_review",
+  "scope": "Repair the existing telemetry writer/projector committed-source frontier; no hosted database was targeted.",
+  "design": {
+    "writer_fence": "Canonical telemetry writes and PostgreSQL lifecycle source snapshots take the same transaction-scoped pg_advisory_xact_lock(hashtext(table)) before source sequence observations.",
+    "source_frontier": "fetch_after derives an explicit frontier from the last returned lifecycle row, or the committed-source maximum when no lifecycle rows are returned, under the writer fence. ProjectionStore may cross absent source positions only through this explicit frontier; ordinary receipt-contiguous advancement remains unchanged without it.",
+    "missing_receipts": "Rows present in the fenced lifecycle snapshot are returned for applied, ignored, or quarantined receipt disposition before committing the frontier. Real PostgreSQL coverage confirms an extant row without source proof still stalls receipt-contiguous advancement.",
+    "delayed_commit": "A delayed canonical writer holds the shared advisory lock through commit. The source snapshot blocks behind it and observes the allocated row after commit rather than claiming the sequence absent.",
+    "preserved_invariants": [
+      "Canonical event fingerprint conflict detection",
+      "Tenant/environment-scoped receipt and quarantine behavior",
+      "Atomic projection and receipt writes",
+      "Idempotent exact replay semantics"
+    ]
+  },
+  "validation": [
+    {
+      "command": "TEST_DATABASE_URL=<disposable PostgreSQL 16 task database> PANTHEON_PY -m pytest -q services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_projection_store.py services/trade_journey/test_lifecycle_projector_capacity.py services/telemetry/test_ingest_shock_absorption.py",
+      "result": "214 passed, 1 skipped in 94.78s"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "database_evidence": {
+    "engine": "PostgreSQL 16.15",
+    "target": "Disposable task-local PostgreSQL container pantheon-projector-frontier-tests-20261006; unique schemas per test",
+    "hosted_mutation": false,
+    "scenarios": [
+      "Aborted insert consumed ingested_seq 1; canonical committed event at sequence 2 was fetched and projected with frontier checkpoint 2.",
+      "A delayed canonical writer held the shared lock while sequence 3 was uncommitted; the source fetch waited and returned sequence 3 only after commit.",
+      "ProjectionStore crossed a proven source hole while ordinary receipt-contiguous advancement still stopped before an extant event missing its receipt."
+    ]
+  },
+  "review": {
+    "reviewer": "Claude",
+    "decision": "pending exact-head independent review"
+  }
+}

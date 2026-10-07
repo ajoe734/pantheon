@@ -1,18 +1,14 @@
 """Regression coverage for Persona provisioning reconciliation writes."""
 from __future__ import annotations
 
-import ast
 from copy import deepcopy
-import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional
 
 import pytest
 
-from services.control_plane.bff.personas.reconciliation import (
-    PersonaProvisioningReconciliationMutationPort,
-)
+from services.control_plane.bff.personas import service as persona_service
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
@@ -67,54 +63,34 @@ def _terminal_checkpoint(lifecycle_state: str) -> dict[str, Any]:
     }
 
 
-def _load_reconciliation_module() -> dict[str, Any]:
-    main_path = Path(__file__).resolve().parents[1] / "main.py"
-    tree = ast.parse(main_path.read_text(encoding="utf-8"))
-    names = {
-        "_persist_persona_provisioning_terminal_transition",
-        "_materialize_terminal_persona_provisioning_ledger",
-    }
-    nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
-    namespace: dict[str, Any] = dict(__import__("typing").__dict__)
-    namespace.update(
-        deepcopy=deepcopy,
-        Mapping=Mapping,
-        Dict=dict,
-        Any=Any,
-        Optional=Optional,
-        List=list,
-        log=logging.getLogger("test_persona_provisioning_read_surface_mutation"),
-        _append_persona_reconcile_diagnostic=lambda *args: None,
-    )
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), "main.py", "exec"), namespace)
-    return namespace
-
-
 @pytest.mark.parametrize("expected_state", ["paper_running", "provisioning_failed"])
 def test_terminal_reconciliation_uses_authoritative_mutation_port_not_read_surface(
     expected_state: str,
+    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     read_surface = create_in_memory_read_surface_ports()
     mutation_owner = _RecordingPersonaMutationPort()
-    ns = _load_reconciliation_module()
-    ns["read_store"] = read_surface
-    ns["_PERSONA_BFF_OVERLAY"] = {}
-    ns["_PERSONA_PROVISIONING_STORE"] = SimpleNamespace(
+    store = SimpleNamespace(
         get=lambda *_args: SimpleNamespace(
             state="succeeded" if expected_state == "paper_running" else "failed",
             references={},
             error={"terminal_reason": "deployment-owner-rejected"},
         )
     )
-    ns["_persona_provisioning_store"] = lambda: ns["_PERSONA_PROVISIONING_STORE"]
-    ns["persona_reconciliation_mutation_port"] = PersonaProvisioningReconciliationMutationPort(
-        persona_mutation_port=mutation_owner,
+    monkeypatch.setattr(persona_service, "_PERSONA_PROVISIONING_STORE", store)
+    monkeypatch.setattr(persona_service, "_get_active_write_owner", lambda: mutation_owner)
+    monkeypatch.setattr(
+        persona_service,
+        "_checkpoint_persona_provisioning_readback",
+        lambda **_kwargs: _terminal_checkpoint(expected_state),
     )
-    ns["_checkpoint_persona_provisioning_readback"] = (
-        lambda **_kwargs: _terminal_checkpoint(expected_state)
+    monkeypatch.setattr(
+        persona_service,
+        "_reconcile_persona_provisioning_compensation",
+        lambda _metadata: None,
     )
-    ns["_reconcile_persona_provisioning_compensation"] = lambda _metadata: None
+    monkeypatch.setattr(persona_service, "_append_persona_reconcile_diagnostic", lambda *args: None)
 
     raw = {
         "persona_id": PERSONA_ID,
@@ -125,7 +101,7 @@ def test_terminal_reconciliation_uses_authoritative_mutation_port_not_read_surfa
         },
     }
 
-    state = ns["_materialize_terminal_persona_provisioning_ledger"](
+    state = persona_service._materialize_terminal_persona_provisioning_ledger(
         PERSONA_ID,
         raw,
     )

@@ -17,6 +17,8 @@ CASES = {
     "agora-interaction-worker": ("PANTHEON_TENANT_ID", "tenant-dev"),
     "training-session-preview-worker": ("TRAINING_SESSION_TENANT_ID", "tenant-dev"),
     "reconciliation-drift-incident-listener": ("PANTHEON_TENANT_ID", "tenant-dev"),
+    "reconciliation-drift-svc": ("PANTHEON_TENANT_ID", "tenant-dev"),
+    "strategy-distillation-worker": ("PANTHEON_TENANT_ID", "tenant-dev"),
 }
 
 
@@ -26,7 +28,7 @@ def _render(env: dict[str, str]) -> dict:
     ).returncode != 0:
         pytest.skip("docker compose unavailable")
     result = subprocess.run(
-        ["docker", "compose", "-f", "docker-compose.yml", "config", "--format", "json"],
+        ["docker", "compose", "--profile", "*", "-f", "docker-compose.yml", "config", "--format", "json"],
         cwd=ROOT,
         env={**os.environ, **env},
         capture_output=True,
@@ -47,3 +49,28 @@ def test_dev_deploy_env_resolves_product_tenant(service: str) -> None:
 def test_explicit_tenant_wins_over_bff_tenant() -> None:
     env = {"PANTHEON_BFF_TENANT_ID": "tenant-dev", "PANTHEON_TENANT_ID": "tenant-x"}
     assert _render(env)["agora-interaction-worker"]["environment"]["PANTHEON_TENANT_ID"] == "tenant-x"
+
+
+def test_agora_worker_persona_url_and_token_defaults() -> None:
+    services = _render({})
+    worker_env = services["agora-interaction-worker"]["environment"]
+    assert worker_env["PERSONA_URL"] == "http://persona:8002"
+    assert worker_env["PANTHEON_PERSONA_SERVICE_TOKEN"] == "pantheon-local-persona-service-token"
+    assert worker_env["PANTHEON_PERSONA_SERVICE_ACTOR_ID"] == "operator-bff"
+
+
+def test_agora_worker_persona_url_and_token_overrides() -> None:
+    env = {
+        "PERSONA_URL": "http://custom-persona:9002",
+        "PANTHEON_PERSONA_SERVICE_TOKEN": "custom-secret-token",
+    }
+    worker_env = _render(env)["agora-interaction-worker"]["environment"]
+    assert worker_env["PERSONA_URL"] == "http://custom-persona:9002"
+    assert worker_env["PANTHEON_PERSONA_SERVICE_TOKEN"] == "custom-secret-token"
+
+
+def test_agora_worker_depends_on_persona() -> None:
+    services = _render({})
+    depends_on = services["agora-interaction-worker"].get("depends_on", {})
+    assert "persona" in depends_on
+

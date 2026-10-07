@@ -1659,6 +1659,21 @@ class TestInfrastructureHealthReplicaAdmission(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+class TestMissingSchemaFileFailsClosed(unittest.TestCase):
+    def _service(self, schema_path: Optional[str]) -> TelemetryIngestService:
+        return TelemetryIngestService(schema_path=schema_path, storage_dir=tempfile.mkdtemp())
+
+    def test_configured_schema_file_missing_rejects_events(self):
+        service = self._service(str(Path(tempfile.mkdtemp()) / "missing.schema.json"))
+        for event_type in ("order_submitted", "trade_journal_entry"):
+            valid, error = service._validate_event({"event_type": event_type})
+            self.assertFalse(valid, event_type)
+            self.assertIn("schema is unavailable", error)
+
+    def test_no_schema_configured_stays_pass_through(self):
+        self.assertEqual(self._service(None)._validate_event({"event_type": "order_submitted"}), (True, None))
+
+
 class _DegradingBroker(_DurableFileBroker):
     """A broker adapter that stops being durable after its first enqueue.
 

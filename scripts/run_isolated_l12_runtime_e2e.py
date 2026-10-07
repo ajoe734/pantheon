@@ -33,9 +33,10 @@ from pathlib import Path
 from typing import Any, Mapping
 
 try:
-    from scripts import dev_environment_lease
+    from scripts import dev_environment_lease, issue_dev_paper_principals
 except ModuleNotFoundError:  # Direct ``python scripts/...`` invocation.
     import dev_environment_lease  # type: ignore[no-redef]
+    import issue_dev_paper_principals  # type: ignore[no-redef]
 
 TASK_ID = "PFG-L12-RUNTIME-E2E-20260820"
 MAIN_NEGATIVE_BINDING_ID = "rb-51f84b3169d745e4b34fcf80f0bc5f3c"
@@ -105,7 +106,18 @@ STIMULUS_SERVICES: dict[str, dict[str, Any]] = {
     "training": {"port_var": "TRAINING_SESSION_PORT", "default_port": 18099, "health": "/readyz"},
 }
 DB_MIGRATION_SERVICE = "source-ingest-controller-migrate"
+TW_OFFICIAL_CONNECTOR_ID = "tw-twse-tpex-official-market"
+TW_OFFICIAL_EGRESS_HOSTS = "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw"
+TW_OFFICIAL_PULL_SERVICE = "source-ingest-scheduler"
+TW_OFFICIAL_SNAPSHOT_SYMBOL = "2330.TW"
+TW_OFFICIAL_DEFAULT_HISTORY_SYMBOLS = "2330.TW,2317.TW"
+TW_OFFICIAL_PULL_TIMEOUT_SECONDS = 1800
+# Controller leases are not released on exit, so the bounded tick takes a short
+# fence and the resident scheduler starts only after it has expired.
+TW_OFFICIAL_PULL_LEASE_SECONDS = 10
 PROJECTION_BOOTSTRAP_SERVICE = "loop-run-projector-scheduler"
+PRINCIPAL_ISSUER_SERVICE = "dev-paper-principal-issuer"
+ISOLATED_DEV_TENANT = "tenant-dev"
 COMPOSE_ALL_PROFILES = ("--profile", "*")
 ISOLATED_SAFE_CONTROLS = {
     "BROKER_PAPER_ENABLED": "true",
@@ -218,18 +230,82 @@ def _mint_projector_service_jwt(
     tenant_id: str,
     issuer: str | None = None,
     audience: str | None = None,
+    subject: str = "agora-market-projector",
+    roles: tuple[str, ...] = ("source_ingest_reader",),
+    ttl_seconds: int | None = None,
 ) -> str:
     header = {"alg": "HS256", "typ": "JWT"}
-    claims: dict[str, Any] = {"sub": "agora-market-projector", "roles": ["source_ingest_reader"], "tenant_id": tenant_id}
+    claims: dict[str, Any] = {"sub": subject, "roles": list(roles), "tenant_id": tenant_id}
     if issuer:
         claims["iss"] = issuer
     if audience:
         claims["aud"] = audience
+    if ttl_seconds is not None:
+        claims["exp"] = int(time.time()) + ttl_seconds
     b64 = lambda d: base64.urlsafe_b64encode(d).rstrip(b"=").decode("ascii")
     h = b64(json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8"))
     c = b64(json.dumps(claims, separators=(",", ":"), sort_keys=True).encode("utf-8"))
     sig = hmac.new(secret.encode("utf-8"), f"{h}.{c}".encode("ascii"), hashlib.sha256).digest()
     return f"{h}.{c}.{b64(sig)}"
+
+
+def _isolated_reader_token(compose_env: Mapping[str, str], subject: str) -> tuple[str, str]:
+    """Mint a source-ingest reader token that the isolated stack accepts."""
+    tenant = compose_env.get("PANTHEON_TENANT_ID") or compose_env.get("PANTHEON_BFF_TENANT_ID") or "default"
+    token = _mint_projector_service_jwt(
+        compose_env.get("PANTHEON_RUNTIME_JWT_SECRET") or compose_env.get("PANTHEON_BFF_JWT_SECRET") or "",
+        tenant_id=tenant,
+        issuer=compose_env.get("PANTHEON_RUNTIME_JWT_ISSUER") or compose_env.get("PANTHEON_BFF_JWT_ISSUER"),
+        audience=compose_env.get("PANTHEON_RUNTIME_JWT_AUDIENCE") or compose_env.get("PANTHEON_BFF_JWT_AUDIENCE"),
+        subject=subject,
+    )
+    return token, tenant
+
+
+def _isolated_dev_principal_env(compose_env: Mapping[str, str]) -> dict[str, str]:
+    """Bind owner verifiers and issue owner principals as the hosted dev deploy does.
+
+    deploy_nonprod_vm.sh signs Registry and Governance with the dev BFF secret,
+    runs Compose as tenant-dev and issues owner-to-owner principals through
+    issue_dev_paper_principals.py.  Without them every strict owner rejects
+    service calls (e.g. distillation -> Registry).  The paper grant is asserted
+    only for this throwaway project and signed with its per-run secret.
+    """
+    secret = compose_env["PANTHEON_BFF_JWT_SECRET"]
+    issuer = compose_env["PANTHEON_BFF_JWT_ISSUER"]
+    audience = compose_env["PANTHEON_BFF_JWT_AUDIENCE"]
+    env = {
+        "PANTHEON_DEV_BFF_TENANT_ID": ISOLATED_DEV_TENANT,
+        "PANTHEON_BFF_TENANT_ID": ISOLATED_DEV_TENANT,
+        "PANTHEON_DEPLOYMENT_TENANT_ID": ISOLATED_DEV_TENANT,
+        "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true",
+        "PANTHEON_DEV_BFF_JWT_SECRET": secret,
+        "PANTHEON_DEV_BFF_JWT_ISSUER": issuer,
+        "PANTHEON_DEV_BFF_JWT_AUDIENCE": audience,
+        "PANTHEON_REGISTRY_JWT_SECRET": secret,
+        "PANTHEON_GOVERNANCE_JWT_SECRET": secret,
+        "PANTHEON_GOVERNANCE_JWT_ISSUER": issuer,
+        "PANTHEON_GOVERNANCE_JWT_AUDIENCE": audience,
+    }
+    env.update(issue_dev_paper_principals.issue_environment({**env, "PANTHEON_ENV": "dev"}))
+    return env
+
+
+def _isolated_human_token(compose_env: Mapping[str, str], subject: str, *roles: str) -> str:
+    """Mint a human operator/reviewer identity for the domain suites.
+
+    Registry and Governance verify the dev BFF signer (see
+    _isolated_dev_principal_env), so one signer serves both owners.
+    """
+    return _mint_projector_service_jwt(
+        compose_env["PANTHEON_BFF_JWT_SECRET"],
+        tenant_id=compose_env["PANTHEON_BFF_TENANT_ID"],
+        issuer=compose_env["PANTHEON_BFF_JWT_ISSUER"],
+        audience=compose_env["PANTHEON_BFF_JWT_AUDIENCE"],
+        subject=subject,
+        roles=roles,
+        ttl_seconds=4 * 60 * 60,
+    )
 
 
 def _compose_command(
@@ -258,12 +334,166 @@ def _project_container_ids(project: str) -> list[str]:
     return sorted(line.strip() for line in output.splitlines() if line.strip())
 
 
+def _tw_official_history_symbols(compose_env: Mapping[str, str]) -> str:
+    """History symbols for the pull; always includes the runtime suite's symbol."""
+    raw = (
+        os.getenv("SOURCE_INGEST_TW_HISTORY_SYMBOLS")
+        or compose_env.get("SOURCE_INGEST_TW_HISTORY_SYMBOLS")
+        or TW_OFFICIAL_DEFAULT_HISTORY_SYMBOLS
+    )
+    symbols = [item.strip().upper() for item in raw.split(",") if item.strip()]
+    if TW_OFFICIAL_SNAPSHOT_SYMBOL not in symbols:
+        symbols.append(TW_OFFICIAL_SNAPSHOT_SYMBOL)
+    return ",".join(dict.fromkeys(symbols))
+
+
+def _tw_official_pull_env(compose_env: Mapping[str, str]) -> dict[str, str]:
+    """Env of deploy_nonprod_vm.sh execute_bounded_source_refresh_entrypoint."""
+    return {
+        **compose_env,
+        "PANTHEON_EXTERNAL_EGRESS": "allowlist",
+        "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": TW_OFFICIAL_EGRESS_HOSTS,
+        "SOURCE_INGEST_BOUNDED_CONNECTOR_ID": TW_OFFICIAL_CONNECTOR_ID,
+        "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_and_pull",
+        "SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL": "reconciled_live_proof",
+        "SOURCE_INGEST_CONTROLLER_RESTART_POLICY": "no",
+        "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "1",
+        "SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS": str(TW_OFFICIAL_PULL_LEASE_SECONDS),
+        "SOURCE_INGEST_CONTROLLER_LEASE_SECONDS": str(TW_OFFICIAL_PULL_LEASE_SECONDS),
+        "SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS": str(TW_OFFICIAL_PULL_TIMEOUT_SECONDS),
+        "SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS": TW_OFFICIAL_CONNECTOR_ID,
+        "SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS": TW_OFFICIAL_CONNECTOR_ID,
+        "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY": "1",
+        "SOURCE_INGEST_MAX_RECORDS": "100",
+        # A fresh isolated stack has no active paper RuntimeBindings to prioritize.
+        "SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS": "",
+        "SOURCE_INGEST_TW_HISTORY_SYMBOLS": _tw_official_history_symbols(compose_env),
+    }
+
+
+def _tw_official_pull_commands(
+    project: str, compose_files: list[str]
+) -> dict[str, list[str]]:
+    return {
+        "source_ingest_up": _compose_command(
+            project, compose_files, "up", "-d", "--no-deps", "--no-build",
+            "--wait", "--wait-timeout", "120", "source-ingest",
+        ),
+        "scheduler_tick": _compose_command(
+            project, compose_files, "run", "--rm", "--build", "--no-deps", "-T",
+            TW_OFFICIAL_PULL_SERVICE,
+        ),
+        "source_ingest_restore": _compose_command(
+            project, compose_files, "up", "-d", "--no-deps", "--no-build",
+            "--wait", "--wait-timeout", "120", "source-ingest",
+        ),
+        "scheduler_start": _compose_command(
+            project, compose_files, "up", "-d", "--no-deps", "--no-build",
+            "--wait", "--wait-timeout", "120", TW_OFFICIAL_PULL_SERVICE,
+        ),
+    }
+
+
+def _run_tw_official_pull(
+    project: str,
+    compose_files: list[str],
+    compose_env: Mapping[str, str],
+    *,
+    snapshot_url: str,
+    reader_headers: Mapping[str, str],
+    diagnostics_dir: Path,
+    start_resident_scheduler: bool = False,
+) -> dict[str, Any]:
+    """Run the bounded Taiwan official pull once; fail on error or empty result."""
+    commands = _tw_official_pull_commands(project, compose_files)
+    pull_env = _tw_official_pull_env(compose_env)
+    diagnostics_dir.mkdir(parents=True, exist_ok=True)
+
+    def _capture(name: str, proc: subprocess.CompletedProcess[str]) -> str:
+        text = f"# exit={proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+        (diagnostics_dir / f"tw-official-pull-{name}.txt").write_text(text, encoding="utf-8")
+        return text
+
+    failure: str | None = None
+    tick_returncode: int | None = None
+    snapshot: Any = None
+    try:
+        up = subprocess.run(
+            commands["source_ingest_up"], env=pull_env, capture_output=True, text=True, check=False
+        )
+        up_text = _capture("source-ingest-up", up)
+        if up.returncode != 0:
+            failure = f"source-ingest restart with TWSE/TPEx allowlist failed: {up_text[-2000:]}"
+        else:
+            tick = subprocess.run(
+                commands["scheduler_tick"], env=pull_env, capture_output=True, text=True,
+                check=False, timeout=TW_OFFICIAL_PULL_TIMEOUT_SECONDS + 120,
+            )
+            tick_returncode = tick.returncode
+            tick_text = _capture("scheduler", tick)
+            if tick.returncode != 0:
+                failure = (
+                    f"{TW_OFFICIAL_PULL_SERVICE} tick exited {tick.returncode}: "
+                    f"{tick_text[-2000:]}"
+                )
+    except subprocess.TimeoutExpired as exc:
+        failure = f"{TW_OFFICIAL_PULL_SERVICE} tick timed out: {exc}"
+    finally:
+        restore = subprocess.run(
+            commands["source_ingest_restore"], env=dict(compose_env),
+            capture_output=True, text=True, check=False,
+        )
+        restore_text = _capture("source-ingest-restore", restore)
+        if restore.returncode != 0 and failure is None:
+            failure = f"source-ingest egress restore failed: {restore_text[-2000:]}"
+    if failure is None:
+        snapshot = _get_json(snapshot_url, reader_headers)
+        closes = snapshot.get("closes") if isinstance(snapshot, Mapping) else None
+        if not isinstance(closes, list) or len(closes) < 2:
+            failure = (
+                f"bounded pull produced no usable {TW_OFFICIAL_SNAPSHOT_SYMBOL} "
+                f"snapshot: {snapshot!r}"
+            )
+    if failure is not None:
+        raise RuntimeError(f"bounded Taiwan official pull failed: {failure}")
+    if start_resident_scheduler:
+        # The resident owner would otherwise be fenced by the bounded tick's lease.
+        time.sleep(TW_OFFICIAL_PULL_LEASE_SECONDS + 5)
+        started = subprocess.run(
+            commands["scheduler_start"], env=dict(compose_env),
+            capture_output=True, text=True, check=False,
+        )
+        started_text = _capture("scheduler-start", started)
+        if started.returncode != 0:
+            raise RuntimeError(
+                f"resident {TW_OFFICIAL_PULL_SERVICE} did not start after the pull: "
+                f"{started_text[-2000:]}"
+            )
+    return {
+        "connector_id": TW_OFFICIAL_CONNECTOR_ID,
+        "commands": commands,
+        "history_symbols": pull_env["SOURCE_INGEST_TW_HISTORY_SYMBOLS"],
+        "scheduler_returncode": tick_returncode,
+        "snapshot_symbol": TW_OFFICIAL_SNAPSHOT_SYMBOL,
+        "snapshot_closes": len(snapshot.get("closes", [])),
+    }
+
+
 def _projector_run_command(project: str, compose_files: list[str]) -> list[str]:
     # `up --build` rebuilds only the services it starts; the projector is run
     # separately, so build it here or a stale image from an earlier run is used.
     return _compose_command(
         project, compose_files, "run", "--rm", "--build", STIMULUS_PROJECTOR_SERVICE
     )
+
+
+def _suite_url_env(urls: Mapping[str, str]) -> dict[str, str]:
+    """Expose every service URL under the names the deployed suites read."""
+    env = {f"PANTHEON_L12_{name.upper()}_URL": url for name, url in urls.items()}
+    # The research and runtime suites read source-ingest as PANTHEON_L12_SOURCE_URL.
+    if "source_ingest" in urls:
+        env["PANTHEON_L12_SOURCE_URL"] = urls["source_ingest"]
+    return env
 
 
 def _bootstrap_trade_journey_projection(
@@ -699,6 +929,7 @@ def _augment_report(
     *,
     main_retirement: Mapping[str, Any] | None,
     database_migration: Mapping[str, Any] | None,
+    tw_official_pull: Mapping[str, Any] | None = None,
     preclean: Mapping[str, Any] | None,
     teardown: Mapping[str, Any] | None,
 ) -> None:
@@ -708,6 +939,7 @@ def _augment_report(
     report["harness"] = {
         "main_negative_binding_retirement": dict(main_retirement or {}),
         "database_migration": dict(database_migration or {}),
+        "tw_official_pull": dict(tw_official_pull or {}),
         "isolated_safe_controls": dict(ISOLATED_SAFE_CONTROLS),
         "preclean": dict(preclean or {}),
         "teardown": dict(teardown or {}),
@@ -868,6 +1100,7 @@ def main(argv: list[str] | None = None) -> int:
     # excluded from ISOLATED_SAFE_CONTROLS because that mapping is written to
     # the evidence report.
     compose_env["PANTHEON_BFF_JWT_SECRET"] = secrets.token_urlsafe(48)
+    compose_env.update(_isolated_dev_principal_env(compose_env))
     for port_name, default_port in DEFAULT_PORTS.items():
         if port_name not in compose_env:
             compose_env[port_name] = str(default_port + args.port_offset)
@@ -908,8 +1141,20 @@ def main(argv: list[str] | None = None) -> int:
     test_env["PANTHEON_L12_COMPOSE_FILES"] = os.pathsep.join(compose_files)
     test_env["PANTHEON_L12_EVIDENCE_OUTPUT"] = str(args.evidence_output.resolve())
     test_env["PANTHEON_L12_PORT_OFFSET"] = str(args.port_offset)
-    for name, url in urls.items():
-        test_env[f"PANTHEON_L12_{name.upper()}_URL"] = url
+    test_env.update(_suite_url_env(urls))
+    reader_token, reader_tenant = _isolated_reader_token(compose_env, "l12-domain-suites")
+    test_env["PANTHEON_L12_SOURCE_READER_TOKEN"] = reader_token
+    test_env["PANTHEON_L12_SOURCE_READER_TENANT_ID"] = reader_tenant
+    test_env["PANTHEON_L12_TENANT_ID"] = compose_env["PANTHEON_BFF_TENANT_ID"]
+    test_env["PANTHEON_L12_OPERATOR_TOKEN"] = _isolated_human_token(
+        compose_env, "l12-domain-suites-operator", "operator"
+    )
+    test_env["PANTHEON_L12_REVIEWER_TOKEN"] = _isolated_human_token(
+        compose_env, "l12-domain-suites-reviewer", "governance_reviewer"
+    )
+    test_env["PANTHEON_L12_BFF_BEARER"] = _isolated_human_token(
+        compose_env, "l12-domain-suites-operator", "operator", "admin"
+    )
 
     # Resolve python binary
     python_bin = sys.executable
@@ -941,6 +1186,7 @@ def main(argv: list[str] | None = None) -> int:
     pytest_invoked = False
     main_retirement: dict[str, Any] | None = None
     database_migration: dict[str, Any] | None = None
+    tw_official_pull: dict[str, Any] | None = None
     preclean: dict[str, Any] | None = None
     teardown: dict[str, Any] | None = None
     try:
@@ -1001,6 +1247,14 @@ def main(argv: list[str] | None = None) -> int:
                 compose_files,
                 compose_env,
             )
+            # Same order as start_dev_paper_principal_issuer: owners start
+            # with their principal files already written.
+            issuer_command = _compose_command(
+                args.compose_project, compose_files, "up", "-d", "--build",
+                "--no-deps", "--wait", "--wait-timeout", "60", PRINCIPAL_ISSUER_SERVICE,
+            )
+            print(f"[*] Starting the dev principal issuer: {' '.join(issuer_command)}")
+            subprocess.run(issuer_command, env=compose_env, check=True)
             command = _compose_command(
                 args.compose_project,
                 compose_files,
@@ -1010,13 +1264,31 @@ def main(argv: list[str] | None = None) -> int:
                 "--wait",
                 "--wait-timeout",
                 str(max(1, int(args.ready_timeout))),
-                *required_services,
+                # The resident scheduler holds the source controller lease, so it
+                # starts after the bounded Taiwan pull instead of beside it.
+                *[name for name in required_services if name != TW_OFFICIAL_PULL_SERVICE],
             )
             print(
                 "[*] Provisioning isolated Compose services "
                 f"(offset +{args.port_offset}): {' '.join(command)}"
             )
             subprocess.run(command, env=compose_env, check=True)
+            print("[*] Running the bounded Taiwan official pull (tw-twse-tpex-official-market)...")
+            tw_official_pull = _run_tw_official_pull(
+                args.compose_project,
+                compose_files,
+                compose_env,
+                snapshot_url=(
+                    f"{urls['source_ingest']}/api/source-ingest/snapshots/latest"
+                    f"?symbol={urllib.parse.quote(TW_OFFICIAL_SNAPSHOT_SYMBOL, safe='')}"
+                ),
+                reader_headers={
+                    "Authorization": f"Bearer {reader_token}",
+                    "X-Tenant-Id": reader_tenant,
+                },
+                diagnostics_dir=args.evidence_output.resolve().parent / "diagnostics",
+                start_resident_scheduler=TW_OFFICIAL_PULL_SERVICE in required_services,
+            )
             if args.stimulus_gate:
                 projector_command = _projector_run_command(
                     args.compose_project, compose_files
@@ -1025,13 +1297,8 @@ def main(argv: list[str] | None = None) -> int:
                     "[*] Running one-shot Agora projector after market seeding: "
                     f"{' '.join(projector_command)}"
                 )
-                projector_secret = compose_env.get("PANTHEON_RUNTIME_JWT_SECRET") or compose_env.get("PANTHEON_BFF_JWT_SECRET") or ""
-                projector_tenant = compose_env.get("PANTHEON_TENANT_ID") or compose_env.get("PANTHEON_BFF_TENANT_ID") or "default"
-                projector_token = _mint_projector_service_jwt(
-                    projector_secret,
-                    tenant_id=projector_tenant,
-                    issuer=compose_env.get("PANTHEON_RUNTIME_JWT_ISSUER") or compose_env.get("PANTHEON_BFF_JWT_ISSUER"),
-                    audience=compose_env.get("PANTHEON_RUNTIME_JWT_AUDIENCE") or compose_env.get("PANTHEON_BFF_JWT_AUDIENCE"),
+                projector_token, projector_tenant = _isolated_reader_token(
+                    compose_env, "agora-market-projector"
                 )
                 projector_process = subprocess.run(
                     projector_command,
@@ -1136,6 +1403,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.evidence_output,
                     main_retirement=main_retirement,
                     database_migration=database_migration,
+                    tw_official_pull=tw_official_pull,
                     preclean=preclean,
                     teardown=teardown,
                 )

@@ -110,7 +110,10 @@ class DeployedHumanLearningHarness:
         self.compose_project = os.getenv("PANTHEON_L12_COMPOSE_PROJECT", "pantheon").strip()
         self.timeout_seconds = float(os.getenv("PANTHEON_L12_POLL_TIMEOUT_SECONDS", "210"))
         self.poll_seconds = float(os.getenv("PANTHEON_L12_POLL_INTERVAL_SECONDS", "2"))
-        self.tenant_id = os.getenv("PANTHEON_L12_HUMAN_LEARNING_TENANT_ID", "pantheon-local").strip()
+        self.tenant_id = os.getenv(
+            "PANTHEON_L12_HUMAN_LEARNING_TENANT_ID",
+            os.getenv("PANTHEON_L12_TENANT_ID", "pantheon-local"),
+        ).strip()
         self.consultation_tenant_id = os.getenv(
             "PANTHEON_L12_CONSULTATION_TENANT_ID",
             os.getenv("PANTHEON_TENANT_ID", "tenant-dev"),

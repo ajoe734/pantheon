@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import math
+import os
 import re
 import urllib.parse
 import urllib.request
@@ -59,6 +60,36 @@ TAIFEX_OPENAPI_BASE_URL = "https://openapi.taifex.com.tw/v1"
 
 TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL = 2
 TW_OFFICIAL_HISTORY_MAX_MONTHS = 2
+SOURCE_INGEST_TW_HISTORY_TRADING_DAYS_DEFAULT = 40
+TW_PRICE_DAILY_DEFAULT_AVAILABLE_TIME_SUFFIX = "T14:30:00+08:00"
+
+
+def resolve_tw_history_trading_days(val: Any = None) -> int:
+    """Resolve the target trading-day depth for Taiwan official history."""
+    if val is not None and str(val).strip():
+        try:
+            days = int(val)
+            if days > 0:
+                return days
+        except (TypeError, ValueError):
+            pass
+    raw = os.getenv("SOURCE_INGEST_TW_HISTORY_TRADING_DAYS", "").strip()
+    if raw:
+        try:
+            days = int(raw)
+            if days > 0:
+                return days
+        except (TypeError, ValueError):
+            pass
+    return SOURCE_INGEST_TW_HISTORY_TRADING_DAYS_DEFAULT
+
+
+def derive_tw_history_max_months(trading_days: int) -> int:
+    """Derive bounded monthly fetch count for a target trading-day history depth."""
+    depth = max(1, trading_days)
+    months = max(2, math.ceil(depth / 15) + 1)
+    return min(months, 12)
+
 
 # Source-owned, immutable market-session evidence catalog.  The price adapter
 # binds this evidence only to TWSE records whose trade date is inside the exact
@@ -442,6 +473,35 @@ def _roc_date_to_iso(value: Any) -> str:
     return text
 
 
+def _tw_price_available_time(val: Any, date: str) -> str:
+    """Normalize available_time for tw_price_daily to an aware ISO 8601 string with offset.
+
+    tw_price_daily rows must carry a timezone-aware available_time (ISO 8601 with offset)
+    and never a bare date.
+    """
+    target_date = _roc_date_to_iso(date) or _text(date)
+    s = _text(val)
+    if s and re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$", s):
+        if target_date and s.startswith(target_date):
+            return s
+        if not target_date:
+            return s
+    if s and re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$", s):
+        iso_str = s.replace(" ", "T")
+        if target_date and iso_str.startswith(target_date):
+            return iso_str
+        if not target_date:
+            return iso_str
+    if target_date and re.match(r"^\d{4}-\d{2}-\d{2}$", target_date):
+        return f"{target_date}{TW_PRICE_DAILY_DEFAULT_AVAILABLE_TIME_SUFFIX}"
+    if s and re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+        return f"{s}{TW_PRICE_DAILY_DEFAULT_AVAILABLE_TIME_SUFFIX}"
+    if s and re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$", s):
+        return s
+    return _utc_now()
+
+
+
 def _month_anchors(value: Any, *, max_months: int) -> tuple[str, ...]:
     """Return a bounded newest-first list of Gregorian month anchors."""
 
@@ -791,15 +851,32 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         venue: str,
         *,
         anchor_date: str,
+        history_trading_days: int | None = None,
+        max_months: int | None = None,
         timeout_seconds: float = 20.0,
         trace_id: str = "",
     ) -> tuple[SourceRecord, ...]:
-        """Fetch at most two official monthly windows for one active symbol."""
+        """Fetch official monthly windows for one active symbol bounded by history depth."""
+
+        raw_env = os.getenv("SOURCE_INGEST_TW_HISTORY_TRADING_DAYS", "").strip()
+        if history_trading_days is not None:
+            target_days = max(1, int(history_trading_days))
+        elif raw_env:
+            target_days = max(1, int(raw_env))
+        else:
+            target_days = TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL
+
+        if max_months is not None:
+            resolved_max_months = max(1, int(max_months))
+        elif history_trading_days is not None or raw_env:
+            resolved_max_months = derive_tw_history_max_months(target_days)
+        else:
+            resolved_max_months = TW_OFFICIAL_HISTORY_MAX_MONTHS
 
         records: list[SourceRecord] = []
         for month_anchor in _month_anchors(
             anchor_date,
-            max_months=TW_OFFICIAL_HISTORY_MAX_MONTHS,
+            max_months=resolved_max_months,
         ):
             payload, api_endpoint = self.fetch_price_history_payload(
                 symbol,
@@ -814,6 +891,7 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                     payload,
                     api_endpoint=api_endpoint,
                     available_time=anchor_date,
+                    max_records=max(self.max_records, target_days),
                     trace_id=trace_id,
                 )
             )
@@ -822,7 +900,7 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                 for record in records
                 if record.metadata.get("event_time")
             }
-            if len(distinct_dates) >= TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL:
+            if len(distinct_dates) >= target_days:
                 break
         return tuple(records)
 
@@ -834,6 +912,7 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         *,
         api_endpoint: str | None = None,
         available_time: str | None = None,
+        max_records: int | None = None,
         trace_id: str = "",
     ) -> tuple[SourceRecord, ...]:
         canonical_venue = _canonical_venue(venue)
@@ -909,23 +988,28 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                     "transactions": _int(_first(raw_row, "成交筆數", "筆數", "Transaction")),
                     "source_dataset": source_dataset,
                     "api_endpoint": api_endpoint or str(descriptor["endpoint"]),
-                    "available_time": available_time or date,
+                    "available_time": _tw_price_available_time(
+                        available_time or _first(raw_row, "available_time", "AvailableTime"),
+                        date,
+                    ),
                     "history_window": "official_monthly",
                     "raw_row": raw_row,
                 }
             )
 
+        limit = max_records if max_records is not None else self.max_records
         return self._records_from_normalized_rows(
             dataset="tw_price_daily",
             venue=canonical_venue,
             normalized_rows=sorted(
                 normalized_rows,
                 key=lambda row: str(row.get("date") or ""),
-            )[-self.max_records :],
+            )[-limit :],
             source_dataset=source_dataset,
             api_endpoint=api_endpoint or str(descriptor["endpoint"]),
             available_time=available_time,
             universe_tier="core_universe",
+            max_records=limit,
             trace_id=trace_id,
         )
 
@@ -941,6 +1025,7 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         available_time: str | None = None,
         universe_tier: str = "core_universe",
         priority_symbols: Sequence[str] | str | None = None,
+        max_records: int | None = None,
         trace_id: str = "",
     ) -> tuple[SourceRecord, ...]:
         tier = _tier_name(universe_tier)
@@ -973,6 +1058,7 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
             api_endpoint=api_endpoint,
             available_time=available_time,
             universe_tier=tier,
+            max_records=max_records,
             trace_id=trace_id,
         )
 
@@ -986,12 +1072,14 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         api_endpoint: str,
         available_time: str | None,
         universe_tier: str,
+        max_records: int | None = None,
         trace_id: str,
     ) -> tuple[SourceRecord, ...]:
         tier = _tier_name(universe_tier)
         endpoint = dict(_endpoint_for(dataset, venue))
+        limit = max_records if max_records is not None else self.max_records
         records: list[SourceRecord] = []
-        for row in normalized_rows[: self.max_records]:
+        for row in normalized_rows[: limit]:
             normalized_row = dict(row)
             calendar_evidence = None
             if dataset == "tw_price_daily":
@@ -999,6 +1087,13 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                     venue=str(row["venue"]),
                     trade_date=str(row.get("date") or ""),
                 )
+                row_available_time = _tw_price_available_time(
+                    row.get("available_time") or available_time,
+                    str(row.get("date") or ""),
+                )
+                normalized_row["available_time"] = row_available_time
+            else:
+                row_available_time = row.get("available_time") or available_time or _utc_now()
             row_hash = _stable_hash(
                 {"dataset": dataset, "venue": normalized_row["venue"], "row": normalized_row}
             )
@@ -1022,7 +1117,7 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                         "symbol_canonical": row.get("symbol_canonical"),
                         "date": row.get("date"),
                         "event_time": row.get("date"),
-                        "available_time": row.get("available_time") or available_time or _utc_now(),
+                        "available_time": row_available_time,
                         "api_endpoint": api_endpoint,
                         "cadence": endpoint.get("cadence"),
                         "tier_scope": list(endpoint.get("tier_scope") or []),
@@ -1163,7 +1258,10 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
             "transactions": _int(_first(row, "Transaction", "TransactionNumber", "成交筆數")),
             "source_dataset": source_dataset,
             "api_endpoint": api_endpoint,
-            "available_time": available_time or date,
+            "available_time": _tw_price_available_time(
+                available_time or _first(row, "available_time", "AvailableTime"),
+                date,
+            ),
             "raw_row": dict(row),
         }
 

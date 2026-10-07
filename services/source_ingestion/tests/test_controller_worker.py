@@ -1066,6 +1066,43 @@ def test_due_state_readback_rejects_mutating_non_executed_connector_health() -> 
     assert raised.value.stage == "provider_boundary"
 
 
+def test_due_state_readback_accepts_staleness_seconds_drift_for_non_executed_connector() -> None:
+    pre_actual = _simulation_actual_readback(record_count=1, has_sim_record=False, include_official=True)
+    actual = _simulation_actual_readback(record_count=6, has_sim_record=True, include_official=True)
+    pre_actual["connectors"][0]["source_health"]["staleness_seconds"] = 186381
+    actual["connectors"][0]["source_health"]["staleness_seconds"] = 186386
+
+    _validate_due_state_readback(
+        reconcile=_simulation_reconcile(),
+        pre_actual=pre_actual,
+        actual=actual,
+        expected_controller_id="source-ingestion-test:generation-test",
+        expected_sequence_no=1,
+        expected_deployment=_deployment(),
+        executed_connector_ids=(SIMULATION_CONNECTOR_ID,),
+    )
+
+
+def test_due_state_readback_rejects_mutating_non_executed_connector_last_failure_at() -> None:
+    pre_actual = _simulation_actual_readback(record_count=1, has_sim_record=False, include_official=True)
+    actual = _simulation_actual_readback(record_count=6, has_sim_record=True, include_official=True)
+    pre_actual["connectors"][0]["source_health"]["last_failure_at"] = None
+    actual["connectors"][0]["source_health"]["last_failure_at"] = "2026-10-07T12:00:00Z"
+
+    with pytest.raises(ControllerTickError, match="mutated source_health for non-executed connector") as raised:
+        _validate_due_state_readback(
+            reconcile=_simulation_reconcile(),
+            pre_actual=pre_actual,
+            actual=actual,
+            expected_controller_id="source-ingestion-test:generation-test",
+            expected_sequence_no=1,
+            expected_deployment=_deployment(),
+            executed_connector_ids=(SIMULATION_CONNECTOR_ID,),
+        )
+    assert raised.value.stage == "provider_boundary"
+
+
+
 def test_terminal_readback_accepts_resolved_historical_dead_letters() -> None:
     actual = _actual_readback()
     actual["dlq_count"] = 1
@@ -1713,6 +1750,137 @@ def test_run_controller_tick_mixed_connectors_only_executes_egress_free_in_recon
     assert CONNECTOR_ID not in call["exclusive_connector_ids"]
 
 
+def test_run_controller_tick_reconcile_only_accepts_staleness_seconds_drift_for_non_executed_connector(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    config = _config(
+        tmp_path,
+        truth_level="scheduled_tick",
+        mode=RECONCILE_ONLY_MODE,
+    )
+    state = _state()
+    store = RecordingStateStore(config.state_path, events)
+    writer = RecordingWriter(events)
+
+    def load_desired_state(*, timeout_seconds: float) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
+        return (*_personas(), *_simulation_personas()), _desired_meta()
+
+    def reconcile_desired_state(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "desired_state_sha256": "desired-state-sha",
+            "summary": {"total": 2, "satisfied": 2},
+            "results": [
+                {
+                    "persona_id": "persona-source-test",
+                    "actions": [{"dataset": DATASET, "connector_id": CONNECTOR_ID, "status": "satisfied"}],
+                },
+                {
+                    "persona_id": "persona-sim-test",
+                    "actions": [{"dataset": SIMULATION_DATASET, "connector_id": SIMULATION_CONNECTOR_ID, "status": "satisfied"}],
+                },
+            ],
+        }
+
+    read_count = 0
+
+    def read_actual_state(**kwargs: Any) -> dict[str, Any]:
+        nonlocal read_count
+        read_count += 1
+        base = _actual_readback()
+        base["connectors"][0]["source_health"]["staleness_seconds"] = 186381 if read_count == 1 else 186386
+        base["connectors"].append(_simulation_connector_readback(has_record=(read_count > 1)))
+        base["connector_count"] = 2
+        base["source_record_count"] = 1 if read_count == 1 else 6
+        return base
+
+    def run_schedule_tick(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "summary": {
+                "total_ran": 1,
+                "total_skipped": 0,
+                "total_failed": 0,
+                "total_enqueued": 1,
+            }
+        }
+
+    monkeypatch.setattr(controller_worker, "load_desired_state", load_desired_state)
+    monkeypatch.setattr(controller_worker, "reconcile_desired_state", reconcile_desired_state)
+    monkeypatch.setattr(controller_worker, "read_actual_state", read_actual_state)
+    monkeypatch.setattr(controller_worker, "run_schedule_tick", run_schedule_tick)
+
+    result = run_controller_tick(config=config, state=state, store=store, writer=writer)
+    assert result["status"] == "ok"
+
+
+def test_run_controller_tick_reconcile_only_rejects_last_failure_at_drift_for_non_executed_connector(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    config = _config(
+        tmp_path,
+        truth_level="scheduled_tick",
+        mode=RECONCILE_ONLY_MODE,
+    )
+    state = _state()
+    store = RecordingStateStore(config.state_path, events)
+    writer = RecordingWriter(events)
+
+    def load_desired_state(*, timeout_seconds: float) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
+        return (*_personas(), *_simulation_personas()), _desired_meta()
+
+    def reconcile_desired_state(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "desired_state_sha256": "desired-state-sha",
+            "summary": {"total": 2, "satisfied": 2},
+            "results": [
+                {
+                    "persona_id": "persona-source-test",
+                    "actions": [{"dataset": DATASET, "connector_id": CONNECTOR_ID, "status": "satisfied"}],
+                },
+                {
+                    "persona_id": "persona-sim-test",
+                    "actions": [{"dataset": SIMULATION_DATASET, "connector_id": SIMULATION_CONNECTOR_ID, "status": "satisfied"}],
+                },
+            ],
+        }
+
+    read_count = 0
+
+    def read_actual_state(**kwargs: Any) -> dict[str, Any]:
+        nonlocal read_count
+        read_count += 1
+        base = _actual_readback()
+        if read_count > 1:
+            base["connectors"][0]["source_health"]["last_failure_at"] = "2026-10-07T12:00:00Z"
+        base["connectors"].append(_simulation_connector_readback(has_record=(read_count > 1)))
+        base["connector_count"] = 2
+        base["source_record_count"] = 1 if read_count == 1 else 6
+        return base
+
+    def run_schedule_tick(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "summary": {
+                "total_ran": 1,
+                "total_skipped": 0,
+                "total_failed": 0,
+                "total_enqueued": 1,
+            }
+        }
+
+    monkeypatch.setattr(controller_worker, "load_desired_state", load_desired_state)
+    monkeypatch.setattr(controller_worker, "reconcile_desired_state", reconcile_desired_state)
+    monkeypatch.setattr(controller_worker, "read_actual_state", read_actual_state)
+    monkeypatch.setattr(controller_worker, "run_schedule_tick", run_schedule_tick)
+
+    with pytest.raises(ControllerTickError, match="mutated source_health for non-executed connector") as raised:
+        run_controller_tick(config=config, state=state, store=store, writer=writer)
+    assert raised.value.stage == "provider_boundary"
+
+
+
 def test_run_controller_tick_reconcile_only_fails_when_egress_free_schedule_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2193,3 +2361,418 @@ def test_terminal_readback_rejects_unparsable_refresh_receipt_for_taiwan_officia
             actual=actual,
             now=now,
         )
+
+
+class _StubPersonaOwnerHandler:
+    personas: list[dict[str, Any]] = []
+    status_code: int = 200
+    raw_body: bytes | None = None
+
+
+def _make_stub_persona_server():
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(_StubPersonaOwnerHandler.status_code)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            if _StubPersonaOwnerHandler.raw_body is not None:
+                self.wfile.write(_StubPersonaOwnerHandler.raw_body)
+            else:
+                self.wfile.write(json.dumps(_StubPersonaOwnerHandler.personas).encode("utf-8"))
+
+        def log_message(self, format, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, port
+
+
+def test_load_desired_state_merges_default_and_active_personas(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    server, port = _make_stub_persona_server()
+    try:
+        active_persona_1 = {
+            "persona_id": "persona-paper-1",
+            "lifecycle_state": "paper_running",
+            "status": "active",
+            "required_data_sources": [_simulation_requirement()],
+        }
+        active_persona_2 = {
+            "persona_id": "persona-paper-2",
+            "lifecycle_state": "paper_running",
+            "status": "active",
+            "required_data_sources": [_simulation_requirement()],
+        }
+        active_persona_no_req = {
+            "persona_id": "persona-no-req",
+            "lifecycle_state": "paper_running",
+            "status": "active",
+            "required_data_sources": [],
+        }
+        retired_persona = {
+            "persona_id": "persona-retired",
+            "lifecycle_state": "retired",
+            "status": "active",
+            "required_data_sources": [_simulation_requirement()],
+        }
+        archived_persona = {
+            "persona_id": "persona-archived",
+            "lifecycle_state": "paper_running",
+            "status": "archived",
+            "required_data_sources": [_simulation_requirement()],
+        }
+        _StubPersonaOwnerHandler.status_code = 200
+        _StubPersonaOwnerHandler.raw_body = None
+        _StubPersonaOwnerHandler.personas = [
+            active_persona_1,
+            active_persona_2,
+            active_persona_no_req,
+            retired_persona,
+            archived_persona,
+        ]
+
+        monkeypatch.setenv("SOURCE_INGEST_DESIRED_STATE_URL", f"http://127.0.0.1:{port}/api/personas")
+        monkeypatch.delenv("SOURCE_INGEST_DESIRED_STATE_PATH", raising=False)
+
+        personas, meta = controller_worker.load_desired_state(timeout_seconds=5.0)
+        pids = [p["persona_id"] for p in personas]
+        assert pids == ["persona-source-ingest-public-market"]
+        holder = personas[0]
+        req_datasets = [r["dataset"] for r in (holder.get("required_data_sources") or [])]
+        assert "tw_price_daily" in req_datasets
+        assert "us_price_daily" in req_datasets
+        assert req_datasets.count("us_price_daily") == 1
+        assert meta["persona_count"] == 1
+        assert meta["requirement_count"] == 2
+        assert meta["transport"] == "internal_http"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_load_desired_state_fails_closed_when_persona_owner_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    server, port = _make_stub_persona_server()
+    try:
+        _StubPersonaOwnerHandler.status_code = 500
+        _StubPersonaOwnerHandler.raw_body = b'{"detail": "internal error"}'
+        _StubPersonaOwnerHandler.personas = []
+
+        monkeypatch.setenv("SOURCE_INGEST_DESIRED_STATE_URL", f"http://127.0.0.1:{port}/api/personas")
+        monkeypatch.delenv("SOURCE_INGEST_DESIRED_STATE_PATH", raising=False)
+
+        with pytest.raises(ControllerTickError) as exc_info:
+            controller_worker.load_desired_state(timeout_seconds=5.0)
+        assert exc_info.value.stage == "persona_owner_read"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_load_desired_state_fails_closed_when_persona_owner_returns_malformed_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    server, port = _make_stub_persona_server()
+    try:
+        _StubPersonaOwnerHandler.status_code = 200
+        _StubPersonaOwnerHandler.raw_body = b'{"not_a_persona_list": 123}'
+        _StubPersonaOwnerHandler.personas = []
+
+        monkeypatch.setenv("SOURCE_INGEST_DESIRED_STATE_URL", f"http://127.0.0.1:{port}/api/personas")
+        monkeypatch.delenv("SOURCE_INGEST_DESIRED_STATE_PATH", raising=False)
+
+        with pytest.raises(ControllerTickError) as exc_info:
+            controller_worker.load_desired_state(timeout_seconds=5.0)
+        assert exc_info.value.stage == "persona_owner_read"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_two_controller_ticks_preserve_active_persona_simulation_schedule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import socket
+    import threading
+    import time
+    import urllib.request
+    import uvicorn
+    import services.source_ingestion.main as sim
+
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+
+    data_dir = tmp_path / "source_data"
+    data_dir.mkdir()
+    token = "test-token-1234567890-test-token-1234567890"
+    (data_dir / "controller_token").write_text(token)
+    monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TOKEN", token)
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_STATE_PATH", str(data_dir / "controller_state.json"))
+
+    runtime = sim.create_runtime(data_dir=data_dir)
+    monkeypatch.setattr(sim, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
+    app = sim.create_app(runtime)
+
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    ingest_port = s.getsockname()[1]
+    s.close()
+
+    ingest_config = uvicorn.Config(app, host="127.0.0.1", port=ingest_port, log_level="error")
+    ingest_server = uvicorn.Server(ingest_config)
+    t_ingest = threading.Thread(target=ingest_server.run, daemon=True)
+    t_ingest.start()
+
+    persona_server, persona_port = _make_stub_persona_server()
+
+    req_spec = [
+        {
+            "dataset": SIMULATION_DATASET,
+            "market": "US",
+            "cadence": "daily",
+            "source_class": "live_pull",
+            "connector_candidates": [SIMULATION_CONNECTOR_ID],
+            "policy_gates": ["require_connector_approved", "require_schedule_active", "require_source_health_ok"],
+        }
+    ]
+    active_persona_1 = {
+        "persona_id": "dev-paper-active-1",
+        "lifecycle_state": "paper_running",
+        "status": "active",
+        "name": "Dev Paper Active 1",
+        "required_data_sources": list(req_spec),
+    }
+    active_persona_2 = {
+        "persona_id": "dev-paper-active-2",
+        "lifecycle_state": "paper_running",
+        "status": "active",
+        "name": "Dev Paper Active 2",
+        "required_data_sources": list(req_spec),
+    }
+    active_persona_3 = {
+        "persona_id": "dev-paper-active-3",
+        "lifecycle_state": "paper_running",
+        "status": "active",
+        "name": "Dev Paper Active 3",
+        "required_data_sources": list(req_spec),
+    }
+    persona_no_req = {
+        "persona_id": "dev-paper-no-req",
+        "lifecycle_state": "paper_running",
+        "status": "active",
+        "name": "Dev Paper No Req",
+        "required_data_sources": [],
+    }
+    all_personas = [active_persona_1, active_persona_2, active_persona_3, persona_no_req]
+    _StubPersonaOwnerHandler.status_code = 200
+    _StubPersonaOwnerHandler.raw_body = None
+    _StubPersonaOwnerHandler.personas = all_personas
+
+    for _ in range(50):
+        try:
+            req = urllib.request.Request(f"http://127.0.0.1:{ingest_port}/readyz")
+            resp = urllib.request.urlopen(req, timeout=1)
+            break
+        except Exception:
+            time.sleep(0.05)
+
+    try:
+        state_path = data_dir / "controller_state.json"
+        alive_path = data_dir / "controller_alive"
+        store = ControllerStateStore(state_path)
+        deployment = _deployment()
+        state = ControllerState(
+            controller_id="test-controller",
+            controller_name="test-controller-name",
+            sequence_no=0,
+            deployment=deployment,
+            tenant_id="default",
+            environment="dev",
+        )
+        store.save(state)
+
+        config = ControllerConfig(
+            api_url=f"http://127.0.0.1:{ingest_port}",
+            database_url="",
+            lease_seconds=60,
+            interval_seconds=60,
+            timeout_seconds=5.0,
+            mode=RECONCILE_ONLY_MODE,
+            truth_level="scheduled_tick",
+            max_ticks=0,
+            state_path=state_path,
+            alive_path=alive_path,
+            controller_token=token,
+            max_concurrency=1,
+        )
+
+        class DummyWriter:
+            async def record_heartbeat(self, *a, **k): pass
+            async def record_tick(self, *a, **k): pass
+            async def record_success(self, *a, **k): pass
+            async def record_failure(self, *a, **k): pass
+            async def record_repair(self, *a, **k): pass
+
+        writer = DummyWriter()
+        monkeypatch.setenv("SOURCE_INGEST_DESIRED_STATE_URL", f"http://127.0.0.1:{persona_port}/api/personas")
+
+        # Tick 1: Provisions and enables the simulation connector schedule with exactly one binding
+        run_controller_tick(config=config, state=state, store=store, writer=writer)
+        sched1 = runtime.schedule_config_store.get_schedule(SIMULATION_CONNECTOR_ID)
+        assert sched1 is not None
+        assert sched1.enabled is True
+        bindings1 = [k for k, v in runtime.requirement_snapshot_store.latest.bindings.items() if v == SIMULATION_CONNECTOR_ID]
+        assert len(bindings1) == 1
+
+        # Tick 2: Second tick preserves the simulation connector schedule enabled with exactly one binding
+        run_controller_tick(config=config, state=state, store=store, writer=writer)
+        sched2 = runtime.schedule_config_store.get_schedule(SIMULATION_CONNECTOR_ID)
+        assert sched2 is not None
+        assert sched2.enabled is True
+        bindings2 = [k for k, v in runtime.requirement_snapshot_store.latest.bindings.items() if v == SIMULATION_CONNECTOR_ID]
+        assert len(bindings2) == 1
+        assert bindings1 == bindings2
+
+        # Tick 3: Retire all personas -> connector schedule and connector are retired
+        _StubPersonaOwnerHandler.personas = [{**p, "lifecycle_state": "retired"} for p in all_personas]
+        run_controller_tick(config=config, state=state, store=store, writer=writer)
+        sched3 = runtime.schedule_config_store.get_schedule(SIMULATION_CONNECTOR_ID)
+        assert sched3 is not None
+        assert sched3.enabled is False
+        connector_cfg = runtime.connector_store.get_config(SIMULATION_CONNECTOR_ID)
+        assert connector_cfg is not None
+        assert connector_cfg.connector.status.value == "disabled"
+    finally:
+        ingest_server.should_exit = True
+        persona_server.shutdown()
+        persona_server.server_close()
+
+
+def test_persona_owner_read_failure_leaves_every_connector_and_schedule_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import socket
+    import threading
+    import time
+    import urllib.request
+    import uvicorn
+    import services.source_ingestion.main as sim
+
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+
+    data_dir = tmp_path / "source_data"
+    data_dir.mkdir()
+    token = "test-token-1234567890-test-token-1234567890"
+    (data_dir / "controller_token").write_text(token)
+    monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TOKEN", token)
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_STATE_PATH", str(data_dir / "controller_state.json"))
+
+    runtime = sim.create_runtime(data_dir=data_dir)
+    monkeypatch.setattr(sim, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
+    app = sim.create_app(runtime)
+
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    ingest_port = s.getsockname()[1]
+    s.close()
+
+    ingest_config = uvicorn.Config(app, host="127.0.0.1", port=ingest_port, log_level="error")
+    ingest_server = uvicorn.Server(ingest_config)
+    t_ingest = threading.Thread(target=ingest_server.run, daemon=True)
+    t_ingest.start()
+
+    persona_server, persona_port = _make_stub_persona_server()
+
+    active_persona = {
+        "persona_id": "dev-paper-active-persona",
+        "lifecycle_state": "paper_running",
+        "status": "active",
+        "name": "Dev Paper Active Persona",
+        "mandate": "Testing",
+        "required_data_sources": [
+            {
+                "dataset": SIMULATION_DATASET,
+                "market": "US",
+                "cadence": "daily",
+                "source_class": "live_pull",
+                "connector_candidates": [SIMULATION_CONNECTOR_ID],
+                "policy_gates": ["require_connector_approved", "require_schedule_active", "require_source_health_ok"],
+            }
+        ],
+    }
+    _StubPersonaOwnerHandler.status_code = 200
+    _StubPersonaOwnerHandler.raw_body = None
+    _StubPersonaOwnerHandler.personas = [active_persona]
+
+    for _ in range(50):
+        try:
+            req = urllib.request.Request(f"http://127.0.0.1:{ingest_port}/readyz")
+            resp = urllib.request.urlopen(req, timeout=1)
+            break
+        except Exception:
+            time.sleep(0.05)
+
+    try:
+        state_path = data_dir / "controller_state.json"
+        alive_path = data_dir / "controller_alive"
+        store = ControllerStateStore(state_path)
+        deployment = _deployment()
+        state = ControllerState(
+            controller_id="test-controller",
+            controller_name="test-controller-name",
+            sequence_no=0,
+            deployment=deployment,
+            tenant_id="default",
+            environment="dev",
+        )
+        store.save(state)
+
+        config = ControllerConfig(
+            api_url=f"http://127.0.0.1:{ingest_port}",
+            database_url="",
+            lease_seconds=60,
+            interval_seconds=60,
+            timeout_seconds=5.0,
+            mode=RECONCILE_ONLY_MODE,
+            truth_level="scheduled_tick",
+            max_ticks=0,
+            state_path=state_path,
+            alive_path=alive_path,
+            controller_token=token,
+            max_concurrency=1,
+        )
+
+        class DummyWriter:
+            async def record_heartbeat(self, *a, **k): pass
+            async def record_tick(self, *a, **k): pass
+            async def record_success(self, *a, **k): pass
+            async def record_failure(self, *a, **k): pass
+            async def record_repair(self, *a, **k): pass
+
+        writer = DummyWriter()
+        monkeypatch.setenv("SOURCE_INGEST_DESIRED_STATE_URL", f"http://127.0.0.1:{persona_port}/api/personas")
+
+        # Initial tick sets up connectors
+        run_controller_tick(config=config, state=state, store=store, writer=writer)
+
+        configs_before = {c.connector.connector_id: c.to_dict() for c in runtime.connector_store.list_configs()}
+        schedules_before = {s.connector_id: s.to_dict() for s in runtime.schedule_config_store.list_schedules()}
+
+        # Owner read now fails
+        _StubPersonaOwnerHandler.status_code = 500
+        _StubPersonaOwnerHandler.raw_body = b'{"error": "owner failure"}'
+
+        with pytest.raises(ControllerTickError) as exc_info:
+            run_controller_tick(config=config, state=state, store=store, writer=writer)
+        assert exc_info.value.stage == "persona_owner_read"
+
+        configs_after = {c.connector.connector_id: c.to_dict() for c in runtime.connector_store.list_configs()}
+        schedules_after = {s.connector_id: s.to_dict() for s in runtime.schedule_config_store.list_schedules()}
+
+        assert configs_before == configs_after
+        assert schedules_before == schedules_after
+    finally:
+        ingest_server.should_exit = True
+        persona_server.shutdown()
+        persona_server.server_close()
+
+
