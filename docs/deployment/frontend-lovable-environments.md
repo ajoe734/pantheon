@@ -1,28 +1,23 @@
 # Frontend Lovable Environments
 
+Status: historical record of the 2026-06-08 environment named in the status date below; every "Current" label in this file means current on 2026-06-08. Every Pantheon VM name, sslip.io host and public VM IP in this file belongs to the retired projects pantheon-lupin-dev-20260719 or pantheon-benjamin-20260528 (104.155.223.192 has since been reassigned to a third party); do not deploy to or probe any of them. Lovable URLs are legacy references only. The current dev identity is recorded only in [vm-dev-staging-prod-management-plan.md § 3.1](vm-dev-staging-prod-management-plan.md).
+
 Status date: 2026-06-08
 
 ## Current Dev Override
 
 This file is superseded for Pantheon dev frontend hosting.
 
-For current dev frontend work, use
-`docs/frontend/execute-plans-dev-hosting.md`. The active frontend repository is
-`ajoe734/execute-plans`, not `front-ai-trading-system`, and the Pantheon-owned
-dev FE host is:
-
-```text
-https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io
-```
+For current dev frontend work, use `docs/frontend/execute-plans-dev-hosting.md`. The active frontend repository is `ajoe734/execute-plans`, not `front-ai-trading-system`. The current dev FE and BFF identity is recorded only in [vm-dev-staging-prod-management-plan.md § 3.1](vm-dev-staging-prod-management-plan.md).
 
 Lovable URLs in this file are historical/staging-live context. Do not use
 Lovable publish state as Pantheon dev frontend acceptance.
 
-Authoritative operating rules:
+Related documents:
 
-- [execute-plans-dev-hosting.md](/home/lupin/code/pantheon/docs/frontend/execute-plans-dev-hosting.md)
-- [lovable-dev-staging-operating-rules.md](/home/lupin/code/pantheon/docs/deployment/lovable-dev-staging-operating-rules.md)
-- [bff-https-ingress.md](/home/lupin/code/pantheon/docs/deployment/bff-https-ingress.md)
+- [execute-plans-dev-hosting.md](../frontend/execute-plans-dev-hosting.md)
+- [lovable-dev-staging-operating-rules.md](lovable-dev-staging-operating-rules.md)
+- [bff-https-ingress.md](bff-https-ingress.md)
 
 ## Current State
 

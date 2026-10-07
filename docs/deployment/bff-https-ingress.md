@@ -1,5 +1,7 @@
 # BFF HTTPS Ingress
 
+Status: historical record of the 2026-06-08 environment named in the status date below; every "Current" label in this file means current on 2026-06-08. Every Pantheon VM name, sslip.io host and public VM IP in this file belongs to the retired projects pantheon-lupin-dev-20260719 or pantheon-benjamin-20260528 (104.155.223.192 has since been reassigned to a third party); do not deploy to or probe any of them. Lovable URLs are legacy references only. The current dev identity is recorded only in [vm-dev-staging-prod-management-plan.md § 3.1](vm-dev-staging-prod-management-plan.md).
+
 Status date: 2026-06-08
 
 ## Purpose

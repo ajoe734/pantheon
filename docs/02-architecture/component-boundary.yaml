@@ -90,11 +90,6 @@ components:
       - docs/orchestrator-portability.md
       - docs/operations/provider-auth-health-contract.md
       - docs/operations/pi-astra-worker.md
-      - docs/deployment/main-py-test-coupling-measurement.md
-      - docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/REBASELINE_2026-09-16.md
-      - docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/data/
-      # Superseded path retained so the rename classifies on both sides.
-      - docs/deployment/main-py-seam-inventory.md
       - ai-task-archive/
     runtime_required: false
     removal_condition: "all engineering tasks archived and no worker/lease remains"
