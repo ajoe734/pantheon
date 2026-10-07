@@ -873,6 +873,7 @@ def _load_authority_snapshot(*, trusted_now: datetime, strategy_id: str) -> Eval
                 source_volume_root=source_root,
                 output_root=output_root,
                 trusted_now=trusted_now,
+                clock=_trusted_now,
             )
         except (SourceDatasetAuthorityError, ValueError) as exc:
             raise AuthorityValidationError(f"source DatasetVersion authority rejected: {exc}") from exc
