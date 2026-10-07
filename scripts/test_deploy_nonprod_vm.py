@@ -462,6 +462,26 @@ def test_verify_exact_component_deployment_function_contract() -> None:
     assert "PANTHEON_DEV_FRONTEND_SHA=$(shell_quote" in deploy_script
 
 
+def test_stage_dev_paper_prerequisite_readiness_contract() -> None:
+    """deploy_nonprod_vm.sh must define stage_dev_paper_prerequisite_readiness and order it before verify_exact_component_deployment."""
+    deploy_script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert "stage_dev_paper_prerequisite_readiness()" in deploy_script
+    assert "api/source-ingest/snapshots/latest?symbol=" in deploy_script
+    assert "api/source-ingest/run-scheduled" in deploy_script
+
+    idx_stage = deploy_script.find(
+        'stage_dev_paper_prerequisite_readiness \\\n      || rollback_dev_bff_on_failure "paper_prerequisite_readiness"'
+    )
+    assert idx_stage != -1, "stage_dev_paper_prerequisite_readiness call missing in deploy_nonprod_vm.sh"
+    idx_verify = deploy_script.find(
+        'verify_exact_component_deployment \\\n      || rollback_dev_bff_on_failure "exact_component_deployment"',
+        idx_stage,
+    )
+    assert (
+        idx_verify != -1
+    ), "stage_dev_paper_prerequisite_readiness must precede verify_exact_component_deployment in Phase 4 root"
+
+
 def _extract_verify_exact_component_deployment_func() -> str:
     """Extract verify_exact_component_deployment function definition from deploy_nonprod_vm.sh."""
     script_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
@@ -471,6 +491,18 @@ def _extract_verify_exact_component_deployment_func() -> str:
     assert next_func != -1, "next function boundary after verify_exact_component_deployment not found"
     end = script_text.rfind("\n}\n", start, next_func)
     assert end != -1, "closing brace for verify_exact_component_deployment not found"
+    return script_text[start : end + 2]
+
+
+def _extract_stage_dev_paper_prerequisite_readiness_func() -> str:
+    """Extract stage_dev_paper_prerequisite_readiness function definition from deploy_nonprod_vm.sh."""
+    script_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = script_text.find("stage_dev_paper_prerequisite_readiness() {")
+    assert start != -1, "stage_dev_paper_prerequisite_readiness() not found in deploy_nonprod_vm.sh"
+    next_func = script_text.find("\nverify_exact_component_deployment() {", start)
+    assert next_func != -1, "next function boundary after stage_dev_paper_prerequisite_readiness not found"
+    end = script_text.rfind("\n}\n", start, next_func)
+    assert end != -1, "closing brace for stage_dev_paper_prerequisite_readiness not found"
     return script_text[start : end + 2]
 
 
@@ -1428,5 +1460,328 @@ if bundle.get("source_sha") != expected_source:
             assert len(events) == 1
             assert events[0]["args"]["--baseline-source"] == DRIFT_SOURCE
             assert events[0]["args"]["--observed-live-bff-sha"] == DRIFT_SHA
+
+
+def test_verify_exact_component_deployment_staged_paper_readiness_ordering(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PAPER-LEGACY-MARKET-TRANSITION-20261007: old approved artifact against stored snapshot without market
+
+    fails closed at root gate before staged prerequisite readiness runs, and passes once staged readiness runs.
+    """
+    import copy
+    import hashlib
+    import json
+    import os
+    import subprocess
+    from services.execution.artifact_loader import ArtifactLoader
+    from services.execution.lean_runtime.paper_signal_producer import (
+        CurrentArtifactStrategy,
+        SignalDecisionUnavailable,
+    )
+    from services.registry.strategy_artifact import (
+        BUILTIN_STRATEGY_ARTIFACT_PATHS,
+        load_strategy_artifact_registration,
+    )
+
+    # 1. Direct Python reproduction:
+    # A legacy approved artifact carrying raw symbol 'SPY' without market in parameters/metadata.
+    registration = load_strategy_artifact_registration(
+        BUILTIN_STRATEGY_ARTIFACT_PATHS[0]
+    )
+    legacy_artifact = copy.deepcopy(registration["strategy_artifact"])
+    legacy_artifact["parameters"]["symbols"] = ["SPY"]
+    legacy_artifact["parameters"].pop("market", None)
+    if "metadata" in legacy_artifact and isinstance(legacy_artifact["metadata"], dict):
+        legacy_artifact["metadata"].pop("market", None)
+
+    payload_bytes = json.dumps(
+        {"strategy_artifact": legacy_artifact},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    checksum = f"sha256:{hashlib.sha256(payload_bytes).hexdigest()}"
+    projection = ArtifactLoader.build_projection(
+        legacy_artifact["strategy_id"], legacy_artifact["version"]
+    )
+    object_store = {
+        projection.metadata_key: {
+            "registry_id": legacy_artifact["artifact_id"],
+            "strategy_id": legacy_artifact["strategy_id"],
+            "version": legacy_artifact["version"],
+            "artifact_type": "execution_bundle",
+            "artifact_state": "approved",
+            "deployment_stage": "paper",
+            "promotion_state": "paper",
+            "lineage": legacy_artifact["lineage"],
+            "created_at": "2026-10-07T00:00:00Z",
+            "checksum": checksum,
+        },
+        projection.artifact_key: payload_bytes,
+    }
+
+    # Stored pre-change snapshot for 'SPY' lacking explicit market context.
+    pre_change_snapshot = {
+        "symbol": "SPY",
+        "closes": [500.0, 502.0],
+        "event_time": "2026-10-07T00:00:00Z",
+    }
+
+    strategy = CurrentArtifactStrategy()
+    binding_pre = {
+        "binding_id": "rb-legacy-001",
+        "runtime_id": "rt-paper-001",
+        "capital_pool_id": "pool-001",
+        "strategy_id": legacy_artifact["strategy_id"],
+        "artifact_id": legacy_artifact["artifact_id"],
+        "artifact_version": legacy_artifact["version"],
+        "artifact_checksum": checksum,
+        "market_input": pre_change_snapshot,
+        "object_store": object_store,
+        "metadata": {
+            "strategy_artifact": legacy_artifact,
+            "object_store": object_store,
+            "artifact_checksum": checksum,
+        },
+    }
+
+    # Strategy evaluation against pre-change snapshot fails closed with market_context_missing
+    with pytest.raises(SignalDecisionUnavailable) as exc_info:
+        strategy(binding_pre, "2026-10-07T00:01:00Z")
+    assert exc_info.value.code == "market_context_missing"
+    assert "SPY" in exc_info.value.detail
+    assert "has no explicit market context and no intrinsic market suffix" in exc_info.value.detail
+
+    # 2. Post-readiness snapshot: contains explicit market="US"
+    post_readiness_snapshot = {
+        "symbol": "SPY",
+        "closes": [500.0, 502.0],
+        "market": "US",
+        "event_time": "2026-10-07T00:00:00Z",
+    }
+    binding_post = {
+        **binding_pre,
+        "market_input": post_readiness_snapshot,
+    }
+    decision = strategy(binding_post, "2026-10-07T00:01:00Z")
+    assert decision["action"] in ("BUY", "HOLD", "SELL")
+    assert decision["symbol"] == "SPY.US"
+    assert decision["metadata"]["artifact_id"] == legacy_artifact["artifact_id"]
+
+    # 3. Full bash deployment script gate ordering test:
+    # Setting up mock docker, mock curl, and mock git
+    stage_def = _extract_stage_dev_paper_prerequisite_readiness_func()
+    verify_def = _extract_verify_exact_component_deployment_func()
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    _write_mock_git(bin_dir, "7a9674ea259bbac883e42f3ee217b3e8f68170fe")
+
+    snapshot_file = tmp_path / "snapshot_state.json"
+    snapshot_file.write_text(json.dumps(pre_change_snapshot), encoding="utf-8")
+
+    mock_curl = bin_dir / "curl"
+    mock_curl.write_text(
+        """#!/usr/bin/env bash
+for arg in "$@"; do
+  if [[ "$arg" == *"snapshots/latest?symbol=SPY"* ]]; then
+    cat "$SNAPSHOT_STATE_FILE"
+    exit 0
+  fi
+  if [[ "$arg" == *"/api/source-ingest/run-scheduled"* ]]; then
+    cat <<'EOF' >"$SNAPSHOT_STATE_FILE"
+{"symbol": "SPY", "closes": [500.0, 502.0], "market": "US", "event_time": "2026-10-07T00:00:00Z"}
+EOF
+    echo '{"status": "ok", "ingest_run_id": "run-scheduled-001"}'
+    exit 0
+  fi
+done
+exit 0
+""",
+        encoding="utf-8",
+    )
+    mock_curl.chmod(0o755)
+
+    mock_docker = bin_dir / "docker"
+    mock_docker.write_text(
+        """#!/usr/bin/env bash
+if [[ "$1" == "compose" ]]; then
+  if [[ " $* " == *" images -q "* ]]; then
+    echo "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  elif [[ " $* " == *" ps -q source-ingest "* ]]; then
+    echo "cid_source_1"
+  else
+    echo "cid_paper_1"
+  fi
+elif [[ "$1" == "exec" ]]; then
+  if [[ "$3" == "cat" && "$4" == "/data/source-ingest/controller_token" ]]; then
+    echo "mock-source-controller-token"
+  fi
+elif [[ "$1" == "inspect" ]]; then
+  fmt="$3"
+  if [[ "$fmt" == "{{.State.Status}}" ]]; then
+    echo "running"
+  elif [[ "$fmt" == "{{.RestartCount}}" ]]; then
+    echo "0"
+  elif [[ "$fmt" == *"{{.State.Health.Status}}"* ]]; then
+    if [[ -f "$SNAPSHOT_STATE_FILE" ]] && grep -q '"market": "US"' "$SNAPSHOT_STATE_FILE" 2>/dev/null; then
+      echo "healthy"
+    else
+      echo "unhealthy"
+    fi
+  elif [[ "$fmt" == "{{.Config.Image}}" ]]; then
+    echo "pantheon-paper-signal-producer:latest"
+  elif [[ "$fmt" == "{{.Image}}" ]]; then
+    echo "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  elif [[ "$fmt" == *"org.opencontainers.image.revision"* ]]; then
+    echo "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+  elif [[ "$fmt" == *"{{json .Config.Cmd}}"* ]]; then
+    echo '["python", "-m", "services.execution.lean_runtime.paper_signal_producer"]'
+  fi
+fi
+""",
+        encoding="utf-8",
+    )
+    mock_docker.chmod(0o755)
+
+    receipt_path = tmp_path / "backend-components-receipt.json"
+    rollback_marker = tmp_path / "rollback-called"
+
+    # Step A: Running verify_exact_component_deployment BEFORE staged readiness
+    # (reproducing the old ordering failure where paper-signal-producer is unhealthy)
+    run_direct_verify = tmp_path / "run_direct_verify.sh"
+    run_direct_verify.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{verify_def}
+
+export PATH="{bin_dir}:$PATH"
+export SNAPSHOT_STATE_FILE="{snapshot_file}"
+export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
+export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
+export GIT_SHA="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+
+verify_exact_component_deployment paper-signal-producer || printf 'rollback\\n' >"{rollback_marker}"
+""",
+        encoding="utf-8",
+    )
+    run_direct_verify.chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+
+    proc_direct = subprocess.run(
+        ["bash", str(run_direct_verify)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert proc_direct.returncode == 0
+    assert rollback_marker.exists(), "verify before staged readiness must fail and trigger rollback"
+    assert "required component(s) unhealthy or unknown: paper-signal-producer: health=unhealthy" in proc_direct.stderr
+    receipt_data = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt_data["status"] == "failed"
+    rollback_marker.unlink()
+
+    # Step B: Running staged prerequisite readiness FIRST, then verify_exact_component_deployment
+    # (the corrected release ordering)
+    run_staged_then_verify = tmp_path / "run_staged_then_verify.sh"
+    run_staged_then_verify.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{stage_def}
+{verify_def}
+
+export PATH="{bin_dir}:$PATH"
+export SNAPSHOT_STATE_FILE="{snapshot_file}"
+export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
+export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
+export GIT_SHA="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+export SOURCE_INGEST_API_URL="http://127.0.0.1:18097"
+
+stage_dev_paper_prerequisite_readiness SPY 3 0 || printf 'rollback\\n' >"{rollback_marker}"
+verify_exact_component_deployment paper-signal-producer || printf 'rollback\\n' >"{rollback_marker}"
+""",
+        encoding="utf-8",
+    )
+    run_staged_then_verify.chmod(0o755)
+
+    proc_staged = subprocess.run(
+        ["bash", str(run_staged_then_verify)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert proc_staged.returncode == 0
+    assert not rollback_marker.exists(), "staged readiness followed by verify must not trigger rollback"
+    assert "staged dev paper prerequisite readiness satisfied for SPY" in proc_staged.stdout
+    assert "backend component receipt written atomically" in proc_staged.stdout
+    receipt_data2 = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt_data2["status"] == "passed"
+    assert receipt_data2["all_passed"] is True
+    assert receipt_data2["services"]["paper-signal-producer"]["health"] == "healthy"
+
+
+def test_bootstrap_dev_paper_baseline_transition_legacy_persona_caller() -> None:
+    from scripts.bootstrap_dev_paper_baseline import (
+        transition_legacy_persona_market_record,
+    )
+
+    class _FakeStore:
+        def __init__(self, record):
+            self.record = record
+
+        def get(self, tenant_id, key):
+            if tenant_id == "tenant-test" and key == "key-legacy-1":
+                return self.record
+            return None
+
+    class _FakeRecord:
+        def __init__(self):
+            self.tenant_id = "tenant-test"
+            self.persona_id = "persona-test-1"
+            self.idempotency_key = "key-legacy-1"
+            self.result = {
+                "strategy_artifact_id": "art-rev1",
+                "legacy_strategy_artifact_id": "art-parent",
+                "market": "US",
+            }
+
+    fake_rec = _FakeRecord()
+
+    class _FakeCoordinator:
+        def __init__(self):
+            self.store = _FakeStore(fake_rec)
+            self.calls = []
+
+        def transition_legacy_persona_market(self, record, *, market=None, new_version="1.0.1"):
+            self.calls.append((record, market, new_version))
+            return record
+
+    coord = _FakeCoordinator()
+    res = transition_legacy_persona_market_record(
+        idempotency_key="key-legacy-1",
+        tenant_id="tenant-test",
+        market="US",
+        coordinator=coord,
+    )
+    assert res["status"] == "ok"
+    assert res["strategy_artifact_id"] == "art-rev1"
+    assert res["legacy_strategy_artifact_id"] == "art-parent"
+    assert res["market"] == "US"
+    assert len(coord.calls) == 1
+    assert coord.calls[0][1] == "US"
+
+
 
 

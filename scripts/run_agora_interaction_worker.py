@@ -8,6 +8,7 @@ import os
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 
 # Add repository root and services/control-plane/bff to path
@@ -19,13 +20,27 @@ for path in (
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from agora.interaction.persona_client import build_canonical_persona_client
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("agora-interaction-worker")
+
+HEARTBEAT_PATH = Path(os.getenv("AGORA_WORKER_HEARTBEAT_PATH", "/tmp/agora-interaction-worker.heartbeat"))
+HEARTBEAT_MAX_AGE_SECONDS = float(os.getenv("AGORA_WORKER_HEARTBEAT_MAX_AGE_SECONDS", "300"))
+
+
+def check_heartbeat(path: Path = HEARTBEAT_PATH, max_age: float = HEARTBEAT_MAX_AGE_SECONDS) -> bool:
+    """Stdlib-only liveness probe: the running loop must have touched the heartbeat recently."""
+    try:
+        age = time.time() - path.stat().st_mtime
+    except OSError:
+        logger.error("Healthcheck failed: no heartbeat at %s", path)
+        return False
+    if age > max_age:
+        logger.error("Healthcheck failed: heartbeat is %.0fs old (max %.0fs)", age, max_age)
+        return False
+    return True
 
 
 def main() -> int:
@@ -38,28 +53,16 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.healthcheck:
-        try:
-            client = build_canonical_persona_client()
-            status = getattr(client, "get_surface_status", None)
-            if callable(status):
-                diag = status()
-                pcr = diag.get("persona_capital_runtime") if isinstance(diag, dict) else None
-                persona_status = (pcr.get("persona") if isinstance(pcr, dict) else None) or {}
-                if persona_status.get("status") != "ok":
-                    raise RuntimeError(
-                        f"Persona dependency unhealthy: {persona_status.get('message') or persona_status.get('source')}"
-                    )
-            else:
-                client.list_personas()
-        except Exception:
-            logger.exception("Healthcheck failed: Persona dependency is unavailable or unconfigured")
+        if not check_heartbeat():
             return 1
         logger.info("Healthcheck OK")
         return 0
 
     from agora.governance.store import ProposalStore
+    from agora.interaction.persona_client import build_canonical_persona_client
     from agora.interaction.store import InteractionLifecycleStore
     from agora.interaction.worker import AgoraInteractionWorker
+    from agora.research.routes.common import publish_research_progress
     from agora.research.store import (
         MemoryResearchPlanStore,
         PostgresResearchPlanStore,
@@ -95,6 +98,7 @@ def main() -> int:
     # cannot be constructed, startup fails rather than substituting an
     # always-empty implementation.
     read_store = build_canonical_persona_client()
+    HEARTBEAT_PATH.unlink(missing_ok=True)
 
     # Durable research store and dispatcher
     # Research store is a required dependency: wire the same durable owner store (postgres in production)
@@ -172,6 +176,7 @@ def main() -> int:
         max_ticks=args.max_ticks,
         stop_event=stop_event,
         tenant_id=tenant_id,
+        heartbeat_path=HEARTBEAT_PATH,
     )
     return 0
 

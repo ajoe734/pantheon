@@ -687,9 +687,12 @@ class CapitalBffAuthorityHarness:
         "CAPITAL_ALLOWED_CALLER_SERVICES",
     )
 
-    def __init__(self, root: Path, *, seed_allocation: bool = True) -> None:
+    def __init__(self, root: Path, *, seed_allocation: bool = True, ranking_reader: Any = None) -> None:
+        """``ranking_reader`` makes the owner verify rebalance lineage against it; without one, suites that
+        drive synthetic proposal lines skip owner lineage (it is proven on the live route instead)."""
         self.root = Path(root)
         self.seed_allocation = seed_allocation
+        self.ranking_reader = ranking_reader
         self.capital_data_dir = self.root / "capital"
         self.read_path = self.root / "bff-read-surfaces.json"
         self.command_path = self.root / "bff-commands.jsonl"
@@ -727,6 +730,13 @@ class CapitalBffAuthorityHarness:
         sys.modules.pop("services.capital.main", None)
         self.capital_module = importlib.import_module("services.capital.main")
         self.capital_client = TestClient(self.capital_module.app)
+        from services.capital import allocation_lineage
+
+        self._lineage_original = (allocation_lineage.verify_rebalance_lineage, allocation_lineage.create_ranking_reader)
+        if self.ranking_reader is None:
+            allocation_lineage.verify_rebalance_lineage = lambda proposal: None
+        else:
+            allocation_lineage.create_ranking_reader = lambda: self.ranking_reader
         command_executor._post_json = self._post_json
         command_executor._get_json = self._get_json
         self._original_urlopen = urllib.request.urlopen
@@ -784,8 +794,9 @@ class CapitalBffAuthorityHarness:
         capital_guard.configured_approval_reader = lambda domain: _ApprovesWhatIsAsked()
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
-        from services.capital import capital_guard
+        from services.capital import allocation_lineage, capital_guard
 
+        allocation_lineage.verify_rebalance_lineage, allocation_lineage.create_ranking_reader = self._lineage_original
         for name, original in getattr(self, "_guard_originals", {}).items():
             setattr(capital_guard, name, original)
         if self.client is not None:

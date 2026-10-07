@@ -722,6 +722,132 @@ def mutate_strategy_artifact(
     return child
 
 
+def create_market_transition_revision(
+    parent: Mapping[str, Any],
+    *,
+    market: str,
+    new_artifact_id: str,
+    new_version: str,
+    source_run_ids: Sequence[str],
+    parent_registry_id: str | None = None,
+) -> dict[str, Any]:
+    """Produce a governed new revision of an immutable older artifact to add explicit market context.
+
+    Preserves parent artifact bytes, checksum, version, and raw symbols membership without mutation.
+    The new child revision inherits all parameters, controls, and lineage from parent,
+    links parent_registry_ids to the parent, records source_run_ids, and sets explicit
+    market validated against canonical_market_context(market, symbols=symbols).
+    """
+    validate_strategy_artifact(parent)
+    child = copy.deepcopy(dict(parent))
+
+    new_artifact_id = str(new_artifact_id).strip()
+    if not new_artifact_id or new_artifact_id == parent["artifact_id"]:
+        raise StrategyArtifactValidationError(
+            "a market transition revision requires a new, non-empty artifact_id"
+        )
+    try:
+        parent_semver = tuple(int(part) for part in str(parent["version"]).split("."))
+        child_semver = tuple(int(part) for part in str(new_version).split("."))
+    except (TypeError, ValueError) as exc:
+        raise StrategyArtifactValidationError(
+            "revision version must be semantic version x.y.z"
+        ) from exc
+    if len(child_semver) != 3 or child_semver <= parent_semver:
+        raise StrategyArtifactValidationError(
+            "revision version must be greater than the parent semantic version"
+        )
+
+    symbols = child["parameters"].get("symbols")
+    canonical_market = canonical_market_context(market, symbols=symbols)
+
+    if isinstance(source_run_ids, (str, bytes)):
+        raise StrategyArtifactValidationError(
+            "source_run_ids must be a sequence of ids, not a string"
+        )
+    normalized_source_run_ids: list[str] = []
+    for source_run_id in source_run_ids:
+        if not isinstance(source_run_id, str):
+            raise StrategyArtifactValidationError(
+                "source_run_ids must contain only string ids"
+            )
+        normalized = source_run_id.strip()
+        if not normalized or normalized != source_run_id:
+            raise StrategyArtifactValidationError(
+                "source_run_ids must contain only canonical non-empty ids"
+            )
+        if normalized not in normalized_source_run_ids:
+            normalized_source_run_ids.append(normalized)
+    if not normalized_source_run_ids:
+        raise StrategyArtifactValidationError(
+            "a market transition revision requires at least one producing source_run_id"
+        )
+
+    direct_parent = str(parent_registry_id or parent["artifact_id"]).strip()
+    if not direct_parent:
+        raise StrategyArtifactValidationError("parent_registry_id must not be blank")
+
+    child["artifact_id"] = new_artifact_id
+    child["version"] = str(new_version)
+    child_lineage = child["lineage"]
+    child_lineage["parent_registry_ids"] = [direct_parent]
+    child_lineage["source_run_ids"] = normalized_source_run_ids
+
+    child["parameters"]["market"] = canonical_market
+    immutable_params = child["mutation_surface"]["immutable_parameters"]
+    if "market" not in immutable_params:
+        immutable_params.append("market")
+
+    validate_strategy_artifact(child)
+    return child
+
+
+def build_market_transition_registry_payload(
+    parent_entry: Mapping[str, Any],
+    *,
+    market: str,
+    new_artifact_id: str,
+    new_version: str,
+    source_run_ids: Sequence[str],
+    producer_run_id: str | None = None,
+    parent_registry_id: str | None = None,
+) -> tuple[str, RegistryEntryCreate]:
+    """Map a governed market transition revision to the generic registry envelope."""
+    parent_metadata = parent_entry.get("metadata") if isinstance(parent_entry.get("metadata"), Mapping) else {}
+    parent_artifact = parent_metadata.get("strategy_artifact")
+    if not isinstance(parent_artifact, Mapping):
+        raise StrategyArtifactValidationError(
+            "parent entry is missing metadata.strategy_artifact"
+        )
+    direct_parent_id = str(
+        parent_registry_id
+        or parent_entry.get("registry_id")
+        or parent_artifact.get("artifact_id")
+        or ""
+    ).strip()
+    child_artifact = create_market_transition_revision(
+        parent_artifact,
+        market=market,
+        new_artifact_id=new_artifact_id,
+        new_version=new_version,
+        source_run_ids=source_run_ids,
+        parent_registry_id=direct_parent_id,
+    )
+    registration = {
+        "registry_id": child_artifact["artifact_id"],
+        "artifact_state": ArtifactState.CANDIDATE.value,
+        "strategy_artifact": child_artifact,
+        "producer_run_id": producer_run_id or (source_run_ids[-1] if source_run_ids else None),
+        "rollback_target": direct_parent_id,
+        "metadata": {
+            "parent_registry_id": direct_parent_id,
+            "transition_kind": "legacy_market_addition",
+            "market": child_artifact["parameters"]["market"],
+        },
+    }
+    return build_strategy_artifact_registry_payload(registration)
+
+
 def evaluate_strategy_action(
     strategy_artifact: Mapping[str, Any],
     closes: Sequence[float],

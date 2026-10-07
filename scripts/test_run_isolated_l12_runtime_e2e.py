@@ -403,7 +403,7 @@ def test_principal_issuer_starts_before_the_owner_stack() -> None:
 
     source = Path(harness.__file__).read_text(encoding="utf-8")
     issuer = source.index("PRINCIPAL_ISSUER_SERVICE,\n")
-    owners = source.index("*required_services,\n")
+    owners = source.index("for name in required_services if name != TW_OFFICIAL_PULL_SERVICE]")
     assert source.index("_bootstrap_trade_journey_projection(\n                args") < issuer < owners
 
 
@@ -486,3 +486,44 @@ def test_tw_official_pull_fails_on_empty_snapshot(
         harness._run_tw_official_pull(
             "proj", ["a.yml"], {}, snapshot_url="http://s", reader_headers={}, diagnostics_dir=tmp_path
         )
+
+
+def test_tw_official_pull_takes_a_short_lease_and_builds_the_scheduler() -> None:
+    env = harness._tw_official_pull_env({})
+    commands = harness._tw_official_pull_commands("proj", ["a.yml"])
+
+    lease = str(harness.TW_OFFICIAL_PULL_LEASE_SECONDS)
+    assert env["SOURCE_INGEST_CONTROLLER_LEASE_SECONDS"] == lease
+    assert env["SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS"] == lease
+    assert "--build" in commands["scheduler_tick"]
+    assert commands["scheduler_start"][-1] == "source-ingest-scheduler"
+    assert "up" in commands["scheduler_start"] and "--wait" in commands["scheduler_start"]
+
+
+def test_resident_scheduler_starts_after_the_pull_with_steady_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    calls = _fake_pull_run(monkeypatch, 0, {"closes": [1.0, 2.0]})
+    sleeps: list[float] = []
+    monkeypatch.setattr(harness.time, "sleep", sleeps.append)
+
+    harness._run_tw_official_pull(
+        "proj", ["a.yml"], {"X": "y"}, snapshot_url="http://s", reader_headers={},
+        diagnostics_dir=tmp_path, start_resident_scheduler=True,
+    )
+
+    assert len(calls) == 4
+    start_cmd, start_env = calls[3]
+    assert start_cmd[-1] == "source-ingest-scheduler" and "up" in start_cmd
+    assert start_env.get("SOURCE_INGEST_CONTROLLER_MODE") is None
+    assert sleeps == [harness.TW_OFFICIAL_PULL_LEASE_SECONDS + 5]
+
+
+def test_initial_provisioning_leaves_the_resident_scheduler_for_after_the_pull() -> None:
+    from pathlib import Path
+
+    source = Path(harness.__file__).read_text(encoding="utf-8")
+    provision = source.index("for name in required_services if name != TW_OFFICIAL_PULL_SERVICE]")
+    pull = source.index("tw_official_pull = _run_tw_official_pull(")
+    assert provision < pull
+    assert "start_resident_scheduler=TW_OFFICIAL_PULL_SERVICE in required_services" in source

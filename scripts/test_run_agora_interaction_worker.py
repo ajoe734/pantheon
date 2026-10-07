@@ -1,50 +1,21 @@
 """Regression coverage for the retained Persona interaction worker launcher."""
 from __future__ import annotations
 
-import http.server
 import os
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import unittest
 from pathlib import Path
-from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = ROOT / "scripts" / "run_agora_interaction_worker.py"
+COMPOSE_HEALTHCHECK_TIMEOUT_SECONDS = 5
 PERSONA_CLIENT = ROOT / "services/control-plane/bff/agora/interaction/persona_client.py"
 
 
-class _MockPersonaHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self) -> None:
-        body = b"[]"
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *args: Any) -> None:
-        pass
-
-
 class InteractionWorkerLauncherTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls._server = http.server.HTTPServer(("127.0.0.1", 0), _MockPersonaHandler)
-        cls._port = cls._server.server_port
-        cls._thread = threading.Thread(target=cls._server.serve_forever, daemon=True)
-        cls._thread.start()
-        cls._persona_url = f"http://127.0.0.1:{cls._port}"
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        cls._server.shutdown()
-        cls._server.server_close()
-
     def _run(self, *args: str, cwd: str | None = None, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
         run_env = os.environ.copy() if env is None else env
         return subprocess.run(
@@ -52,55 +23,73 @@ class InteractionWorkerLauncherTests(unittest.TestCase):
             capture_output=True, text=True, timeout=20,
         )
 
-    def test_healthcheck_fails_when_persona_unconfigured(self) -> None:
+    def _heartbeat_env(self, heartbeat: Path, max_age: str = "300") -> dict[str, str]:
         env = os.environ.copy()
         env.pop("PYTHONPATH", None)
-        env.pop("PERSONA_URL", None)
-        env.pop("PANTHEON_PERSONA_URL", None)
-        env.pop("PANTHEON_PERSONA_API_URL", None)
-        result = self._run("--healthcheck", env=env)
-        self.assertNotEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Healthcheck failed", result.stdout + result.stderr)
+        env["AGORA_WORKER_HEARTBEAT_PATH"] = str(heartbeat)
+        env["AGORA_WORKER_HEARTBEAT_MAX_AGE_SECONDS"] = max_age
+        return env
+
+    def _timed_healthcheck(self, env: dict[str, str], cwd: str | None = None) -> subprocess.CompletedProcess[str]:
+        started = time.monotonic()
+        result = self._run("--healthcheck", cwd=cwd, env=env)
+        self.assertLess(time.monotonic() - started, COMPOSE_HEALTHCHECK_TIMEOUT_SECONDS)
+        return result
+
+    def test_healthcheck_with_live_loop_heartbeat_succeeds(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            heartbeat = Path(temporary, "heartbeat")
+            heartbeat.touch()
+            result = self._timed_healthcheck(self._heartbeat_env(heartbeat), cwd="/tmp")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Healthcheck OK", result.stdout + result.stderr)
+
+    def test_healthcheck_with_stalled_loop_heartbeat_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            heartbeat = Path(temporary, "heartbeat")
+            heartbeat.touch()
+            stale = time.time() - 600
+            os.utime(heartbeat, (stale, stale))
+            result = self._timed_healthcheck(self._heartbeat_env(heartbeat))
+        self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("Healthcheck OK", result.stdout + result.stderr)
 
-    def test_healthcheck_fails_when_persona_unavailable(self) -> None:
-        env = os.environ.copy()
-        env.pop("PYTHONPATH", None)
-        env["PERSONA_URL"] = "http://127.0.0.1:59999"
-        result = self._run("--healthcheck", env=env)
-        self.assertNotEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Healthcheck failed", result.stdout + result.stderr)
-        self.assertNotIn("Healthcheck OK", result.stdout + result.stderr)
+    def test_healthcheck_without_heartbeat_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            result = self._timed_healthcheck(self._heartbeat_env(Path(temporary, "missing")))
+        self.assertNotEqual(result.returncode, 0)
 
-    def test_healthcheck_subprocess_with_clean_pythonpath_succeeds(self) -> None:
-        env = os.environ.copy()
-        env.pop("PYTHONPATH", None)
-        env["PERSONA_URL"] = self._persona_url
-        env["AGORA_RESEARCH_BACKEND_URL"] = "http://research-orchestrator-svc:8101"
-        result = self._run("--healthcheck", env=env)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Healthcheck OK", result.stdout + result.stderr)
-        self.assertNotIn("No module named services", result.stderr)
+    def test_run_loop_refreshes_heartbeat_while_idle(self) -> None:
+        sys.path[:0] = [str(ROOT), str(ROOT / "services/control-plane/bff")]
+        from agora.interaction.worker import AgoraInteractionWorker
+        with tempfile.TemporaryDirectory() as temporary:
+            heartbeat = Path(temporary, "heartbeat")
+            worker = AgoraInteractionWorker(store=object(), worker_id="hb-test")
+            worker.run_once = lambda **kwargs: 0
+            worker.run_loop(poll_interval=0.01, max_ticks=2, heartbeat_path=heartbeat)
+            self.assertTrue(heartbeat.exists())
 
-    def test_healthcheck_from_foreign_working_directory_succeeds(self) -> None:
-        env = os.environ.copy()
-        env.pop("PYTHONPATH", None)
-        env["PERSONA_URL"] = self._persona_url
-        result = self._run("--healthcheck", cwd="/tmp", env=env)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Healthcheck OK", result.stdout + result.stderr)
-
-    def test_healthcheck_cold_start_under_deadline(self) -> None:
-        env = os.environ.copy()
-        env.pop("PYTHONPATH", None)
-        env["PERSONA_URL"] = self._persona_url
-        env["PYTHONDONTWRITEBYTECODE"] = "1"
-        start = time.monotonic()
-        result = self._run("--healthcheck", env=env)
-        elapsed = time.monotonic() - start
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Healthcheck OK", result.stdout + result.stderr)
-        self.assertLess(elapsed, 5.0, f"Cold-start healthcheck took {elapsed:.2f}s, exceeding 5s limit")
+    def test_startup_fails_closed_when_persona_client_cannot_construct(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            Path(temporary, "sitecustomize.py").write_text(
+                "import sys\n"
+                f"sys.path[:0] = [{str(ROOT)!r}, {str(ROOT / 'services/control-plane/bff')!r}]\n"
+                "from agora.interaction import persona_client\n"
+                "def fail():\n"
+                "    raise RuntimeError('construction failed')\n"
+                "persona_client.build_canonical_persona_client = fail\n"
+            )
+            heartbeat = Path(temporary, "heartbeat")
+            env = self._heartbeat_env(heartbeat)
+            env["PYTHONPATH"] = temporary
+            env.update(
+                AGORA_WORKSHOP_STORE_BACKEND="memory",
+                AGORA_GOVERNANCE_STORE_BACKEND="memory",
+            )
+            result = self._run("--once", env=env)
+            self.assertFalse(heartbeat.exists())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("construction failed", result.stderr)
 
     def test_help_argument_subprocess_succeeds(self) -> None:
         result = self._run("--help")
@@ -122,32 +111,13 @@ class InteractionWorkerLauncherTests(unittest.TestCase):
     def test_persona_client_construction_failure_is_not_swallowed(self) -> None:
         sys.path[:0] = [str(ROOT), str(ROOT / "services/control-plane/bff")]
         from agora.interaction import persona_client
-        original = persona_client.create_persona_registry_write_owner
+        original = persona_client.create_read_surface_ports
         try:
-            persona_client.create_persona_registry_write_owner = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("required client unavailable"))
+            persona_client.create_read_surface_ports = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("required client unavailable"))
             with self.assertRaisesRegex(RuntimeError, "required client unavailable"):
                 persona_client.build_canonical_persona_client()
         finally:
-            persona_client.create_persona_registry_write_owner = original
-
-    def test_healthcheck_subprocess_fails_when_persona_client_cannot_construct(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            Path(temporary, "sitecustomize.py").write_text(
-                "import builtins\n"
-                "original = builtins.__import__\n"
-                "def custom_import(name, globals=None, locals=None, fromlist=(), level=0):\n"
-                "    module = original(name, globals, locals, fromlist, level)\n"
-                "    if name == 'agora.interaction.persona_client':\n"
-                "        module.build_canonical_persona_client = lambda: (_ for _ in ()).throw(RuntimeError('construction failed'))\n"
-                "    return module\n"
-                "builtins.__import__ = custom_import\n"
-            )
-            env = os.environ.copy()
-            env["PYTHONPATH"] = temporary
-            env["PERSONA_URL"] = self._persona_url
-            result = self._run("--healthcheck", env=env)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn("Healthcheck OK", result.stdout + result.stderr)
+            persona_client.create_read_surface_ports = original
 
 
 if __name__ == "__main__":

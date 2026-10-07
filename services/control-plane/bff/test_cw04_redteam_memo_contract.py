@@ -11,13 +11,35 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from services.control_plane.bff.auth.policy import capabilities_for_identity
 from services.control_plane.bff.governance.router import create_governance_router
+from services.control_plane.bff.models import redact_evidence_refs
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
 REVIEWER_AUTH = "Bearer test-reviewer:reviewer"
 PUBLISHED_MEMO_ID = "memo-rt-20260419-081"
 DRAFT_MEMO_ID = "memo-rt-20260420-002"
+
+
+_REDACTED_TELEMETRY_REF = {
+    "ref_id": "telemetry-vol-spike-20260419",
+    "kind": "metric",
+    "required_capability": "metric.read",
+    "reason": "insufficient_capability",
+    "redacted": True,
+    "display_label": None,
+    "redacted_count": None,
+}
+_REDACTED_DEPLOYMENT_REF = {
+    "ref_id": "dp-20260419-014",
+    "kind": "deployment",
+    "required_capability": "deployment.read",
+    "reason": "insufficient_capability",
+    "redacted": True,
+    "display_label": None,
+    "redacted_count": None,
+}
 
 
 def _extract_identity(authorization: Optional[str] = None) -> Any:
@@ -332,6 +354,8 @@ def _seeded_client(*, service_backed_memo_store: bool = False):
                 get_read_store=lambda: store,
                 extract_identity=_extract_identity,
                 require_read_role=_require_read_role,
+                redact_evidence_refs=redact_evidence_refs,
+                capabilities_for_identity=capabilities_for_identity,
             )
         )
         client = TestClient(app)
@@ -430,18 +454,35 @@ def test_cw04_detail_returns_backend_owned_shape_and_governance_gate_for_reviewe
             "created_at": "2026-04-19T17:18:00Z",
         }
         assert payload["recommendations"][0].startswith("Raise the ATR-based circuit-breaker threshold")
-        assert payload["evidence_refs"][0] == {
-            "id": "telemetry-vol-spike-20260419",
-            "evidence_type": "telemetry",
-            "artifact_ref": "artifact-042",
-            "description": "Volatility spike - 2026-04-19",
-            "link": "/telemetry/events/telemetry-vol-spike-20260419",
-        }
+        # The reviewer role holds neither metric.read nor deployment.read, so the
+        # production redaction policy withholds both refs (visibility unchanged).
+        assert payload["evidence_refs"][0] == _REDACTED_TELEMETRY_REF
         assert payload["allowedActions"] == {
             "canInitiateGovernanceReview": True,
         }
         assert payload["meta"]["surfaces"]["redteam_memo"]["state"] == "ok"
         assert payload["meta"]["staleness"]["status"] == "fresh"
+
+
+def test_cw04_detail_evidence_visibility_follows_role_capabilities() -> None:
+    with _seeded_client(service_backed_memo_store=True) as (client, _memo_store_path):
+        operator = client.get(
+            f"/api/v1/consult/memos/{PUBLISHED_MEMO_ID}",
+            headers={"Authorization": OPERATOR_AUTH},
+        ).json()
+        assert operator["evidence_refs"] == [_REDACTED_TELEMETRY_REF, _REDACTED_DEPLOYMENT_REF]
+        assert operator["meta"]["supporting_counts"]["redacted_evidence_count"] == 2
+
+        admin = client.get(
+            f"/api/v1/consult/memos/{PUBLISHED_MEMO_ID}",
+            headers={"Authorization": "Bearer test-admin:admin"},
+        ).json()
+        assert [ref["id"] for ref in admin["evidence_refs"]] == [
+            "telemetry-vol-spike-20260419",
+            "dp-20260419-014",
+        ]
+        assert admin["evidence_refs"][0]["description"] == "Volatility spike - 2026-04-19"
+        assert admin["meta"]["supporting_counts"]["redacted_evidence_count"] == 0
 
 
 def test_cw04_detail_hides_governance_handoff_for_operator_without_review_authority() -> None:
@@ -535,22 +576,7 @@ def test_cw04_detail_keeps_last_known_content_when_surface_degraded() -> None:
         }
         assert payload["summary"] is not None
         assert payload["recommendations"]
-        assert payload["evidence_refs"] == [
-            {
-                "id": "telemetry-vol-spike-20260419",
-                "evidence_type": "telemetry",
-                "artifact_ref": "artifact-042",
-                "description": "Volatility spike - 2026-04-19",
-                "link": "/telemetry/events/telemetry-vol-spike-20260419",
-            },
-            {
-                "id": "dp-20260419-014",
-                "evidence_type": "deployment_plan",
-                "artifact_ref": "plan-F-042",
-                "description": "Deployment plan plan-F-042",
-                "link": "/deployments/plans/plan-F-042",
-            },
-        ]
+        assert payload["evidence_refs"] == [_REDACTED_TELEMETRY_REF, _REDACTED_DEPLOYMENT_REF]
         assert payload["allowedActions"] == {
             "canInitiateGovernanceReview": False,
         }

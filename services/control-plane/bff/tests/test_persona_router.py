@@ -24,6 +24,11 @@ from services.control_plane.bff.command_queue import CommandStore
 AUTH_HEADERS = {"Authorization": "Bearer test-operator:operator,reviewer,admin"}
 
 
+def _error(resp) -> Dict[str, Any]:
+    body = resp.json()
+    return body.get("detail", body)["error"]
+
+
 class FakeRankingWriteOwner:
     def __init__(self):
         self.snapshots = {}
@@ -134,11 +139,13 @@ def test_list_personas_api_v1(client: TestClient):
 def test_get_persona_detail_api_v1(client: TestClient):
     resp = client.get("/api/v1/personas/persona-alpha", headers=AUTH_HEADERS)
     assert resp.status_code == 404
+    assert _error(resp)["code"] == "RESOURCE_NOT_FOUND", resp.text
 
 
 def test_list_persona_sessions_api_v1(client: TestClient):
     resp = client.get("/api/v1/personas/persona-alpha/sessions", headers=AUTH_HEADERS)
     assert resp.status_code == 404
+    assert _error(resp)["code"] == "RESOURCE_NOT_FOUND", resp.text
 
 
 def test_get_session_detail_api_v1(client: TestClient):
@@ -149,20 +156,25 @@ def test_get_session_detail_api_v1(client: TestClient):
 def test_list_persona_teaching_sessions_api_v1(client: TestClient):
     resp = client.get("/api/v1/personas/persona-alpha/teaching", headers=AUTH_HEADERS)
     assert resp.status_code == 404
+    assert _error(resp)["code"] == "RESOURCE_NOT_FOUND", resp.text
 
 
 def test_get_persona_capabilities_api_v1(client: TestClient):
     resp = client.get("/api/v1/personas/persona-alpha/capabilities", headers=AUTH_HEADERS)
     assert resp.status_code == 404
+    assert _error(resp)["code"] == "RESOURCE_NOT_FOUND", resp.text
 
 
 def test_get_persona_management_api_v1(client: TestClient):
     resp = client.get("/api/v1/operator/persona-management/persona-alpha", headers=AUTH_HEADERS)
     assert resp.status_code == 404
+    assert _error(resp)["code"] == "RESOURCE_NOT_FOUND", resp.text
 
 
-def test_unconfigured_owner_returns_503(tmp_path):
+def test_unconfigured_owner_returns_503(tmp_path, monkeypatch):
     """When the persona owner is unconfigured, requests for nonexistent personas fail closed with 503 (e32ab2785)."""
+    for name in ("PERSONA_URL", "PANTHEON_PERSONA_URL", "PANTHEON_PERSONA_API_URL"):
+        monkeypatch.delenv(name, raising=False)
     write_owner = create_persona_registry_write_owner()
     read_store = create_read_surface_ports(persona_registry_store=write_owner)
     service = PersonaService(
@@ -176,6 +188,9 @@ def test_unconfigured_owner_returns_503(tmp_path):
     unconfigured_client = TestClient(app)
     resp = unconfigured_client.get("/api/v1/personas/persona-alpha", headers=AUTH_HEADERS)
     assert resp.status_code == 503
+    error = _error(resp)
+    assert error["code"] == "DEPENDENCY_UNAVAILABLE", resp.text
+    assert error["retryable"] is True, resp.text
 
 
 def test_bff_list_personas(client: TestClient):

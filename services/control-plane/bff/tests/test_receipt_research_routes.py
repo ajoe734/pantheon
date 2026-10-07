@@ -17,7 +17,7 @@ from services.control_plane.bff.ports import create_read_surface_ports
 from services.control_plane.bff.ports.research_commands import ResearchCommandsPort
 from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
 from services.control_plane.bff.research.routes.experiments import create_research_experiments_router
-from services.control_plane.bff.tests.test_receipt_owner_routes import identity
+from services.control_plane.bff.tests.test_receipt_owner_routes import _JWT_ENV, _tok, identity
 from services.control_plane.bff.tests.test_research_jobs_action_receipts import research_client
 from services.research.write_owner import ResearchWriteOwner
 
@@ -40,6 +40,8 @@ class DiskStore:
 
 
 def test_experiment_admission_changes_owner_once(tmp_path, monkeypatch):
+    for key, value in _JWT_ENV.items():
+        monkeypatch.setenv(key, value)
     stores = [DiskStore(tmp_path / f"{name}.json") for name in ("tickets", "experiments", "notes")]
     owner = ResearchWriteOwner(tickets_store=stores[0], experiments_store=stores[1], notes_store=stores[2])
     exp = owner.create_research_experiment(ticket_id="ticket", experiment_name="test",
@@ -59,7 +61,7 @@ def test_experiment_admission_changes_owner_once(tmp_path, monkeypatch):
     ))
     client = TestClient(app)
     path = f"/bff/experiments/{exp_id}/actions/cancel"
-    headers = {"Authorization": "Bearer tenant-a", "Idempotency-Key": "cancel"}
+    headers = {"Authorization": _tok("tenant-a"), "Idempotency-Key": "cancel"}
     assert client.post(path, json={}).status_code == 401
     result = client.post(path, json={}, headers=headers)
     assert result.status_code == 202, result.text
@@ -74,6 +76,8 @@ def test_experiment_admission_changes_owner_once(tmp_path, monkeypatch):
 
 
 def test_job_admission_executes_real_orchestrator(research_client, tmp_path, monkeypatch):
+    for key, value in _JWT_ENV.items():
+        monkeypatch.setenv(key, value)
     task = research_client.post("/api/research-orchestrator/tasks", json={"title": "bounded run", "objective": "test", "actor_id": "tenant-a"}).json()
     run = research_client.post(f"/api/research-orchestrator/tasks/{task['task_id']}/runs", json={"adapter": "stub", "requested_mode": "stub", "dispatch_mode": "stub"}).json()
     job_id = "job-orchestrator-" + run["run_id"]
@@ -107,7 +111,7 @@ def test_job_admission_executes_real_orchestrator(research_client, tmp_path, mon
     ))
     client = TestClient(app)
     path = f"/bff/jobs/{job_id}/actions/cancel"
-    headers = {"Authorization": "Bearer tenant-a", "Idempotency-Key": "cancel"}
+    headers = {"Authorization": _tok("tenant-a"), "Idempotency-Key": "cancel"}
     assert client.post(path, json={}).status_code == 401
     result = client.post(path, json={}, headers=headers)
     assert result.status_code == 202, result.text

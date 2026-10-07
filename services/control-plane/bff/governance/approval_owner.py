@@ -80,15 +80,36 @@ def _claims(authorization: Optional[str]) -> Dict[str, Any]:
 
 
 def project(decision: Mapping[str, Any]) -> Dict[str, Any]:
-    state = str(decision.get("decision_state") or "")
+    if not isinstance(decision, Mapping):
+        raise ValueError("Malformed decision item in owner response")
+    state = str(decision.get("decision_state") or decision.get("state") or "")
+    dec_id = decision.get("decision_id") or decision.get("id")
+    target_type = decision.get("decision_type") or decision.get("target_type") or "ApprovalDecision"
     status = "pending" if state in _PENDING else state
-    return {
-        "id": decision.get("decision_id"),
-        "outcome": decision.get("decision"),
-        "status": status,
-        "state": status,
-        **decision,
+    can_decide = state in {"under_review", "reviewed", "in_review", "proposed", "pending"}
+    res = {"id": dec_id, "outcome": decision.get("decision"), "status": status, "state": status}
+    res.update(decision)
+    res["decision_id"] = dec_id
+    res["decision_type"] = target_type
+    res.setdefault("risk_level", decision.get("risk_level"))
+    res.setdefault("submitted_at", decision.get("created_at"))
+    res.setdefault("submitted_by", decision.get("owner_user_id") or decision.get("actor_id") or decision.get("created_by"))
+    if state:
+        res.setdefault("decision_state", state)
+    res.setdefault("allowedActions", {"canApprove": can_decide, "canReject": can_decide, "canRequestRevision": False})
+    context = {
+        "risk_summary": decision.get("rationale"),
+        "evidence_refs": list(decision.get("evidence_refs") or []),
+        "governance_chain": {
+            "target_type": target_type,
+            "target_id": decision.get("target_id"),
+            "target_version": decision.get("target_version"),
+        },
     }
+    if decision.get("required_approvals") is not None:
+        context["required_approvals"] = decision["required_approvals"]
+    res.setdefault("decision_context", context)
+    return res
 
 
 def list_decisions(
@@ -101,13 +122,22 @@ def list_decisions(
     ws = {p.strip().lower() for p in str(state or "").split(",") if p.strip()}
     wo = {p.strip().lower() for p in str(outcome or "").split(",") if p.strip()}
     raw_decisions = call_owner("GET", "/api/governance/approvals", authorization)
-    return [
-        it
-        for it in (project(x) for x in raw_decisions)
-        if (not pending_only or it["status"] == "pending")
-        and (not ws or str(it.get("decision_state")).lower() in ws or it["status"] in ws)
-        and (not wo or str(it.get("outcome") or "").lower() in wo)
-    ]
+    if not isinstance(raw_decisions, list):
+        raise ValueError("Governance owner returned non-list decisions response")
+    results = []
+    for x in raw_decisions:
+        it = project(x)
+        raw_state = str(x.get("decision_state") or x.get("state") or it.get("decision_state") or "").lower()
+        status = "pending" if raw_state in _PENDING or raw_state == "pending" else raw_state
+        raw_outcome = str(x.get("decision") or x.get("outcome") or it.get("outcome") or "").lower()
+        if pending_only and status != "pending":
+            continue
+        if ws and raw_state not in ws and status not in ws:
+            continue
+        if wo and raw_outcome not in wo:
+            continue
+        results.append(it)
+    return results
 
 
 def get_decision(authorization: Optional[str], decision_id: str) -> Dict[str, Any]:

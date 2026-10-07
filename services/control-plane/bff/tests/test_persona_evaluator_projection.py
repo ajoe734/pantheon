@@ -102,7 +102,12 @@ def test_unresolvable_saved_snapshot_fails_closed(monkeypatch):
             "recommendation_id": f"pm12-2026-q1-{persona}-promote_to_canary_candidate",
         }]}
         monkeypatch.setattr(evaluator_results, "saved_evaluator_result", lambda *a, **k: saved)
-        assert _items(client) == []
+        response = client.get(URL, headers=HEADERS, params={"quarter": "2026-Q1", "page_size": 50})
+        assert response.status_code == 503, response.text
+        payload = response.json()
+        assert payload.get("error", {}).get("code") == "DEPENDENCY_UNAVAILABLE"
+        assert "data" not in payload or not payload.get("data", {}).get("items")
+
 
 
 def test_saved_recommendations_are_limited_to_personas_visible_to_the_caller(monkeypatch):

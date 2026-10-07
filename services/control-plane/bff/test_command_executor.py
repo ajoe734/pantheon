@@ -203,7 +203,9 @@ class TestKillSwitchExecutor(unittest.TestCase):
 
 class TestEvolutionDecisionExecutor(unittest.TestCase):
     def setUp(self):
-        os.environ["PANTHEON_GOVERNANCE_API_URL"] = "http://localhost:5001"
+        patcher = patch.dict(os.environ, {"PANTHEON_EVOLUTION_API_URL": "http://localhost:5001"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     @patch("services.control_plane.bff.command_executor._post_json")
     def test_approve_evolution_decision_governance_api(self, mock_post):
@@ -237,11 +239,9 @@ class TestEvolutionDecisionExecutor(unittest.TestCase):
 
 class TestEvolutionActionExecutor(unittest.TestCase):
     def setUp(self):
-        os.environ["PANTHEON_GOVERNANCE_API_URL"] = "http://localhost:5001"
-        os.environ["PANTHEON_GOVERNANCE_SERVICE_URL"] = "http://localhost:5002"
-
-    def tearDown(self):
-        os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
+        patcher = patch.dict(os.environ, {"PANTHEON_EVOLUTION_API_URL": "http://localhost:5001"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     @patch("services.control_plane.bff.command_executor._post_json")
     def test_execute_evolution_action_governance_api(self, mock_post):
@@ -329,11 +329,9 @@ class TestEvolutionActionExecutor(unittest.TestCase):
 
 class TestMutationReviewExecutors(unittest.TestCase):
     def setUp(self):
-        os.environ["PANTHEON_GOVERNANCE_API_URL"] = "http://localhost:5001"
-        os.environ["PANTHEON_GOVERNANCE_SERVICE_URL"] = "http://localhost:5002"
-
-    def tearDown(self):
-        os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
+        patcher = patch.dict(os.environ, {"PANTHEON_EVOLUTION_API_URL": "http://localhost:5001"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     @patch("services.control_plane.bff.command_executor._post_json")
     def test_approve_mutation_governance_api(self, mock_post):

@@ -112,6 +112,9 @@ TW_OFFICIAL_PULL_SERVICE = "source-ingest-scheduler"
 TW_OFFICIAL_SNAPSHOT_SYMBOL = "2330.TW"
 TW_OFFICIAL_DEFAULT_HISTORY_SYMBOLS = "2330.TW,2317.TW"
 TW_OFFICIAL_PULL_TIMEOUT_SECONDS = 1800
+# Controller leases are not released on exit, so the bounded tick takes a short
+# fence and the resident scheduler starts only after it has expired.
+TW_OFFICIAL_PULL_LEASE_SECONDS = 10
 PROJECTION_BOOTSTRAP_SERVICE = "loop-run-projector-scheduler"
 PRINCIPAL_ISSUER_SERVICE = "dev-paper-principal-issuer"
 ISOLATED_DEV_TENANT = "tenant-dev"
@@ -355,6 +358,8 @@ def _tw_official_pull_env(compose_env: Mapping[str, str]) -> dict[str, str]:
         "SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL": "reconciled_live_proof",
         "SOURCE_INGEST_CONTROLLER_RESTART_POLICY": "no",
         "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "1",
+        "SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS": str(TW_OFFICIAL_PULL_LEASE_SECONDS),
+        "SOURCE_INGEST_CONTROLLER_LEASE_SECONDS": str(TW_OFFICIAL_PULL_LEASE_SECONDS),
         "SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS": str(TW_OFFICIAL_PULL_TIMEOUT_SECONDS),
         "SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS": TW_OFFICIAL_CONNECTOR_ID,
         "SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS": TW_OFFICIAL_CONNECTOR_ID,
@@ -375,12 +380,16 @@ def _tw_official_pull_commands(
             "--wait", "--wait-timeout", "120", "source-ingest",
         ),
         "scheduler_tick": _compose_command(
-            project, compose_files, "run", "--rm", "--no-deps", "-T",
+            project, compose_files, "run", "--rm", "--build", "--no-deps", "-T",
             TW_OFFICIAL_PULL_SERVICE,
         ),
         "source_ingest_restore": _compose_command(
             project, compose_files, "up", "-d", "--no-deps", "--no-build",
             "--wait", "--wait-timeout", "120", "source-ingest",
+        ),
+        "scheduler_start": _compose_command(
+            project, compose_files, "up", "-d", "--no-deps", "--no-build",
+            "--wait", "--wait-timeout", "120", TW_OFFICIAL_PULL_SERVICE,
         ),
     }
 
@@ -393,6 +402,7 @@ def _run_tw_official_pull(
     snapshot_url: str,
     reader_headers: Mapping[str, str],
     diagnostics_dir: Path,
+    start_resident_scheduler: bool = False,
 ) -> dict[str, Any]:
     """Run the bounded Taiwan official pull once; fail on error or empty result."""
     commands = _tw_official_pull_commands(project, compose_files)
@@ -446,6 +456,19 @@ def _run_tw_official_pull(
             )
     if failure is not None:
         raise RuntimeError(f"bounded Taiwan official pull failed: {failure}")
+    if start_resident_scheduler:
+        # The resident owner would otherwise be fenced by the bounded tick's lease.
+        time.sleep(TW_OFFICIAL_PULL_LEASE_SECONDS + 5)
+        started = subprocess.run(
+            commands["scheduler_start"], env=dict(compose_env),
+            capture_output=True, text=True, check=False,
+        )
+        started_text = _capture("scheduler-start", started)
+        if started.returncode != 0:
+            raise RuntimeError(
+                f"resident {TW_OFFICIAL_PULL_SERVICE} did not start after the pull: "
+                f"{started_text[-2000:]}"
+            )
     return {
         "connector_id": TW_OFFICIAL_CONNECTOR_ID,
         "commands": commands,
@@ -1241,7 +1264,9 @@ def main(argv: list[str] | None = None) -> int:
                 "--wait",
                 "--wait-timeout",
                 str(max(1, int(args.ready_timeout))),
-                *required_services,
+                # The resident scheduler holds the source controller lease, so it
+                # starts after the bounded Taiwan pull instead of beside it.
+                *[name for name in required_services if name != TW_OFFICIAL_PULL_SERVICE],
             )
             print(
                 "[*] Provisioning isolated Compose services "
@@ -1262,6 +1287,7 @@ def main(argv: list[str] | None = None) -> int:
                     "X-Tenant-Id": reader_tenant,
                 },
                 diagnostics_dir=args.evidence_output.resolve().parent / "diagnostics",
+                start_resident_scheduler=TW_OFFICIAL_PULL_SERVICE in required_services,
             )
             if args.stimulus_gate:
                 projector_command = _projector_run_command(

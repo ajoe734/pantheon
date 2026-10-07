@@ -1,0 +1,22 @@
+{
+  "task_id": "BFF-ACTION-RETIRED-ERROR-MATRIX-20261007",
+  "root_cause": "67e53b2c2 removed ACTION_RETIRED from _PACK_D_D21_ERROR_BEHAVIOR while the ErrorCode enum kept it (157d78bb5); live 410 envelopes fell back to INTERNAL_ERROR flags (userActionable:false).",
+  "production_fix": [
+    "auth/policy.py: restored ACTION_RETIRED row {retryable:false,userActionable:true}",
+    "personas/service.py: removed duplicate matrix copy, now imported from auth.policy"
+  ],
+  "test_changes": [
+    {
+      "test": "test_bff_error_envelope_shape.py allowlist and count (26 -> 27, ACTION_RETIRED added)",
+      "classification": "stale sample",
+      "decision": "ErrorCode enum keeps ACTION_RETIRED (157d78bb5); BFF_COMMAND_API_CONTRACT.md documents it as client-visible 410 code",
+      "assertion_weakened": false
+    },
+    {
+      "test": "added assertion behavior[ACTION_RETIRED] == retryable false, userActionable true",
+      "classification": "new coverage of live 410 path",
+      "assertion_weakened": false
+    }
+  ],
+  "verification": "pytest: test_bff_error_envelope_shape, test_bff_write_gap_2026_05_28, test_final_command_execution_bridge, tests/test_bff_main_composition: 98 passed after fix (2 allowlist tests failed before the stale-sample update)"
+}

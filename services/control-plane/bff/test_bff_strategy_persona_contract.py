@@ -34,6 +34,8 @@ from services.control_plane.bff.personas import service as personas_service
 from services.control_plane.bff.personas.router import create_personas_router
 from services.control_plane.bff.personas.service import PersonaService
 from services.control_plane.bff.ports import ReadSurfacePorts
+from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.test_exp002_bff_research_experiments_contract import _FakeResearchWriteOwner
 from services.control_plane.bff.research.router import create_research_router
 from services.control_plane.bff.strategies.router import create_strategies_router
 from services.control_plane.bff.test_persona_provisioning_coordinator import (
@@ -96,7 +98,10 @@ class StrategyPersonaTestReadPorts(ReadSurfacePorts):
         *,
         allow_local_snapshot_fallback: bool = True,
     ) -> None:
-        super().__init__()
+        # Experiments delegate to the research write owner (57bfb1b40); inject an empty one.
+        super().__init__(research_knowledge_source=DefaultResearchKnowledgeSourcePort(
+            research_write_owner=_FakeResearchWriteOwner({}),
+        ))
         self._data = seed_data if seed_data is not None else _local_strategy_persona_read_data()
         self.allow_local_snapshot_fallback = allow_local_snapshot_fallback
 
@@ -587,6 +592,17 @@ def test_bff_strategies_patch_updates_existing_record() -> None:
         assert patch_resp.json()["data"]["risk"] == "high"
 
 
+def test_bff_personas_patch_rejects_missing_idempotency_key() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        persona_id = next(iter(_CURRENT_STORE_DATA["personas"]))
+        response = client.patch(f"/bff/personas/{persona_id}", json={"name": "Renamed"}, headers=HEADERS)
+        assert response.status_code == 400, response.text
+        error = response.json()["error"]
+        assert error["code"] == ErrorCode.VALIDATION_FAILED.value
+        assert error["details"]["precondition_failed"] == "idempotency_key"
+
+
 def test_bff_strategies_subresources_return_envelope() -> None:
     with tempfile.TemporaryDirectory() as td:
         client = _fresh_client(td)
@@ -825,7 +841,22 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
             "runtime_id": runtime_id,
             "runtime_binding": authoritative_binding,
         }
-        personas_service._get_json = lambda *_args, **_kwargs: projection
+        class _ProjectionTransport:
+            """Serve the Deployment projection through the owner transport (4e9b4917e)."""
+
+            def __init__(self, base):
+                self._base = base
+
+            def get(self, owner, path, *args, **kwargs):
+                if owner == "deployment" and path.endswith("/projection"):
+                    return projection
+                return self._base.get(owner, path, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._base, name)
+
+        owner_transport = personas_service._PersonaOwnerHttpTransport()
+        personas_service._PersonaOwnerHttpTransport = lambda *_a, **_k: _ProjectionTransport(owner_transport)
         personas_service._register_persona_cron_required = lambda *_args, **_kwargs: {
             "authoritative_readback": {
                 "persona_id": persona_id,

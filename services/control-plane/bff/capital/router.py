@@ -443,12 +443,12 @@ def create_capital_router(
     async def bff_evaluate_persona_allocation_policy(
         payload: Dict[str, Any] = Body(...), authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
-        _require_read(authorization)
+        identity = _require_read(authorization)
         try:
-            evaluation = service.evaluate_allocation_policy(payload)
+            evaluation = service.write("evaluate_allocation", payload, actor_id=_identity_id(identity), actor_role=_owner_actor_role(identity), auth_token=authorization)
         except Exception as exc:
             raise _error_for_capital_exception(exc, bff_error) from exc
-        return _readback_response(evaluation, meta={"snapshot_at": utc_now(), "allocation_digest": evaluation["allocation_digest"]})
+        return _readback_response(evaluation, meta={"snapshot_at": utc_now(), "allocation_evaluation_id": evaluation.get("allocation_evaluation_id")})
 
     # 11. Rebalance list.
     @router.get("/bff/rebalances")

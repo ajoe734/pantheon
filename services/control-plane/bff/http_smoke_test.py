@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
 import sys
 import tempfile
 import time
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import httpx
@@ -16,8 +19,54 @@ ROOT = Path(__file__).resolve().parents[3]
 BFF_DIR = ROOT / "services" / "control-plane" / "bff"
 HOST = "127.0.0.1"
 
-OPERATOR_TOKEN = "Bearer op-2:operator"
-APPROVER_TOKEN = "Bearer op-1:approver"
+# The third stub-token segment is the verified tenant; owner reads fail closed
+# without one.
+OPERATOR_TOKEN = "Bearer op-2:operator:tenant-smoke"
+APPROVER_TOKEN = "Bearer op-1:approver:tenant-smoke"
+
+
+_DEPLOYMENT_PLAN = {
+    "id": "plan-F-042",
+    "plan_id": "plan-F-042",
+    "stage": "paper",
+    "artifact_id": "artifact-F-042",
+}
+
+
+_APPROVAL_DECISION = {
+    "decision_id": "appr-dp-001",
+    "decision": "approved",
+    "decision_state": "approved",
+    "command": "ApproveDeployment",
+    "target_type": "DeploymentPlan",
+    "target_id": "dp-001",
+}
+
+_OWNER_COLLECTIONS = {
+    "/api/deployment/plans": [_DEPLOYMENT_PLAN],
+    "/api/governance/approvals": [_APPROVAL_DECISION],
+}
+
+
+class _OwnerStub(BaseHTTPRequestHandler):
+    """Stand-in Deployment and Governance owners.
+
+    The BFF reads plans and approval evidence from the owner APIs rather than
+    a local snapshot, so the smoke needs reachable owners to serve them.
+    """
+
+    def do_GET(self) -> None:  # noqa: N802 - http.server naming
+        records = _OWNER_COLLECTIONS.get(self.path.split("?", 1)[0])
+        found = records is not None
+        body = json.dumps(records if found else {}).encode("utf-8")
+        self.send_response(200 if found else 404)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args) -> None:
+        return
 
 
 def _free_port() -> int:
@@ -29,11 +78,18 @@ def _free_port() -> int:
 class TestOperatorBFFHttpSmoke(unittest.TestCase):
     def test_socket_level_http_smoke(self) -> None:
         port = _free_port()
+        owner = ThreadingHTTPServer((HOST, 0), _OwnerStub)
+        threading.Thread(target=owner.serve_forever, daemon=True).start()
+        self.addCleanup(owner.server_close)
+        self.addCleanup(owner.shutdown)
         with tempfile.TemporaryDirectory(prefix="pantheon-bff-http-") as temp_dir:
             env = os.environ.copy()
             env["BFF_DATA_DIR"] = temp_dir
             env["BFF_READ_SURFACE_STATE"] = "fresh"
             env["PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK"] = "true"
+            owner_url = f"http://{HOST}:{owner.server_address[1]}"
+            env["PANTHEON_DEPLOYMENT_API_URL"] = owner_url
+            env["PANTHEON_GOVERNANCE_APPROVAL_API_URL"] = owner_url
 
             command = [
                 sys.executable,
@@ -70,7 +126,7 @@ class TestOperatorBFFHttpSmoke(unittest.TestCase):
                 self._terminate(process)
 
     def _wait_until_ready(self, base_url: str, process: subprocess.Popen[str]) -> None:
-        deadline = time.time() + 20.0
+        deadline = time.time() + 60.0
         last_error: str | None = None
         while time.time() < deadline:
             if process.poll() is not None:
@@ -117,7 +173,10 @@ class TestOperatorBFFHttpSmoke(unittest.TestCase):
     def _verify_command_roundtrip(self, client: httpx.Client) -> None:
         submit = client.post(
             "/bff/v1/commands",
-            headers={"Authorization": APPROVER_TOKEN},
+            headers={
+                "Authorization": APPROVER_TOKEN,
+                "Idempotency-Key": "http-smoke-approve-dp-001",
+            },
             json={
                 "command": "ApproveDeployment",
                 "target": {"type": "DeploymentPlan", "id": "dp-001"},
@@ -125,6 +184,7 @@ class TestOperatorBFFHttpSmoke(unittest.TestCase):
                 "params": {
                     "deployment_plan_id": "dp-001",
                     "approval_decision": "approve",
+                    "approvalId": "appr-dp-001",
                 },
                 "audit_context": {"reason": "HTTP smoke"},
             },

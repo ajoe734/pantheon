@@ -1,0 +1,53 @@
+{
+  "task_id": "BFF-RED-TESTS-COMPOSITION-20261007",
+  "change_class": "corrective",
+  "net_prod_line_budget": 0,
+  "summary": "Refresh six BFF composition test files that required CI does not run. Pure test updates; no production file touched and no assertion weakened.",
+  "triage_classifications": {
+    "path_dedupe_ranking_promote": {
+      "file": "services/control-plane/bff/tests/test_bff_path_dedupe.py",
+      "classification": "retired",
+      "decision": "RankingFormulaAction has no executor and fails before admission with 410 ACTION_RETIRED. The case moved out of the deprecated-alias header check into its own explicit 410/ACTION_RETIRED assertion, so the guarantee is still tested."
+    },
+    "path_dedupe_persona_promote": {
+      "file": "services/control-plane/bff/tests/test_bff_path_dedupe.py",
+      "classification": "intended_change",
+      "deciding_commit": "ade4fd088",
+      "decision": "Persona promote is a live lifecycle entry point. The still-deprecated nested persona sample is now /actions/archive, which keeps the 410 + X-Deprecated headers assertion unchanged."
+    },
+    "final_precondition_missing_approval": {
+      "file": "services/control-plane/bff/test_final_precondition_errors.py",
+      "classification": "intended_change",
+      "deciding_commit": "6631736ae",
+      "decision": "ApproveDecision is exempt from the approval-evidence precondition (owner verifies). The 409 HUMAN_GATE_PENDING expectation is kept and exercised with ApproveDeployment + approval_decision, which still requires evidence."
+    },
+    "read_surface_cutover_notes": {
+      "file": "services/control-plane/bff/tests/test_read_surface_port_cutover.py",
+      "classification": "stale_sample",
+      "deciding_commit": "e194571a1",
+      "decision": "Research single owner: the owner answers experiment reads only. A bare MagicMock answered note reads too and polluted the count. The double is now MagicMock(spec=[experiment methods]); the 1-note count assertion is unchanged."
+    },
+    "list_detail_facade_order_dependence": {
+      "file": "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py",
+      "classification": "stale_sample",
+      "decision": "The _PERSONA_PROVISIONING_STORE guard was captured at import time, so another module rebinding the global between collection and the first test failed the module fixture (order-dependent errors). The original is now captured inside the fixture; the restore-and-identity assertions on exit remain. The dataset_surface_status double already returns ok (ed2951d76). Verified alone and after the persona wiring/contract files."
+    },
+    "http_smoke": {
+      "file": "services/control-plane/bff/http_smoke_test.py",
+      "classification": "stale_sample",
+      "decision": "Reads now come from owner APIs under a verified tenant, and ApproveDeployment requires Idempotency-Key and approval evidence. Test now stands up stub Deployment and Governance owners (plan-F-042, appr-dp-001 bound to ApproveDeployment/dp-001), uses tenant-bearing stub tokens, sends Idempotency-Key and approvalId, and waits up to 60s for readiness. All original status assertions are kept."
+    },
+    "staging_cutoff": {
+      "file": "services/control-plane/bff/test_staging_read_store_cutoff_contract.py",
+      "classification": "intended_change",
+      "deciding_commits": ["3619312f3", "9644a6b5e", "99833357f"],
+      "decision": "3619312f3 gave operator-bff a read-only governance journal consumer mount. The static test now requires exactly that one mount, :ro, and the rendered test requires exactly {bff-data rw, governance-data ro}. Rendering needs --profile root (99833357f) and dummy required env (9644a6b5e); a writable or extra mount still fails."
+    }
+  },
+  "observation_not_changed": "With no Governance owner configured, a command carrying approval evidence returns 500 INTERNAL_ERROR (unconfigured RuntimeError from governance_approval_url escapes), while the cleanup default is 503 DEPENDENCY_UNAVAILABLE for an unavailable owner. Not marked as a regression by triage and the production budget is 0, so left for a separate task.",
+  "local_verification": {
+    "command": "python -m pytest tests/test_bff_path_dedupe.py test_final_precondition_errors.py tests/test_read_surface_port_cutover.py tests/test_bff_b2_list_detail_facade.py http_smoke_test.py test_staging_read_store_cutoff_contract.py (cwd services/control-plane/bff)",
+    "result": "72 passed (baseline before change: 7 failed, 65 passed)",
+    "order_check": "tests/test_bff_persona_create_paper_bundle.py tests/test_persona_owner_transport_contract.py tests/test_remaining_main_seam_composition.py tests/test_bff_b2_list_detail_facade.py: 92 passed"
+  }
+}
