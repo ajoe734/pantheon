@@ -1,0 +1,31 @@
+{
+  "task_id": "REVIEW-PROVENANCE-CORRECTION-20261007",
+  "kind": "review_provenance_correction",
+  "corrected_tasks": ["OSS-STORAGE-INVENTORY-20261002", "FE-APPROVAL-HOSTED-ACCEPTANCE-001"],
+  "append_only": true,
+  "files": [
+    "docs/deployment/evidence/OSS-STORAGE-INVENTORY-20261002/merged-review.md",
+    "docs/deployment/evidence/OSS-STORAGE-INVENTORY-20261002/provenance-review.md",
+    "docs/deployment/evidence/FE-APPROVAL-HOSTED-ACCEPTANCE-001/merged-review.md",
+    "docs/deployment/evidence/FE-APPROVAL-HOSTED-ACCEPTANCE-001/provenance-review.md"
+  ],
+  "sources": "coordinator raw material in /tmp/pantheon-review-provenance-20261007 (not in the repository); gh PR comments and PR metadata; nonprod-deploy runs 37105169338, 37123107209, 37035071230 and job logs; compose and source at f3e267c1 and 9304d19c via git show; execute-plans source at 86a4314b",
+  "findings": {
+    "provenance": "all earlier review rounds were coordinator-started CLI runs, not dispatched fleet reviews; no journal review event for either task; both archived by reconcile_merged_done",
+    "model_home": {
+      "FE-APPROVAL-HOSTED-ACCEPTANCE-001": "codex-cli 0.153.0, no CODEX_HOME set, likely ~/.codex rather than ~/.codex2 (likely, not verified)",
+      "OSS-STORAGE-INVENTORY-20261002": "2026-10-02 codex rounds: CODEX_HOME not recorded, home not established; 2026-10-06 agy rounds: ANTIGRAVITY_HOME=~/.gemini-agy2, plan mode, sandbox, no tools"
+    },
+    "oss_table": "27 evidence claims classified; no factual claim contradicted by a source except the review-independence wording; 10-02 MinIO observations and several attestations unsupported",
+    "fe_table": "26 evidence claims classified; probe-derived steps all confirmed; attestations and served identities remain coordinator-sourced",
+    "contradicted": [
+      "review independence wording in both merged-review.md briefs and the independent_review block of the OSS evidence"
+    ]
+  },
+  "operator_follow_ups": [
+    "OSS: original 2026-10-02 MinIO outputs unsupported; byte totals 188390/180198 vs 32761/37401 unreconciled; claim citing failed run 37035071230 names a run that did not deploy f3e267c1; acceptance-3 MET rests on the operator decision",
+    "FE: ha_404.out shows unknown approval id returns 404 on 5743158b0, so the recorded 409 deviation may already be fixed; operator decides whether to close it",
+    "Both: decide whether archived status stands on this task's fleet review"
+  ],
+  "not_done": "no task-state, archive or reconcile action; no hosted or VM operation; no reviewer CLI run; no production code change; execute-plans untouched"
+}
