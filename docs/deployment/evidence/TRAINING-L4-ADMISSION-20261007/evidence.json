@@ -1,5 +1,7 @@
 {
   "task_id": "TRAINING-L4-ADMISSION-20261007",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
   "diagnosis": {
     "reproduced_at_head": "1fa363214",
     "reproduced_from_report": "/tmp/pantheon-closure-continuation-20261007T1255Z/isolated-retry/run-report.json",
@@ -17,7 +19,7 @@
     "other provenance fields"
   ],
   "verification": {
-    "unit": "pytest services/training-session: 152 passed, 2 skipped (includes access_scope negative cases)",
+    "unit": "pytest services/training-session: 161 passed, 2 skipped, 1 warning (includes access_scope negative cases)",
     "isolated_leased_harness": {
       "compose_project": "l12l4adm20261007",
       "head_sha": "c50236ef05f4e8a1fe60ea9eed88c534e939414c",
