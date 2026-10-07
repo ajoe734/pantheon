@@ -161,6 +161,7 @@ _PACK_D_D21_ERROR_BEHAVIOR: Dict[str, Dict[str, bool]] = {
     ErrorCode.UPSTREAM_ERROR.value: {"retryable": True, "userActionable": True},
     ErrorCode.INTERNAL_ERROR.value: {"retryable": False, "userActionable": False},
     ErrorCode.NOT_IMPLEMENTED.value: {"retryable": False, "userActionable": False},
+    ErrorCode.ACTION_RETIRED.value: {"retryable": False, "userActionable": True},
     ErrorCode.MAINTENANCE_MODE.value: {"retryable": True, "userActionable": True},
     ErrorCode.KILL_SWITCH_ACTIVE.value: {"retryable": False, "userActionable": False},
     ErrorCode.SAFE_MODE_ACTIVE.value: {"retryable": False, "userActionable": False},

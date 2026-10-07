@@ -299,9 +299,10 @@ def _healthy_cockpit_context(monkeypatch):
         status="ok",
         source_kind="live",
         source_version="rv1",
+        tenant_id="tenant-a",
     )
     telemetry = dict(
-        runtime_id="r1", owner="telemetry-owner", status="ok", source_kind="live", source_version="tv1"
+        runtime_id="r1", owner="telemetry-owner", status="ok", source_kind="live", source_version="tv1", tenant_id="tenant-a"
     )
     store = SimpleNamespace(
         list_runtime_bindings=lambda: [binding],
@@ -377,6 +378,7 @@ def test_nonraising_unavailable_rollback_owner_is_preserved(
         observed_at="2026-09-08T18:00:00Z",
         correlation_id="rollback-correlation",
         degradation_reason="rollback owner offline",
+        tenant_id="tenant-a",
     )
     monkeypatch.setattr(mock_context_host.store, "get_rollbacks", lambda _runtime_id: [row])
 

@@ -190,18 +190,21 @@ def strict_client(monkeypatch):
     return TestClient(_make_app(), raise_server_exceptions=False)
 
 
-def jwt_authorization(subject, roles, *, user_id="proposal-owner"):
+def jwt_authorization(subject, roles, *, user_id="proposal-owner", tenant_id="pantheon-dev"):
     now = int(time.time())
+    claims = {
+        "sub": subject,
+        "user_id": user_id,
+        "roles": roles,
+        "iss": JWT_ISSUER,
+        "aud": JWT_AUDIENCE,
+        "iat": now,
+        "exp": now + 3600,
+    }
+    if tenant_id:
+        claims["tenant_id"] = tenant_id
     token = encode_jwt_hs256(
-        {
-            "sub": subject,
-            "user_id": user_id,
-            "roles": roles,
-            "iss": JWT_ISSUER,
-            "aud": JWT_AUDIENCE,
-            "iat": now,
-            "exp": now + 3600,
-        },
+        claims,
         secret=JWT_SECRET,
     )
     return f"Bearer {token}"
@@ -235,6 +238,13 @@ def authoritative_approval(*, approval_id="approval-risk-1", reviewer="risk-revi
         "decided_at": (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat(),
         **overrides,
     }
+
+
+def test_tenantless_jwt_scope_denial_is_403(monkeypatch):
+    c = client(monkeypatch)
+    auth = jwt_authorization("proposal-owner", ["operator"], tenant_id=None)
+    denied = c.post("/bff/agora/proposals", headers={**HEADERS, "Authorization": auth}, json=payload())
+    assert denied.status_code == 403, denied.text
 
 
 def test_revision_history_etag_and_governed_link(monkeypatch):

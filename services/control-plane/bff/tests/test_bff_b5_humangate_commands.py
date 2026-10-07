@@ -84,7 +84,6 @@ class MockReadStore:
 
 command_store: Optional[CommandStore] = None
 read_store: Optional[MockReadStore] = None
-_FINAL_CONTRACT_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _GOV_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 
 
@@ -96,7 +95,6 @@ def _build_test_app() -> FastAPI:
         command_store=lambda: command_store,
         read_surface=lambda: read_store,
         extract_identity=_test_extract_identity,
-        final_contract_idempotency=_FINAL_CONTRACT_IDEMPOTENCY,
         gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
     )
 
@@ -157,7 +155,6 @@ def _isolated_b5_client() -> Iterator[TestClient]:
                 {"decision_id": "b5-revoke", "status": "pending", "requested_by": "governance-queue"},
             ]
         )
-        _FINAL_CONTRACT_IDEMPOTENCY.clear()
         _GOV_BFF_IDEMPOTENCY.clear()
         app = _build_test_app()
         try:
@@ -165,7 +162,6 @@ def _isolated_b5_client() -> Iterator[TestClient]:
         finally:
             command_store = None
             read_store = None
-            _FINAL_CONTRACT_IDEMPOTENCY.clear()
             _GOV_BFF_IDEMPOTENCY.clear()
 
 
@@ -203,11 +199,7 @@ def _accepted_command_id(payload: dict) -> str:
 
 def test_humangate_command_names_are_admitted_through_bff_v1_commands() -> None:
     cases = [
-        ("HumanGateApprove", "approval:b5-approve", {}),
-        ("HumanGateReject", "approval:b5-reject", {"rejection_reason": "risk budget exceeded"}),
-        ("HumanGateRequestMoreEvidence", "approval:b5-evidence", {"evidence_request": "attach PM-12 packet"}),
         ("HumanGateRevoke", "approval:b5-revoke", {"revoke_reason": "stale approval"}),
-        ("HumanGateExtendTtl", "approval:b5-ttl", {"ttlSeconds": 3600}),
     ]
 
     with _isolated_b5_client() as client:
@@ -234,115 +226,14 @@ def test_humangate_command_names_are_admitted_through_bff_v1_commands() -> None:
             assert record["target"] == {"type": "HumanGateItem", "id": target_id}
             assert record["params"]["human_gate_item_id"] == target_id
             assert record["params"]["itemId"] == target_id
-            assert record["params"]["decision"] in {
-                "approve",
-                "reject",
-                "request_more_evidence",
-                "revoke",
-                "extend_ttl",
-            }
+            assert record["params"]["decision"] == "revoke"
             assert record["params"]["audit_event"].startswith("human_gate.")
             assert record["foundation"]["admission_route"] == "POST /bff/v1/commands"
 
 
-def test_human_inbox_decision_flow_can_submit_decisions_via_command_path() -> None:
-    with _isolated_b5_client() as client:
-        inbox = client.get(
-            "/bff/management/human-inbox",
-            headers=HEADERS,
-            params={"source_type": "approval", "page_size": 1},
-        )
-        assert inbox.status_code == 200, inbox.text
-        item = inbox.json()["data"]["items"][0]
-        assert item["id"].startswith("approval:")
-
-        for command in (
-            "HumanGateApprove",
-            "HumanGateReject",
-            "HumanGateRequestMoreEvidence",
-        ):
-            response = _submit_command(
-                client,
-                command=command,
-                target_type="HumanGateItem",
-                target_id=item["id"],
-                params={"source_record_id": item["source_id"]},
-                idempotency_key=f"bff-b5-inbox-{command}",
-            )
-
-            assert response.status_code == 202, response.text
-            payload = response.json()
-            command_id = _accepted_command_id(payload)
-            assert command_store is not None
-            record = command_store.get_command(command_id)
-            assert record is not None
-            assert record["target"]["id"] == item["id"]
-            assert record["params"]["source_type"] == "approval"
-            assert record["params"]["source_record_id"] == item["source_id"]
-            command_store.update_status(command_id, CommandStatus.EXECUTED)
-
-
-def test_quarterly_ranking_recommendation_submit_uses_command_response_without_live_mutation(
-    _saved_evaluator_result_stub,
-) -> None:
-    with _isolated_b5_client() as client:
-        snapshot = read_store.get_ranking_snapshot("snap-b5-001")
-        _saved_evaluator_result_stub.record({**snapshot, "ranking_snapshot_id": "snap-b5-001"})
-        recommendations = client.get(
-            "/bff/management/quarterly-ranking/recommendations",
-            headers=HEADERS,
-            params={"quarter": "2026-Q1", "page_size": 1},
-        )
-        assert recommendations.status_code == 200, recommendations.text
-        item = recommendations.json()["data"]["items"][0]
-
-        response = _submit_command(
-            client,
-            command="QuarterlyRankingRecommendationSubmit",
-            target_type="Ranking",
-            target_id=item["recommendation_id"],
-            params={
-                "quarter": item["quarter"],
-                "recommendation_id": item["recommendation_id"],
-                "recommendation_action_id": item["action_id"],
-                "action_id": "submit_recommendation",
-                "actionId": "submit_recommendation",
-                "persona_id": item["persona_id"],
-                "ranking_snapshot_id": item["ranking_snapshot_id"],
-                "live_capital_mutation": item["live_capital_mutation"],
-            },
-            idempotency_key="bff-b5-quarterly-recommendation-submit",
-        )
-
-        assert response.status_code == 202, response.text
-        payload = response.json()
-        command_id = _accepted_command_id(payload)
-        assert payload["data"]["command"] == "QuarterlyRankingRecommendationSubmit"
-
-        assert command_store is not None
-        record = command_store.get_command(command_id)
-        assert record is not None
-        assert record["type"] == "QuarterlyRankingRecommendationSubmit"
-        assert record["target"] == {"type": "Ranking", "id": item["recommendation_id"]}
-        assert record["params"]["recommendation_id"] == item["recommendation_id"]
-        assert record["params"]["recommendation_action_id"] == item["action_id"]
-        assert record["params"]["ranking_snapshot_id"] == item["ranking_snapshot_id"]
-        assert record["params"]["action_id"] == "submit_recommendation"
-        assert record["params"]["actionId"] == "submit_recommendation"
-        assert record["params"]["audit_event"] == "quarterly_ranking.recommendation_submitted"
-        assert record["audit"]["receipt_dual_write"]["command_receipt"]["command"] == (
-            "QuarterlyRankingRecommendationSubmit"
-        )
-
-
 def test_b5_commands_are_in_action_catalog() -> None:
     expected = {
-        "HumanGateApprove": "HumanGateItem",
-        "HumanGateReject": "HumanGateItem",
-        "HumanGateRequestMoreEvidence": "HumanGateItem",
         "HumanGateRevoke": "HumanGateItem",
-        "HumanGateExtendTtl": "HumanGateItem",
-        "QuarterlyRankingRecommendationSubmit": "Ranking",
     }
 
     for command, entity_type in expected.items():

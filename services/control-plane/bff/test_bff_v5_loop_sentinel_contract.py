@@ -1369,10 +1369,18 @@ def test_command_executor_post_and_get_json_integration_with_downstream_monitor(
 
     monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
 
-    res_post = command_executor._post_json(f"{target_url}/api/ingest", {"test": 1})
+    token = encode_jwt_hs256(
+        {
+            "sub": "v5-loop-sentinel",
+            "roles": ["operator"],
+            "allowed_tenants": ["tenant-dev"],
+        },
+        secret="v5-secret",
+    )
+    res_post = command_executor._post_json(f"{target_url}/api/ingest", {"test": 1}, auth_token=token)
     assert res_post == {"result": "success"}
 
-    res_get = command_executor._get_json(f"{target_url}/api/status")
+    res_get = command_executor._get_json(f"{target_url}/api/status", auth_token=token)
     assert res_get == {"result": "success"}
 
     state = monitor.get_state()

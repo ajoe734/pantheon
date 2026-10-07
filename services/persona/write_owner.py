@@ -85,6 +85,9 @@ _DECISION_EXECUTOR_ROLES = frozenset({"admin", "approver", "operator"})
 _AUTHENTICATED_MUTATION_ROLES = (
     _PERSONA_PLANE_ROLES | _GOVERNANCE_PLANE_ROLES | _DECISION_EXECUTOR_ROLES
 )
+_AUTHENTICATED_READ_ROLES = (
+    _AUTHENTICATED_MUTATION_ROLES | frozenset({"viewer", "view_only", "reviewer"})
+)
 _LIFECYCLE_POLICY_ROLES = {
     ("draft", "research_only"): _PERSONA_PLANE_ROLES,
     ("research_only", "consultable"): _GOVERNANCE_PLANE_ROLES,
@@ -400,6 +403,7 @@ def _persona_auth_env() -> dict[str, str]:
 
 def _authenticate_persona_mutation(
     authorization: str | None,
+    required_roles: frozenset[str] = _AUTHENTICATED_MUTATION_ROLES,
 ) -> PersonaInboundAuthority:
     configured_service_token = str(
         os.getenv("PANTHEON_PERSONA_SERVICE_TOKEN")
@@ -424,7 +428,7 @@ def _authenticate_persona_mutation(
     try:
         context: AuthContext = validate_request_auth(
             authorization=authorization,
-            required_roles=tuple(sorted(_AUTHENTICATED_MUTATION_ROLES)),
+            required_roles=tuple(sorted(required_roles)),
             mfa_required=False,
             env=_persona_auth_env(),
         )
@@ -440,11 +444,19 @@ def _authenticate_persona_mutation(
     )
 
 
+def _authenticate_persona_read(
+    authorization: str | None,
+) -> PersonaInboundAuthority:
+    return _authenticate_persona_mutation(authorization, _AUTHENTICATED_READ_ROLES)
+
+
 def resolve_persona_tenant_scope(
-    authorization: str | None, requested_tenant: str | None = None
+    authorization: str | None,
+    requested_tenant: str | None = None,
+    required_roles: frozenset[str] = _AUTHENTICATED_READ_ROLES,
 ) -> tuple[PersonaInboundAuthority, str]:
     """Authenticate and select only a tenant admitted by verified claims."""
-    authority = _authenticate_persona_mutation(authorization)
+    authority = _authenticate_persona_mutation(authorization, required_roles)
     if authority.token_kind == "service":
         default = str(os.getenv("PERSONA_DEFAULT_TENANT_ID") or os.getenv("PANTHEON_TENANT_ID") or "").strip()
         chosen = str(requested_tenant or "").strip() or default
@@ -1777,7 +1789,7 @@ def create_app(
             if has_private: raise HTTPException(status_code=401, detail="UNAUTHORIZED: Missing authorization")
             return persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value)
         try:
-            authority = _authenticate_persona_mutation(authorization)
+            authority = _authenticate_persona_read(authorization)
             if authority.token_kind == "service" and not tenant_id:
                 return persistent_owner.list(lifecycle_state=lifecycle_state, status_value=status_value)
             if not tenant_id and not has_private:
@@ -1796,7 +1808,7 @@ def create_app(
             if has_private: raise HTTPException(status_code=401, detail="UNAUTHORIZED: Missing authorization")
             return persistent_owner.get(persona_id)
         try:
-            authority = _authenticate_persona_mutation(authorization)
+            authority = _authenticate_persona_read(authorization)
             if has_private and authority.token_kind != "service":
                 tenant = raw.get("tenant_id")
                 if not tenant: raise HTTPException(status_code=403, detail="FORBIDDEN: Persona has no tenant binding")
