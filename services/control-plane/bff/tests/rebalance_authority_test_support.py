@@ -128,6 +128,7 @@ class PplProjectionTestDouble(MarketPersonaProjectionTestDouble):
         self._capital_allocations = state.get("capital_allocations", [])
         self._ppl_ranking_snapshots = state.get("ranking_snapshots", {})
         self._allocation_evaluations = state.get("allocation_evaluations", {})
+        self._paper_monitoring_sessions = list(state.get("paper_monitoring_sessions", []))
         ports = create_in_memory_read_surface_ports(
             persona_capital_runtime_kwargs={
                 "personas": self._personas,
@@ -146,6 +147,7 @@ class PplProjectionTestDouble(MarketPersonaProjectionTestDouble):
             research_knowledge_source=ports.research_knowledge_source,
             lifecycle_telemetry_governance=ports.lifecycle_telemetry_governance,
             persona_training=ports.persona_training,
+            paper_runtime_monitoring_sessions_provider=lambda: self._paper_monitoring_sessions,
         )
 
     @staticmethod
@@ -173,6 +175,11 @@ class PplProjectionTestDouble(MarketPersonaProjectionTestDouble):
         metadata: Optional[Dict[str, Any]] = None,
         **_: Any,
     ) -> Dict[str, Any]:
+        meta = dict(metadata or {})
+        meta.setdefault("tenant_id", "pantheon-dev")
+        meta.setdefault("owner", actor_id)
+        meta.setdefault("archetype", archetype)
+        meta.setdefault("risk_level", risk_level)
         record = self._fixture_builder.add_persona(
             persona_id,
             name=name,
@@ -181,12 +188,7 @@ class PplProjectionTestDouble(MarketPersonaProjectionTestDouble):
             status=lifecycle_state,
             mandate=mandate or archetype,
             strategy_family=strategy_family or archetype,
-            metadata={
-                **(metadata or {}),
-                "owner": actor_id,
-                "archetype": archetype,
-                "risk_level": risk_level,
-            },
+            metadata=meta,
         )
         return self._replace(self._personas, record, "persona_id", "id")
 
@@ -284,10 +286,34 @@ class PplProjectionTestDouble(MarketPersonaProjectionTestDouble):
 
     def get_ranking_snapshot(self, snapshot_id: Optional[str]) -> Optional[Dict[str, Any]]:
         record = self._ppl_ranking_snapshots.get(str(snapshot_id or ""))
-        return copy.deepcopy(record) if record is not None else None
+        if record is not None:
+            return copy.deepcopy(record)
+        try:
+            from services.control_plane.bff.personas.service import _get_ranking_write_owner
+            owner = _get_ranking_write_owner()
+            if owner is not None and hasattr(owner, "get_ranking_snapshot"):
+                rec = owner.get_ranking_snapshot(str(snapshot_id or ""))
+                if rec is not None:
+                    self.put_ranking_snapshot(rec)
+                    return copy.deepcopy(rec)
+        except Exception:
+            pass
+        return None
 
     def put_allocation_evaluation(self, record: Dict[str, Any]) -> Dict[str, Any]:
         evaluation_id = str(record.get("allocation_evaluation_id") or "")
+        if not record.get("content_digest") and evaluation_id:
+            record = {
+                **record,
+                "content_digest": _stable_json_hash(
+                    {
+                        "ranking_snapshot_id": record.get("ranking_snapshot_id"),
+                        "allocation_evaluation_id": evaluation_id,
+                        "allocation_policy_version": record.get("allocation_policy_version"),
+                        "lines": record.get("lines") or [],
+                    }
+                ),
+            }
         if not evaluation_id or not record.get("content_digest"):
             raise ValueError("allocation evaluation id and content_digest are required")
         existing = self._allocation_evaluations.get(evaluation_id)
@@ -336,6 +362,7 @@ class PplProjectionTestDouble(MarketPersonaProjectionTestDouble):
                 "capital_allocations": self._capital_allocations,
                 "ranking_snapshots": self._ppl_ranking_snapshots,
                 "allocation_evaluations": self._allocation_evaluations,
+                "paper_monitoring_sessions": self._paper_monitoring_sessions,
             }
         )
         for name in (
@@ -343,6 +370,7 @@ class PplProjectionTestDouble(MarketPersonaProjectionTestDouble):
             "get_telemetry_summary",
             "list_authoritative_paper_runtime_monitoring_sessions",
             "list_evidence_refs",
+            "_paper_runtime_monitoring_sessions_provider",
         ):
             if name in self.__dict__:
                 setattr(clone, name, self.__dict__[name])
@@ -535,7 +563,6 @@ class PplRankingProjectionHarness:
             require_read_role=require_read_role,
             bff_error=bff_error,
             utc_now=utc_now,
-            final_contract_idempotency=self.final_idempotency,
             gov_bff_idempotency=self.gov_idempotency,
         )
         app.state.command_adapter_service = self.command_adapter_service
@@ -597,6 +624,44 @@ def _build_authority_harness_app(
             status_code=exc.status_code,
             content={"error": {"code": "ERROR", "message": str(detail)}},
         )
+
+    from services.control_plane.bff.personas import (
+        PersonaService,
+        create_personas_router,
+    )
+    from services.control_plane.bff.personas.service import (
+        create_persona_registry_write_owner,
+    )
+    from services.control_plane.bff.management_read_models.router import (
+        create_management_router,
+    )
+
+    persona_service = PersonaService(
+        write_owner=create_persona_registry_write_owner(),
+        read_store=read_surface,
+        ranking_write_owner=read_surface,
+        command_store=command_store,
+    )
+    app.state.persona_service = persona_service
+    app.include_router(
+        create_personas_router(
+            service=persona_service,
+            extract_identity_fn=extract_identity,
+            require_read_role_fn=require_read_role,
+            require_operator_role_fn=require_operator_role,
+            bff_error_fn=bff_error,
+            utc_now_fn=utc_now,
+        )
+    )
+    app.include_router(
+        create_management_router(
+            get_read_store=lambda: read_surface,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+        )
+    )
 
     app.include_router(
         create_capital_router(
@@ -687,9 +752,12 @@ class CapitalBffAuthorityHarness:
         "CAPITAL_ALLOWED_CALLER_SERVICES",
     )
 
-    def __init__(self, root: Path, *, seed_allocation: bool = True) -> None:
+    def __init__(self, root: Path, *, seed_allocation: bool = True, ranking_reader: Any = None) -> None:
+        """``ranking_reader`` makes the owner verify rebalance lineage against it; without one, suites that
+        drive synthetic proposal lines skip owner lineage (it is proven on the live route instead)."""
         self.root = Path(root)
         self.seed_allocation = seed_allocation
+        self.ranking_reader = ranking_reader
         self.capital_data_dir = self.root / "capital"
         self.read_path = self.root / "bff-read-surfaces.json"
         self.command_path = self.root / "bff-commands.jsonl"
@@ -699,6 +767,9 @@ class CapitalBffAuthorityHarness:
         self.client: Optional[TestClient] = None
         self.read_surface = PplProjectionTestDouble()
         self.owner_calls: List[Tuple[str, str, Optional[str]]] = []
+        self.persona_service: Optional[Any] = None
+        self.final_idempotency: Dict[str, Dict[str, Any]] = {}
+        self.gov_idempotency: Dict[str, Dict[str, Any]] = {}
 
     def __enter__(self) -> "CapitalBffAuthorityHarness":
         self.root.mkdir(parents=True, exist_ok=True)
@@ -727,6 +798,14 @@ class CapitalBffAuthorityHarness:
         sys.modules.pop("services.capital.main", None)
         self.capital_module = importlib.import_module("services.capital.main")
         self.capital_client = TestClient(self.capital_module.app)
+        from services.capital import allocation_lineage
+
+        self._lineage_original = (allocation_lineage.verify_rebalance_lineage, allocation_lineage.create_ranking_reader)
+        allocation_lineage.create_ranking_reader = (
+            lambda: self.ranking_reader if self.ranking_reader is not None else self.read_surface
+        )
+        if self.ranking_reader is None:
+            allocation_lineage.verify_rebalance_lineage = lambda proposal: None
         command_executor._post_json = self._post_json
         command_executor._get_json = self._get_json
         self._original_urlopen = urllib.request.urlopen
@@ -784,8 +863,9 @@ class CapitalBffAuthorityHarness:
         capital_guard.configured_approval_reader = lambda domain: _ApprovesWhatIsAsked()
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
-        from services.capital import capital_guard
+        from services.capital import allocation_lineage, capital_guard
 
+        allocation_lineage.verify_rebalance_lineage, allocation_lineage.create_ranking_reader = self._lineage_original
         for name, original in getattr(self, "_guard_originals", {}).items():
             setattr(capital_guard, name, original)
         if self.client is not None:
@@ -812,7 +892,16 @@ class CapitalBffAuthorityHarness:
             self.client.close()
         self.command_store = CommandStore(str(self.command_path))
         app = _build_authority_harness_app(self.read_surface, self.command_store)
+        self.persona_service = getattr(app.state, "persona_service", None)
         self.client = TestClient(app)
+
+    def set_read_surface(self, read_surface: PplProjectionTestDouble) -> PplProjectionTestDouble:
+        """Swap the injected read projection the mounted routers resolve."""
+        self.read_surface = read_surface
+        if self.persona_service is not None:
+            self.persona_service._read_store = read_surface
+            self.persona_service._ranking_write_owner = read_surface
+        return read_surface
 
     def restart(self) -> None:
         """Rebuild both owner and BFF process-local state over the same files."""
@@ -1038,6 +1127,8 @@ class CapitalBffAuthorityHarness:
             self.read_surface.add_authoritative_binding(body)
         elif parsed.path == "/api/rebalances":
             self.read_surface.add_authoritative_rebalance(body)
+        elif parsed.path == "/api/allocation-evaluations":
+            self.read_surface.put_allocation_evaluation(body)
         return body
 
     def _get_json(

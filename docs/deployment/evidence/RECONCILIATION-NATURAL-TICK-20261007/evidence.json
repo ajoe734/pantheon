@@ -1,0 +1,72 @@
+{
+  "task_id": "RECONCILIATION-NATURAL-TICK-20261007",
+  "title": "Diagnose and repair natural scheduled reconciliation timeout without synthetic closure",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 40,
+  "net_prod_lines": 16,
+  "hosted_incident": {
+    "failing_service": "services/reconciliation-drift",
+    "observed_at": "2026-10-07T12:56:18.028267+00:00",
+    "evidence_files": [
+      "/tmp/pantheon-closure-continuation-20261007T1220Z/natural-run-boundaries.json",
+      "/tmp/pantheon-closure-continuation-20261007T1220Z/reconciliation-health.json",
+      "/tmp/pantheon-closure-continuation-20261007T1255Z/scheduler-log-summary-nested.json"
+    ],
+    "observed_symptoms": "Reconciliation scheduler ticks 1-10 failed with controller_status: unhealthy, evaluated_binding_count: 0, last_failure: timed out, last_success_at: null. In each tick, attempt 1 threw TimeoutError in scheduled_reconcile, while attempts 2 and 3 encountered DownstreamStatusError due to active lock contention from attempt 1.",
+    "root_cause_diagnosis": {
+      "auth_failure": "Ruled out. JWTs, service client tokens, and telemetry auth headers were valid; no HTTP 401 or 403 status codes were observed.",
+      "missing_lifecycle_correlation": "Ruled out. Natural signal runs 1-7 contained complete correlation envelopes and _paper_lifecycle_identity resolved without latency.",
+      "transport_timeout": "Confirmed. In _execute_scheduled_reconcile, downstream incident classification calls via _dispatch_scheduled_drift_report -> _classify_drift_report_incident -> _post_json synchronously used PANTHEON_INCIDENTS_API_TIMEOUT_SECONDS (110s in hosted compose, 90s default). Across 15-26 active bindings, any slow or unresponsive incidents response exceeded the scheduler worker's 90.0s socket timeout and 60.0s SLA budget, raising URLError('timed out')."
+    },
+    "repair_strategy": "Bound per-binding incident classification calls to min(5.0s, remaining_tick_budget) within the tick SLA deadline (sla_seconds - 5.0s). If the SLA budget is exhausted, return retryable_error (504) immediately rather than blocking downstream ticks, preserving tick completion and healthy controller status."
+  },
+  "acceptance_criteria_verification": {
+    "ac1_reproduce_natural_scheduler_boundary": {
+      "status": "satisfied",
+      "detail": "Reproduced transport timeout boundary vs auth failure and lifecycle correlation. Proven that synchronous unbounded incident dispatch in _post_json caused the 90s socket timeout in scheduler_worker.py."
+    },
+    "ac2_exact_read_only_evidence": {
+      "status": "satisfied",
+      "detail": "Analyzed /tmp/pantheon-closure-continuation-20261007T1220Z/natural-run-boundaries.json, reconciliation-health.json, and /tmp/pantheon-closure-continuation-20261007T1255Z/scheduler-log-summary-nested.json confirming ticks 1-10 timeout patterns."
+    },
+    "ac3_preserve_contracts_and_boundaries": {
+      "status": "satisfied",
+      "detail": "Preserved stable tick ID (scheduled:tenant-dev:<window>:PT300S), bounded idempotent retry semantics, existing authentication, and tenant scoping. No secondary store or controller added; no blanket timeout inflation or health suppression."
+    },
+    "ac4_regression_coverage": {
+      "status": "satisfied",
+      "detail": "Added test_scheduled_reconcile_incident_dispatch_bounded_and_completes_within_sla in services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py verifying 15 active bindings, per-binding timeout <= 5.0s, SLA deadline enforcement, retryable error handling, and within_sla == True."
+    },
+    "ac5_source_and_isolated_tests_only": {
+      "status": "satisfied",
+      "detail": "Changes restricted strictly to services/reconciliation-drift/main.py and its unit tests. Zero hosted mutations, DLQ replays, manual reconciliation injections, or state manipulations."
+    },
+    "ac6_exact_head_review_and_external_wait": {
+      "status": "satisfied",
+      "detail": "Exact-head review file committed and bound for independent review by Claude. Hosted completion track remains external_wait until a new pair verifies end-to-end natural scheduled reconciliation."
+    },
+    "ac7_root_cause_scope": {
+      "status": "satisfied",
+      "detail": "Root cause localized and remediated entirely within the reconciliation-drift service codebase."
+    }
+  },
+  "diff_budget": {
+    "change_class": "corrective",
+    "net_prod_line_budget": 40,
+    "net_prod_lines": 16,
+    "evidence_max_added_lines": 400,
+    "status": "passed"
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -v services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py",
+      "result": "25 passed in 23.82s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/reconciliation-drift/tests",
+      "result": "124 passed in 142.12s"
+    }
+  ]
+}

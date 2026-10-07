@@ -343,6 +343,8 @@ def persist_market_data_storage_refs(
 def persist_latest_market_snapshots(
     latest_market_snapshot_store: LatestMarketSnapshotStore,
     result: Any,
+    *,
+    connector: Any | None = None,
 ) -> dict[str, Any]:
     """Project completed normalized SourceRecords into the read-only paper API."""
     if result.run.status.value != "completed":
@@ -357,6 +359,7 @@ def persist_latest_market_snapshots(
         result.records,
         ingest_run_id=result.run.ingest_run_id,
         observed_at=run_finished_at_iso(result.run),
+        connector=connector,
     )
 
 
@@ -859,7 +862,11 @@ class IngestPipelineService:
             storage_refs = persist_market_data_storage_refs(self.manager, self.market_data_storage_writer, result)
             evidence_refs["storage_refs"] = storage_refs
             post_processing_stage = "latest_market_snapshot"
-            market_snapshots = persist_latest_market_snapshots(self.latest_market_snapshot_store, result)
+            market_snapshots = persist_latest_market_snapshots(
+                self.latest_market_snapshot_store,
+                result,
+                connector=connector,
+            )
             evidence_refs["market_snapshots"] = market_snapshots
             post_processing_stage = "source_evidence"
             evidence_refs = persist_source_evidence_refs(
@@ -1197,9 +1204,22 @@ class IngestPipelineService:
                 continue
             if not sched.enabled or sched.interval_seconds <= 0:
                 if sched.connector_id in exclusive_connector_ids:
+                    config = self.connector_store.get_config(sched.connector_id)
+                    is_op_stop = False
+                    if (
+                        config is not None
+                        and config.connector.status == ConnectorStatus.DISABLED
+                        and hasattr(self.runtime, "_is_operator_stopped")
+                    ):
+                        is_op_stop = self.runtime._is_operator_stopped(config.connector)
+                    err_msg = (
+                        "exclusively selected connector is disabled by explicit operator stop"
+                        if is_op_stop
+                        else "exclusively selected connector schedule is disabled"
+                    )
                     failed.append({
                         "connector_id": sched.connector_id,
-                        "error": "exclusively selected connector schedule is disabled",
+                        "error": err_msg,
                     })
                 else:
                     skipped.append(sched.connector_id)
@@ -1222,10 +1242,18 @@ class IngestPipelineService:
                 failed.append({"connector_id": sched.connector_id, "error": "connector config not found"})
                 continue
             if config.connector.status == ConnectorStatus.DISABLED:
+                is_op_stop = False
+                if hasattr(self.runtime, "_is_operator_stopped"):
+                    is_op_stop = self.runtime._is_operator_stopped(config.connector)
+                err_msg = (
+                    "exclusively selected connector is disabled by explicit operator stop"
+                    if is_op_stop
+                    else "exclusively selected connector is disabled"
+                )
                 if sched.connector_id in exclusive_connector_ids:
                     failed.append({
                         "connector_id": sched.connector_id,
-                        "error": "exclusively selected connector is disabled",
+                        "error": err_msg,
                     })
                 else:
                     skipped.append(sched.connector_id)

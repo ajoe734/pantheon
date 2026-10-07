@@ -41,6 +41,12 @@ from services.control_plane.bff.command_adapters.evolution_adapter import (  # n
 )
 
 
+@pytest.fixture(autouse=True)
+def _clean_evolution_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PANTHEON_EVOLUTION_API_URL", raising=False)
+    monkeypatch.delenv("PANTHEON_GOVERNANCE_API_URL", raising=False)
+
+
 class _FakeIdentity:
     def __init__(self, operator_id: str = "operator-1") -> None:
         self.operator_id = operator_id
@@ -118,7 +124,7 @@ def _build_app():
     read_store = _FakeReadStore()
     program_commands = _FakeProgramCommandPort(read_store)
 
-    def _submit_program_action_unavailable(entity_type, entity_id, action_id, resolved_key, identity, payload):
+    def _submit_program_action_unavailable(entity_type, entity_id, action_id, resolved_key, identity, payload, authorization=None):
         # Mirrors production wiring: dispatch reaches the real
         # EvolutionCommandAdapter, which raises ActionUnavailableError for
         # every program action in U8A (see the direct adapter tests below).
@@ -129,6 +135,7 @@ def _build_app():
             command_id="cmd-1",
             command_type="EvolutionProgramAction",
             params={"action_id": action_id, "program_id": entity_id},
+            auth_token=authorization,
         )
 
     router = create_evolution_programs_router(

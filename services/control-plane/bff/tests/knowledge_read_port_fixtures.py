@@ -18,6 +18,7 @@ from services.control_plane.bff.ports import (
     ReadSurfacePorts,
     create_in_memory_persona_capital_runtime_port,
 )
+from services.research.write_owner import ResearchWriteOwner
 
 
 class _InstitutionalMemoryStoreDouble:
@@ -33,6 +34,45 @@ class _InstitutionalMemoryStoreDouble:
     def get(self, entry_id: str) -> Optional[Dict[str, Any]]:
         record = self._records.get(str(entry_id))
         return _clone(record) if record is not None else None
+
+
+class JsonFileOwnerStore:
+    """Owner-store (put/get/list_all) persisting to the JSON file fixtures read."""
+
+    def __init__(
+        self,
+        records: Optional[Mapping[str, Dict[str, Any]]] = None,
+        path: Optional[Path] = None,
+    ) -> None:
+        self._records = _clone_records(records or {})
+        self._path = path
+
+    def put(self, key: str, payload: Dict[str, Any]) -> None:
+        self._records[str(key)] = _clone(payload)
+        if self._path is not None:
+            self._path.write_text(json.dumps(self._records, indent=2), encoding="utf-8")
+
+    def get(self, key: str) -> Optional[Dict[str, Any]]:
+        record = self._records.get(str(key))
+        return _clone(record) if record is not None else None
+
+    def list_all(self, **_: Any) -> list[Dict[str, Any]]:
+        return [_clone(record) for record in self._records.values()]
+
+
+def build_json_file_research_write_owner(
+    *,
+    tickets: Optional[Mapping[str, Dict[str, Any]]] = None,
+    tickets_path: Optional[Path] = None,
+    notes: Optional[Mapping[str, Dict[str, Any]]] = None,
+    notes_path: Optional[Path] = None,
+) -> ResearchWriteOwner:
+    """Production ``ResearchWriteOwner`` backed by JSON-file owner stores."""
+    return ResearchWriteOwner(
+        tickets_store=JsonFileOwnerStore(tickets, tickets_path),
+        experiments_store=JsonFileOwnerStore(),
+        notes_store=JsonFileOwnerStore(notes, notes_path),
+    )
 
 
 class KnowledgeReadPortsDouble(ReadSurfacePorts):
@@ -93,6 +133,7 @@ def create_knowledge_read_ports(
     research_experiments: Optional[Mapping[str, Dict[str, Any]]] = None,
     institutional_memory_entries: Optional[Mapping[str, Dict[str, Any]]] = None,
     personas: Optional[Mapping[str, Dict[str, Any]]] = None,
+    research_write_owner: Optional[Any] = None,
 ) -> KnowledgeReadPortsDouble:
     """Build a typed test container from explicitly supplied owner records."""
     memory_store = (
@@ -108,6 +149,7 @@ def create_knowledge_read_ports(
         strategy_specs_store=_clone_records(strategy_specs or {}),
         research_tickets_store=_clone_records(research_tickets or {}),
         research_experiments_store=_clone_records(research_experiments or {}),
+        research_write_owner=research_write_owner,
     )
     return KnowledgeReadPortsDouble(
         research_port=research_port,
@@ -152,6 +194,14 @@ def create_environment_knowledge_read_ports() -> KnowledgeReadPortsDouble:
         )
         sources["institutional_memory_entries"] = "typed_store"
 
+    notes_path = os.getenv("PANTHEON_BFF_RESEARCH_NOTES_STORE")
+    tickets_path = os.getenv("PANTHEON_BFF_RESEARCH_TICKET_STORE")
+    write_owner = build_json_file_research_write_owner(
+        tickets=datasets.get("research_tickets"),
+        tickets_path=Path(tickets_path) if tickets_path else None,
+        notes=datasets.get("research_notes"),
+        notes_path=Path(notes_path) if notes_path else None,
+    )
     return create_knowledge_read_ports(
         dataset_sources=sources,
         research_notes=datasets.get("research_notes"),
@@ -162,6 +212,7 @@ def create_environment_knowledge_read_ports() -> KnowledgeReadPortsDouble:
         research_experiments=datasets.get("research_experiments"),
         institutional_memory_entries=memory_records,
         personas=datasets.get("personas"),
+        research_write_owner=write_owner,
     )
 
 

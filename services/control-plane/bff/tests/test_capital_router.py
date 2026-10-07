@@ -95,6 +95,13 @@ class _CapitalStore:
         self.calls.append(("pool_action", ctx))
         return {"pool_id": ctx["target_id"], "action_id": payload["action_id"], "status": "paused"}
 
+    def evaluate_allocation(self, payload: Dict[str, Any], **ctx: Any) -> Dict[str, Any]:
+        # Operator decision 2026-10-07: the Capital owner (not the BFF) evaluates against the ranking snapshot.
+        self.calls.append(("evaluate_allocation", ctx))
+        lines = [{**row, "allocation_line_digest": f"digest-{row['strategy_id']}"} for row in self.allocation_rows]
+        return {"allocation_evaluation_id": "allocation-evaluation-owner", "lines": lines,
+                "allocation_policy_version": payload["allocation_policy_version"]}
+
     def create_rebalance(self, payload: Dict[str, Any], **ctx: Any) -> Dict[str, Any]:
         self.calls.append(("create_rebalance", ctx))
         item = {"id": str(payload.get("id") or "rebalance-created"), "status": "proposed", **deepcopy(payload)}

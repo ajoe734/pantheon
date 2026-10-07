@@ -454,3 +454,33 @@ def test_approval_queue_filters_by_decision_type_and_terminal_states(monkeypatch
     assert "approval-2" not in ids
 
 
+
+
+def test_approval_projection_invents_nothing_and_keeps_legacy_fields() -> None:
+    from services.control_plane.bff.governance import approval_owner
+
+    bare = approval_owner.project({"decision_id": "a-1", "target_type": "DeploymentPlan"})
+    assert bare["submitted_by"] is None
+    assert bare["decision_context"]["risk_summary"] is None
+    assert "required_approvals" not in bare["decision_context"]
+    assert "decision_state" not in bare
+
+    owned = approval_owner.project(
+        {
+            "decision_id": "a-2",
+            "decision": "approved",
+            "decision_state": "under_review",
+            "owner_user_id": "user-7",
+            "rationale": "owner words",
+            "required_approvals": 2,
+        }
+    )
+    assert owned["submitted_by"] == "user-7"
+    assert owned["decision_context"]["risk_summary"] == "owner words"
+    assert owned["decision_context"]["required_approvals"] == 2
+    assert owned["allowedActions"] == {"canApprove": True, "canReject": True, "canRequestRevision": False}
+    # fields returned before the queue projection change stay present
+    assert (owned["id"], owned["outcome"], owned["status"], owned["state"]) == ("a-2", "approved", "pending", "pending")
+    assert owned["decision_state"] == "under_review"
+    decided = approval_owner.project({"decision_id": "a-3", "decision_state": "approved"})
+    assert (decided["status"], decided["state"]) == ("approved", "approved")

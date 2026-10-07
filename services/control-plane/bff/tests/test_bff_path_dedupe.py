@@ -124,7 +124,9 @@ def test_deprecated_alternate_url_families_return_410_with_headers() -> None:
         "/bff/ranking/formulas/formula-1/actions/promote", headers=OPERATOR_HEADERS
     )
     assert retired.status_code == 410, retired.text
-    assert retired.json()["error"]["code"] == "ACTION_RETIRED"
+    error = retired.json()["error"]
+    assert error["code"] == "ACTION_RETIRED"
+    assert error["details"]["replacement"]
 
 
 def test_deprecated_nested_action_families_return_410_with_headers() -> None:

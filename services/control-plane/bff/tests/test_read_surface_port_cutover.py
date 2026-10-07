@@ -368,10 +368,16 @@ class TestResearchKnowledgeSourcePortCutover(unittest.TestCase):
             research_experiments_store={
                 "exp-1": {"experiment_id": "exp-1", "name": "Exp 1"},
             },
-            # spec limits the owner to experiment methods (e194571a1: research
-            # single owner); a bare MagicMock would answer note reads too.
+            # e194571a1 routed note list/get/create to the research owner, and
+            # research/client.py ResearchServiceClient implements them.
             research_write_owner=MagicMock(
-                spec=["list_research_experiments", "get_research_experiment"],
+                spec=["list_research_notes", "list_research_experiments", "get_research_experiment"],
+                list_research_notes=MagicMock(
+                    return_value=[
+                        {"note_id": "owner-note-1", "title": "Owner finding"},
+                        {"note_id": "owner-note-2", "title": "Owner finding 2"},
+                    ]
+                ),
                 list_research_experiments=MagicMock(return_value=[{"experiment_id": "exp-1", "name": "Exp 1"}]),
                 get_research_experiment=MagicMock(return_value={"experiment_id": "exp-1", "name": "Exp 1"}),
             ),
@@ -384,7 +390,9 @@ class TestResearchKnowledgeSourcePortCutover(unittest.TestCase):
         self.assertEqual(status["status"], "ok")
 
     def test_knowledge_and_research_lists(self) -> None:
-        self.assertEqual(len(self.port.list_research_notes()), 1)
+        notes = self.port.list_research_notes()
+        # The in-memory store holds one note; two means the owner served them.
+        self.assertEqual([n["note_id"] for n in notes], ["owner-note-1", "owner-note-2"])
         self.assertEqual(len(self.port.list_evidence_refs()), 1)
         self.assertEqual(len(self.port.list_insight_cards()), 1)
         self.assertEqual(len(self.port.list_strategy_specs()), 1)

@@ -28,7 +28,6 @@ from unittest.mock import MagicMock, patch
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 
-import base64
 import json
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -40,12 +39,14 @@ from services.control_plane.bff.auth.policy import (
     require_operator_role,
     require_read_role,
 )
-from services.control_plane.bff.command_adapters.base import _token_tenant
 from services.control_plane.bff.command_adapters.preconditions import (
     build_default_validators,
 )
 from services.control_plane.bff.command_adapters.router import (
     create_command_adapters_router,
+)
+from services.control_plane.bff.control_loops.router import (
+    create_control_loops_router,
 )
 from services.control_plane.bff.command_adapters.service import (
     CommandAdapterService,
@@ -57,11 +58,11 @@ from services.control_plane.bff.core.errors import register_error_handlers
 from services.control_plane.bff.models import CommandType, RiskLevel, utc_now
 from services.control_plane.bff.ports import ReadSurfacePorts
 
-OPERATOR_TOKEN = "Bearer op-mgmt-ops-006:operator"
-ADMIN_TOKEN = "Bearer op-mgmt-ops-006:admin"
-REVIEWER_TOKEN = "Bearer op-mgmt-ops-006:reviewer"
-APPROVER_TOKEN = "Bearer op-mgmt-ops-006:approver"
-READONLY_TOKEN = "Bearer op-mgmt-ops-006:reader"
+OPERATOR_TOKEN = "Bearer op-mgmt-ops-006:operator:tenant-default"
+ADMIN_TOKEN = "Bearer op-mgmt-ops-006:admin:tenant-default"
+REVIEWER_TOKEN = "Bearer op-mgmt-ops-006:reviewer:tenant-default"
+APPROVER_TOKEN = "Bearer op-mgmt-ops-006:approver:tenant-default"
+READONLY_TOKEN = "Bearer op-mgmt-ops-006:reader:tenant-default"
 
 
 def _load_fallback_data() -> dict[str, Any]:
@@ -181,9 +182,6 @@ def _make_process_command_task(commands: CommandStore, store: Optional[Any] = No
         audit = record.get("audit") or {}
         auth_token = runtime_auth.get("auth_token") or audit.get("auth_token")
         mfa_token = runtime_auth.get("mfa_token") or audit.get("mfa_token")
-        if not _token_tenant(auth_token):
-            payload = base64.urlsafe_b64encode(json.dumps({"tenant_id": "tenant-default"}).encode()).decode()
-            auth_token = f"stub.{payload}.stub"
         status, result, error = command_executor.execute_command_with_status(
             command_id,
             command_type,
@@ -225,6 +223,17 @@ def _mounted_app(
     )
     app = FastAPI()
     register_error_handlers(app)
+    app.include_router(
+        create_control_loops_router(
+            read_surface=store,
+            extract_identity=_extract_identity_from_bearer,
+            require_operator_role=require_operator_role,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now_fn=utc_now,
+            submit_sem_command=service.sem_command_response,
+        )
+    )
     app.include_router(create_command_adapters_router(service=service))
     app.state.command_store = commands
     return app
@@ -832,28 +841,50 @@ def test_generic_enforce_ops_console_preconditions_no_runtime_from_persona_entit
         assert ct_resp.status_code == 201, ct_resp.text
 
         entry = get_catalog_entry("EmergencyContainment")
-        with patch.object(entry, "requires_two_man", False):
-            # Test EmergencyContainment with entity_id in params matching persona id
-            resp_cont = client.post(
-                "/bff/v1/commands",
+        assert entry.requires_two_man is True
+
+        signature_id = "tms-containment-regression"
+        for op_id, token in (
+            ("op-mgmt-ops-006", OPERATOR_TOKEN),
+            ("op-mgmt-ops-006-second", "Bearer op-mgmt-ops-006-second:operator:tenant-default"),
+        ):
+            sign_resp = client.post(
+                f"/bff/v5/interventions/{signature_id}/two-man-sign",
                 headers={
-                    "Authorization": OPERATOR_TOKEN,
-                    "Idempotency-Key": "key-cmd-containment-regression",
-                    "X-Confirm-Token": "token-containment-regression",
+                    "Authorization": token,
+                    "Idempotency-Key": f"sign-ct-{op_id}",
                 },
                 json={
+                    "twoManSignatureId": signature_id,
                     "command": "EmergencyContainment",
                     "target": {"type": "Persona", "id": "persona-no-runtime"},
-                    "params": {
-                        "persona_id": "persona-no-runtime",
-                        "entity_id": "persona-no-runtime",
-                        "action": "freeze",
-                        "trigger": "drawdown_breach",
-                        "evidence_refs": ["inc-1"],
-                        "approval_decision_id": "appr-containment-regression",
-                    },
-                    "audit_context": {"reason": "Regression test for EmergencyContainment entity_id"},
+                    "reason": "authenticated operator approved emergency containment",
                 },
             )
-            assert resp_cont.status_code == 202, resp_cont.text
-            assert resp_cont.json()["data"]["command_id"]
+            assert sign_resp.status_code == 202, sign_resp.text
+
+        # Test EmergencyContainment with entity_id in params matching persona id
+        resp_cont = client.post(
+            "/bff/v1/commands",
+            headers={
+                "Authorization": OPERATOR_TOKEN,
+                "Idempotency-Key": "key-cmd-containment-regression",
+                "X-Confirm-Token": "token-containment-regression",
+            },
+            json={
+                "command": "EmergencyContainment",
+                "target": {"type": "Persona", "id": "persona-no-runtime"},
+                "params": {
+                    "persona_id": "persona-no-runtime",
+                    "entity_id": "persona-no-runtime",
+                    "action": "freeze",
+                    "trigger": "drawdown_breach",
+                    "evidence_refs": ["inc-1"],
+                    "approval_decision_id": "appr-containment-regression",
+                    "two_man_signature_id": signature_id,
+                },
+                "audit_context": {"reason": "Regression test for EmergencyContainment entity_id"},
+            },
+        )
+        assert resp_cont.status_code == 202, resp_cont.text
+        assert resp_cont.json()["data"]["command_id"]

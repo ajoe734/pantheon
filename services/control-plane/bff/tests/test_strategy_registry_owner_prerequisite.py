@@ -1213,13 +1213,19 @@ class TestHttpRequestJsonMethodDispatch:
         acceptor = threading.Thread(target=_accept_and_stall, daemon=True)
         acceptor.start()
         try:
-            with pytest.raises(Exception):
+            started = time.monotonic()
+            with pytest.raises((socket.timeout, TimeoutError, urllib.error.URLError)) as excinfo:
                 http_request_json(
                     f"http://127.0.0.1:{stall_port}/api/registry/entries/reg-001/metadata",
                     method="PATCH",
                     payload={},
+                    auth_token=_strict_token(),
                     timeout=1,
                 )
+            elapsed = time.monotonic() - started
+            reason = getattr(excinfo.value, "reason", excinfo.value)
+            assert isinstance(reason, (socket.timeout, TimeoutError)), repr(excinfo.value)
+            assert 0.8 <= elapsed < 1.9, elapsed
         finally:
             listener.close()
             acceptor.join(timeout=5)

@@ -286,34 +286,6 @@ class CapitalService:
             raise CapitalAuthorityUnavailable(f"Capital owner writer does not expose {operation}")
         return deepcopy(dict(method(payload, **context)))
 
-    def evaluate_allocation_policy(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
-        policy_version = str(payload.get("allocation_policy_version") or payload.get("policy_version") or "").strip()
-        if not policy_version:
-            raise CapitalValidationError("allocation_policy_version is required")
-        raw_lines = payload.get("lines")
-        if raw_lines is None:
-            raw_lines = self.allocations(capital_pool_id_value=payload.get("capital_pool_id"))
-        if not isinstance(raw_lines, Sequence) or isinstance(raw_lines, (str, bytes)):
-            raise CapitalValidationError("lines must be an array")
-        lines: List[Dict[str, Any]] = []
-        for index, raw in enumerate(raw_lines):
-            if not isinstance(raw, Mapping):
-                raise CapitalValidationError(f"lines[{index}] must be an object")
-            line = deepcopy(dict(raw))
-            line["allocation_line_digest"] = stable_digest({"index": index, "line": line})
-            lines.append(line)
-        evaluation_id = str(payload.get("allocation_evaluation_id") or "").strip()
-        if not evaluation_id:
-            evaluation_id = f"allocation-eval-{stable_digest({'policy': policy_version, 'lines': lines})[:16]}"
-        return {
-            "allocation_evaluation_id": evaluation_id,
-            "allocation_policy_version": policy_version,
-            "capital_pool_id": payload.get("capital_pool_id"),
-            "lines": lines,
-            "allocation_digest": stable_digest(lines),
-            "evaluated_at": self.utc_now(),
-        }
-
     def portfolio_rows(self) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
         for pool in self.list_pools():
