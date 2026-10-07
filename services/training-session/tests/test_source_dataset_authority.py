@@ -889,3 +889,83 @@ def test_urllib_json_get_sends_supplied_headers(monkeypatch: pytest.MonkeyPatch)
     assert payload == {"ok": True}
     assert seen["headers"]["authorization"] == "Bearer t"
     assert seen["headers"]["x-tenant-id"] == "tenant-dev"
+
+
+def test_select_evidence_bundles_diagnostics_when_unmatched() -> None:
+    payload = {
+        "bundles": [
+            {
+                "evidence_bundle_id": "bundle-other-run",
+                "source_ids": ["s1"],
+                "evidence_item_ids": ["i1"],
+                "created_at": "2026-07-15T11:00:00Z",
+                "metadata": {
+                    "connector_id": CONNECTOR_ID,
+                    "ingest_run_id": "other-run-id",
+                    "tenant_id": "tenant-dev",
+                },
+            }
+        ]
+    }
+    with pytest.raises(SourceDatasetAuthorityError) as exc_info:
+        AUTHORITY._select_evidence_bundles(
+            payload,
+            connector_id=CONNECTOR_ID,
+            run_id=RUN_ID,
+            trusted_now=NOW,
+        )
+    msg = str(exc_info.value)
+    assert "exactly one source evidence bundle must bind the selected connector run" in msg
+    assert "matching_count=0" in msg
+    assert f"selected connector={CONNECTOR_ID}" in msg
+    assert f"run={RUN_ID}" in msg
+    assert "observed_count=1" in msg
+    assert f"id=bundle-other-run:connector={CONNECTOR_ID}:run=other-run-id:tenant=tenant-dev" in msg
+
+
+def test_select_evidence_bundles_diagnostics_when_duplicate() -> None:
+    bundle = {
+        "evidence_bundle_id": "bundle-1",
+        "source_ids": ["s1"],
+        "evidence_item_ids": ["i1"],
+        "created_at": "2026-07-15T11:00:00Z",
+        "metadata": {
+            "connector_id": CONNECTOR_ID,
+            "ingest_run_id": RUN_ID,
+            "tenant_id": "tenant-dev",
+        },
+    }
+    payload = {"bundles": [bundle, {**bundle, "evidence_bundle_id": "bundle-2"}]}
+    with pytest.raises(SourceDatasetAuthorityError) as exc_info:
+        AUTHORITY._select_evidence_bundles(
+            payload,
+            connector_id=CONNECTOR_ID,
+            run_id=RUN_ID,
+            trusted_now=NOW,
+        )
+    msg = str(exc_info.value)
+    assert "matching_count=2" in msg
+    assert "observed_count=2" in msg
+
+
+def test_select_evidence_bundles_fails_closed_on_future() -> None:
+    bundle = {
+        "evidence_bundle_id": "bundle-future",
+        "source_ids": ["s1"],
+        "evidence_item_ids": ["i1"],
+        "created_at": "2026-07-15T13:00:00Z",
+        "metadata": {
+            "connector_id": CONNECTOR_ID,
+            "ingest_run_id": RUN_ID,
+            "tenant_id": "tenant-dev",
+        },
+    }
+    payload = {"bundles": [bundle]}
+    with pytest.raises(SourceDatasetAuthorityError, match="source evidence bundle created_at is in the future"):
+        AUTHORITY._select_evidence_bundles(
+            payload,
+            connector_id=CONNECTOR_ID,
+            run_id=RUN_ID,
+            trusted_now=NOW,
+        )
+
