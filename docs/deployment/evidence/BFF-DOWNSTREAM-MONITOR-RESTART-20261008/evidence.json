@@ -43,5 +43,14 @@
     "Persona provisioning reconciler loop also removed by c1894c3b0 (separate decision).",
     "Controller records are written with PANTHEON_ENV while the BFF loop-health read expects the paper stage; not changed here."
   ],
-  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending."
+  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending.",
+  "delivery_verification": {
+    "verifier": "Claude",
+    "date": "2026-10-08",
+    "verified_head": "0344c1562195fdebd30ee9afdbe83be32f61c8e1",
+    "python": "/tmp/dev-projection-bootstrap-venv/bin/python (3.12.3)",
+    "command": "python -m pytest -q services/control-plane/bff/test_downstream_health_monitor.py services/control-plane/bff/tests/test_bff_lifespan_background_work.py services/control-plane/bff/tests/test_control_loops_router.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/control-plane/bff/tests/test_bff_test_architecture.py",
+    "result": "117 passed, 3 warnings in 84.27s, exit 0",
+    "notes": "First attempt in /tmp/l12venv failed collection of test_bff_v5_loop_sentinel_contract.py (flask not installed: environment only); rerun in a venv with flask+fastapi+asyncpg passed. test_current_twelve_owner_truth.py not run (11 known failures identical on base, out of scope). No product code or tests changed; no hosted action."
+  }
 }
