@@ -177,9 +177,7 @@ class DeployedResearchHarness:
 
     def _compose_argv(self, *args: str) -> list[str]:
         argv = ["docker", "compose", "-p", self.compose_project]
-        compose_file = os.getenv("PANTHEON_L12_COMPOSE_FILE", "").strip()
-        if compose_file:
-            argv.extend(["-f", compose_file])
+        argv.extend(compose_file_args())
         argv.extend(args)
         return argv
 

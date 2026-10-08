@@ -286,9 +286,29 @@ def _isolated_dev_principal_env(compose_env: Mapping[str, str]) -> dict[str, str
         "PANTHEON_GOVERNANCE_JWT_SECRET": secret,
         "PANTHEON_GOVERNANCE_JWT_ISSUER": issuer,
         "PANTHEON_GOVERNANCE_JWT_AUDIENCE": audience,
+        # deploy_nonprod_vm.sh:40,3731 binds Capital's verifier to the same dev
+        # secret that signs the runtime-manager/deployment capital-reader tokens.
+        "CAPITAL_JWT_SECRET": secret,
+        "PANTHEON_CAPITAL_JWT_SECRET": secret,
     }
     env.update(issue_dev_paper_principals.issue_environment({**env, "PANTHEON_ENV": "dev"}))
     return env
+
+
+def _isolated_handoff_env(compose_env: Mapping[str, str]) -> dict[str, str]:
+    """Per-run Agora handoff and policy-learning service credentials and tenants.
+
+    Passed to both the Compose owners and the suites so a local .env or an
+    exported shell variable cannot desynchronize them.
+    """
+    tenant = compose_env["PANTHEON_BFF_TENANT_ID"]
+    return {
+        "AGORA_HANDOFF_SERVICE_TOKEN": secrets.token_urlsafe(32),
+        "POLICY_LEARNING_SERVICE_TOKEN": secrets.token_urlsafe(32),
+        "POLICY_LEARNING_AGORA_TENANT_ID": tenant,
+        "POLICY_LEARNING_SERVICE_TENANTS": tenant,
+        "AGORA_HANDOFF_SERVICE_TENANTS": tenant,
+    }
 
 
 def _isolated_human_token(compose_env: Mapping[str, str], subject: str, *roles: str) -> str:
@@ -1101,6 +1121,7 @@ def main(argv: list[str] | None = None) -> int:
     # the evidence report.
     compose_env["PANTHEON_BFF_JWT_SECRET"] = secrets.token_urlsafe(48)
     compose_env.update(_isolated_dev_principal_env(compose_env))
+    compose_env.update(_isolated_handoff_env(compose_env))
     for port_name, default_port in DEFAULT_PORTS.items():
         if port_name not in compose_env:
             compose_env[port_name] = str(default_port + args.port_offset)
@@ -1146,6 +1167,9 @@ def main(argv: list[str] | None = None) -> int:
     test_env["PANTHEON_L12_SOURCE_READER_TOKEN"] = reader_token
     test_env["PANTHEON_L12_SOURCE_READER_TENANT_ID"] = reader_tenant
     test_env["PANTHEON_L12_TENANT_ID"] = compose_env["PANTHEON_BFF_TENANT_ID"]
+    test_env["PANTHEON_L12_AGORA_HANDOFF_TOKEN"] = compose_env["AGORA_HANDOFF_SERVICE_TOKEN"]
+    test_env["PANTHEON_L12_POLICY_LEARNING_TOKEN"] = compose_env["POLICY_LEARNING_SERVICE_TOKEN"]
+    test_env["PANTHEON_L12_HUMAN_LEARNING_TENANT_ID"] = compose_env["POLICY_LEARNING_AGORA_TENANT_ID"]
     test_env["PANTHEON_L12_OPERATOR_TOKEN"] = _isolated_human_token(
         compose_env, "l12-domain-suites-operator", "operator"
     )
