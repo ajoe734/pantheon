@@ -478,7 +478,11 @@ def test_tw_official_pull_fails_on_scheduler_error_and_still_restores(
         harness._run_tw_official_pull(
             "proj", ["a.yml"], {}, snapshot_url="http://s", reader_headers={}, diagnostics_dir=tmp_path
         )
-    assert len(calls) == 3
+    # up, tick, source-ingest logs (kept before the restore recreates it), restore
+    assert len(calls) == 4
+    assert "logs" in calls[2][0] and calls[2][0][-1] == "source-ingest"
+    assert "up" in calls[3][0] and calls[3][0][-1] == "source-ingest"
+    assert (tmp_path / "tw-official-pull-source-ingest-logs.txt").exists()
 
 
 def test_tw_official_pull_fails_on_empty_snapshot(
@@ -612,3 +616,42 @@ def test_l12_suites_import_every_owner_auth_helper_they_call() -> None:
         }
         missing.extend(f"{suite.name}: {name}" for name in sorted((called & helpers) - bound))
     assert not missing, f"L12 suites call l12_owner_auth helpers without importing them: {missing}"
+
+
+def test_tw_official_pull_keeps_source_ingest_logs_when_tick_times_out(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """L12-HARNESS-TW-PULL-DIAGNOSTICS-20261008: gates 37738094930 and
+    37736344787 kept only the scheduler summary line; the per-connector error
+    lived in the source-ingest container that the restore recreated."""
+    import subprocess
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, env=None, **_kwargs):
+        calls.append(list(cmd))
+        if "run" in cmd:
+            raise subprocess.TimeoutExpired(cmd, 1)
+        return subprocess.CompletedProcess(cmd, 0, stdout="connector tw-official failed: HTTP 503", stderr="")
+
+    monkeypatch.setattr(harness.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="tick timed out"):
+        harness._run_tw_official_pull(
+            "proj", ["a.yml"], {}, snapshot_url="http://s", reader_headers={}, diagnostics_dir=tmp_path
+        )
+    assert ["logs" in c for c in calls] == [False, False, True, False]
+    assert "HTTP 503" in (tmp_path / "tw-official-pull-source-ingest-logs.txt").read_text(encoding="utf-8")
+
+
+def test_tw_official_pull_success_does_not_collect_logs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    calls = _fake_pull_run(monkeypatch, 0, {"closes": [1.0, 2.0]})
+
+    harness._run_tw_official_pull(
+        "proj", ["a.yml"], {}, snapshot_url="http://s", reader_headers={}, diagnostics_dir=tmp_path
+    )
+
+    assert not any("logs" in c for c, _ in calls)
+    assert not (tmp_path / "tw-official-pull-source-ingest-logs.txt").exists()
