@@ -28,6 +28,7 @@ from services.control_plane.bff.persona_provisioning import (
     ProvisioningConflict,
 )
 from services.control_plane.bff.personas import service
+from services.control_plane.bff.tests.conftest import make_composed_persona_service
 from services.control_plane.bff.core import owner_reads
 from services.runtime_auth_inbound import encode_jwt_hs256
 
@@ -261,10 +262,10 @@ def projection_boundary(owner_boundary, monkeypatch):
         persona_id="persona-contract",
         request_payload={"name": "Isolated paper contract", "requested_by": "operator-contract"},
     )
-    monkeypatch.setattr(service, "read_store", SimpleNamespace(
-        get_persona=port.get_persona, list_personas=port.list_personas,
+    monkeypatch.setattr(service, "_composed_persona_service", make_composed_persona_service(
+        read_store=SimpleNamespace(get_persona=port.get_persona, list_personas=port.list_personas),
+        write_owner=port,
     ))
-    monkeypatch.setattr(service, "persona_write_owner", port)
     monkeypatch.setattr(service, "_PERSONA_PROVISIONING_STORE", store)
     return port, store, record
 
@@ -383,8 +384,9 @@ def test_foreign_or_missing_scope_cannot_be_relabelled(projection_boundary, monk
         raw["metadata"]["tenant_id"] = value
         raw["tenantId"] = value
         raw["metadata"]["tenantId"] = value
-    monkeypatch.setattr(service, "read_store", SimpleNamespace(
-        get_persona=lambda pid: raw, list_personas=lambda: [raw],
+    monkeypatch.setattr(service, "_composed_persona_service", make_composed_persona_service(
+        read_store=SimpleNamespace(get_persona=lambda pid: raw, list_personas=lambda: [raw]),
+        write_owner=port,
     ))
     for mutate in (False, True):
         with pytest.raises(ProvisioningConflict):
@@ -400,8 +402,9 @@ def test_projection_does_not_reactivate_or_downgrade_governed_owner(projection_b
     project(record, mutate=True)
     canonical = {**port.get_persona(record.persona_id), "lifecycle_state": state}
     # Later governed states are read-only fixtures, not forged owner transitions.
-    monkeypatch.setattr(service, "read_store", SimpleNamespace(
-        get_persona=lambda pid: canonical, list_personas=lambda: [canonical],
+    monkeypatch.setattr(service, "_composed_persona_service", make_composed_persona_service(
+        read_store=SimpleNamespace(get_persona=lambda pid: canonical, list_personas=lambda: [canonical]),
+        write_owner=port,
     ))
     checkpoint(store, record, "succeeded", complete_readback=True)
     projected, = service._list_persona_records()
@@ -413,8 +416,9 @@ def test_projection_does_not_reactivate_or_downgrade_governed_owner(projection_b
 def test_ordinary_draft_without_ledger_is_not_reconciled(owner_boundary, monkeypatch):
     port, _client, _path, _calls = owner_boundary
     create(port, state="draft")
-    monkeypatch.setattr(service, "read_store", SimpleNamespace(
-        get_persona=port.get_persona, list_personas=port.list_personas,
+    monkeypatch.setattr(service, "_composed_persona_service", make_composed_persona_service(
+        read_store=SimpleNamespace(get_persona=port.get_persona, list_personas=port.list_personas),
+        write_owner=port,
     ))
     monkeypatch.setattr(service, "_PERSONA_PROVISIONING_STORE", MemoryPersonaProvisioningStore())
     monkeypatch.setattr(service, "_persona_readback_snapshot", lambda: ({}, None, []))

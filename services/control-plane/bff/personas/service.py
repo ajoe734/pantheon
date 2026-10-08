@@ -254,9 +254,9 @@ except ImportError:
 
 log = logging.getLogger(__name__)
 
-# Standalone fallback stores are eliminated; explicit composition root injects dependencies.
-persona_write_owner = None
-read_store = None
+# The only out-of-context default is the PersonaService composed from app_deps in
+# core/app_factory.py; it is bound once there. No store or write owner is created here.
+_composed_persona_service: Optional[Any] = None
 
 # Rankings write-owner port must be configured at service/app startup;
 # missing required configuration fails startup closed, never deferred to first write.
@@ -267,13 +267,22 @@ _current_persona_service: ContextVar[Optional[Any]] = ContextVar(
 )
 
 
+def _require_composed_persona_service(store_name: str) -> Any:
+    if _composed_persona_service is None:
+        raise RuntimeError(
+            f"{store_name} requested outside a persona request context before the app "
+            "composed its PersonaService; failing closed instead of creating a store."
+        )
+    return _composed_persona_service
+
+
 def _get_active_read_store(explicit: Optional[Any] = None) -> Any:
     if explicit is not None:
         return explicit
     svc = _current_persona_service.get()
     if svc is not None:
         return svc.get_read_store()
-    return read_store
+    return _require_composed_persona_service("read_store").get_read_store()
 
 
 def _active_persona_service() -> "PersonaService":
@@ -292,7 +301,7 @@ def _get_active_command_store(explicit: Optional[Any] = None) -> Any:
     svc = _current_persona_service.get()
     if svc is not None:
         return svc.get_command_store()
-    return command_store
+    return _require_composed_persona_service("command_store").get_command_store()
 
 
 def _get_active_ranking_write_owner(explicit: Optional[Any] = None) -> Any:
@@ -317,21 +326,8 @@ def _get_active_write_owner(explicit: Optional[Any] = None) -> Any:
     svc = _current_persona_service.get()
     if svc is not None and hasattr(svc, "get_write_owner"):
         return svc.get_write_owner()
-    if persona_write_owner is not None:
-        return persona_write_owner
-    return create_persona_registry_write_owner()
+    return _require_composed_persona_service("persona_write_owner").get_write_owner()
 
-class _DefaultCommandStore:
-    def _get_all_commands(self) -> List[Dict[str, Any]]:
-        return []
-    def get_all(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-        return []
-
-command_store = (
-    CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
-    if CommandStore is not None
-    else _DefaultCommandStore()
-)
 
 _ppl_alloc_009_eligibility_observation_store = (
     PaperEligibilityObservationStore(

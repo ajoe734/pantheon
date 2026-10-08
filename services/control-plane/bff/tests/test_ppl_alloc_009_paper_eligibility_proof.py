@@ -24,6 +24,7 @@ from services.control_plane.bff.paper_eligibility_proof import (
     run_positive_control,
 )
 from services.control_plane.bff.personas import service as personas_service
+from services.control_plane.bff.tests.conftest import make_composed_persona_service
 from services.control_plane.bff.personas.router import create_personas_router
 from services.control_plane.bff.personas.routes import lifecycle as personas_lifecycle
 from services.control_plane.bff.personas.service import PersonaService
@@ -306,9 +307,13 @@ def _mock_context_dependencies(
 ) -> None:
     # These tests call ``_ppl_alloc_009_paper_eligibility_context`` directly,
     # outside of any request, so the request-scoped active-PersonaService
-    # context var is unset; fall back to the module-level read_store global
-    # that ``_get_active_read_store`` reads in that case.
-    monkeypatch.setattr(personas_service, "read_store", _READ_STORE)
+    # context var is unset; bind the composed PersonaService that
+    # ``_get_active_read_store`` resolves to in that case.
+    monkeypatch.setattr(
+        personas_service,
+        "_composed_persona_service",
+        make_composed_persona_service(read_store=_READ_STORE),
+    )
     monkeypatch.setattr(
         personas_lifecycle,
         "_bff_me_tenant_payload",

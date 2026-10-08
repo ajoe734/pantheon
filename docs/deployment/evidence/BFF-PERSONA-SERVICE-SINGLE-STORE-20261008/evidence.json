@@ -1,0 +1,100 @@
+{
+ "task_id": "BFF-PERSONA-SERVICE-SINGLE-STORE-20261008",
+ "owner": "Claude",
+ "reviewer": "Antigravity2",
+ "change": {
+  "personas/service.py": "Removed import-time CommandStore/_DefaultCommandStore and module globals read_store/persona_write_owner; removed per-call create_persona_registry_write_owner(). Added one module slot _composed_persona_service and _require_composed_persona_service, which raises RuntimeError (fail closed) when no app was composed. Out-of-context _get_active_read_store/_command_store/_write_owner resolve through that service; in-context resolution unchanged.",
+  "core/app_factory.py": "Binds the PersonaService it already builds from app_deps as personas.service._composed_persona_service (one assignment, no new module/registry/wrapper)."
+ },
+ "base_fallback_callers": {
+  "method": "Instrumented a pristine git-archive of base HEAD (0edaf3837) to log every call reaching the out-of-context fallback, then ran all 423 BFF test files with the governed worker interpreter. No production request path reached it (routes run inside PersonaService context); every hit was a test that set the module global. None/fresh-write-owner results: 0 hits.",
+  "hits": [
+   {
+    "accessor": "command_store",
+    "received": "CommandStore",
+    "hits": 12,
+    "test_files": [
+     "services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py"
+    ]
+   },
+   {
+    "accessor": "read_store",
+    "received": "FakeReadStore",
+    "hits": 32,
+    "test_files": [
+     "services/control-plane/bff/tests/test_pint_013_durable_interactions.py"
+    ]
+   },
+   {
+    "accessor": "read_store",
+    "received": "MarketPersonaProjectionTestDouble",
+    "hits": 80,
+    "test_files": [
+     "services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py"
+    ]
+   },
+   {
+    "accessor": "read_store",
+    "received": "PromotionReviewTestReadPorts",
+    "hits": 72,
+    "test_files": [
+     "services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py"
+    ]
+   },
+   {
+    "accessor": "read_store",
+    "received": "ReadSurfacePorts",
+    "hits": 130,
+    "test_files": [
+     "services/control-plane/bff/tests/test_bff_b3_persona_intent.py",
+     "services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py",
+     "services/control-plane/bff/tests/test_ppl_alloc_009_paper_eligibility_proof.py"
+    ]
+   },
+   {
+    "accessor": "read_store",
+    "received": "SimpleNamespace",
+    "hits": 73,
+    "test_files": [
+     "services/control-plane/bff/tests/test_persona_create_owner_contract.py"
+    ]
+   },
+   {
+    "accessor": "write_owner_global",
+    "received": "PersonaRegistryHttpWritePort",
+    "hits": 49,
+    "test_files": [
+     "services/control-plane/bff/tests/test_persona_create_owner_contract.py"
+    ]
+   },
+   {
+    "accessor": "write_owner_global",
+    "received": "_FakePersonaMutationPort",
+    "hits": 48,
+    "test_files": [
+     "services/control-plane/bff/test_persona_provisioning_readback.py"
+    ]
+   }
+  ]
+ },
+ "after_change": "Same call sites now receive the composed PersonaService's stores (app_deps.read_surface, app_deps.command_store, app_deps.persona_write_owner) - the identical objects as main.read_store/command_store/persona_write_owner - or RuntimeError when not composed. Proven by tests/test_bff_main_composition.py::test_personas_out_of_context_accessors_return_the_main_composed_stores, ::test_personas_out_of_context_accessors_fail_closed_when_not_composed, ::test_command_written_through_persona_fallback_is_visible_in_main_command_store.",
+ "tests_updated_to_composition_binding": [
+  "test_persona_provisioning_readback.py",
+  "tests/rebalance_authority_test_support.py",
+  "tests/test_pint_013_durable_interactions.py",
+  "tests/test_ppl_alloc_009_paper_eligibility_proof.py",
+  "tests/test_persona_create_owner_contract.py (not in brief list; failed closed)",
+  "tests/test_bff_b3_persona_intent.py (not in brief list)",
+  "tests/test_pm12_eligibility_fixture_contract.py (not in brief list)"
+ ],
+ "test_helper": "tests/conftest.py::make_composed_persona_service builds a real PersonaService; the seam-app helpers in rebalance_authority_test_support.py compose the seam app first because composing rebinds the default.",
+ "known_followups": "Tests that still assign personas_service.persona_write_owner (test_loop_prod_per_001_provisioning.py, tests/test_persona_provisioning_reconcile.py) now set an unused attribute and still pass; left for the later helper-convergence task. Composing a second app in one process rebinds the default to the newest app (single app in production).",
+ "verification": {
+  "interpreter": "PANTHEON_DEPENDENCY_PYTHON (runtime/worker-test-python/current)",
+  "required_files_base_vs_head": {
+   "base": "7 requested files: 249 passed, 0 failed",
+   "head": "test_persona_provisioning_readback 54, test_pint_013 38, test_ppl_alloc_009 41, test_persona_main_residue 3, test_bff_main_composition 57 (was 54; +3 new), test_bff_strategy_persona_contract 20, test_bff_test_architecture 39: all passed, 0 failed"
+  },
+  "full_suite_per_file": "423 files run on base and head. Files failing on both base and head (pre-existing, identical failing tests): migrations/test_twelve_loop_truth (timeout), test_loop_inventory_read_model_contract, test_management_list_response_guardrail, tests/test_agora_research_candidate_governed, tests/test_command_adapters_router (timeout), tests/test_main_composition_seam_extraction_005, tests/test_persona_paper_owner_lifecycle_contract, tests/test_ranking_evidence_surfaces_default_composition, tests/test_read_surface_caller_migration. test_mgmt_load_005_read_concurrency, tests/test_bff_auth_facade, tests/test_management_read_budget, tests/test_persona_lifecycle_forward failed or timed out only under 12-way parallel load and pass in isolation on both base and head. No new failure."
+ }
+}
