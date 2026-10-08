@@ -41,7 +41,6 @@ import json
 import logging
 import os
 import re
-import signal
 import subprocess
 import sys
 import threading
@@ -1218,6 +1217,7 @@ class PaperFleetReconciler:
         if path is None:
             return
         path.parent.mkdir(parents=True, exist_ok=True)
+        self._prune_ended_monitoring_sessions()
         records = sorted(
             self._monitoring_sessions.values(),
             key=lambda item: (
@@ -1229,6 +1229,16 @@ class PaperFleetReconciler:
         tmp_path = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
         tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         os.replace(tmp_path, path)
+
+    def _prune_ended_monitoring_sessions(self, max_ended: int = 20) -> None:
+        ended = [
+            (sid, s) for sid, s in self._monitoring_sessions.items()
+            if not self._monitoring_session_open(s)
+        ]
+        if len(ended) > max_ended:
+            ended.sort(key=lambda it: (str(it[1].get("ended_at") or it[1].get("started_at") or ""), it[0]))
+            for sid, _ in ended[: len(ended) - max_ended]:
+                self._monitoring_sessions.pop(sid, None)
 
     @staticmethod
     def _monitoring_session_staleness_marker(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -1706,11 +1716,13 @@ class PaperFleetReconciler:
     # State snapshot
     # ------------------------------------------------------------------
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self, *, include_ended_monitoring_sessions: bool = True) -> Dict[str, Any]:
         with self._lock:
-            return self._snapshot()
+            return self._snapshot(
+                include_ended_monitoring_sessions=include_ended_monitoring_sessions
+            )
 
-    def _snapshot(self) -> Dict[str, Any]:
+    def _snapshot(self, *, include_ended_monitoring_sessions: bool = True) -> Dict[str, Any]:
         workers = []
         for entry in self._workers.values():
             pid = entry.process.pid if entry.process is not None else None
@@ -1733,7 +1745,7 @@ class PaperFleetReconciler:
                 }
             )
         running = sum(1 for w in workers if w["status"] == "running")
-        monitoring_sessions = [
+        all_sessions = [
             {
                 **session,
                 "active": self._monitoring_session_open(session),
@@ -1746,6 +1758,10 @@ class PaperFleetReconciler:
                 ),
             )
         ]
+        active_sessions = [s for s in all_sessions if s.get("active")]
+        reported_sessions = (
+            all_sessions if include_ended_monitoring_sessions else active_sessions
+        )
         return {
             "reconciler": "paper_fleet_reconciler",
             "started_at": self._started_at,
@@ -1772,11 +1788,10 @@ class PaperFleetReconciler:
             "worker_count": len(workers),
             "running_count": running,
             "workers": workers,
-            "monitoring_session_count": len(monitoring_sessions),
-            "active_monitoring_session_count": len([
-                session for session in monitoring_sessions if session.get("active")
-            ]),
-            "monitoring_sessions": monitoring_sessions,
+            "monitoring_session_count": len(reported_sessions),
+            "active_monitoring_session_count": len(active_sessions),
+            "ended_monitoring_session_count": len(all_sessions) - len(active_sessions),
+            "monitoring_sessions": reported_sessions,
         }
 
     def is_ready(self) -> bool:
@@ -1845,11 +1860,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._write_json(200, {"status": "live"})
             return
         if self.path in {"/", "/healthz", "/readyz"}:
-            snap = recon.snapshot()
+            snap = recon.snapshot(include_ended_monitoring_sessions=False)
             ready = recon.is_ready() and snap.get("last_error") is None
             code = 200 if ready else 503
-            if self.path == "/livez":
-                code = 200
             self._write_json(code, {**snap, "ready": ready, "live": True})
             return
         if self.path == "/api/fleet/state":

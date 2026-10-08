@@ -9,7 +9,6 @@ canonical pipeline service.
 from __future__ import annotations
 
 import json
-import os
 import re
 import urllib.parse
 import urllib.request
@@ -229,17 +228,17 @@ def _resolve_connector_tenant(
     connector: SourceConnector | None,
     runtime: Any = None,
 ) -> str | None:
+    if connector and runtime is not None and hasattr(runtime, "_is_controller_owned") and runtime._is_controller_owned(connector):
+        state_path = getattr(runtime, "CONTROLLER_STATE_PATH", None)
+        state = read_controller_state(state_path) if state_path else None
+        tenant_id = str(state.get("tenant_id") or "").strip() if isinstance(state, Mapping) else ""
+        if not tenant_id:
+            raise SourceEvidenceError(
+                f"controller tenant identity is unavailable for controller-owned connector {connector.connector_id}"
+            )
+        return tenant_id
     if connector and isinstance(connector.metadata, Mapping) and connector.metadata.get("tenant_id"):
         return str(connector.metadata["tenant_id"]).strip() or None
-    if connector and runtime is not None and hasattr(runtime, "_is_controller_owned") and runtime._is_controller_owned(connector):
-        env_tenant = os.getenv("PANTHEON_TENANT_ID") or os.getenv("PANTHEON_BFF_TENANT_ID") or ""
-        if env_tenant.strip():
-            return env_tenant.strip()
-        state_path = getattr(runtime, "CONTROLLER_STATE_PATH", None)
-        if state_path:
-            state = read_controller_state(state_path)
-            if state and isinstance(state, Mapping) and state.get("tenant_id"):
-                return str(state["tenant_id"]).strip() or None
     return None
 
 
@@ -252,7 +251,6 @@ def persist_source_evidence_refs(
     storage_refs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     connector = manager.get_connector(result.run.connector_id)
-    connector_tenant = _resolve_connector_tenant(connector, runtime=getattr(manager, "runtime", None))
 
     source_records = [
         with_source_ingest_run(
@@ -270,12 +268,6 @@ def persist_source_evidence_refs(
             "knowledge_object_ids": [],
             "distillation_admissions": {},
         }
-
-    if connector_tenant:
-        source_records = [
-            stamp_source_record_tenant(record, connector_tenant)
-            for record in source_records
-        ]
 
     if len({record.tenant_id for record in source_records}) != 1:
         raise EvidenceValidationError("An ingest evidence batch must have one tenant identity")
