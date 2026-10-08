@@ -7,7 +7,7 @@
   "target_repo": "ajoe734/pantheon",
   "task_class": "execution",
   "delivery_state": "ready_for_independent_review",
-  "base_sha": "552a5f1812a50fbd42ba63431974c96fd49acf0e",
+  "base_sha": "d7958d0c1f00fcc495825965760f11d1aeb5147c",
   "objective": "Align stale source-ingest API, scheduler, and market admission tests with deliberate production changes (tenant-scoped read auth, operator-stop schedule guard, required snapshot market field, and mocked social fetch) without altering production code.",
   "scope": {
     "owned": [
