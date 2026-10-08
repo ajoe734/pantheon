@@ -9248,7 +9248,7 @@ def execute_review_decision_intent(task: Mapping[str, Any]) -> dict[str, Any]:
     binding = deepcopy(dict(intent["binding"]))
     command = str(intent["command"])
     admission = None
-    if command in {"approve", "reopen"}:
+    if command == "approve":
         github_review_bridge = _github_review_bridge_module()
         try:
             admission = github_review_bridge.revalidate_review_admission(

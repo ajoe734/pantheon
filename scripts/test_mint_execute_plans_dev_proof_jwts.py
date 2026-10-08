@@ -94,3 +94,5 @@ def test_workflow_is_dev_only_and_validates_before_secret_updates() -> None:
     assert "--header 'X-Tenant-Id: tenant-dev'" in workflow
     assert "--arg tenant 'tenant-dev'" in workflow
     assert "X-Tenant-Id: pantheon-dev" not in workflow
+    assert '      DEV_BFF_URL: ${{ vars.DEV_BFF_URL }}\n' in workflow
+    assert '          readonly expected_url="https://api.dev.mvl-cap.tw"\n' in workflow

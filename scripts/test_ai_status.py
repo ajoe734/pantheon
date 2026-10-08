@@ -5399,6 +5399,132 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertNotIn(ai_status.REVIEW_DECISION_INTENT_RECOVERY_KEY, task)
         self.assertNotIn(ai_status.DELIVERY_BINDING_KEY, task)
 
+    def _run_reopen_without_admission(
+        self, message, config, revalidate_error, bridge_side_effect
+    ):
+        self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
+        task = self.state["tasks"][0]
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            preflight = ai_status.prepare_external_mutation_preflight(
+                "reopen", task, ["REG-002", message]
+            )
+        runtime_lock, task_lock = self._two_phase_contexts(
+            {"runtime": False, "task": False}
+        )
+        logs: list[dict] = []
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(ai_status, "canonical_task_state_lock", side_effect=task_lock),
+            mock.patch.object(
+                ai_status,
+                "authoritative_task_state_transaction",
+                return_value=contextlib.nullcontext(),
+            ),
+            mock.patch.object(ai_status, "load_state", return_value=self.state),
+            mock.patch.object(ai_status, "validate_active_status_command_lease"),
+            mock.patch.object(ai_status, "validate_bound_status_command_task_authority"),
+            mock.patch.object(ai_status, "save_state"),
+            mock.patch.object(ai_status, "recover_status_archive_outbox"),
+            mock.patch.object(ai_status, "recover_status_activity_outbox"),
+            mock.patch.object(ai_status, "sync_all"),
+            mock.patch.object(ai_status, "refresh_derived_status_views_if_current"),
+            mock.patch.object(ai_status, "append_log", side_effect=logs.append),
+            mock.patch.object(self._review_bridge, "validate_result_evidence"),
+            mock.patch.object(
+                self._review_bridge,
+                "revalidate_review_admission",
+                side_effect=revalidate_error,
+            ) as revalidate,
+            mock.patch.object(
+                ai_status,
+                "bridge_github_review_decision",
+                side_effect=bridge_side_effect,
+            ) as bridge,
+        ):
+            ai_status.run_two_phase_review_decision(
+                "reopen", ["REG-002", message], preflight
+            )
+        return task, revalidate, bridge, logs
+
+    @staticmethod
+    def _reopen_evidence(_task, **kwargs):
+        return {
+            "repository": "ajoe734/pantheon",
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+            "decision": "reopen",
+            "actor": "Claude",
+            "mode": "pull_request_review",
+            "github_review_id": 102,
+            "review_proof_ref": f"refs/tags/pantheon-review/reopen/{'a' * 40}",
+            "intent_nonce": kwargs["intent_nonce"],
+        }
+
+    def test_reopen_of_conflicted_pr_skips_admission_in_canonical_mode(self) -> None:
+        message = "Conflicted PR goes back to the owner."
+        task, revalidate, bridge, _ = self._run_reopen_without_admission(
+            message,
+            {"review_gate": {"github_review_bridge_required": False}},
+            self._review_bridge.GitHubReviewBridgeError(
+                "GitHub PR #4269 has merge conflicts and cannot enter review"
+            ),
+            None,
+        )
+
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["next"], message)
+        self.assertEqual(task["review_requeue_intent"]["reason"], message)
+        pending = [h for h in self.state["handoffs"] if h.get("status") == "pending"]
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["from"], "Claude")
+        self.assertEqual(pending[0]["to"], "Codex")
+        self.assertEqual(pending[0]["message"], message)
+        self.assertNotIn(ai_status.DELIVERY_BINDING_KEY, task)
+        self.assertNotIn(ai_status.REVIEW_DECISION_INTENT_KEY, task)
+        revalidate.assert_not_called()
+        bridge.assert_not_called()
+
+    def test_reopen_of_conflicted_pr_skips_admission_in_bridge_mode(self) -> None:
+        task, revalidate, _, _ = self._run_reopen_without_admission(
+            "Conflicted PR, bridge mode.",
+            {},
+            self._review_bridge.GitHubReviewBridgeError(
+                "GitHub PR #4269 has merge conflicts and cannot enter review"
+            ),
+            self._reopen_evidence,
+        )
+
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task[ai_status.GITHUB_REVIEW_BRIDGE_KEY]["decision"], "reopen")
+        self.assertEqual(task[ai_status.GITHUB_REVIEW_BRIDGE_KEY]["head_sha"], "a" * 40)
+        revalidate.assert_not_called()
+
+    def test_reopen_of_moved_head_recovers_mismatch_in_bridge_mode(self) -> None:
+        moved = (
+            "GitHub PR #4269 no longer matches reviewed identity: head "
+            + "b" * 40
+            + " != "
+            + "a" * 40
+        )
+        task, revalidate, _, logs = self._run_reopen_without_admission(
+            "Head moved after handoff.",
+            {},
+            self._review_bridge.ReviewBindingMismatch(moved),
+            ai_status.ReviewBindingMismatchError(moved),
+        )
+
+        self.assertEqual(task["status"], "in_progress")
+        self.assertNotIn(ai_status.GITHUB_REVIEW_BRIDGE_KEY, task)
+        self.assertNotIn(ai_status.DELIVERY_BINDING_KEY, task)
+        reopens = [e for e in logs if e.get("type") == "reopen"]
+        self.assertEqual(len(reopens), 1)
+        self.assertEqual(reopens[0]["review_binding_mismatch"], moved)
+        revalidate.assert_not_called()
+
     def test_partial_bridge_failure_keeps_same_nonce_for_crash_retry(self) -> None:
         message = "Retry the same reserved approval."
         preflight = self._pr_approve_preflight(message)
