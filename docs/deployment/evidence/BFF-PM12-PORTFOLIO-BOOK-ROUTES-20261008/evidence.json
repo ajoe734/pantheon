@@ -1,0 +1,272 @@
+{
+  "task_id": "BFF-PM12-PORTFOLIO-BOOK-ROUTES-20261008",
+  "change_class": "corrective",
+  "net_prod_line_budget": 1000,
+  "summary": "Restored PM12 projection shape {data: {summary and items}} with filters, telemetry, and degraded surfaces for the four portfolio-book routes called by the execute-plans dev frontend: /bff/management/portfolio-book, /bff/management/portfolio-book/pools, /bff/management/portfolio-book/exposure, and /bff/management/portfolio-book/holdings. The uncalled routes (/positions, /strategy-allocation, /capital-flow, /board-pack) remain un-restored readback endpoints per commit 4cd637d0d and operator decision 2026-10-07.",
+  "route_to_field_mapping": {
+    "GET /bff/management/portfolio-book": {
+      "summary_fields": [
+        "portfolio_book_status",
+        "capital_pool_count",
+        "active_capital_pool_count",
+        "binding_count",
+        "active_binding_count",
+        "deployment_count",
+        "approved_deployment_count",
+        "runtime_count",
+        "active_runtime_count",
+        "paper_runtime_count",
+        "live_runtime_count",
+        "telemetry_runtime_count",
+        "total_pnl",
+        "max_drawdown",
+        "average_fill_rate",
+        "total_trades",
+        "latest_telemetry_at"
+      ],
+      "item_fields": [
+        "id",
+        "pool_id",
+        "capital_pool_id",
+        "name",
+        "status",
+        "risk_policy_ref",
+        "owner",
+        "currency",
+        "risk_budget",
+        "current_exposure",
+        "risk_budget_utilization",
+        "risk_state",
+        "exposure",
+        "pnl",
+        "total_pnl",
+        "pnl_summary",
+        "binding_count",
+        "active_binding_count",
+        "deployment_count",
+        "approved_deployment_count",
+        "runtime_count",
+        "active_runtime_count",
+        "paper_runtime_count",
+        "live_runtime_count",
+        "deployment_stages",
+        "binding_ids",
+        "deployment_ids",
+        "runtime_ids",
+        "persona_ids",
+        "strategy_ids",
+        "telemetry",
+        "links"
+      ]
+    },
+    "GET /bff/management/portfolio-book/pools": {
+      "summary_fields": [
+        "total_pools",
+        "returned_pools",
+        "risk_budget_total",
+        "current_exposure_total",
+        "risk_budget_utilization",
+        "telemetry_runtime_count",
+        "total_pnl"
+      ],
+      "item_fields": [
+        "id",
+        "pool_id",
+        "capital_pool_id",
+        "name",
+        "status",
+        "risk_budget",
+        "current_exposure",
+        "risk_budget_utilization",
+        "risk_state",
+        "exposure",
+        "pnl",
+        "pnl_summary",
+        "telemetry",
+        "links"
+      ]
+    },
+    "GET /bff/management/portfolio-book/exposure": {
+      "id": "pm12-portfolio-book-exposure",
+      "summary_fields": [
+        "exposure_count",
+        "returned_exposure_count",
+        "risk_budget_total",
+        "current_exposure_total",
+        "available_budget_total",
+        "risk_budget_utilization",
+        "over_budget_count",
+        "near_limit_count",
+        "unknown_exposure_count",
+        "telemetry_runtime_count",
+        "total_pnl"
+      ],
+      "item_fields": [
+        "pool_id",
+        "capital_pool_id",
+        "risk_budget",
+        "current_exposure",
+        "risk_budget_utilization",
+        "risk_state",
+        "available_budget",
+        "exposure",
+        "binding_count",
+        "active_binding_count",
+        "deployment_count",
+        "runtime_count",
+        "active_runtime_count",
+        "paper_runtime_count",
+        "live_runtime_count",
+        "deployment_stages",
+        "strategy_ids",
+        "persona_ids",
+        "source_refs",
+        "links"
+      ]
+    },
+    "GET /bff/management/portfolio-book/holdings": {
+      "summary_fields": [
+        "holding_count",
+        "returned_holding_count",
+        "source_row_count",
+        "active_holding_count",
+        "paper_holding_count",
+        "live_holding_count",
+        "runtime_count",
+        "telemetry_runtime_count",
+        "stale_row_count",
+        "missing_binding_count",
+        "degraded_source_count",
+        "incident_count",
+        "total_notional",
+        "total_market_value",
+        "total_unrealized_pnl",
+        "total_realized_pnl",
+        "total_pnl",
+        "latest_mark_at",
+        "source_status_counts",
+        "risk_state_counts",
+        "by_stage",
+        "by_broker"
+      ],
+      "item_fields": [
+        "id",
+        "holding_id",
+        "position_id",
+        "runtime_id",
+        "runtime_binding_id",
+        "deployment_plan_id",
+        "capital_pool_id",
+        "capital_pool",
+        "persona_id",
+        "persona_capital_binding_id",
+        "strategy_id",
+        "artifact_id",
+        "artifact_version",
+        "broker_id",
+        "paper_ledger_id",
+        "sleeve_id",
+        "deployment_stage",
+        "status",
+        "source_status",
+        "source_row_count",
+        "source_issues",
+        "telemetry_available",
+        "telemetry_stale",
+        "risk_state",
+        "identity",
+        "capital_scope",
+        "instrument",
+        "symbol",
+        "side",
+        "quantity",
+        "average_price",
+        "mark_price",
+        "market_value",
+        "notional",
+        "exposure",
+        "weight",
+        "pnl",
+        "total_pnl",
+        "unrealized_pnl",
+        "realized_pnl",
+        "last_mark_at",
+        "links"
+      ]
+    }
+  },
+  "test_classifications": [
+    {
+      "test": "test_portfolio_book_positions_composes_global_positions_table",
+      "classification": "retired",
+      "reason": "PM12 positions projection was deleted in commit 4cd637d0d and intentionally not restored per operator decision 2026-10-07 because execute-plans frontend does not call it. Test updated to assert the active readback contract."
+    },
+    {
+      "test": "test_portfolio_book_positions_filters_by_stage",
+      "classification": "retired",
+      "reason": "PM12 positions projection was deleted in commit 4cd637d0d and intentionally not restored per operator decision 2026-10-07. Test updated to assert the active readback contract with capital_pool_id filter."
+    },
+    {
+      "test": "test_portfolio_book_positions_reports_degraded_telemetry",
+      "classification": "retired",
+      "reason": "PM12 positions projection was deleted in commit 4cd637d0d and intentionally not restored per operator decision 2026-10-07. Capital readback endpoint operates independently of telemetry state."
+    },
+    {
+      "test": "test_strategy_allocation_returns_active_strategy_allocations_with_drift",
+      "classification": "retired",
+      "reason": "PM12 strategy-allocation projection was deleted in commit 4cd637d0d and intentionally not restored per operator decision 2026-10-07. Test updated to assert the active readback contract."
+    },
+    {
+      "test": "test_capital_flow_returns_read_only_capital_flow_projection",
+      "classification": "retired",
+      "reason": "PM12 capital-flow projection was deleted in commit 4cd637d0d and intentionally not restored per operator decision 2026-10-07. Test updated to assert the active readback contract."
+    },
+    {
+      "test": "test_capital_flow_filters_outflows",
+      "classification": "retired",
+      "reason": "PM12 capital-flow projection was deleted in commit 4cd637d0d and intentionally not restored per operator decision 2026-10-07. Test updated to assert the active readback contract."
+    },
+    {
+      "test": "test_management_board_pack_composes_pm12_sections",
+      "classification": "retired",
+      "reason": "PM12 board-pack projection was deleted in commit 4cd637d0d and intentionally not restored per operator decision 2026-10-07. Test updated to assert the active readback contract."
+    },
+    {
+      "test": "PortfolioBookTestReadPorts.list_personas",
+      "classification": "stale sample",
+      "reason": "Test store lacked list_personas required by performance attribution to resolve tenant personas in pantheon-dev tenancy."
+    },
+    {
+      "test": "test_risk_radar_composes_persona_strategy_exposure_drawdown_and_var",
+      "classification": "stale sample",
+      "reason": "Aligned assertion with management_read_models risk-radar response envelope ('rows' presence) and metric field structure."
+    },
+    {
+      "test": "test_portfolio_book_summary_composes_pool_runtime_and_telemetry",
+      "classification": "intended change",
+      "reason": "Restored PM12 projection shape {data: {summary and items}} with filters and telemetry for GET /bff/management/portfolio-book."
+    },
+    {
+      "test": "test_portfolio_book_pools_returns_pool_risk_exposure_and_pnl",
+      "classification": "intended change",
+      "reason": "Restored PM12 projection shape {data: {summary and items}} for GET /bff/management/portfolio-book/pools."
+    },
+    {
+      "test": "test_portfolio_book_exposure_composes_risk_budget_rollup",
+      "classification": "intended change",
+      "reason": "Restored PM12 projection shape {data: {id, summary, items}} for GET /bff/management/portfolio-book/exposure."
+    },
+    {
+      "test": "test_portfolio_book_holdings_composes_global_holdings_table",
+      "classification": "intended change",
+      "reason": "Restored PM12 projection shape {data: {summary and items}} for GET /bff/management/portfolio-book/holdings."
+    }
+  ],
+  "assertions_weakened": false,
+  "compressed_code_used": false,
+  "verification": {
+    "test_bff_pm12_portfolio_book_contract": "46 passed, 0 failed in 25.98s",
+    "test_bff_mgmt_common_filters": "4 passed, 0 failed in 4.90s",
+    "test_capital_router": "13 passed, 0 failed in 8.52s"
+  }
+}

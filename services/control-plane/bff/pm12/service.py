@@ -7,12 +7,13 @@ resolution, and performance attribution integration.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import os
 import re
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple, Set
+import urllib.parse
 
 from fastapi import HTTPException
 
@@ -143,31 +144,42 @@ def _stable_json_hash(value: Any) -> str:
 # ---------------------------------------------------------------------------
 
 def _pm12_semantic_json_value(value: Any) -> Any:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, _NUMERIC_TYPES):
-        try:
-            d = Decimal(str(value))
-            if not d.is_finite():
-                raise ValueError("non-finite numeric value cannot be canonicalized")
-            d = d.normalize()
-            if d == d.to_integral():
-                return int(d)
-            return float(d)
-        except Exception as exc:
-            raise ValueError(f"unsupported numeric value: {value!r}") from exc
-    if isinstance(value, str):
-        return value
-    if isinstance(value, (list, tuple)):
-        return [_pm12_semantic_json_value(item) for item in value]
-    if isinstance(value, dict):
-        return {
-            str(key): _pm12_semantic_json_value(item)
-            for key, item in value.items()
-        }
+    """Canonicalize JSON values without treating booleans as numbers."""
     if value is None:
-        return None
-    raise ValueError(f"unsupported type for semantic value comparison: {type(value)!r}")
+        return ["null"]
+    if isinstance(value, bool):
+        return ["boolean", value]
+    if isinstance(value, str):
+        return ["string", value]
+    if isinstance(value, (int, float, Decimal)):
+        try:
+            numeric = (
+                value
+                if isinstance(value, Decimal)
+                else Decimal(str(value))
+            )
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise ValueError("allocation line contains an invalid number") from exc
+        if not numeric.is_finite():
+            raise ValueError("allocation line contains a non-finite number")
+        if numeric == 0:
+            numeric = Decimal(0)
+        return ["number", format(numeric.normalize(), "f")]
+    if isinstance(value, list):
+        return ["array", [_pm12_semantic_json_value(item) for item in value]]
+    if isinstance(value, dict):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("allocation line contains a non-string object key")
+        return [
+            "object",
+            [
+                [key, _pm12_semantic_json_value(value[key])]
+                for key in sorted(value)
+            ],
+        ]
+    raise ValueError(
+        f"allocation line contains unsupported JSON value {type(value).__name__}"
+    )
 
 
 def _pm12_semantic_values_match(asserted: Any, authoritative: Any) -> bool:
@@ -936,11 +948,15 @@ def _management_portfolio_book_exposure_item(entry: Dict[str, Any]) -> Dict[str,
         "paper_runtime_count": entry.get("paper_runtime_count", 0),
         "live_runtime_count": entry.get("live_runtime_count", 0),
         "deployment_stages": entry.get("deployment_stages") or [],
+        "strategy_ids": entry.get("strategy_ids") or [],
+        "persona_ids": entry.get("persona_ids") or [],
         "source_refs": {
             "runtime_ids": runtime_ids,
             "binding_ids": binding_ids,
             "deployment_ids": deployment_ids,
             "capital_pool_ids": [pool_id] if pool_id else [],
+            "strategy_ids": entry.get("strategy_ids") or [],
+            "persona_ids": entry.get("persona_ids") or [],
         },
         "links": {
             "capital_pool": f"/bff/capital-pools/{pool_id}" if pool_id else None,
@@ -1174,9 +1190,58 @@ def _management_portfolio_holding_entry(
     )
     status = str(_management_first_non_empty(position.get("status"), runtime.get("status"), "unknown") or "unknown")
 
+    last_mark_at = str(
+        _management_first_non_empty(
+            _management_dict_value(position, "marked_at", "mark_time", "updated_at", "collected_at"),
+            _management_dict_value(mark, "marked_at", "mark_time", "updated_at", "collected_at"),
+            _management_dict_value(telemetry_dict, "collected_at", "updated_at"),
+            _management_dict_value(summary, "collected_at", "updated_at"),
+        )
+        or ""
+    )
+    source_issues = _management_portfolio_source_issues(
+        runtime_id=runtime_id,
+        persona_id=persona_id,
+        persona_binding_id=persona_binding_id,
+        telemetry=telemetry_dict,
+        position_source_count=position_source_count,
+    )
+    source_status = _management_portfolio_source_status(source_issues)
+    risk_state = _management_portfolio_risk_state(
+        source_status=source_status,
+        source_issues=source_issues,
+        deployment_stage=deployment_stage,
+    )
+    identity = _management_portfolio_identity(
+        portfolio_id=holding_id,
+        capital_pool_id=capital_pool_id,
+        sleeve_id=sleeve_id,
+        paper_ledger_id=paper_ledger_id,
+        persona_id=persona_id,
+        runtime_id=runtime_id,
+        runtime_binding_id=runtime_binding_id,
+        plan_id=plan_id,
+        strategy_id=strategy_id,
+        artifact_id=artifact_id,
+        broker_id=broker_id,
+        deployment_stage=deployment_stage,
+    )
+    capital_scope = _management_portfolio_capital_scope(
+        deployment_stage=deployment_stage,
+        capital_pool_id=capital_pool_id,
+        sleeve_id=sleeve_id,
+        paper_ledger_id=paper_ledger_id,
+    )
+    operator_links = _management_portfolio_operator_links(
+        persona_id=persona_id,
+        runtime_id=runtime_id,
+        holding_id=holding_id,
+    )
+
     return {
         "id": holding_id,
         "holding_id": holding_id,
+        "position_id": holding_id,
         "runtime_id": runtime_id,
         "runtime_binding_id": runtime_binding_id,
         "deployment_plan_id": plan_id,
@@ -1197,6 +1262,14 @@ def _management_portfolio_holding_entry(
         "sleeve_id": sleeve_id or None,
         "deployment_stage": deployment_stage,
         "status": status,
+        "source_status": source_status,
+        "source_row_count": position_source_count,
+        "source_issues": source_issues,
+        "telemetry_available": bool(telemetry_dict),
+        "telemetry_stale": any(issue.get("code") == "STALE_TELEMETRY" for issue in source_issues),
+        "risk_state": risk_state,
+        "identity": identity,
+        "capital_scope": capital_scope,
         "instrument": {
             "symbol": symbol,
             "asset_class": asset_class,
@@ -1223,4 +1296,882 @@ def _management_portfolio_holding_entry(
             "realized": realized_pnl,
         },
         "total_pnl": total_pnl,
+        "unrealized_pnl": unrealized_pnl,
+        "realized_pnl": realized_pnl,
+        "last_mark_at": last_mark_at or None,
+        "links": {
+            "runtime": f"/bff/runtimes/{runtime_id}" if runtime_id else None,
+            "capital_pool": f"/bff/capital-pools/{capital_pool_id}" if capital_pool_id else None,
+            "persona": f"/bff/personas/{persona_id}" if persona_id else None,
+            "strategy": f"/bff/strategies/{strategy_id}" if strategy_id else None,
+            "deployment": f"/bff/deployments/{plan_id}" if plan_id else None,
+            **operator_links,
+        },
+    }
+
+
+def _management_portfolio_source_issues(
+    *,
+    runtime_id: str,
+    persona_id: str,
+    persona_binding_id: str,
+    telemetry: Dict[str, Any],
+    position_source_count: int,
+) -> List[Dict[str, Any]]:
+    issues: List[Dict[str, Any]] = []
+    if not persona_id or not persona_binding_id:
+        issues.append({
+            "source_name": "persona_bindings",
+            "code": "MISSING_PERSONA_BINDING",
+            "message": f"Runtime {runtime_id or 'unknown'} does not resolve to a persona capital binding.",
+        })
+    if not telemetry:
+        issues.append({
+            "source_name": "telemetry_summaries",
+            "code": "MISSING_TELEMETRY",
+            "message": f"Telemetry summary is unavailable for runtime {runtime_id or 'unknown'}.",
+        })
+    elif position_source_count <= 0:
+        issues.append({
+            "source_name": "portfolio_holdings",
+            "code": "MISSING_HOLDING_ROW",
+            "message": f"Telemetry for runtime {runtime_id or 'unknown'} did not include a holding or position row.",
+        })
+
+    freshness = str(
+        _management_first_non_empty(
+            telemetry.get("source_status"),
+            telemetry.get("source_state"),
+            telemetry.get("data_status"),
+            telemetry.get("freshness_status"),
+        )
+        or ""
+    ).strip().lower()
+    if bool(telemetry.get("stale")) or freshness in {"stale", "expired", "lagging"}:
+        issues.append({
+            "source_name": "telemetry_summaries",
+            "code": "STALE_TELEMETRY",
+            "message": f"Telemetry for runtime {runtime_id or 'unknown'} is stale.",
+        })
+    elif freshness in {"degraded", "missing", "partial", "timeout", "unavailable", "unhealthy"}:
+        issues.append({
+            "source_name": "telemetry_summaries",
+            "code": "DEGRADED_TELEMETRY",
+            "message": f"Telemetry for runtime {runtime_id or 'unknown'} is degraded.",
+        })
+    return issues
+
+
+def _management_portfolio_source_status(issues: List[Dict[str, Any]]) -> str:
+    codes = {str(issue.get("code") or "") for issue in issues}
+    if "STALE_TELEMETRY" in codes:
+        return "stale"
+    if codes:
+        return "degraded"
+    return "ok"
+
+
+def _management_portfolio_risk_state(
+    *,
+    source_status: str,
+    source_issues: List[Dict[str, Any]],
+    deployment_stage: str,
+) -> str:
+    codes = {str(issue.get("code") or "") for issue in source_issues}
+    if "MISSING_PERSONA_BINDING" in codes:
+        return "missing_binding"
+    if "STALE_TELEMETRY" in codes:
+        return "stale_telemetry"
+    if source_status == "degraded":
+        return "degraded_source"
+    if deployment_stage == "live":
+        return "live_exposure"
+    if deployment_stage == "canary":
+        return "canary_exposure"
+    if deployment_stage == "paper":
+        return "paper_exposure"
+    return "unknown"
+
+
+def _management_portfolio_identity(
+    *,
+    portfolio_id: str,
+    capital_pool_id: str,
+    sleeve_id: str,
+    paper_ledger_id: str,
+    persona_id: str,
+    runtime_id: str,
+    runtime_binding_id: str,
+    plan_id: str,
+    strategy_id: str,
+    artifact_id: str,
+    broker_id: str,
+    deployment_stage: str,
+) -> Dict[str, Any]:
+    stage = deployment_stage or "unknown"
+    return {
+        "portfolio_id": portfolio_id,
+        "capital_pool_id": capital_pool_id,
+        "capital_pool_ids": [capital_pool_id] if capital_pool_id else [],
+        "sleeve_id": sleeve_id or None,
+        "sleeve_ids": [sleeve_id] if sleeve_id else [],
+        "paper_ledger_id": paper_ledger_id or None,
+        "paper_ledger_ids": [paper_ledger_id] if paper_ledger_id else [],
+        "persona_id": persona_id,
+        "persona_ids": [persona_id] if persona_id else [],
+        "runtime_id": runtime_id,
+        "runtime_ids": [runtime_id] if runtime_id else [],
+        "runtime_binding_id": runtime_binding_id,
+        "runtime_binding_ids": [runtime_binding_id] if runtime_binding_id else [],
+        "deployment_plan_id": plan_id,
+        "deployment_plan_ids": [plan_id] if plan_id else [],
+        "strategy_id": strategy_id,
+        "strategy_ids": [strategy_id] if strategy_id else [],
+        "artifact_id": artifact_id,
+        "artifact_ids": [artifact_id] if artifact_id else [],
+        "broker_id": broker_id,
+        "broker_ids": [broker_id] if broker_id else [],
+        "stage": stage,
+        "deployment_stage": stage,
+    }
+
+
+def _management_portfolio_capital_scope(
+    *,
+    deployment_stage: str,
+    capital_pool_id: str,
+    sleeve_id: str,
+    paper_ledger_id: str,
+) -> Dict[str, Any]:
+    if deployment_stage == "paper":
+        scope_kind = "paper_ledger"
+        scope_id = paper_ledger_id
+    elif deployment_stage == "canary":
+        scope_kind = "canary_sleeve"
+        scope_id = sleeve_id
+    elif deployment_stage == "live":
+        scope_kind = "live_capital_pool"
+        scope_id = capital_pool_id
+    else:
+        scope_kind = "unclassified"
+        scope_id = capital_pool_id or sleeve_id or paper_ledger_id
+    return {
+        "stage": deployment_stage or "unknown",
+        "scope_kind": scope_kind,
+        "scope_id": scope_id or None,
+        "paper_ledger_id": paper_ledger_id or None,
+        "canary_sleeve_id": sleeve_id if deployment_stage == "canary" else None,
+        "live_capital_pool_id": capital_pool_id if deployment_stage == "live" else None,
+        "capital_pool_id": capital_pool_id or None,
+        "sleeve_id": sleeve_id or None,
+    }
+
+
+def _management_portfolio_operator_links(
+    *,
+    persona_id: str,
+    runtime_id: str,
+    holding_id: str,
+) -> Dict[str, Optional[str]]:
+    query: Dict[str, str] = {}
+    if persona_id:
+        query["persona_id"] = persona_id
+    if runtime_id:
+        query["runtime_id"] = runtime_id
+    query_string = urllib.parse.urlencode(query)
+    attribution_href = "/management/performance-attribution"
+    review_href = "/management/human-inbox"
+    if query_string:
+        attribution_href = f"{attribution_href}?{query_string}"
+        review_href = f"{review_href}?{query_string}"
+    return {
+        "persona_fleet": f"/management/persona-fleet?persona_id={urllib.parse.quote(persona_id)}" if persona_id else None,
+        "performance_attribution": attribution_href if query else None,
+        "human_review": (
+            f"{review_href}&target_type=portfolio_holding&target_id={urllib.parse.quote(holding_id)}"
+            if query_string and holding_id
+            else review_href if query else None
+        ),
+    }
+
+
+def _management_portfolio_incident(metadata: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    issues = metadata.get("source_issues") if isinstance(metadata.get("source_issues"), list) else []
+    if not issues:
+        return None
+    runtime_id = str(metadata.get("runtime_id") or "")
+    holding_id = str(metadata.get("holding_id") or runtime_id or "unassigned")
+    risk_state = str(metadata.get("risk_state") or "degraded_source")
+    severity = "high" if risk_state in {"missing_binding", "degraded_source"} else "medium"
+    return {
+        "id": f"portfolio-risk-{risk_state}-{holding_id}",
+        "kind": risk_state,
+        "status": "open",
+        "severity": severity,
+        "message": "; ".join(str(issue.get("message") or issue.get("code") or "") for issue in issues if issue),
+        "risk_state": risk_state,
+        "source_status": metadata.get("source_status"),
+        "source_issues": issues,
+        "identity": metadata.get("identity") or {},
+        "source_refs": {
+            "runtime_ids": [runtime_id] if runtime_id else [],
+            "persona_ids": [metadata.get("persona_id")] if metadata.get("persona_id") else [],
+            "capital_pool_ids": [metadata.get("capital_pool_id")] if metadata.get("capital_pool_id") else [],
+        },
+        "links": metadata.get("links") or {},
+    }
+
+
+def _management_normalized_status(record: Optional[Dict[str, Any]]) -> str:
+    if not isinstance(record, dict):
+        return "unknown"
+    val = record.get("status") or record.get("state") or record.get("lifecycle_state") or "unknown"
+    return str(val).strip().lower()
+
+
+def _management_first_float(record: Dict[str, Any], *keys: str) -> Optional[float]:
+    for key in keys:
+        parts = key.split(".")
+        cur: Any = record
+        for part in parts:
+            if isinstance(cur, dict):
+                cur = cur.get(part)
+            else:
+                cur = None
+                break
+        f = _management_as_float(cur)
+        if f is not None:
+            return f
+    return None
+
+
+def _management_sum_numeric(items: Any, field: str) -> Optional[float]:
+    vals = [_management_as_float(it.get(field)) for it in items if _management_as_float(it.get(field)) is not None]
+    return round(sum(vals), 6) if vals else None
+
+
+def _management_latest_timestamp(items: Any, field: str) -> Optional[str]:
+    timestamps = [str(it.get(field) or "").strip() for it in items if str(it.get(field) or "").strip()]
+    return max(timestamps) if timestamps else None
+
+
+def _management_count_by(items: Any, field: str) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for it in items:
+        k = str(it.get(field) or "unknown").strip().lower()
+        counts[k] = counts.get(k, 0) + 1
+    return counts
+
+
+def _management_telemetry_rollup(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    pnl_values: List[float] = []
+    drawdown_values: List[float] = []
+    fill_rates: List[float] = []
+    total_trades = 0
+    latest_collected_at: Optional[str] = None
+    for record in records:
+        pnl = _management_first_float(record, "pnl", "summary.total_pnl", "summary.pnl")
+        drawdown = _management_first_float(record, "drawdown", "max_drawdown", "summary.max_drawdown")
+        fill_rate = _management_first_float(record, "fill_rate", "summary.fill_rate")
+        trades = _management_first_float(record, "total_trades", "summary.total_trades")
+        collected_at = str(record.get("collected_at") or record.get("collectedAt") or record.get("updated_at") or "").strip()
+        if pnl is not None:
+            pnl_values.append(pnl)
+        if drawdown is not None:
+            drawdown_values.append(drawdown)
+        if fill_rate is not None:
+            fill_rates.append(fill_rate)
+        if trades is not None:
+            total_trades += int(trades)
+        if collected_at and (latest_collected_at is None or collected_at > latest_collected_at):
+            latest_collected_at = collected_at
+    return {
+        "runtime_count": len(records),
+        "total_pnl": round(sum(pnl_values), 6) if pnl_values else None,
+        "max_drawdown": max(drawdown_values) if drawdown_values else None,
+        "average_fill_rate": round(sum(fill_rates) / len(fill_rates), 6) if fill_rates else None,
+        "total_trades": total_trades,
+        "latest_collected_at": latest_collected_at,
+    }
+
+
+def _management_portfolio_book_entry(
+    pool: Dict[str, Any],
+    *,
+    bindings: List[Dict[str, Any]],
+    deployment_plans: List[Dict[str, Any]],
+    runtime_bindings: List[Dict[str, Any]],
+    telemetry_by_runtime_id: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    pool_id = str(pool.get("pool_id") or pool.get("id") or "").strip()
+    pool_bindings = [
+        b for b in bindings
+        if str(b.get("capital_pool_id") or b.get("pool_id") or "").strip() == pool_id
+    ]
+    pool_binding_ids = {
+        str(b.get("binding_id") or b.get("id") or b.get("persona_capital_binding_id") or "").strip()
+        for b in pool_bindings
+    }
+    pool_binding_ids.discard("")
+    pool_plans = [
+        p for p in deployment_plans
+        if str(p.get("capital_pool_id") or p.get("target_pool_id") or p.get("pool_id") or "").strip() == pool_id
+        or bool(pool_binding_ids.intersection(str(v) for v in (p.get("binding_ids") or [])))
+    ]
+    pool_plan_ids = {str(p.get("plan_id") or p.get("id") or "").strip() for p in pool_plans}
+    pool_plan_ids.discard("")
+
+    pool_runtimes = [
+        r for r in runtime_bindings
+        if str(r.get("capital_pool_id") or r.get("pool_id") or "").strip() == pool_id
+        or str(r.get("plan_id") or r.get("deployment_plan_id") or "").strip() in pool_plan_ids
+    ]
+    telemetry_records = [
+        telemetry_by_runtime_id[rid]
+        for rid in (str(r.get("runtime_id") or r.get("id") or r.get("binding_id") or "").strip() for r in pool_runtimes)
+        if rid in telemetry_by_runtime_id
+    ]
+    telemetry = _management_telemetry_rollup(telemetry_records)
+
+    risk_budget = _management_as_float(pool.get("risk_budget"))
+    current_exposure = _management_as_float(pool.get("current_exposure"))
+    utilization = round(current_exposure / risk_budget, 6) if current_exposure is not None and risk_budget not in (None, 0) else None
+
+    runtime_ids_set = {
+        str(r.get("runtime_id") or r.get("id") or r.get("binding_id") or "").strip()
+        for r in pool_runtimes
+        if str(r.get("runtime_id") or r.get("id") or r.get("binding_id") or "").strip()
+    }
+    if pool.get("runtime_id"):
+        runtime_ids_set.add(str(pool["runtime_id"]).strip())
+    runtime_ids = sorted(runtime_ids_set)
+
+    persona_ids_set = {str(b.get("persona_id") or "").strip() for b in pool_bindings}
+    if pool.get("persona_id"):
+        persona_ids_set.add(str(pool["persona_id"]).strip())
+    persona_ids_set.discard("")
+
+    strategy_ids_set = {
+        str(x.get("strategy_id") or "").strip()
+        for x in pool_bindings + pool_plans + pool_runtimes
+    }
+    if pool.get("strategy_id"):
+        strategy_ids_set.add(str(pool["strategy_id"]).strip())
+    strategy_ids_set.discard("")
+
+    sleeve_ids_set = {str(x.get("sleeve_id") or "").strip() for x in pool_bindings + pool_plans + pool_runtimes}
+    if pool.get("sleeve_id"):
+        sleeve_ids_set.add(str(pool["sleeve_id"]).strip())
+    sleeve_ids_set.discard("")
+
+    artifact_ids_set = {str(x.get("artifact_id") or "").strip() for x in pool_plans + pool_runtimes}
+    if pool.get("artifact_id"):
+        artifact_ids_set.add(str(pool["artifact_id"]).strip())
+    artifact_ids_set.discard("")
+
+    broker_ids_set = {str(x.get("broker_id") or "").strip() for x in pool_bindings + pool_plans + pool_runtimes}
+    if pool.get("broker_id"):
+        broker_ids_set.add(str(pool["broker_id"]).strip())
+    broker_ids_set.discard("")
+
+    active_bindings = [b for b in pool_bindings if _management_normalized_status(b) == "active" or str(b.get("validity") or "").strip().lower() == "active"]
+    approved_plans = [p for p in pool_plans if _management_normalized_status(p) in {"approved", "executing", "executed", "active"}]
+    active_runtimes = [r for r in pool_runtimes if _management_normalized_status(r) in {"active", "running", "healthy"}]
+
+    return {
+        "id": pool_id,
+        "pool_id": pool_id,
+        "capital_pool_id": pool_id,
+        "name": pool.get("name") or pool_id,
+        "status": pool.get("status") or "unknown",
+        "risk_policy_ref": pool.get("risk_policy_ref"),
+        "owner": {"id": pool.get("owner_id") or pool.get("owner"), "type": pool.get("owner_type")},
+        "currency": pool.get("currency"),
+        "risk_budget": risk_budget,
+        "current_exposure": current_exposure,
+        "risk_budget_utilization": utilization,
+        "risk_state": _management_exposure_risk_state(utilization),
+        "exposure": {
+            "amount": current_exposure,
+            "risk_budget": risk_budget,
+            "risk_budget_utilization": utilization,
+            "source": "capital_pool",
+        },
+        "pnl": telemetry["total_pnl"],
+        "total_pnl": telemetry["total_pnl"],
+        "pnl_summary": telemetry,
+        "binding_count": len(pool_bindings),
+        "active_binding_count": len(active_bindings),
+        "deployment_count": len(pool_plans),
+        "approved_deployment_count": len(approved_plans),
+        "runtime_count": len(pool_runtimes),
+        "active_runtime_count": len(active_runtimes),
+        "paper_runtime_count": len([r for r in pool_runtimes if str(r.get("deployment_stage") or r.get("deployment_mode") or "").lower() == "paper"]),
+        "live_runtime_count": len([r for r in pool_runtimes if str(r.get("deployment_stage") or r.get("deployment_mode") or "").lower() == "live"]),
+        "deployment_stages": sorted({str(x.get("deployment_stage") or x.get("target_stage") or "").strip() for x in pool_plans + pool_runtimes if str(x.get("deployment_stage") or x.get("target_stage") or "").strip()}),
+        "binding_ids": sorted(pool_binding_ids),
+        "deployment_ids": sorted(pool_plan_ids),
+        "runtime_ids": runtime_ids,
+        "persona_ids": sorted(persona_ids_set),
+        "strategy_ids": sorted(strategy_ids_set),
+        "sleeve_ids": sorted(sleeve_ids_set),
+        "artifact_ids": sorted(artifact_ids_set),
+        "broker_ids": sorted(broker_ids_set),
+        "telemetry": telemetry,
+        "links": {"capital_pool": f"/bff/capital-pools/{pool_id}" if pool_id else None},
+    }
+
+
+def _management_portfolio_book_pool_sources(
+    read_store: Any,
+    *,
+    status: Optional[str] = None,
+    risk_policy_ref: Optional[str] = None,
+) -> Dict[str, Any]:
+    capital_pools = (read_store.list_capital_pools(status=status, risk_policy_ref=risk_policy_ref) or []) if hasattr(read_store, "list_capital_pools") else []
+    bindings = (read_store.list_bindings() or []) if hasattr(read_store, "list_bindings") else []
+    deployment_plans = (read_store.list_deployment_plans() or []) if hasattr(read_store, "list_deployment_plans") else []
+    runtime_bindings = (read_store.list_runtime_bindings() or []) if hasattr(read_store, "list_runtime_bindings") else []
+
+    telemetry_by_runtime_id: Dict[str, Dict[str, Any]] = {}
+    for runtime in runtime_bindings:
+        runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
+        if not runtime_id:
+            continue
+        telemetry = read_store.get_telemetry_summary(runtime_id) if hasattr(read_store, "get_telemetry_summary") else None
+        if telemetry is not None:
+            telemetry_by_runtime_id[runtime_id] = telemetry
+
+    entries = [
+        _management_portfolio_book_entry(
+            pool,
+            bindings=bindings,
+            deployment_plans=deployment_plans,
+            runtime_bindings=runtime_bindings,
+            telemetry_by_runtime_id=telemetry_by_runtime_id,
+        )
+        for pool in capital_pools
+    ]
+    return {
+        "capital_pools": capital_pools,
+        "bindings": bindings,
+        "deployment_plans": deployment_plans,
+        "runtime_bindings": runtime_bindings,
+        "telemetry_by_runtime_id": telemetry_by_runtime_id,
+        "entries": sorted(entries, key=lambda entry: str(entry.get("pool_id") or "")),
+    }
+
+
+def _pm12_portfolio_book_response(
+    read_store: Any,
+    *,
+    query_params: Optional[Dict[str, Any]] = None,
+    page_token: Optional[str] = None,
+    page_size: int = 50,
+    utc_now_fn: Optional[Callable[[], str]] = None,
+) -> Dict[str, Any]:
+    from ..personas.service import _filter_by_common_identifiers
+    from ..agora.performance.service import _pm12_page_slice
+    qp = query_params or {}
+    snapshot_at = utc_now_fn() if utc_now_fn else _default_utc_now()
+    sources = _management_portfolio_book_pool_sources(
+        read_store,
+        status=qp.get("status"),
+        risk_policy_ref=qp.get("risk_policy_ref"),
+    )
+    entries = sources["entries"]
+    entries = _filter_by_common_identifiers(
+        entries,
+        persona_id=qp.get("personaId") or qp.get("persona_id"),
+        persona=qp.get("persona"),
+        runtime_id=qp.get("runtimeId") or qp.get("runtime_id"),
+        runtime=qp.get("runtime"),
+        strategy_id=qp.get("strategyId") or qp.get("strategy_id"),
+        strategy=qp.get("strategy"),
+        capital_pool_id=qp.get("capitalPoolId") or qp.get("capital_pool_id") or qp.get("pool"),
+        pool=qp.get("pool"),
+        sleeve_id=qp.get("sleeveId") or qp.get("sleeve_id"),
+        sleeve=qp.get("sleeve"),
+        artifact_id=qp.get("artifactId") or qp.get("artifact_id"),
+        artifact=qp.get("artifact"),
+        broker_id=qp.get("brokerId") or qp.get("broker_id"),
+        broker=qp.get("broker"),
+        stage=qp.get("stage"),
+        period=qp.get("period"),
+        as_of=qp.get("asOf") or qp.get("as_of"),
+    )
+    total = len(entries)
+    page_items, next_page_token = _pm12_page_slice(entries, page_token, page_size)
+    portfolio_telemetry = _management_telemetry_rollup(list(sources["telemetry_by_runtime_id"].values()))
+
+    dataset_source = getattr(read_store, "dataset_source", None) or (lambda ds: "canonical")
+    tel_src = dataset_source("telemetry_summaries")
+    tel_status = "unavailable" if tel_src in ("missing", "unavailable") or not sources["telemetry_by_runtime_id"] else "ok"
+
+    summary = {
+        "portfolio_book_status": "ready" if total else "empty",
+        "capital_pool_count": len(sources["capital_pools"]),
+        "active_capital_pool_count": len([p for p in sources["capital_pools"] if _management_normalized_status(p) in {"active", "ready"}]),
+        "binding_count": len(sources["bindings"]),
+        "active_binding_count": len([b for b in sources["bindings"] if _management_normalized_status(b) == "active" or str(b.get("validity") or "").strip().lower() == "active"]),
+        "deployment_count": len(sources["deployment_plans"]),
+        "approved_deployment_count": len([p for p in sources["deployment_plans"] if _management_normalized_status(p) in {"approved", "executing", "executed", "active"}]),
+        "runtime_count": len(sources["runtime_bindings"]),
+        "active_runtime_count": len([r for r in sources["runtime_bindings"] if _management_normalized_status(r) in {"active", "running", "healthy"}]),
+        "paper_runtime_count": len([r for r in sources["runtime_bindings"] if str(r.get("deployment_stage") or r.get("deployment_mode") or "").lower() == "paper"]),
+        "live_runtime_count": len([r for r in sources["runtime_bindings"] if str(r.get("deployment_stage") or r.get("deployment_mode") or "").lower() == "live"]),
+        "telemetry_runtime_count": portfolio_telemetry["runtime_count"],
+        "total_pnl": portfolio_telemetry["total_pnl"],
+        "max_drawdown": portfolio_telemetry["max_drawdown"],
+        "average_fill_rate": portfolio_telemetry["average_fill_rate"],
+        "total_trades": portfolio_telemetry["total_trades"],
+        "latest_telemetry_at": portfolio_telemetry["latest_collected_at"],
+    }
+    surfaces = {
+        "portfolio_book": {"status": "degraded" if tel_status == "unavailable" else "ok", "source": "bff_composed", "snapshot_at": snapshot_at},
+        "capital_pools": {"status": "ok", "source": dataset_source("capital_pools"), "snapshot_at": snapshot_at},
+        "persona_bindings": {"status": "ok", "source": dataset_source("persona_bindings"), "snapshot_at": snapshot_at},
+        "deployment_plans": {"status": "ok", "source": dataset_source("deployment_plans"), "snapshot_at": snapshot_at},
+        "runtime_bindings": {"status": "ok", "source": dataset_source("runtime_bindings"), "snapshot_at": snapshot_at},
+        "telemetry_summaries": {"status": tel_status, "source": tel_src, "snapshot_at": snapshot_at},
+    }
+    return {
+        "data": {
+            "summary": summary,
+            "items": page_items,
+        },
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": surfaces,
+            "total": total,
+        },
+    }
+
+
+def _pm12_portfolio_book_pools_response(
+    read_store: Any,
+    *,
+    query_params: Optional[Dict[str, Any]] = None,
+    page_token: Optional[str] = None,
+    page_size: int = 50,
+    utc_now_fn: Optional[Callable[[], str]] = None,
+) -> Dict[str, Any]:
+    from ..personas.service import _filter_by_common_identifiers
+    from ..agora.performance.service import _pm12_page_slice
+    qp = query_params or {}
+    snapshot_at = utc_now_fn() if utc_now_fn else _default_utc_now()
+    sources = _management_portfolio_book_pool_sources(
+        read_store,
+        status=qp.get("status"),
+        risk_policy_ref=qp.get("risk_policy_ref"),
+    )
+    entries = sources["entries"]
+    entries = _filter_by_common_identifiers(
+        entries,
+        persona_id=qp.get("personaId") or qp.get("persona_id"),
+        persona=qp.get("persona"),
+        runtime_id=qp.get("runtimeId") or qp.get("runtime_id"),
+        runtime=qp.get("runtime"),
+        strategy_id=qp.get("strategyId") or qp.get("strategy_id"),
+        strategy=qp.get("strategy"),
+        capital_pool_id=qp.get("capitalPoolId") or qp.get("capital_pool_id") or qp.get("pool"),
+        pool=qp.get("pool"),
+        sleeve_id=qp.get("sleeveId") or qp.get("sleeve_id"),
+        sleeve=qp.get("sleeve"),
+        artifact_id=qp.get("artifactId") or qp.get("artifact_id"),
+        artifact=qp.get("artifact"),
+        broker_id=qp.get("brokerId") or qp.get("broker_id"),
+        broker=qp.get("broker"),
+        stage=qp.get("stage"),
+        period=qp.get("period"),
+        as_of=qp.get("asOf") or qp.get("as_of"),
+    )
+    total = len(entries)
+    page_items, next_page_token = _pm12_page_slice(entries, page_token, page_size)
+    portfolio_telemetry = _management_telemetry_rollup(list(sources["telemetry_by_runtime_id"].values()))
+
+    dataset_source = getattr(read_store, "dataset_source", None) or (lambda ds: "canonical")
+    tel_src = dataset_source("telemetry_summaries")
+    tel_status = "unavailable" if tel_src in ("missing", "unavailable") or not sources["telemetry_by_runtime_id"] else "ok"
+
+    risk_budgets = [item["risk_budget"] for item in entries if item.get("risk_budget") is not None]
+    current_exposures = [item["current_exposure"] for item in entries if item.get("current_exposure") is not None]
+    rb_total = round(sum(risk_budgets), 6) if risk_budgets else None
+    ce_total = round(sum(current_exposures), 6) if current_exposures else None
+    util = round(ce_total / rb_total, 6) if ce_total is not None and rb_total not in (None, 0) else None
+
+    summary = {
+        "total_pools": total,
+        "returned_pools": len(page_items),
+        "risk_budget_total": rb_total,
+        "current_exposure_total": ce_total,
+        "risk_budget_utilization": util,
+        "telemetry_runtime_count": portfolio_telemetry["runtime_count"],
+        "total_pnl": portfolio_telemetry["total_pnl"],
+    }
+    return {
+        "data": {
+            "summary": summary,
+            "items": page_items,
+        },
+        "page_info": {"next_page_token": next_page_token, "total": total, "page_size": page_size},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "portfolio_book_pools": {"status": "degraded" if tel_status == "unavailable" else "ok", "source": "bff_composed", "snapshot_at": snapshot_at},
+                "capital_pools": {"status": "ok", "source": dataset_source("capital_pools"), "snapshot_at": snapshot_at},
+            },
+            "composition_sources": ["GET /bff/capital-pools"],
+            "total": total,
+        },
+    }
+
+
+def _pm12_portfolio_book_exposure_response(
+    read_store: Any,
+    *,
+    query_params: Optional[Dict[str, Any]] = None,
+    page_token: Optional[str] = None,
+    page_size: int = 50,
+    utc_now_fn: Optional[Callable[[], str]] = None,
+) -> Dict[str, Any]:
+    from ..personas.service import _filter_by_common_identifiers
+    from ..agora.performance.service import _pm12_page_slice
+    qp = query_params or {}
+    snapshot_at = utc_now_fn() if utc_now_fn else _default_utc_now()
+    sources = _management_portfolio_book_pool_sources(read_store)
+    exposure_items = [_management_portfolio_book_exposure_item(entry) for entry in sources["entries"]]
+    exposure_items = _filter_by_common_identifiers(
+        exposure_items,
+        persona_id=qp.get("personaId") or qp.get("persona_id"),
+        persona=qp.get("persona"),
+        runtime_id=qp.get("runtimeId") or qp.get("runtime_id"),
+        runtime=qp.get("runtime"),
+        strategy_id=qp.get("strategyId") or qp.get("strategy_id"),
+        strategy=qp.get("strategy"),
+        capital_pool_id=qp.get("capitalPoolId") or qp.get("capital_pool_id") or qp.get("pool"),
+        pool=qp.get("pool"),
+        sleeve_id=qp.get("sleeveId") or qp.get("sleeve_id"),
+        sleeve=qp.get("sleeve"),
+        artifact_id=qp.get("artifactId") or qp.get("artifact_id"),
+        artifact=qp.get("artifact"),
+        broker_id=qp.get("brokerId") or qp.get("broker_id"),
+        broker=qp.get("broker"),
+        stage=qp.get("stage"),
+        period=qp.get("period"),
+        as_of=qp.get("asOf") or qp.get("as_of"),
+    )
+    total = len(exposure_items)
+    page_items, next_page_token = _pm12_page_slice(exposure_items, page_token, page_size)
+
+    dataset_source = getattr(read_store, "dataset_source", None) or (lambda ds: "canonical")
+    tel_src = dataset_source("telemetry_summaries")
+    tel_status = "unavailable" if tel_src in ("missing", "unavailable") or not sources["telemetry_by_runtime_id"] else "ok"
+
+    risk_budgets = [item["risk_budget"] for item in exposure_items if item.get("risk_budget") is not None]
+    current_exposures = [item["current_exposure"] for item in exposure_items if item.get("current_exposure") is not None]
+    available_budgets = [item["available_budget"] for item in exposure_items if item.get("available_budget") is not None]
+    pnls = [item["pnl"] for item in exposure_items if item.get("pnl") is not None]
+    rb_total = round(sum(risk_budgets), 6) if risk_budgets else None
+    ce_total = round(sum(current_exposures), 6) if current_exposures else None
+    av_total = round(sum(available_budgets), 6) if available_budgets else None
+    util = round(ce_total / rb_total, 6) if ce_total is not None and rb_total not in (None, 0) else None
+
+    matched_runtime_ids = {rid for it in exposure_items for rid in (it.get("source_refs") or {}).get("runtime_ids", [])}
+    tel_runtime_count = len([rid for rid in matched_runtime_ids if rid in sources["telemetry_by_runtime_id"]])
+
+    summary = {
+        "exposure_count": total,
+        "returned_exposure_count": len(page_items),
+        "risk_budget_total": rb_total,
+        "current_exposure_total": ce_total,
+        "available_budget_total": av_total,
+        "risk_budget_utilization": util,
+        "over_budget_count": sum(1 for it in exposure_items if it.get("risk_state") == "over_budget"),
+        "near_limit_count": sum(1 for it in exposure_items if it.get("risk_state") == "near_limit"),
+        "unknown_exposure_count": sum(1 for it in exposure_items if it.get("risk_state") == "unknown"),
+        "telemetry_runtime_count": tel_runtime_count,
+        "total_pnl": round(sum(pnls), 6) if pnls else None,
+    }
+    return {
+        "data": {
+            "id": "pm12-portfolio-book-exposure",
+            "items": page_items,
+            "summary": summary,
+        },
+        "page_info": {"next_page_token": next_page_token, "total": total, "page_size": page_size},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "portfolio_book_exposure": {"status": "degraded" if tel_status == "unavailable" else "ok", "source": "bff_composed", "snapshot_at": snapshot_at},
+                "capital_pools": {"status": "ok", "source": dataset_source("capital_pools"), "snapshot_at": snapshot_at},
+            },
+            "policy": "read_only_portfolio_exposure",
+            "composition_sources": ["GET /api/v1/telemetry/{runtime_id}/summary"],
+            "total": total,
+        },
+    }
+
+
+def _pm12_portfolio_book_holdings_response(
+    read_store: Any,
+    *,
+    query_params: Optional[Dict[str, Any]] = None,
+    page_token: Optional[str] = None,
+    page_size: int = 50,
+    utc_now_fn: Optional[Callable[[], str]] = None,
+) -> Dict[str, Any]:
+    from ..agora.performance.service import _pm12_page_slice
+    qp = query_params or {}
+    snapshot_at = utc_now_fn() if utc_now_fn else _default_utc_now()
+
+    runtime_bindings = (read_store.list_runtime_bindings(include_market_persona_defaults=True) or []) if hasattr(read_store, "list_runtime_bindings") else []
+    deployment_plans = (read_store.list_deployment_plans() or []) if hasattr(read_store, "list_deployment_plans") else []
+    bindings = (read_store.list_bindings(include_market_persona_defaults=True) or []) if hasattr(read_store, "list_bindings") else []
+    capital_pools = (read_store.list_capital_pools(include_market_persona_defaults=True) or []) if hasattr(read_store, "list_capital_pools") else []
+
+    plans_by_id = {str(p.get("plan_id") or p.get("id") or "").strip(): p for p in deployment_plans}
+    bindings_by_id = {str(b.get("binding_id") or b.get("id") or b.get("persona_capital_binding_id") or "").strip(): b for b in bindings}
+    pools_by_id = {str(p.get("pool_id") or p.get("id") or "").strip(): p for p in capital_pools}
+
+    telemetry_by_runtime_id: Dict[str, Dict[str, Any]] = {}
+    for r in runtime_bindings:
+        rid = str(r.get("runtime_id") or r.get("id") or r.get("binding_id") or "").strip()
+        if rid:
+            t = read_store.get_telemetry_summary(rid) if hasattr(read_store, "get_telemetry_summary") else None
+            if t is not None:
+                telemetry_by_runtime_id[rid] = t
+
+    holding_items: List[Dict[str, Any]] = []
+    for runtime in runtime_bindings:
+        rid = str(runtime.get("runtime_id") or runtime.get("id") or runtime.get("binding_id") or "").strip()
+        telemetry = telemetry_by_runtime_id.get(rid, {})
+        plan = plans_by_id.get(str(runtime.get("plan_id") or runtime.get("deployment_plan_id") or "").strip(), {})
+        plan_binding_ids = [str(v).strip() for v in (plan.get("binding_ids") or []) if str(v).strip()]
+        persona_binding_id = str(runtime.get("persona_capital_binding_id") or (plan_binding_ids[0] if plan_binding_ids else "")).strip()
+        persona_binding = bindings_by_id.get(persona_binding_id, {})
+        pool_id = str(runtime.get("capital_pool_id") or plan.get("capital_pool_id") or plan.get("target_pool_id") or persona_binding.get("capital_pool_id") or "").strip()
+        capital_pool = pools_by_id.get(pool_id, {})
+        position_records = telemetry.get("positions") if isinstance(telemetry.get("positions"), list) else []
+        positions = position_records or [{}]
+        position_source_count = len(position_records)
+        for index, position in enumerate(positions):
+            entry = _management_portfolio_holding_entry(
+                runtime,
+                position,
+                position_index=index,
+                plan=plan,
+                persona_binding=persona_binding,
+                capital_pool=capital_pool,
+                telemetry=telemetry,
+                position_source_count=position_source_count,
+            )
+            holding_items.append(entry)
+
+    capital_pool_id = qp.get("capital_pool_id") or qp.get("pool")
+    if capital_pool_id:
+        req = {x.strip() for x in str(capital_pool_id).split(",") if x.strip()}
+        holding_items = [it for it in holding_items if str(it.get("capital_pool_id") or "") in req]
+    persona_id = qp.get("persona_id") or qp.get("personaId")
+    if persona_id:
+        req = {x.strip() for x in str(persona_id).split(",") if x.strip()}
+        holding_items = [it for it in holding_items if str(it.get("persona_id") or "") in req]
+    runtime_id = qp.get("runtime_id") or qp.get("runtimeId")
+    if runtime_id:
+        req = {x.strip() for x in str(runtime_id).split(",") if x.strip()}
+        holding_items = [it for it in holding_items if str(it.get("runtime_id") or "") in req]
+    deployment_stage = qp.get("deployment_stage") or qp.get("stage")
+    if deployment_stage:
+        req = {x.strip().lower() for x in str(deployment_stage).split(",") if x.strip()}
+        holding_items = [it for it in holding_items if str(it.get("deployment_stage") or "").lower() in req]
+    broker_id = qp.get("broker_id") or qp.get("brokerId")
+    if broker_id:
+        req = {x.strip() for x in str(broker_id).split(",") if x.strip()}
+        holding_items = [it for it in holding_items if str(it.get("broker_id") or "") in req]
+    status = qp.get("status")
+    if status:
+        req = {x.strip().lower() for x in str(status).split(",") if x.strip()}
+        holding_items = [it for it in holding_items if str(it.get("status") or "").lower() in req]
+    source_status = qp.get("source_status")
+    if source_status:
+        req = {x.strip().lower() for x in str(source_status).split(",") if x.strip()}
+        holding_items = [it for it in holding_items if str(it.get("source_status") or "").lower() in req]
+    stale_telemetry = qp.get("stale_telemetry")
+    if stale_telemetry is not None:
+        val = str(stale_telemetry).strip().lower() in ("true", "1")
+        holding_items = [it for it in holding_items if bool(it.get("telemetry_stale")) is val]
+    risk_state = qp.get("risk_state")
+    if risk_state:
+        req = {x.strip().lower() for x in str(risk_state).split(",") if x.strip()}
+        holding_items = [it for it in holding_items if str(it.get("risk_state") or "").lower() in req]
+    q = qp.get("q")
+    if q:
+        needle = str(q).strip().lower()
+        holding_items = [it for it in holding_items if needle in " ".join(str(it.get(k) or "").lower() for k in ("holding_id", "symbol", "runtime_id", "capital_pool_id", "persona_id", "strategy_id"))]
+
+    holding_items = sorted(
+        holding_items,
+        key=lambda item: (
+            str(item.get("capital_pool_id") or ""),
+            str(item.get("runtime_id") or ""),
+            str(item.get("symbol") or ""),
+            str(item.get("holding_id") or ""),
+        ),
+    )
+    total = len(holding_items)
+    page_items, next_page_token = _pm12_page_slice(holding_items, page_token, page_size)
+    incidents = [
+        incident for incident in (_management_portfolio_incident(item) for item in holding_items)
+        if incident is not None
+    ]
+    active_statuses = {"active", "running", "healthy", "bound"}
+    summary = {
+        "holding_count": total,
+        "returned_holding_count": len(page_items),
+        "source_row_count": sum(int(item.get("source_row_count") or 0) for item in holding_items),
+        "active_holding_count": len([item for item in holding_items if str(item.get("status") or "").lower() in active_statuses]),
+        "paper_holding_count": len([item for item in holding_items if str(item.get("deployment_stage") or "").lower() == "paper"]),
+        "live_holding_count": len([item for item in holding_items if str(item.get("deployment_stage") or "").lower() == "live"]),
+        "runtime_count": len({str(item.get("runtime_id") or "") for item in holding_items if str(item.get("runtime_id") or "")}),
+        "telemetry_runtime_count": len({str(item.get("runtime_id") or "") for item in holding_items if item.get("telemetry_available")}),
+        "stale_row_count": len([item for item in holding_items if item.get("telemetry_stale")]),
+        "missing_binding_count": len([item for item in holding_items if any(issue.get("code") == "MISSING_PERSONA_BINDING" for issue in (item.get("source_issues") or []))]),
+        "degraded_source_count": len([item for item in holding_items if str(item.get("source_status") or "").lower() in {"degraded", "stale", "unavailable"}]),
+        "incident_count": len(incidents),
+        "total_notional": _management_sum_numeric(holding_items, "notional"),
+        "total_market_value": _management_sum_numeric(holding_items, "market_value"),
+        "total_unrealized_pnl": _management_sum_numeric(holding_items, "unrealized_pnl"),
+        "total_realized_pnl": _management_sum_numeric(holding_items, "realized_pnl"),
+        "total_pnl": _management_sum_numeric(holding_items, "total_pnl"),
+        "latest_mark_at": _management_latest_timestamp(holding_items, "last_mark_at"),
+        "source_status_counts": _management_count_by(holding_items, "source_status"),
+        "risk_state_counts": _management_count_by(holding_items, "risk_state"),
+        "by_stage": _management_count_by(holding_items, "deployment_stage"),
+        "by_broker": _management_count_by(holding_items, "broker_id"),
+    }
+    dataset_source = getattr(read_store, "dataset_source", None) or (lambda ds: "canonical")
+    tel_src = dataset_source("telemetry_summaries")
+    tel_status = "unavailable" if tel_src in ("missing", "unavailable") or not telemetry_by_runtime_id else "ok"
+
+    surfaces = {
+        "portfolio_book_holdings": {"status": "degraded" if tel_status == "unavailable" else "ok", "source": "bff_composed", "snapshot_at": snapshot_at},
+        "runtime_bindings": {"status": "ok", "source": dataset_source("runtime_bindings"), "snapshot_at": snapshot_at},
+        "telemetry_summaries": {"status": tel_status, "source": tel_src, "snapshot_at": snapshot_at},
+    }
+    filters_dict = {k: v for k, v in qp.items() if v is not None}
+    return {
+        "data": {
+            "summary": summary,
+            "items": page_items,
+        },
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": surfaces,
+            "total": total,
+            "incidents": incidents,
+            "filters": filters_dict,
+            "composition_sources": ["GET /api/v1/telemetry/{runtime_id}/summary"],
+        },
     }
