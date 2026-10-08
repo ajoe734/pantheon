@@ -20,5 +20,11 @@
     "base_with_new_tests": "new test module fails at import on base 2f2218e65 (OfficialResponseTruncated does not exist)",
     "head": "new tests 9 passed; the 15 Source test files that reference the Taiwan official adapters: 388 passed, 1 skipped; services/test_external_egress.py: 25 passed"
   },
-  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending."
+  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending.",
+  "delivery_verification": {
+    "agent": "Claude",
+    "head": "695cd7d0800c599b039e9b35d7261201e3fce949",
+    "command": "python -m pytest -q services/source_ingestion/tests/test_taiwan_official_fetch_retry.py services/test_external_egress.py services/source_ingestion/tests/test_provider_management_coverage.py",
+    "result": "63 passed, 1 warning (StarletteDeprecationWarning), exit 0"
+  }
 }
