@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import Executor
+from concurrent.futures import Executor, ThreadPoolExecutor
 from contextvars import copy_context
 from dataclasses import dataclass
 from functools import partial
@@ -23,17 +23,16 @@ class ManagementReadSaturated(Exception):
     """Raised before submission when a bounded read executor has no capacity."""
 
 
+_MANAGEMENT_READ_DEFAULT_SLOT_COUNT = 12
+_MANAGEMENT_READ_DEFAULT_SLOTS = threading.BoundedSemaphore(_MANAGEMENT_READ_DEFAULT_SLOT_COUNT)
+_MANAGEMENT_READ_DEFAULT_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_MANAGEMENT_READ_DEFAULT_SLOT_COUNT,
+    thread_name_prefix="bff-mgmt-read",
+)
+
+
 def _management_read_timeout_seconds() -> float:
     """Bound for offloaded management read aggregation (MGMT-LOAD-005)."""
-    try:
-        import sys
-        main_mod = sys.modules.get("services.control_plane.bff.main")
-        if main_mod is not None:
-            fn = getattr(main_mod, "_management_read_timeout_seconds", None)
-            if fn is not None and fn is not _management_read_timeout_seconds:
-                return float(fn())
-    except Exception:
-        pass
     try:
         return max(0.05, float(os.getenv("PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS", "0.6")))
     except (TypeError, ValueError):
@@ -59,27 +58,28 @@ async def run_management_read(
     """Run a synchronous read-store aggregation on a worker thread, bounded by a wait budget."""
     budget = _management_read_timeout_seconds() if timeout_seconds is None else timeout_seconds
     if capacity is None:
-        task = asyncio.ensure_future(asyncio.to_thread(func, *args, **kwargs))
-    else:
-        if not capacity.acquire(blocking=False):
-            raise ManagementReadSaturated()
-        context = copy_context()
-        call = partial(func, *args, **kwargs)
-        try:
-            worker_future = executor.submit(context.run, call) if executor else None
-            if worker_future is None:
-                raise RuntimeError("A bounded management read requires an executor")
-        except BaseException:
-            capacity.release()
-            raise
+        capacity = _MANAGEMENT_READ_DEFAULT_SLOTS
+        if executor is None:
+            executor = _MANAGEMENT_READ_DEFAULT_EXECUTOR
 
-        worker_future.add_done_callback(lambda _future: capacity.release())
-        task = asyncio.wrap_future(worker_future)
+    if not capacity.acquire(blocking=False):
+        raise ManagementReadSaturated()
+    context = copy_context()
+    call = partial(func, *args, **kwargs)
+    try:
+        worker_future = executor.submit(context.run, call) if executor else None
+        if worker_future is None:
+            raise RuntimeError("A bounded management read requires an executor")
+    except BaseException:
+        capacity.release()
+        raise
+
+    worker_future.add_done_callback(lambda _future: capacity.release())
+    task = asyncio.wrap_future(worker_future)
     done, _pending = await asyncio.wait({task}, timeout=budget)
     if task in done:
         return task.result()
-    if capacity is not None:
-        worker_future.cancel()
+    worker_future.cancel()
     task.add_done_callback(discard_late_management_read_result)
     raise ManagementReadTimeout()
 
