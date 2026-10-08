@@ -951,13 +951,14 @@ def _human_inbox_governance_contributor(
             read_store = None
     records = list(read_store.list_governance_review_queue_items() or []) if read_store else []
     try:
-        from ..main import _dataset_source_after_read, _dataset_surface_status
+        from ..main import _dataset_surface_status, read_store as _main_read_store
+        from ..personas.service import _dataset_source_after_read
         surface = _dataset_surface_status(
             "governance_review_queue_items",
             snapshot_at=snapshot_at,
             has_data=bool(records),
             missing_message="Governance review queue has no readable source records.",
-            source=_dataset_source_after_read("governance_review_queue_items"),
+            source=_dataset_source_after_read("governance_review_queue_items", read_store=_main_read_store),
         )
     except (ImportError, AttributeError):
         surface = {
@@ -980,13 +981,14 @@ def _human_inbox_approval_contributor(
             read_store = None
     records = list(read_store.list_approval_queue_items() or []) if read_store else []
     try:
-        from ..main import _dataset_source_after_read, _dataset_surface_status
+        from ..main import _dataset_surface_status, read_store as _main_read_store
+        from ..personas.service import _dataset_source_after_read
         surface = _dataset_surface_status(
             "approval_queue_items",
             snapshot_at=snapshot_at,
             has_data=bool(records),
             missing_message="Approval queue has no readable source records.",
-            source=_dataset_source_after_read("approval_queue_items"),
+            source=_dataset_source_after_read("approval_queue_items", read_store=_main_read_store),
         )
     except (ImportError, AttributeError):
         surface = {
@@ -1274,7 +1276,7 @@ def _human_inbox_loaded_surface(
     missing_message: Optional[str] = None,
 ) -> Dict[str, Any]:
     try:
-        from ..main import _surface_status
+        from ..personas.service import _surface_status
         surface = dict(_surface_status())
     except (ImportError, AttributeError):
         surface = {"status": "ok"}
@@ -1384,7 +1386,8 @@ def _human_inbox_payload_from_loaded(
         priority=priority,
     )
     total = len(filtered)
-    from ..main import _page_slice, _snapshot_meta
+    from ..main import _snapshot_meta
+    from ..personas.service import _page_slice
     if page_size is None:
         page_items = filtered
         next_page_token = None
