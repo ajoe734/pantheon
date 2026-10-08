@@ -100,10 +100,6 @@ def test_declared_sources_use_only_canonical_internal_imports() -> None:
 
 
 def test_internal_imports_do_not_have_namespace_fallbacks() -> None:
-    known_preexisting = {
-        "services/control-plane/bff/events/router.py:50",  # f66817c33440 (OSS-CORE-BASELINE-001)
-        "services/control-plane/bff/management_read_models/service.py:3528",  # 301a792a1587 (BFF-PROMOTION-REVIEW-DEFECT-REPAIR-001)
-    }
     violations: list[str] = []
     for relative in SOURCE_PATHS:
         tree = ast.parse((ROOT / relative).read_text(), filename=relative)
@@ -121,9 +117,7 @@ def test_internal_imports_do_not_have_namespace_fallbacks() -> None:
                 for handler in node.handlers
             )
             if canonical_import and catches_import_error:
-                key = f"{relative}:{node.lineno}"
-                if key not in known_preexisting:
-                    violations.append(key)
+                violations.append(f"{relative}:{node.lineno}")
     assert violations == []
 
 

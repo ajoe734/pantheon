@@ -65,8 +65,7 @@ def create_ranking_reader() -> Any:
 
 def _load_snapshot(snapshot_id: str) -> Dict[str, Any]:
     try:  # the Rankings store is a separate owner; any failure to read it is unavailability
-        raw = create_ranking_reader().get_ranking_snapshot(snapshot_id)
-        snapshot = raw.to_canonical_dict() if hasattr(raw, "to_canonical_dict") else raw
+        snapshot = create_ranking_reader().get_ranking_snapshot(snapshot_id)
     except Exception as exc:
         raise AllocationLineageError(f"Ranking snapshot store is unavailable: {exc}", 503) from exc
     if snapshot is None or snapshot.get("surface") != "quarterly":
