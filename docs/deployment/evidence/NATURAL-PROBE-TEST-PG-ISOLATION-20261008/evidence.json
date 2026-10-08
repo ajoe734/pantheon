@@ -1,0 +1,42 @@
+{
+  "task_id": "NATURAL-PROBE-TEST-PG-ISOLATION-20261008",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "change_class": "corrective",
+  "net_prod_line_budget": 0,
+  "title": "原自然probe PG测试仅owned scratch隔离",
+  "summary": "Hardened probe live PostgreSQL test fixture to require explicit owned loopback test DB opt-in and eliminate hardcoded connection to shared dev instance (port 15432) or fixed schemas: 1) _validate_owned_loopback_pg_dsn strictly enforces loopback host (127.0.0.1/localhost/::1), postgresql scheme, rejection of query parameter injection, rejection of unowned shared dev port 15432 without explicit PROBE_TEST_POSTGRES_OWNED opt-in, and zero DSN/credential leakage in error messages; 2) test_asyncpg_case_source_live_postgres_queries requires explicit test DSN opt-in via PROBE_TEST_POSTGRES_DSN / PANTHEON_TEST_POSTGRES_DSN, safely skipping when unconfigured instead of connecting to shared default instances; 3) Every test run generates randomized, unique scratch schemas (probe_bff_scratch_<hex>, probe_reg_scratch_<hex>, probe_src_scratch_<hex>) and strictly cleans up only its own created schemas in finally block, completely eliminating fixed schemas (test_bff_live, test_reg_live, test_src_live); 4) Real Source and Registry existing DTO contracts and adversarial checks (wrong-tenant, unobserved source, malformed/non-mapping metadata, future candidates) are fully maintained and verified; 5) Validated with a dedicated owned disposable PostgreSQL container: zero skips across all 105 tests, clean schema drops (0 lingering schemas verified), and container destroyed.",
+  "counterexamples_eliminated": {
+    "hardcoded_shared_15432": "Eliminated hardcoded localhost:15432 connection; test skips safely when no owned DSN is provided",
+    "fixed_schemas_collision": "Eliminated fixed schema names test_bff_live/test_reg_live/test_src_live; uses randomized unique scratch schemas",
+    "non_loopback_dsn_leakage": "Rejected remote/external and non-loopback DSN fail-closed without leaking DSN or credentials in error messages",
+    "unowned_port_15432_use": "Rejects default shared compose container on port 15432 unless explicitly declared owned disposable",
+    "shared_schema_mutation": "Only creates and cleans up its own scratch schemas, ensuring no mutation or deletion of shared schemas"
+  },
+  "verification": [
+    {
+      "command": "python3 -m pytest services/trade_journey/test_hosted_lifecycle_probe.py -q  # default unconfigured",
+      "exit_code": 0,
+      "test_count": 105,
+      "output": "104 passed, 1 skipped in 37.69s (live query fixture safely skipped without opt-in)"
+    },
+    {
+      "command": "PROBE_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:<random-port>/postgres PROBE_TEST_POSTGRES_OWNED=true python3 -m pytest services/trade_journey/test_hosted_lifecycle_probe.py -q  # owned disposable PG",
+      "exit_code": 0,
+      "test_count": 105,
+      "output": "105 passed, 0 skipped in 70.06s (scratch schemas verified dropped and container destroyed)"
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
+      "exit_code": 0,
+      "status": "passed"
+    }
+  ],
+  "diff_budget": {
+    "change_class": "corrective",
+    "budget": 0,
+    "production_net_lines": 0,
+    "status": "passed",
+    "note": "Net production line budget <= 0 strictly satisfied with 0 production code changes (only test and evidence files touched)."
+  }
+}
