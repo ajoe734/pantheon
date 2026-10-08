@@ -140,9 +140,8 @@ def test_compose_wires_persona_target_templates() -> None:
     assert env["TRAINING_SESSION_APPROVAL_READBACK_URL_TEMPLATE"] == (
         "${TRAINING_SESSION_APPROVAL_READBACK_URL_TEMPLATE:-http://governance:8082/api/governance/approvals/{approval_decision_ref}}"
     )
-    assert env["TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"] == (
-        "${TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN:-}"
-    )
+    assert "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN" not in env
     assert env["TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN_FILE"] == (
-        "${TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN_FILE:-}"
+        "${TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN_FILE:-"
+        "/run/pantheon-principals/TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN}"
     )

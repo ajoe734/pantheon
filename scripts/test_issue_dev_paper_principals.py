@@ -11,6 +11,7 @@ from scripts.issue_dev_paper_principals import (
 )
 from services.runtime_auth_inbound import AuthError, _verify_jwt_hs256, validate_request_auth
 
+claims_roles = lambda role: [role] if isinstance(role, str) else list(role)
 NOW = 2_000_000_000
 KEY = "synthetic-dev-principal-unit-key-" * 2
 
@@ -37,7 +38,7 @@ def test_fixed_product_profiles_are_tenant_scoped_short_lived_and_separate():
     for variable, (subject, role) in READERS.items():
         claims = verify(values[variable])
         assert claims["sub"] == subject
-        assert claims["roles"] == [role]
+        assert claims["roles"] == ([role] if isinstance(role, str) else list(role))
         assert claims["tenant_id"] == "tenant-dev"
         assert claims["allowed_tenants"] == ["tenant-dev"]
         assert claims["exp"] - claims["iat"] == TTL_SECONDS
@@ -93,7 +94,7 @@ def test_readers_do_not_have_product_write_roles(variable):
         "PANTHEON_RUNTIME_JWT_AUDIENCE": "isolated-audience",
     }
     context = validate_request_auth(authorization="Bearer " + token,
-                                    required_roles=(READERS[variable][1],), env=env)
+                                    required_roles=tuple(claims_roles(READERS[variable][1])), env=env)
     assert context.actor_id == READERS[variable][0]
     with pytest.raises(AuthError) as rejected:
         validate_request_auth(authorization="Bearer " + token, mfa_header=None,
@@ -179,7 +180,11 @@ def test_training_session_source_reader_principal_is_dedicated_and_mounted():
     import yaml
     root = Path(__file__).resolve().parents[1]
     variable = "TRAINING_SESSION_SOURCE_READ_TOKEN"
-    assert CONSUMER_FILES["training-session-svc"] == (variable,)
+    authority = "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"
+    assert CONSUMER_FILES["training-session-svc"] == (variable, authority)
+    issued = verify(issue_environment(configured(), now=NOW)[authority])
+    assert issued["roles"] == ["persona.admin", "approval_reader"]
+    assert issued["allowed_tenants"] == ["tenant-dev"]
     claims = verify(issue_environment(configured(), now=NOW)[variable])
     assert claims["roles"] == ["source_ingest_reader"]
     assert claims["tenant_id"] == "tenant-dev"
@@ -188,5 +193,7 @@ def test_training_session_source_reader_principal_is_dedicated_and_mounted():
     training = compose["services"]["training-session-svc"]
     assert "dev-paper-training-session-tokens:/run/pantheon-principals:ro" in training["volumes"]
     assert training["environment"]["TRAINING_SESSION_SOURCE_READ_TOKEN_FILE"].endswith(variable + "}")
+    assert training["environment"][authority + "_FILE"].endswith("/" + authority + "}")
+    assert authority not in training["environment"]
     issuer = compose["services"]["dev-paper-principal-issuer"]["volumes"]
     assert "dev-paper-training-session-tokens:/issued/training-session-svc" in issuer
