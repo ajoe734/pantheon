@@ -98,7 +98,7 @@ def test_dev_compose_forwards_bff_auth_env_with_dev_stub_default() -> None:
     assert "PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-strict}" in block
     assert (
         "PANTHEON_BFF_JWT_SECRET: "
-        "${PANTHEON_BFF_JWT_SECRET:-pantheon-local-bff-jwt-secret}"
+        "${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}"
     ) in block
     assert "PANTHEON_BFF_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}" in block
     assert "PANTHEON_BFF_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}" in block
