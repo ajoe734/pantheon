@@ -214,15 +214,18 @@ def validate_readback(value: dict, evidence: dict, operation: str) -> dict:
     public = value["public"]
     # An image that declares no dedicated dev-login registry cannot be asked for
     # a viewer round trip, so exactly that pair of literal booleans is
-    # admissible. A login claimed against an empty registry, an unexplained
-    # missing login, and any non-boolean all remain incomplete; FE bytes and
-    # strict-auth denials stay mandatory in both cases.
+    # admissible for verify only; restore always proves the viewer round trip.
+    # A login claimed against an empty registry, an unexplained missing login,
+    # and any non-boolean all remain incomplete; FE bytes and strict-auth
+    # denials stay mandatory in both cases.
     dev_login = public["dev_login_enabled"]
+    viewer_readback = public["authenticated_viewer_readback_verified"]
     if (public["source_sha"] != expected_public["source_sha"] or
             public["fe_manifest_bytes_verified"] is not True or
             public["strict_auth_denials_verified"] is not True or
             type(dev_login) is not bool or
-            public["authenticated_viewer_readback_verified"] is not dev_login):
+            viewer_readback is not dev_login or
+            (operation == "restore" and dev_login is not True)):
         raise capture.CaptureError("public source or strict authenticated readback is incomplete")
     return value
 
