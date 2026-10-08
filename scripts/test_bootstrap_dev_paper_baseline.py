@@ -49,6 +49,13 @@ def _run(**overrides):
 def test_baseline_reservation_version_tracks_operator_a_semantics() -> None:
     assert bootstrap.DEFAULT_NAME == "Pantheon Dev Paper Baseline 4"
     assert bootstrap.DEFAULT_IDEMPOTENCY_KEY == "dev-paper-bootstrap-20261007-operator-a-tw-v4"
+    assert bootstrap.DEFAULT_MARKET_SYMBOL == "2330.TW"
+
+
+def test_baseline_symbol_declared_once_as_default_market_symbol() -> None:
+    args = bootstrap.parse_args([])
+    assert args.market_symbol == bootstrap.DEFAULT_MARKET_SYMBOL
+    assert bootstrap.DEFAULT_MARKET_SYMBOL == "2330.TW"
 
 
 def test_login_credentials_prefer_dedicated_mfa_operator() -> None:

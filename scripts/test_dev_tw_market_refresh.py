@@ -158,7 +158,7 @@ def _setup_refresh_stub_docker(tmp_path: Path, initial_state: dict[str, Any]) ->
     state_file.write_text(json.dumps(initial_state))
 
     docker_script = f"""#!/usr/bin/env python3
-import json, os, sys
+import json, os, sys, subprocess
 from pathlib import Path
 
 state_file = Path({repr(str(state_file))})
@@ -180,9 +180,16 @@ if args[0] == "compose":
         sys.exit(0)
     if sub[0] == "run":
         if "runtime-manager" in sub:
-            print("0050.TW")
+            if state.get("runtime_manager_output") is not None:
+                print(state["runtime_manager_output"])
+            else:
+                code = sys.stdin.read()
+                proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=os.environ)
+                sys.stdout.write(proc.stdout)
+                sys.stderr.write(proc.stderr)
+                sys.exit(proc.returncode)
         else:
-            log_event("compose_run", args=sub)
+            log_event("compose_run", args=sub, active_symbols=os.environ.get("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS"))
         sys.exit(0)
     elif sub[0] == "ps":
         target = sub[-1]
@@ -533,3 +540,64 @@ def test_preflight_already_fresh_same_day_noop():
         # With force=True, even an already-fresh snapshot proceeds
         res_force = _run_preflight_script(force=True, now_dt=dt, snapshot_json=snap)
         assert res_force["status"] == "proceed"
+
+
+def test_refresh_only_with_no_bindings_runs_bounded_pull_for_baseline_symbol(tmp_path: Path):
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+    }
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode == 0, f"Refresh failed: {proc.stderr}\n{proc.stdout}"
+    assert output_file.exists()
+    out_data = json.loads(output_file.read_text(encoding="utf-8"))
+    assert out_data.get("status") == "completed"
+
+    events = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines() if line]
+    compose_run_events = [e for e in events if e.get("event") == "compose_run"]
+    assert len(compose_run_events) == 2
+    assert all(e.get("active_symbols") == "2330.TW" for e in compose_run_events)
+
+
+def test_refresh_only_with_no_bindings_skips_when_no_baseline_declared(tmp_path: Path):
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+    }
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+    test_env["PANTHEON_DEV_PAPER_BASELINE_SYMBOL"] = ""
+
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode == 0, f"Refresh failed: {proc.stderr}\n{proc.stdout}"
+    assert output_file.exists()
+    out_data = json.loads(output_file.read_text(encoding="utf-8"))
+    assert out_data.get("status") == "skipped"
+    assert out_data.get("reason") == "no_active_taiwan_symbols"
