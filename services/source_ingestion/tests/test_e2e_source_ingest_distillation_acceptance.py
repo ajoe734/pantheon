@@ -152,6 +152,7 @@ def test_real_bounded_source_ingestion_tick_persistence_readback_and_distillatio
                 "license_scope": "public",
                 "status": "enabled",
                 "metadata": {
+                    "tenant_id": "tenant-e2e",
                     "persona_source_reconciliation": {
                         "desired_state": {
                             "dataset": DATASET,

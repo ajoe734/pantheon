@@ -3,6 +3,9 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
+import sys
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -107,6 +110,11 @@ def test_compose_lease_uses_existing_cas_lease_and_releases_exact_owner(
     monkeypatch.setattr(harness.dev_environment_lease, "LeaseManager", FakeManager)
     monkeypatch.setattr(harness.subprocess, "Popen", FakeHeartbeat)
     monkeypatch.setattr(harness.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(
+        harness._DevEnvironmentLeaseSession,
+        "_verify_heartbeat_started",
+        lambda *_args: None,
+    )
 
     session = harness._DevEnvironmentLeaseSession(compose_project="unit-test")
     acquire = manager_calls["acquire"]
@@ -122,6 +130,161 @@ def test_compose_lease_uses_existing_cas_lease_and_releases_exact_owner(
     released = manager_calls["release"]
     assert isinstance(released, dict)
     assert released["leaseId"] == state["leaseId"]
+
+
+def _fake_lease_state() -> dict[str, object]:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    stamp = now.isoformat().replace("+00:00", "Z")
+    return {
+        "schemaVersion": 1,
+        "repository": harness.dev_environment_lease.DEFAULT_REPOSITORY,
+        "branch": harness.dev_environment_lease.DEFAULT_BRANCH,
+        "path": harness.dev_environment_lease.DEFAULT_PATH,
+        "resource": harness.dev_environment_lease.DEFAULT_RESOURCE,
+        "mode": "qualification",
+        "owner": "test-owner",
+        "leaseId": "f9865193-5bb4-4e44-8ce8-e3b6d73a6c76",
+        "acquiredAt": stamp,
+        "heartbeatAt": stamp,
+        "expiresAt": (now + timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+        "expectedBackendSha": "",
+        "runUrl": "",
+    }
+
+
+def _install_fake_manager(
+    monkeypatch: pytest.MonkeyPatch, calls: dict[str, object]
+) -> None:
+    state = _fake_lease_state()
+
+    class FakeManager:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def acquire(self, **_kwargs: object) -> tuple[dict[str, object], str, object]:
+            return state, "a" * 40, datetime.now(timezone.utc)
+
+        def release(self, local: object) -> None:
+            calls["release"] = local
+
+    monkeypatch.setattr(harness.dev_environment_lease, "LeaseManager", FakeManager)
+    monkeypatch.setattr(harness.signal, "signal", lambda *_args: None)
+
+
+def test_inherited_token_env_with_token_stdin_is_rejected_by_real_child(
+    tmp_path: Path,
+) -> None:
+    """Reproduces the old startup rejection with a synthetic, non-credential token."""
+
+    env = dict(os.environ)
+    env[harness.dev_environment_lease.TOKEN_ENV] = "synthetic-not-a-credential"
+    state_file = tmp_path / "state.json"
+    state_file.write_text("{}")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(harness.dev_environment_lease.__file__).resolve()),
+            "heartbeat-loop",
+            "--state-file",
+            str(state_file),
+            "--token-stdin",
+        ],
+        input="synthetic-not-a-credential\n",
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 78
+    assert "mutually exclusive" in result.stderr
+
+
+def test_heartbeat_child_gets_token_only_on_stdin_and_verified_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, object] = {}
+    _install_fake_manager(monkeypatch, calls)
+    monkeypatch.setenv(harness.dev_environment_lease.TOKEN_ENV, "synthetic-token")
+    monkeypatch.setattr(harness, "_lease_token_from_github_cli", lambda: "synthetic-token")
+    seen: dict[str, object] = {}
+    real_popen = subprocess.Popen
+
+    def popen(command: list[str], **kwargs: object) -> subprocess.Popen[str]:
+        seen["env"] = kwargs["env"]
+        seen["command"] = command
+        # Run the real CLI with a stand-in that stays alive and writes the
+        # real identity file, without any network access.
+        child = real_popen(
+            [
+                sys.executable,
+                "-c",
+                "import sys,runpy;sys.argv=sys.argv[1:];"
+                "sys.stdin.read();"
+                "import scripts.dev_environment_lease as d;"
+                "import os,time,signal;"
+                "a=d.build_parser().parse_args(sys.argv[1:]);"
+                "d.atomic_write_json(a.identity_json_out,"
+                "d.heartbeat_identity_payload(os.getpid(),expected_cli=d.__file__,"
+                "state_file=a.state_file),0o644);"
+                "signal.signal(signal.SIGTERM,lambda *_:sys.exit(0));time.sleep(30)",
+                *command[1:],
+            ],
+            stdin=kwargs["stdin"],
+            stdout=kwargs["stdout"],
+            stderr=kwargs["stderr"],
+            text=True,
+            env={**kwargs["env"], "PYTHONPATH": str(harness.REPO_ROOT)},  # type: ignore[arg-type]
+            cwd=harness.REPO_ROOT,
+        )
+        return child
+
+    monkeypatch.setattr(harness.subprocess, "Popen", popen)
+    monkeypatch.setattr(
+        harness.dev_environment_lease,
+        "verify_heartbeat_identity",
+        lambda identity, **_kwargs: identity,
+    )
+    session = harness._DevEnvironmentLeaseSession(compose_project="unit-test")
+    try:
+        assert harness.dev_environment_lease.TOKEN_ENV not in seen["env"]  # type: ignore[operator]
+        assert "--token-stdin" in seen["command"]  # type: ignore[operator]
+        assert "synthetic-token" not in " ".join(seen["command"])  # type: ignore[arg-type]
+    finally:
+        session.close()
+    assert "release" in calls
+
+
+def test_heartbeat_startup_exit_releases_exact_owner_and_blocks_compose(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    calls: dict[str, object] = {}
+    _install_fake_manager(monkeypatch, calls)
+    monkeypatch.setattr(harness, "_lease_token_from_github_cli", lambda: "synthetic-token")
+    real_popen = subprocess.Popen
+
+    def popen_with_old_inherited_env(
+        command: list[str], **kwargs: object
+    ) -> subprocess.Popen[str]:
+        env = dict(kwargs["env"])  # type: ignore[arg-type]
+        env[harness.dev_environment_lease.TOKEN_ENV] = "synthetic-token"
+        return real_popen(command, **{**kwargs, "env": env})  # type: ignore[arg-type]
+
+    monkeypatch.setattr(harness.subprocess, "Popen", popen_with_old_inherited_env)
+    compose_calls: list[object] = []
+    monkeypatch.setattr(harness, "_run", lambda *a, **k: compose_calls.append(a))
+    monkeypatch.delenv(harness.WORKER_TASK_ID_ENV, raising=False)
+
+    assert harness.main(["--provision-services"]) == 78
+    err = capsys.readouterr().err
+    assert "exited during startup" in err
+    assert "mutually exclusive" in err
+    assert "synthetic-token" not in err
+    assert compose_calls == []
+    released = calls["release"]
+    assert isinstance(released, dict)
+    assert released["leaseId"] == _fake_lease_state()["leaseId"]
 
 
 def test_busy_shared_lease_returns_before_compose_work(

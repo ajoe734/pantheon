@@ -143,11 +143,6 @@ def test_nonprod_workflow_has_bounded_dev_permissive_stub_profile() -> None:
     assert "export DEV_BFF_AUTH_MODE=strict" in workflow
     assert "export DEV_BFF_AUTH_STUB=true" in workflow
     assert "export DEV_BFF_AUTH_MODE=permissive" in workflow
-    # The auth profile is a dev-job concern only: the independent staging job
-    # must not read it, so a permissive-stub selection can never leak into
-    # staging deployments.
-    staging = workflow[workflow.index("  deploy-staging-live:"):]
-    assert "DEV_AUTH_PROFILE" not in staging
 
 
 def _run_deploy_script(

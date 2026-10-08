@@ -183,6 +183,7 @@ daily
                 "license_scope": "public",
                 "status": "enabled",
                 "metadata": {
+                    "tenant_id": "tenant-r3",
                     "persona_source_reconciliation": {
                         "desired_state": {
                             "dataset": DATASET,
