@@ -621,10 +621,13 @@ def test_provider_owned_adapters_execute_bounded_fetches_when_payload_omitted(mo
     @contextmanager
     def mock_tdcc_url(req, *args, **kwargs):
         mock_resp = MagicMock()
-        mock_resp.read.return_value = (
-            "資料日期,證券代號,持股分級,持股分級說明,人數,股數,占集保庫存數比例%\n"
-            "20261002,2330,1,1-999,100,50000,0.05\n"
-        ).encode("utf-8-sig")
+        mock_resp.read.side_effect = [
+            (
+                "資料日期,證券代號,持股分級,持股分級說明,人數,股數,占集保庫存數比例%\n"
+                "20261002,2330,1,1-999,100,50000,0.05\n"
+            ).encode("utf-8-sig"),
+            b"",
+        ]
         yield mock_resp
 
     monkeypatch.setattr("services.source_ingestion.connectors.taiwan_official.open_external_url", mock_tdcc_url)
@@ -643,19 +646,22 @@ def test_provider_owned_adapters_execute_bounded_fetches_when_payload_omitted(mo
     @contextmanager
     def mock_taifex_url(req, *args, **kwargs):
         mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps([
-            {
-                "Date": "2026-10-08",
-                "Contract": "TX",
-                "ParticipantGroup": "foreign_investors",
-                "LongVolume": 100,
-                "ShortVolume": 80,
-                "NetVolume": 20,
-                "LongOpenInterest": 500,
-                "ShortOpenInterest": 400,
-                "NetOpenInterest": 100,
-            }
-        ]).encode("utf-8-sig")
+        mock_resp.read.side_effect = [
+            json.dumps([
+                {
+                    "Date": "2026-10-08",
+                    "Contract": "TX",
+                    "ParticipantGroup": "foreign_investors",
+                    "LongVolume": 100,
+                    "ShortVolume": 80,
+                    "NetVolume": 20,
+                    "LongOpenInterest": 500,
+                    "ShortOpenInterest": 400,
+                    "NetOpenInterest": 100,
+                }
+            ]).encode("utf-8-sig"),
+            b"",
+        ]
         yield mock_resp
 
     monkeypatch.setattr("services.source_ingestion.connectors.taiwan_official.open_external_url", mock_taifex_url)
