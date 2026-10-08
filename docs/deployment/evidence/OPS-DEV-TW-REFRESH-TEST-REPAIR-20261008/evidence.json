@@ -1,0 +1,65 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "OPS-DEV-TW-REFRESH-TEST-REPAIR-20261008",
+  "title": "Repair dev Taiwan refresh tests left failing by the managed-worktree refresh change",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "classification": "test_fixtures",
+  "context": "Following the deliberate move of the refresh to managed-worktree execution in DEV-TW-REFRESH-WORKFLOW-R2-20261007",
+  "base_sha": "4a6f8b1de5285a094a2c8f90d8033a28c9318dee",
+  "code_head_sha": "ff5e6a992a4b5680e83ae3042e70f4d45d10a324",
+  "head_sha": "ff5e6a992a4b5680e83ae3042e70f4d45d10a324",
+  "summary": "Repaired scripts/test_dev_tw_market_refresh.py test fixtures by setting PANTHEON_REMOTE_DIR in 4 entrypoint fail-closed tests, updating test_workflow_variables_and_remote_execution to reflect managed worktree execution (removing DEV_REMOTE_DIR and dev_vm_ssh.sh exec assertions), and removing 2 obsolete hand-copied preflight tests whose replacement behavior is covered in scripts/test_deploy_nonprod_vm.py.",
+  "pytest_results": {
+    "before": {
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest scripts/test_dev_tw_market_refresh.py -v",
+      "summary": "5 failed, 12 passed in 3.33s",
+      "failed_tests": [
+        "test_workflow_variables_and_remote_execution",
+        "test_refresh_entrypoint_restores_egress_deny_and_preserves_env",
+        "test_refresh_entrypoint_image_id_guard_pre_recreate_mismatch",
+        "test_refresh_entrypoint_image_id_guard_post_recreate_mismatch",
+        "test_refresh_entrypoint_env_equality_fails_closed_on_mismatch"
+      ],
+      "cause": "DEV-TW-REFRESH-WORKFLOW-R2-20261007 removed DEV_REMOTE_DIR and dev_vm_ssh.sh exec in workflow, and deploy_nonprod_vm.sh --refresh-only requires PANTHEON_REMOTE_DIR / DEV_DEPLOY_WORKTREE_ROOT to find managed worktree docker-compose.yml; the 4 entrypoint guards never reached execution."
+    },
+    "after": {
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest scripts/test_dev_tw_market_refresh.py -v",
+      "summary": "15 passed in 9.84s",
+      "passed_tests": [
+        "test_workflow_file_exists_and_parses",
+        "test_workflow_triggers",
+        "test_workflow_strict_absence_of_hardcoded_ips_and_fallbacks",
+        "test_workflow_variables_and_remote_execution",
+        "test_no_second_script_created",
+        "test_deploy_script_help_includes_refresh_only_options",
+        "test_deploy_script_refresh_only_argument_parsing",
+        "test_refresh_entrypoint_restores_egress_deny_and_preserves_env",
+        "test_refresh_entrypoint_image_id_guard_pre_recreate_mismatch",
+        "test_refresh_entrypoint_image_id_guard_post_recreate_mismatch",
+        "test_refresh_entrypoint_env_equality_fails_closed_on_mismatch",
+        "test_preflight_weekend_skip",
+        "test_preflight_session_not_closed_skip",
+        "test_preflight_holiday_skip",
+        "test_preflight_already_fresh_same_day_noop"
+      ]
+    }
+  },
+  "acceptance_verification": {
+    "ac1_test_suite_15_passed": "PASSED (15 passed, 0 failed with shared worker test interpreter from git checkout)",
+    "ac2_workflow_test_minimal_change": "PASSED (only DEV_REMOTE_DIR and dev_vm_ssh.sh exec removed, other lines byte-identical)",
+    "ac3_remote_dir_fixture_added": "PASSED (PANTHEON_REMOTE_DIR=str(ROOT) added to 4 entrypoint tests, assertions untouched)",
+    "ac4_obsolete_preflight_tests_removed": "PASSED (2 tests removed, replacement behavior verified in test_deploy_nonprod_vm.py)",
+    "ac5_diff_scope_clean": "PASSED (diff touches only scripts/test_dev_tw_market_refresh.py and evidence manifest)",
+    "ac6_evidence_manifest_complete": "PASSED (records base and head SHAs, before/after pytest results, classified as test fixtures)"
+  },
+  "diff_budget": {
+    "production_net_lines": 0,
+    "evidence_added_lines": 65
+  },
+  "artifacts": [
+    "scripts/test_dev_tw_market_refresh.py",
+    "docs/deployment/evidence/OPS-DEV-TW-REFRESH-TEST-REPAIR-20261008/evidence.json"
+  ]
+}
