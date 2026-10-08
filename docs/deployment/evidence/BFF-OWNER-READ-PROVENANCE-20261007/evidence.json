@@ -1,0 +1,76 @@
+{
+  "task_id": "BFF-OWNER-READ-PROVENANCE-20261007",
+  "title": "Report a down configured owner as unavailable for every owner-read dataset",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 20,
+  "net_prod_lines": 1,
+  "decision": "Unify on the dfb1b1a05 rule: a configured owner that is down reports unavailable for every owner-read dataset while an unconfigured owner reports missing; failing pools read no longer masks readable bindings source",
+  "production_fixes": [
+    {
+      "file": "services/control-plane/bff/ports/persona_capital_runtime.py",
+      "change": "CapitalPoolPort.get_surface_status always includes bindings_source even when pools read fails or is missing, preventing a failing pools read from masking a readable bindings source"
+    },
+    {
+      "file": "services/control-plane/bff/ports/read_surface_ports.py",
+      "change": "ReadSurfacePorts.dataset_source returns status.get('source') for ranking and evolution datasets rather than turning status['status'] == 'unavailable' into missing"
+    }
+  ],
+  "test_expectation_changes": [
+    {
+      "test": "test_default_readers_preserve_auth_and_availability",
+      "file": "services/control-plane/bff/tests/test_receipt_default_reads.py",
+      "classification": "intended change",
+      "decision": "Task BFF-OWNER-READ-PROVENANCE-20261007 unifying on dfb1b1a05 rule. Configured owner that is down reports unavailable for all six cases (capital_pools, bindings, deployment_plans, runtime_bindings, evolution_programs, evolution_decisions). Changed expectations from 'missing' to 'unavailable' when owner call fails. Assertion tightened, not weakened."
+    }
+  ],
+  "new_tests": [
+    {
+      "test": "test_unconfigured_owner_reports_missing",
+      "file": "services/control-plane/bff/tests/test_receipt_default_reads.py",
+      "description": "Verifies all 6 datasets report missing when owner URLs are unconfigured in environment"
+    },
+    {
+      "test": "test_failing_pools_read_does_not_mask_readable_bindings",
+      "file": "services/control-plane/bff/tests/test_receipt_default_reads.py",
+      "description": "Verifies CapitalPoolPort with failing pools provider preserves readable bindings_source ('service')"
+    },
+    {
+      "test": "test_ranking_datasets_owner_down_vs_unconfigured",
+      "file": "services/control-plane/bff/tests/test_receipt_default_reads.py",
+      "description": "Verifies ranking datasets report unavailable when downstream owner is down and missing when unconfigured"
+    }
+  ],
+  "acceptance_criteria": {
+    "ac_1_configured_owner_down_reports_unavailable_unconfigured_missing": {
+      "status": "satisfied",
+      "detail": "Every owner-read dataset (capital_pools, bindings, deployment_plans, runtime_bindings, evolution_programs, evolution_decisions, rankings, rebalances) reports unavailable when configured owner is down and missing when unconfigured."
+    },
+    "ac_2_failing_pools_no_longer_masks_bindings": {
+      "status": "satisfied",
+      "detail": "CapitalPoolPort.get_surface_status returns bindings_source even when pools read fails; dataset_source('bindings') reports service when bindings_provider succeeds."
+    },
+    "ac_3_all_tests_pass_no_regressions": {
+      "status": "satisfied",
+      "detail": "All 109 tests across test_receipt_default_reads.py, test_persona_capital_runtime_ports.py, test_ranking_evolution_projection_ports.py, test_owner_read_wiring.py, test_read_surface_port_cutover.py, and test_ranking_default_owner_integrity.py pass."
+    },
+    "ac_4_test_expectation_changes_classified": {
+      "status": "satisfied",
+      "detail": "Changed expectation in test_receipt_default_reads.py classified as intended change under dfb1b1a05 unification. No assertion weakened to go green."
+    },
+    "ac_5_budget_compliance_no_compressed_code": {
+      "status": "satisfied",
+      "detail": "Production code net change is +1 line (+10 / -9), strictly within net_prod_line_budget: 20 without compressed code."
+    }
+  },
+  "verification": {
+    "command": "python3 -m pytest services/control-plane/bff/tests/test_receipt_default_reads.py services/control-plane/bff/tests/test_persona_capital_runtime_ports.py services/control-plane/bff/tests/test_ranking_evolution_projection_ports.py services/control-plane/bff/tests/test_owner_read_wiring.py services/control-plane/bff/tests/test_read_surface_port_cutover.py services/control-plane/bff/tests/test_ranking_default_owner_integrity.py",
+    "result": "109 passed, 3 warnings in 36.47s"
+  },
+  "diff_stat": {
+    "persona_capital_runtime.py": "+8 / -8 (net 0)",
+    "read_surface_ports.py": "+2 / -1 (net +1)",
+    "production_net": 1
+  }
+}

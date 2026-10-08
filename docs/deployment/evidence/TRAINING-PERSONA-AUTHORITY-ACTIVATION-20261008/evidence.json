@@ -1,0 +1,11 @@
+{
+  "task": "TRAINING-PERSONA-AUTHORITY-ACTIVATION-20261008",
+  "scope": "source-only; no hosted/natural acceptance claimed",
+  "changes": [
+    "issue_dev_paper_principals: TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN (roles persona.admin+approval_reader, tenant-dev) via the existing issuer, mounted through the training-session-svc consumer volume",
+    "docker-compose: Training token_FILE defaults to the consumer volume file; plain token env removed",
+    "persona write_owner: training-target GET/POST scope the header tenant via resolve_persona_tenant_scope (JWT claims)"
+  ],
+  "tests": "issuer, renewal, training-target owner, training-session, isolated-e2e and deploy tests passed. Pre-existing unrelated failure on base: services/persona/test_lifecycle_approval_verifier.py::test_rendered_compose_gives_persona_the_bff_jwt_verifier_config",
+  "not_proven": ["hosted approval", "L1-L12 natural closure", "rollback"]
+}

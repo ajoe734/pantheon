@@ -1932,7 +1932,9 @@ def create_app(
         authorization: str | None = Header(default=None),
     ) -> dict[str, Any]:
         try:
-            authority = _authenticate_persona_mutation(authorization)
+            authority, tenant_id = resolve_persona_tenant_scope(
+                authorization, tenant_id, _AUTHENTICATED_MUTATION_ROLES
+            )
             _require_persona_plane_owner(authority)
             return persistent_training_target_owner.read(
                 persona_id=persona_id, tenant_id=tenant_id
@@ -1951,7 +1953,9 @@ def create_app(
         authorization: str | None = Header(default=None),
     ) -> dict[str, Any]:
         try:
-            authority = _authenticate_persona_mutation(authorization)
+            authority, tenant_id = resolve_persona_tenant_scope(
+                authorization, tenant_id, _AUTHENTICATED_MUTATION_ROLES
+            )
             _require_persona_plane_owner(authority)
             return persistent_training_target_owner.commit(
                 persona_id=persona_id,

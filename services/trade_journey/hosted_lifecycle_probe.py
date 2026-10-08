@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -21,6 +23,20 @@ import time
 from typing import Any, Awaitable, Callable, Mapping, Sequence
 import uuid
 
+from services.execution.market_snapshot_admission import (
+    evaluate_taiwan_market_freshness,
+    is_taiwan_symbol,
+    parse_rfc3339,
+)
+from services.source_ingestion.requirement_state import (
+    MARKET_SNAPSHOT_SCHEMA_VERSION,
+    LatestMarketSnapshot,
+    LatestMarketSnapshotStore,
+    MarketSnapshotStateError,
+    _MARKET_SNAPSHOT_STATE_OPTIONAL_FIELDS,
+    _MARKET_SNAPSHOT_STATE_REQUIRED_FIELDS,
+    _checksum,
+)
 from services.trade_journey.telemetry_rows import decode_event_payload
 from services.trade_journey.lifecycle_projector import (
     JOURNEY_STORE_SCHEMA,
@@ -33,6 +49,10 @@ from services.trade_journey.lifecycle_projector import (
 
 SCHEMA_VERSION = "pantheon.lifecycle-proj-cutover-hosted-proof.v1"
 TASK_ID = "LIFECYCLE-PROJ-CUTOVER-001"
+NATURAL_PRODUCER = "paper-signal-producer"
+NATURAL_INTERPRETER = "services.registry.strategy_artifact:evaluate_strategy_action"
+_SNAPSHOT_ID_RE = re.compile(r"^mss-[0-9a-fA-F]{24}$")
+_SNAPSHOT_STATE_FIELDS = _MARKET_SNAPSHOT_STATE_REQUIRED_FIELDS | _MARKET_SNAPSHOT_STATE_OPTIONAL_FIELDS
 REQUIRED_EVENT_TYPES = (
     "signal_generation",
     "trade_decision",
@@ -92,104 +112,81 @@ def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
         os.replace(tmp, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
 
 
+@asynccontextmanager
+async def _readonly_conn(dsn: str):
+    import asyncpg  # type: ignore[import]
+
+    conn = await asyncpg.connect(dsn)
+    try:
+        async with conn.transaction(isolation="repeatable_read", readonly=True):
+            yield conn
+    finally:
+        await conn.close()
+
+
 class AsyncpgTelemetrySource:
     """Take a bounded, read-only snapshot of committed lifecycle rows."""
 
-    def __init__(
-        self,
-        dsn: str,
-        *,
-        row_limit: int = 20_000,
-        query_types: Sequence[str] = QUERY_TYPES,
-    ) -> None:
-        self._dsn = dsn
-        self._row_limit = row_limit
-        self._query_types = tuple(query_types)
+    def __init__(self, dsn: str, *, row_limit: int = 20_000, query_types: Sequence[str] = QUERY_TYPES) -> None:
+        self._dsn, self._row_limit, self._query_types = dsn, row_limit, tuple(query_types)
 
-    async def high_watermark(self) -> int:
+    async def _fetch(self, baseline: int | None) -> tuple[int, list[dict[str, Any]]]:
         try:
-            import asyncpg  # type: ignore[import]
-
-            conn = await asyncpg.connect(self._dsn)
-            try:
-                async with conn.transaction(isolation="repeatable_read", readonly=True):
-                    return int(
-                        await conn.fetchval(
-                            "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events "
-                            "WHERE event_type = ANY($1::text[])",
-                            list(self._query_types),
-                        )
-                        or 0
+            async with _readonly_conn(self._dsn) as conn:
+                high = int(
+                    await conn.fetchval(
+                        "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events "
+                        "WHERE event_type = ANY($1::text[])",
+                        list(self._query_types),
                     )
-            finally:
-                await conn.close()
-        except Exception as exc:  # noqa: BLE001 - never include DSN/error text
-            raise ProbeError(
-                "source_query_error", "committed telemetry snapshot query failed"
-            ) from exc
-
-    async def snapshot_after(self, baseline_high_watermark: int) -> tuple[int, list[dict[str, Any]]]:
-        try:
-            import asyncpg  # type: ignore[import]
-
-            conn = await asyncpg.connect(self._dsn)
-            try:
-                async with conn.transaction(isolation="repeatable_read", readonly=True):
-                    high = int(
-                        await conn.fetchval(
-                            "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events "
-                            "WHERE event_type = ANY($1::text[])",
-                            list(self._query_types),
-                        )
-                        or 0
-                    )
+                    or 0
+                )
+                records = []
+                if baseline is not None:
                     records = await conn.fetch(
                         "SELECT ingested_seq, ingested_at, event_id, event_type, "
                         "created_at, payload FROM telemetry_events "
                         "WHERE ingested_seq > $1 AND event_type = ANY($2::text[]) "
                         "ORDER BY ingested_seq ASC LIMIT $3",
-                        int(baseline_high_watermark),
+                        int(baseline),
                         list(self._query_types),
                         self._row_limit,
                     )
-            finally:
-                await conn.close()
         except Exception as exc:  # noqa: BLE001 - never include DSN/error text
             raise ProbeError(
                 "source_query_error", "committed telemetry snapshot query failed"
             ) from exc
 
-        rows: list[dict[str, Any]] = []
         try:
-            for record in reversed(records):
-                rows.append(
-                    {
-                        "ingested_seq": int(record["ingested_seq"]),
-                        "ingested_at": record["ingested_at"].astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
-                        "event_id": str(record["event_id"]),
-                        "event_type": str(record["event_type"]),
-                        "created_at": record["created_at"].astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
-                        "payload": decode_event_payload(record["payload"]),
-                    }
-                )
+            iso = lambda dt: dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            rows = [
+                {
+                    "ingested_seq": int(r["ingested_seq"]),
+                    "ingested_at": iso(r["ingested_at"]),
+                    "event_id": str(r["event_id"]),
+                    "event_type": str(r["event_type"]),
+                    "created_at": iso(r["created_at"]),
+                    "payload": decode_event_payload(r["payload"]),
+                }
+                for r in reversed(records)
+            ]
         except Exception as exc:  # noqa: BLE001 - source content is never exported
             raise ProbeError(
                 "source_decode_error", "committed telemetry snapshot could not be normalized"
             ) from exc
         return high, rows
+
+    async def high_watermark(self) -> int:
+        return (await self._fetch(None))[0]
+
+    async def snapshot_after(self, baseline_high_watermark: int) -> tuple[int, list[dict[str, Any]]]:
+        return await self._fetch(baseline_high_watermark)
 
     async def snapshot(self) -> tuple[int, list[dict[str, Any]]]:
         return await self.snapshot_after(0)
@@ -213,20 +210,11 @@ class AsyncpgRelationalProjectionSource:
     backend = "postgres"
 
     def __init__(
-        self,
-        dsn: str,
-        *,
-        schema: str = DEFAULT_PROJECTION_SCHEMA,
-        controller_id: str = DEFAULT_CONTROLLER_ID,
+        self, dsn: str, *, schema: str = DEFAULT_PROJECTION_SCHEMA, controller_id: str = DEFAULT_CONTROLLER_ID
     ) -> None:
         if not _SCHEMA_RE.fullmatch(schema):
-            raise ProbeError(
-                "projection_configuration_invalid",
-                "relational projection schema is invalid",
-            )
-        self._dsn = dsn
-        self._schema = schema
-        self._controller_id = controller_id
+            raise ProbeError("projection_configuration_invalid", "relational projection schema is invalid")
+        self._dsn, self._schema, self._controller_id = dsn, schema, controller_id
 
     async def current_projection(
         self, candidate: Mapping[str, Any]
@@ -237,54 +225,48 @@ class AsyncpgRelationalProjectionSource:
         journey_id = str(identity["journey_id"])
         loop_run_id = str(identity["loop_run_id"])
         try:
-            import asyncpg  # type: ignore[import]
-
-            conn = await asyncpg.connect(self._dsn)
-            try:
-                async with conn.transaction(isolation="repeatable_read", readonly=True):
-                    controller_row = await conn.fetchrow(
-                        f"SELECT controller_id, checkpoint_seq, source_high_watermark, "
-                        f"backlog_count, projection_revision, deployment_sha, mode, status, "
-                        f"accepted_live, last_poll_at, last_error_message, "
-                        f"unresolved_quarantine_count FROM {self._schema}.controller "
-                        "WHERE controller_id=$1 AND tenant_scope IN ($2, '*') "
-                        "AND environment_scope IN ($3, '*') "
-                        "ORDER BY (tenant_scope=$2 AND environment_scope=$3) DESC, "
-                        "updated_at DESC LIMIT 1",
-                        self._controller_id,
-                        tenant_id,
-                        environment,
-                    )
-                    journey_row = await conn.fetchrow(
-                        f"SELECT current_identity_summary, projection_revision "
-                        f"FROM {self._schema}.journeys "
-                        "WHERE tenant_id=$1 AND environment=$2 AND journey_id=$3",
-                        tenant_id,
-                        environment,
-                        journey_id,
-                    )
-                    stage_rows = await conn.fetch(
-                        f"SELECT source_event_id, stage_name, stage_status, "
-                        f"source_ingested_seq, contract_fields "
-                        f"FROM {self._schema}.journey_stages "
-                        "WHERE tenant_id=$1 AND environment=$2 AND journey_id=$3 "
-                        "ORDER BY stage_ordinal, event_sequence, source_ingested_seq, "
-                        "source_event_id",
-                        tenant_id,
-                        environment,
-                        journey_id,
-                    )
-                    loop_row = await conn.fetchrow(
-                        f"SELECT tenant_id, environment, loop_run_id, journey_id, status, "
-                        f"lifecycle_summary, freshness_lineage, contract_payload, "
-                        f"projection_revision FROM {self._schema}.loop_runs "
-                        "WHERE tenant_id=$1 AND environment=$2 AND loop_run_id=$3",
-                        tenant_id,
-                        environment,
-                        loop_run_id,
-                    )
-            finally:
-                await conn.close()
+            async with _readonly_conn(self._dsn) as conn:
+                controller_row = await conn.fetchrow(
+                    f"SELECT controller_id, checkpoint_seq, source_high_watermark, "
+                    f"backlog_count, projection_revision, deployment_sha, mode, status, "
+                    f"accepted_live, last_poll_at, last_error_message, "
+                    f"unresolved_quarantine_count FROM {self._schema}.controller "
+                    "WHERE controller_id=$1 AND tenant_scope IN ($2, '*') "
+                    "AND environment_scope IN ($3, '*') "
+                    "ORDER BY (tenant_scope=$2 AND environment_scope=$3) DESC, "
+                    "updated_at DESC LIMIT 1",
+                    self._controller_id,
+                    tenant_id,
+                    environment,
+                )
+                journey_row = await conn.fetchrow(
+                    f"SELECT current_identity_summary, projection_revision "
+                    f"FROM {self._schema}.journeys "
+                    "WHERE tenant_id=$1 AND environment=$2 AND journey_id=$3",
+                    tenant_id,
+                    environment,
+                    journey_id,
+                )
+                stage_rows = await conn.fetch(
+                    f"SELECT source_event_id, stage_name, stage_status, "
+                    f"source_ingested_seq, contract_fields "
+                    f"FROM {self._schema}.journey_stages "
+                    "WHERE tenant_id=$1 AND environment=$2 AND journey_id=$3 "
+                    "ORDER BY stage_ordinal, event_sequence, source_ingested_seq, "
+                    "source_event_id",
+                    tenant_id,
+                    environment,
+                    journey_id,
+                )
+                loop_row = await conn.fetchrow(
+                    f"SELECT tenant_id, environment, loop_run_id, journey_id, status, "
+                    f"lifecycle_summary, freshness_lineage, contract_payload, "
+                    f"projection_revision FROM {self._schema}.loop_runs "
+                    "WHERE tenant_id=$1 AND environment=$2 AND loop_run_id=$3",
+                    tenant_id,
+                    environment,
+                    loop_run_id,
+                )
         except ProbeError:
             raise
         except Exception as exc:  # noqa: BLE001 - never export DSN/query detail
@@ -297,68 +279,50 @@ class AsyncpgRelationalProjectionSource:
         controller = {
             "controller_id": controller_data.get("controller_id"),
             "checkpoint": int(controller_data.get("checkpoint_seq") or 0),
-            "source_high_watermark": int(
-                controller_data.get("source_high_watermark") or 0
-            ),
+            "source_high_watermark": int(controller_data.get("source_high_watermark") or 0),
             "backlog": int(controller_data.get("backlog_count") or 0),
             "generation": int(controller_data.get("projection_revision") or 0),
             "deployment_sha": controller_data.get("deployment_sha"),
             "mode": controller_data.get("mode"),
-            "status": (
-                "ready"
-                if str(controller_data.get("status") or "").lower()
-                in {"ok", "ready"}
-                else controller_data.get("status")
-            ),
+            "status": "ready" if str(controller_data.get("status") or "").lower() in {"ok", "ready"} else controller_data.get("status"),
             "accepted_live": bool(controller_data.get("accepted_live")),
             "truth_level": (
                 "canonical_live"
-                if controller_data.get("mode") == "live"
-                and controller_data.get("accepted_live") is True
+                if controller_data.get("mode") == "live" and controller_data.get("accepted_live") is True
                 else "not_accepted_live"
             ),
             "last_poll_at": str(controller_data.get("last_poll_at") or ""),
             "last_error": controller_data.get("last_error_message") or None,
-            "quarantine_count": int(
-                controller_data.get("unresolved_quarantine_count") or 0
-            ),
+            "quarantine_count": int(controller_data.get("unresolved_quarantine_count") or 0),
         }
 
-        projected_events: list[dict[str, Any]] = []
-        for row in stage_rows:
-            stage = _json_object(row.get("contract_fields"))
-            stage.update(
-                {
-                    "canonical_event_id": str(row.get("source_event_id") or ""),
-                    "stage": str(row.get("stage_name") or ""),
-                    "stage_status": str(row.get("stage_status") or ""),
-                    "source_offset": int(row.get("source_ingested_seq") or 0),
-                }
-            )
-            projected_events.append(stage)
-
-        loop: dict[str, Any] | None = None
-        if loop_row is not None:
-            loop_data = dict(loop_row)
-            loop = {
-                **_json_object(loop_data.get("contract_payload")),
-                **_json_object(loop_data.get("lifecycle_summary")),
+        projected_events = [
+            {
+                **_json_object(r.get("contract_fields")),
+                "canonical_event_id": str(r.get("source_event_id") or ""),
+                "stage": str(r.get("stage_name") or ""),
+                "stage_status": str(r.get("stage_status") or ""),
+                "source_offset": int(r.get("source_ingested_seq") or 0),
             }
-            freshness = _json_object(loop_data.get("freshness_lineage"))
-            loop.update(
-                {
-                    "tenant_id": loop_data.get("tenant_id"),
-                    "environment": loop_data.get("environment"),
-                    "loop_run_id": loop_data.get("loop_run_id"),
-                    "journey_id": loop_data.get("journey_id"),
-                    "status": loop_data.get("status"),
-                    "accepted_live": bool(freshness.get("accepted_live")),
-                    "projection_mode": freshness.get("mode"),
-                    "projection_revision": int(
-                        loop_data.get("projection_revision") or 0
-                    ),
-                }
-            )
+            for r in stage_rows
+        ]
+
+        loop = None
+        if loop_row is not None:
+            ld = dict(loop_row)
+            freshness = _json_object(ld.get("freshness_lineage"))
+            loop = {
+                **_json_object(ld.get("contract_payload")),
+                **_json_object(ld.get("lifecycle_summary")),
+                "tenant_id": ld.get("tenant_id"),
+                "environment": ld.get("environment"),
+                "loop_run_id": ld.get("loop_run_id"),
+                "journey_id": ld.get("journey_id"),
+                "status": ld.get("status"),
+                "accepted_live": bool(freshness.get("accepted_live")),
+                "projection_mode": freshness.get("mode"),
+                "projection_revision": int(ld.get("projection_revision") or 0),
+            }
 
         generation = int(controller.get("generation") or 0)
         journeys = {
@@ -366,11 +330,11 @@ class AsyncpgRelationalProjectionSource:
             "generation": generation,
             "controller": controller,
             "journey_present": journey_row is not None,
-            "journey_projection_revision": int(
-                dict(journey_row).get("projection_revision") or 0
-            )
-            if journey_row is not None
-            else None,
+            "journey_projection_revision": (
+                int(dict(journey_row).get("projection_revision") or 0)
+                if journey_row is not None
+                else None
+            ),
         }
         loops = {
             "records": {loop_run_id: loop} if loop is not None else {},
@@ -381,29 +345,26 @@ class AsyncpgRelationalProjectionSource:
 
 
 async def _source_high_watermark(source: Any) -> int:
-    high_watermark = getattr(source, "high_watermark", None)
-    if callable(high_watermark):
-        return int(await high_watermark())
-    high, _rows = await source.snapshot()
-    return int(high)
+    fn = getattr(source, "high_watermark", None)
+    return int(await fn()) if callable(fn) else int((await source.snapshot())[0])
 
 
-async def _source_snapshot_after(
-    source: Any, baseline_high_watermark: int
-) -> tuple[int, list[dict[str, Any]]]:
-    snapshot_after = getattr(source, "snapshot_after", None)
-    if callable(snapshot_after):
-        high, rows = await snapshot_after(baseline_high_watermark)
+async def _source_snapshot_after(source: Any, baseline: int) -> tuple[int, list[dict[str, Any]]]:
+    fn = getattr(source, "snapshot_after", None)
+    if callable(fn):
+        high, rows = await fn(baseline)
         return int(high), list(rows)
     high, rows = await source.snapshot()
-    return int(high), [
-        row
-        for row in rows
-        if int(row.get("ingested_seq") or 0) > baseline_high_watermark
-    ]
+    return int(high), [r for r in rows if int(r.get("ingested_seq") or 0) > baseline]
 
 
-def _complete_candidates(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _complete_candidates(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    mode: str = "natural",
+    case: Mapping[str, Any] | None = None,
+    now_dt: datetime | None = None,
+) -> list[dict[str, Any]]:
     groups: dict[tuple[str, ...], dict[str, Any]] = {}
     for row in rows:
         try:
@@ -460,6 +421,23 @@ def _complete_candidates(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, An
                 metadata.get("reconciliation_evaluation_id") or ""
             ),
         })
+        if event_type == "signal_generation":
+            src = {**metadata, **event}
+            group["signal_provenance"] = {
+                k: src.get(k)
+                for k in (
+                    "source_worker", "artifact_interpreter", "artifact_id",
+                    "artifact_version", "artifact_checksum", "artifact_registry_id",
+                    "binding_id", "runtime_id", "capital_pool_id", "plan_id",
+                    "persona_capital_binding_id", "raw_symbol", "market_input_ref",
+                    "market_input_snapshot_id", "market_input_observed_at",
+                    "market_input_event_time", "market_input_lineage",
+                    "is_real_order", "is_real_capital",
+                )
+            }
+            group["signal_provenance"]["signal_event_time"] = (
+                src.get("created_at") or envelope.get("event_time") or ""
+            )
     complete: list[dict[str, Any]] = []
     for group in groups.values():
         selected = sorted(group["events"], key=lambda item: item["sequence_no"])
@@ -470,117 +448,546 @@ def _complete_candidates(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, An
             or event_types[:2] != ["signal_generation", "trade_decision"]
             or event_types[-1] not in RECONCILIATION_TYPES
             or len(middle) % 5 != 0
-            or middle
-            != [
-                "risk_evaluation",
-                "order_submitted",
-                "order_accepted",
-                "paper_fill_simulated",
-                "position_snapshot",
-            ]
-            * (len(middle) // 5)
+            or middle != [
+                "risk_evaluation", "order_submitted", "order_accepted",
+                "paper_fill_simulated", "position_snapshot",
+            ] * (len(middle) // 5)
+            or [item["sequence_no"] for item in selected] != list(range(1, len(selected) + 1))
+            or any(current["ingested_seq"] >= following["ingested_seq"] for current, following in zip(selected, selected[1:]))
+            or selected[0]["causal_parent_event_id"] != f"signal:{group['identity']['signal_id']}"
+            or any(following["causal_parent_event_id"] != current["event_id"] for current, following in zip(selected, selected[1:]))
+            or selected[1]["event_id"] != str(uuid.uuid5(PAPER_LIFECYCLE_UUID_NAMESPACE, f"{selected[0]['event_id']}:trade_decision"))
         ):
             continue
-        if [item["sequence_no"] for item in selected] != list(
-            range(1, len(selected) + 1)
-        ):
-            continue
-        if any(
-            current["ingested_seq"] >= following["ingested_seq"]
-            for current, following in zip(selected, selected[1:])
-        ):
-            continue
-        if selected[0]["causal_parent_event_id"] != f"signal:{group['identity']['signal_id']}":
-            continue
-        if any(
-            following["causal_parent_event_id"] != current["event_id"]
-            for current, following in zip(selected, selected[1:])
-        ):
-            continue
-        expected_decision_id = str(
-            uuid.uuid5(
-                PAPER_LIFECYCLE_UUID_NAMESPACE,
-                f"{selected[0]['event_id']}:trade_decision",
-            )
-        )
-        if selected[1]["event_id"] != expected_decision_id:
-            continue
-        valid_derived_ids = True
         for index in range(2, len(selected) - 1, 5):
-            risk, order, accepted, fill, position = selected[index : index + 5]
-            if risk["event_id"] != str(
-                uuid.uuid5(
-                    PAPER_LIFECYCLE_UUID_NAMESPACE,
-                    f"{fill['event_id']}:risk_evaluation",
-                )
-            ) or order["event_id"] != str(
-                uuid.uuid5(
-                    PAPER_LIFECYCLE_UUID_NAMESPACE,
-                    f"{fill['event_id']}:order_submitted",
-                )
-            ) or accepted["event_id"] != str(
-                uuid.uuid5(
-                    PAPER_LIFECYCLE_UUID_NAMESPACE,
-                    f"{fill['event_id']}:order_accepted",
-                )
-            ) or position["event_id"] != str(
-                uuid.uuid5(
-                    PAPER_LIFECYCLE_UUID_NAMESPACE,
-                    f"{fill['event_id']}:position_snapshot",
-                )
+            risk, order, accepted, fill, pos = selected[index : index + 5]
+            fid = fill["event_id"]
+            u5 = lambda s: str(uuid.uuid5(PAPER_LIFECYCLE_UUID_NAMESPACE, f"{fid}:{s}"))
+            if (
+                risk["event_id"] != u5("risk_evaluation")
+                or order["event_id"] != u5("order_submitted")
+                or accepted["event_id"] != u5("order_accepted")
+                or pos["event_id"] != u5("position_snapshot")
             ):
-                valid_derived_ids = False
                 break
-        if not valid_derived_ids:
-            continue
-        reconciliation = selected[-1]
-        evaluation_id = reconciliation["reconciliation_evaluation_id"]
-        if not evaluation_id or reconciliation["event_id"] != str(
-            uuid.uuid5(
-                uuid.NAMESPACE_URL,
-                f"pantheon:scheduled-reconciliation:{evaluation_id}",
-            )
-        ):
-            continue
-        group["selected_events"] = selected
-        group["max_ingested_seq"] = max(item["ingested_seq"] for item in selected)
-        complete.append(group)
+        else:
+            reconciliation = selected[-1]
+            evaluation_id = reconciliation["reconciliation_evaluation_id"]
+            if not evaluation_id or reconciliation["event_id"] != str(
+                uuid.uuid5(uuid.NAMESPACE_URL, f"pantheon:scheduled-reconciliation:{evaluation_id}")
+            ):
+                continue
+            if mode == "natural":
+                try:
+                    _validate_natural_candidate(group, case, now_dt=now_dt, require_snapshot=False)
+                except ProbeError:
+                    continue
+            group["selected_events"] = selected
+            group["max_ingested_seq"] = max(item["ingested_seq"] for item in selected)
+            complete.append(group)
     return sorted(complete, key=lambda item: item["max_ingested_seq"], reverse=True)
+
+
+def _bind_source_snapshot(snap: Mapping[str, Any], prov: Mapping[str, Any]) -> None:
+    if not isinstance(snap, Mapping):
+        raise ProbeError("invalid_snapshot_schema", "snapshot must be a mapping")
+    s_schema = str(snap.get("schema_version") or "").strip()
+    if s_schema != MARKET_SNAPSHOT_SCHEMA_VERSION:
+        raise ProbeError("invalid_snapshot_schema", f"unsupported snapshot schema version: {s_schema!r}")
+    snap_id = str(prov.get("market_input_snapshot_id") or "").strip()
+    s_snap_id = str(snap.get("snapshot_id") or "").strip()
+    if not s_snap_id or not _SNAPSHOT_ID_RE.match(s_snap_id) or s_snap_id != snap_id:
+        raise ProbeError("invalid_snapshot_id", f"snapshot ID mismatch: {s_snap_id!r} != {snap_id!r}")
+    ref = str(prov.get("market_input_ref") or "").strip()
+    s_ref = str(snap.get("source_ref") or "").strip()
+    if not s_ref or s_ref != f"source-ingest://snapshots/{s_snap_id}" or s_ref != ref:
+        raise ProbeError("invalid_lineage", f"snapshot ref mismatch: {s_ref!r} != {ref!r}")
+    s_sym = str(snap.get("symbol") or "").strip()
+    p_sym = str(prov.get("raw_symbol") or "").strip()
+    if not s_sym or (p_sym and s_sym != p_sym):
+        raise ProbeError("invalid_lineage", f"snapshot symbol mismatch: {s_sym!r} != {p_sym!r}")
+    s_evt = str(snap.get("event_time") or "").strip()
+    p_evt = str(prov.get("market_input_event_time") or "").strip()
+    if not s_evt or not p_evt or s_evt != p_evt:
+        raise ProbeError("invalid_freshness", f"snapshot event_time mismatch: {s_evt!r} != {p_evt!r}")
+    s_evt_dt, err_e = parse_rfc3339(s_evt, field_name="snapshot event_time")
+    if err_e or s_evt_dt is None:
+        raise ProbeError("invalid_freshness", f"snapshot event_time invalid: {err_e}")
+    s_obs = str(snap.get("observed_at") or "").strip()
+    p_obs = str(prov.get("market_input_observed_at") or "").strip()
+    if not s_obs or not p_obs or s_obs != p_obs:
+        raise ProbeError("invalid_freshness", f"snapshot observed_at mismatch: {s_obs!r} != {p_obs!r}")
+    s_obs_dt, err_o = parse_rfc3339(s_obs, field_name="snapshot observed_at")
+    if err_o or s_obs_dt is None:
+        raise ProbeError("invalid_freshness", f"snapshot observed_at invalid: {err_o}")
+    closes = snap.get("closes")
+    if not isinstance(closes, Sequence) or isinstance(closes, (str, bytes)) or len(closes) < 2:
+        raise ProbeError("invalid_lineage", "snapshot closes must contain at least 2 entries")
+    for i, c in enumerate(closes):
+        try:
+            val = float(c)
+            if not math.isfinite(val) or val <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ProbeError("invalid_lineage", f"snapshot close at index {i} is invalid ({c!r})")
+    s_lin = snap.get("lineage")
+    p_lin = prov.get("market_input_lineage")
+    if not isinstance(s_lin, Mapping) or not isinstance(p_lin, Mapping):
+        raise ProbeError("invalid_lineage", "snapshot lineage mapping is required")
+    for k in ("source_ids", "connector_ids", "content_refs", "ingest_run_ids"):
+        s_items = [str(x).strip() for x in s_lin.get(k) or () if str(x).strip()]
+        p_items = [str(x).strip() for x in p_lin.get(k) or () if str(x).strip()]
+        if not s_items:
+            raise ProbeError("invalid_lineage", f"snapshot lineage {k} is empty")
+        if not p_items or sorted(s_items) != sorted(p_items):
+            raise ProbeError("invalid_lineage", f"snapshot lineage {k} mismatch")
+    if snap.get("points") is not None:
+        try:
+            snap_dict = {k: v for k, v in snap.items() if k in _SNAPSHOT_STATE_FIELDS}
+            snap_obj = LatestMarketSnapshot.from_dict(snap_dict)
+        except Exception as exc:
+            raise ProbeError("invalid_lineage", f"snapshot points validation failed: {exc}") from exc
+        if snap_obj.snapshot_id != s_snap_id:
+            raise ProbeError("invalid_snapshot_id", f"snapshot ID mismatch with derived SHA24: {s_snap_id!r} != {snap_obj.snapshot_id!r}")
+    s_chk = str(snap.get("checksum") or snap.get("data_checksum") or "").strip()
+    if not s_chk or s_chk == s_snap_id:
+        raise ProbeError("invalid_checksum", "snapshot data checksum is missing or invalid placeholder")
+    p_chk = str(
+        prov.get("market_input_checksum")
+        or (p_lin.get("checksum") if isinstance(p_lin, Mapping) else "")
+        or ""
+    ).strip()
+    if p_chk and p_chk != s_chk:
+        raise ProbeError("invalid_checksum", f"snapshot checksum mismatch: {s_chk!r} != {p_chk!r}")
+
+
+def _validate_natural_candidate(
+    candidate: Mapping[str, Any],
+    case: Mapping[str, Any] | None = None,
+    now_dt: datetime | None = None,
+    snap: Mapping[str, Any] | None = None,
+    require_snapshot: bool = True,
+) -> None:
+    prov = candidate.get("signal_provenance")
+    if not isinstance(prov, Mapping):
+        raise ProbeError("natural_provenance_missing", "signal provenance metadata is missing")
+    if prov.get("source_worker") != NATURAL_PRODUCER:
+        raise ProbeError("invalid_producer", f"natural candidate requires producer {NATURAL_PRODUCER!r}")
+    if prov.get("artifact_interpreter") != NATURAL_INTERPRETER:
+        raise ProbeError("invalid_interpreter", f"natural candidate requires interpreter {NATURAL_INTERPRETER!r}")
+    if not isinstance(prov.get("artifact_checksum"), str) or not prov["artifact_checksum"].strip():
+        raise ProbeError("invalid_checksum", "approved artifact checksum is missing")
+    if not isinstance(prov.get("artifact_version"), str) or not prov["artifact_version"].strip():
+        raise ProbeError("invalid_version", "approved artifact version is missing")
+    if prov.get("is_real_capital") is not False or prov.get("is_real_order") is not False:
+        raise ProbeError("invalid_capital_mode", "safe paper flags violated")
+
+    ref, pfx = str(prov.get("market_input_ref") or "").strip(), "source-ingest://snapshots/"
+    if not ref.startswith(pfx):
+        raise ProbeError("invalid_lineage", "market input lineage ref is invalid or missing")
+    snap_id = str(prov.get("market_input_snapshot_id") or "").strip()
+    if not snap_id or not _SNAPSHOT_ID_RE.match(snap_id) or snap_id != ref.removeprefix(pfx):
+        raise ProbeError("invalid_snapshot_id", "market input snapshot ID does not match ref")
+
+    t_obs, err_o = parse_rfc3339(prov.get("market_input_observed_at"), field_name="market_input_observed_at")
+    t_evt, err_e = parse_rfc3339(prov.get("market_input_event_time"), field_name="market_input_event_time")
+    if err_o or t_obs is None or err_e or t_evt is None:
+        raise ProbeError("invalid_lineage", f"market input timestamp invalid: {err_o or err_e}")
+    sig_raw = str(prov.get("signal_event_time") or "").strip()
+    if not sig_raw:
+        raise ProbeError("invalid_freshness", "signal generation timestamp is required")
+    t_sig, err_s = parse_rfc3339(sig_raw, field_name="signal_event_time")
+    if err_s or t_sig is None:
+        raise ProbeError("invalid_freshness", f"signal generation timestamp invalid: {err_s}")
+
+    if now_dt is None:
+        now_dt = datetime.now(timezone.utc)
+    elif now_dt.tzinfo is None:
+        now_dt = now_dt.replace(tzinfo=timezone.utc)
+
+    if t_evt > now_dt:
+        raise ProbeError("invalid_freshness", f"market input event time {t_evt.isoformat()} is in the future")
+    if t_obs > now_dt:
+        raise ProbeError("invalid_freshness", f"market input observation time {t_obs.isoformat()} is in the future")
+    if t_sig > now_dt:
+        raise ProbeError("invalid_freshness", f"signal generation event time {t_sig.isoformat()} is in the future")
+    if not (t_evt <= t_obs <= t_sig):
+        raise ProbeError("invalid_freshness", "market input timestamps violate t_evt <= t_obs <= t_sig")
+
+    policy = _json_object(case.get("market_data_policy")) if case else {}
+    max_age_seconds = float(policy.get("max_age_seconds") or (case.get("max_age_seconds") if case else None) or 86400.0)
+    if (t_sig - t_obs).total_seconds() > max_age_seconds:
+        raise ProbeError("invalid_freshness", f"market input timestamps violate age <= {max_age_seconds}s")
+
+    lineage = prov.get("market_input_lineage")
+    if not isinstance(lineage, Mapping):
+        raise ProbeError("invalid_lineage", "market input lineage is missing")
+    for key in ("source_ids", "connector_ids", "content_refs", "ingest_run_ids"):
+        items = lineage.get(key)
+        if not isinstance(items, (list, tuple)) or not items or not all(isinstance(x, str) and x.strip() for x in items):
+            raise ProbeError("invalid_lineage", f"market input lineage {key} is incomplete")
+
+    if is_taiwan_symbol(prov.get("raw_symbol") or ""):
+        ok, r_code, detail = evaluate_taiwan_market_freshness(
+            event_time_dt=t_evt, now_dt=now_dt, refresh_receipt_dt=t_obs, lineage=lineage, max_refresh_age_seconds=int(max_age_seconds)
+        )
+        if not ok:
+            raise ProbeError("invalid_freshness", f"Taiwan market freshness rejected: {r_code} - {detail}")
+
+    if case is not None:
+        if case.get("state") != "succeeded":
+            raise ProbeError("case_state_mismatch", "case provisioning state is not succeeded")
+        if case.get("artifact_state") != "approved":
+            raise ProbeError("artifact_not_approved", "case artifact state is not approved")
+        expected = (
+            (candidate["identity"].get("tenant_id"), case.get("tenant_id"), "case_identity_mismatch"),
+            (prov.get("binding_id"), case.get("runtime_binding_id"), "case_identity_mismatch"),
+            (prov.get("runtime_id"), case.get("runtime_id"), "case_identity_mismatch"),
+            (prov.get("plan_id"), case.get("deployment_plan_id"), "case_plan_mismatch"),
+            (prov.get("capital_pool_id"), case.get("capital_pool_id"), "case_capital_mismatch"),
+            (prov.get("artifact_id"), case.get("artifact_id"), "case_artifact_mismatch"),
+            (prov.get("artifact_version"), case.get("artifact_version"), "case_version_mismatch"),
+            (prov.get("artifact_checksum"), case.get("artifact_checksum"), "case_checksum_mismatch"),
+        )
+        for act, exp, err_code in expected:
+            if not exp or act != exp:
+                raise ProbeError(err_code, f"mismatch: actual {act!r} != expected {exp!r}")
+        snapshot_to_bind = snap if snap is not None else case.get("source_snapshot")
+        if require_snapshot and not isinstance(snapshot_to_bind, Mapping):
+            raise ProbeError("source_snapshot_missing", "case source_snapshot proof is missing")
+        if isinstance(snapshot_to_bind, Mapping):
+            _bind_source_snapshot(snapshot_to_bind, prov)
+        if snap is not None and isinstance(case.get("source_snapshot"), Mapping):
+            _bind_source_snapshot(case["source_snapshot"], prov)
+            s_chk = snap.get("checksum") or snap.get("data_checksum")
+            c_chk = case["source_snapshot"].get("checksum") or case["source_snapshot"].get("data_checksum")
+            if s_chk and c_chk and s_chk != c_chk:
+                raise ProbeError("invalid_checksum", "case source snapshot checksum does not match source authority")
+
+
+def _normalize_case_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    refs, res = _json_object(record.get("references")), _json_object(record.get("result"))
+    strat = _json_object(refs.get("strategy_artifact_approved"))
+    entry = _json_object(strat.get("entry")) if "entry" in strat else strat
+
+    def pick(*keys: str) -> str:
+        return next((str(v) for k in keys for v in (record.get(k), refs.get(k), res.get(k), entry.get(k)) if v), "")
+
+    norm = {
+        "tenant_id": str(record.get("tenant_id") or ""),
+        "persona_id": str(record.get("persona_id") or ""),
+        "idempotency_key": str(record.get("idempotency_key") or ""),
+        "state": str(record.get("state") or res.get("state") or ""),
+        "artifact_state": str(record.get("artifact_state") or entry.get("artifact_state") or ""),
+        "runtime_binding_id": pick("runtime_binding_id"),
+        "runtime_id": pick("runtime_id"),
+        "capital_pool_id": pick("capital_pool_id"),
+        "deployment_plan_id": pick("deployment_plan_id"),
+        "persona_capital_binding_id": pick("persona_capital_binding_id"),
+        "artifact_id": pick("artifact_id", "registry_id", "strategy_artifact_id"),
+        "artifact_version": pick("artifact_version", "version"),
+        "artifact_checksum": record.get("artifact_checksum") or entry.get("checksum") or res.get("artifact_checksum"),
+    }
+    snap = record.get("source_snapshot") or refs.get("source_snapshot") or res.get("source_snapshot") or refs.get("market_input")
+    if isinstance(snap, Mapping):
+        norm["source_snapshot"] = dict(snap)
+    policy = record.get("market_data_policy") or refs.get("market_data_policy") or res.get("market_data_policy")
+    if isinstance(policy, Mapping):
+        norm["market_data_policy"] = dict(policy)
+    return norm
+
+
+class AsyncpgCaseSource:
+    """Read governed persona provisioning case and verify lineage from Postgres."""
+
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        schema: str = "bff",
+        registry_schema: str = "registry",
+        source_evidence_schema: str = "source_ingest",
+        snapshot_store: Any | None = None,
+        snapshot_store_path: str | Path | None = None,
+        source_base_url: str | None = None,
+    ) -> None:
+        self._dsn = dsn
+        self._schema = schema
+        self._registry_schema = registry_schema
+        self._source_evidence_schema = source_evidence_schema
+        if snapshot_store is not None:
+            self._snapshot_store = snapshot_store
+        elif snapshot_store_path is not None:
+            self._snapshot_store = LatestMarketSnapshotStore(snapshot_store_path)
+        else:
+            p = os.getenv("SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH") or os.getenv("SOURCE_SNAPSHOT_STORE_PATH")
+            self._snapshot_store = LatestMarketSnapshotStore(p) if p and Path(p).exists() else None
+        self._source_base_url = (
+            source_base_url
+            or os.getenv("PANTHEON_SOURCE_INGEST_URL")
+            or os.getenv("PANTHEON_SOURCE_INGEST_API_URL")
+            or os.getenv("SOURCE_INGEST_URL")
+            or os.getenv("SOURCE_INGEST_BASE_URL")
+            or ""
+        ).rstrip("/")
+
+    async def get_case(self, case_key: str) -> dict[str, Any] | None:
+        try:
+            async with _readonly_conn(self._dsn) as conn:
+                row = await conn.fetchrow(
+                    f'SELECT tenant_id, idempotency_key, persona_id, "references", result, state '
+                    f'FROM {self._schema}.persona_provisioning WHERE idempotency_key = $1 LIMIT 1',
+                    case_key,
+                )
+                if row is None:
+                    return None
+                case = _normalize_case_record(dict(row))
+                artifact_id = case.get("artifact_id")
+                if not artifact_id:
+                    raise ProbeError("case_artifact_missing", "case artifact ID is missing")
+                reg_row = await conn.fetchrow(
+                    f"SELECT payload FROM {self._registry_schema}.entries WHERE record_id = $1 LIMIT 1",
+                    artifact_id,
+                )
+                if reg_row is None:
+                    raise ProbeError("registry_artifact_missing", f"artifact {artifact_id!r} not found in registry")
+                payload = _json_object(reg_row["payload"])
+                reg_state = str(payload.get("artifact_state") or "")
+                if reg_state != "approved":
+                    raise ProbeError("registry_artifact_not_approved", f"registry artifact state {reg_state!r}")
+                reg_tenant = str(payload.get("owner_tenant") or payload.get("tenant_id") or "").strip()
+                if not reg_tenant or (reg_tenant != case.get("tenant_id") and reg_tenant != "system"):
+                    raise ProbeError("registry_tenant_mismatch", "registry artifact tenant mismatch")
+                for field, req_err, mis_err in (
+                    ("checksum", "registry_checksum_missing", "case_checksum_mismatch"),
+                    ("version", "registry_version_missing", "case_version_mismatch"),
+                ):
+                    val = str(payload.get(field) or "")
+                    if not val:
+                        raise ProbeError(req_err, f"registry artifact {field} is missing")
+                    if case.get(f"artifact_{field}") and case[f"artifact_{field}"] != val:
+                        raise ProbeError(mis_err, f"case {field} mismatch")
+                    case[f"artifact_{field}"] = val
+                case["artifact_state"] = "approved"
+                return case
+        except ProbeError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise ProbeError("case_query_error", "governed case query failed") from exc
+
+    async def get_source_snapshot(
+        self, snapshot_id: str, tenant_id: str, symbol: str | None = None
+    ) -> dict[str, Any] | None:
+        if self._snapshot_store is not None:
+            try:
+                snapshots = self._snapshot_store.reload()
+                snap = None
+                if symbol:
+                    candidate = self._snapshot_store.get(symbol)
+                    if candidate and candidate.snapshot_id == snapshot_id:
+                        snap = candidate
+                if snap is None:
+                    for s in snapshots.values():
+                        if s.snapshot_id == snapshot_id:
+                            snap = s
+                            break
+                if snap is not None:
+                    data = snap.to_dict()
+                    data["source_ref"] = f"source-ingest://snapshots/{snap.snapshot_id}"
+                    data["checksum"] = _checksum(snap.to_dict())
+                    data["data_checksum"] = data["checksum"]
+                    return data
+            except Exception as exc:  # noqa: BLE001
+                raise ProbeError("source_snapshot_store_error", f"source snapshot store lookup failed: {exc}") from exc
+
+        if self._source_base_url and symbol:
+            try:
+                import urllib.parse
+                import urllib.request
+
+                url = (
+                    f"{self._source_base_url}/api/source-ingest/snapshots/latest"
+                    f"?symbol={urllib.parse.quote(symbol, safe='')}"
+                )
+                req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    payload = json.loads(resp.read().decode("utf-8"))
+                if not isinstance(payload, Mapping):
+                    raise ProbeError("source_snapshot_api_error", "source snapshot API returned non-object")
+                if payload.get("snapshot_id") != snapshot_id:
+                    return None
+                if str(payload.get("schema_version") or "").strip() != MARKET_SNAPSHOT_SCHEMA_VERSION:
+                    raise ProbeError("source_snapshot_api_error", "source snapshot API invalid schema_version")
+                p_sym = str(payload.get("symbol") or "").strip()
+                if not p_sym or p_sym != symbol:
+                    raise ProbeError("source_snapshot_api_error", "source snapshot API symbol mismatch")
+                for tf in ("event_time", "observed_at"):
+                    t_val = str(payload.get(tf) or "").strip()
+                    if not t_val:
+                        raise ProbeError("source_snapshot_api_error", f"source snapshot API missing {tf}")
+                    t_dt, err_t = parse_rfc3339(t_val, field_name=tf)
+                    if err_t or t_dt is None:
+                        raise ProbeError("source_snapshot_api_error", f"source snapshot API invalid {tf}: {err_t}")
+                closes = payload.get("closes")
+                if not isinstance(closes, Sequence) or isinstance(closes, (str, bytes)) or len(closes) < 2:
+                    raise ProbeError("source_snapshot_api_error", "source snapshot API invalid closes")
+                if any(not isinstance(c, (int, float)) or not math.isfinite(c) or c <= 0 for c in closes):
+                    raise ProbeError("source_snapshot_api_error", "source snapshot API closes non-positive")
+                lin = payload.get("lineage")
+                if not isinstance(lin, Mapping):
+                    raise ProbeError("source_snapshot_api_error", "source snapshot API missing lineage")
+                for k in ("source_ids", "connector_ids", "content_refs", "ingest_run_ids"):
+                    items = [str(x).strip() for x in lin.get(k) or () if str(x).strip()]
+                    if not items:
+                        raise ProbeError("source_snapshot_api_error", f"source snapshot API lineage missing {k}")
+                res = dict(payload)
+                if payload.get("points") is not None:
+                    try:
+                        snap_dict = {k: v for k, v in payload.items() if k in _SNAPSHOT_STATE_FIELDS}
+                        snap_obj = LatestMarketSnapshot.from_dict(snap_dict)
+                    except Exception as exc:
+                        raise ProbeError("source_snapshot_api_error", f"source snapshot points invalid: {exc}") from exc
+                    if snap_obj.snapshot_id != snapshot_id:
+                        raise ProbeError("source_snapshot_api_error", "snapshot ID does not match canonical points derived SHA24")
+                    res["checksum"] = _checksum(snap_obj.to_dict())
+                else:
+                    chk = str(payload.get("checksum") or payload.get("data_checksum") or "").strip()
+                    if chk == snapshot_id:
+                        raise ProbeError("source_snapshot_api_error", "source snapshot API returned ID-derived checksum placeholder")
+                    res["checksum"] = chk or _checksum(payload)
+                res["data_checksum"] = res["checksum"]
+                res.setdefault("source_ref", f"source-ingest://snapshots/{snapshot_id}")
+                return res
+            except ProbeError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise ProbeError("source_snapshot_api_error", f"source snapshot API lookup failed: {exc}") from exc
+
+        return None
+
+    async def verify_source_lineage(self, lineage: Mapping[str, Any], tenant_id: str) -> None:
+        source_ids = [str(x).strip() for x in lineage.get("source_ids") or () if str(x).strip()]
+        if not source_ids:
+            raise ProbeError("unobserved_source_record", "lineage source_ids is empty")
+        connector_ids = {str(x).strip() for x in lineage.get("connector_ids") or () if str(x).strip()}
+        content_refs = {str(x).strip() for x in lineage.get("content_refs") or () if str(x).strip()}
+        ingest_run_ids = {str(x).strip() for x in lineage.get("ingest_run_ids") or () if str(x).strip()}
+        lineage_checksums = {str(x).strip() for x in lineage.get("checksums") or () if str(x).strip()}
+        scoped_keys = [f"@t{len(tenant_id)}:{tenant_id}:{s}" for s in source_ids]
+        try:
+            async with _readonly_conn(self._dsn) as conn:
+                rows = await conn.fetch(
+                    f"SELECT record_id, payload FROM {self._source_evidence_schema}.source_evidence "
+                    f"WHERE record_type = 'source_record' "
+                    f"AND (record_id = ANY($1::text[]) OR (payload->>'source_id' = ANY($2::text[]))) "
+                    f"AND COALESCE(payload->'metadata'->>'tenant_id', payload->>'tenant_id', '') = $3",
+                    scoped_keys,
+                    source_ids,
+                    tenant_id,
+                )
+        except ProbeError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise ProbeError("source_evidence_query_error", "source evidence query failed") from exc
+
+        records: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            payload = _json_object(row["payload"])
+            sid = str(payload.get("source_id") or "")
+            if not sid:
+                rid = str(row["record_id"] or "")
+                sid = rid.split(":", 2)[-1] if (rid.startswith("@t") and ":" in rid) else rid
+            if sid:
+                records[sid] = payload
+
+        for sid in source_ids:
+            if sid not in records:
+                raise ProbeError("unobserved_source_record", f"source record {sid!r} not observed in source evidence")
+            p = records[sid]
+            m = _json_object(p.get("metadata"))
+            t = str(m.get("tenant_id") or p.get("tenant_id") or "").strip()
+            if not t:
+                raise ProbeError("source_tenant_missing", f"source record {sid!r} missing tenant_id")
+            if t != tenant_id:
+                raise ProbeError("source_tenant_mismatch", f"source record {sid!r} tenant {t!r} does not match {tenant_id!r}")
+            c = str(p.get("connector_id") or m.get("connector_id") or "").strip()
+            if not c:
+                raise ProbeError("source_connector_missing", f"source record {sid!r} missing connector_id")
+            if c not in connector_ids:
+                raise ProbeError("source_connector_mismatch", f"source record {sid!r} connector {c!r} not in lineage connector_ids")
+            r = str(p.get("content_ref") or m.get("content_ref") or "").strip()
+            if not r:
+                raise ProbeError("source_content_ref_missing", f"source record {sid!r} missing content_ref")
+            if r not in content_refs:
+                raise ProbeError("source_content_ref_mismatch", f"source record {sid!r} content_ref {r!r} not in lineage content_refs")
+            run_id = str(m.get("source_ingest_run_id") or m.get("ingest_run_id") or p.get("ingest_run_id") or "").strip()
+            if not run_id:
+                raise ProbeError("source_ingest_run_missing", f"source record {sid!r} missing ingest_run_id")
+            if run_id not in ingest_run_ids:
+                raise ProbeError("source_ingest_run_mismatch", f"source record {sid!r} ingest_run_id {run_id!r} not in lineage ingest_run_ids")
+            chk = str(
+                m.get("content_hash")
+                or m.get("body_hash")
+                or m.get("checksum")
+                or m.get("content_checksum")
+                or p.get("checksum")
+                or p.get("content_checksum")
+                or ""
+            ).strip()
+            if not chk and r.startswith("sha256:"):
+                chk = r.removeprefix("sha256:").strip()
+            if not chk:
+                raise ProbeError("source_checksum_missing", f"source record {sid!r} missing checksum")
+            if lineage_checksums and chk not in lineage_checksums:
+                raise ProbeError("source_checksum_mismatch", f"source record {sid!r} checksum {chk!r} not in lineage checksums")
+
+
+async def _resolve_case(case_source: Any, case_key: str | None) -> dict[str, Any]:
+    if not case_key:
+        raise ProbeError("case_key_missing", "a concrete governed case key is required in natural mode")
+    if case_source is None:
+        raise ProbeError("case_source_missing", "governed case source is required in natural mode")
+    if hasattr(case_source, "get_case"):
+        case = await case_source.get_case(case_key)
+    elif isinstance(case_source, Mapping):
+        case = case_source.get(case_key)
+    else:
+        raise ProbeError("case_source_invalid", "unsupported case source type")
+    if case is None:
+        raise ProbeError("case_not_found", f"governed case {case_key!r} was not found")
+    return case
 
 
 def _read_object(path: Path) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        val = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ProbeError("projection_read_error", "current projector generation is unreadable") from exc
-    if not isinstance(value, dict):
+    if not isinstance(val, dict):
         raise ProbeError("projection_read_error", "current projector generation is malformed")
-    return value
+    return val
 
 
 def _current_projection(root: Path) -> tuple[dict[str, Any], dict[str, Any], str]:
     try:
-        generation = (root / "current").resolve(strict=True)
-        generation.relative_to((root / "generations").resolve(strict=True))
+        gen = (root / "current").resolve(strict=True)
+        gen.relative_to((root / "generations").resolve(strict=True))
     except (OSError, ValueError) as exc:
         raise ProbeError("projection_read_error", "current projector generation is unavailable") from exc
-    manifest = _read_object(generation / "manifest.json")
-    journeys = _read_object(generation / "trade_journey_events.json")
-    loops = _read_object(generation / "loop_runs.json")
+    manifest = _read_object(gen / "manifest.json")
+    journeys, loops = _read_object(gen / "trade_journey_events.json"), _read_object(gen / "loop_runs.json")
     if manifest.get("schema_version") != "pantheon.lifecycle-projection-bundle.v1":
         raise ProbeError("projection_manifest_mismatch", "projector bundle manifest is not canonical")
-    if manifest.get("journey_sha256") != _fingerprint(journeys) or manifest.get(
-        "loop_runs_sha256"
-    ) != _fingerprint(loops):
+    if manifest.get("journey_sha256") != _fingerprint(journeys) or manifest.get("loop_runs_sha256") != _fingerprint(loops):
         raise ProbeError("projection_integrity_mismatch", "projector bundle fingerprints do not match")
-    generation_number = manifest.get("generation")
-    if journeys.get("generation") != generation_number or loops.get("generation") != generation_number:
+    g_num = manifest.get("generation")
+    if journeys.get("generation") != g_num or loops.get("generation") != g_num:
         raise ProbeError("projection_generation_mismatch", "projector bundle generation is inconsistent")
     if journeys.get("schema_version") != JOURNEY_STORE_SCHEMA or loops.get("schema_version") != LOOP_STORE_SCHEMA:
         raise ProbeError("projection_schema_mismatch", "projector read model schema is not canonical")
     if journeys.get("controller") != loops.get("controller"):
         raise ProbeError("projection_controller_mismatch", "projector bundle controllers disagree")
-    return journeys, loops, generation.name
+    return journeys, loops, gen.name
 
 
 def _correlate(
@@ -593,19 +1000,16 @@ def _correlate(
     generation_name: str,
     projection_backend: str,
     expected_sha: str,
+    mode: str = "natural",
+    case_key: str | None = None,
 ) -> dict[str, Any]:
     controller = loops.get("controller")
     if not isinstance(controller, Mapping):
         raise ProbeError("projection_controller_missing", "projector controller is missing")
     if str(controller.get("deployment_sha") or "") != expected_sha:
         raise ProbeError("deployment_sha_mismatch", "projector deployment SHA does not match expected SHA")
-    expected_controller = {
-        "mode": "live",
-        "accepted_live": True,
-        "truth_level": "canonical_live",
-        "status": "ready",
-    }
-    if any(controller.get(key) != value for key, value in expected_controller.items()):
+    exp_ctrl = {"mode": "live", "accepted_live": True, "truth_level": "canonical_live", "status": "ready"}
+    if any(controller.get(k) != v for k, v in exp_ctrl.items()):
         raise ProbeError("controller_not_canonical_live", "projector controller is not accepted canonical live truth")
     checkpoint = int(controller.get("checkpoint") or 0)
     if checkpoint < high_watermark or int(controller.get("backlog") or 0) != 0:
@@ -668,6 +1072,8 @@ def _correlate(
             "loop_run_id": identity["loop_run_id"],
             "journey_id": identity["journey_id"],
         },
+        **({"governed_case_key": case_key} if case_key else {}),
+        **({"signal_provenance": candidate["signal_provenance"]} if "signal_provenance" in candidate else {}),
     }
 
 
@@ -676,10 +1082,13 @@ async def run_probe(
     source: Any,
     projection_root: Path | None,
     projection_source: Any | None = None,
+    case_source: Any | None = None,
     expected_sha: str,
     timeout_seconds: float,
     poll_seconds: float,
     baseline_high_watermark: int | None = None,
+    mode: str = "natural",
+    case_key: str | None = None,
     sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
@@ -687,6 +1096,9 @@ async def run_probe(
         raise ProbeError("invalid_expected_sha", "a concrete expected deployment SHA is required")
     if baseline_high_watermark is not None and baseline_high_watermark < 0:
         raise ProbeError("invalid_baseline_high_watermark", "baseline high watermark must be non-negative")
+    if mode not in {"natural", "controlled-stimulus"}:
+        raise ProbeError("invalid_probe_mode", f"unsupported probe mode: {mode!r}")
+    case = await _resolve_case(case_source, case_key) if mode == "natural" else None
     deadline = monotonic() + max(0.0, timeout_seconds)
     last_error = ProbeError("no_complete_paper_aggregate", "no complete committed paper lifecycle aggregate matched")
     observed_baseline_high_watermark = baseline_high_watermark
@@ -715,10 +1127,33 @@ async def run_probe(
             ) from exc
         if observed_baseline_high_watermark is None:
             observed_baseline_high_watermark = high
-        candidates = _complete_candidates(rows)
+        candidates = _complete_candidates(rows, mode=mode, case=case)
         if candidates:
             for candidate in candidates:
                 try:
+                    if mode == "natural" and case is not None:
+                        if case_source is not None and hasattr(case_source, "verify_source_lineage"):
+                            await case_source.verify_source_lineage(
+                                candidate["signal_provenance"]["market_input_lineage"],
+                                case["tenant_id"],
+                            )
+                        snap = None
+                        if case_source is not None and hasattr(case_source, "get_source_snapshot"):
+                            snap = await case_source.get_source_snapshot(
+                                candidate["signal_provenance"]["market_input_snapshot_id"],
+                                case["tenant_id"],
+                                symbol=candidate["signal_provenance"].get("raw_symbol"),
+                            )
+                        if snap is None:
+                            raise ProbeError("source_snapshot_missing", "source snapshot proof could not be verified from source authority")
+                        trusted_now = datetime.now(timezone.utc)
+                        _validate_natural_candidate(
+                            candidate,
+                            case=case,
+                            now_dt=trusted_now,
+                            snap=snap,
+                            require_snapshot=True,
+                        )
                     if projection_source is not None:
                         journeys, loops, generation_name = await asyncio.wait_for(
                             projection_source.current_projection(candidate),
@@ -746,15 +1181,19 @@ async def run_probe(
                         generation_name=generation_name,
                         projection_backend=projection_backend,
                         expected_sha=expected_sha,
+                        mode=mode,
+                        case_key=case_key,
                     )
                     return {
                         "schema_version": SCHEMA_VERSION,
                         "task_id": TASK_ID,
                         "outcome": "passed",
+                        "mode": mode,
                         "observed_at": _utc_now(),
                         "expected_deployment_sha": expected_sha,
                         "proof": proof,
                         "redaction": {"dsn_included": False, "payloads_included": False},
+                        **({"governed_case_key": case_key} if case_key else {}),
                     }
                 except asyncio.TimeoutError:
                     last_error = ProbeError(
@@ -776,6 +1215,8 @@ def _failure_artifact(
     expected_sha: str,
     code: str,
     message: str,
+    mode: str = "natural",
+    case_key: str | None = None,
     timed_out: bool | None = None,
 ) -> dict[str, Any]:
     failure: dict[str, Any] = {"code": code, "message": message}
@@ -785,10 +1226,12 @@ def _failure_artifact(
         "schema_version": SCHEMA_VERSION,
         "task_id": TASK_ID,
         "outcome": "failed",
+        "mode": mode,
         "observed_at": _utc_now(),
         "expected_deployment_sha": expected_sha,
         "failure": failure,
         "redaction": {"dsn_included": False, "payloads_included": False},
+        **({"governed_case_key": case_key} if case_key else {}),
     }
 
 
@@ -798,12 +1241,12 @@ def write_failure_artifact(
     expected_sha: str,
     code: str,
     message: str,
+    mode: str = "natural",
+    case_key: str | None = None,
 ) -> dict[str, Any]:
     """Write a redacted failure artifact when hosted transport fails."""
     artifact = _failure_artifact(
-        expected_sha=expected_sha,
-        code=code,
-        message=message,
+        expected_sha=expected_sha, code=code, message=message, mode=mode, case_key=case_key
     )
     _atomic_write_json(output, artifact)
     return artifact
@@ -814,11 +1257,14 @@ async def execute(
     source: Any,
     projection_root: Path | None,
     projection_source: Any | None = None,
+    case_source: Any | None = None,
     expected_sha: str,
     output: Path,
     timeout_seconds: float,
     poll_seconds: float,
     baseline_high_watermark: int | None = None,
+    mode: str = "natural",
+    case_key: str | None = None,
     sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> tuple[int, dict[str, Any]]:
@@ -827,29 +1273,34 @@ async def execute(
             source=source,
             projection_root=projection_root,
             projection_source=projection_source,
+            case_source=case_source,
             expected_sha=expected_sha,
             timeout_seconds=timeout_seconds,
             poll_seconds=poll_seconds,
             baseline_high_watermark=baseline_high_watermark,
+            mode=mode,
+            case_key=case_key,
             sleeper=sleeper,
             monotonic=monotonic,
         )
         code = 0
     except ProbeError as exc:
-        artifact = _failure_artifact(
+        artifact, code = _failure_artifact(
             expected_sha=expected_sha,
             code=exc.code,
             message=exc.safe_message,
+            mode=mode,
+            case_key=case_key,
             timed_out=exc.timed_out,
-        )
-        code = 1
+        ), 1
     except Exception:  # noqa: BLE001 - keep unexpected failures redacted and durable
-        artifact = _failure_artifact(
+        artifact, code = _failure_artifact(
             expected_sha=expected_sha,
             code="unexpected_probe_error",
             message="hosted lifecycle probe failed unexpectedly",
-        )
-        code = 1
+            mode=mode,
+            case_key=case_key,
+        ), 1
     _atomic_write_json(output, artifact)
     return code, artifact
 
@@ -860,89 +1311,64 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--baseline-high-watermark", type=int)
     parser.add_argument("--print-high-watermark", action="store_true")
-    parser.add_argument(
-        "--timeout-seconds", "--timeout", dest="timeout", type=float, default=300.0
-    )
-    parser.add_argument(
-        "--poll-seconds", "--poll", dest="poll", type=float, default=2.0
-    )
+    parser.add_argument("--timeout-seconds", "--timeout", dest="timeout", type=float, default=300.0)
+    parser.add_argument("--poll-seconds", "--poll", dest="poll", type=float, default=2.0)
+    parser.add_argument("--mode", choices=["natural", "controlled-stimulus"], default="natural")
+    parser.add_argument("--case-key")
     args = parser.parse_args(argv)
     dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
     root = os.getenv("LIFECYCLE_PROJECTION_ROOT", "").strip()
     projection_dsn = os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_DSN", "").strip()
     if args.print_high_watermark:
         if not dsn:
-            print(
-                json.dumps(
-                    {
-                        "outcome": "failed",
-                        "failure": {
-                            "code": "configuration_missing",
-                            "message": "telemetry DSN is required",
-                        },
-                        "redaction": {"dsn_included": False},
-                    },
-                    sort_keys=True,
-                ),
-                file=sys.stderr,
-            )
+            print(json.dumps({"outcome": "failed", "failure": {"code": "configuration_missing", "message": "telemetry DSN is required"}, "redaction": {"dsn_included": False}}, sort_keys=True), file=sys.stderr)
             return 1
         try:
-            high_watermark = asyncio.run(
-                _source_high_watermark(AsyncpgTelemetrySource(dsn))
-            )
+            high_watermark = asyncio.run(_source_high_watermark(AsyncpgTelemetrySource(dsn)))
         except ProbeError as exc:
-            print(
-                json.dumps(
-                    {
-                        "outcome": "failed",
-                        "failure": {
-                            "code": exc.code,
-                            "message": exc.safe_message,
-                            "timed_out": exc.timed_out,
-                        },
-                        "redaction": {"dsn_included": False},
-                    },
-                    sort_keys=True,
-                ),
-                file=sys.stderr,
-            )
+            print(json.dumps({"outcome": "failed", "failure": {"code": exc.code, "message": exc.safe_message, "timed_out": exc.timed_out}, "redaction": {"dsn_included": False}}, sort_keys=True), file=sys.stderr)
             return 1
         print(high_watermark)
         return 0
     if args.output is None:
         parser.error("--output is required unless --print-high-watermark is used")
-    if not dsn or (not root and not projection_dsn):
-        write_failure_artifact(
-            args.output,
-            expected_sha=args.expected_sha,
-            code="configuration_missing",
-            message=(
-                "telemetry DSN and either projection root or relational projection DSN "
-                "are required"
-            ),
-        )
+    if args.mode == "natural" and not args.case_key:
+        write_failure_artifact(args.output, expected_sha=args.expected_sha, code="case_key_missing", message="a concrete governed case key is required in natural mode", mode=args.mode)
         return 1
+    if not dsn or (not root and not projection_dsn):
+        write_failure_artifact(args.output, expected_sha=args.expected_sha, code="configuration_missing", message="telemetry DSN and either projection root or relational projection DSN are required", mode=args.mode, case_key=args.case_key)
+        return 1
+    case_source = (
+        AsyncpgCaseSource(
+            os.getenv("CASE_SOURCE_DSN") or dsn,
+            schema=os.getenv("CASE_SOURCE_SCHEMA", "bff"),
+            registry_schema=os.getenv("REGISTRY_SCHEMA", "registry"),
+            source_evidence_schema=os.getenv("SOURCE_EVIDENCE_SCHEMA", "source_ingest"),
+        )
+        if args.mode == "natural"
+        else None
+    )
+    proj_source = (
+        AsyncpgRelationalProjectionSource(
+            projection_dsn,
+            schema=os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA", DEFAULT_PROJECTION_SCHEMA),
+        )
+        if projection_dsn
+        else None
+    )
     code, artifact = asyncio.run(
         execute(
             source=AsyncpgTelemetrySource(dsn),
             projection_root=Path(root) if root else None,
-            projection_source=(
-                AsyncpgRelationalProjectionSource(
-                    projection_dsn,
-                    schema=os.getenv(
-                        "LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA",
-                        DEFAULT_PROJECTION_SCHEMA,
-                    ),
-                )
-                if projection_dsn
-                else None
-            ),
+            projection_source=proj_source,
+            case_source=case_source,
             expected_sha=args.expected_sha,
             output=args.output,
             timeout_seconds=args.timeout,
             poll_seconds=args.poll,
             baseline_high_watermark=args.baseline_high_watermark,
+            mode=args.mode,
+            case_key=args.case_key,
         )
     )
     print(json.dumps({"outcome": artifact["outcome"], "output": str(args.output)}, sort_keys=True))

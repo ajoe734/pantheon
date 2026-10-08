@@ -297,7 +297,9 @@ Pantheon implementation:
 - `coordination.repositories.<id>.local_path` continues to own each worker
   source checkout. Promotion separately renders an explicit
   `integration_path` pointing at a versioned, clean, standalone writable clone
-  used only by the merge owner. Pantheon and `execute_plans` each receive their
+  used by the merge owner. Operator handoff admission also reads the Pantheon
+  clone and may fetch one PR head by SHA, adding only the objects the clone
+  lacks without moving any ref. Pantheon and `execute_plans` each receive their
   own clone; status/activity paths are never inferred as Git source roots
 - before each dispatch cycle, Worker Manager fetches each selected
   repository's `origin/<default_branch>` once, resolves one exact SHA, and
@@ -456,7 +458,11 @@ require it on new commits.)
 
 For Pantheon pull-request delivery, owner handoff admission invokes the same
 range checker on the frozen `base_sha..head_sha` range with merge commits
-skipped and `--delivery-class auto`. Any failure rejects handoff before review
+skipped and `--delivery-class auto`. When the frozen head commit is absent from
+the resolved repository root (the operator integration clone never fetches task
+branches), it is first fetched by SHA from `origin` (`git fetch --quiet origin
+<head_sha>`), which adds objects and `FETCH_HEAD` and moves no ref, `HEAD` or
+worktree; the range check itself is unchanged. Any failure rejects handoff before review
 state changes and identifies the offending commit and rule; repair the commit
 through `scripts/git/worker_commit.py` and submit a new exact-head handoff.
 Cross-repository deliveries do not run Pantheon's local Git checker.
@@ -590,8 +596,9 @@ authorize a switch. The deploy lane must first admit the exact backend/frontend
 pair; inadmissible snapshots remain promotion inputs without creating a deploy
 dispatch. `publish-promote.yml` still opens promote PRs only after its publish
 criteria pass. staging-live is the post-promote pre-production rehearsal —
-`master` push automatically redeploys both
-`pantheon-lupin-staging-{control,exec}` VMs. Production is operator-locked.
+`master` push triggers the staging-live lane of `nonprod-deploy.yml`, but staging
+has no VM ([§ 3.2](../deployment/vm-dev-staging-prod-management-plan.md)), so that
+lane has no target until ephemeral staging exists. Production is operator-locked.
 
 ---
 

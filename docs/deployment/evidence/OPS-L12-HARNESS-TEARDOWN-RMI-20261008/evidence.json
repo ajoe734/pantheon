@@ -1,0 +1,13 @@
+{
+  "task_id": "OPS-L12-HARNESS-TEARDOWN-RMI-20261008",
+  "base_sha": "c2c88ee7c4e09ed0e5e1a08de040842a2d1484f9",
+  "statement": "Harness was not run; no docker, VM, or hosted endpoint was contacted. Operator verifies on the host after merge that a real teardown leaves zero images for its project.",
+  "change": "_teardown_project in scripts/run_isolated_l12_runtime_e2e.py now passes '--rmi local' to 'compose down'. The preclean, final teardown and --down entry point all use this one function.",
+  "criterion_2_local_not_all": "Flag value is 'local' only; test asserts 'all' is absent from the down args, so images with an explicit image: field (postgres, redis, nats, minio) are kept.",
+  "criterion_3_test": "test_teardown_down_command_carries_all_profiles asserts the token after --rmi is 'local' and 'all' not in down args.",
+  "criterion_4_pytest": {
+    "command": "/tmp/pantheon-pytest-env/bin/python -m pytest scripts/test_run_isolated_l12_runtime_e2e.py -q",
+    "result": "32 passed in 3.44s",
+    "exit_code": 0
+  }
+}

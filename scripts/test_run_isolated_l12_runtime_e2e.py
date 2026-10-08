@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -138,7 +139,7 @@ def test_busy_shared_lease_returns_before_compose_work(
 def test_stimulus_gate_stack_covers_every_domain_suite_url() -> None:
     assert harness.STIMULUS_GATE_SUITE.endswith("test_stimulus_cross_loop_deployed_e2e.py")
     assert set(harness.STIMULUS_SERVICES).isdisjoint(harness.SERVICES)
-    assert {"research", "training", "policy_learning", "consultation"} == set(
+    assert {"research", "training", "policy_learning", "consultation", "persona"} == set(
         harness.STIMULUS_SERVICES
     )
     assert set(harness.STIMULUS_COMPOSE_SERVICES).isdisjoint(
@@ -163,6 +164,9 @@ def test_teardown_down_command_carries_all_profiles(monkeypatch: pytest.MonkeyPa
     ]
     assert command.index("--profile") < command.index("down")
     assert result["zero_project_containers"] is True
+    down_args = command[command.index("down") :]
+    assert down_args[down_args.index("--rmi") + 1] == "local"
+    assert "all" not in down_args
 
 
 def test_teardown_fails_closed_when_containers_remain(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -527,3 +531,51 @@ def test_initial_provisioning_leaves_the_resident_scheduler_for_after_the_pull()
     pull = source.index("tw_official_pull = _run_tw_official_pull(")
     assert provision < pull
     assert "start_resident_scheduler=TW_OFFICIAL_PULL_SERVICE in required_services" in source
+
+
+def test_capital_verifier_secret_matches_the_secret_signing_capital_reader_tokens() -> None:
+    signer = _isolated_signer_env()
+    env = harness._isolated_dev_principal_env(signer)
+
+    secret = signer["PANTHEON_BFF_JWT_SECRET"]
+    assert env["CAPITAL_JWT_SECRET"] == env["PANTHEON_CAPITAL_JWT_SECRET"] == secret
+    for variable in ("RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN", "DEPLOYMENT_CAPITAL_SERVICE_TOKEN"):
+        claims = _decoded_claims(env[variable], env["CAPITAL_JWT_SECRET"])
+        assert claims["roles"] == ["capital-reader"]
+
+
+def test_handoff_credentials_are_per_run_and_tenant_aligned() -> None:
+    env = {**_isolated_signer_env(), **harness._isolated_dev_principal_env(_isolated_signer_env())}
+    first = harness._isolated_handoff_env(env)
+    second = harness._isolated_handoff_env(env)
+
+    assert first["AGORA_HANDOFF_SERVICE_TOKEN"] != second["AGORA_HANDOFF_SERVICE_TOKEN"]
+    assert not first["POLICY_LEARNING_SERVICE_TOKEN"].startswith("pantheon-local-")
+    assert {
+        first["POLICY_LEARNING_AGORA_TENANT_ID"],
+        first["POLICY_LEARNING_SERVICE_TENANTS"],
+        first["AGORA_HANDOFF_SERVICE_TENANTS"],
+    } == {env["PANTHEON_BFF_TENANT_ID"]}
+
+
+def test_suites_read_the_compose_file_list_the_harness_exports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+    from pathlib import Path
+
+    l12_dir = str(Path(__file__).resolve().parents[1] / "tests" / "integration" / "l12")
+    monkeypatch.syspath_prepend(l12_dir)
+    sys.modules.pop("l12_owner_auth", None)
+    import l12_owner_auth
+
+    monkeypatch.delenv("PANTHEON_L12_COMPOSE_FILE", raising=False)
+    monkeypatch.setenv(
+        "PANTHEON_L12_COMPOSE_FILES", os.pathsep.join(["/x/base.yml", "/x/override.yml"])
+    )
+    assert l12_owner_auth.compose_file_args() == ["-f", "/x/base.yml", "-f", "/x/override.yml"]
+    monkeypatch.delenv("PANTHEON_L12_COMPOSE_FILES")
+    assert l12_owner_auth.compose_file_args() == []
+    for suite in ("human_learning", "research_loops"):
+        source = (Path(l12_dir) / f"test_current_{suite}_deployed_e2e.py").read_text()
+        assert "compose_file_args()" in source and "PANTHEON_L12_COMPOSE_FILE\"" not in source

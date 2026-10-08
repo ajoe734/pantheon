@@ -1,0 +1,28 @@
+{
+  "task_id": "OPS-OPERATOR-HANDOFF-EXACT-HEAD-20261007",
+  "base_sha": "4a6f8b1de5285a094a2c8f90d8033a28c9318dee",
+  "code_head_sha": "86d72bae7a458ffa5be49659ca8229c84b6fade7",
+  "production_change": ".orchestrator/rewrite/task_contract.py only: sha-only 'git fetch --quiet origin <head_sha>' (required=False) when git_command_succeeds cat-file probe fails, before check_range",
+  "validation": [
+    {"command": "PYTHONPATH=.orchestrator python3 -m unittest rewrite.test_task_contract scripts.test_ai_status", "tests": 548, "result": "OK"},
+    {"command": "env -u PANTHEON_LIVE_SUPERVISOR_CONFIG PANTHEON_DEPLOY_ROOT=<empty tmp> GIT_ALLOW_PROTOCOL=file GIT_TERMINAL_PROMPT=0 PYTHONPATH=.orchestrator python3 -m unittest rewrite.test_task_contract scripts.test_ai_status", "tests": 548, "result": "OK"}
+  ],
+  "diff_budget": {"command": "python3 scripts/git/diff_budget.py --base <base_sha> --head <code_head_sha>", "production": "+12/-0", "test": "+137/-0", "docs": "+8/-2"},
+  "tests_added": [
+    "HandoffExactHeadFetchTests.test_absent_head_is_fetched_without_moving_anything",
+    "HandoffExactHeadFetchTests.test_head_missing_everywhere_rejects_and_moves_nothing",
+    "HandoffExactHeadFetchTests.test_present_head_runs_no_fetch"
+  ],
+  "tests_patched_git_command_succeeds_true": [
+    "rewrite.test_task_contract: HandoffTrailerAdmissionTests.test_handoff_rejects_bad_trailer_with_commit_and_repair_guidance",
+    "rewrite.test_task_contract: HandoffTrailerAdmissionTests.test_missing_frozen_range_objects_reject_handoff_clearly",
+    "rewrite.test_task_contract: HandoffWorkspaceGitRootAdmissionTests.test_handoff_rejects_unavailable_commit_objects",
+    "scripts.test_ai_status: test_review_manifest_must_be_inside_task_artifact_contract",
+    "scripts.test_ai_status: test_handoff_rejects_unauthorized_rename_source_path_and_accepts_authorized",
+    "scripts.test_ai_status: test_handoff_accepts_directory_prefix_and_wildcard_grants",
+    "scripts.test_ai_status: test_handoff_rejects_on_concurrent_pr_snapshot_drift"
+  ],
+  "additional_patched_tests": [],
+  "docs": "docs/conventions/GIT_WORKFLOW.md integration_path bullet and section 5.2 corrected",
+  "runtime_note": "Runtime effect requires an operator runtime promotion, which is not part of this task."
+}

@@ -654,3 +654,44 @@ def test_service_unconfigured_returns_503(bff_client: TestClient) -> None:
     resp = bff_client.post("/bff/management/data-sources/src-twse-01/actions/validate", json=body, headers=OPERATOR_HEADERS)
     assert resp.status_code == 503
     assert resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+
+def test_source_management_client_auth_token_resolution(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    import urllib.request
+    from pathlib import Path
+
+    token_file = Path(tmp_path) / "controller_token"
+    token_file.write_text("controller-token-secret", encoding="utf-8")
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TOKEN_FILE", str(token_file))
+    monkeypatch.delenv("PANTHEON_SOURCE_INGEST_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("SOURCE_INGEST_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("PANTHEON_SERVICE_TOKEN", raising=False)
+
+    client = SourceManagementClient(base_url="http://fake-source:8097")
+    with pytest.raises(SourceManagementClientError) as exc_info:
+        client.execute_command({"command_type": "validate"}, idempotency_key="idemp-1")
+    assert exc_info.value.error_code == "SERVICE_TOKEN_NOT_CONFIGURED"
+
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_SERVICE_TOKEN", "valid-service-token")
+    client_with_token = SourceManagementClient(base_url="http://fake-source:8097")
+    captured_request: dict[str, Any] = {}
+
+    class DummyResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self):
+            return b'{"status": "ok"}'
+
+    def fake_urlopen(req, timeout=None):
+        captured_request["headers"] = dict(req.headers)
+        return DummyResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    res = client_with_token.execute_command({"command_type": "validate"}, idempotency_key="idemp-2")
+    assert res == {"status": "ok"}
+    assert captured_request["headers"].get("Authorization") == "Bearer valid-service-token"
+

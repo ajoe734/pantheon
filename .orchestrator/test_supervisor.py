@@ -21349,6 +21349,20 @@ class ShippedReviewerFallbackPolicyTests(unittest.TestCase):
                     f"lane {lane} still falls back to a stopped Codex reviewer",
                 )
 
+    def test_every_fallback_reviewer_has_its_own_chain(self) -> None:
+        # Replacing an unavailable reviewer reads only that reviewer's own
+        # chain. PiAstra was listed as a fallback reviewer without one, so
+        # once the operator stopped it on 2026-10-07 its reviews sat
+        # unassigned for hours.
+        named = {name for chain in self.fallbacks.values() for name in chain}
+        for name in sorted(named):
+            with self.subTest(reviewer=name):
+                self.assertIn(
+                    name,
+                    self.fallbacks,
+                    f"reviewer {name} has no fallback chain of its own",
+                )
+
     def test_no_lane_falls_back_to_a_reviewer_on_its_own_account(self) -> None:
         # Independence here is about upstream account, not display name:
         # Claude/Claude2 and Antigravity/Antigravity2 are one account each, so

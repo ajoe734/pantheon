@@ -55,10 +55,35 @@ def _schema_hash(records: Sequence[SourceRecord], connector: SourceConnector) ->
 
 def _feature_targets(records: Sequence[SourceRecord], connector: SourceConnector) -> list[str]:
     targets: list[str] = []
-    for value in connector.metadata.get("feature_targets") or ():
+    meta = connector.metadata or {}
+    for value in meta.get("feature_targets") or ():
         text = str(value).strip()
         if text and text not in targets:
             targets.append(text)
+    for value in meta.get("storage_targets") or ():
+        text = str(value).strip()
+        if text.startswith("features/"):
+            feat = text.split("features/", 1)[1].strip()
+            if feat and feat not in targets:
+                targets.append(feat)
+    if not targets:
+        try:
+            from .connector_definitions import get_connector_definition
+
+            defn = get_connector_definition(connector.connector_id)
+            if defn is not None and defn.metadata:
+                for value in defn.metadata.get("feature_targets") or ():
+                    text = str(value).strip()
+                    if text and text not in targets:
+                        targets.append(text)
+                for value in defn.metadata.get("storage_targets") or ():
+                    text = str(value).strip()
+                    if text.startswith("features/"):
+                        feat = text.split("features/", 1)[1].strip()
+                        if feat and feat not in targets:
+                            targets.append(feat)
+        except Exception:
+            pass
     for record in records:
         metadata = dict(record.metadata)
         for key in ("feature_targets", "feature_datasets"):

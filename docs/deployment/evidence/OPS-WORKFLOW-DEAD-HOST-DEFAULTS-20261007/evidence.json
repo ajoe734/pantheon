@@ -1,0 +1,14 @@
+{
+  "task_id": "OPS-WORKFLOW-DEAD-HOST-DEFAULTS-20261007",
+  "base": "3b6f5dc8dee34c3816639678ae963e7c3229f4f7",
+  "commands": [
+    {"cmd": "pytest -q test_dev_direct_ssh_workflow_contract.py test_mint_execute_plans_dev_proof_jwts.py test_write_bff_live_evidence_preflight.py", "exit": 0, "passed": 21, "failed": 0},
+    {"cmd": "pytest -q test_release_gate_current_run.py --deselect <stage0 strict test>", "exit": 0, "passed": 37, "failed": 0, "deselected": 1},
+    {"cmd": "pytest -q test_release_gate_current_run.py::test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode (head)", "exit": 1, "passed": 0, "failed": 1, "first_failure": "scripts/test_release_gate_current_run.py:1620 assert dispatch_inputs[\"approval_race_id\"][\"required\"] is True"},
+    {"cmd": "same test at merge base via git archive", "exit": 1, "passed": 0, "failed": 1, "first_failure": "scripts/test_release_gate_current_run.py:1664 assert dispatch_inputs[\"approval_race_id\"][\"required\"] is True"},
+    {"cmd": "retired-path git grep", "exit": 0, "result": "only docs/deployment/nonprod-ci-cd.md:20 retirement bullet"},
+    {"cmd": "git grep sslip/35.201.204.12/pantheon-lupin/pantheon-benjamin-20260528 -- .github/workflows", "exit": 1, "result": "no match"},
+    {"cmd": "Required GitHub Configuration section grep", "result": "exactly one line (retired project names sentence)"},
+    {"cmd": "git diff --check HEAD", "exit": 0, "result": "clean"}
+  ]
+}

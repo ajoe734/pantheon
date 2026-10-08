@@ -163,6 +163,16 @@ def test_two_process_workers_create_one_connector_schedule_run_and_source_record
     tmp_path: Path,
 ) -> None:
     (tmp_path / "controller_token").write_text(CONTROLLER_TOKEN, encoding="utf-8")
+    from services.source_ingestion.controller_state import ControllerState, ControllerStateStore
+
+    state = ControllerState(
+        controller_id="ctrl-test-multiprocess",
+        controller_name="test-controller",
+        environment="test",
+        tenant_id="tenant-dev",
+        deployment={},
+    )
+    ControllerStateStore(tmp_path / "controller_state.json").save(state)
     context = multiprocessing.get_context("spawn")
     barrier = context.Barrier(2)
     result_queue = context.Queue()

@@ -142,6 +142,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         # PS-02: Persona detail
         persona = _service.get_persona(persona_id)
         if not persona:
+            _raise_if_read_surface_unavailable(_dataset_surface_status("personas", snapshot_at=utc_now()), label="Persona")
             raise _bff_error(
                 404,
                 ErrorCode.RESOURCE_NOT_FOUND,
@@ -356,6 +357,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                     suggestion="Inspect persona provisioning persistence health before retrying",
                 ) from exc
         if not raw:
+            _raise_if_read_surface_unavailable(_dataset_surface_status("personas", snapshot_at=snapshot_at), label="Persona")
             raise _bff_error(
                 404, ErrorCode.RESOURCE_NOT_FOUND,
                 "Persona not found",

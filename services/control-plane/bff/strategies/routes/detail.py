@@ -12,6 +12,7 @@ try:
     from services.control_plane.bff.models import ErrorCode
 except (ImportError, ValueError):
     from models import ErrorCode
+from services.control_plane.bff.ports.research_knowledge_source import ResearchWriteOwnerUnavailableError
 
 
 def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
@@ -173,7 +174,13 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         ctx.require_read_role(identity)
         ctx.ensure_strategy_exists(strategy_id)
         snapshot_at = ctx.utc_now()
-        items = ctx.service.list_research_experiments(strategy_id=strategy_id) if ctx.service else []
+        try:
+            items = ctx.service.list_research_experiments(strategy_id=strategy_id) if ctx.service else []
+        except ResearchWriteOwnerUnavailableError as exc:
+            raise ctx.bff_error(
+                503, ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Research experiment write owner unavailable", str(exc),
+            ) from exc
         return {
             "data": items,
             "items": items,

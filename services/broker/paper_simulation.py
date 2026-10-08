@@ -147,8 +147,8 @@ def simulate_paper_order(
 ) -> PaperOrder:
     """Simulate a paper order fill synchronously.
 
-    Market orders fill at a placeholder price of 100.0; the real market price
-    comes from the strategy's market data feed, not the broker sidecar.
+    Market orders fill at the caller-supplied positive market_price; without
+    one they are rejected and no fill price is fabricated.
     Limit orders fill at the specified limit_price.
     All fills are 100% of requested qty.
     """
@@ -167,7 +167,10 @@ def simulate_paper_order(
     elif market_price is not None and market_price > 0:
         fill_price = float(market_price)
     else:
-        fill_price = 100.0
+        raise SimulationError(
+            "MARKET_PRICE_UNAVAILABLE",
+            "market order requires a positive market_price; no fill price is fabricated",
+        )
     order_id = uuid.uuid4().hex
     return PaperOrder(
         order_id=order_id,

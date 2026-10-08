@@ -1,0 +1,28 @@
+{
+  "task_id": "RECON-INCIDENT-LISTENER-BACKLOG-20261008",
+  "change_class": "corrective",
+  "net_prod_line_budget": 80,
+  "net_prod_lines_observed": 71,
+  "summary": "Keep reconciliation-drift-incident-listener healthy by acknowledging non-trading infrastructure incidents without reconciliation delivery, bounding listener ticks by a configurable time budget, and reporting backlog size and progress in health state.",
+  "incident_context": {
+    "symptom": "Dev deploy run 37719887861 failed with 'required component(s) unhealthy or unknown: reconciliation-drift-incident-listener: health=unhealthy'. The listener container healthcheck kept returning 'health is not ready: status=starting ticks=0' while sitting in socket poll to reconciliation-drift-svc:8102 with an 18-item backlog of infrastructure incidents (binding infra-subject-*).",
+    "root_cause": "Two compounding defects: (1) Infrastructure incidents (non_trading_infrastructure_incident=true) were being delivered to reconciliation-drift despite having no trading binding to reconcile. (2) Without a tick time budget, serial synchronous retries across the 18 items against a slow/busy single-process uvicorn service exceeded the healthcheck timeout budget; client timeout resulted in result=None, calling record_delivery_failure() and moving updated_at while the server completed later with 201, leaving backlog at 18 and ticks at 0.",
+    "resolution": "Incident listener identifies non-trading infrastructure incidents and acknowledges them immediately without reconciliation delivery; reconciliation-drift service answers fast not_applicable if called; run_tick() is bounded by tick_budget_seconds (default 30s) so ticks always complete and increment ticks >= 1; health state records backlog_count and last_progress_at."
+  },
+  "acceptance_verification": {
+    "ac1_infrastructure_incident_bypass_and_fast_not_applicable": "passed: listener acknowledges infra-subject-* and non_trading_infrastructure_incident=true incidents without HTTP delivery, removing them from backlog; reconciliation-drift endpoint returns fast not_applicable (status=ok, skipped=true, not_applicable=true, no store evaluation).",
+    "ac2_tick_bounded_by_time_budget_and_progress_reported": "passed: run_tick() checks tick_deadline before processing items; health state initializes and updates backlog_count and last_progress_at; tick finishes within budget, setting status=ok and ticks >= 1 so healthcheck passes.",
+    "ac3_reproduction_and_mechanism_analysis": "passed: documented in reproduction_analysis.md; verified mechanism of client timeout vs server completion and ruled out removal/persistence defects in IncidentListenerState.",
+    "ac4_backlog_18_recovery_test": "passed: test_backlog_of_18_infrastructure_incidents_finishes_within_budget_and_health_becomes_ready verifies that 18 infrastructure incidents are drained in milliseconds without calling slow reconciliation stub, and health becomes ready.",
+    "ac5_clean_code_and_line_budget": "passed: 71 net production lines added across incident_listener.py (+68) and main.py (+3), well within the 80 net line limit. Standard formatting with no compression.",
+    "ac6_hosted_track": "external_wait: awaiting next automatic dev pair release to pass exact_component_deployment gate for reconciliation-drift-incident-listener."
+  },
+  "local_verification": {
+    "commands": [
+      "pytest services/reconciliation-drift/tests/test_reconciliation_drift_incident_listener.py -v",
+      "pytest services/reconciliation-drift/tests/test_reconciliation_drift_worker_health.py -v",
+      "pytest services/reconciliation-drift/tests/ -q (129 passed)"
+    ],
+    "result": "passed (all incident listener tests passed; all 129 suite tests passed)"
+  }
+}

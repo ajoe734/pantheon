@@ -18,6 +18,7 @@ import uuid
 from fastapi import APIRouter, Body, Header, HTTPException, Query, Response
 
 from services.control_plane.bff.models import CommandType, ErrorCode, ObjectType
+from services.control_plane.bff.ports.read_surface_ports import PaperReconcilerUnavailableError
 from ..service import (
     _PM12_LEAGUE_FORMULA_VERSION,
     _PM12_QUARTERLY_FORMULA_DOC_REF,
@@ -60,6 +61,13 @@ from ...command_adapters.retired import reject_retired_command
 from .common import PersonaRouteContext, make_context_dependency
 
 log = logging.getLogger(__name__)
+
+
+def _call_or_503_when_reconciler_down(bff_error: Any, fn: Any, **kwargs: Any) -> Any:
+    try:
+        return fn(**kwargs)
+    except PaperReconcilerUnavailableError as exc:
+        raise bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Paper fleet reconciler unavailable", str(exc)) from exc
 
 
 def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
@@ -413,7 +421,9 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
         identity = _extract_identity(authorization)
         _require_read_role(identity)
         caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-        return _service.get_quarterly_ranking(
+        return _call_or_503_when_reconciler_down(
+            _bff_error,
+            _service.get_quarterly_ranking,
             quarter=quarter,
             identity=identity,
             caller_tenant_id=caller_tenant_id,

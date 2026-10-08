@@ -1,0 +1,43 @@
+{
+  "task_id": "NATURAL-PAPER-PROBE-MODE-20261007",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 160,
+  "title": "Make the existing natural paper proof genuinely natural and same fresh governed case",
+  "summary": "Enforce genuine natural proof in loop-prod-tel-002 probe by requiring a fresh governed case (dev-paper-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}), fail closed on absent/mismatched case checksum/plan/binding/version/state, eliminate invented IDs and default versions, require explicit non-empty market input lineage (rejecting bare raw_symbol alone), verify observed source records against Postgres source evidence store (source_ingest.source_evidence) with connector and tenant scoping, anchor approved artifact checksum/version/state from registry entries with non-empty tenant match, enforce RFC-3339 timestamp windowing (t_evt <= t_obs <= t_sig) within 420s freshness window and reasonable year bounds (2024-2030), and apply Taiwan market freshness rules when applicable. In natural mode the wrapper script never invokes hosted_lifecycle_stimulus. Controlled-stimulus mode remains available and clearly labelled.",
+  "counterexample": {
+    "incident_run_id": "37647100516",
+    "signal_id": "add5d7f1-c2af-420b-8322-65e624e5bc1c",
+    "stimulus_source_worker": "loop-prod-tel-002-hosted-stimulus",
+    "natural_mode_outcome": "failed",
+    "failure_code": "no_complete_paper_aggregate",
+    "controlled_stimulus_outcome": "passed"
+  },
+  "verification": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -v services/trade_journey/test_hosted_lifecycle_probe.py",
+      "exit_code": 0,
+      "test_count": 92,
+      "output": "92 passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -v scripts/test_run_loop_prod_tel_002_hosted_probe.py",
+      "exit_code": 0,
+      "test_count": 8,
+      "output": "8 passed"
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
+      "exit_code": 0,
+      "diff_budget_table": "| class | added | deleted | net |\n|---|---|---|---|\n| production | +528 | -393 | +135 |\n| test | +772 | -0 | +772 |\n| docs/evidence | +43 | -0 | +43 |"
+    }
+  ],
+  "diff_budget": {
+    "change_class": "corrective",
+    "budget": 160,
+    "net_production_lines": 135,
+    "note": "Net production line budget <= 160 satisfied cleanly by eliminating redundant boilerplate while maintaining readability.",
+    "status": "passed"
+  }
+}

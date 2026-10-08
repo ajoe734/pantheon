@@ -17,7 +17,7 @@ import urllib.request
 from typing import Any
 
 
-DEFAULT_BFF_BASE = os.environ.get("BFF_BASE", "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io")
+DEFAULT_BFF_BASE = os.environ.get("BFF_BASE", "")
 DEFAULT_TOKEN = os.environ.get("BFF_TOKEN", "op-dev:admin:mfa")
 DEFAULT_SOURCE_INGEST_BASE = os.environ.get("SOURCE_INGEST_BASE", "")
 
@@ -168,6 +168,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-ingest-base", default=DEFAULT_SOURCE_INGEST_BASE)
     parser.add_argument("--json", action="store_true", help="Print JSON summary only.")
     args = parser.parse_args(argv)
+
+    if not (args.bff_base and args.bff_base.strip()):
+        parser.error(
+            "--bff-base (or BFF_BASE) is required; see "
+            "docs/deployment/vm-dev-staging-prod-management-plan.md section 3.1"
+        )
 
     result = {"bff": verify_bff(args.bff_base, args.token)}
     if args.source_ingest_base:

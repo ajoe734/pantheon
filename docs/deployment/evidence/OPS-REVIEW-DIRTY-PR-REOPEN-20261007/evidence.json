@@ -1,0 +1,29 @@
+{
+  "task_id": "OPS-REVIEW-DIRTY-PR-REOPEN-20261007",
+  "origin_dev_base_sha": "89cc8b15fe091b1781b4af758e893a6c3fd505ab",
+  "change": "scripts/ai_status.py execute_review_decision_intent: `if command in {\"approve\", \"reopen\"}` -> `if command == \"approve\"`",
+  "behavior": {
+    "reviewer_reopen_conflicted_or_moved_pr": {
+      "before": "revalidate_review_admission raised (DIRTY, moved head, closed, legacy binding); intent aborted, task stayed in review, reviewer redispatched in a loop",
+      "after": "no admission revalidation; canonical mode finalizes with no GitHub call; bridge mode uses _pr_snapshot and the existing REVIEW_BINDING_MISMATCH reopen branch; task returns to owner in_progress"
+    },
+    "approve_conflicted_or_moved_pr": {
+      "before": "rejected in preflight and phase two",
+      "after": "unchanged: still rejected in preflight and phase two"
+    },
+    "handoff_and_operator_accept": "unchanged"
+  },
+  "tests": {
+    "unittest scripts.test_ai_status": "532 tests OK (529 base + 3 new reopen tests)",
+    "pytest scripts/git/test_github_review_bridge.py": "66 passed, 5 subtests passed",
+    "new_tests_fail_without_fix": true
+  },
+  "diff_budget": {
+    "base": "89cc8b15fe091b1781b4af758e893a6c3fd505ab",
+    "head": "task branch HEAD after merging origin/dev",
+    "production": "+1 -1 net +0",
+    "test": "+126 -0 net +126",
+    "docs_evidence": "+40 -6 net +34 (includes this evidence file)"
+  },
+  "live_effect": "Requires an operator runtime promotion of the command runtime; sync-dev-root, promote and supervisor restart were not run."
+}
