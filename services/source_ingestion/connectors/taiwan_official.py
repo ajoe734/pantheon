@@ -123,6 +123,52 @@ _TWSE_2026_LNY_CALENDAR_PAYLOAD: Mapping[str, Any] = {
     "version": TWSE_2026_LNY_CALENDAR_VERSION,
 }
 
+TWSE_2026_SCHEDULE_CALENDAR_VERSION = "twse-2026-schedule-v1"
+TWSE_2026_SCHEDULE_CALENDAR_SHA256 = (
+    "69c1a9b5f8cd347faca498ea3ecbc63fc3fe7a7bbb49d1ddb2b50f4cef0c35eb"
+)
+TWSE_2026_SCHEDULE_CALENDAR_FETCHED_AT = "2026-10-08T00:00:00Z"
+_TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD: Mapping[str, Any] = {
+    "authority": "Taiwan Stock Exchange 115 年市場開休市日期",
+    "coverage_end": "2026-12-31",
+    "coverage_start": "2026-02-24",
+    "holidays": {
+        "2026-02-27": {"name": "和平紀念日"},
+        "2026-02-28": {"name": "和平紀念日"},
+        "2026-04-03": {"name": "兒童節及民族掃墓節"},
+        "2026-04-04": {"name": "兒童節及民族掃墓節"},
+        "2026-04-05": {"name": "兒童節及民族掃墓節"},
+        "2026-04-06": {"name": "兒童節及民族掃墓節"},
+        "2026-05-01": {"name": "勞動節"},
+        "2026-06-19": {"name": "端午節"},
+        "2026-09-25": {"name": "中秋節"},
+        "2026-09-28": {"name": "孔子誕辰紀念日/ 教師節"},
+        "2026-10-09": {"name": "國慶日"},
+        "2026-10-10": {"name": "國慶日"},
+        "2026-10-25": {"name": "臺灣光復暨金門古寧頭大捷紀念日"},
+        "2026-10-26": {"name": "臺灣光復暨金門古寧頭大捷紀念日"},
+        "2026-12-25": {"name": "行憲紀念日"},
+    },
+    "market": "TW",
+    "source_url": "https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule",
+    "timezone": "Asia/Taipei",
+    "trading_days": [
+        "2026-02-24", "2026-02-25", "2026-02-26",
+        "2026-03-02", "2026-03-03", "2026-03-04", "2026-03-05", "2026-03-06", "2026-03-09", "2026-03-10", "2026-03-11", "2026-03-12", "2026-03-13", "2026-03-16", "2026-03-17", "2026-03-18", "2026-03-19", "2026-03-20", "2026-03-23", "2026-03-24", "2026-03-25", "2026-03-26", "2026-03-27", "2026-03-30", "2026-03-31",
+        "2026-04-01", "2026-04-02", "2026-04-07", "2026-04-08", "2026-04-09", "2026-04-10", "2026-04-13", "2026-04-14", "2026-04-15", "2026-04-16", "2026-04-17", "2026-04-20", "2026-04-21", "2026-04-22", "2026-04-23", "2026-04-24", "2026-04-27", "2026-04-28", "2026-04-29", "2026-04-30",
+        "2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07", "2026-05-08", "2026-05-11", "2026-05-12", "2026-05-13", "2026-05-14", "2026-05-15", "2026-05-18", "2026-05-19", "2026-05-20", "2026-05-21", "2026-05-22", "2026-05-25", "2026-05-26", "2026-05-27", "2026-05-28", "2026-05-29",
+        "2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04", "2026-06-05", "2026-06-08", "2026-06-09", "2026-06-10", "2026-06-11", "2026-06-12", "2026-06-15", "2026-06-16", "2026-06-17", "2026-06-18", "2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26", "2026-06-29", "2026-06-30",
+        "2026-07-01", "2026-07-02", "2026-07-03", "2026-07-06", "2026-07-07", "2026-07-08", "2026-07-09", "2026-07-10", "2026-07-13", "2026-07-14", "2026-07-15", "2026-07-16", "2026-07-17", "2026-07-20", "2026-07-21", "2026-07-22", "2026-07-23", "2026-07-24", "2026-07-27", "2026-07-28", "2026-07-29", "2026-07-30", "2026-07-31",
+        "2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-10", "2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14", "2026-08-17", "2026-08-18", "2026-08-19", "2026-08-20", "2026-08-21", "2026-08-24", "2026-08-25", "2026-08-26", "2026-08-27", "2026-08-28", "2026-08-31",
+        "2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-07", "2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11", "2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24", "2026-09-29", "2026-09-30",
+        "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30",
+        "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13", "2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20", "2026-11-23", "2026-11-24", "2026-11-25", "2026-11-26", "2026-11-27", "2026-11-30",
+        "2026-12-01", "2026-12-02", "2026-12-03", "2026-12-04", "2026-12-07", "2026-12-08", "2026-12-09", "2026-12-10", "2026-12-11", "2026-12-14", "2026-12-15", "2026-12-16", "2026-12-17", "2026-12-18", "2026-12-21", "2026-12-22", "2026-12-23", "2026-12-24", "2026-12-28", "2026-12-29", "2026-12-30", "2026-12-31",
+    ],
+    "venue": "TWSE",
+    "version": TWSE_2026_SCHEDULE_CALENDAR_VERSION,
+}
+
 _DATASET_SCHEMA_HASHES = {
     "tw_price_daily": TW_PRICE_DAILY_SCHEMA_HASH,
     "tw_institutional_flow": TW_INSTITUTIONAL_FLOW_SCHEMA_HASH,
@@ -378,16 +424,33 @@ def governed_taiwan_calendar_evidence(
     normalized_trade_date = _roc_date_to_iso(trade_date)
     if canonical_venue != "TWSE" or not normalized_trade_date:
         return None
-    if not (
+
+    matched_payload: Mapping[str, Any] | None = None
+    expected_digest: str | None = None
+    fetched_at: str | None = None
+
+    if (
         _TWSE_2026_LNY_CALENDAR_PAYLOAD["coverage_start"]
         <= normalized_trade_date
         <= _TWSE_2026_LNY_CALENDAR_PAYLOAD["coverage_end"]
     ):
+        matched_payload = _TWSE_2026_LNY_CALENDAR_PAYLOAD
+        expected_digest = TWSE_2026_LNY_CALENDAR_SHA256
+        fetched_at = TWSE_2026_LNY_CALENDAR_FETCHED_AT
+    elif (
+        _TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD["coverage_start"]
+        <= normalized_trade_date
+        <= _TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD["coverage_end"]
+    ):
+        matched_payload = _TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD
+        expected_digest = TWSE_2026_SCHEDULE_CALENDAR_SHA256
+        fetched_at = TWSE_2026_SCHEDULE_CALENDAR_FETCHED_AT
+    else:
         return None
 
     canonical_payload = json.loads(
         json.dumps(
-            _TWSE_2026_LNY_CALENDAR_PAYLOAD,
+            matched_payload,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -402,13 +465,13 @@ def governed_taiwan_calendar_evidence(
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
-    if digest != TWSE_2026_LNY_CALENDAR_SHA256:
+    if digest != expected_digest:
         raise SourceEvidenceError(
             "governed TWSE calendar payload digest does not match its exact version pin"
         )
     return {
         **canonical_payload,
-        "fetched_at": TWSE_2026_LNY_CALENDAR_FETCHED_AT,
+        "fetched_at": fetched_at,
         "checksum": digest,
     }
 
@@ -725,7 +788,16 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                         "version": TWSE_2026_LNY_CALENDAR_VERSION,
                         "sha256": TWSE_2026_LNY_CALENDAR_SHA256,
                         "source_url": _TWSE_2026_LNY_CALENDAR_PAYLOAD["source_url"],
-                    }
+                    },
+                    {
+                        "venue": "TWSE",
+                        "year": 2026,
+                        "coverage_start": _TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD["coverage_start"],
+                        "coverage_end": _TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD["coverage_end"],
+                        "version": TWSE_2026_SCHEDULE_CALENDAR_VERSION,
+                        "sha256": TWSE_2026_SCHEDULE_CALENDAR_SHA256,
+                        "source_url": _TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD["source_url"],
+                    },
                 ],
                 "tier_policy": {
                     "core_universe": ["tw_price_daily", "tw_institutional_flow", "tw_margin_short_balance", "tw_securities_lending", "tw_day_trading"],

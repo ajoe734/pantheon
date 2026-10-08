@@ -409,3 +409,63 @@ def test_missing_snapshot_has_a_typed_not_found_response(
         "code": "market_snapshot_not_found",
         "symbol": "MISSING.US",
     }
+
+
+def test_refresh_reread_row_without_calendar_evidence_publishes_governed_evidence(
+    tmp_path: Path,
+) -> None:
+    import copy
+    from services.source_ingestion.connectors.taiwan_official import (
+        TWSE_2026_SCHEDULE_CALENDAR_VERSION,
+        TaiwanOfficialMarketDatasetAdapter,
+    )
+
+    store = LatestMarketSnapshotStore(tmp_path / "market-snapshots.jsonl")
+
+    # 1. Stored official row without calendar evidence (pre-fix state for 2026-10-08)
+    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=10)
+    raw_rows = [{"Date": "1151008", "Code": "2330", "ClosingPrice": "955.00"}]
+    initial_records = adapter.records_from_payload(
+        "tw_price_daily",
+        "TWSE",
+        raw_rows,
+        trace_id="trace-initial",
+    )
+    stored_record = copy.deepcopy(initial_records[0])
+    stored_record.metadata.pop("calendar_evidence", None)
+    res1 = store.append_normalized_records(
+        [stored_record],
+        ingest_run_id="run-pre-fix",
+        observed_at="2026-10-08T06:00:00Z",
+    )
+    assert res1["updated_snapshot_count"] == 1
+    prior_snap = store.get("2330.TW")
+    assert prior_snap is not None
+    assert prior_snap.calendar_evidence is None
+
+    # 2. Refresh re-reads the exact official row via the updated adapter
+    refreshed_records = adapter.records_from_payload(
+        "tw_price_daily",
+        "TWSE",
+        raw_rows,
+        trace_id="trace-refresh-re-read",
+    )
+    assert len(refreshed_records) == 1
+    assert "calendar_evidence" in refreshed_records[0].metadata
+    assert refreshed_records[0].source_id == stored_record.source_id
+
+    # 3. Store appends the refreshed record: proves snapshot actually gains evidence
+    res2 = store.append_normalized_records(
+        refreshed_records,
+        ingest_run_id="run-post-fix-refresh",
+        observed_at="2026-10-08T07:00:00Z",
+    )
+    assert res2["updated_snapshot_count"] == 1
+
+    reloaded = LatestMarketSnapshotStore(tmp_path / "market-snapshots.jsonl")
+    updated_snap = reloaded.get("2330.TW")
+    assert updated_snap is not None
+    assert updated_snap.calendar_evidence is not None
+    assert updated_snap.calendar_evidence["version"] == TWSE_2026_SCHEDULE_CALENDAR_VERSION
+    assert "2026-10-09" in updated_snap.calendar_evidence["holidays"]
+    assert "2026-10-08" in updated_snap.calendar_evidence["trading_days"]

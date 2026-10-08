@@ -252,10 +252,16 @@ def test_taiwan_official_adapter_emits_authentic_monthly_history_records() -> No
     assert [record.metadata["normalized_row"]["close"] for record in tpex] == [117.0, 118.5]
     assert tpex[0].metadata["normalized_row"]["volume_lots"] == 2900
     assert tpex[0].metadata["raw_row"]["日 期"] == "115/06/09"
-    assert "calendar_evidence" not in twse[-1].metadata
+    assert twse[-1].metadata["calendar_evidence"]["version"] == "twse-2026-schedule-v1"
+    assert "calendar_evidence" not in tpex[-1].metadata
 
 
 def test_taiwan_official_adapter_binds_exact_governed_twse_calendar_evidence() -> None:
+    from services.source_ingestion.connectors.taiwan_official import (
+        TWSE_2026_SCHEDULE_CALENDAR_SHA256,
+        TWSE_2026_SCHEDULE_CALENDAR_VERSION,
+    )
+
     adapter = TaiwanOfficialMarketDatasetAdapter(max_records=10)
     records = adapter.records_from_payload(
         "tw_price_daily",
@@ -263,39 +269,63 @@ def test_taiwan_official_adapter_binds_exact_governed_twse_calendar_evidence() -
         [
             {"Date": "1150210", "Code": "2330", "ClosingPrice": "950.00"},
             {"Date": "1150211", "Code": "2330", "ClosingPrice": "955.00"},
+            {"Date": "1150223", "Code": "2330", "ClosingPrice": "956.00"},
+            {"Date": "1150224", "Code": "2330", "ClosingPrice": "957.00"},
+            {"Date": "1151008", "Code": "2330", "ClosingPrice": "960.00"},
         ],
         trace_id="trace-governed-twse-calendar",
     )
 
     assert "calendar_evidence" not in records[0].metadata
-    evidence = records[1].metadata["calendar_evidence"]
-    assert evidence["venue"] == "TWSE"
-    assert evidence["version"] == "twse-2026-lny-v1"
-    assert evidence["coverage_start"] == "2026-02-11"
-    assert evidence["coverage_end"] == "2026-02-23"
-    assert evidence["trading_days"] == ["2026-02-11", "2026-02-23"]
-    assert evidence["checksum"] == (
+    evidence_lny = records[1].metadata["calendar_evidence"]
+    assert evidence_lny["venue"] == "TWSE"
+    assert evidence_lny["version"] == "twse-2026-lny-v1"
+    assert evidence_lny["coverage_start"] == "2026-02-11"
+    assert evidence_lny["coverage_end"] == "2026-02-23"
+    assert evidence_lny["trading_days"] == ["2026-02-11", "2026-02-23"]
+    assert evidence_lny["checksum"] == (
         "55b2e23b9bd30af666a99c98da2dbbfad568dcd655631b1c6347d12ee8381596"
     )
-    [catalog_entry] = adapter.connector().metadata["governed_calendar_evidence"]
-    assert catalog_entry["venue"] == "TWSE"
-    assert catalog_entry["year"] == 2026
-    assert catalog_entry["sha256"] == evidence["checksum"]
+
+    evidence_lny_end = records[2].metadata["calendar_evidence"]
+    assert evidence_lny_end["version"] == "twse-2026-lny-v1"
+
+    evidence_sched_start = records[3].metadata["calendar_evidence"]
+    assert evidence_sched_start["version"] == TWSE_2026_SCHEDULE_CALENDAR_VERSION
+    assert evidence_sched_start["coverage_start"] == "2026-02-24"
+    assert evidence_sched_start["coverage_end"] == "2026-12-31"
+
+    evidence_oct = records[4].metadata["calendar_evidence"]
+    assert evidence_oct["version"] == TWSE_2026_SCHEDULE_CALENDAR_VERSION
+    assert evidence_oct["checksum"] == TWSE_2026_SCHEDULE_CALENDAR_SHA256
+    assert "2026-10-09" in evidence_oct["holidays"]
+    assert "2026-10-26" in evidence_oct["holidays"]
+    assert "2026-12-25" in evidence_oct["holidays"]
+    assert "2026-10-08" in evidence_oct["trading_days"]
+
+    catalog = adapter.connector().metadata["governed_calendar_evidence"]
+    assert len(catalog) == 2
+    assert catalog[0]["version"] == "twse-2026-lny-v1"
+    assert catalog[0]["sha256"] == evidence_lny["checksum"]
+    assert catalog[1]["version"] == TWSE_2026_SCHEDULE_CALENDAR_VERSION
+    assert catalog[1]["sha256"] == TWSE_2026_SCHEDULE_CALENDAR_SHA256
+    assert catalog[1]["coverage_start"] == "2026-02-24"
+    assert catalog[1]["coverage_end"] == "2026-12-31"
 
     # The production writer never relabels TWSE proof as TPEx proof or extends
-    # the bounded catalog to an uncovered record date.
+    # the bounded catalog to an uncovered record date (e.g. year 2027).
     tpex = adapter.records_from_payload(
         "tw_price_daily",
         "TPEx",
         [{"Date": "1150211", "SecuritiesCompanyCode": "3105", "Close": "118.50"}],
     )
-    august = adapter.records_from_payload(
+    future_2027 = adapter.records_from_payload(
         "tw_price_daily",
         "TWSE",
-        [{"Date": "1150828", "Code": "2330", "ClosingPrice": "960.00"}],
+        [{"Date": "1160105", "Code": "2330", "ClosingPrice": "970.00"}],
     )
     assert "calendar_evidence" not in tpex[0].metadata
-    assert "calendar_evidence" not in august[0].metadata
+    assert "calendar_evidence" not in future_2027[0].metadata
 
 
 def test_taiwan_official_history_fetch_is_bounded_and_uses_prior_month(
