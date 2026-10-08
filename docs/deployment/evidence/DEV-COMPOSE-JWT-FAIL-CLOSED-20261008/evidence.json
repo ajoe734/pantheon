@@ -32,14 +32,16 @@
     "test_compose_operator_bff_wires_owner_service_jwt_credentials": {
       "file": "scripts/test_bootstrap_dev_paper_baseline.py",
       "classification": "intended_change",
-      "deciding_commit": "operator_pre_review_pr_6385",
-      "decision": "Commit fafd58620 / 62099dfef removed published defaults (pantheon-local-capital-jwt-secret, pantheon-local-registry-jwt-secret, pantheon-local-governance-jwt-secret) across all compose services, making all JWT_SECRET entries fail closed. Updated test expectations to match canonical fail-closed compose interpolation expressions without published local default secrets."
+      "deciding_commit": "operator 2026-10-08 JWT fail-closed",
+      "deciding_decision": "operator 2026-10-08 JWT fail-closed",
+      "decision": "operator 2026-10-08 JWT fail-closed: removed published defaults (pantheon-local-capital-jwt-secret, pantheon-local-registry-jwt-secret, pantheon-local-governance-jwt-secret) across all compose services, making all JWT_SECRET entries fail closed. Updated test expectations to match canonical fail-closed compose interpolation expressions without published local default secrets."
     },
     "test_dev_compose_forwards_bff_auth_env_with_dev_stub_default": {
       "file": "services/control-plane/bff/test_bff_oidc_staging_env_contract.py",
       "classification": "intended_change",
-      "deciding_commit": "operator_pre_review_pr_6385",
-      "decision": "Updated PANTHEON_BFF_JWT_SECRET compose assertion to reflect removal of published default pantheon-local-bff-jwt-secret in favor of ${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}."
+      "deciding_commit": "operator 2026-10-08 JWT fail-closed",
+      "deciding_decision": "operator 2026-10-08 JWT fail-closed",
+      "decision": "operator 2026-10-08 JWT fail-closed: updated PANTHEON_BFF_JWT_SECRET compose assertion to reflect removal of published default pantheon-local-bff-jwt-secret in favor of ${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}."
     }
   },
   "rendered_compose_verification": {
@@ -233,7 +235,7 @@
     ]
   },
   "local_verification": {
-    "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest -v services/runtime-manager/test_stage_promotion_compose.py scripts/test_bootstrap_dev_paper_baseline.py -k 'test_compose_operator_bff_wires_owner_service_jwt_credentials or test_compose_jwt_secrets_fail_closed_without_literal_defaults' services/control-plane/bff/test_bff_oidc_staging_env_contract.py -k test_dev_compose_forwards_bff_auth_env_with_dev_stub_default",
-    "result": "All compose JWT secret and deploy canary contract tests passed cleanly"
+    "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest -v scripts/test_bootstrap_dev_paper_baseline.py services/control-plane/bff/test_bff_oidc_staging_env_contract.py services/runtime-manager/test_stage_promotion_compose.py",
+    "result": "38 passed, 1 warning in 13.92s; all compose JWT secret and deploy canary contract tests passed cleanly"
   }
 }
