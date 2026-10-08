@@ -1,0 +1,63 @@
+{
+  "task_id": "L12-GATE-RUNTIME-CONTRACT-20261008",
+  "live_run": "Not performed here. The operator runs the live isolated runtime suite after merge; no docker and no shared dev lease were used.",
+  "mismatches": [
+    {
+      "id": 1,
+      "topic": "capital verifier secret",
+      "before": "scripts/run_isolated_l12_runtime_e2e.py _isolated_dev_principal_env never set CAPITAL_JWT_SECRET; capital verifies at services/capital/inbound_authority.py:103-107 and docker-compose.yml:1985 defaults it to pantheon-local-capital-jwt-secret, while issue_dev_paper_principals.py:35-36/90-104 sign with the dev BFF secret -> AUTH_JWT_BAD_SIGNATURE",
+      "after": "_isolated_dev_principal_env sets CAPITAL_JWT_SECRET and PANTHEON_CAPITAL_JWT_SECRET to the per-run secret, as scripts/deploy_nonprod_vm.sh:40,3731 does",
+      "test": "scripts/test_run_isolated_l12_runtime_e2e.py::test_capital_verifier_secret_matches_the_secret_signing_capital_reader_tokens"
+    },
+    {
+      "id": 2,
+      "topic": "L8 negative fixtures",
+      "replaced_assertions": [
+        {
+          "case": "negative_missing_market_symbol",
+          "before": "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py fleet exclusion 'non_executable_missing_market_symbol' for a RuntimeBinding; plan validation at suite _deploy_artifact asserted ok True",
+          "owner": "services/deployment/service.py:504-506 raises 'Inline paper artifact requires an explicit symbol or one approved symbol' (parent artifact has 3 symbols)",
+          "after": "POST /plans/validate must return ok False with 'explicit symbol'; POST /plans must be 400/409/422 with the same reason; plan GET is 404; no RuntimeBinding exists for the plan_id; fleet desired-state holds only the positive binding; queue depth 0",
+          "stronger_because": "rejection is asserted at the earliest owner boundary and absence of binding, plan and fleet entry is read back, instead of relying on a later exclusion"
+        },
+        {
+          "case": "negative_missing_artifact_checksum",
+          "before": "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py fleet exclusion 'non_executable_missing_artifact_checksum' after dispatch",
+          "owner": "services/deployment/service.py:494-501 stamps the Registry checksum into plan metadata; runtime-manager fleet_desired_state.py:303/307 exclusion strings still exist but are unreachable through deployment",
+          "after": "validated plan metadata artifact_checksum must equal the approved Registry entry checksum although the submitted plan omitted it; plan is not persisted (GET 404) so no second executable worker joins the fleet; fleet desired-state is exactly the positive binding; queue depth 0",
+          "stronger_because": "asserts the owner-stamped Registry checksum directly and that no checksum-less binding can exist"
+        }
+      ],
+      "unchanged": "case names, loop mapping and the downstream consumers (test_missing_* tests) keep the same assertion keys"
+    },
+    {
+      "id": 3,
+      "topic": "L12 reconciler attribution",
+      "before": "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py read loop-health row capital_pool_execution.downstream_actual_state; no product code writes that record and management_read_models/loop_truth.py:14-16 forbids synthesizing it from probes",
+      "after": "assert /bff/v5/downstream-health target paper-fleet-reconciler ok False with failure_reason (writer: services/control-plane/bff/downstream_health_monitor.py:2105 record_probe) and the bff_health_monitoring loop-health row degraded with healthy_targets_count < total_targets_count (writer: downstream_health_monitor.py:1859-1895 publish_loop_12_controller_truth). attribution loop_id is now bff_health_monitoring",
+      "dependency": "BFF-DOWNSTREAM-MONITOR-RESTART-20261008: the assertion is kept and stays red until the BFF starts the monitor loop"
+    },
+    {
+      "id": 4,
+      "topic": "compose file variable",
+      "before": "human suite :228 and research suite :180 read PANTHEON_L12_COMPOSE_FILE; harness exports PANTHEON_L12_COMPOSE_FILES (run_isolated_l12_runtime_e2e.py:1141)",
+      "after": "both suites use l12_owner_auth.compose_file_args() (plural os.pathsep list, legacy singular fallback); research case logic untouched",
+      "test": "test_suites_read_the_compose_file_list_the_harness_exports (non-default two-file list)"
+    },
+    {
+      "id": 5,
+      "topic": "agora/policy-learning tokens",
+      "before": "human suite :134,:138 defaulted to pantheon-local-agora-handoff-service-token / pantheon-local-policy-learning-service while owners took values from os.environ/.env",
+      "after": "_isolated_handoff_env generates per-run AGORA_HANDOFF_SERVICE_TOKEN, POLICY_LEARNING_SERVICE_TOKEN and tenants into compose_env, and test_env gets PANTHEON_L12_AGORA_HANDOFF_TOKEN, PANTHEON_L12_POLICY_LEARNING_TOKEN, PANTHEON_L12_HUMAN_LEARNING_TENANT_ID from the same values",
+      "test": "test_handoff_credentials_are_per_run_and_tenant_aligned"
+    }
+  ],
+  "noted_not_changed": [
+    "L9 Taiwan freshness depends on run time relative to the 13:30 Taipei close.",
+    "L7 needs the approved provider credential exported only by the isolated qualification workflow."
+  ],
+  "verification": {
+    "harness_and_principal_unit_tests": "65 passed",
+    "l12_suite_collection": "32 tests collected; 6 passed, 26 skipped (deployed-only)"
+  }
+}
