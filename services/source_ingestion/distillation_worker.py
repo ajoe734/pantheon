@@ -374,7 +374,18 @@ class DistillationJobQueue:
                 raise sqlite3.DatabaseError(
                     "distillation queue integrity check failed; offline recovery required"
                 )
-            connection.execute("PRAGMA journal_mode = WAL")
+            # First-time rollback->WAL conversion returns SQLITE_BUSY at once
+            # (the busy handler is not consulted) when a peer is initializing
+            # the same fresh file. Retry only that, within the 30s busy bound.
+            deadline = time.monotonic() + 30.0
+            while True:
+                try:
+                    connection.execute("PRAGMA journal_mode = WAL")
+                    break
+                except sqlite3.OperationalError as exc:
+                    if "locked" not in str(exc) or time.monotonic() >= deadline:
+                        raise
+                    time.sleep(0.02)
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS distillation_source_versions (
