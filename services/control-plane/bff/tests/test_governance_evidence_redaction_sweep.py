@@ -67,6 +67,14 @@ _APPROVAL_3_DECISION_ONLY: Dict[str, Any] = {
     "outcome": "approved",
     "evidence_refs": copy.deepcopy(_MIXED_REFS),
 }
+_APPROVAL_4_UNDER_REVIEW: Dict[str, Any] = {
+    "id": "approval-4",
+    "decision_id": "approval-4",
+    "tenant_id": "tenant-sweep",
+    "decision_type": "StrategySpec",
+    "decision_state": "under_review",
+    "evidence_refs": [],
+}
 _AUDIT_1: Dict[str, Any] = {
     "id": "audit-1",
     "action_type": "approval.reviewed",
@@ -379,7 +387,15 @@ def test_bff_approval_detail_alias_passes_through_for_full_capability_identity()
 # --- Governance approval queue (paginated) ----------------------------------
 
 
-def test_governance_approval_queue_redacted_count_scoped_to_returned_page() -> None:
+def test_governance_approval_queue_redacted_count_scoped_to_returned_page(monkeypatch) -> None:
+    # Since 224b60032 (BFF-APPROVAL-QUEUE-PROJECTION-20261007) the queue lists only
+    # pending decisions (proposed or under_review), the terminal approval-2 never
+    # appears, and so the second page holds the pending approval-4.
+    def call_owner(method, path, authorization, **_kwargs):
+        return [copy.deepcopy(_APPROVAL_1), copy.deepcopy(_APPROVAL_2), copy.deepcopy(_APPROVAL_4_UNDER_REVIEW)]
+
+    monkeypatch.setattr(approval_owner, "call_owner", call_owner)
+
     with _stub_auth_env():
         client = TestClient(_build_app())
 
@@ -402,10 +418,13 @@ def test_governance_approval_queue_redacted_count_scoped_to_returned_page() -> N
             params={"page_size": 1, "page_token": next_token},
             headers={"Authorization": LOW_CAPABILITY_TOKEN},
         )
+        assert page2.status_code == 200, page2.text
         page2_payload = page2.json()
-        assert page2_payload["items"][0]["decision_id"] == "approval-2"
+        assert page2_payload["items"][0]["decision_id"] == "approval-4"
         # page 2's item carries no evidence_refs, so nothing withheld on this page
         assert page2_payload["meta"]["redacted_evidence_count"] == 0
+        assert page2_payload["page_info"]["next_page_token"] is None
+        assert page2_payload["page_info"]["total"] == 2
 
 
 def test_governance_approval_queue_passes_through_for_full_capability_identity() -> None:
