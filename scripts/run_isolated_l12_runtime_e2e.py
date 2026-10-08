@@ -252,6 +252,17 @@ def _mint_projector_service_jwt(
     return f"{h}.{c}.{b64(sig)}"
 
 
+def _suite_service_token_env(compose_env: Mapping[str, str]) -> dict[str, str]:
+    """Service principals the domain suites present, taken from the composed issuers."""
+    return {
+        "PANTHEON_L12_AGORA_HANDOFF_TOKEN": compose_env["AGORA_HANDOFF_SERVICE_TOKEN"],
+        "PANTHEON_L12_POLICY_LEARNING_TOKEN": compose_env["POLICY_LEARNING_SERVICE_TOKEN"],
+        # The research suite calls the Training API as the preview worker with
+        # the same issuer-issued principal the worker reads from its token file.
+        "PANTHEON_L12_TRAINING_TOKEN": compose_env["TRAINING_SESSION_WORKER_TOKEN"],
+    }
+
+
 def _isolated_reader_token(compose_env: Mapping[str, str], subject: str) -> tuple[str, str]:
     """Mint a source-ingest reader token that the isolated stack accepts."""
     tenant = compose_env.get("PANTHEON_TENANT_ID") or compose_env.get("PANTHEON_BFF_TENANT_ID") or "default"
@@ -1257,8 +1268,7 @@ def main(argv: list[str] | None = None) -> int:
     test_env["PANTHEON_L12_SOURCE_READER_TOKEN"] = reader_token
     test_env["PANTHEON_L12_SOURCE_READER_TENANT_ID"] = reader_tenant
     test_env["PANTHEON_L12_TENANT_ID"] = compose_env["PANTHEON_BFF_TENANT_ID"]
-    test_env["PANTHEON_L12_AGORA_HANDOFF_TOKEN"] = compose_env["AGORA_HANDOFF_SERVICE_TOKEN"]
-    test_env["PANTHEON_L12_POLICY_LEARNING_TOKEN"] = compose_env["POLICY_LEARNING_SERVICE_TOKEN"]
+    test_env.update(_suite_service_token_env(compose_env))
     test_env["PANTHEON_L12_HUMAN_LEARNING_TENANT_ID"] = compose_env["POLICY_LEARNING_AGORA_TENANT_ID"]
     test_env["PANTHEON_L12_OPERATOR_TOKEN"] = _isolated_human_token(
         compose_env, "l12-domain-suites-operator", "operator", "persona.admin"

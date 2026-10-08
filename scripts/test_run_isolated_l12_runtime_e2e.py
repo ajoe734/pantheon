@@ -911,3 +911,33 @@ def test_bff_health_telemetry_principal_comes_from_the_same_issuer_and_verifies(
     with pytest.raises(AuthError):
         validate_request_auth(authorization=f"Bearer {token}", required_roles=("service",),
                               env={**verifier, "PANTHEON_RUNTIME_JWT_SECRET": "z" * 64})
+
+
+def test_research_suite_training_token_is_the_issued_worker_principal(monkeypatch: pytest.MonkeyPatch) -> None:
+    env = _composed_isolated_env()
+    env.update(harness._isolated_handoff_env(env))  # same composition order as the harness run
+    suite_env = harness._suite_service_token_env(env)
+
+    token = suite_env["PANTHEON_L12_TRAINING_TOKEN"]
+    assert token == env["TRAINING_SESSION_WORKER_TOKEN"]
+    authority = _training_authenticate(monkeypatch, env, token)
+    assert authority.actor_service == "training-session-preview-worker"
+    assert authority.tenant_id == "tenant-dev"
+
+
+def test_former_published_training_fixture_token_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    env = _composed_isolated_env()
+    # The fixture the research suite used to fall back to (gate run 37769132664).
+    published_fixture = (
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+        "eyJhbGxvd2VkX3RlbmFudHMiOlsiKiJdLCJyb2xlcyI6WyJ0cmFpbmluZy1zZXJ2aWNlIl0s"
+        "InNlcnZpY2UiOiJ0cmFpbmluZy1zZXNzaW9uLXByZXZpZXctd29ya2VyIiwic3ViIjoidHJh"
+        "aW5pbmctc2Vzc2lvbi1wcmV2aWV3LXdvcmtlciJ9."
+        "eb4LoU20NsZEfH8VYjhl1xyOaa37bzzg7yC-D87Uu2g"
+    )
+    with pytest.raises(Exception) as raised:
+        _training_authenticate(monkeypatch, env, published_fixture)
+    assert type(raised.value) is sys.modules["inbound_authority"].TrainingInboundAuthorityError
+    assert "BAD_SIGNATURE" in str(raised.value.code).upper()
