@@ -1,0 +1,12 @@
+{
+  "task_id": "DISTILL-WAL-INIT-20261008",
+  "root_cause": "First rollback->WAL conversion (PRAGMA journal_mode = WAL) on a fresh queue file returns SQLITE_BUSY immediately when a peer process is initializing the same file; busy_timeout is not consulted.",
+  "fix": "Bounded (30s deadline, matching existing busy timeout) retry of only that PRAGMA on 'locked' OperationalError in DistillationJobQueue._bootstrap; other errors and exhausted contention propagate. quick_check-before-schema unchanged. Net production +11 lines.",
+  "baseline_without_fix": "test_two_process_cold_start_initializes_fresh_queue fails 4/4 runs with sqlite3.OperationalError: database is locked at PRAGMA journal_mode = WAL",
+  "with_fix": {
+    "cold_start_test": "passes (3/3 runs at earlier size, plus full suites)",
+    "test_distillation_queue_lifetime + test_multi_process_source_reconciliation + test_distillation_worker + test_distillation_controller": "66 passed (/tmp/pantheon-pytest-env)",
+    "test_l12_dist_001_transactional_distillation": "30 passed (/tmp/l12venv; uvicorn missing in the other env)"
+  },
+  "not_done": "No live VM/deployment; CI and native integration pending; the CI37820069472 log was read, not re-run."
+}

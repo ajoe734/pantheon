@@ -195,6 +195,51 @@ def test_two_process_queue_preserves_versions_receipts_and_integrity(tmp_path, i
     assert not Path(f"{path}.sqlite3").exists()
 
 
+def _cold_constructor(path: str, barrier, index: int) -> None:
+    barrier.wait(timeout=30)
+    for round_ in range(5):
+        storage.DistillationJobQueue(f"{path}-{round_}")
+    storage.DistillationJobQueue(path)
+
+
+def _cold_round(ctx, root: Path, rounds: int) -> None:
+    # Fresh, never-initialized paths: both processes race the first
+    # PRAGMA journal_mode = WAL transition. Do not pre-create the queue.
+    for round_ in range(rounds):
+        barrier = ctx.Barrier(2)
+        base = root / f"cold-{round_}.sqlite3"
+        procs = [ctx.Process(target=_cold_constructor, args=(str(base), barrier, i))
+                 for i in range(2)]
+        for process in procs:
+            process.start()
+        for process in procs:
+            process.join(timeout=120)
+        for process in procs:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=10)
+        assert [p.exitcode for p in procs] == [0, 0], f"cold round {round_}"
+
+
+def test_two_process_cold_start_initializes_fresh_queue(tmp_path):
+    ctx = multiprocessing.get_context("spawn")
+    _cold_round(ctx, tmp_path, 6)
+    paths = sorted(tmp_path.glob("cold-*.sqlite3"))
+    assert len(paths) == 6
+    for path in paths:
+        queue = storage.DistillationJobQueue(path)
+        source = SourceRecord(
+            source_id="cold", connector_id="local-regression", source_type="paper",
+            status="normalized", title="cold", content_ref="file:///synthetic/cold",
+            metadata={},
+        )
+        job = queue.enqueue_source_record(source)
+        assert [j.job_id for j in queue.list_all()] == [job.job_id]
+        with closing(sqlite3.connect(path)) as conn:
+            assert conn.execute("PRAGMA quick_check").fetchall() == [("ok",)]
+            assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+
 def test_controller_reuses_one_queue_across_ticks(tmp_path, monkeypatch):
     config = controller.DistillationControllerConfig(
         database_url="unused", registry_url="http://unused.invalid", interval_seconds=1,
