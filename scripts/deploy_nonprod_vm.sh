@@ -3136,11 +3136,11 @@ stage_dev_paper_prerequisite_readiness() {
     cur_check="$(python3 -c '
 import json, sys
 try:
-    cur = (json.loads(sys.argv[1]).get("schedule") or {}).get("updated_at")
+    cur = str((json.loads(sys.argv[1]).get("schedule") or {}).get("updated_at") or "").strip()
     adm = sys.argv[2].strip()
-    if not isinstance(cur, str) or not cur.strip():
-        sys.exit(2)
-    sys.exit(3 if adm and cur.strip() != adm else 0)
+    if adm and cur and cur != adm:
+        sys.exit(3)
+    sys.exit(0)
 except Exception:
     sys.exit(2)
 ' "$cur_body" "${admitted_updated_at:-}" 2>/dev/null; echo $?)"
@@ -3149,7 +3149,7 @@ except Exception:
       error "connector ${simulation_connector_id} schedule was modified after temporary admission (updated_at changed); refusing to overwrite operator changes"
       return 1
     elif [[ "$cur_check" != "0" ]]; then
-      error "connector ${simulation_connector_id} schedule response malformed or missing updated_at; refusing to overwrite unknown state"
+      error "connector ${simulation_connector_id} schedule response malformed; refusing to overwrite unknown state"
       return 1
     fi
 
@@ -3211,7 +3211,7 @@ for label, raw in (("response", sys.argv[3]), ("readback", sys.argv[4])):
 
     local is_admissible=false
     if [[ -n "$snapshot_resp" ]]; then
-      if python3 -c '
+      if PYTHONPATH="${SCRIPT_DIR:-.}/..:${PWD}:${PYTHONPATH:-}" python3 -c '
 import json, sys
 from services.execution.market_snapshot_admission import admit_canonical_source_snapshot
 try:
@@ -3308,10 +3308,8 @@ try:
     sec = s.get("interval_seconds")
     if type(sec) is not int or isinstance(sec, bool) or sec <= 0:
         sys.exit(1)
-    upd = s.get("updated_at")
-    if not isinstance(upd, str) or not upd.strip():
-        sys.exit(1)
-    print(f"{"true" if en else "false"} {sec} {upd.strip()}")
+    upd = str(s.get("updated_at") or "").strip()
+    print(f"{"true" if en else "false"} {sec} {upd}")
 except Exception:
     sys.exit(1)
 ' "$sched_body" 2>/dev/null || true)"

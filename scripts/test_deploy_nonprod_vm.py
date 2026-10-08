@@ -1343,10 +1343,18 @@ def test_verify_exact_component_deployment_staged_paper_readiness_ordering(
 
     # 2. Post-readiness snapshot: contains explicit market="US"
     post_readiness_snapshot = {
+        "schema_version": "source_ingest_latest_market_snapshot.v1",
+        "snapshot_id": "mss-6861736863616e6f6e696361",
         "symbol": "SPY",
+        "event_time": now_utc_str,
+        "observed_at": now_utc_str,
         "closes": [500.0, 502.0],
         "market": "US",
-        "event_time": now_utc_str,
+        "source_ref": "source-ingest://snapshots/mss-6861736863616e6f6e696361",
+        "lineage": {
+            "source_ids": ["us-equity:test"],
+            "connector_ids": ["dev-paper-us-equity-simulation"],
+        },
     }
     binding_post = {
         **binding_pre,
@@ -1369,6 +1377,7 @@ def test_verify_exact_component_deployment_staged_paper_readiness_ordering(
     snapshot_file = tmp_path / "snapshot_state.json"
     snapshot_file.write_text(json.dumps(pre_change_snapshot), encoding="utf-8")
 
+    post_snapshot_json = json.dumps(post_readiness_snapshot)
     mock_curl = bin_dir / "curl"
     mock_curl.write_text(
         f"""#!/usr/bin/env bash
@@ -1378,7 +1387,7 @@ for arg in "$@"; do
     exit 0
   fi
   if [[ "$arg" == *"/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule"* ]]; then
-    echo '{{"status": "ok", "schedule": {{"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400}}}}'
+    echo '{{"status": "ok", "schedule": {{"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "{now_utc_str}"}}}}'
     if [[ " $* " == *"-w "* ]]; then
       echo "200"
     fi
@@ -1393,7 +1402,7 @@ for arg in "$@"; do
   fi
   if [[ "$arg" == *"/api/source-ingest/run-scheduled"* ]]; then
     cat <<'EOF' >"$SNAPSHOT_STATE_FILE"
-{{"symbol": "SPY", "closes": [500.0, 502.0], "market": "US", "event_time": "{now_utc_str}"}}
+{post_snapshot_json}
 EOF
     echo '{{"status": "ok", "summary": {{"total_ran": 1, "total_failed": 0}}}}'
     if [[ " $* " == *"-w "* ]]; then
@@ -1507,6 +1516,7 @@ error() {{ echo "[error] $*" >&2; exit 1; }}
 {verify_def}
 
 export PATH="{bin_dir}:$PATH"
+export PYTHONPATH="{ROOT}:${{PYTHONPATH:-}}"
 export SNAPSHOT_STATE_FILE="{snapshot_file}"
 export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
 export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"

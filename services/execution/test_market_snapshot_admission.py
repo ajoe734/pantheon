@@ -198,3 +198,109 @@ def test_admit_canonical_source_snapshot_rejects_stale_us_snapshot() -> None:
     decision = admit_canonical_source_snapshot(data, expected_symbol="SPY", max_age_seconds=86400)
     assert decision.admitted is False
     assert decision.reason_code == "market_input_stale"
+
+
+def test_public_dto_missing_schema_version_symbol_market_rejected() -> None:
+    for missing_field in ("schema_version", "symbol", "market"):
+        pub = _make_canonical_snapshot(as_public=True)
+        del pub[missing_field]
+        dec1 = admit_canonical_source_snapshot(pub, expected_symbol="SPY")
+        assert dec1.admitted is False
+        assert dec1.reason_code == "market_input_missing"
+        assert missing_field in (dec1.detail or "")
+
+    # For symbol, admit_market_snapshot also requires symbol
+    pub_no_sym = _make_canonical_snapshot(as_public=True)
+    del pub_no_sym["symbol"]
+    dec_no_sym = admit_market_snapshot(pub_no_sym, expected_symbol="SPY", max_age_seconds=86400)
+    assert dec_no_sym.admitted is False
+    assert dec_no_sym.reason_code == "market_input_missing"
+    assert "symbol" in (dec_no_sym.detail or "")
+
+    # For market, canonical Source DTO with schema_version delegates to canonical admission
+    pub_no_mkt = _make_canonical_snapshot(as_public=True)
+    del pub_no_mkt["market"]
+    dec_no_mkt = admit_market_snapshot(pub_no_mkt, expected_symbol="SPY", max_age_seconds=86400)
+    assert dec_no_mkt.admitted is False
+    assert dec_no_mkt.reason_code == "market_input_missing"
+    assert "market" in (dec_no_mkt.detail or "")
+
+
+def test_public_dto_invalid_schema_version_rejected() -> None:
+    for bad_ver in (999, "999", "v2", "source_ingest_latest_market_snapshot.v999"):
+        pub = _make_canonical_snapshot(as_public=True)
+        pub["schema_version"] = bad_ver
+        dec1 = admit_canonical_source_snapshot(pub, expected_symbol="SPY")
+        assert dec1.admitted is False
+        assert dec1.reason_code == "market_input_invalid"
+        assert "schema_version" in (dec1.detail or "")
+
+        dec2 = admit_market_snapshot(pub, expected_symbol="SPY", max_age_seconds=86400)
+        assert dec2.admitted is False
+        assert dec2.reason_code == "market_input_invalid"
+        assert "schema_version" in (dec2.detail or "")
+
+
+def test_public_dto_bool_closes_rejected() -> None:
+    for bad_closes in ([True, False], [500.0, True], [False, 502.0]):
+        pub = _make_canonical_snapshot(as_public=True)
+        pub["closes"] = bad_closes
+        dec1 = admit_canonical_source_snapshot(pub, expected_symbol="SPY")
+        assert dec1.admitted is False
+        assert dec1.reason_code == "market_input_invalid"
+        assert "positive finite number" in (dec1.detail or "")
+
+        dec2 = admit_market_snapshot(pub, expected_symbol="SPY", max_age_seconds=86400)
+        assert dec2.admitted is False
+        assert dec2.reason_code == "market_input_invalid"
+        assert "positive finite number" in (dec2.detail or "")
+
+
+def test_public_dto_malformed_lineage_rejected() -> None:
+    for bad_lineage in (
+        "tw-official:feed",
+        {"source_ids": "not_a_list"},
+        {"connector_ids": "not_a_list"},
+        {"source_ids": [123]},
+        {"source_ids": [""]},
+        {},
+    ):
+        pub = _make_canonical_snapshot(as_public=True)
+        pub["lineage"] = bad_lineage
+        dec1 = admit_canonical_source_snapshot(pub, expected_symbol="SPY")
+        assert dec1.admitted is False
+        assert dec1.reason_code == "market_input_invalid"
+
+        dec2 = admit_market_snapshot(pub, expected_symbol="SPY", max_age_seconds=86400)
+        assert dec2.admitted is False
+        assert dec2.reason_code == "market_input_invalid"
+
+
+def test_admission_functions_converge_on_missing_observed_at() -> None:
+    # Public Source DTO without observed_at
+    pub = _make_canonical_snapshot(as_public=True)
+    del pub["observed_at"]
+    dec_canon = admit_canonical_source_snapshot(pub, expected_symbol="SPY")
+    dec_market = admit_market_snapshot(pub, expected_symbol="SPY", max_age_seconds=86400)
+
+    assert dec_canon.admitted is False
+    assert dec_market.admitted is False
+    assert dec_canon.reason_code == "market_input_missing"
+    assert dec_market.reason_code == "market_input_missing"
+    assert "observed_at" in (dec_canon.detail or "")
+    assert "observed_at" in (dec_market.detail or "")
+
+    # Non-canonical snapshot without observed_at
+    raw = {
+        "snapshot_id": "snap-us-custom",
+        "symbol": "AAPL.US",
+        "event_time": "2026-10-08T01:00:00Z",
+        "source_ref": "source-ref-1",
+        "lineage": {"source": "manual"},
+        "closes": [150.0, 151.0],
+    }
+    dec_market_raw = admit_market_snapshot(raw, expected_symbol="AAPL.US", max_age_seconds=86400)
+    assert dec_market_raw.admitted is False
+    assert dec_market_raw.reason_code == "market_input_missing"
+    assert "observed_at" in (dec_market_raw.detail or "")
+
