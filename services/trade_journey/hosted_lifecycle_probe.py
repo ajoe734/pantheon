@@ -673,6 +673,13 @@ def _normalize_case_record(record: Mapping[str, Any]) -> dict[str, Any]:
     def pick(*keys: str) -> str:
         return next((str(v) for k in keys for v in (record.get(k), refs.get(k), res.get(k), entry.get(k)) if v), "")
 
+    rb = _json_object(refs.get("authoritative_readback") or res.get("authoritative_readback"))
+    bind, dep = _json_object(rb.get("runtime_binding")), _json_object(rb.get("deployment"))
+
+    def owner(key: str, *nested: Mapping[str, Any]) -> str:
+        vals = {str(m[key]) for m in nested if m.get(key)}
+        return vals.pop() if len(vals) == 1 else ""
+
     norm = {
         "tenant_id": str(record.get("tenant_id") or ""),
         "persona_id": str(record.get("persona_id") or ""),
@@ -681,9 +688,9 @@ def _normalize_case_record(record: Mapping[str, Any]) -> dict[str, Any]:
         "artifact_state": str(record.get("artifact_state") or entry.get("artifact_state") or ""),
         "runtime_binding_id": pick("runtime_binding_id"),
         "runtime_id": pick("runtime_id"),
-        "capital_pool_id": pick("capital_pool_id"),
-        "deployment_plan_id": pick("deployment_plan_id"),
-        "persona_capital_binding_id": pick("persona_capital_binding_id"),
+        "capital_pool_id": pick("capital_pool_id") or owner("capital_pool_id", bind),
+        "deployment_plan_id": pick("deployment_plan_id") or owner("plan_id", dep, bind),
+        "persona_capital_binding_id": pick("persona_capital_binding_id") or owner("persona_capital_binding_id", bind),
         "artifact_id": pick("artifact_id", "registry_id", "strategy_artifact_id"),
         "artifact_version": pick("artifact_version", "version"),
         "artifact_checksum": record.get("artifact_checksum") or entry.get("checksum") or res.get("artifact_checksum"),
