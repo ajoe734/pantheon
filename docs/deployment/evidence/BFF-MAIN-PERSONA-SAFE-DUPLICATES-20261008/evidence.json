@@ -1,0 +1,198 @@
+{
+ "task_id": "BFF-MAIN-PERSONA-SAFE-DUPLICATES-20261008",
+ "base": "dev 3faddc34d",
+ "pre_removal_check": "AST compare of base main.py vs personas/service.py: body ast.dump equal, recursive module-level dependency closure name-set equal with equal ast per dependency; imported names listed (function-local names are not module-level).",
+ "removed_from_main": {
+  "_read_surface_state": {
+   "body_identical": true,
+   "recursive_module_level_deps": [],
+   "dep_sets_equal": true,
+   "dep_bodies_identical": {
+    "_read_surface_state": true
+   },
+   "main_imports": {
+    "os": "import os"
+   },
+   "service_imports": {
+    "os": "import os"
+   }
+  },
+  "_loop_run_controller_is_formal": {
+   "body_identical": true,
+   "recursive_module_level_deps": [
+    "_LOOP_RUN_PROJECTION_SCHEMA"
+   ],
+   "dep_sets_equal": true,
+   "dep_bodies_identical": {
+    "_loop_run_controller_is_formal": true,
+    "_LOOP_RUN_PROJECTION_SCHEMA": true
+   },
+   "main_imports": {
+    "Any": "from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, NoReturn, Optional, Sequence, Set, Tuple",
+    "Mapping": "from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, NoReturn, Optional, Sequence, Set, Tuple"
+   },
+   "service_imports": {
+    "Any": "from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union",
+    "Mapping": "from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union"
+   }
+  },
+  "_INCIDENT_SEVERITY_MAP": {
+   "body_identical": true,
+   "recursive_module_level_deps": [],
+   "dep_sets_equal": true,
+   "dep_bodies_identical": {
+    "_INCIDENT_SEVERITY_MAP": true
+   },
+   "main_imports": {},
+   "service_imports": {}
+  },
+  "_incident_home_severity": {
+   "body_identical": true,
+   "recursive_module_level_deps": [
+    "_INCIDENT_SEVERITY_MAP"
+   ],
+   "dep_sets_equal": true,
+   "dep_bodies_identical": {
+    "_incident_home_severity": true,
+    "_INCIDENT_SEVERITY_MAP": true
+   },
+   "main_imports": {
+    "Optional": "from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, NoReturn, Optional, Sequence, Set, Tuple"
+   },
+   "service_imports": {
+    "Optional": "from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union"
+   }
+  },
+  "_management_number": {
+   "body_identical": true,
+   "recursive_module_level_deps": [],
+   "dep_sets_equal": true,
+   "dep_bodies_identical": {
+    "_management_number": true
+   },
+   "main_imports": {
+    "Any": "from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, NoReturn, Optional, Sequence, Set, Tuple",
+    "Optional": "from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, NoReturn, Optional, Sequence, Set, Tuple"
+   },
+   "service_imports": {
+    "Any": "from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union",
+    "Optional": "from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union"
+   }
+  },
+  "_management_avg": {
+   "body_identical": true,
+   "recursive_module_level_deps": [],
+   "dep_sets_equal": true,
+   "dep_bodies_identical": {
+    "_management_avg": true
+   },
+   "main_imports": {
+    "List": "from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, NoReturn, Optional, Sequence, Set, Tuple",
+    "Optional": "from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, NoReturn, Optional, Sequence, Set, Tuple"
+   },
+   "service_imports": {
+    "List": "from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union",
+    "Optional": "from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union"
+   }
+  },
+  "_management_count_by": {
+   "body_identical": true,
+   "recursive_module_level_deps": [],
+   "dep_sets_equal": true,
+   "dep_bodies_identical": {
+    "_management_count_by": true
+   },
+   "main_imports": {
+    "Any": "from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, NoReturn, Optional, Sequence, Set, Tuple",
+    "Dict": "from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, NoReturn, Optional, Sequence, Set, Tuple",
+    "List": "from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, NoReturn, Optional, Sequence, Set, Tuple"
+   },
+   "service_imports": {
+    "Any": "from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union",
+    "Dict": "from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union",
+    "List": "from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union"
+   }
+  },
+  "_deprecated_bff_path_response": {
+   "body_identical": true,
+   "recursive_module_level_deps": [
+    "_PATH_DEDUPE_DEPRECATED_SINCE",
+    "_PATH_DEDUPE_SUNSET_HTTP_DATE"
+   ],
+   "dep_sets_equal": true,
+   "dep_bodies_identical": {
+    "_PATH_DEDUPE_SUNSET_HTTP_DATE": true,
+    "_deprecated_bff_path_response": true,
+    "_PATH_DEDUPE_DEPRECATED_SINCE": true
+   },
+   "main_imports": {
+    "ErrorCode": "from .models import ActionCommandStatus, ApproveMutationCommandPayload, AuditContext, SseEventEnvelope, BffActionCatalogResponse, BffErrorEnvelope, BffErrorPayload, CommandReceipt, CommandReceiptStatus, CommandResponse, CommandResultMeta, CommandRoutingPath, CommandStatus, CommandSubmissionResponse, CommandStatusResponse, CommandType, DecisionJournalEntryDTO, ErrorCode, ErrorDetail, JournalEntryMergePatch, McpImportedTool, McpRejectedTool, McpToolActionData, McpToolActionRequest, McpToolActionVerb, McpToolDescriptor, McpToolImportData, McpToolImportRequest, McpToolLifecycleStatus, ObjectType, OperatorCommand, OperatorIdentity, EVIDENCE_CAPABILITY_MAP, SOURCE_TYPE_TO_EVIDENCE_KIND, RecordSponsorDecisionCommandPayload, RejectMutationCommandPayload, ReviewMutationCommandPayload, ExecuteMutationCommandPayload, StalenessWarning, TargetObject, utc_now",
+    "JSONResponse": "from fastapi.responses import JSONResponse, StreamingResponse"
+   },
+   "service_imports": {
+    "ErrorCode": "from ..models import ActionCommandStatus, ApproveMutationCommandPayload, AuditContext, SseEventEnvelope, BffActionCatalogResponse, BffErrorEnvelope, BffErrorPayload, CommandReceipt, CommandReceiptStatus, CommandResponse, CommandResultMeta, CommandRoutingPath, CommandStatus, CommandSubmissionResponse, CommandStatusResponse, CommandType, DecisionJournalEntryDTO, ErrorCode, ErrorDetail, JournalEntryMergePatch, McpImportedTool, McpRejectedTool, McpToolActionData, McpToolActionRequest, McpToolActionVerb, McpToolDescriptor, McpToolImportData, McpToolImportRequest, McpToolLifecycleStatus, ObjectType, OperatorCommand, OperatorIdentity, EVIDENCE_CAPABILITY_MAP, SOURCE_TYPE_TO_EVIDENCE_KIND, redact_evidence_refs, RecordSponsorDecisionCommandPayload, RejectMutationCommandPayload, ReviewMutationCommandPayload, ExecuteMutationCommandPayload, StalenessWarning, TargetObject, utc_now",
+    "JSONResponse": "from starlette.responses import JSONResponse"
+   }
+  }
+ },
+ "json_response_identity": {
+  "fastapi.responses.JSONResponse is starlette.responses.JSONResponse": true
+ },
+ "main_py_changes": "8 definitions removed (-82 lines); imports added from .personas.service only for names main still calls: _read_surface_state, _loop_run_controller_is_formal, _incident_home_severity, _management_count_by. _INCIDENT_SEVERITY_MAP, _management_number, _management_avg, _deprecated_bff_path_response are not referenced by remaining main.py code. main module __getattr__ falls back to assistant.management_service for undefined names, so getattr(main, '_management_number') resolves to that module's copy, not a main definition; test checks vars(main).",
+ "app_factory": "Added explicit _resolve_default_dependency branch for _read_surface_state; _deprecated_bff_path_response branch already existed. Unknown names still raise UnresolvedBffDependency.",
+ "callers_updated": [
+  "smoke_test.py",
+  "tests/test_read_surface_caller_migration.py"
+ ],
+ "new_test": "tests/test_persona_main_residue.py::test_safe_duplicate_names_have_single_persona_service_owner (AST: no main definition; identity vs personas.service; resolver identity for the two resolver names; compose_bff_app).",
+ "excluded_unchanged": {
+  "_composed_dataset_surface_status": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_composed_surface_status": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_dataset_source_after_read": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_dataset_surface_status": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_decode_page_token": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_foundation_audit_for_command_record": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_latest_promotion_review_command": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_list_governance_audit_events": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_list_persona_records": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_loop_run_projection_metadata": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_loop_run_surface_status": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_loop_run_truth_source": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_meta_staleness": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_page_slice": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_parse_rfc3339": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_performance_ranking_source_surface": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_project_final_command_response": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_promotion_review_decision_projection": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_promotion_review_submission_projection": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_raise_if_read_surface_unavailable": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_read_store_fixture_records": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_read_surface_meta": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_sem_command_response": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed.",
+  "_surface_status": "different body, module-level dependency that differs (utc_now rebound to _utc_now_rfc3339, _bff_error vs auth_policy.bff_error), or read_store/command_store vs _get_active_* store binding; per operator decision. Service copies of _foundation_audit_for_command_record and _project_final_command_response reference main-only functions (look dead/broken); not changed."
+ },
+ "tests": {
+  "interpreter": "runtime/worker-test-python/current",
+  "base_vs_head": {
+   "tests/test_persona_main_residue.py": {
+    "base": "2 passed",
+    "head": "3 passed"
+   },
+   "tests/test_read_surface_caller_migration.py": {
+    "base": "1 failed (test_main_py_all_read_store_attributes_are_inventoried_and_mapped: 24 != 25), 28 passed",
+    "head": "identical: 1 failed same assertion, 28 passed (pre-existing)"
+   },
+   "tests/test_bff_test_architecture.py": {
+    "base": "39 passed",
+    "head": "39 passed"
+   },
+   "smoke_test.py": {
+    "head": "26 passed"
+   },
+   "tests/test_bff_management_cockpit.py": {
+    "head": "10 passed"
+   }
+  }
+ },
+ "personas_service_py_edited": false
+}

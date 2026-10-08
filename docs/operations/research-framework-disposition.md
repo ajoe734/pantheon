@@ -25,7 +25,7 @@ The previous vectorbt 0.26.2 and statsmodels 0.14.2 pins were advanced to the cu
 ## Existing ownership and boundaries
 
 - Research is the sole owner/executor after `BFF-RESEARCH-SINGLE-OWNER-001`; this change adds no dispatcher or registry.
-- RLlib/Ray files and lock remain excluded for `DIRECT-RAY-BASELINE-001`.
+- `DIRECT-RAY-BASELINE-001` was NOT DELIVERED: its branch has no commits beyond `775647a93`, and its workspace was removed by a host `/tmp` cleanup on 2026-10-04. RLlib/Ray source and lock stay exactly as on `dev`; any future Ray baseline is a new task.
 - `services/research/requirements.txt` is deprecated and is not an install input.
 - Keep vectorbt and statsmodels as Research-only adapters. Their outputs remain non-executable research artifacts; policy authority, dataset admission, and lineage remain in their existing owners.
 - Do not change Compose here. For `OSS-INFRA-PROFILES-002`, the verified profile contract is Python 3.12, separate hash-locked environments per scientific runtime, and exact lock paths above. Do not merge these locks or constrain them with `constraints-research.txt`'s MLflow/QuantLib NumPy baseline.

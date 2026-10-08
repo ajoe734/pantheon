@@ -1,0 +1,39 @@
+{
+  "task_id": "RECON-DRIFT-DEV-POSTGRES-STORE-20261008",
+  "change_class": "corrective",
+  "summary": "Run dev reconciliation-drift on the existing Postgres store like the control topology.",
+  "incident_context": {
+    "hosted_measurements": {
+      "drift_evaluations_size": "37MB",
+      "work_claims_size": "24MB",
+      "drift_reports_size": "10MB",
+      "incident_listener_first_tick": "about 30 minutes",
+      "deploy_health_window": "about 8 minutes",
+      "failed_deploy_run": "37719887861",
+      "failed_service": "reconciliation-drift-incident-listener",
+      "failure_symptom": "incident listener unhealthy due to first tick taking ~30m to process oversized JSON ledger"
+    },
+    "operator_live_repair": {
+      "action": "The Postgres store starts empty and the operator archived the oversized JSON ledger on the dev volume on 2026-10-08 as a temporary live repair.",
+      "migration_policy": "No code migrates or deletes the existing JSON files. Single mechanism matching control topology."
+    }
+  },
+  "acceptance_verification": {
+    "ac1_dev_compose_and_deploy_select_postgres": "passed: docker-compose.yml defaults RECONCILIATION_DRIFT_STORE_BACKEND to postgres matching docker-compose.control.yml:657, and scripts/deploy_nonprod_vm.sh exports RECONCILIATION_DRIFT_STORE_BACKEND=postgres and DSN for hosted dev deployment. The JSON file store is no longer the dev default.",
+    "ac2_postgres_dsn_non_admin_role": "passed: Postgres DSN follows the standard non-admin pantheon_app owner-store pattern (postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon). No new store class, second backend, or fallback was added.",
+    "ac3_fail_closed_test": "passed: test_reconciliation_drift_compose_environment_builds_postgres_store_and_fails_closed_without_dsn in test_reconciliation_drift_compose_activation.py proves the service builds PostgresReconciliationDriftStore from the dev compose environment and fails closed with ValueError when DSN is missing without falling back to JSON.",
+    "ac4_no_json_migration_empty_store": "passed: No code migrates or deletes existing JSON files. Evidence states Postgres store starts empty and operator archived oversized JSON files on 2026-10-08.",
+    "ac5_tests_and_loopback_postgres": "passed: All 130 reconciliation-drift tests pass. Live Postgres test test_live_postgres_reconciliation_drift_store_loopback in test_reconciliation_drift_store.py runs against disposable loopback database when TEST_DATABASE_URL is set, or reports skipped with explicit reason when unset.",
+    "ac6_hosted_measurements_recorded": "passed: Recorded hosted measurements (drift_evaluations 37MB, work_claims 24MB, drift_reports 10MB; incident listener first tick ~30 minutes against deploy health window of ~8 minutes; deploy run 37719887861 failed on reconciliation-drift-incident-listener unhealthy)."
+  },
+  "local_verification": {
+    "commands": [
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py",
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_store.py",
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest scripts/test_deploy_nonprod_vm.py -k test_deploy_nonprod_vm_wires_dev_reconciliation_drift_postgres_store",
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest scripts/test_deploy_nonprod_vm.py -k test_deploy_nonprod_vm_dry_run_execution",
+      "bash -n scripts/deploy_nonprod_vm.sh"
+    ],
+    "result": "passed: compose activation (2 passed), store tests (27 passed, 1 skipped for missing TEST_DATABASE_URL), deploy vm wiring test (1 passed), deploy vm dry run (1 passed), deploy script syntax check (passed)."
+  }
+}

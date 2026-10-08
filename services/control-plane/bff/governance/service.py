@@ -844,20 +844,12 @@ class GovernanceService:
         allowed_actions = self._memo_allowed_actions(memo, identity=identity, surface_state=surface_state)
         hide_memo_content = surface_state == "unavailable"
         evidence_refs = [] if hide_memo_content else copy.deepcopy(memo.get("evidence_refs") or [])
-        try:
-            capabilities = self.capabilities_for_identity(identity)
-        except Exception:
-            capabilities = None
-        if capabilities is None:
-            # A missing or failed capability lookup must fail closed: pass an
-            # explicit empty capability set so the canonical redactor gates
-            # every capability-required evidence ref, instead of silently
-            # letting an unknown capability set through unredacted.
-            capabilities = []
-        try:
-            evidence_refs, redacted_count = self.redact_evidence_refs(identity, evidence_refs, capabilities=capabilities)
-        except Exception:
-            evidence_refs, redacted_count = self._fail_closed_redact_evidence_refs(identity, evidence_refs, capabilities=[])
+        evidence_refs, redacted_count = safe_redact_evidence_refs(
+            identity,
+            evidence_refs,
+            redact_fn=self.redact_evidence_refs,
+            capabilities_fn=self.capabilities_for_identity,
+        )
         meta = {
             "snapshot_at": snap,
             "staleness": self._memo_staleness(surface_state, snapshot_at=snap),
@@ -1195,16 +1187,12 @@ class GovernanceService:
         proposed_changes.setdefault("downstream_plane", (decision.get("execution_result") or {}).get("plane"))
         proposed_changes.setdefault("change_details", [])
 
-        try:
-            capabilities = self.capabilities_for_identity(identity)
-        except Exception:
-            capabilities = None
-        if capabilities is None:
-            capabilities = []
-        try:
-            evidence_refs, redacted_count = self.redact_evidence_refs(identity, evidence_refs, capabilities=capabilities)
-        except Exception:
-            evidence_refs, redacted_count = self._fail_closed_redact_evidence_refs(identity, evidence_refs, capabilities=[])
+        evidence_refs, redacted_count = safe_redact_evidence_refs(
+            identity,
+            evidence_refs,
+            redact_fn=self.redact_evidence_refs,
+            capabilities_fn=self.capabilities_for_identity,
+        )
 
         risk_assessment.setdefault(
             "risk_summary",
@@ -1461,6 +1449,8 @@ class GovernanceService:
             "meta": {
                 "snapshot_at": self.utc_now(),
                 "policy": "read_only_governance_ledger",
+                "surfaces": {"governance_ledger": {"status": "ok", "source": "bff_composed"}},
+                "composition_sources": ["GET /bff/audit", "GET /bff/approvals", "GET /bff/v5/interventions"],
                 "filters": {"source_type": source_type, "status": status, "q": q},
             },
         }

@@ -34,6 +34,7 @@ FULL_CAPABILITY_TOKEN = "Bearer admin-sweep-1:admin"
 # "operator", which holds both) -- it is the low-capability identity that
 # actually exercises redaction on consult-request context_refs.
 CONTEXT_REF_LOW_CAPABILITY_TOKEN = "Bearer reviewer-sweep-1:reviewer"
+VIEWER_TOKEN = "Bearer viewer-sweep-1:viewer"
 
 _ALERT_REF = {"ref_id": "ref-alert-ev", "type": "alert"}
 _METRIC_REF = {"ref_id": "ref-metric-ev", "type": "metric"}
@@ -66,6 +67,14 @@ _APPROVAL_3_DECISION_ONLY: Dict[str, Any] = {
     "decision_state": "approved",
     "outcome": "approved",
     "evidence_refs": copy.deepcopy(_MIXED_REFS),
+}
+_APPROVAL_4_UNDER_REVIEW: Dict[str, Any] = {
+    "id": "approval-4",
+    "decision_id": "approval-4",
+    "tenant_id": "tenant-sweep",
+    "decision_type": "StrategySpec",
+    "decision_state": "under_review",
+    "evidence_refs": [],
 }
 _AUDIT_1: Dict[str, Any] = {
     "id": "audit-1",
@@ -130,6 +139,61 @@ _CONSULT_REQUEST_1: Dict[str, Any] = {
     },
     "allowedActions": {"canCancel": True},
 }
+_ROLLBACK_REVIEW_1: Dict[str, Any] = {
+    "rollback_id": "rollback-rb-001",
+    "target_plan_id": "plan-dp-000",
+    "trigger_reason": "Automated risk trigger: max_drawdown threshold breached during paper trading window.",
+    "position_impact": [
+        {
+            "binding_id": "binding-001",
+            "persona_id": "persona-alpha",
+            "current_stage": "paper",
+            "target_stage": "paper",
+            "position_impact_summary": "Open long position of 4% portfolio weight will be closed before rollback. No live positions affected.",
+            "position_data_stale": False,
+        }
+    ],
+    "affected_bindings": [
+        {
+            "binding_id": "binding-001",
+            "persona_id": "persona-alpha",
+            "capital_pool_id": "pool-002",
+            "current_stage": "paper",
+        }
+    ],
+    "trigger_evidence": {
+        "trigger_reason": "Automated risk trigger: max_drawdown threshold breached during paper trading window.",
+        "evidence_refs": copy.deepcopy(_MIXED_REFS),
+        "linked_incident_id": "inc-001",
+    },
+    "allowedActions": {
+        "canApproveRollback": False,
+        "canRejectRollback": True,
+    },
+    "meta": {
+        "snapshot_at": "2026-04-16T10:00:00Z",
+        "surfaces": {
+            "rollback_review": {"status": "ok", "snapshot_at": "2026-04-16T10:00:00Z", "available": True},
+            "position_data": {"status": "ok", "snapshot_at": "2026-04-16T10:00:00Z", "available": True},
+            "allowedActions": {
+                "status": "ok",
+                "snapshot_at": "2026-04-16T10:00:00Z",
+                "available": True,
+                "missing_message": None,
+            },
+        },
+    },
+}
+_ROLLBACK_REVIEW_NO_TRIGGER_EV: Dict[str, Any] = {
+    k: copy.deepcopy(v)
+    for k, v in _ROLLBACK_REVIEW_1.items()
+    if k != "trigger_evidence"
+}
+_ROLLBACK_REVIEW_NO_TRIGGER_EV["rollback_id"] = "rollback-rb-no-trigger-ev"
+
+_ROLLBACK_REVIEW_EMPTY_REFS: Dict[str, Any] = copy.deepcopy(_ROLLBACK_REVIEW_1)
+_ROLLBACK_REVIEW_EMPTY_REFS["rollback_id"] = "rollback-rb-empty-refs"
+_ROLLBACK_REVIEW_EMPTY_REFS["trigger_evidence"]["evidence_refs"] = []
 
 
 class _SweepStore:
@@ -192,8 +256,21 @@ class _SweepStore:
     def get_consult_transcript(self, session_id: str, **_: Any) -> Optional[Dict[str, Any]]:
         return copy.deepcopy(_TRANSCRIPT_1) if session_id == "session-1" else None
 
+    def get_consultation_evidence(self, session_id: str) -> Optional[List[Dict[str, Any]]]:
+        return copy.deepcopy(_MIXED_REFS) if session_id == "session-1" else None
+
     def get_consult_request(self, request_id: str) -> Optional[Dict[str, Any]]:
         return copy.deepcopy(_CONSULT_REQUEST_1) if request_id == "consult-req-1" else None
+
+    # Rollback review -------------------------------------------------------
+    def get_rollback_review(self, rollback_id: str) -> Optional[Dict[str, Any]]:
+        reviews = {
+            "rollback-rb-001": _ROLLBACK_REVIEW_1,
+            "rollback-rb-no-trigger-ev": _ROLLBACK_REVIEW_NO_TRIGGER_EV,
+            "rollback-rb-empty-refs": _ROLLBACK_REVIEW_EMPTY_REFS,
+        }
+        item = reviews.get(rollback_id)
+        return copy.deepcopy(item) if item is not None else None
 
 
 @pytest.fixture(autouse=True)
@@ -379,7 +456,15 @@ def test_bff_approval_detail_alias_passes_through_for_full_capability_identity()
 # --- Governance approval queue (paginated) ----------------------------------
 
 
-def test_governance_approval_queue_redacted_count_scoped_to_returned_page() -> None:
+def test_governance_approval_queue_redacted_count_scoped_to_returned_page(monkeypatch) -> None:
+    # Since 224b60032 (BFF-APPROVAL-QUEUE-PROJECTION-20261007) the queue lists only
+    # pending decisions (proposed or under_review), the terminal approval-2 never
+    # appears, and so the second page holds the pending approval-4.
+    def call_owner(method, path, authorization, **_kwargs):
+        return [copy.deepcopy(_APPROVAL_1), copy.deepcopy(_APPROVAL_2), copy.deepcopy(_APPROVAL_4_UNDER_REVIEW)]
+
+    monkeypatch.setattr(approval_owner, "call_owner", call_owner)
+
     with _stub_auth_env():
         client = TestClient(_build_app())
 
@@ -402,10 +487,13 @@ def test_governance_approval_queue_redacted_count_scoped_to_returned_page() -> N
             params={"page_size": 1, "page_token": next_token},
             headers={"Authorization": LOW_CAPABILITY_TOKEN},
         )
+        assert page2.status_code == 200, page2.text
         page2_payload = page2.json()
-        assert page2_payload["items"][0]["decision_id"] == "approval-2"
+        assert page2_payload["items"][0]["decision_id"] == "approval-4"
         # page 2's item carries no evidence_refs, so nothing withheld on this page
         assert page2_payload["meta"]["redacted_evidence_count"] == 0
+        assert page2_payload["page_info"]["next_page_token"] is None
+        assert page2_payload["page_info"]["total"] == 2
 
 
 def test_governance_approval_queue_passes_through_for_full_capability_identity() -> None:
@@ -844,3 +932,200 @@ def test_get_consult_request_fails_closed_when_capabilities_unresolvable() -> No
         assert len(refs) == 2
         assert all(ref["redacted"] is True for ref in refs)
         assert payload["meta"]["redacted_evidence_count"] == 2
+
+
+# --- Consultation evidence and approval evidence routes ---------------------
+
+
+def test_consultation_evidence_redacts_for_low_capability_identity() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/api/v1/consultations/session-1/evidence",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        _assert_mixed_refs_redacted_for_low_capability(payload["data"])
+        assert payload["meta"]["supporting_counts"]["redacted_evidence_count"] == 2
+
+
+def test_consultation_evidence_passes_through_for_full_capability_identity() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/api/v1/consultations/session-1/evidence",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["data"] == _MIXED_REFS
+        assert payload["meta"]["supporting_counts"]["redacted_evidence_count"] == 0
+
+
+def test_bff_approval_evidence_redacts_for_low_capability_identity() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/bff/approvals/approval-1/evidence",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        _assert_mixed_refs_redacted_for_low_capability(payload["evidence"])
+        assert payload["meta"]["redacted_count"] == 2
+
+
+def test_bff_approval_evidence_passes_through_for_full_capability_identity() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/bff/approvals/approval-1/evidence",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["evidence"] == _MIXED_REFS
+        assert payload["meta"]["redacted_count"] == 0
+
+
+# --- Rollback review trigger evidence redaction -----------------------------
+
+
+def test_get_rollback_review_redacts_for_low_capability_identity() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/api/v1/operator/rollback-review/rollback-rb-001",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert {k: v for k, v in payload.items() if k not in ("trigger_evidence", "meta")} == {
+            k: v for k, v in _ROLLBACK_REVIEW_1.items() if k not in ("trigger_evidence", "meta")
+        }
+        assert {k: v for k, v in payload["meta"].items() if k != "redacted_evidence_count"} == _ROLLBACK_REVIEW_1["meta"]
+        assert payload["trigger_evidence"]["trigger_reason"] == _ROLLBACK_REVIEW_1["trigger_evidence"]["trigger_reason"]
+        assert payload["trigger_evidence"]["linked_incident_id"] == _ROLLBACK_REVIEW_1["trigger_evidence"]["linked_incident_id"]
+        refs = payload["trigger_evidence"]["evidence_refs"]
+        assert len(refs) == 3
+        # operator role holds risk.alert.read: alert ref passes through unchanged
+        assert refs[0] == _ALERT_REF
+        # operator role lacks metric.read and job.read: both are withheld
+        _assert_redacted(refs[1], ref_id="ref-metric-ev", required_capability="metric.read")
+        _assert_redacted(refs[2], ref_id="ref-job-ev", required_capability="job.read")
+        assert payload["meta"]["redacted_evidence_count"] == 2
+
+
+def test_get_rollback_review_redacts_for_viewer_identity() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/api/v1/operator/rollback-review/rollback-rb-001",
+            headers={"Authorization": VIEWER_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert {k: v for k, v in payload.items() if k not in ("trigger_evidence", "meta")} == {
+            k: v for k, v in _ROLLBACK_REVIEW_1.items() if k not in ("trigger_evidence", "meta")
+        }
+        assert {k: v for k, v in payload["meta"].items() if k != "redacted_evidence_count"} == _ROLLBACK_REVIEW_1["meta"]
+        assert payload["trigger_evidence"]["trigger_reason"] == _ROLLBACK_REVIEW_1["trigger_evidence"]["trigger_reason"]
+        assert payload["trigger_evidence"]["linked_incident_id"] == _ROLLBACK_REVIEW_1["trigger_evidence"]["linked_incident_id"]
+        refs = payload["trigger_evidence"]["evidence_refs"]
+        assert len(refs) == 3
+        # viewer role holds metric.read; lacks risk.alert.read and job.read
+        _assert_redacted(refs[0], ref_id="ref-alert-ev", required_capability="risk.alert.read")
+        assert refs[1] == _METRIC_REF
+        _assert_redacted(refs[2], ref_id="ref-job-ev", required_capability="job.read")
+        assert payload["meta"]["redacted_evidence_count"] == 2
+
+
+def test_get_rollback_review_passes_through_for_full_capability_identity() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/api/v1/operator/rollback-review/rollback-rb-001",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert {k: v for k, v in payload.items() if k not in ("trigger_evidence", "meta")} == {
+            k: v for k, v in _ROLLBACK_REVIEW_1.items() if k not in ("trigger_evidence", "meta")
+        }
+        assert payload["trigger_evidence"] == _ROLLBACK_REVIEW_1["trigger_evidence"]
+        assert {k: v for k, v in payload["meta"].items() if k != "redacted_evidence_count"} == _ROLLBACK_REVIEW_1["meta"]
+        assert payload["meta"]["redacted_evidence_count"] == 0
+        assert payload["meta"] == {**_ROLLBACK_REVIEW_1["meta"], "redacted_evidence_count": 0}
+
+
+def test_get_rollback_review_fails_closed_when_capabilities_unresolvable() -> None:
+    def _boom(identity: Any) -> List[str]:
+        raise RuntimeError("capability lookup unavailable")
+
+    with _stub_auth_env():
+        client = TestClient(_build_app(capabilities_for_identity=_boom))
+        response = client.get(
+            "/api/v1/operator/rollback-review/rollback-rb-001",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert {k: v for k, v in payload.items() if k not in ("trigger_evidence", "meta")} == {
+            k: v for k, v in _ROLLBACK_REVIEW_1.items() if k not in ("trigger_evidence", "meta")
+        }
+        assert {k: v for k, v in payload["meta"].items() if k != "redacted_evidence_count"} == _ROLLBACK_REVIEW_1["meta"]
+        assert payload["trigger_evidence"]["trigger_reason"] == _ROLLBACK_REVIEW_1["trigger_evidence"]["trigger_reason"]
+        assert payload["trigger_evidence"]["linked_incident_id"] == _ROLLBACK_REVIEW_1["trigger_evidence"]["linked_incident_id"]
+        refs = payload["trigger_evidence"]["evidence_refs"]
+        assert len(refs) == 3
+        assert all(ref["redacted"] is True for ref in refs)
+        assert all(ref["reason"] == "redaction_policy_unavailable" for ref in refs)
+        assert payload["meta"]["redacted_evidence_count"] == 3
+
+
+def test_get_rollback_review_without_trigger_evidence() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/api/v1/operator/rollback-review/rollback-rb-no-trigger-ev",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert "trigger_evidence" not in payload
+        assert {k: v for k, v in payload.items() if k != "meta"} == {
+            k: v for k, v in _ROLLBACK_REVIEW_NO_TRIGGER_EV.items() if k != "meta"
+        }
+        assert {k: v for k, v in payload["meta"].items() if k != "redacted_evidence_count"} == _ROLLBACK_REVIEW_NO_TRIGGER_EV["meta"]
+        assert set(payload.keys()) == set(_ROLLBACK_REVIEW_NO_TRIGGER_EV.keys())
+        assert payload["meta"]["redacted_evidence_count"] == 0
+
+
+def test_get_rollback_review_with_empty_evidence_refs() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/api/v1/operator/rollback-review/rollback-rb-empty-refs",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert {k: v for k, v in payload.items() if k not in ("trigger_evidence", "meta")} == {
+            k: v for k, v in _ROLLBACK_REVIEW_EMPTY_REFS.items() if k not in ("trigger_evidence", "meta")
+        }
+        assert payload["trigger_evidence"] == _ROLLBACK_REVIEW_EMPTY_REFS["trigger_evidence"]
+        assert payload["trigger_evidence"]["evidence_refs"] == []
+        assert {k: v for k, v in payload["meta"].items() if k != "redacted_evidence_count"} == _ROLLBACK_REVIEW_EMPTY_REFS["meta"]
+        assert set(payload.keys()) == set(_ROLLBACK_REVIEW_EMPTY_REFS.keys())
+        assert payload["meta"]["redacted_evidence_count"] == 0
+
+
+def test_get_rollback_review_unknown_id_returns_404() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/api/v1/operator/rollback-review/non-existent-rollback-id",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 404, response.text

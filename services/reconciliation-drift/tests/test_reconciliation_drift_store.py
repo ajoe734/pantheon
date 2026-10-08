@@ -677,3 +677,62 @@ def test_postgres_store_owns_records_reports_worker_state_and_work_claims(
     assert not store.drift_reports_path.exists()
     assert not store.worker_states_path.exists()
     assert not store.work_claims_path.exists()
+    assert store.backend == "postgres"
+    assert module.ReconciliationDriftStore(tmp_path).backend == "json"
+
+
+def test_live_postgres_reconciliation_drift_store_loopback(tmp_path: Path) -> None:
+    """Acceptance 5: Postgres store test against a disposable loopback database or skipped with reason."""
+    import os
+    import uuid
+
+    dsn = os.getenv("TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL is not set; skipping live Postgres loopback integration test")
+
+    module = _load_store_module()
+    schema = f"recon_test_{uuid.uuid4().hex[:12]}"
+    eval_table = f"{schema}.drift_evaluations"
+    alerts_table = f"{schema}.alert_handoffs"
+    rec_table = f"{schema}.reconciliation_records"
+    reports_table = f"{schema}.drift_reports"
+    claims_table = f"{schema}.work_claims"
+    states_table = f"{schema}.worker_states"
+
+    try:
+        store = module.PostgresReconciliationDriftStore(
+            tmp_path,
+            dsn=dsn,
+            evaluations_table=eval_table,
+            alerts_table=alerts_table,
+            reconciliation_records_table=rec_table,
+            drift_reports_table=reports_table,
+            work_claims_table=claims_table,
+            worker_states_table=states_table,
+            bootstrap=True,
+        )
+        assert store.backend == "postgres"
+
+        eval_rec = store.put_evaluation(
+            {"evaluation_id": "eval-live-1", "tenant_id": "tenant-live", "status": "ok"}
+        )
+        assert store.get_evaluation("eval-live-1", tenant_id="tenant-live") == eval_rec
+
+        claim = store.claim_work(
+            tenant_id="tenant-live",
+            work_type="scheduled_reconcile",
+            window_id="win-live-1",
+            owner_id="worker-live",
+            lease_seconds=30,
+            now=datetime(2026, 10, 8, 5, 0, tzinfo=timezone.utc),
+        )
+        assert claim["acquired"] is True
+    finally:
+        try:
+            import psycopg
+
+            with psycopg.connect(dsn) as conn:
+                conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        except Exception:
+            pass
+

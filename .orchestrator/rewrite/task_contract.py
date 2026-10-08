@@ -430,6 +430,18 @@ def validate_handoff_pr_delivery_binding(
         repository_root, _ = ai_status._done_delivery_repository_root(
             config, dict(task), repository_id, action="handoff"
         )
+        head_sha = normalized["head_sha"]
+        if not ai_status.git_command_succeeds(
+            ["cat-file", "-e", f"{head_sha}^{{commit}}"], cwd=repository_root
+        ):
+            # Operator handoff reads the live integration clone, which never
+            # fetches task branches. Add this one commit by SHA the way the
+            # auto-integrator does; no ref, HEAD or worktree changes.
+            ai_status.run_git_command(
+                ["fetch", "--quiet", "origin", head_sha],
+                cwd=repository_root,
+                required=False,
+            )
         commit_range = f"{validated.base_sha}..{normalized['head_sha']}"
         try:
             failures = check_commit_trailers.check_range(

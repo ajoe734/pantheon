@@ -1,0 +1,232 @@
+{
+ "task": "DOCS-LINE-BUDGET-AND-NONPROD-CURRENT-STATE-20261007",
+ "base_sha": "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9",
+ "verified_head_sha": "d8bb3b2a358b3f64a892be83de366a7f2716edcf",
+ "reviewer": "Antigravity",
+ "contact": "No VM, host, GCP API, GitHub API or hosted endpoint was contacted; docs-only edits.",
+ "numstat": [
+  [
+   "3",
+   "8",
+   "deploy/caddy/README.md"
+  ],
+  [
+   "1",
+   "1",
+   "docs/02-architecture/dev-environment-execution-resource-admission.md"
+  ],
+  [
+   "10",
+   "8",
+   "docs/02-architecture/phase4-bff-thinning.md"
+  ],
+  [
+   "3",
+   "2",
+   "docs/conventions/GIT_WORKFLOW.md"
+  ],
+  [
+   "14",
+   "11",
+   "docs/deployment/gcp-identity-platform-auth.md"
+  ],
+  [
+   "52",
+   "40",
+   "docs/deployment/nonprod-ci-cd.md"
+  ],
+  [
+   "8",
+   "8",
+   "docs/operations/supervisor-watchdog-persistence.md"
+  ],
+  [
+   "3",
+   "3",
+   "docs/testing/devloop-census/README.md"
+  ]
+ ],
+ "grep_before_base": [
+  {
+   "cmd": "git grep -n -F 帶淨行數上限 3200e78174fe6d9fbe3f2cbabb76b658d5637fc9 -- docs/02-architecture/phase4-bff-thinning.md",
+   "rc": 0,
+   "out": [
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/02-architecture/phase4-bff-thinning.md:13:7. **每筆任務**帶淨行數上限；驗收涵蓋同一業務動作的**所有現存入口**。",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/02-architecture/phase4-bff-thinning.md:159:每筆都帶淨行數上限，驗收涵蓋所有入口。"
+   ]
+  },
+  {
+   "cmd": "git grep -n -F | 上限 | 3200e78174fe6d9fbe3f2cbabb76b658d5637fc9 -- docs/02-architecture/phase4-bff-thinning.md",
+   "rc": 0,
+   "out": [
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/02-architecture/phase4-bff-thinning.md:163:| 任務 | 服務 | 內容 | 上限 |",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/02-architecture/phase4-bff-thinning.md:170:| 任務 | 內容 | 上限 |",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/02-architecture/phase4-bff-thinning.md:177:| 任務 | 內容 | 上限 |",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/02-architecture/phase4-bff-thinning.md:186:| 任務 | 內容 | 上限 |"
+   ]
+  },
+  {
+   "cmd": "git grep -n -F 行數上限 | 3200e78174fe6d9fbe3f2cbabb76b658d5637fc9 -- docs/02-architecture/phase4-bff-thinning.md",
+   "rc": 0,
+   "out": [
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/02-architecture/phase4-bff-thinning.md:193:| 任務 | 唯一負責範圍 | 依賴 | 淨 production 行數上限 |"
+   ]
+  },
+  {
+   "cmd": "git grep -n -i lupin 3200e78174fe6d9fbe3f2cbabb76b658d5637fc9 -- docs/deployment/nonprod-ci-cd.md",
+   "rc": 0,
+   "out": [
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:16:Pantheon Lupin GCP projects and uses GitHub Actions for pinned VM deployment:",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:95:checkout (`/home/lupin/pantheon` on the replacement dev VM).",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:98:`/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees/dev-root`. It is",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:100:`/home/lupin/pantheon-ci-deploy/dev-root`: deployments detach at the accepted",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:206:- VM: `pantheon-lupin-dev`",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:207:- GCP project: `pantheon-lupin-dev-20260719`",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:210:- public BFF: `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io`",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:217:PANTHEON_BFF_CORS_ORIGINS=https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:226:  --frontend-root /home/lupin/code/execute-plans \\",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:235:  --frontend-root /home/lupin/code/execute-plans \\",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:317:- VM1: `pantheon-lupin-staging-control`, compose project `pantheon-control`,",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:319:- VM2: `pantheon-lupin-staging-exec`, compose project `pantheon-exec`,",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:321:- public BFF: `https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io`",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:367:the retired `pantheon-lupin-dev-20260719` and `pantheon-benjamin-20260528`",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:405:Dev uses its dedicated public key on `pantheon-lupin-dev`; GitHub's deploy",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:409:- `pantheon-lupin-staging-control`",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:410:- `pantheon-lupin-staging-exec`"
+   ]
+  },
+  {
+   "cmd": "git grep -n -E 35[.]201[.]|104[.]155[.]|sslip[.]io|41950751674|317269804408|/home/ 3200e78174fe6d9fbe3f2cbabb76b658d5637fc9 -- docs/deployment/nonprod-ci-cd.md",
+   "rc": 0,
+   "out": [
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:95:checkout (`/home/lupin/pantheon` on the replacement dev VM).",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:98:`/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees/dev-root`. It is",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:100:`/home/lupin/pantheon-ci-deploy/dev-root`: deployments detach at the accepted",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:210:- public BFF: `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io`",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:217:PANTHEON_BFF_CORS_ORIGINS=https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:226:  --frontend-root /home/lupin/code/execute-plans \\",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:235:  --frontend-root /home/lupin/code/execute-plans \\",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:321:- public BFF: `https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io`",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/nonprod-ci-cd.md:423:  `41950751674-compute@developer.gserviceaccount.com`, because `gcloud compute"
+   ]
+  },
+  {
+   "cmd": "git grep -n -E lupin|35[.]201[.]|sslip[.]io 3200e78174fe6d9fbe3f2cbabb76b658d5637fc9 -- docs/deployment/gcp-identity-platform-auth.md",
+   "rc": 0,
+   "out": [
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/gcp-identity-platform-auth.md:4:project `pantheon-lupin-dev-20260719`. Supabase is not an authentication",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/gcp-identity-platform-auth.md:19:    `https://securetoken.google.com/pantheon-lupin-dev-20260719`",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/gcp-identity-platform-auth.md:20:  - audience: `pantheon-lupin-dev-20260719`",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/gcp-identity-platform-auth.md:42:  - `pantheon-lupin-dev-20260719.firebaseapp.com`",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/gcp-identity-platform-auth.md:43:  - `pantheon-lupin-dev-20260719.web.app`",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/gcp-identity-platform-auth.md:44:  - `pantheon-lupin-dev-fe.35.201.204.12.sslip.io`",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/gcp-identity-platform-auth.md:56:VITE_GCP_IDENTITY_PROJECT_ID=pantheon-lupin-dev-20260719",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/gcp-identity-platform-auth.md:57:VITE_GCP_IDENTITY_AUTH_DOMAIN=pantheon-lupin-dev-20260719.firebaseapp.com",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/gcp-identity-platform-auth.md:64:DEV_BFF_OIDC_ISSUER=https://securetoken.google.com/pantheon-lupin-dev-20260719",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/deployment/gcp-identity-platform-auth.md:65:DEV_BFF_OIDC_AUDIENCE=pantheon-lupin-dev-20260719"
+   ]
+  },
+  {
+   "cmd": "git grep -n -E 104[.]155[.]|lupin@|migrate_to_benjamin 3200e78174fe6d9fbe3f2cbabb76b658d5637fc9 -- deploy/caddy/README.md",
+   "rc": 0,
+   "out": [
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:deploy/caddy/README.md:42:  lupin@104.155.223.192 \\",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:deploy/caddy/README.md:43:  pantheon-lupin-staging-bff.104.155.223.192.sslip.io \\",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:deploy/caddy/README.md:47:`scripts/migrate_to_benjamin_cutover.sh` calls this automatically for both envs"
+   ]
+  },
+  {
+   "cmd": "git grep -n /home/lupin 3200e78174fe6d9fbe3f2cbabb76b658d5637fc9 -- docs/operations/supervisor-watchdog-persistence.md",
+   "rc": 0,
+   "out": [
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/operations/supervisor-watchdog-persistence.md:49:- immutable command source: `/home/lupin/pantheon-ci-deploy/command-runtimes/<exact-commit-sha>`;",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/operations/supervisor-watchdog-persistence.md:51:  `/home/lupin/pantheon-ci-deploy/coordination-root`;",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/operations/supervisor-watchdog-persistence.md:52:- mutable staging checkout: `/home/lupin/pantheon-ci-deploy/dev-root`.",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/operations/supervisor-watchdog-persistence.md:92:COORDINATION_ROOT=/home/lupin/pantheon-ci-deploy/coordination-root",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/operations/supervisor-watchdog-persistence.md:94:  /home/lupin/pantheon-ci-deploy/dev-root \\",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/operations/supervisor-watchdog-persistence.md:95:  /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json \\",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/operations/supervisor-watchdog-persistence.md:98:  --repo /home/lupin/pantheon-ci-deploy/command-runtimes/<exact-commit-sha> \\",
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/operations/supervisor-watchdog-persistence.md:99:  --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json \\"
+   ]
+  },
+  {
+   "cmd": "git grep -n -i -E lupin|sslip[.]io|35[.]201[.] 3200e78174fe6d9fbe3f2cbabb76b658d5637fc9 -- docs/testing/devloop-census/README.md",
+   "rc": 0,
+   "out": [
+    "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9:docs/testing/devloop-census/README.md:17:BFF_BASE=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io \\"
+   ]
+  }
+ ],
+ "grep_after_head": [
+  {
+   "cmd": "git grep -n -F 帶淨行數上限 d8bb3b2a358b3f64a892be83de366a7f2716edcf -- docs/02-architecture/phase4-bff-thinning.md",
+   "rc": 1,
+   "out": []
+  },
+  {
+   "cmd": "git grep -n -F | 上限 | d8bb3b2a358b3f64a892be83de366a7f2716edcf -- docs/02-architecture/phase4-bff-thinning.md",
+   "rc": 1,
+   "out": []
+  },
+  {
+   "cmd": "git grep -n -F 行數上限 | d8bb3b2a358b3f64a892be83de366a7f2716edcf -- docs/02-architecture/phase4-bff-thinning.md",
+   "rc": 1,
+   "out": []
+  },
+  {
+   "cmd": "git grep -n -i lupin d8bb3b2a358b3f64a892be83de366a7f2716edcf -- docs/deployment/nonprod-ci-cd.md",
+   "rc": 0,
+   "out": [
+    "d8bb3b2a358b3f64a892be83de366a7f2716edcf:docs/deployment/nonprod-ci-cd.md:3:Status: current-state record of the nonprod deploy process. The current dev VM, GCP project, remote user, remote and worktree directories and FE/BFF origins are recorded only in [vm-dev-staging-prod-management-plan.md § 3.1](vm-dev-staging-prod-management-plan.md#31-dev), and a configured value there is not evidence of an accepted served pair. staging-live has no VM ([§ 3.2](vm-dev-staging-prod-management-plan.md)). The retired projects pantheon-lupin-dev-20260719 and pantheon-benjamin-20260528 and their VMs and hosts must not be deployed to or probed."
+   ]
+  },
+  {
+   "cmd": "git grep -n -E 35[.]201[.]|104[.]155[.]|sslip[.]io|41950751674|317269804408|/home/ d8bb3b2a358b3f64a892be83de366a7f2716edcf -- docs/deployment/nonprod-ci-cd.md",
+   "rc": 1,
+   "out": []
+  },
+  {
+   "cmd": "git grep -n -E lupin|35[.]201[.]|sslip[.]io d8bb3b2a358b3f64a892be83de366a7f2716edcf -- docs/deployment/gcp-identity-platform-auth.md",
+   "rc": 1,
+   "out": []
+  },
+  {
+   "cmd": "git grep -n -E 104[.]155[.]|lupin@|migrate_to_benjamin d8bb3b2a358b3f64a892be83de366a7f2716edcf -- deploy/caddy/README.md",
+   "rc": 1,
+   "out": []
+  },
+  {
+   "cmd": "git grep -n /home/lupin d8bb3b2a358b3f64a892be83de366a7f2716edcf -- docs/operations/supervisor-watchdog-persistence.md",
+   "rc": 1,
+   "out": []
+  },
+  {
+   "cmd": "git grep -n -i -E lupin|sslip[.]io|35[.]201[.] d8bb3b2a358b3f64a892be83de366a7f2716edcf -- docs/testing/devloop-census/README.md",
+   "rc": 1,
+   "out": []
+  }
+ ],
+ "diff_budget": {
+  "cmd": "python3 scripts/git/diff_budget.py --base 3200e78174fe6d9fbe3f2cbabb76b658d5637fc9 --head d8bb3b2a358b3f64a892be83de366a7f2716edcf",
+  "rc": 0,
+  "out": [
+   "| class | added | deleted | net |",
+   "|---|---|---|---|",
+   "| production | +0 | -0 | +0 |",
+   "| test | +0 | -0 | +0 |",
+   "| docs/evidence | +94 | -81 | +13 |"
+  ]
+ },
+ "trailer_check": {
+  "cmd": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge --delivery-class auto --task-id DOCS-LINE-BUDGET-AND-NONPROD-CURRENT-STATE-20261007",
+  "rc": 0,
+  "out": [
+   "[trailers] d8bb3b2a358b3f64a892be83de366a7f2716edcf: delivery_class=product"
+  ]
+ },
+ "notes": [
+  "gcp-deploy.yml no longer exists on dev (retired by OPS-WORKFLOW-DEAD-HOST-DEFAULTS-20261007); the GCP_BUILD_STAGING_BUCKET text states it has no current value and that the retired workflow's fallback named a bucket in the retired project.",
+  "Line numbers in the brief were at 54c6ebef9; edits were located by content on the current base.",
+  "trailer_check was run on the doc commit before this evidence commit was added."
+ ]
+}

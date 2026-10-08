@@ -1,53 +1,39 @@
-"""BFF-MGMT-READ-DEFECT-REPAIR-001 regression coverage.
+"""BFF-MGMT-READ-SINGLE-BOUND-20261007 regression coverage.
 
-Covers two of the three repaired defects against the *real* production
-composition (``services.control_plane.bff.main``'s already-assembled
-``app``/``persona_service``/``run_management_read`` wiring, imported under
-its production-qualified module name -- not a second app, router, or
-test-only reimplementation):
+Verifies the convergence of Management read offloading onto a single bounded
+`run_management_read` and the dedicated contributor bound for persona_readiness:
 
-* Defect 1 -- ``management_read_models/service.py::ManagementService.get_human_inbox``
-  dropped every promotion-review record it fetched (fetch, derive a status
-  string, never emit items). Durable ``QuarterlyRankingRecommendationSubmit``
-  command-log submissions now surface as ``promotion_review`` items on
-  ``/bff/management/human-inbox`` via the same canonical
-  ``governance/human_inbox.py`` projection helpers the Management NL
-  assistant surface already used (no second implementation).
+* Single bounded Management read offload:
+  `personas/routes/common.py::run_management_read` is the single bounded offload
+  point. When `capacity` is None, it uses the shared default pair
+  `_MANAGEMENT_READ_DEFAULT_SLOTS` and `_MANAGEMENT_READ_DEFAULT_EXECUTOR`
+  (pool of 12, former default 8 plus cockpit 4, thread_name_prefix bff-mgmt-read).
+  The unbounded `asyncio.to_thread` branch is deleted, and a saturated pool raises
+  `ManagementReadSaturated` before the callable runs. `main.py` no longer defines
+  or binds `run_management_read` or dispatch shims; composition resolves
+  `personas.routes.common.run_management_read` directly via `core/app_factory.py`.
 
-* Defect 2 -- ``core/app_factory.py`` composed ``create_management_router``
-  with an *unbounded* ``run_management_read`` (capacity=None ->
-  unlimited ``asyncio.to_thread`` fan-out). Production now binds named,
-  bounded capacity pools (``_HUMAN_INBOX_READ_SLOTS`` /
-  ``_MANAGEMENT_COCKPIT_READ_SLOTS`` / ``_MANAGEMENT_READ_DEFAULT_SLOTS``)
-  at composition time in ``main.py``, dispatched by the offloaded
-  callable's name so one surface's saturation/timeout cannot silently
-  starve or block another.
-
-Note on scope: the task brief's acceptance criteria also describe a
-finer-grained per-contributor timeout/capacity story (a `persona_readiness`
-surface independently timing out with `meta.partial=True` while sibling
-surfaces stay populated). Tracing the real `/bff/management/human-inbox`
-route (management_read_models/service.py::get_human_inbox) shows each of
-its contributor blocks (approvals, governance reviews, incidents,
-persona readiness, promotion reviews) reads directly
-from `store`/the command log inline, with no per-contributor async
-offload, timeout, or `meta.partial` computation at all -- only the whole
-`get_human_inbox` call is offloaded/bounded as a single unit. Building
-genuine per-contributor bounded/timeout semantics (and a `meta.partial`
-field) does not exist today and is a materially larger feature than
-"pass capacity/executor into an existing call"; it is out of scope for
-this repair pass. This file instead proves defect 2's actual fix -- a real,
-composed, named capacity bound -- at the level that exists: the whole-route
-`run_management_read` offload.
+* Dedicated persona_readiness contributor bound:
+  The contributor bound lives in `management_read_models/service.py` with
+  `_HUMAN_INBOX_READ_SLOT_COUNT = 4`, `_HUMAN_INBOX_READ_SLOTS`, and
+  `_HUMAN_INBOX_READ_EXECUTOR` (thread_name_prefix bff-human-inbox-read).
+  `ManagementService._bounded_persona_readiness_rows` runs
+  `_build_persona_readiness_items` on this executor within
+  `human_inbox_surface_timeout_seconds`. Saturated capacity yields
+  `read_capacity_saturated` immediately, timeout yields `read_timeout`,
+  and errors fail fast with `contributor_read_error` without unbounded inline
+  retries.
 """
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from typing import Iterator, Tuple
 
+import pytest
 from fastapi.testclient import TestClient
 
 # Package-qualified import (not `sys.path.insert` + bare `import main`):
@@ -58,6 +44,7 @@ from fastapi.testclient import TestClient
 # command_store`) resolve to the same live module this test manipulates.
 from services.control_plane.bff import main as bff_main
 from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.core.app_factory import _resolve_default_dependency
 from services.control_plane.bff.models import CommandType, ObjectType, TargetObject
 from services.control_plane.bff.personas.routes import common as management_read_common
 from services.control_plane.bff.ports import ReadSurfacePorts, create_read_surface_ports
@@ -156,22 +143,66 @@ def test_command_log_promotion_review_rows_are_not_projected_into_human_inbox(tm
 
 
 def test_run_management_read_is_bounded_not_the_raw_unbounded_helper() -> None:
-    """Defect 2 regression: the real composed app's `run_management_read`
-    (what `create_management_router(...)` was actually given at
-    `core/app_factory.py` composition time) must not be the raw
-    `personas.routes.common.run_management_read` passed straight through --
-    that helper's `capacity`/`executor` default to `None`, i.e. an unbounded
-    `asyncio.to_thread` fan-out with no concurrency ceiling."""
-    assert bff_main.run_management_read is not management_read_common.run_management_read
-    for slot_name in (
-        "_HUMAN_INBOX_READ_SLOTS",
-        "_MANAGEMENT_COCKPIT_READ_SLOTS",
-        "_MANAGEMENT_READ_DEFAULT_SLOTS",
-    ):
-        semaphore = getattr(bff_main, slot_name)
-        assert hasattr(semaphore, "acquire") and hasattr(semaphore, "release"), (
-            f"bff_main.{slot_name} must be a real bounded semaphore"
+    """AC 7: Shared pool of 12 slots raises ManagementReadSaturated when full without running callable."""
+    assert management_read_common._MANAGEMENT_READ_DEFAULT_SLOT_COUNT == 12
+    assert not hasattr(bff_main, "run_management_read")
+    assert (
+        _resolve_default_dependency("run_management_read", None)
+        is management_read_common.run_management_read
+    )
+
+    semaphore = management_read_common._MANAGEMENT_READ_DEFAULT_SLOTS
+    acquired = 0
+    try:
+        for _ in range(management_read_common._MANAGEMENT_READ_DEFAULT_SLOT_COUNT):
+            assert semaphore.acquire(timeout=5)
+            acquired += 1
+
+        called = False
+
+        def dummy_read() -> str:
+            nonlocal called
+            called = True
+            return "ok"
+
+        with pytest.raises(management_read_common.ManagementReadSaturated):
+            asyncio.run(management_read_common.run_management_read(dummy_read))
+        assert not called, "callable must not run when capacity pool is saturated"
+    finally:
+        for _ in range(acquired):
+            semaphore.release()
+
+    result = asyncio.run(management_read_common.run_management_read(dummy_read))
+    assert result == "ok"
+    assert called
+
+
+def test_human_inbox_persona_readiness_error_fails_fast_without_retry(
+    tmp_path, monkeypatch
+) -> None:
+    """AC 8: A store list_personas that raises causes persona_readiness to degrade
+    with contributor_read_error without retry, called with include_market_persona_defaults=True."""
+    calls = []
+
+    def failing_list_personas(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise RuntimeError("simulated store failure")
+
+    with _isolated_bff(tmp_path) as (client, store):
+        monkeypatch.setattr(store, "list_personas", failing_list_personas)
+
+        response = client.get(
+            "/bff/management/human-inbox",
+            headers=HEADERS,
+            params={"page_size": 10},
         )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert len(calls) == 1, f"expected exactly 1 call, got {len(calls)}"
+        assert calls[0][1].get("include_market_persona_defaults") is True
+        surfaces = body["meta"]["surfaces"]
+        assert surfaces["persona_readiness"]["reason"] == "contributor_read_error"
 
 
 def test_human_inbox_capacity_saturation_yields_immediate_degraded_response_and_recovers(
@@ -185,7 +216,8 @@ def test_human_inbox_capacity_saturation_yields_immediate_degraded_response_and_
     test-added wiring. After the first read releases, a fresh request must
     recover to a normal (non-degraded) response."""
     with _isolated_bff(tmp_path) as (client, store):
-        monkeypatch.setattr(bff_main, "_HUMAN_INBOX_READ_SLOTS", threading.BoundedSemaphore(1))
+        from services.control_plane.bff.management_read_models import service as mgmt_service
+        monkeypatch.setattr(mgmt_service, "_HUMAN_INBOX_READ_SLOTS", threading.BoundedSemaphore(1))
 
         release = threading.Event()
         entered = threading.Event()

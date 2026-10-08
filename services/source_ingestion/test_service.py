@@ -1380,7 +1380,17 @@ def test_controller_provisioned_official_connector_stamps_requirement_tenant_and
 ) -> None:
     test_client, _, module = client
     monkeypatch.setenv("PANTHEON_ENV", "dev")
-    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+
+    from services.source_ingestion.controller_state import ControllerState, ControllerStateStore
+
+    state = ControllerState(
+        controller_id="ctrl-test-state-1",
+        controller_name="test-controller",
+        environment="test",
+        tenant_id="tenant-dev",
+        deployment={},
+    )
+    ControllerStateStore(module.runtime.CONTROLLER_STATE_PATH).save(state)
 
     # 1. Controller provisions connector from persona requirement snapshot
     persona = {
@@ -1411,7 +1421,6 @@ def test_controller_provisioned_official_connector_stamps_requirement_tenant_and
     # Provisioned connector carries requirement tenant
     config = module.connector_store.get_config("tw-twse-tpex-official-market")
     assert config is not None
-    assert config.connector.metadata.get("tenant_id") == "tenant-dev"
 
     # 2. Trigger ingest job for the provisioned connector
     job_res = test_client.post(
@@ -1711,6 +1720,285 @@ def test_postgres_backend_adversarial_db_failure_cannot_return_stale_cache_via_a
         finally:
             with psycopg.connect(dsn) as conn:
                 conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+def test_controller_owned_connector_resolves_tenant_from_controller_state(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    test_client, data_dir, module = client
+    monkeypatch.delenv("PANTHEON_TENANT_ID", raising=False)
+    monkeypatch.delenv("PANTHEON_BFF_TENANT_ID", raising=False)
+
+    from services.source_ingestion.controller_state import ControllerState, ControllerStateStore
+
+    state = ControllerState(
+        controller_id="ctrl-test-state-1",
+        controller_name="test-controller",
+        environment="test",
+        tenant_id="tenant-dev",
+        deployment={},
+    )
+    ControllerStateStore(module.runtime.CONTROLLER_STATE_PATH).save(state)
+
+    from services.source_ingestion.persona_source_reconciler import RECONCILIATION_METADATA_KEY
+
+    controller_headers = {"Authorization": f"Bearer {module.controller_token}"}
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        headers=controller_headers,
+        json={
+            "connector": {
+                "connector_id": "conn-reconciled-managed",
+                "source_type": "market",
+                "provider": "TW_OFFICIAL",
+                "license_scope": "official",
+                "metadata": {
+                    RECONCILIATION_METADATA_KEY: {
+                        "managed_by": "persona_source_provisioning_reconciler",
+                    },
+                },
+            },
+            "fetch": {
+                "mode": "static_records",
+                "next_watermark": "2026-10-07T12:00:00Z",
+                "records": [
+                    {
+                        "source_id": "src-managed-reconciled-1",
+                        "title": "Managed test record",
+                        "content_ref": "memory://managed/1",
+                        "metadata": {
+                            "body": "Reconciled market payload",
+                            "access_scope": ["internal"],
+                        },
+                    }
+                ],
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+
+    response = test_client.post(
+        "/api/source-ingest/jobs",
+        headers=controller_headers,
+        json={
+            "connector_id": "conn-reconciled-managed",
+            "trace_id": "trace-controller-state-tenant",
+            "trigger_type": "scheduled",
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["run"]["status"] == "completed"
+    assert body["records"][0]["metadata"]["tenant_id"] == "tenant-dev"
+    bundle_id = body["evidence_refs"]["evidence_bundle_id"]
+    assert bundle_id
+
+    dev_headers = _read_headers("tenant-dev")
+    dev_headers["X-Tenant-Id"] = "tenant-dev"
+    bundle_res = test_client.get(f"/api/source-ingest/evidence/bundles/{bundle_id}", headers=dev_headers)
+    assert bundle_res.status_code == 200
+    assert bundle_res.json()["bundle"]["metadata"]["tenant_id"] == "tenant-dev"
+
+    list_res = test_client.get("/api/source-ingest/evidence/bundles", headers=dev_headers)
+    assert list_res.status_code == 200
+    bundle_ids = [b["evidence_bundle_id"] for b in list_res.json()["bundles"]]
+    assert bundle_id in bundle_ids
+
+    wrong_headers = _read_headers("tenant-wrong")
+    wrong_headers["X-Tenant-Id"] = "tenant-wrong"
+    wrong_res = test_client.get(f"/api/source-ingest/evidence/bundles/{bundle_id}", headers=wrong_headers)
+    assert wrong_res.status_code == 404
+
+    wrong_list_res = test_client.get("/api/source-ingest/evidence/bundles", headers=wrong_headers)
+    assert wrong_list_res.status_code == 200
+    assert bundle_id not in [b["evidence_bundle_id"] for b in wrong_list_res.json()["bundles"]]
+
+
+def test_controller_owned_connector_without_controller_state_rejects_job_and_persists_nothing(
+    client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    test_client, _, module = client
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-env")
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-bff-env")
+
+    # Ensure no controller state exists
+    state_path = module.runtime.CONTROLLER_STATE_PATH
+    if state_path.exists():
+        state_path.unlink()
+
+    from services.source_ingestion.persona_source_reconciler import RECONCILIATION_METADATA_KEY
+
+    controller_headers = {"Authorization": f"Bearer {module.controller_token}"}
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        headers=controller_headers,
+        json={
+            "connector": {
+                "connector_id": "conn-ctrl-no-state",
+                "source_type": "market",
+                "provider": "TW_OFFICIAL",
+                "license_scope": "official",
+                "metadata": {
+                    RECONCILIATION_METADATA_KEY: {
+                        "managed_by": "persona_source_provisioning_reconciler",
+                    },
+                },
+            },
+            "fetch": {
+                "mode": "static_records",
+                "next_watermark": "2026-10-08T00:00:00Z",
+                "records": [],
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+
+    record_id = "tw-official:tw_price_daily:TWSE:2330:2026-10-08-no-state"
+    job_res = test_client.post(
+        "/api/source-ingest/jobs",
+        headers=controller_headers,
+        json={
+            "connector_id": "conn-ctrl-no-state",
+            "trace_id": "trace-test-no-state",
+            "trigger_type": "scheduled",
+            "records": [
+                {
+                    "source_id": record_id,
+                    "connector_id": "conn-ctrl-no-state",
+                    "source_type": "market",
+                    "title": "2330 Daily Close",
+                    "content_ref": "tw-official://tw_price_daily/TWSE/2330/2026-10-08",
+                    "status": "normalized",
+                    "metadata": {
+                        "provider": "TWSE OpenAPI",
+                        "dataset": "tw_price_daily",
+                        "market": "TW",
+                        "venue": "TWSE",
+                        "symbol": "2330",
+                        "available_time": "2026-10-08T05:30:00Z",
+                        "event_time": "2026-10-08T05:30:00Z",
+                    },
+                }
+            ],
+        },
+    )
+    assert job_res.status_code >= 400
+    assert "controller tenant identity is unavailable" in job_res.text
+
+    # Verify no source record, evidence bundle, or distillation admission was persisted
+    assert module.evidence_repository.get_source_record(record_id) is None
+    assert len(module.evidence_repository.list_bundles()) == 0
+    assert module.distillation_job_queue.count() == 0
+
+
+def test_controller_owned_connector_resolves_only_controller_state_ignoring_env_and_stale_metadata(
+    client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    test_client, _, module = client
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-env")
+
+    from services.source_ingestion.controller_state import ControllerState, ControllerStateStore
+    from services.source_ingestion.persona_source_reconciler import RECONCILIATION_METADATA_KEY
+
+    state = ControllerState(
+        controller_id="ctrl-test-state-single-path",
+        controller_name="test-controller",
+        environment="test",
+        tenant_id="tenant-dev",
+        deployment={},
+    )
+    ControllerStateStore(module.runtime.CONTROLLER_STATE_PATH).save(state)
+
+    controller_headers = {"Authorization": f"Bearer {module.controller_token}"}
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        headers=controller_headers,
+        json={
+            "connector": {
+                "connector_id": "conn-ctrl-stale-meta",
+                "source_type": "market",
+                "provider": "TW_OFFICIAL",
+                "license_scope": "official",
+                "metadata": {
+                    "tenant_id": "tenant-stale",
+                    RECONCILIATION_METADATA_KEY: {
+                        "managed_by": "persona_source_provisioning_reconciler",
+                    },
+                },
+            },
+            "fetch": {
+                "mode": "static_records",
+                "next_watermark": "2026-10-08T00:00:00Z",
+                "records": [],
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+
+    record_id = "tw-official:tw_price_daily:TWSE:2330:2026-10-08-stale-meta"
+    job_res = test_client.post(
+        "/api/source-ingest/jobs",
+        headers=controller_headers,
+        json={
+            "connector_id": "conn-ctrl-stale-meta",
+            "trace_id": "trace-test-stale-meta",
+            "trigger_type": "scheduled",
+            "records": [
+                {
+                    "source_id": record_id,
+                    "connector_id": "conn-ctrl-stale-meta",
+                    "source_type": "market",
+                    "title": "2330 Daily Close",
+                    "content_ref": "tw-official://tw_price_daily/TWSE/2330/2026-10-08",
+                    "status": "normalized",
+                    "metadata": {
+                        "provider": "TWSE OpenAPI",
+                        "dataset": "tw_price_daily",
+                        "market": "TW",
+                        "venue": "TWSE",
+                        "symbol": "2330",
+                        "available_time": "2026-10-08T05:30:00Z",
+                        "event_time": "2026-10-08T05:30:00Z",
+                    },
+                }
+            ],
+        },
+    )
+    assert job_res.status_code == 201, job_res.text
+    body = job_res.json()
+    assert body["run"]["status"] == "completed"
+    assert body["records"][0]["metadata"]["tenant_id"] == "tenant-dev"
+    bundle_id = body["evidence_refs"]["evidence_bundle_id"]
+    assert bundle_id
+
+    persisted_record = module.evidence_repository.get_source_record(record_id, tenant_id="tenant-dev")
+    assert persisted_record is not None
+    assert persisted_record.tenant_id == "tenant-dev"
+    assert persisted_record.metadata.get("tenant_id") == "tenant-dev"
+
+    bundle = module.evidence_repository.get_bundle(bundle_id, tenant_id="tenant-dev")
+    assert bundle is not None
+    assert bundle.metadata.get("tenant_id") == "tenant-dev"
+
+    # Readers admitted for tenant-env or tenant-stale get 404 for bundle and do not see it in bundle list
+    for other_tenant in ("tenant-env", "tenant-stale"):
+        headers_other = _read_headers(tenant=other_tenant)
+        headers_other["X-Tenant-Id"] = other_tenant
+        res_other = test_client.get(f"/api/source-ingest/evidence/bundles/{bundle_id}", headers=headers_other)
+        assert res_other.status_code == 404
+        list_other = test_client.get("/api/source-ingest/evidence/bundles", headers=headers_other)
+        assert list_other.status_code == 200
+        assert bundle_id not in [b["evidence_bundle_id"] for b in list_other.json()["bundles"]]
+
+    # Reader admitted for tenant-dev sees it
+    headers_dev = _read_headers(tenant="tenant-dev")
+    headers_dev["X-Tenant-Id"] = "tenant-dev"
+    res_dev = test_client.get(f"/api/source-ingest/evidence/bundles/{bundle_id}", headers=headers_dev)
+    assert res_dev.status_code == 200
+    assert res_dev.json()["bundle"]["evidence_bundle_id"] == bundle_id
+    list_dev = test_client.get("/api/source-ingest/evidence/bundles", headers=headers_dev)
+    assert list_dev.status_code == 200
+    assert bundle_id in [b["evidence_bundle_id"] for b in list_dev.json()["bundles"]]
+
+
 
 
 

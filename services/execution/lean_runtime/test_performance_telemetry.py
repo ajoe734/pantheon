@@ -609,6 +609,13 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
             "quote_source": "shioaji-paper-quote",
         }
 
+        algorithm.SetCurrentSignalContext(
+            {
+                "market_price": 50.0,
+                "market_price_as_of": "2026-07-14T11:00:00Z",
+                "market_price_source": "source-ingest://snapshots/test-2330",
+            }
+        )
         with patch.object(algorithm, "_post_broker_paper_order", return_value=broker_fill):
             algorithm.SubmitTaiwanBrokerOrder(
                 "2330.TW",

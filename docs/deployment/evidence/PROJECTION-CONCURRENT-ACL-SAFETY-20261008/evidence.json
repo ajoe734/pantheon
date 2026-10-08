@@ -1,0 +1,49 @@
+{
+  "task_id": "PROJECTION-CONCURRENT-ACL-SAFETY-20261008",
+  "title": "Preserve original runtime ACL atomically before concurrent projection migrations",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 60,
+  "incident_context": {
+    "prior_task_id": "PROJECTION-MIGRATION-TIMEOUT-20261008",
+    "prior_merged_pr": 6357,
+    "prior_merged_head": "e4005f5bf4ba7670b583ffbb985ff8e124d19ebb",
+    "counterexample_proof": "/tmp/pantheon-projection-e400-concurrent-counterexample.json",
+    "counterexample_script": "/tmp/pantheon-projection-concurrent-phase-atomicity-recheck.py",
+    "pr_comment": "https://github.com/ajoe734/pantheon/pull/6357#issuecomment-6052056163",
+    "root_cause": "bootstrap_schema committed _reconcile_runtime_ddl in the initial transaction, but _apply_grants was guarded by 'not concurrent_files' and deferred to the end of the concurrent autocommit phase. When concurrent/autocommit phase failures occurred before deferred grants, ownership remained transferred to the migration authority while runtime role grants were never executed, causing runtime SELECT true before -> false after."
+  },
+  "phase_separation_architecture": {
+    "phase_1_transactional_authority_and_acl": {
+      "execution_model": "Transactional with statement_timeout=300s and lock_timeout=30s",
+      "operations": [
+        "Non-admin runtime role verification",
+        "_reconcile_runtime_ddl: alters schema/table ownership of known projection tables from runtime to migration authority and revokes CREATE/TRIGGER",
+        "Transactional migration SQL execution (tx_files, e.g. 001_create_trade_journey_projection_schema.sql)",
+        "_apply_grants: verifies runtime holds no DDL authority, grants schema USAGE, and grants SELECT, INSERT, UPDATE, DELETE on existing PROJECTION_TABLES"
+      ],
+      "atomicity_and_failure_semantics": "Authority reconciliation, transactional DDL, and complete runtime ACL restoration settle atomically in a single transaction. If any failure occurs during this phase (including partial grant failure), the entire transaction rolls back, restoring original table/schema ownership and prior runtime permissions."
+    },
+    "phase_2_nontransactional_concurrent_indexes": {
+      "execution_model": "Autocommit with statement_timeout=300s and lock_timeout=30s",
+      "operations": [
+        "REINDEX INDEX CONCURRENTLY for any invalid indexes (indisvalid=false)",
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS across concurrent migration files (002_add_trade_journey_search_indexes.sql)"
+      ],
+      "atomicity_and_failure_semantics": "PostgreSQL requires concurrent indexes to execute outside transaction blocks. Because Phase 1 already committed complete runtime ACLs (USAGE + SELECT, INSERT, UPDATE, DELETE), any subsequent concurrent index failure leaves the existing BFF runtime operational and able to read and write without losing table access."
+    }
+  },
+  "acceptance_verification": {
+    "ac1_atomic_authority_and_acl_settlement": "Verified: authority reconciliation (_reconcile_runtime_ddl), transactional DDL (tx_files), and complete runtime ACL restoration (_apply_grants) commit atomically in Phase 1 before opening the autocommit concurrent connection.",
+    "ac2_concurrent_and_partial_grant_failure_safety": "Verified: test_bootstrap_schema_concurrent_failure_preserves_runtime_dml_and_usage_seven_tables proves runtime SELECT, INSERT, UPDATE, DELETE and schema USAGE are preserved after concurrent phase failure; test_bootstrap_schema_partial_grant_failure_rolls_back_authority_and_acl_seven_tables proves partial grant failure rolls back authority reconciliation and table ownership.",
+    "ac3_boundaries_and_limits_retained": "Verified: runtime nonadmin checks, runtime no-DDL boundary enforcement, known schema/object/owner checks, configurable bounded migration timeouts (300s/30s), concurrent index execution, invalid-index repair, and idempotent re-execution are strictly retained.",
+    "ac4_owned_real_postgresql_tests": "Verified: 12 tests in test_journey_search_migration.py pass against owned real PostgreSQL 16 (docker container on 127.0.0.1:15432) with separate nonadmin runtime and migration roles and complete 7-table schema, and test_bootstrap_schema_concurrent_failure_minimal_controller_preserves_runtime proves minimal-controller fixture remains fail-safe. No tests skipped.",
+    "ac5_evidence_separation": "Verified: evidence JSON accurately details the atomic transactional authority/ACL phase vs the nontransactional concurrent index phase.",
+    "ac6_hosted_and_l1_l12_obligations": "Full L1-L12 natural hosted authenticated browser restart and exact rollback obligations remain unaccepted until genuine hosted proofs are produced."
+  },
+  "hosted_track": {
+    "status": "external_wait",
+    "next": "Operator continues original TW/full L1-L12/natural authenticated readback/exact rollback chain."
+  }
+}

@@ -45,14 +45,6 @@ def _extract_bff_recreate_invocation(source: str) -> str:
     return phase3[:call_end_line].strip()
 
 
-def _extract_artifact_driver_invocation(source: str) -> str:
-    driver_func = _extract_function(source, "run_dev_artifact_driver")
-    call_start = driver_func.index('with_dev_bff_runtime_env "${runtime_sha}" false')
-    call_end = driver_func.index('"${candidate_args[@]}" "${drift_args[@]}"')
-    call_end_line = driver_func.index("\n", call_end)
-    return driver_func[call_start:call_end_line].strip()
-
-
 def _setup_stub_bin(tmp_path: Path) -> tuple[Path, Path]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
@@ -382,7 +374,6 @@ runtime_sha="{env['PANTHEON_DEPLOY_SHA']}"
 compose_file="{tmp_path}/docker-compose.yml"
 operation="verify"
 candidate_args=()
-drift_args=()
 
 with_dev_bff_runtime_env "${{runtime_sha}}" false \
   python3 "${{PANTHEON_DEV_ARTIFACT_DRIVER_PATH}}" "${{operation}}" \
@@ -400,7 +391,7 @@ with_dev_bff_runtime_env "${{runtime_sha}}" false \
     --bff-url "https://${{PANTHEON_DEV_BFF_PUBLIC_HOST}}" \
     --fe-url "https://${{PANTHEON_DEV_FE_PUBLIC_HOST}}" \
     --guard-channel-fd "${{PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD}}" \
-    "${{candidate_args[@]}}" "${{drift_args[@]}}"
+    "${{candidate_args[@]}}"
 """
     result = subprocess.run(["bash", "-s"], input=script_payload, env=env, text=True, capture_output=True)
     assert result.returncode == 0, f"Artifact driver invocation failed: {result.stderr}"

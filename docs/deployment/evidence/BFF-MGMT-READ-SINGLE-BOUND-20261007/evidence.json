@@ -1,0 +1,272 @@
+{
+  "task_id": "BFF-MGMT-READ-SINGLE-BOUND-20261007",
+  "change_class": "simplify",
+  "net_prod_line_budget": 0,
+  "summary": "Converge management reads onto single bounded run_management_read in common.py (12 slots, thread_name_prefix bff-mgmt-read) and encapsulate persona_readiness contributor pool in service.py (4 slots, thread_name_prefix bff-human-inbox-read). Remove duplicate dispatch, obsolete pools, and all sys.modules['services.control_plane.bff.main'] lookups.",
+  "call_sites_mapping": [
+    {
+      "site": "cockpit",
+      "endpoint": "GET /bff/management/cockpit",
+      "location": "services/control-plane/bff/management_read_models/router.py",
+      "caller": "ManagementCockpitRouter._get_cockpit -> ManagementCockpitService.get_cockpit",
+      "pool_before": "_MANAGEMENT_COCKPIT_READ_SLOTS (4 slots in main.py)",
+      "pool_after": "_MANAGEMENT_READ_DEFAULT_SLOTS (12 slots in common.py)",
+      "target_bound": "services.control_plane.bff.personas.routes.common.run_management_read"
+    },
+    {
+      "site": "human_inbox_contributor",
+      "endpoint": "GET /bff/human-inbox/persona-readiness",
+      "location": "services/control-plane/bff/management_read_models/service.py",
+      "caller": "_bounded_persona_readiness_rows",
+      "pool_before": "_HUMAN_INBOX_READ_SLOTS (4 slots in main.py)",
+      "pool_after": "_HUMAN_INBOX_READ_SLOTS (4 slots in service.py)",
+      "target_bound": "services.control_plane.bff.personas.routes.common.run_management_read"
+    },
+    {
+      "site": "evidence",
+      "endpoint": "GET /bff/management/evidence/*",
+      "location": "services/control-plane/bff/management_read_models/router.py",
+      "caller": "Management evidence query routes",
+      "pool_before": "_MANAGEMENT_READ_DEFAULT_SLOTS (8 slots in main.py)",
+      "pool_after": "_MANAGEMENT_READ_DEFAULT_SLOTS (12 slots in common.py)",
+      "target_bound": "services.control_plane.bff.personas.routes.common.run_management_read"
+    },
+    {
+      "site": "alerts",
+      "endpoint": "GET /bff/management/alerts/*",
+      "location": "services/control-plane/bff/incidents/router.py",
+      "caller": "Incidents alerts query routes",
+      "pool_before": "_MANAGEMENT_READ_DEFAULT_SLOTS (8 slots in main.py)",
+      "pool_after": "_MANAGEMENT_READ_DEFAULT_SLOTS (12 slots in common.py)",
+      "target_bound": "services.control_plane.bff.personas.routes.common.run_management_read"
+    },
+    {
+      "site": "data_sources_registry_read",
+      "endpoint": "GET /bff/management/data-sources/*",
+      "location": "services/control-plane/bff/main.py",
+      "caller": "Source Ingest registry read handler",
+      "pool_before": "_MANAGEMENT_DATA_SOURCES_READ_SLOTS (2 slots, private _run_management_read alias)",
+      "pool_after": "_MANAGEMENT_DATA_SOURCES_READ_SLOTS (2 slots, private _run_management_read alias)",
+      "target_bound": "services.control_plane.bff.personas.routes.common.run_management_read"
+    }
+  ],
+  "offload_thread_counts": {
+    "before": {
+      "management_read_default": 8,
+      "management_cockpit_read": 4,
+      "human_inbox_read": 4,
+      "total_threads": 16,
+      "source": "services/control-plane/bff/main.py"
+    },
+    "after": {
+      "management_read_default": 12,
+      "human_inbox_read": 4,
+      "total_threads": 16,
+      "source": "common.py (_MANAGEMENT_READ_DEFAULT_SLOTS=12) + service.py (_HUMAN_INBOX_READ_SLOTS=4)"
+    },
+    "note": "Offload thread counts stay exactly 16 (excluding unchanged data-sources pool of 2 and out-of-scope router contributor executor of 4)."
+  },
+  "persona_readiness_path": {
+    "before": "A raising read in main._bounded_human_inbox_persona_readiness fell through to an inline unbounded retry and a raw list_personas retry that ran in caller contextvars.",
+    "after": "Encapsulated in services/control-plane/bff/management_read_models/service.py using _HUMAN_INBOX_READ_EXECUTOR (4 threads, prefix bff-human-inbox-read). One bounded read without caller contextvars; errors fail fast as contributor_read_error without retry loop; capacity saturation returns immediate degraded response (read_capacity_saturated); timeout returns read_timeout."
+  },
+  "diff_budget": {
+    "table": "| class | added | deleted | net |\n|---|---|---|---|\n| production | +74 | -267 | -193 |\n| test | +93 | -58 | +35 |\n| docs/evidence | +275 | 0 | +275 |",
+    "production_added": 74,
+    "production_deleted": 267,
+    "production_net": -193,
+    "test_added": 93,
+    "test_deleted": 58,
+    "test_net": 35,
+    "budget_satisfied": true
+  },
+  "out_of_scope_follow_ups": [
+    {
+      "file": "services/control-plane/bff/management_read_models/router.py",
+      "lines": "54, 59-90, 91-163, 214-252",
+      "description": "_StoreTimeoutProxy, _HUMAN_INBOX_CONTRIBUTOR_EXECUTOR, _get_human_inbox_surface_timeout, and ManagementService.get_human_inbox class patch."
+    },
+    {
+      "file": "services/control-plane/bff/governance/human_inbox.py",
+      "lines": "205, 868-869, 948-949, 954, 977-978, 983, 1006-1007, 1013, 1028-1029, 1153, 1173, 1277, 1351, 1387",
+      "description": "Imports from main and second human_inbox_surface_timeout_seconds (PANTHEON_BFF_HUMAN_INBOX_TIMEOUT_SECONDS default 3.0)."
+    },
+    {
+      "file": "services/control-plane/bff/ports/persona_write_owner.py",
+      "lines": "170-186",
+      "description": "Missing caller contextvars in persona_readiness executor (falls back to service token without X-Tenant-Id) as auth and tenant follow-up."
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_management_session_harness.py",
+      "lines": "40-55",
+      "description": "InMemoryManagementReadStore.list_personas missing **kwargs / actor_persona_id parameter (pre-existing baseline failure)."
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_bff_management_cockpit.py",
+      "lines": "all",
+      "description": "8 test failures due to cockpit route response formatting expectation mismatches (pre-existing baseline failures)."
+    },
+    {
+      "file": "services/control-plane/bff/test_bff_promotion_review_governance.py",
+      "lines": "~682-700, ~828-850",
+      "description": "Stale docstrings describing obsolete concurrency bounds."
+    },
+    {
+      "file": "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py",
+      "lines": "header",
+      "description": "Stale docstring referring to legacy slot count."
+    },
+    {
+      "file": "services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "lines": "75-90",
+      "description": "Stale allowlist rationale for capacity test in test architecture."
+    },
+    {
+      "file": "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+      "lines": "allowlist entries",
+      "description": "Stale allowlist rationale for capacity test."
+    }
+  ],
+  "side_by_side_test_verification": [
+    {
+      "suite": "tests/test_main_composition_seam_extraction_002.py",
+      "baseline_rc": 0,
+      "head_rc": 0,
+      "status": "PASS",
+      "head_summary": "21 passed, 3 warnings in 19.40s"
+    },
+    {
+      "suite": "tests/test_main_composition_seam_extraction_003.py",
+      "baseline_rc": 0,
+      "head_rc": 0,
+      "status": "PASS",
+      "head_summary": "29 passed, 3 warnings in 45.08s"
+    },
+    {
+      "suite": "test_mgmt_load_005_read_concurrency.py",
+      "baseline_rc": 0,
+      "head_rc": 0,
+      "status": "PASS",
+      "head_summary": "10 passed, 1 warning in 10.78s"
+    },
+    {
+      "suite": "test_bff_promotion_review_governance.py (run 1)",
+      "baseline_rc": 0,
+      "head_rc": 0,
+      "status": "PASS",
+      "head_summary": "13 passed, 1 warning in 13.73s"
+    },
+    {
+      "suite": "test_bff_promotion_review_governance.py (run 2)",
+      "baseline_rc": 0,
+      "head_rc": 0,
+      "status": "PASS",
+      "head_summary": "13 passed, 1 warning in 14.20s"
+    },
+    {
+      "suite": "test_bff_promotion_review_governance.py (run 3)",
+      "baseline_rc": 0,
+      "head_rc": 0,
+      "status": "PASS",
+      "head_summary": "13 passed, 1 warning in 14.17s"
+    },
+    {
+      "suite": "tests/test_bff_main_composition.py",
+      "baseline_rc": 0,
+      "head_rc": 0,
+      "status": "PASS",
+      "head_summary": "54 passed, 3 warnings in 76.00s"
+    },
+    {
+      "suite": "tests/test_management_read_models_router.py",
+      "baseline_rc": 0,
+      "head_rc": 0,
+      "status": "PASS",
+      "head_summary": "41 passed, 3 warnings in 32.41s"
+    },
+    {
+      "suite": "tests/test_management_read_budget.py",
+      "baseline_rc": 0,
+      "head_rc": 0,
+      "status": "PASS",
+      "head_summary": "4 passed, 4 warnings in 3.54s"
+    },
+    {
+      "suite": "tests/test_management_session_harness.py",
+      "baseline_rc": 1,
+      "head_rc": 1,
+      "status": "PRE_EXISTING_BASELINE_FAILURE",
+      "head_summary": "1 failed, 10 passed, 3 warnings in 12.23s"
+    },
+    {
+      "suite": "test_bff_session_auth_me_contract.py",
+      "baseline_rc": 0,
+      "head_rc": 0,
+      "status": "PASS",
+      "head_summary": "62 passed, 3 warnings in 48.13s"
+    },
+    {
+      "suite": "test_bff_consol_013_cookie_session_write_gate.py",
+      "baseline_rc": 0,
+      "head_rc": 0,
+      "status": "PASS",
+      "head_summary": "13 passed, 6 warnings in 11.22s"
+    },
+    {
+      "suite": "tests/test_bff_b3_human_inbox.py",
+      "baseline_rc": 0,
+      "head_rc": 0,
+      "status": "PASS",
+      "head_summary": "5 passed, 3 warnings in 3.38s"
+    },
+    {
+      "suite": "tests/test_promotion_review_production_defects.py",
+      "baseline_rc": 0,
+      "head_rc": 0,
+      "status": "PASS",
+      "head_summary": "6 passed, 2 warnings in 2.99s"
+    },
+    {
+      "suite": "tests/test_bff_management_cockpit.py",
+      "baseline_rc": 1,
+      "head_rc": 1,
+      "status": "PRE_EXISTING_BASELINE_FAILURE",
+      "head_summary": "8 failed, 2 passed, 3 warnings in 5.27s"
+    },
+    {
+      "suite": "test_bff_management_delta_routes.py",
+      "baseline_rc": 0,
+      "head_rc": 0,
+      "status": "PASS",
+      "head_summary": "20 passed, 1 warning in 21.93s"
+    },
+    {
+      "suite": "test_execute_plans_final_live_wiring_contract.py",
+      "baseline_rc": 0,
+      "head_rc": 0,
+      "status": "PASS",
+      "head_summary": "7 passed, 1 skipped, 115 warnings in 13.98s"
+    },
+    {
+      "suite": "tests/test_bff_test_architecture.py",
+      "baseline_rc": 0,
+      "head_rc": 0,
+      "status": "PASS",
+      "head_summary": "39 passed, 3 warnings in 51.02s"
+    },
+    {
+      "suite": "scripts/test_bff_package_boundary_prerequisite.py",
+      "baseline_rc": 0,
+      "head_rc": 0,
+      "status": "PASS",
+      "head_summary": "0 violations"
+    },
+    {
+      "suite": "tests/test_management_read_timeout_and_capacity.py",
+      "baseline_rc": 0,
+      "head_rc": 0,
+      "status": "PASS",
+      "head_summary": "5 passed, 3 warnings in 10.78s"
+    }
+  ]
+}

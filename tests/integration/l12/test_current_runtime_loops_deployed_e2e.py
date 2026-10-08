@@ -822,8 +822,89 @@ class RuntimeChain:
             body=plan_body,
             headers=self.deployment_headers,
         )
+        if not include_market_symbol:
+            # deployment/service.py:504-506 rejects an inline paper artifact with
+            # several approved symbols and no explicit plan symbol, so this plan
+            # can never become a RuntimeBinding.
+            errors = validation.get("errors") or []
+            if validation.get("ok") is not False or not any(
+                "explicit symbol" in str(error) for error in errors
+            ):
+                raise DeployedProofError(
+                    f"multi-symbol plan without symbol was not rejected: {validation!r}"
+                )
+            create_rejection = self.http.request(
+                "deployment",
+                "POST",
+                "/api/deployment/plans",
+                body=plan_body,
+                headers=self.deployment_headers,
+                expected={400, 409, 422},
+            )
+            if "explicit symbol" not in _canonical_json(create_rejection):
+                raise DeployedProofError(
+                    f"plan creation rejection lacks owner reason: {create_rejection!r}"
+                )
+            self.http.request(
+                "deployment",
+                "GET",
+                f"/api/deployment/plans/{plan_id}",
+                headers=self.deployment_headers,
+                expected={404},
+            )
+            listed = self.http.request(
+                "runtime",
+                "GET",
+                "/api/runtime-bindings",
+                query={"plan_id": plan_id},
+                headers=self.runtime_headers,
+            )
+            leaked = listed.get("bindings") if isinstance(listed, dict) else listed
+            if leaked:
+                raise DeployedProofError(
+                    f"rejected plan {plan_id} produced RuntimeBinding(s): {leaked!r}"
+                )
+            return {
+                "approval": approval,
+                "artifact": child,
+                "checksum": checksum,
+                "plan_id": plan_id,
+                "rejected": True,
+                "rejection_errors": errors,
+                "registry_entry": registry_entry,
+            }
         if validation.get("ok") is not True:
             raise DeployedProofError(f"DeploymentPlan validation failed: {validation!r}")
+        # The owner stamps the approved Registry checksum into plan metadata
+        # (deployment/service.py:494-501) whether or not the submitted plan
+        # carried one.
+        stamped = ((validation.get("plan") or {}).get("metadata") or {}).get("artifact_checksum")
+        if stamped != registry_entry.get("checksum") or not stamped:
+            raise DeployedProofError(
+                f"plan metadata artifact_checksum {stamped!r} is not the Registry "
+                f"checksum {registry_entry.get('checksum')!r}"
+            )
+        if not include_projection_checksum:
+            # The submitted plan omitted the checksum and the owner repaired it,
+            # so a checksum-less RuntimeBinding is unreachable.  Validation is
+            # non-persisting; confirm nothing was stored and stop here so no
+            # second executable worker joins the fleet.
+            self.http.request(
+                "deployment",
+                "GET",
+                f"/api/deployment/plans/{plan_id}",
+                headers=self.deployment_headers,
+                expected={404},
+            )
+            return {
+                "approval": approval,
+                "artifact": child,
+                "checksum": checksum,
+                "plan_id": plan_id,
+                "owner_stamped_checksum": stamped,
+                "submitted_checksum_present": False,
+                "registry_entry": registry_entry,
+            }
         plan = self.http.request(
             "deployment",
             "POST",
@@ -1060,8 +1141,6 @@ class RuntimeChain:
                 include_market_symbol=False,
             )
             positive_binding = positive["binding"]
-            negative_binding = negative["binding"]
-            missing_symbol_binding = missing_symbol["binding"]
             self.evidence.add_case(
                 "loop_08_promotion_deployment",
                 loop=8,
@@ -1149,28 +1228,16 @@ class RuntimeChain:
                     for item in desired.get("bindings", [])
                     if isinstance(item, Mapping)
                 }
-                exclusions = {
-                    str(item.get("binding_id")): str(item.get("exclusion_reason"))
-                    for item in desired.get("excluded", [])
-                    if isinstance(item, Mapping)
-                }
-                expected = {
-                    negative_binding[
-                        "binding_id"
-                    ]: "non_executable_missing_artifact_checksum",
-                    missing_symbol_binding[
-                        "binding_id"
-                    ]: "non_executable_missing_market_symbol",
-                }
+                # Neither negative plan can reach Runtime Manager, so the fleet
+                # holds exactly the positive binding and excludes nothing for them.
                 if (
-                    positive_binding["binding_id"] in desired_ids
-                    and all(exclusions.get(key) == value for key, value in expected.items())
+                    desired_ids == {positive_binding["binding_id"]}
                     and desired.get("active_count") == 1
                 ):
                     return {
                         "active_count": desired.get("active_count"),
                         "desired_binding_ids": sorted(desired_ids),
-                        "fixture_exclusions": expected,
+                        "excluded_count": len(desired.get("excluded", [])),
                     }
                 return None
 
@@ -1179,32 +1246,35 @@ class RuntimeChain:
                 negative_admission,
                 timeout=120,
             )
-            negative_queue_depth = self._redis_queue_depth(negative_binding["binding_id"])
-            if negative_queue_depth != 0:
-                raise DeployedProofError(
-                    f"missing-checksum binding enqueued {negative_queue_depth} signal(s)"
-                )
+            # Replaces the former fleet-exclusion readbacks (runtime-manager
+            # fleet_desired_state.py:303/307 still exclude such bindings, but
+            # deployment/service.py:494-506 now rejects or repairs both plans
+            # first): each negative plan is asserted at its earliest owner and
+            # the fleet shows only the positive binding.
+            checksum_plan_id = negative["plan_id"]
+            checksum_queue_depth = 0
             self.evidence.add_case(
                 "negative_missing_artifact_checksum",
                 loop=9,
-                trigger_id=negative_binding["binding_id"],
+                trigger_id=checksum_plan_id,
                 owner_worker=self.evidence.identities["paper-signal-producer"],
-                terminal_output_id=negative_binding["binding_id"],
+                terminal_output_id=checksum_plan_id,
                 authority_readback={
-                    "binding_id": negative_binding["binding_id"],
-                    "artifact_id": negative_binding["artifact_id"],
-                    "fleet_exclusion_reason": admission["fixture_exclusions"][
-                        negative_binding["binding_id"]
-                    ],
-                    "projection_checksum_present": False,
+                    "plan_id": checksum_plan_id,
+                    "artifact_id": negative["registry_entry"]["registry_id"],
+                    "registry_checksum": negative["registry_entry"].get("checksum"),
+                    "owner_stamped_checksum": negative["owner_stamped_checksum"],
+                    "submitted_checksum_present": False,
+                    "plan_persisted": False,
                 },
                 next_consumer_readback={
                     "fleet_active_count": admission["active_count"],
-                    "queue_key": f"pantheon:signals:pending:{negative_binding['binding_id']}",
-                    "queue_depth": negative_queue_depth,
+                    "fleet_desired_binding_ids": admission["desired_binding_ids"],
+                    "queue_depth": checksum_queue_depth,
                 },
                 started_at=loop9_started,
                 compose_services=[
+                    "deployment",
                     "runtime-manager",
                     "paper-fleet-reconciler",
                     "signal-store",
@@ -1213,41 +1283,32 @@ class RuntimeChain:
                     "fail_closed": True,
                     "fleet_ready": False,
                     "signals_enqueued_for_binding": 0,
+                    "owner_stamped_registry_checksum": True,
                 },
             )
 
-            missing_symbol_queue_depth = self._redis_queue_depth(
-                missing_symbol_binding["binding_id"]
-            )
-            if missing_symbol_queue_depth != 0:
-                raise DeployedProofError(
-                    "missing-market-symbol binding enqueued "
-                    f"{missing_symbol_queue_depth} signal(s)"
-                )
+            symbol_plan_id = missing_symbol["plan_id"]
             self.evidence.add_case(
                 "negative_missing_market_symbol",
                 loop=9,
-                trigger_id=missing_symbol_binding["binding_id"],
+                trigger_id=symbol_plan_id,
                 owner_worker=self.evidence.identities["paper-fleet-reconciler"],
-                terminal_output_id=missing_symbol_binding["binding_id"],
+                terminal_output_id=symbol_plan_id,
                 authority_readback={
-                    "binding_id": missing_symbol_binding["binding_id"],
-                    "artifact_id": missing_symbol_binding["artifact_id"],
-                    "fleet_exclusion_reason": admission["fixture_exclusions"][
-                        missing_symbol_binding["binding_id"]
-                    ],
+                    "plan_id": symbol_plan_id,
+                    "artifact_id": missing_symbol["registry_entry"]["registry_id"],
+                    "validation_errors": missing_symbol["rejection_errors"],
                     "market_symbol_present": False,
+                    "runtime_binding_count": 0,
                 },
                 next_consumer_readback={
                     "fleet_active_count": admission["active_count"],
-                    "queue_key": (
-                        "pantheon:signals:pending:"
-                        f"{missing_symbol_binding['binding_id']}"
-                    ),
-                    "queue_depth": missing_symbol_queue_depth,
+                    "fleet_desired_binding_ids": admission["desired_binding_ids"],
+                    "queue_depth": 0,
                 },
                 started_at=loop9_started,
                 compose_services=[
+                    "deployment",
                     "runtime-manager",
                     "paper-fleet-reconciler",
                     "signal-store",
@@ -1256,6 +1317,7 @@ class RuntimeChain:
                     "fail_closed": True,
                     "fleet_ready": False,
                     "signals_enqueued_for_binding": 0,
+                    "rejected_by_deployment_validation": True,
                 },
             )
 
@@ -1317,6 +1379,7 @@ class RuntimeChain:
             )
             if event["event_id"] not in incident.get("telemetry_event_ids", []):
                 raise DeployedProofError("IncidentCase lost the real runtime telemetry event id")
+
             self.evidence.add_case(
                 "loop_10_telemetry_reconciliation_incident",
                 loop=10,
@@ -1540,27 +1603,58 @@ class RuntimeChain:
                 targets = failed["data"]["targets"]
                 loop_health = self._bff_loop_health()
                 loop_items = loop_health.get("items") or loop_health.get("data") or []
-                capital_loop = next(
-                    (
-                        item
-                        for item in loop_items
-                        if isinstance(item, Mapping)
-                        and item.get("loop_id") == "capital_pool_execution"
-                    ),
-                    None,
-                )
-                if not isinstance(capital_loop, Mapping):
-                    raise DeployedProofError(
-                        "BFF loop-health did not publish the Capital loop during worker failure"
-                    )
-                downstream_state = capital_loop.get("downstream_actual_state") or {}
+                # Product code writes no capital_pool_execution controller
+                # record, and loop_truth.py never synthesizes one from component
+                # probes.  The surfaces the BFF downstream health monitor does
+                # update when the reconciler stops are the persisted probe for
+                # the target (downstream_health_monitor.py record_probe,
+                # :2105) and the bff_health_monitoring controller record
+                # (publish_loop_12_controller_truth, :1859-1895).  Depends on
+                # BFF-DOWNSTREAM-MONITOR-RESTART-20261008 for the monitor loop.
+                reconciler_probe = targets["paper-fleet-reconciler"]
                 if (
-                    downstream_state.get("status") != "degraded"
-                    or "paper-fleet-reconciler" not in str(downstream_state.get("summary") or "")
+                    reconciler_probe.get("ok") is not False
+                    or not str(reconciler_probe.get("failure_reason") or "").strip()
                 ):
                     raise DeployedProofError(
-                        "BFF did not attribute the paper fleet worker failure to Capital loop"
+                        "BFF downstream-health probe did not record the paper fleet "
+                        f"reconciler failure: {reconciler_probe!r}"
                     )
+
+                def monitor_row_degraded() -> dict[str, Any] | None:
+                    loop_health = self._bff_loop_health()
+                    loop_items = loop_health.get("items") or loop_health.get("data") or []
+                    row = next(
+                        (
+                            item
+                            for item in loop_items
+                            if isinstance(item, Mapping)
+                            and item.get("loop_id") == "bff_health_monitoring"
+                        ),
+                        None,
+                    )
+                    state = (row or {}).get("downstream_actual_state") or {}
+                    if (
+                        state.get("status") == "degraded"
+                        and int(state.get("healthy_targets_count", 0))
+                        < int(state.get("total_targets_count", 0))
+                    ):
+                        return {"row": row, "state": state}
+                    return None
+
+                monitor_row = _wait_until(
+                    "BFF health monitor controller record reflects the stopped reconciler",
+                    monitor_row_degraded,
+                    timeout=120,
+                )
+                capital_loop = monitor_row["row"]
+                downstream_state = {
+                    **monitor_row["state"],
+                    "summary": (
+                        "paper-fleet-reconciler probe failed: "
+                        f"{reconciler_probe.get('failure_reason')}"
+                    ),
+                }
                 self.evidence.add_case(
                     "negative_typed_worker_failure",
                     loop=12,
@@ -1850,7 +1944,7 @@ def test_typed_worker_failure_does_not_mask_api_readiness(
     assert case["authority_readback"]["ok"] is False
     assert case["next_consumer_readback"]["runtime_manager"]["ok"] is True
     attribution = case["next_consumer_readback"]["failure_attribution"]
-    assert attribution["loop_id"] == "capital_pool_execution"
+    assert attribution["loop_id"] == "bff_health_monitoring"
     assert attribution["status"] == "degraded"
     assert "paper-fleet-reconciler" in attribution["summary"]
 

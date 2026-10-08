@@ -40,6 +40,7 @@ Required response fields:
   - `canApproveRollback` (boolean)
   - `canRejectRollback` (boolean)
 - `meta.snapshot_at`
+- `meta.redacted_evidence_count`
 - `meta.surfaces` (per-surface `status`; must include `position_data` and `rollback_review`)
 
 ## Write Actions
@@ -78,6 +79,7 @@ All write actions use `POST /api/v1/operator/commands`.
 - When `position_data_stale` is `true` on a row, `position_impact_summary` will be null. The UI renders the stale-data message for that row.
 - Rollback action semantics (safe rollback targets, position settlement rules, and authority boundaries) are governed by `ROLLBACK_AND_POSITION_SEMANTICS.md`. This contract does not redefine those rules; it exposes them as backend-shaped fields.
 - Inherits `meta.surfaces.*` degradation semantics from `PKT-005 Degradation Banner`.
+- `trigger_evidence.evidence_refs` is redacted by the shared fail-closed evidence redactor: withheld refs carry `redacted: true`, `required_capability`, and `reason`; refs whose evidence kind the shared resolver cannot determine are withheld for every identity with `required_capability: "unknown"` and `reason: "unresolved_evidence_kind"`.
 
 ## Example Payload
 

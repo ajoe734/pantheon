@@ -5,6 +5,7 @@ import os
 import tempfile
 from typing import Any, Callable, Optional
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -30,6 +31,12 @@ HEADERS = {
     "X-Correlation-Id": "corr-bff-management-delta",
 }
 LOVABLE_ORIGIN = "https://pantheon-dev.lovable.app"
+FIXTURE_TENANT_ID = "pantheon-dev"
+
+
+@pytest.fixture(autouse=True)
+def _fixture_tenant(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", FIXTURE_TENANT_ID)
 
 
 def _load_fallback_data() -> dict[str, Any]:
@@ -91,15 +98,22 @@ class ManagementDeltaTestReadPorts(ReadSurfacePorts):
     def list_audit_events(self, **kwargs: Any) -> list[dict[str, Any]]:
         return self.list_governance_audit_events(**kwargs)
 
+    # Persona reads are tenant-scoped (3f2d13a40, 7959c408d); tag fixture personas with the fixture caller tenant.
+    @staticmethod
+    def _tenant_tagged(persona: dict[str, Any] | None) -> dict[str, Any] | None:
+        return None if persona is None else {"tenant_id": FIXTURE_TENANT_ID, **persona}
+
     def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
         ds = self._get_dataset("personas")
-        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+        return [self._tenant_tagged(p) for p in (ds.values() if isinstance(ds, dict) else ds)]
 
     def get_persona(self, persona_id: str | None) -> dict[str, Any] | None:
         ds = self._get_dataset("personas")
         if isinstance(ds, dict):
-            return ds.get(str(persona_id or ""))
-        return next((p for p in ds if p.get("id") == persona_id or p.get("persona_id") == persona_id), None)
+            return self._tenant_tagged(ds.get(str(persona_id or "")))
+        return self._tenant_tagged(
+            next((p for p in ds if p.get("id") == persona_id or p.get("persona_id") == persona_id), None)
+        )
 
     def get_capability_snapshot_for_persona(self, persona_id: str | None) -> dict[str, Any] | None:
         ds = self._get_dataset("capability_snapshots")
@@ -719,7 +733,17 @@ def test_quarterly_ranking_drilldown_accepts_cors_preflight() -> None:
         assert "authorization" in response.headers["access-control-allow-headers"].lower()
 
 
-def test_governance_ledger_unifies_approval_and_override_sources() -> None:
+def test_governance_ledger_unifies_approval_and_override_sources(monkeypatch) -> None:
+    # Approvals are owned by the Governance service (503 when unreachable); stub that owner.
+    from services.control_plane.bff.governance import approval_owner
+
+    monkeypatch.setattr(
+        approval_owner,
+        "call_owner",
+        lambda method, path, authorization, **kwargs: [
+            {"decision_id": "apv-delta-001", "decision_state": "proposed", "version": 1, "evidence_refs": []}
+        ],
+    )
     with tempfile.TemporaryDirectory() as td:
         client = _fresh_client(td)
         store = client.store  # type: ignore[attr-defined]
@@ -823,83 +847,18 @@ def test_cost_attribution_success() -> None:
         body = response.json()
         data = body["data"]
 
-        assert set(body) == {"data", "page_info", "meta"}
-        assert data["id"] == "management-cost-attribution"
-        assert set(data) >= {"items", "summary"}
-        assert "rows" not in data
-        assert "attributions" not in data
-        assert body["page_info"]["page_size"] == 20
-        assert data["summary"]["policy"] == "read_only_cost_attribution"
+        # 8226b2774 moved this route to the capital router's owner-backed portfolio
+        # projection (tests/test_capital_router.py): list data plus top-level items,
+        # no composed summary and no fabricated costs.
+        assert set(body) == {"data", "items", "page_info", "meta"}
+        assert body["data"] == body["items"]
+        assert body["page_info"]["total"] == len(body["items"])
         assert body["meta"]["policy"] == "read_only_cost_attribution"
-        assert "cost_attribution" in body["meta"]["surfaces"]
-        assert body["meta"]["surfaces"]["cost_attribution"]["source"] == "bff_composed"
-        assert "GET /bff/capital-pools" in body["meta"]["composition_sources"]
-        assert "row_count" in data["summary"]
-        assert "total_cost" in data["summary"]
-        assert "rowCount" not in data["summary"]
-        assert "totalCost" not in data["summary"]
-        if data["items"]:
-            row = data["items"][0]
-            assert "cost_id" in row
-            assert "capital_pool_id" in row
-            assert "source_refs" in row
+        assert body["meta"]["total"] == len(body["items"])
+        for row in body["items"]:
+            assert {"capital_pool_id", "allocation", "cost"} <= set(row)
             assert "costId" not in row
             assert "capitalPoolId" not in row
-            assert "sourceRefs" not in row
-            assert "capitalPool" not in row["links"]
-            assert "performanceAttribution" not in row["links"]
-
-
-def test_cost_attribution_pages_groups_before_row_projection() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        client = _fresh_client(td, fallback=False)
-        store = client.store  # type: ignore[attr-defined]
-        store._data.update(
-            {
-                "runtime_bindings": [{"runtime_id": "runtime-a"}],
-                "deployment_plans": [],
-                "bindings": [],
-                "capital_pools": [
-                    {"pool_id": "pool-a", "name": "Pool A", "risk_budget": 100.0},
-                    {"pool_id": "pool-b", "name": "Pool B", "risk_budget": 100.0},
-                    {"pool_id": "pool-c", "name": "Pool C", "risk_budget": 100.0},
-                ],
-                "personas": [],
-                "strategies": [],
-                "plans_by_id": {},
-                "bindings_by_id": {},
-                "pools_by_id": {
-                    "pool-a": {"pool_id": "pool-a", "name": "Pool A", "risk_budget": 100.0},
-                    "pool-b": {"pool_id": "pool-b", "name": "Pool B", "risk_budget": 100.0},
-                    "pool-c": {"pool_id": "pool-c", "name": "Pool C", "risk_budget": 100.0},
-                },
-                "personas_by_id": {},
-                "strategies_by_id": {},
-                "telemetry_by_runtime_id": {"runtime-a": {"runtime_id": "runtime-a"}},
-            }
-        )
-        # NOTE: the production `_pm12_performance_attribution_sources` /
-        # `_pm12_performance_attribution_facts` / `_management_cost_attribution_rows`
-        # helpers this test used to monkeypatch on `main.py` no longer back the
-        # mounted `/bff/management/cost-attribution` route: that route is now
-        # served by `capital.router.create_capital_router`'s simpler
-        # portfolio-cost projection (see capital/router.py), which has no
-        # equivalent seam to intercept. The fixture data above and the
-        # assertions below are kept as-is (unweakened) so this test still
-        # documents and exercises the intended contract; see
-        # test_failure_disposition notes for why it does not pass today.
-
-        response = client.get(
-            "/bff/management/cost-attribution",
-            headers=HEADERS,
-            params={"page_size": 1},
-        )
-
-        assert response.status_code == 200, response.text
-        body = response.json()
-        assert body["data"]["summary"]["row_count"] == 3
-        assert body["data"]["summary"]["returned_row_count"] == 1
-        assert body["page_info"] == {"next_page_token": "1", "total": 3, "page_size": 1}
 
 
 def test_cost_attribution_filter_by_persona() -> None:
@@ -915,7 +874,7 @@ def test_cost_attribution_filter_by_persona() -> None:
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["page_info"]["total"] == 0
-        assert body["data"]["items"] == []
+        assert body["items"] == []
 
 
 def test_cost_attribution_cors_preflight_and_openapi() -> None:

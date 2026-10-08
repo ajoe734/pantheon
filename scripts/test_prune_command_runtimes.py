@@ -181,6 +181,8 @@ def test_main_dry_run_does_not_delete(tmp_path: Path, capsys: pytest.CaptureFixt
         [
             "--parent",
             str(parent),
+            "--integration-parent",
+            str(tmp_path / "integration-runtimes"),
             "--live-config",
             str(live_config),
             "--status-root",
@@ -216,6 +218,8 @@ def test_prune_skips_without_inspection_or_deletion_while_runner_is_active(
             [
                 "--parent",
                 str(parent),
+                "--integration-parent",
+                str(tmp_path / "integration-runtimes"),
                 "--live-config",
                 str(live_config),
                 "--status-root",
@@ -258,6 +262,8 @@ def test_main_deletes_and_keeps_live_and_leased(tmp_path: Path) -> None:
         [
             "--parent",
             str(parent),
+            "--integration-parent",
+            str(tmp_path / "integration-runtimes"),
             "--live-config",
             str(live_config),
             "--status-root",

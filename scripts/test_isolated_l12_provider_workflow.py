@@ -1,4 +1,7 @@
+import os
 import re
+import subprocess
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -80,6 +83,93 @@ def test_payload_fetch_does_not_add_checkout_action_or_leak_token() -> None:
     assert "uses" not in fetch
     assert "GH_TOKEN" in fetch["env"] and "GIT_CONFIG_VALUE_0" not in fetch["env"]
     assert "x-access-token:%s" in fetch["run"] and "git submodule update" in fetch["run"]
+    assert "FETCH_HEAD" not in fetch["run"]
+    assert 'target_sha="$(git rev-parse --verify "${TARGET_REF}^{commit}")"' in fetch["run"]
+    assert 'git checkout -q --detach "${target_sha}"' in fetch["run"]
+
+
+def test_tempgit_multipayload_fetch_and_mismatch_guard() -> None:
+    val_script = STEPS["Validate protected exact dev source"]["run"]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        remote = os.path.join(tmpdir, "remote")
+        subprocess.run(["git", "init", "-b", "dev", remote], check=True, capture_output=True)
+        subprocess.run(["git", "-C", remote, "config", "user.name", "test"], check=True)
+        subprocess.run(["git", "-C", remote, "config", "user.email", "test@test"], check=True)
+
+        with open(os.path.join(remote, "f.txt"), "w") as f:
+            f.write("c1")
+        subprocess.run(["git", "-C", remote, "add", "."], check=True)
+        subprocess.run(["git", "-C", remote, "commit", "-m", "c1"], check=True)
+        old_sha = subprocess.check_output(["git", "-C", remote, "rev-parse", "HEAD"]).decode().strip()
+
+        with open(os.path.join(remote, "f.txt"), "w") as f:
+            f.write("c2")
+        subprocess.run(["git", "-C", remote, "add", "."], check=True)
+        subprocess.run(["git", "-C", remote, "commit", "-m", "c2"], check=True)
+        dev_sha = subprocess.check_output(["git", "-C", remote, "rev-parse", "HEAD"]).decode().strip()
+
+        local = os.path.join(tmpdir, "local")
+        subprocess.run(["git", "init", "-q", local], check=True)
+        subprocess.run(["git", "-C", local, "remote", "add", "origin", remote], check=True)
+
+        # Multipayload fetch: origin/dev and requested oldsha
+        subprocess.run(
+            ["git", "-C", local, "fetch", "-q", "origin", "+refs/heads/dev:refs/remotes/origin/dev", old_sha],
+            check=True,
+        )
+
+        # Verify FETCH_HEAD first entry is origin/dev (the override footgun)
+        with open(os.path.join(local, ".git", "FETCH_HEAD"), encoding="utf-8") as f:
+            first_line = f.readline()
+            assert dev_sha in first_line
+
+        # Exact requested commit resolution and checkout
+        target_sha = subprocess.check_output(
+            ["git", "-C", local, "rev-parse", "--verify", f"{old_sha}^{{commit}}"]
+        ).decode().strip()
+        subprocess.run(["git", "-C", local, "checkout", "-q", "--detach", target_sha], check=True)
+        assert subprocess.check_output(["git", "-C", local, "rev-parse", "HEAD"]).decode().strip() == old_sha
+
+        # Run exact workflow validation script: mismatch rejected before resources or lease
+        env = os.environ.copy()
+        env.update({
+            "GITHUB_REF": "refs/heads/dev",
+            "GITHUB_SHA": dev_sha,
+            "TARGET_COMPONENT": "auto",
+            "ALLOW_DIRTY": "false",
+            "DEV_AUTH_PROFILE": "strict",
+        })
+        mismatch_res = subprocess.run(
+            ["/bin/bash", "--noprofile", "--norc", "-euo", "pipefail", "-c", val_script],
+            cwd=local,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert mismatch_res.returncode != 0
+        assert "Isolated qualification must run from the exact current Pantheon dev commit" in mismatch_res.stderr
+
+        # Empty input: workflow SHA accepted only when protected current dev
+        subprocess.run(["git", "-C", local, "checkout", "-q", "--detach", dev_sha], check=True)
+        pass_res = subprocess.run(
+            ["/bin/bash", "--noprofile", "--norc", "-euo", "pipefail", "-c", val_script],
+            cwd=local,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert pass_res.returncode == 0
+
+        # Stale workflow SHA rejected even if checked out
+        env["GITHUB_SHA"] = old_sha
+        stale_res = subprocess.run(
+            ["/bin/bash", "--noprofile", "--norc", "-euo", "pipefail", "-c", val_script],
+            cwd=local,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert stale_res.returncode != 0
 
 
 def test_preflight_verifies_runner_disk_and_memory_without_broad_deletion() -> None:

@@ -291,21 +291,16 @@ def submit_incident_action_command(
     bff_error: Optional[Callable[..., Any]] = None,
 ) -> Dict[str, Any]:
     from services.control_plane.bff.command_adapters.base import ActionUnavailableError
+    from services.control_plane.bff.command_adapters.incident_adapter import IncidentRouteRejected, bind_incident_route_target
     from services.control_plane.bff.command_adapters.registry import dispatch_domain_command
     import urllib.error as urllib_error
     err_fn = bff_error or _default_bff_error
     cmd_type = command_type if isinstance(command_type, CommandType) else CommandType(command_type)
     obj_type = entity_type if isinstance(entity_type, ObjectType) else ObjectType(entity_type)
-    inc_id = entity_id if cmd_type == CommandType.INCIDENT_ACTION else (entity_id[15:] if entity_id.startswith("alert-incident-") else (entity_id if entity_id.startswith("inc-") else ""))
-    route_params = {
-        "entity_type": obj_type.value, "entity_id": entity_id, "action_id": action_id,
-        "alert_id": entity_id if cmd_type == CommandType.RISK_ALERT_ACTION else "",
-        "incident_id": inc_id,
-    }
-    for field, expected in route_params.items():
-        if field in payload and str(payload[field]).strip() != expected:
-            raise err_fn(422, ErrorCode.OPERATION_NOT_ALLOWED, "Action target mismatch", f"{field} must match the requested route", precondition_failed="route_target_mismatch")
-    params = {**payload, **route_params}
+    try:
+        params = bind_incident_route_target(cmd_type.value, obj_type.value, entity_id, action_id, payload)
+    except IncidentRouteRejected as exc:
+        raise err_fn(422, ErrorCode.OPERATION_NOT_ALLOWED, "Action target mismatch", str(exc), precondition_failed=exc.precondition) from exc
     cmd_id = str(uuid.uuid4())
     try:
         domain_res = dispatch_domain_command(

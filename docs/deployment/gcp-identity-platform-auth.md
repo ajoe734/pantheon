@@ -1,8 +1,10 @@
 # GCP Identity Platform authentication
 
 Pantheon dev browser authentication is owned by GCP Identity Platform in
-project `pantheon-lupin-dev-20260719`. Supabase is not an authentication
-dependency.
+the project that `nonprod-deploy.yml` passes to the BFF as
+`DEV_BFF_OIDC_AUDIENCE`; its workflow fallback is the dev project of
+[§ 3.1](vm-dev-staging-prod-management-plan.md#31-dev) (value not copied here; `<dev-project>` below). Supabase is not an
+authentication dependency.
 
 ## Runtime contract
 
@@ -16,8 +18,8 @@ dependency.
   - JWKS:
     `https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com`
   - issuer:
-    `https://securetoken.google.com/pantheon-lupin-dev-20260719`
-  - audience: `pantheon-lupin-dev-20260719`
+    `https://securetoken.google.com/<dev-project>`
+  - audience: `<dev-project>`
   - `email_verified=true` required.
   - `firebase.sign_in_second_factor=totp` required while dev MFA enforcement is
     enabled.
@@ -39,9 +41,9 @@ Identity Platform must have:
   including lower-case, upper-case, numeric, and non-alphanumeric characters.
 - TOTP MFA enabled.
 - Authorized domains:
-  - `pantheon-lupin-dev-20260719.firebaseapp.com`
-  - `pantheon-lupin-dev-20260719.web.app`
-  - `pantheon-lupin-dev-fe.35.201.204.12.sslip.io`
+  - `<dev-project>.firebaseapp.com`
+  - `<dev-project>.web.app`
+  - the `DEV_FE_PUBLIC_HOST` variable
   - `localhost`
 
 The hosted functional browser path uses the Firebase Web SDK's short-lived
@@ -53,16 +55,16 @@ Frontend repository variables:
 
 ```text
 VITE_GCP_IDENTITY_API_KEY
-VITE_GCP_IDENTITY_PROJECT_ID=pantheon-lupin-dev-20260719
-VITE_GCP_IDENTITY_AUTH_DOMAIN=pantheon-lupin-dev-20260719.firebaseapp.com
+VITE_GCP_IDENTITY_PROJECT_ID=<dev-project>
+VITE_GCP_IDENTITY_AUTH_DOMAIN=<dev-project>.firebaseapp.com
 ```
 
 BFF repository variables:
 
 ```text
 DEV_BFF_JWKS_URI=https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com
-DEV_BFF_OIDC_ISSUER=https://securetoken.google.com/pantheon-lupin-dev-20260719
-DEV_BFF_OIDC_AUDIENCE=pantheon-lupin-dev-20260719
+DEV_BFF_OIDC_ISSUER=https://securetoken.google.com/<dev-project>
+DEV_BFF_OIDC_AUDIENCE=<dev-project>
 DEV_BFF_ROLE_CLAIMS=roles,role
 DEV_BFF_DEFAULT_ROLE=viewer
 DEV_BFF_MFA_CLAIMS=amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor
@@ -87,6 +89,7 @@ There is no shared default account or password.
 
 ```bash
 python3 scripts/gcp_identity_set_roles.py \
+  --project-id <dev-project> \
   --email operator@example.com \
   --role operator \
   --role reviewer

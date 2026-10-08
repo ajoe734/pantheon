@@ -446,6 +446,11 @@ class CurrentArtifactStrategy:
                 "market_input_snapshot_id": market_input.get("snapshot_id"),
                 "market_input_event_time": market_input.get("event_time"),
                 "market_input_lineage": market_input.get("lineage"),
+                "market_data": {
+                    "close": closes[-1],
+                    "event_time": market_input.get("event_time"),
+                    "source_ref": market_input.get("source_ref"),
+                },
                 "is_real_order": False,
                 "is_real_capital": False,
             },

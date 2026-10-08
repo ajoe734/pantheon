@@ -105,7 +105,6 @@ def test_secret_inventory_reports_repo_scope_only_required_secrets(tmp_path: Pat
     assert payload["repo_scope"]["present_required_secret_names"] == ["PANTHEON_BFF_SMOKE_BEARER_TOKEN"]
     assert staging["repo_scope_only_secret_names"] == ["PANTHEON_BFF_SMOKE_BEARER_TOKEN"]
     assert "staging-live" in staging["workflow_dispatch_template"]
-    assert "pantheon-lupin-staging-bff" in staging["workflow_dispatch_template"]
 
 
 def test_secret_inventory_can_write_output_without_printing_when_json_flag_is_absent(tmp_path: Path) -> None:

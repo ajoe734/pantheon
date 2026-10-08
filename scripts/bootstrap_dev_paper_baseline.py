@@ -24,8 +24,8 @@ from typing import Any
 
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8001"
-DEFAULT_NAME = "Pantheon Dev Paper Baseline 3"
-DEFAULT_IDEMPOTENCY_KEY = "dev-paper-bootstrap-20260720-operator-a-v3"
+DEFAULT_NAME = "Pantheon Dev Paper Baseline 4"
+DEFAULT_IDEMPOTENCY_KEY = "dev-paper-bootstrap-20261007-operator-a-tw-v4"
 
 # The BFF only resolves a Persona's reconcile lifecycle to a terminal state
 # (paper_running, or provisioning_failed with a named provisioning_failure_reason)
@@ -41,28 +41,6 @@ DEFAULT_IDEMPOTENCY_KEY = "dev-paper-bootstrap-20260720-operator-a-v3"
 # fallback default to stay in lock-step with the server's own timeout.
 DEFAULT_SERVER_PROVISIONING_TIMEOUT_SECONDS = 600.0
 SERVER_TIMEOUT_SAFETY_MARGIN_SECONDS = 30.0
-
-# Mirrors services/control-plane/bff/personas/service.py
-# _market_persona_required_data_sources(market="US") for PANTHEON_ENV=dev.
-# The Persona create response is the canonical source for this (it is used
-# whenever present); this is only a fallback for a response shape that omits
-# requiredDataSources, so the governed source provisioning prerequisite below
-# still has a requirement to reconcile against.
-DEV_US_REQUIRED_DATA_SOURCES: tuple[dict[str, Any], ...] = (
-    {
-        "dataset": "us_price_daily",
-        "market": "US",
-        "cadence": "daily",
-        "source_class": "live_pull",
-        "connector_candidates": ["dev-paper-us-equity-simulation"],
-        "policy_gates": [
-            "require_connector_approved",
-            "require_schedule_active",
-            "require_source_health_ok",
-        ],
-    },
-)
-DEPLOYMENT_REQUIREMENT_HOLDER_ID = "persona-source-ingest-public-market"
 
 
 class BootstrapError(RuntimeError):
@@ -181,325 +159,6 @@ def _get_json(
         return int(response.status), body if isinstance(body, dict) else {}
 
 
-def _nudge_run_scheduled(
-    *,
-    source_ingest_url: str,
-    controller_token: str,
-    request_timeout_seconds: float,
-    force_connector_ids: Sequence[str] = (),
-    exclusive_connector_ids: Sequence[str] = (),
-) -> dict[str, Any]:
-    """Best-effort nudge of a fresh ingest pass for any due connector.
-
-    The nudge is a no-op for a connector whose watermark is already inside
-    its cadence interval (see run_scheduled_connectors in pipeline.py), so
-    calling it repeatedly never disturbs the steady-state daily cadence. It
-    is safe to call whenever the polled snapshot is not yet admissible,
-    regardless of whether that is because it has never been ingested (404)
-    or because the only snapshot on record has gone stale.
-
-    "Best-effort" governs whether a failed nudge aborts the wait -- it must
-    not, since the caller's own bounded poll loop is what decides when to
-    give up. It must not also mean "silent": a caller-authorization denial
-    (401/403) or a per-connector provider fetch failure reported in the
-    response body's ``failed`` list are real, actionable diagnostics, not
-    noise, so this returns them instead of discarding them in a bare
-    ``except Exception: pass`` -- see DEV-PAPER-FIRST-INGEST-ON-PROVISION-001
-    AC2, where exactly that discard caused a real HTTP 403 authorization
-    denial and a real per-connector provider fetch failure to both surface
-    only as the caller's own generic "market_input_stale" timeout, with the
-    connector identity and actual failure reason lost.
-    """
-    try:
-        payload: dict[str, Any] = {"max_concurrency": 1}
-        if force_connector_ids:
-            payload["force_connector_ids"] = list(force_connector_ids)
-        if exclusive_connector_ids:
-            payload["exclusive_connector_ids"] = list(exclusive_connector_ids)
-        status, body = _post_json(
-            f"{source_ingest_url.rstrip('/')}/api/source-ingest/run-scheduled",
-            payload,
-            headers=(
-                {"Authorization": f"Bearer {controller_token}"}
-                if controller_token
-                else None
-            ),
-            timeout_seconds=request_timeout_seconds,
-        )
-        failed = body.get("failed") if isinstance(body, Mapping) else None
-        return {
-            "attempted": True,
-            "http_status": status,
-            "body": body,
-            "failed": failed if isinstance(failed, list) else [],
-            "transport_error": None,
-        }
-    except AssertionError:
-        raise
-    except Exception as exc:
-        return {
-            "attempted": True,
-            "http_status": None,
-            "body": None,
-            "failed": [],
-            "transport_error": f"{type(exc).__name__}: {exc}",
-        }
-
-
-def _nudge_diagnostic_summary(
-    nudge_result: Mapping[str, Any] | None,
-    *,
-    connector_candidates: Sequence[str] = (),
-) -> str | None:
-    """Extract a connector identity plus HTTP/provider/transport reason.
-
-    Returns None when the nudge outcome carries nothing actionable (a clean
-    HTTP 200 with no per-connector failures), so the caller's own
-    market-snapshot-derived reason (market_input_stale, etc.) stays the
-    surfaced diagnostic in that unchanged case.
-    """
-    if not nudge_result:
-        return None
-
-    connector_suffix = (
-        f" (connector_candidates={sorted(connector_candidates)})"
-        if connector_candidates
-        else ""
-    )
-
-    transport_error = nudge_result.get("transport_error")
-    if transport_error:
-        return (
-            f"run-scheduled nudge transport error{connector_suffix}: {transport_error}"
-        )
-
-    status = nudge_result.get("http_status")
-    if status in (401, 403):
-        body = nudge_result.get("body") or {}
-        detail = body.get("detail") if isinstance(body, Mapping) else None
-        return f"run-scheduled nudge HTTP {status}{connector_suffix}: {detail or body}"
-    if status is not None and status != 200:
-        return (
-            f"run-scheduled nudge HTTP {status}{connector_suffix}: "
-            f"{nudge_result.get('body')}"
-        )
-
-    failed = nudge_result.get("failed") or []
-    if not failed:
-        return None
-    candidates = set(connector_candidates)
-    relevant = [
-        entry
-        for entry in failed
-        if isinstance(entry, Mapping)
-        and (not candidates or entry.get("connector_id") in candidates)
-    ]
-    target = relevant or [entry for entry in failed if isinstance(entry, Mapping)]
-    if not target:
-        return None
-    entries = "; ".join(
-        f"{entry.get('connector_id')}: {entry.get('error')}" for entry in target
-    )
-    return f"run-scheduled reported connector failure(s): {entries}"
-
-
-def ensure_dev_market_snapshot_ready(
-    *,
-    source_ingest_url: str,
-    symbol: str = "SPY",
-    timeout_seconds: float = 60.0,
-    poll_seconds: float = 2.0,
-    request_timeout_seconds: float = 10.0,
-    controller_token: str = "",
-    connector_candidates: Sequence[str] = (),
-    force_connector_ids: Sequence[str] = (),
-    exclusive_connector_ids: Sequence[str] = (),
-    monotonic: Callable[[], float] = time.monotonic,
-    sleep: Callable[[float], None] = time.sleep,
-) -> dict[str, Any]:
-    """Wait until an admissible, fresh market snapshot is available for symbol.
-
-    On a fresh host that has never ingested the dev synthetic connector, this
-    waits for the snapshot to appear and be admissible before paper baseline
-    creation proceeds. It also covers the host that already has a *stale*
-    snapshot on record (for example left over from an earlier attempt): a
-    stale snapshot never becomes fresh on its own, so this actively nudges a
-    fresh ingest pass rather than only passively polling an input that can
-    never change without one -- see DEV-PAPER-FIRST-INGEST-ON-PROVISION-001.
-    The wait is strictly bounded. If timeout expires, it raises BootstrapError
-    explicitly naming the missing market snapshot and reason rather than a
-    generic readback failure.
-    """
-    deadline = monotonic() + timeout_seconds
-    max_poll_iterations = max(int(timeout_seconds / max(poll_seconds, 0.001)) + 5, 50)
-    poll_iterations = 0
-    snapshot_url = (
-        f"{source_ingest_url.rstrip('/')}/api/source-ingest/snapshots/latest"
-        f"?symbol={urllib.parse.quote(symbol, safe='')}"
-    )
-    last_reason = "market_snapshot_not_found"
-    last_detail = f"snapshot for {symbol} was not found"
-    last_nudge_diagnostic: str | None = None
-
-    while True:
-        poll_iterations += 1
-        status, body = _get_json(snapshot_url, timeout_seconds=request_timeout_seconds)
-        needs_nudge = False
-        if status == 200 and isinstance(body, dict):
-            closes = body.get("closes")
-            market = body.get("market")
-            if not market or not isinstance(market, str) or not market.strip():
-                last_reason = "market_context_missing"
-                last_detail = f"snapshot for symbol {symbol!r} lacks market context"
-                needs_nudge = True
-            elif closes and isinstance(closes, Sequence) and not isinstance(closes, (str, bytes)) and len(closes) >= 2:
-                ev_str = str(body.get("event_time") or "")
-                is_fresh = True
-                if ev_str:
-                    try:
-                        ev_dt = datetime.fromisoformat(ev_str.replace("Z", "+00:00"))
-                        now_dt = datetime.now(timezone.utc)
-                        age_sec = (now_dt - ev_dt).total_seconds()
-                        if age_sec > 86400:
-                            is_fresh = False
-                            last_reason = "market_input_stale"
-                            last_detail = f"snapshot event_time {ev_str} is stale ({age_sec:.1f}s > 86400s)"
-                        elif age_sec < 0:
-                            is_fresh = False
-                            last_reason = "market_input_invalid"
-                            last_detail = f"snapshot event_time {ev_str} is in the future"
-                    except Exception as exc:
-                        is_fresh = False
-                        last_reason = "market_input_invalid"
-                        last_detail = f"invalid event_time {ev_str}: {exc}"
-                if is_fresh:
-                    return body
-                needs_nudge = True
-            else:
-                last_reason = "market_input_insufficient"
-                count = len(closes) if isinstance(closes, Sequence) and not isinstance(closes, (str, bytes)) else 0
-                last_detail = f"snapshot has {count} closes, requires >= 2"
-                needs_nudge = True
-        elif status == 404:
-            last_reason = "market_snapshot_not_found"
-            last_detail = f"HTTP 404: snapshot for symbol {symbol!r} not found in source-ingest"
-            needs_nudge = True
-        else:
-            last_reason = f"http_{status}"
-            last_detail = f"source-ingest responded with HTTP {status}: {body}"
-
-        if needs_nudge:
-            nudge_result = _nudge_run_scheduled(
-                source_ingest_url=source_ingest_url,
-                controller_token=controller_token,
-                request_timeout_seconds=request_timeout_seconds,
-                force_connector_ids=force_connector_ids,
-                exclusive_connector_ids=exclusive_connector_ids,
-            )
-            nudge_diagnostic = _nudge_diagnostic_summary(
-                nudge_result, connector_candidates=connector_candidates
-            )
-            if nudge_diagnostic:
-                # A fresh actionable diagnostic replaces whatever was
-                # captured on a prior poll.
-                last_nudge_diagnostic = nudge_diagnostic
-            if last_nudge_diagnostic:
-                # Keep surfacing the latest actionable nudge failure even
-                # when this poll's own nudge was a clean no-op/skip (for
-                # example run_scheduled_connectors skipping a connector
-                # that is already mid-run from the prior poll's nudge) --
-                # see DEV-PAPER-FIRST-INGEST-ON-PROVISION-001 AC2, where
-                # dropping it here made a real provider failure disappear
-                # behind a later "no failures reported" poll.
-                last_reason = "ingest_nudge_failed"
-                last_detail = f"{last_detail}; {last_nudge_diagnostic}"
-
-        if monotonic() >= deadline or poll_iterations >= max_poll_iterations:
-            raise BootstrapError(
-                f"timed out waiting for admissible market snapshot for symbol {symbol!r}: "
-                f"{last_reason} ({last_detail})"
-            )
-
-        sleep(poll_seconds)
-
-
-def source_ingest_controller_token(environ: Mapping[str, str] | None = None) -> str:
-    """Read the source-ingest controller's own bearer token.
-
-    Mirrors services/source_ingestion/controller_auth.load_controller_token's
-    explicit-value-then-file precedence, read-only: this process never
-    creates the token file, it only reads the token the source-ingest
-    service itself already created at startup (runtime.py,
-    ``load_controller_token(..., create=True)``).
-    """
-
-    env = environ if environ is not None else os.environ
-    explicit = str(env.get("SOURCE_INGEST_CONTROLLER_TOKEN") or "").strip()
-    if explicit:
-        return explicit
-    token_file = str(env.get("SOURCE_INGEST_CONTROLLER_TOKEN_FILE") or "").strip()
-    if not token_file:
-        return ""
-    try:
-        return Path(token_file).read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
-
-
-def ensure_source_provisioning(
-    *,
-    source_ingest_url: str,
-    persona_id: str = DEPLOYMENT_REQUIREMENT_HOLDER_ID,
-    required_data_sources: Sequence[Mapping[str, Any]],
-    controller_token: str,
-    request_timeout_seconds: float = 10.0,
-) -> dict[str, Any]:
-    """Provision the Persona's declared data-source connector/schedule now.
-
-    This direct reconcile is a first-tick shortcut so a fresh deploy
-    converges immediately without waiting for the controller's scheduled
-    tick. The source-ingest controller is the single authoritative desired-state
-    owner; its authoritative desired state derives active persona requirements
-    from the persona owner and submits them under the deployment requirement holder
-    identity (DEPLOYMENT_REQUIREMENT_HOLDER_ID), preserving this provisioned connector
-    on subsequent controller ticks. Both paths converge on this single holder identity,
-    ensuring this shortcut is not a second desired-state authority.
-    """
-
-    if not required_data_sources:
-        return {"status": "skipped", "reason": "no_required_data_sources"}
-    if not controller_token:
-        raise BootstrapError(
-            "governed source provisioning prerequisite requires a "
-            "source-ingest controller token (SOURCE_INGEST_CONTROLLER_TOKEN "
-            "or SOURCE_INGEST_CONTROLLER_TOKEN_FILE) but none is configured"
-        )
-    persona_payload = {
-        "persona_id": persona_id,
-        "lifecycle_state": "provisioning",
-        "required_data_sources": list(required_data_sources),
-    }
-    status, body = _post_json(
-        f"{source_ingest_url.rstrip('/')}/api/source-ingest/persona-source-provisioning/reconcile",
-        {"persona": persona_payload, "dry_run": False},
-        headers={"Authorization": f"Bearer {controller_token}"},
-        timeout_seconds=request_timeout_seconds,
-    )
-    if status != 200:
-        raise BootstrapError(
-            "governed source provisioning prerequisite failed: "
-            + json.dumps({"http_status": status, "body": body}, sort_keys=True)
-        )
-    summary = body.get("summary") if isinstance(body.get("summary"), Mapping) else {}
-    if summary.get("unsupported") or summary.get("conflicts"):
-        raise BootstrapError(
-            "governed source provisioning prerequisite reported an "
-            "unsupported or conflicting requirement: "
-            + json.dumps(summary, sort_keys=True)
-        )
-    return body
-
-
 def _login(base_url: str, *, request_timeout_seconds: float) -> str:
     client_id, client_secret, expected_identity = _login_credential_pair()
     status, body = _post_json(
@@ -613,27 +272,20 @@ def ensure_paper_baseline(
     timeout_seconds: float,
     poll_seconds: float,
     request_timeout_seconds: float,
-    source_ingest_url: str | None = None,
-    market_symbol: str = "SPY",
-    market_input_timeout_seconds: float = 60.0,
+    market_symbol: str = "2330.TW",
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     assert_dev_paper_boundary()
-    env = environ if environ is not None else os.environ
-    effective_source_url = (
-        source_ingest_url
-        or env.get("SOURCE_MANAGEMENT_API_URL")
-        or env.get("PANTHEON_SOURCE_INGEST_URL")
-    )
     token = _login(base_url, request_timeout_seconds=request_timeout_seconds)
     payload = {
         "name": name,
         "archetype": "momentum",
         "risk": "low",
         "mandate": "Paper-only lifecycle verification in dev",
-        "market": "US",
+        "market": "TW",
+        "symbols": [market_symbol],
         "strategy_family": "dev_paper_baseline",
     }
     attempts = 1
@@ -681,48 +333,6 @@ def ensure_paper_baseline(
                 },
                 sort_keys=True,
             )
-        )
-
-    # Both the never-provisioned first-run path and an idempotent successful
-    # replay must run this gate before returning "ok": the Persona (and its
-    # required_data_sources declaration) already exists by this point, so
-    # provisioning the connector here can never deadlock on a producer that
-    # does not exist yet -- see DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001.
-    # Skipping this on the early paper_running/succeeded replay return would
-    # bypass freshness validation on that replay instead of merely skipping
-    # redundant provisioning work.
-    if effective_source_url:
-        required_data_sources = (
-            data.get("requiredDataSources")
-            or data.get("required_data_sources")
-            or (list(DEV_US_REQUIRED_DATA_SOURCES) if str(data.get("market") or "US").strip().upper() == "US" else [])
-        )
-        provisioning_controller_token = source_ingest_controller_token(env)
-        ensure_source_provisioning(
-            source_ingest_url=effective_source_url,
-            persona_id=DEPLOYMENT_REQUIREMENT_HOLDER_ID,
-            required_data_sources=required_data_sources,
-            controller_token=provisioning_controller_token,
-            request_timeout_seconds=request_timeout_seconds,
-        )
-        connector_candidates = [
-            candidate
-            for source in required_data_sources
-            for candidate in (
-                (source.get("connector_candidates") if isinstance(source, Mapping) else None)
-                or []
-            )
-        ]
-        ensure_dev_market_snapshot_ready(
-            source_ingest_url=effective_source_url,
-            symbol=market_symbol,
-            timeout_seconds=market_input_timeout_seconds,
-            poll_seconds=poll_seconds,
-            request_timeout_seconds=request_timeout_seconds,
-            controller_token=provisioning_controller_token,
-            connector_candidates=connector_candidates,
-            monotonic=monotonic,
-            sleep=sleep,
         )
 
     if (
@@ -988,291 +598,8 @@ def transition_legacy_persona_market_record(
 
 
 def run_self_tests() -> int:
-    """Run regression self-tests covering market snapshot readiness paths.
-
-    Covers:
-    1. Steady-state path: snapshot is already fresh and admissible -> returns immediately.
-    2. Never-ingested first-run path: 404 initially, triggers run-scheduled, succeeds when fresh snapshot appears.
-    3. Missing snapshot timeout: bounds wait and names missing snapshot symbol and reason code.
-    4. Insufficient closes: < 2 closes is rejected and named.
-    5. Stale snapshot: event_time > 86400s is rejected and named.
-    6. Future snapshot: event_time in future is rejected and named.
-    7. Integration with ensure_paper_baseline under effective_source_url.
-    """
-    from unittest.mock import patch
-
-    this_module = sys.modules[__name__]
+    """Run regression self-tests covering legacy persona transition path."""
     tests_run = 0
-    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    valid_snapshot = {
-        "schema_version": 1,
-        "snapshot_id": "snap-test-001",
-        "symbol": "SPY",
-        "market": "US",
-        "event_time": now_iso,
-        "observed_at": now_iso,
-        "closes": [500.0, 501.5],
-        "lineage": {"source": "simulation"},
-        "source_ref": "source-ingest://snapshots/snap-test-001",
-    }
-
-    # Test 1: Steady-state path (already fresh)
-    with patch.object(this_module, "_get_json", return_value=(200, valid_snapshot)):
-        res = ensure_dev_market_snapshot_ready(
-            source_ingest_url="http://mock-source:8097",
-            symbol="SPY",
-            timeout_seconds=5.0,
-            poll_seconds=0.01,
-        )
-        assert res["snapshot_id"] == "snap-test-001"
-        assert res["symbol"] == "SPY"
-        assert len(res["closes"]) == 2
-        tests_run += 1
-
-    # Test 2: Never-ingested first-run path (404 initially, then appears).
-    # The real runtime guard rejects an unauthenticated run-scheduled nudge
-    # for a controller-owned connector with 401
-    # (_require_controller_authorization); this proves the nudge carries the
-    # controller bearer token rather than an unconditional mocked 200.
-    responses_first_run = [
-        (404, {"detail": {"code": "market_snapshot_not_found", "symbol": "SPY"}}),
-        (200, valid_snapshot),
-    ]
-    post_calls = []
-
-    def fake_post_json(url, payload=None, **kwargs):
-        post_calls.append((url, payload, kwargs))
-        headers = kwargs.get("headers") or {}
-        if headers.get("Authorization") != "Bearer controller-token-test":
-            return 401, {"detail": "controller authorization required"}
-        return 200, {"status": "ok"}
-
-    with patch.object(this_module, "_get_json", side_effect=responses_first_run), \
-         patch.object(this_module, "_post_json", side_effect=fake_post_json):
-        res = ensure_dev_market_snapshot_ready(
-            source_ingest_url="http://mock-source:8097",
-            symbol="SPY",
-            timeout_seconds=5.0,
-            poll_seconds=0.01,
-            controller_token="controller-token-test",
-        )
-        assert res["snapshot_id"] == "snap-test-001"
-        assert len(post_calls) >= 1
-        assert "run-scheduled" in post_calls[0][0]
-        assert post_calls[0][2].get("headers") == {"Authorization": "Bearer controller-token-test"}
-        tests_run += 1
-
-    # Test 2b: without a controller token, the nudge is sent unauthenticated
-    # and the real guard's 401 is swallowed (best-effort nudge), so the wait
-    # still times out naming the missing snapshot rather than crashing.
-    post_calls_unauth = []
-
-    def fake_post_json_unauth(url, payload=None, **kwargs):
-        post_calls_unauth.append((url, payload, kwargs))
-        return 401, {"detail": "controller authorization required"}
-
-    mock_clock_2b = [0.0]
-
-    def fake_mono_2b():
-        mock_clock_2b[0] += 10.0
-        return mock_clock_2b[0]
-
-    with patch.object(this_module, "_get_json", return_value=(404, {})), \
-         patch.object(this_module, "_post_json", side_effect=fake_post_json_unauth):
-        try:
-            ensure_dev_market_snapshot_ready(
-                source_ingest_url="http://mock-source:8097",
-                symbol="SPY",
-                timeout_seconds=5.0,
-                poll_seconds=0.01,
-                monotonic=fake_mono_2b,
-                sleep=lambda _: None,
-            )
-            raise AssertionError("Expected BootstrapError on missing snapshot timeout")
-        except BootstrapError as exc:
-            assert "symbol 'SPY'" in str(exc)
-        assert post_calls_unauth
-        assert post_calls_unauth[0][2].get("headers") is None
-        tests_run += 1
-
-    # Test 3: Missing snapshot timeout names symbol and reason
-    mock_clock = [0.0]
-
-    def fake_mono():
-        mock_clock[0] += 10.0
-        return mock_clock[0]
-
-    with patch.object(this_module, "_get_json", return_value=(404, {})), \
-         patch.object(this_module, "_post_json", return_value=(200, {})):
-        try:
-            ensure_dev_market_snapshot_ready(
-                source_ingest_url="http://mock-source:8097",
-                symbol="SPY",
-                timeout_seconds=5.0,
-                poll_seconds=0.01,
-                monotonic=fake_mono,
-                sleep=lambda _: None,
-            )
-            raise AssertionError("Expected BootstrapError on missing snapshot timeout")
-        except BootstrapError as exc:
-            assert "symbol 'SPY'" in str(exc), f"Expected symbol in error: {exc}"
-            assert "market_snapshot_not_found" in str(exc), f"Expected reason in error: {exc}"
-            tests_run += 1
-
-    # Test 4: Insufficient closes rejected (< 2 closes), and a nudge is still
-    # attempted since a producer stuck emitting a partial record also needs a
-    # fresh pass to converge.
-    one_close_snapshot = dict(valid_snapshot, closes=[500.0])
-    mock_clock = [0.0]
-    nudge_calls_4: list[tuple] = []
-    with patch.object(this_module, "_get_json", return_value=(200, one_close_snapshot)), \
-         patch.object(this_module, "_post_json", side_effect=lambda *a, **k: (nudge_calls_4.append((a, k)), (200, {}))[1]):
-        try:
-            ensure_dev_market_snapshot_ready(
-                source_ingest_url="http://mock-source:8097",
-                symbol="SPY",
-                timeout_seconds=5.0,
-                poll_seconds=0.01,
-                monotonic=fake_mono,
-                sleep=lambda _: None,
-            )
-            raise AssertionError("Expected BootstrapError on insufficient closes")
-        except BootstrapError as exc:
-            assert "symbol 'SPY'" in str(exc)
-            assert "market_input_insufficient" in str(exc)
-            assert nudge_calls_4, "expected a run-scheduled nudge on insufficient closes"
-            tests_run += 1
-
-    # Test 5: Stale snapshot rejected (event_time > 86400s). This is the
-    # DEV-PAPER-FIRST-INGEST-ON-PROVISION-001 regression: a host that already
-    # has a stale snapshot on record must still nudge a fresh ingest pass
-    # instead of only passively polling an input that can never change on
-    # its own.
-    stale_iso = "2020-01-01T00:00:00Z"
-    stale_snapshot = dict(valid_snapshot, event_time=stale_iso)
-    mock_clock = [0.0]
-    nudge_calls_5: list[tuple] = []
-    with patch.object(this_module, "_get_json", return_value=(200, stale_snapshot)), \
-         patch.object(this_module, "_post_json", side_effect=lambda *a, **k: (nudge_calls_5.append((a, k)), (200, {}))[1]):
-        try:
-            ensure_dev_market_snapshot_ready(
-                source_ingest_url="http://mock-source:8097",
-                symbol="SPY",
-                timeout_seconds=5.0,
-                poll_seconds=0.01,
-                monotonic=fake_mono,
-                sleep=lambda _: None,
-            )
-            raise AssertionError("Expected BootstrapError on stale snapshot")
-        except BootstrapError as exc:
-            assert "symbol 'SPY'" in str(exc)
-            assert "market_input_stale" in str(exc)
-            assert nudge_calls_5, "expected a run-scheduled nudge on a stale snapshot"
-            assert "run-scheduled" in nudge_calls_5[0][0][0]
-            tests_run += 1
-
-    # Test 6: Future snapshot rejected
-    future_iso = "2099-01-01T00:00:00Z"
-    future_snapshot = dict(valid_snapshot, event_time=future_iso)
-    mock_clock = [0.0]
-    with patch.object(this_module, "_get_json", return_value=(200, future_snapshot)), \
-         patch.object(this_module, "_post_json", return_value=(200, {})):
-        try:
-            ensure_dev_market_snapshot_ready(
-                source_ingest_url="http://mock-source:8097",
-                symbol="SPY",
-                timeout_seconds=5.0,
-                poll_seconds=0.01,
-                monotonic=fake_mono,
-                sleep=lambda _: None,
-            )
-            raise AssertionError("Expected BootstrapError on future snapshot")
-        except BootstrapError as exc:
-            assert "symbol 'SPY'" in str(exc)
-            assert "market_input_invalid" in str(exc)
-            tests_run += 1
-
-    # Test 6b: Missing market context rejected
-    missing_market_snapshot = dict(valid_snapshot)
-    missing_market_snapshot.pop("market", None)
-    mock_clock = [0.0]
-    with patch.object(this_module, "_get_json", return_value=(200, missing_market_snapshot)), \
-         patch.object(this_module, "_post_json", return_value=(200, {})):
-        try:
-            ensure_dev_market_snapshot_ready(
-                source_ingest_url="http://mock-source:8097",
-                symbol="SPY",
-                timeout_seconds=5.0,
-                poll_seconds=0.01,
-                monotonic=fake_mono,
-                sleep=lambda _: None,
-            )
-            raise AssertionError("Expected BootstrapError on missing market context")
-        except BootstrapError as exc:
-            assert "symbol 'SPY'" in str(exc)
-            assert "market_context_missing" in str(exc)
-            tests_run += 1
-
-    # Test 6c: Nudge forwards force_connector_ids and exclusive_connector_ids
-    nudge_payload_calls = []
-    def fake_post_payload(url, payload=None, **kwargs):
-        nudge_payload_calls.append(payload)
-        return 200, {"status": "ok"}
-
-    with patch.object(this_module, "_post_json", side_effect=fake_post_payload):
-        _nudge_run_scheduled(
-            source_ingest_url="http://mock-source:8097",
-            controller_token="token",
-            request_timeout_seconds=5.0,
-            force_connector_ids=["dev-paper-us-equity-simulation"],
-            exclusive_connector_ids=["dev-paper-us-equity-simulation"],
-        )
-        assert len(nudge_payload_calls) == 1
-        assert nudge_payload_calls[0].get("force_connector_ids") == ["dev-paper-us-equity-simulation"]
-        assert nudge_payload_calls[0].get("exclusive_connector_ids") == ["dev-paper-us-equity-simulation"]
-        tests_run += 1
-
-    # Test 7: Integration in ensure_paper_baseline with effective_source_url.
-    # This is an idempotent successful replay (the create response already
-    # reports paper_running/succeeded), so it also proves the governed source
-    # provisioning prerequisite and the freshness gate both still run on that
-    # early-return path (DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001 AC4).
-    dev_env = {
-        "PANTHEON_ENV": "dev",
-        "PANTHEON_BFF_AUTH_MODE": "strict",
-        "PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID": "op-a",
-        "PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET": "op-sec",
-        "SOURCE_MANAGEMENT_API_URL": "http://source-ingest:8097",
-        "SOURCE_INGEST_CONTROLLER_TOKEN": "controller-token-test",
-    }
-    bff_responses = [
-        (200, {"access_token": "token-1", "meta": {"identity": "operator_a"}}),
-        (201, {
-            "data": {"id": "p-1", "state": "paper_running", "capitalMode": "paper"},
-            "meta": {
-                "provisioning_state": "succeeded",
-                "provisioning_step": "done",
-                "runtime_id": "rt-1",
-                "runtime_binding_id": "rb-1",
-                "live_capital_side_effects": False,
-            },
-        }),
-        (200, {"summary": {"mutated": 1, "satisfied": 0, "unsupported": 0, "conflicts": 0}}),
-    ]
-    with patch.dict(os.environ, dev_env, clear=True), \
-         patch.object(this_module, "_get_json", return_value=(200, valid_snapshot)), \
-         patch.object(this_module, "_post_json", side_effect=bff_responses):
-        res = ensure_paper_baseline(
-            base_url="http://127.0.0.1:8001",
-            name=DEFAULT_NAME,
-            idempotency_key=DEFAULT_IDEMPOTENCY_KEY,
-            timeout_seconds=30.0,
-            poll_seconds=0.1,
-            request_timeout_seconds=5.0,
-        )
-        assert res["status"] == "ok"
-        assert res["persona_id"] == "p-1"
-        tests_run += 1
 
     # Test 9: transition_legacy_persona_market_record wires coordinator call correctly
     class _MockStore:
@@ -1334,20 +661,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--poll-seconds", type=float, default=5)
     parser.add_argument("--request-timeout-seconds", type=float, default=180)
     parser.add_argument(
-        "--source-ingest-url",
-        default=os.getenv("SOURCE_MANAGEMENT_API_URL", os.getenv("PANTHEON_SOURCE_INGEST_URL", "")),
-        help="Base URL for source ingestion service to verify market snapshot readiness",
-    )
-    parser.add_argument(
         "--market-symbol",
-        default="SPY",
+        default="2330.TW",
         help="Market symbol required for the dev paper baseline",
-    )
-    parser.add_argument(
-        "--market-input-timeout-seconds",
-        type=float,
-        default=60.0,
-        help="Maximum wait time for admissible market snapshot before paper baseline creation",
     )
     parser.add_argument(
         "--transition-legacy-persona",
@@ -1414,9 +730,7 @@ def main(argv: list[str] | None = None) -> int:
             timeout_seconds=max(1, args.timeout_seconds),
             poll_seconds=max(0.1, args.poll_seconds),
             request_timeout_seconds=max(1, args.request_timeout_seconds),
-            source_ingest_url=args.source_ingest_url or None,
             market_symbol=args.market_symbol,
-            market_input_timeout_seconds=max(1, args.market_input_timeout_seconds),
         )
     except (BootstrapError, OSError, ValueError, json.JSONDecodeError) as exc:
         print(json.dumps({"status": "error", "message": str(exc)}, sort_keys=True), file=sys.stderr)

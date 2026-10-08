@@ -257,18 +257,18 @@ class CapitalPoolPort:
     def get_surface_status(self) -> Dict[str, Any]:
         pool_source, pools = self._get_raw_pools()
         binding_source, bindings = self._get_raw_bindings()
-        if pool_source in ("missing", "unavailable"):
-            return {
-                "status": "unavailable",
-                "source": pool_source,
-                "message": "Capital pool store is unavailable or unconfigured.",
-            }
-        status = "unavailable" if binding_source == "unavailable" else ("degraded" if binding_source == "missing" else "ok")
+        if "unavailable" in (pool_source, binding_source) or (pool_source == "missing" and binding_source == "missing"):
+            status = "unavailable"
+        elif "missing" in (pool_source, binding_source):
+            status = "degraded"
+        else:
+            status = "ok"
+        message = "Capital pool store is unavailable or unconfigured." if pool_source in ("missing", "unavailable") else None
         return {
             "status": status,
             "source": pool_source,
             "bindings_source": binding_source,
-            "message": None,
+            "message": message,
         }
 
     @staticmethod

@@ -26,7 +26,7 @@ def test_baseline_is_guarded_and_uploaded_before_candidate_mutation():
     assert sorted(required, key=order.index) == required
     capture = step(DEPLOY, "artifact_baseline")
     assert "run_with_dev_environment_lease.sh" in capture["run"]
-    assert "52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048" in capture["run"]
+    assert "da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae" in capture["run"]
     assert "6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2" in capture["run"]
     assert "capture_dev_artifact_baseline.py" in capture["run"]
     assert "acquire" not in capture["run"]  # no replacement lease authority

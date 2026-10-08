@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import copy
+import io
 import json
 import os
 import signal
 import tempfile
 import unittest
+import urllib.error
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 import dev_environment_lease as lease
 
@@ -148,6 +151,161 @@ def manager(client: FakeClient) -> lease.LeaseManager:
         path=lease.DEFAULT_PATH,
         resource=lease.DEFAULT_RESOURCE,
     )
+
+
+class GitHubRetryTests(unittest.TestCase):
+    def test_verify_survives_transient_read_errors(self) -> None:
+        for first_error in (500, 502, 503, 504, "timeout", "connection"):
+            with self.subTest(first_error=first_error):
+                state = state_for()
+                payload = {
+                    "encoding": "base64",
+                    "content": lease.base64.b64encode(json.dumps(state).encode()).decode(),
+                    "sha": "blob-current",
+                }
+                response = mock.MagicMock()
+                response.__enter__.return_value = response
+                response.status = 200
+                response.headers = {"Date": "Mon, 13 Jul 2026 16:30:01 GMT"}
+                response.read.return_value = json.dumps(payload).encode()
+                if first_error == "timeout":
+                    error = TimeoutError("timed out")
+                elif first_error == "connection":
+                    error = urllib.error.URLError("connection reset")
+                else:
+                    error = urllib.error.HTTPError(
+                        "https://api.github.com/test", first_error, "transient", {},
+                        io.BytesIO(b'{"message":"temporary failure"}'),
+                    )
+                client = lease.GitHubClient("secret-sentinel")
+                with mock.patch.object(lease.urllib.request, "urlopen", side_effect=[error, response]) as request, mock.patch.object(lease.time, "sleep") as sleep:
+                    result = manager(client).verify(
+                        lease.public_state(state, content_sha="blob-current"),
+                        max_heartbeat_age_seconds=120,
+                    )
+                self.assertEqual(result["status"], "verified")
+                self.assertEqual(request.call_count, 2)
+                sleep.assert_called_once_with(1)
+                self.assertEqual(request.call_args.kwargs["timeout"], 5)
+
+    def test_read_retry_is_bounded_and_does_not_hide_persistent_outage(self) -> None:
+        with mock.patch.object(lease.GitHubClient, "_request_once", side_effect=lease.GitHubApiError(500, "unavailable")) as request, mock.patch.object(lease.time, "sleep") as sleep:
+            with self.assertRaises(lease.GitHubApiError):
+                lease.GitHubClient("sentinel").get_content(
+                    lease.DEFAULT_REPOSITORY, lease.DEFAULT_BRANCH, lease.DEFAULT_PATH
+                )
+        self.assertEqual(request.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [mock.call(1), mock.call(2)])
+
+    def test_auth_conflict_and_malformed_responses_are_not_retried(self) -> None:
+        for error in (
+            lease.GitHubApiError(401, "unauthorized"),
+            lease.GitHubApiError(403, "forbidden"),
+            lease.GitHubApiError(409, "conflict"),
+            lease.LeaseError("malformed lease"),
+        ):
+            with self.subTest(error=error), mock.patch.object(lease.GitHubClient, "_request_once", side_effect=error) as request, mock.patch.object(lease.time, "sleep") as sleep:
+                with self.assertRaises(lease.LeaseError):
+                    lease.GitHubClient("sentinel").get_content(
+                        lease.DEFAULT_REPOSITORY, lease.DEFAULT_BRANCH, lease.DEFAULT_PATH
+                    )
+                self.assertEqual(request.call_count, 1)
+                sleep.assert_not_called()
+
+    def test_ambiguous_cas_write_is_not_blindly_replayed(self) -> None:
+        with mock.patch.object(lease.GitHubClient, "_request_once", side_effect=lease.GitHubApiError(500, "ambiguous write")) as request, mock.patch.object(lease.time, "sleep") as sleep:
+            with self.assertRaises(lease.GitHubApiError):
+                lease.GitHubClient("sentinel").put_content(
+                    lease.DEFAULT_REPOSITORY, lease.DEFAULT_BRANCH, lease.DEFAULT_PATH,
+                    state_for(), expected_sha="old-blob", message="heartbeat",
+                )
+        self.assertEqual(request.call_count, 1)
+        sleep.assert_not_called()
+
+
+class HeartbeatRecoveryTests(unittest.TestCase):
+    def run_loop(self, root: Path, mgr: lease.LeaseManager) -> tuple[int, list[float]]:
+        args = lease.build_parser().parse_args([
+            "heartbeat-loop", "--state-file", str(root / "state.json"),
+            "--interval-seconds", "60", "--failure-json-out", str(root / "failure.json"),
+        ])
+        handlers = {}
+        self.stop_loop = lambda: handlers[signal.SIGTERM](signal.SIGTERM, None)
+        with mock.patch.object(lease.signal, "signal", side_effect=lambda sig, handler: handlers.update({sig: handler})), mock.patch.object(lease.time, "sleep") as sleep:
+            result = lease.heartbeat_loop(args, mgr)
+        return result, [call.args[0] for call in sleep.call_args_list]
+
+    def test_ambiguous_committed_heartbeat_recovers_with_fresh_cas_and_server_clock(self) -> None:
+        client = FakeClient()
+        # Server time is deliberately years behind the runner clock.
+        client.state = state_for()
+        client.content_sha = "blob-current"
+        mgr = manager(client)
+        original_put = client.put_content
+        calls = 0
+
+        def flaky_put(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            result = original_put(*args, **kwargs)
+            if calls == 1:
+                raise lease.GitHubApiError(500, "committed but response lost")
+            self.stop_loop()
+            return result
+
+        client.put_content = flaky_put
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lease.atomic_write_json(root / "state.json", lease.public_state(client.state, content_sha="blob-current"), 0o600)
+            result, sleeps = self.run_loop(root, mgr)
+            self.assertEqual(result, 0)
+            self.assertFalse((root / "failure.json").exists())
+            self.assertEqual(lease.read_json_file(root / "state.json", "test")["contentSha"], "blob-2")
+        self.assertEqual(client.put_expected_shas, ["blob-current", "blob-1"])
+        self.assertEqual(client.get_content_calls, 2)
+        # Retry after five seconds, without another normal 60s sleep.
+        self.assertEqual(sum(sleeps), 65)
+
+    def test_renewal_outage_is_bounded_but_auth_and_ownership_fail_immediately(self) -> None:
+        for error, attempts in (
+            (lease.GitHubApiError(500, "outage"), 2),
+            (lease.GitHubTransportError("timeout"), 2),
+            (lease.GitHubApiError(401, "unauthorized"), 1),
+            (lease.GitHubApiError(403, "forbidden"), 1),
+            (lease.LeaseLost("owner changed or expired"), 1),
+            (lease.LeaseConflict("CAS changed"), 1),
+            (lease.LeaseError("malformed lease"), 1),
+        ):
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                client = FakeClient()
+                client.state = state_for()
+                mgr = manager(client)
+                mgr.heartbeat = mock.Mock(side_effect=error)
+                lease.atomic_write_json(root / "state.json", lease.public_state(client.state, content_sha="blob-current"), 0o600)
+                result, _ = self.run_loop(root, mgr)
+                self.assertEqual(result, 75)
+                self.assertEqual(mgr.heartbeat.call_count, attempts)
+                self.assertEqual(lease.read_json_file(root / "failure.json", "test")["status"], "lost")
+
+    def test_owner_replacement_after_transient_error_is_never_renewed(self) -> None:
+        client = FakeClient()
+        client.state = state_for()
+        client.content_sha = "blob-current"
+
+        def replaced_put(*args, **kwargs):
+            client.state["leaseId"] = "22222222-2222-4222-8222-222222222222"
+            client.content_sha = "replacement"
+            raise lease.GitHubApiError(503, "response unavailable")
+
+        client.put_content = mock.Mock(side_effect=replaced_put)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lease.atomic_write_json(root / "state.json", lease.public_state(client.state, content_sha="blob-current"), 0o600)
+            result, _ = self.run_loop(root, manager(client))
+            self.assertEqual(result, 75)
+            self.assertIn("leaseId", lease.read_json_file(root / "failure.json", "test")["error"])
+        self.assertEqual(client.put_content.call_count, 1)
 
 
 class LeaseStateTests(unittest.TestCase):
@@ -624,7 +782,7 @@ from scripts.test_dev_environment_lease import FakeClient, state_for, manager
 from datetime import datetime, timedelta, timezone
 import argparse
 
-now = datetime.now(timezone.utc)
+now = datetime.fromisoformat({now.isoformat()!r})
 client = FakeClient()
 client.now = now
 client.state = state_for(heartbeat=now, expires=now + timedelta(minutes=5))

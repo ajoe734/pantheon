@@ -1,0 +1,46 @@
+{
+  "task_id": "L12-LEARNING-PERSONA-OWNER-WIRING-20261008",
+  "base_sha": "6e315874d5aa784d863c7417af560ec738cdba66",
+  "root_cause": {
+    "summary": "Training session service and Compose stack had unconfigured empty defaults for Persona and Governance URL templates, and PR6347 head f4f0412a3 used a plain service-token fallback that could not pass Governance strict JWT validation. In addition, _persona_authority_token had broad exception fallback, _ensure_persona accepted 409 conflicts without tenant/identity verification readback, and the stimulus test harness lacked Persona service registration.",
+    "introduced_by": "Initial L12 training session compose template placeholders and missing test fixture setup",
+    "why_unnoticed": "Isolated testing mocked target preconditions while deployed gates failed at L4 evaluation dependency check; previous PR6347 attempted plain service token fallback without fail-closed credential contract",
+    "detected_by": "L12-LEARNING-PERSONA-OWNER-WIRING-20261008 coordinator rejection and dispatch gate logs"
+  },
+  "changes": {
+    "docker-compose.yml": [
+      "Configured default URL templates for TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE, TRAINING_SESSION_APPROVAL_READBACK_URL_TEMPLATE, TRAINING_SESSION_PERSONA_TARGET_WRITE_URL_TEMPLATE, and TRAINING_SESSION_PERSONA_TARGET_READBACK_URL_TEMPLATE.",
+      "Removed plain Persona service-token fallback; defaults TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN and TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN_FILE to empty, requiring configured consumer credentials."
+    ],
+    "services/training-session/main.py": [
+      "Updated _persona_authority_token to use configured_service_token fail-closed without broad exception fallback or plain service-token fallback."
+    ],
+    "services/training-session/tests/test_main.py": [
+      "Added regression tests for _persona_authority_token fail-closed file vs env rules, including missing, unsafe, and invalid credential file negatives."
+    ],
+    "scripts/run_isolated_l12_runtime_e2e.py": [
+      "Registered persona in STIMULUS_SERVICES, configured PERSONA_JWT_* and PANTHEON_PERSONA_SERVICE_TOKEN in _isolated_dev_principal_env, and added persona.admin to PANTHEON_L12_OPERATOR_TOKEN."
+    ],
+    "scripts/test_run_isolated_l12_runtime_e2e.py": [
+      "Updated STIMULUS_SERVICES unit assertions to include persona."
+    ],
+    "tests/integration/l12/test_current_research_loops_deployed_e2e.py": [
+      "Added self.persona_url and _ensure_persona helper with GET readback asserting exact persona_id and tenant_id match on creation and 409 conflict."
+    ],
+    "tests/integration/l12/test_current_human_learning_deployed_e2e.py": [
+      "Added self.persona_url and _ensure_persona helper with GET readback asserting exact persona_id and tenant_id match on creation and 409 conflict."
+    ]
+  },
+  "chain_scope_distinction": "L4 _case_persona_teaching deployed E2E verifies evaluation execution and Training terminal-readback against the real Persona owner pre-condition. Downstream approval -> Persona CAS write -> durable Persona readback is verified by unit suites test_persona_target.py and test_training_target_owner.py, with hosted CAS mutation obligations retained.",
+  "validation": {
+    "unit_tests": {
+      "training_session_tests": "services/training-session/tests/ (187 passed, 2 skipped)",
+      "persona_training_target_owner": "services/persona/test_training_target_owner.py (14 passed)",
+      "persona_target_tests": "services/training-session/tests/test_persona_target.py (42 passed)",
+      "isolated_harness_tests": "scripts/test_run_isolated_l12_runtime_e2e.py (32 passed)",
+      "training_session_main_tests": "services/training-session/tests/test_main.py (3 passed)"
+    },
+    "diff_budget": "Net production lines well below corrective budget of 260 lines; evidence lines well below 400 lines cap."
+  },
+  "review_status": "Author validation complete; rebased on origin/dev and ready for independent review."
+}

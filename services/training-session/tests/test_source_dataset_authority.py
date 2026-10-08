@@ -372,7 +372,7 @@ def _make_case(tmp_path: Path) -> AuthorityCase:
     )
 
 
-def _materialize(case: AuthorityCase, module=AUTHORITY):
+def _materialize(case: AuthorityCase, module=AUTHORITY, **kwargs: Any):
     return module.materialize_source_dataset_version(
         http_get=case.get,
         source_api_url=BASE_URL,
@@ -381,6 +381,7 @@ def _materialize(case: AuthorityCase, module=AUTHORITY):
         source_volume_root=case.source_root,
         output_root=case.output_root,
         trusted_now=NOW,
+        **kwargs,
     )
 
 
@@ -682,7 +683,10 @@ CATALOG_URL = f"{BASE_URL}/api/source-ingest/data-sources/financial-catalog"
 TW_INSTRUMENTS = (("2330.TWSE", "2330", 900.0), ("2317.TWSE", "2317", 180.0))
 
 
-def _make_tw_case(tmp_path: Path) -> AuthorityCase:
+def _make_tw_case(
+    tmp_path: Path,
+    instruments: Sequence[tuple[str, str, float]] = TW_INSTRUMENTS,
+) -> AuthorityCase:
     """Rewrite the crypto fixture into the Taiwan normalized_row contract."""
 
     case = _make_case(tmp_path)
@@ -690,7 +694,7 @@ def _make_tw_case(tmp_path: Path) -> AuthorityCase:
     first_date = date(2026, 6, 16)
     for offset in range(30):
         trade_date = (first_date + timedelta(days=offset)).isoformat()
-        for canonical, symbol, base in TW_INSTRUMENTS:
+        for canonical, symbol, base in instruments:
             open_price = base + offset
             normalized_row = {
                 "dataset": "tw_price_daily",
@@ -727,38 +731,532 @@ def _make_tw_case(tmp_path: Path) -> AuthorityCase:
         }
         for row in wrappers
     ]
+    feature_rows = [
+        {
+            "source_id": row["source_id"],
+            "connector_id": CONNECTOR_ID,
+            "source_dataset": NORMALIZED_DATASET_ID,
+            "feature_dataset": "returns",
+            "feature_as_of_time": row["metadata"]["date"],
+        }
+        for row in wrappers
+    ]
     _write_jsonl(case.normalized_path, wrappers)
     _write_jsonl(case.raw_path, raw_rows)
+    _write_jsonl(case.feature_path, feature_rows)
     readback = case.responses[READBACK_URL]
     connector = readback["connectors"][0]
     connector["desired_state"] = {**DESIRED_STATE, "market": "TW"}
     connector["desired_state_sha256"] = _desired_digest(connector["desired_state"])
+    connector["connector"]["metadata"]["feature_targets"] = ["returns"]
+    connector["connector"]["metadata"]["storage_targets"] = [
+        "normalized/tw_price_daily",
+        "features/returns",
+    ]
     manifest = connector["source_health"]["metadata"]["storage_refs"]
-    manifest["feature_refs"] = []
-    manifest["summary"]["feature_ref_count"] = 0
+    manifest["raw_refs"][0]["row_count"] = len(wrappers)
+    manifest["normalized_refs"][0]["row_count"] = len(wrappers)
+    manifest["feature_refs"] = [
+        {
+            "ref_type": "feature_rows",
+            "dataset": "returns",
+            "source_dataset": NORMALIZED_DATASET_ID,
+            "date": "2026-07-15",
+            "uri": case.feature_path.as_posix(),
+            "row_count": len(wrappers),
+            "feature_as_of_time": "2026-07-15",
+        }
+    ]
+    manifest["summary"]["feature_ref_count"] = 1
+    manifest["summary"]["normalized_row_count"] = len(wrappers)
+    connector["source_health"]["raw_count"] = len(wrappers)
+    connector["source_health"]["normalized_count"] = len(wrappers)
+    connector["source_health"]["row_count_last_run"] = len(wrappers)
+    readback["source_record_count"] = len(wrappers)
+    run_url = f"{BASE_URL}/api/source-ingest/jobs/{RUN_ID}"
+    case.responses[run_url]["run"]["raw_count"] = len(wrappers)
+    case.responses[run_url]["run"]["normalized_count"] = len(wrappers)
     case.responses[CATALOG_URL]["config_templates"][0]["fetch"] = {"datasets": [DESIRED_DATASET_ID]}
     return case
 
 
-def test_tw_normalized_row_contract_materializes_without_feature_refs(tmp_path: Path) -> None:
+def test_tw_normalized_row_contract_materializes_with_feature_refs(tmp_path: Path) -> None:
     case = _make_tw_case(tmp_path)
 
     result = _materialize(case)
 
     assert result.payload["market_scope"] == ["TW"]
     assert result.payload["instrument_scope"] == ["2317.TWSE", "2330.TWSE"]
-    assert result.payload["feature_dataset_refs"] == []
+    assert len(result.payload["feature_dataset_refs"]) == 1
+    assert result.payload["feature_dataset_refs"] == [case.feature_path.as_posix()]
     assert len(result.payload["records"]) == 60
     assert result.payload["records"][0]["instrument"] in {"2317.TWSE", "2330.TWSE"}
     assert result.payload["records"][0]["open"] > 0
 
+    # Load the evaluator contract and verify strict admission of TW DatasetVersion
+    spec = importlib.util.spec_from_file_location(
+        "training_session_evaluation_authority_tw_contract_test",
+        SERVICE_DIR / "evaluation_authority.py",
+    )
+    assert spec and spec.loader
+    evaluator = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = evaluator
+    spec.loader.exec_module(evaluator)
+    tw_policy = {**_policy(), "required_instruments": ["2317.TWSE", "2330.TWSE"]}
+    policy_path = tmp_path / "tw_policy.json"
+    policy_path.write_text(json.dumps(tw_policy), encoding="utf-8")
+    snapshot = evaluator.load_evaluation_authority(
+        result.path,
+        policy_path,
+        trusted_now=NOW,
+        strategy_id="strategy-tw-source-authority",
+        authority_root=result.path.parent,
+    )
+    assert snapshot.dataset_version_id == result.payload["dataset_version_id"]
+    assert snapshot.dataset_digest == result.payload_sha256
+    assert len(snapshot.vectorbt_dataset["records"]) == 60
 
-def test_feature_refs_required_when_connector_declares_feature_targets(tmp_path: Path) -> None:
+
+def test_tw_materialization_with_whole_market_one_bar_extras_and_policy_selection(tmp_path: Path) -> None:
     case = _make_tw_case(tmp_path)
-    connector = case.responses[READBACK_URL]["connectors"][0]
-    connector["connector"]["metadata"]["feature_targets"] = ["returns"]
+    trade_date = "2026-07-15"
+    extra_instruments = (("00400A.TWSE", "00400A", 15.0), ("0050.TWSE", "0050", 170.0))
+    extra_normalized = []
+    extra_raw = []
+    extra_features = []
+    for canonical, symbol, base_price in extra_instruments:
+        normalized_row = {
+            "dataset": "tw_price_daily",
+            "date": trade_date,
+            "symbol": symbol,
+            "symbol_canonical": canonical,
+            "market": "TW",
+            "venue": "TWSE",
+            "open": base_price,
+            "high": base_price + 1.0,
+            "low": base_price - 1.0,
+            "close": base_price + 0.5,
+            "volume": 1_000,
+        }
+        wrapper = {
+            "source_id": f"tw-official:tw_price_daily:TWSE:{symbol}:{trade_date}",
+            "connector_id": CONNECTOR_ID,
+            "dataset": NORMALIZED_DATASET_ID,
+            "content_ref": f"tw-official://tw_price_daily/TWSE/{symbol}/{trade_date}",
+            "metadata": {
+                "dataset": "tw_price_daily",
+                "symbol": symbol,
+                "symbol_canonical": canonical,
+                "date": trade_date,
+                "normalized_row": normalized_row,
+            },
+        }
+        extra_normalized.append(wrapper)
+        extra_raw.append({
+            "source_id": wrapper["source_id"],
+            "connector_id": CONNECTOR_ID,
+            "content_ref": wrapper["content_ref"],
+            "metadata": {**wrapper["metadata"], "dataset": NORMALIZED_DATASET_ID},
+        })
+        extra_features.append({
+            "source_id": wrapper["source_id"],
+            "connector_id": CONNECTOR_ID,
+            "source_dataset": NORMALIZED_DATASET_ID,
+            "feature_dataset": "returns",
+            "feature_as_of_time": trade_date,
+        })
+
+    with case.normalized_path.open("a", encoding="utf-8") as f:
+        for row in extra_normalized:
+            f.write(json.dumps(row) + "\n")
+    with case.raw_path.open("a", encoding="utf-8") as f:
+        for row in extra_raw:
+            f.write(json.dumps(row) + "\n")
+    with case.feature_path.open("a", encoding="utf-8") as f:
+        for row in extra_features:
+            f.write(json.dumps(row) + "\n")
+
+    manifest = case.responses[READBACK_URL]["connectors"][0]["source_health"]["metadata"]["storage_refs"]
+    total_normalized = 60 + len(extra_normalized)
+    manifest["raw_refs"][0]["row_count"] = total_normalized
+    manifest["normalized_refs"][0]["row_count"] = total_normalized
+    manifest["feature_refs"][0]["row_count"] = total_normalized
+    manifest["summary"]["normalized_row_count"] = total_normalized
+    case.responses[READBACK_URL]["connectors"][0]["source_health"]["row_count_last_run"] = total_normalized
+    case.responses[f"{BASE_URL}/api/source-ingest/jobs/{RUN_ID}"]["run"]["normalized_count"] = total_normalized
+
+    tw_policy = {**_policy(), "required_instruments": ["2317.TWSE", "2330.TWSE"], "min_bars_per_instrument": 30}
+    policy_path = tmp_path / "tw_active_policy.json"
+    policy_path.write_text(json.dumps(tw_policy), encoding="utf-8")
+
+    result = _materialize(case, policy_path=policy_path)
+
+    # Scoped to required_instruments, omitting 00400A and 0050
+    assert result.payload["instrument_scope"] == ["2317.TWSE", "2330.TWSE"]
+    assert "00400A.TWSE" not in result.payload["instrument_scope"]
+    assert "0050.TWSE" not in result.payload["instrument_scope"]
+    assert len(result.payload["records"]) == 60
+    selection = result.payload["metadata_json"]["source_policy_selection"]
+    assert selection["required_instruments"] == ["2317.TWSE", "2330.TWSE"]
+    assert selection["selected_instruments"] == ["2317.TWSE", "2330.TWSE"]
+    assert bool(result.payload["metadata_json"]["source_policy_selection_sha256"])
+
+    spec = importlib.util.spec_from_file_location(
+        "eval_universe_test_module", SERVICE_DIR / "evaluation_authority.py"
+    )
+    assert spec and spec.loader
+    evaluator = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = evaluator
+    spec.loader.exec_module(evaluator)
+    snapshot = evaluator.load_evaluation_authority(
+        result.path,
+        policy_path,
+        trusted_now=NOW,
+        strategy_id="strategy-tw-universe-test",
+        authority_root=result.path.parent,
+    )
+    assert snapshot.dataset_version_id == result.payload["dataset_version_id"]
+    assert len(snapshot.vectorbt_dataset["records"]) == 60
+
+
+def test_tw_materialization_with_actual_storage_writer_output(tmp_path: Path) -> None:
+    from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+    from services.source_ingestion.connectors.base import SourceConnector, SourceRecord, SourceType
+
+    case = _make_tw_case(tmp_path)
+    storage_root = tmp_path / "writer_storage"
+    case.source_root = storage_root
+    writer = MarketDataStorageWriter(storage_root)
+
+    first_date = date(2026, 6, 16)
+    records: list[SourceRecord] = []
+    # 2 history instruments with 30 bars each
+    for offset in range(30):
+        trade_date = (first_date + timedelta(days=offset)).isoformat()
+        for canonical, symbol, base in TW_INSTRUMENTS:
+            open_price = base + offset
+            records.append(
+                SourceRecord(
+                    source_id=f"tw-official:tw_price_daily:TWSE:{symbol}:{trade_date}",
+                    connector_id=CONNECTOR_ID,
+                    source_type=SourceType.MARKET,
+                    title=symbol,
+                    content_ref=f"tw-official://tw_price_daily/TWSE/{symbol}/{trade_date}",
+                    metadata={
+                        "dataset": NORMALIZED_DATASET_ID,
+                        "trade_date": trade_date,
+                        "symbol": symbol,
+                        "symbol_canonical": canonical,
+                        "normalized_row": {
+                            "dataset": NORMALIZED_DATASET_ID,
+                            "date": trade_date,
+                            "symbol": symbol,
+                            "symbol_canonical": canonical,
+                            "market": "TW",
+                            "venue": "TWSE",
+                            "open": open_price,
+                            "high": open_price + 5.0,
+                            "low": open_price - 5.0,
+                            "close": open_price + 1.0,
+                            "volume": 10_000 + offset,
+                        },
+                    },
+                )
+            )
+
+    # 1 extra whole-market 1-bar instrument: 00400A.TWSE
+    unrelated_date = "2026-07-15"
+    records.append(
+        SourceRecord(
+            source_id=f"tw-official:tw_price_daily:TWSE:00400A:{unrelated_date}",
+            connector_id=CONNECTOR_ID,
+            source_type=SourceType.MARKET,
+            title="00400A",
+            content_ref=f"tw-official://tw_price_daily/TWSE/00400A/{unrelated_date}",
+            metadata={
+                "dataset": NORMALIZED_DATASET_ID,
+                "trade_date": unrelated_date,
+                "symbol": "00400A",
+                "symbol_canonical": "00400A.TWSE",
+                "normalized_row": {
+                    "dataset": NORMALIZED_DATASET_ID,
+                    "date": unrelated_date,
+                    "symbol": "00400A",
+                    "symbol_canonical": "00400A.TWSE",
+                    "market": "TW",
+                    "venue": "TWSE",
+                    "open": 15.0,
+                    "high": 16.0,
+                    "low": 14.0,
+                    "close": 15.5,
+                    "volume": 500,
+                },
+            },
+        )
+    )
+
+    class FakeRun:
+        def __init__(self, run_id):
+            self.ingest_run_id = run_id
+
+    class FakeResult:
+        def __init__(self, run_id, records):
+            self.run = FakeRun(run_id)
+            self.records = records
+
+    connector = SourceConnector(
+        connector_id=CONNECTOR_ID,
+        source_type=SourceType.MARKET,
+        provider="TWSE",
+        license_scope="public",
+        metadata={
+            "feature_targets": ["returns"],
+            "storage_targets": [f"normalized/{NORMALIZED_DATASET_ID}", "features/returns"],
+            "normalized_target": NORMALIZED_DATASET_ID,
+        },
+    )
+
+    manifest = writer.write_run(result=FakeResult(RUN_ID, records), connector=connector)
+    manifest_dict = manifest.to_dict()
+    manifest_dict["created_at"] = case.responses[f"{BASE_URL}/api/source-ingest/jobs/{RUN_ID}"]["run"]["finished_at"]
+    total_normalized = manifest_dict["summary"]["normalized_row_count"]
+
+    readback = case.responses[READBACK_URL]
+    readback["connectors"][0]["source_health"]["metadata"]["storage_refs"] = manifest_dict
+    readback["connectors"][0]["source_health"]["row_count_last_run"] = total_normalized
+    case.responses[f"{BASE_URL}/api/source-ingest/jobs/{RUN_ID}"]["run"]["normalized_count"] = total_normalized
+
+    tw_policy = {**_policy(), "required_instruments": ["2317.TWSE", "2330.TWSE"], "min_bars_per_instrument": 30}
+    policy_path = tmp_path / "tw_writer_policy.json"
+    policy_path.write_text(json.dumps(tw_policy), encoding="utf-8")
+
+    result = _materialize(case, policy_path=policy_path)
+
+    # Scoped to 2 history instruments (60 rows) while raw storage manifest has 61 rows
+    assert result.payload["instrument_scope"] == ["2317.TWSE", "2330.TWSE"]
+    assert "00400A.TWSE" not in result.payload["instrument_scope"]
+    assert len(result.payload["records"]) == 60
+
+    # Genuine evaluation execution
+    spec = importlib.util.spec_from_file_location(
+        "eval_writer_test_module", SERVICE_DIR / "evaluation_authority.py"
+    )
+    assert spec and spec.loader
+    evaluator = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = evaluator
+    spec.loader.exec_module(evaluator)
+    snapshot = evaluator.load_evaluation_authority(
+        result.path,
+        policy_path,
+        trusted_now=NOW,
+        strategy_id="strategy-tw-writer-test",
+        authority_root=result.path.parent,
+    )
+    assert snapshot.dataset_version_id == result.payload["dataset_version_id"]
+    assert len(snapshot.vectorbt_dataset["records"]) == 60
+
+
+def test_adversarial_missing_required_policy_symbol_fails_closed(tmp_path: Path) -> None:
+    case = _make_tw_case(tmp_path)
+    normalized_rows = [
+        json.loads(line) for line in case.normalized_path.read_text().splitlines()
+        if "2317" not in line
+    ]
+    raw_rows = [
+        json.loads(line) for line in case.raw_path.read_text().splitlines()
+        if "2317" not in line
+    ]
+    feature_rows = [
+        json.loads(line) for line in case.feature_path.read_text().splitlines()
+        if "2317" not in line
+    ]
+    _write_jsonl(case.normalized_path, normalized_rows)
+    _write_jsonl(case.raw_path, raw_rows)
+    _write_jsonl(case.feature_path, feature_rows)
+    manifest = case.responses[READBACK_URL]["connectors"][0]["source_health"]["metadata"]["storage_refs"]
+    manifest["raw_refs"][0]["row_count"] = len(raw_rows)
+    manifest["normalized_refs"][0]["row_count"] = len(normalized_rows)
+    manifest["feature_refs"][0]["row_count"] = len(feature_rows)
+    manifest["summary"]["normalized_row_count"] = len(normalized_rows)
+    case.responses[READBACK_URL]["connectors"][0]["source_health"]["row_count_last_run"] = len(normalized_rows)
+    case.responses[f"{BASE_URL}/api/source-ingest/jobs/{RUN_ID}"]["run"]["normalized_count"] = len(normalized_rows)
+
+    tw_policy = {**_policy(), "required_instruments": ["2317.TWSE", "2330.TWSE"]}
+    policy_path = tmp_path / "tw_active_policy_missing.json"
+    policy_path.write_text(json.dumps(tw_policy), encoding="utf-8")
+
+    with pytest.raises(SourceDatasetAuthorityError, match="missing required policy instrument: 2317.TWSE"):
+        _materialize(case, policy_path=policy_path)
+
+
+def test_adversarial_short_required_symbol_fails_at_evaluation(tmp_path: Path) -> None:
+    case = _make_tw_case(tmp_path)
+    count_2317 = 0
+    kept_rows = []
+    for line in case.normalized_path.read_text().splitlines():
+        row = json.loads(line)
+        if "2317" in line:
+            if count_2317 < 5:
+                kept_rows.append(row)
+                count_2317 += 1
+        else:
+            kept_rows.append(row)
+    raw_rows = [
+        {**{k: r[k] for k in ("source_id", "connector_id", "content_ref")}, "metadata": {**r["metadata"], "dataset": NORMALIZED_DATASET_ID}}
+        for r in kept_rows
+    ]
+    feature_rows = [
+        {"source_id": r["source_id"], "connector_id": CONNECTOR_ID, "source_dataset": NORMALIZED_DATASET_ID, "feature_dataset": "returns", "feature_as_of_time": r["metadata"]["date"]}
+        for r in kept_rows
+    ]
+    _write_jsonl(case.normalized_path, kept_rows)
+    _write_jsonl(case.raw_path, raw_rows)
+    _write_jsonl(case.feature_path, feature_rows)
+    manifest = case.responses[READBACK_URL]["connectors"][0]["source_health"]["metadata"]["storage_refs"]
+    manifest["raw_refs"][0]["row_count"] = len(raw_rows)
+    manifest["normalized_refs"][0]["row_count"] = len(kept_rows)
+    manifest["feature_refs"][0]["row_count"] = len(feature_rows)
+    manifest["summary"]["normalized_row_count"] = len(kept_rows)
+    case.responses[READBACK_URL]["connectors"][0]["source_health"]["row_count_last_run"] = len(kept_rows)
+    case.responses[f"{BASE_URL}/api/source-ingest/jobs/{RUN_ID}"]["run"]["normalized_count"] = len(kept_rows)
+
+    tw_policy = {**_policy(), "required_instruments": ["2317.TWSE", "2330.TWSE"], "min_bars_per_instrument": 30}
+    policy_path = tmp_path / "tw_policy_short.json"
+    policy_path.write_text(json.dumps(tw_policy), encoding="utf-8")
+
+    result = _materialize(case, policy_path=policy_path)
+    assert len(result.payload["records"]) == 35
+
+    spec = importlib.util.spec_from_file_location(
+        "eval_short_test_module", SERVICE_DIR / "evaluation_authority.py"
+    )
+    assert spec and spec.loader
+    evaluator = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = evaluator
+    spec.loader.exec_module(evaluator)
+    with pytest.raises(evaluator.AuthorityValidationError, match="dataset instrument 2317.TWSE has 5 bars; minimum is 30"):
+        evaluator.load_evaluation_authority(
+            result.path,
+            policy_path,
+            trusted_now=NOW,
+            strategy_id="strategy-tw-short",
+            authority_root=result.path.parent,
+        )
+
+
+def test_adversarial_invalid_policy_fails_closed(tmp_path: Path) -> None:
+    case = _make_tw_case(tmp_path)
+    invalid_policy = {**_policy(), "status": "expired"}
+    policy_path = tmp_path / "tw_invalid_policy.json"
+    policy_path.write_text(json.dumps(invalid_policy), encoding="utf-8")
+
+    with pytest.raises(SourceDatasetAuthorityError, match="evaluation policy authority rejected"):
+        _materialize(case, policy_path=policy_path)
+
+
+def test_cache_isolation_between_different_policy_scopes(tmp_path: Path) -> None:
+    case = _make_tw_case(tmp_path)
+    tw_policy = {**_policy(), "required_instruments": ["2317.TWSE", "2330.TWSE"]}
+    policy_path = tmp_path / "tw_policy_scoped.json"
+    policy_path.write_text(json.dumps(tw_policy), encoding="utf-8")
+
+    res1 = _materialize(case, policy_path=policy_path)
+    res2 = _materialize(case)
+
+    assert res1.path != res2.path
+    assert res1.payload_sha256 != res2.payload_sha256
+    assert res1.payload["metadata_json"].get("source_policy_selection") is not None
+    assert "source_policy_selection" not in res2.payload["metadata_json"]
+
+
+def test_reject_changed_storage_with_different_policy(tmp_path: Path) -> None:
+    instruments = (
+        ("2330.TWSE", "2330", 900.0),
+        ("2317.TWSE", "2317", 180.0),
+        ("2454.TWSE", "2454", 1000.0),
+    )
+    case = _make_tw_case(tmp_path, instruments=instruments)
+    policy_1 = {**_policy(), "required_instruments": ["2317.TWSE", "2330.TWSE"]}
+    policy_path_1 = tmp_path / "tw_policy_1.json"
+    policy_path_1.write_text(json.dumps(policy_1), encoding="utf-8")
+
+    first = _materialize(case, policy_path=policy_path_1)
+    assert first.path.exists()
+
+    rows = [json.loads(line) for line in case.normalized_path.read_text().splitlines()]
+    rows[0]["metadata"]["normalized_row"]["close"] += 1.0
+    _write_jsonl(case.normalized_path, rows)
+
+    policy_2 = {
+        **_policy(),
+        "policy_id": "persona-teaching-evaluation-alt",
+        "approval_decision_ref": "approval:persona-teaching-evaluation:alt",
+        "required_instruments": ["2317.TWSE", "2454.TWSE"],
+    }
+    policy_path_2 = tmp_path / "tw_policy_2.json"
+    policy_path_2.write_text(json.dumps(policy_2), encoding="utf-8")
+
+    with pytest.raises(SourceDatasetAuthorityError, match="source run bytes changed"):
+        _materialize(case, policy_path=policy_path_2)
+
+    assert json.loads(first.path.read_text()) == first.payload
+
+
+def test_allow_identical_storage_with_different_policy_scope(tmp_path: Path) -> None:
+    instruments = (
+        ("2330.TWSE", "2330", 900.0),
+        ("2317.TWSE", "2317", 180.0),
+        ("2454.TWSE", "2454", 1000.0),
+    )
+    case = _make_tw_case(tmp_path, instruments=instruments)
+    policy_1 = {**_policy(), "required_instruments": ["2317.TWSE", "2330.TWSE"]}
+    policy_path_1 = tmp_path / "tw_policy_1.json"
+    policy_path_1.write_text(json.dumps(policy_1), encoding="utf-8")
+
+    policy_2 = {
+        **_policy(),
+        "policy_id": "persona-teaching-evaluation-subset",
+        "approval_decision_ref": "approval:persona-teaching-evaluation:subset",
+        "required_instruments": ["2317.TWSE", "2454.TWSE"],
+    }
+    policy_path_2 = tmp_path / "tw_policy_2.json"
+    policy_path_2.write_text(json.dumps(policy_2), encoding="utf-8")
+
+    res1 = _materialize(case, policy_path=policy_path_1)
+    res2 = _materialize(case, policy_path=policy_path_2)
+
+    assert res1.path != res2.path
+    assert res1.payload_sha256 != res2.payload_sha256
+    assert (
+        res1.payload["metadata_json"]["source_storage_binding_sha256"]
+        == res2.payload["metadata_json"]["source_storage_binding_sha256"]
+    )
+    assert (
+        res1.payload["metadata_json"]["source_policy_selection_sha256"]
+        != res2.payload["metadata_json"]["source_policy_selection_sha256"]
+    )
+    assert res1.payload["instrument_scope"] == ["2317.TWSE", "2330.TWSE"]
+    assert res2.payload["instrument_scope"] == ["2317.TWSE", "2454.TWSE"]
+    assert len(list(case.output_root.glob("dataset-version-*.json"))) == 2
+
+
+def test_feature_refs_required_when_storage_omits_feature_refs(tmp_path: Path) -> None:
+    case = _make_tw_case(tmp_path)
+    manifest = case.responses[READBACK_URL]["connectors"][0]["source_health"]["metadata"]["storage_refs"]
+    manifest["feature_refs"] = []
+    manifest["summary"]["feature_ref_count"] = 0
 
     with pytest.raises(SourceDatasetAuthorityError, match="feature_refs"):
+        _materialize(case)
+
+
+def test_altered_feature_artifact_is_rejected(tmp_path: Path) -> None:
+    case = _make_tw_case(tmp_path)
+    rows = [json.loads(line) for line in case.feature_path.read_text().splitlines()]
+    rows[0]["connector_id"] = "different-connector"
+    _write_jsonl(case.feature_path, rows)
+
+    with pytest.raises(SourceDatasetAuthorityError, match="different connector"):
         _materialize(case)
 
 
@@ -889,3 +1387,83 @@ def test_urllib_json_get_sends_supplied_headers(monkeypatch: pytest.MonkeyPatch)
     assert payload == {"ok": True}
     assert seen["headers"]["authorization"] == "Bearer t"
     assert seen["headers"]["x-tenant-id"] == "tenant-dev"
+
+
+def test_select_evidence_bundles_diagnostics_when_unmatched() -> None:
+    payload = {
+        "bundles": [
+            {
+                "evidence_bundle_id": "bundle-other-run",
+                "source_ids": ["s1"],
+                "evidence_item_ids": ["i1"],
+                "created_at": "2026-07-15T11:00:00Z",
+                "metadata": {
+                    "connector_id": CONNECTOR_ID,
+                    "ingest_run_id": "other-run-id",
+                    "tenant_id": "tenant-dev",
+                },
+            }
+        ]
+    }
+    with pytest.raises(SourceDatasetAuthorityError) as exc_info:
+        AUTHORITY._select_evidence_bundles(
+            payload,
+            connector_id=CONNECTOR_ID,
+            run_id=RUN_ID,
+            trusted_now=NOW,
+        )
+    msg = str(exc_info.value)
+    assert "exactly one source evidence bundle must bind the selected connector run" in msg
+    assert "matching_count=0" in msg
+    assert f"selected connector={CONNECTOR_ID}" in msg
+    assert f"run={RUN_ID}" in msg
+    assert "observed_count=1" in msg
+    assert f"id=bundle-other-run:connector={CONNECTOR_ID}:run=other-run-id:tenant=tenant-dev" in msg
+
+
+def test_select_evidence_bundles_diagnostics_when_duplicate() -> None:
+    bundle = {
+        "evidence_bundle_id": "bundle-1",
+        "source_ids": ["s1"],
+        "evidence_item_ids": ["i1"],
+        "created_at": "2026-07-15T11:00:00Z",
+        "metadata": {
+            "connector_id": CONNECTOR_ID,
+            "ingest_run_id": RUN_ID,
+            "tenant_id": "tenant-dev",
+        },
+    }
+    payload = {"bundles": [bundle, {**bundle, "evidence_bundle_id": "bundle-2"}]}
+    with pytest.raises(SourceDatasetAuthorityError) as exc_info:
+        AUTHORITY._select_evidence_bundles(
+            payload,
+            connector_id=CONNECTOR_ID,
+            run_id=RUN_ID,
+            trusted_now=NOW,
+        )
+    msg = str(exc_info.value)
+    assert "matching_count=2" in msg
+    assert "observed_count=2" in msg
+
+
+def test_select_evidence_bundles_fails_closed_on_future() -> None:
+    bundle = {
+        "evidence_bundle_id": "bundle-future",
+        "source_ids": ["s1"],
+        "evidence_item_ids": ["i1"],
+        "created_at": "2026-07-15T13:00:00Z",
+        "metadata": {
+            "connector_id": CONNECTOR_ID,
+            "ingest_run_id": RUN_ID,
+            "tenant_id": "tenant-dev",
+        },
+    }
+    payload = {"bundles": [bundle]}
+    with pytest.raises(SourceDatasetAuthorityError, match="source evidence bundle created_at is in the future"):
+        AUTHORITY._select_evidence_bundles(
+            payload,
+            connector_id=CONNECTOR_ID,
+            run_id=RUN_ID,
+            trusted_now=NOW,
+        )
+
