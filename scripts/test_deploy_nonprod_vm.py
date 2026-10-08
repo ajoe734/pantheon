@@ -2552,3 +2552,64 @@ stage_dev_paper_prerequisite_readiness SPY 5 0
 
 
 
+
+
+def _run_real_taiwan_preflight(snapshot: dict[str, Any], calendar_valid: bool) -> tuple[dict[str, Any], str]:
+    """Run the heredoc python from check_taiwan_refresh_preflight against a stub snapshot API."""
+    import http.server
+    import os
+    import threading
+
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    body = script.split("<<'PREFLIGHT_PY'\n", 1)[1].split("\nPREFLIGHT_PY", 1)[0]
+    today = datetime.now(timezone(timedelta(hours=8))).date().isoformat()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            payload = json.dumps(snapshot).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    wrapper = (
+        "import sys\n"
+        "import services.execution.market_snapshot_admission as m\n"
+        f"valid = {calendar_valid!r}\n"
+        f"m.validate_taiwan_calendar_evidence = lambda cal, now_dt=None: "
+        f"(valid, None if valid else 'calendar pin mismatch', {{'holidays': {{{today!r}: 'Holiday'}}}})\n"
+        f"exec(compile({body!r}, 'preflight', 'exec'))\n"
+    )
+    try:
+        proc = subprocess.run(
+            ["python3", "-c", wrapper, "true"],
+            cwd=ROOT,
+            env={**os.environ, "PYTHONPATH": str(ROOT), "SOURCE_INGEST_API_URL": f"http://127.0.0.1:{server.server_port}"},
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    finally:
+        server.shutdown()
+    return json.loads(proc.stdout), proc.stderr
+
+
+def test_taiwan_preflight_legacy_snapshot_without_calendar_proceeds_to_refresh() -> None:
+    snapshot = {"snapshot_id": "legacy", "event_time": "2026-10-02T06:00:00Z", "observed_at": "2026-10-05T07:00:00Z", "lineage": {}}
+    result, stderr = _run_real_taiwan_preflight(snapshot, calendar_valid=False)
+    assert result["status"] == "proceed"
+    assert result["reason"] == "calendar_evidence_refresh_needed"
+    assert "refresh needed" in stderr
+
+
+def test_taiwan_preflight_invalid_calendar_proceeds_and_valid_holiday_still_skips() -> None:
+    snapshot = {"snapshot_id": "s", "event_time": "2026-10-02T06:00:00Z", "calendar_evidence": {"market": "TWSE"}}
+    result, _ = _run_real_taiwan_preflight(snapshot, calendar_valid=False)
+    assert (result["status"], result["detail"]) == ("proceed", "calendar pin mismatch")
+    result, _ = _run_real_taiwan_preflight(snapshot, calendar_valid=True)
+    assert (result["status"], result["reason"]) == ("skipped", "holiday")
