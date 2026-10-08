@@ -3252,20 +3252,23 @@ def consume_incident_trigger(body: IncidentTriggerBody) -> Dict[str, Any]:
     trigger_id = incident_id or source_event_id or f"{binding_id}:{timestamp}"
     evaluation_id = _trigger_evaluation_id(trigger_id, binding_id)
 
-    existing = store.get_evaluation(evaluation_id, tenant_id=tenant_id)
-    if existing is not None:
+    evidence_summary = str(incident.get("evidence_summary") or anomaly_event.get("evidence_summary") or "")
+    is_infra = binding_id.startswith("infra-subject-") or "non_trading_infrastructure_incident=true" in evidence_summary
+    existing = None if is_infra else store.get_evaluation(evaluation_id, tenant_id=tenant_id)
+    if is_infra or existing is not None:
         return {
             "status": "ok",
             "trigger": "incident",
             "created": False,
             "skipped": True,
+            "not_applicable": is_infra,
             "evaluation_id": evaluation_id,
             "tenant_id": tenant_id,
             "binding_id": binding_id,
             "runtime_id": runtime_id or None,
             "incident_id": incident_id or None,
             "source_event_id": source_event_id or None,
-            "reason": existing.get("trigger_reason") or _trigger_reason(body),
+            "reason": "non_trading_infrastructure_incident" if is_infra else (existing.get("trigger_reason") or _trigger_reason(body)),
             "triggered_at": timestamp,
         }
 
