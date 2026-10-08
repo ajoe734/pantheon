@@ -1,0 +1,20 @@
+{
+  "task_id": "BFF-MANAGEMENT-READ-REGRESSIONS-20261007",
+  "scope": "source/local validation only; no hosted or VM acceptance claimed",
+  "result": "test_mgmt_load_002_shell_summary.py, test_bff_management_delta_routes.py, tests/test_management_read_models_router.py: 66 passed. Neighbours test_bff_pm12_portfolio_book_contract, test_receipt_governance_routes, test_execute_plans_final_live_wiring_contract, test_tenant_fallback_audit pass from repo root.",
+  "production_net_lines": "+78 (management_read_models/service.py +74, capital/router.py +2, governance/service.py +2)",
+  "classification": [
+    {"test": "shell_summary (3 tests in test_mgmt_load_002)", "class": "real regression fixed in production", "fix": "approvals counted once from the approval queue; open_alerts = incidents + governance review + pending approvals + kill switch (bff_cheap_count); queued jobs counted; session.display_label restored; BFF_READ_SURFACE_STATE degraded/stale propagates to pending_approvals/open_alerts/running_jobs/shell_summary with freshness.ttl_seconds; expectations unchanged"},
+    {"test": "loop_throughput", "class": "real regression fixed in production", "fix": "ported pre-0edf0cd6d item projection: queue_lag_seconds, duration_seconds, links, source_refs, composition_sources, policy, loop_runs surface; runs_per_minute divides only runs inside the window (window_minutes, ending at the latest event) by the observed span; expectations unchanged"},
+    {"test": "incident_timeline", "class": "real regression fixed in production", "fix": "meta.surfaces.incidents.source reports store.dataset_source('incidents') instead of the hard-coded 'store' (96cd7c093); expectation unchanged"},
+    {"test": "governance_ledger", "class": "real regression fixed in production + stale fixture", "fix": "service restores meta.surfaces.governance_ledger and meta.composition_sources (eaa1cfea5). The test now stubs the Governance approval owner (approval_owner.call_owner) because an unreachable owner answers 503 DEPENDENCY_UNAVAILABLE by decision; assertions unchanged"},
+    {"test": "persona_league_heatmap, quarterly_ranking_drilldown", "class": "stale sample", "decision": "3f2d13a40 / 7959c408d made persona reads tenant-scoped; fixture personas are now tagged with the fixture caller tenant, assertions unchanged"},
+    {"test": "cost_attribution_success", "class": "intended change", "decision": "8226b2774 moved the route to capital.router owner-backed projection (tests/test_capital_router.py): list data + items + page_info, no composed summary, cost is null (not 0) when the allocation carries no cost field, so no cost is fabricated. Expectations rewritten to that shape"},
+    {"test": "cost_attribution_pages_groups_before_row_projection", "class": "retired", "decision": "8226b2774: the paging/grouping projection it exercised no longer exists; the route has no grouping seam. Deleted, not weakened"},
+    {"test": "cost_attribution_filter_by_persona", "class": "real regression fixed in production", "fix": "capital router accepts persona_id and filters allocations; expectation unchanged apart from the new response shape"},
+    {"test": "risk_radar (router + PM12)", "class": "no change needed", "note": "current rows carry both data.rows and nested metrics plus flat drawdown/exposure fields, so both the router contract and the PM12 contract pass"},
+    {"test": "6 router tests returning 403 tenant_scope", "class": "stale sample", "decision": "91c68f0ff made tenant authority fail-closed; tests now pass a verified tenant_payload_fn fixture, assertions unchanged"},
+    {"test": "test_shell_summary_endpoint, test_loop_throughput (router tests)", "class": "kept passing", "note": "fallback readers (list_approval_records, list_records('jobs')) and total_runs retained"}
+  ],
+  "known_out_of_scope": "tests/test_capital_router.py::test_allocation_and_management_readbacks_retain_pool_and_risk_lineage fails at portfolio-book/exposure ('items' missing), a PM12 route owned by BFF-PM12-PORTFOLIO-BOOK-ROUTES-20261008; the cost-attribution assertions in that test are not reached. Not touched by this task."
+}

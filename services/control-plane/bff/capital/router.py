@@ -649,13 +649,15 @@ def create_capital_router(
     # 23. Cost attribution is a read-only projection; the BFF never invents costs.
     @router.get("/bff/management/cost-attribution")
     async def bff_management_cost_attribution(
-        capital_pool_id: Optional[str] = None, authorization: Optional[str] = Header(default=None)
+        capital_pool_id: Optional[str] = None, persona_id: Optional[str] = None,
+        authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         _require_read(authorization)
         rows = [r for r in _portfolio_or_error() if not capital_pool_id or r["capital_pool_id"] == capital_pool_id]
         costs = [
-            {"capital_pool_id": r["capital_pool_id"], "allocation": alloc, "cost": cost if (cost := first_present(alloc, "cost", "cost_amount", "commission", "fees")) is not None else 0}
+            {"capital_pool_id": r["capital_pool_id"], "allocation": alloc, "cost": first_present(alloc, "cost", "cost_amount", "commission", "fees")}
             for r in rows for alloc in r["allocations"]
+            if not persona_id or alloc.get("persona_id") == persona_id
         ]
         return _readback_response(costs, meta={"snapshot_at": utc_now(), "total": len(costs), "policy": "read_only_cost_attribution"}, items=costs)
 
