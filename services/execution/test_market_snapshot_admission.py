@@ -74,7 +74,7 @@ def test_admit_canonical_source_snapshot_valid_both_public_and_internal() -> Non
 
 
 def test_admit_canonical_source_snapshot_taiwan_symbol_alias() -> None:
-    now_dt = datetime.now(timezone.utc)
+    now_dt = datetime(2026, 10, 7, 6, 0, 0, tzinfo=timezone.utc)
     ev_time = "2026-10-07T05:30:00Z"
     obs_time = now_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     p1 = MarketSnapshotPoint(event_time="2026-10-06T05:30:00Z", close=950.0, source_id="tw-official:tw_price_daily:TWSE:2330:p1", connector_id="tw-twse-tpex-official-market", content_ref="tw-official://ref1", ingest_run_id="run1", market="TWSE")
@@ -85,7 +85,7 @@ def test_admit_canonical_source_snapshot_taiwan_symbol_alias() -> None:
     pub = snap.to_public_dict(requested_symbol="2330.TW")
     assert pub["symbol"] == "2330.TW"
     assert "points" not in pub
-    dec = admit_canonical_source_snapshot(pub, expected_symbol="2330.TW")
+    dec = admit_canonical_source_snapshot(pub, expected_symbol="2330.TW", now_iso=obs_time)
     assert dec.admitted is True
 
 
@@ -375,5 +375,70 @@ def test_admit_market_snapshot_counterexample_convergence() -> None:
     }
     d_raw = admit_market_snapshot(raw_valid, expected_symbol="SPY", max_age_seconds=86400)
     assert d_raw.admitted is True
+
+
+def test_evaluate_taiwan_market_freshness_extended_governed_calendar_2026() -> None:
+    from services.execution.market_snapshot_admission import (
+        TW_GOVERNED_CALENDAR_PINS,
+        evaluate_taiwan_market_freshness,
+    )
+    from services.source_ingestion.connectors.taiwan_official import (
+        TWSE_2026_SCHEDULE_CALENDAR_SHA256,
+        TWSE_2026_SCHEDULE_CALENDAR_VERSION,
+        governed_taiwan_calendar_evidence,
+    )
+
+    # Acceptance criterion 3: connector digest constant and admission trusted pin match
+    assert TWSE_2026_SCHEDULE_CALENDAR_VERSION in TW_GOVERNED_CALENDAR_PINS
+    assert (
+        TW_GOVERNED_CALENDAR_PINS[TWSE_2026_SCHEDULE_CALENDAR_VERSION]
+        == TWSE_2026_SCHEDULE_CALENDAR_SHA256
+    )
+
+    evidence_2026_10_08 = governed_taiwan_calendar_evidence(
+        venue="TWSE",
+        trade_date="2026-10-08",
+    )
+    assert evidence_2026_10_08 is not None
+    assert evidence_2026_10_08["version"] == TWSE_2026_SCHEDULE_CALENDAR_VERSION
+    assert evidence_2026_10_08["checksum"] == TWSE_2026_SCHEDULE_CALENDAR_SHA256
+
+    lineage = {"connector_ids": ["tw-twse-tpex-official-market"]}
+    close_2026_10_08 = datetime.fromisoformat("2026-10-08T05:30:00+00:00")
+    now_2026_10_09_12 = datetime.fromisoformat("2026-10-09T12:00:00+00:00")
+    receipt_2026_10_09_07 = datetime.fromisoformat("2026-10-09T07:00:00+00:00")
+
+    # Acceptance criterion 4: admits TWSE snapshot with latest close 2026-10-08
+    # at 2026-10-09T12:00:00Z with a refresh receipt from 2026-10-09T07:00:00Z
+    ok, reason, detail = evaluate_taiwan_market_freshness(
+        event_time_dt=close_2026_10_08,
+        now_dt=now_2026_10_09_12,
+        refresh_receipt_dt=receipt_2026_10_09_07,
+        lineage=lineage,
+        max_refresh_age_seconds=86400,
+        calendar_evidence=evidence_2026_10_08,
+    )
+    assert ok is True
+    assert reason is None
+    assert detail is None
+
+    # Acceptance criterion 4: still fails closed for a missed regular weekday session
+    # (e.g. latest close 2026-10-07 evaluated on 2026-10-09T12:00:00Z, missing 2026-10-08)
+    evidence_2026_10_07 = governed_taiwan_calendar_evidence(
+        venue="TWSE",
+        trade_date="2026-10-07",
+    )
+    close_2026_10_07 = datetime.fromisoformat("2026-10-07T05:30:00+00:00")
+    ok_missed, reason_missed, detail_missed = evaluate_taiwan_market_freshness(
+        event_time_dt=close_2026_10_07,
+        now_dt=now_2026_10_09_12,
+        refresh_receipt_dt=receipt_2026_10_09_07,
+        lineage=lineage,
+        max_refresh_age_seconds=86400,
+        calendar_evidence=evidence_2026_10_07,
+    )
+    assert ok_missed is False
+    assert reason_missed == "market_input_stale"
+    assert "2026-10-08" in str(detail_missed)
 
 
