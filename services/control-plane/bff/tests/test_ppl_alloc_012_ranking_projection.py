@@ -2228,7 +2228,7 @@ def test_binding_runtime_and_stage_mismatches_fail_closed() -> None:
 
 
 def test_pm12_quarterly_rows_allocation_policy_compatibility() -> None:
-    from persona_allocation_policy import calculate_target_allocations
+    from services.capital.allocation_policy import calculate_target_allocations
     row = {
         "persona_id": "persona-ppl-alloc-012-compat",
         "stage": "live_running",

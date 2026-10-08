@@ -51,9 +51,8 @@ def test_packaged_transport_handles_owner_readback_and_compensation() -> None:
             [sys.executable, "-c", """
 import os, sys
 from urllib.error import HTTPError
-from services.control_plane.bff.personas.service import (
-    _PersonaOwnerHttpTransport, build_pm12_allocation_policy_input,
-)
+from services.capital.allocation_policy import build_pm12_allocation_policy_input
+from services.control_plane.bff.personas.service import _PersonaOwnerHttpTransport
 policy = build_pm12_allocation_policy_input({'overall_score': 80, 'tier': 'tier-2'})
 assert policy['rank_score'] == 80
 assert policy['allocation_tier'] == 'a'

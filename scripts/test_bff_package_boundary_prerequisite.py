@@ -16,15 +16,13 @@ LOCAL_ROOTS = {
     "action_catalog", "agora", "assistant", "command_executor", "command_queue",
     "downstream_health_monitor", "emergency_containment_policy", "loop_inventory",
     "main", "management_read_models", "models", "openclaw_ops_client",
-    "operations_read_model", "paper_eligibility_proof", "persona_allocation_policy",
+    "operations_read_model", "paper_eligibility_proof",
     "persona_provisioning", "persona_provisioning_coordinator", "ports",
     "source_management_client", "trade_journal", "trade_journey_projection_store",
 }
 SOURCE_PATHS = (
     "services/control-plane/bff/agora/candidate_decisions/router.py",
-    "services/control-plane/bff/agora/dashboard/router.py",
     "services/control-plane/bff/agora/dataset_extraction/router.py",
-    "services/control-plane/bff/agora/identity/router.py",
     "services/control-plane/bff/agora/interaction/persona_client.py",
     "services/control-plane/bff/agora/interaction/router.py",
     "services/control-plane/bff/agora/interaction/runner.py",
@@ -85,7 +83,8 @@ def _run_fresh(code: str) -> dict[str, object]:
 
 
 def test_declared_sources_use_only_canonical_internal_imports() -> None:
-    assert len(SOURCE_PATHS) == 51
+    # 49 after AGORA-DEAD-SURFACES-REMOVAL-001 (0cfb1e2af) deleted agora dashboard and identity routers
+    assert len(SOURCE_PATHS) == 49
     violations: list[str] = []
     for relative in SOURCE_PATHS:
         tree = ast.parse((ROOT / relative).read_text(), filename=relative)
@@ -181,7 +180,7 @@ def test_cross_user_forbidden_is_403_without_bare_models_alias() -> None:
     payload = _run_fresh("""
 import json, sys
 from fastapi import HTTPException
-from services.control_plane.bff.agora.dashboard.router import _raise_cross_user_forbidden
+from services.control_plane.bff.agora.strategy_workshop._common import _raise_cross_user_forbidden
 def bff_error(status, code, message, reason, **kwargs):
     return HTTPException(status_code=status, detail={'code': code.value, 'reason': reason})
 try:
@@ -213,7 +212,7 @@ import asyncio, json
 from types import SimpleNamespace
 from fastapi import HTTPException
 from services.control_plane.bff.agora.candidate_decisions.router import create_candidate_decision_router
-from services.control_plane.bff.agora.dashboard.router import create_dashboard_router
+from services.control_plane.bff.agora.servant.router import create_servant_router
 from services.control_plane.bff.assistant.routes import create_assistant_router
 from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
@@ -227,9 +226,11 @@ candidate = create_candidate_decision_router(
     service=object(), extract_identity=lambda _: identity,
     require_read_role=lambda _: None, require_write_role=lambda _: None,
     bff_error=bff_error, utc_now=lambda: '2026-09-05T00:00:00Z')
-dashboard = create_dashboard_router(
+servant = create_servant_router(
     extract_identity=lambda _: identity, require_read_role=lambda _: None,
-    bff_error=bff_error, utc_now=lambda: '2026-09-05T00:00:00Z')
+    require_write_role=lambda _: None, bff_error=bff_error,
+    utc_now=lambda: '2026-09-05T00:00:00Z', get_read_store=lambda: None,
+    sync_servant_agent=lambda _: {})
 assistant = create_assistant_router(
     build_context_pack=lambda *args: None, extract_identity=lambda _: identity,
     require_read_role=lambda _: None, bff_error=bff_error)
@@ -239,7 +240,7 @@ try:
 except HTTPException as exc:
     results['capability'] = [exc.status_code, exc.detail['code'], exc.detail['reason']]
 try:
-    endpoint(dashboard, '/bff/agora/strategies/{strategy_id}/dashboard-recipes/proposals')('s1', {}, None, None)
+    endpoint(servant, '/bff/agora/servant/ensure')(None, None, None, None, None)
 except HTTPException as exc:
     results['validation'] = [exc.status_code, exc.detail['code'], exc.detail['reason']]
 try:
@@ -256,5 +257,14 @@ print(json.dumps(results, sort_keys=True))
         "assistant_disabled": [503, "PRECONDITION_FAILED", "OpenClaw adapter provider readiness is not configured for this BFF."],
         "capability": [403, "FORBIDDEN", "capability_missing"],
         "provider_unavailable": [503, "OPENCLAW_ADAPTER_URL_NOT_CONFIGURED"],
-        "validation": [400, "VALIDATION_FAILED", "missing_field"],
+        "validation": [422, "VALIDATION_FAILED", "Missing required Idempotency-Key header for Agora servant ensure"],
     }
+
+
+def test_allocation_policy_single_home_in_capital() -> None:
+    from services.capital import allocation_policy
+
+    assert hasattr(allocation_policy, "calculate_target_allocations")
+    assert hasattr(allocation_policy, "calculate_paper_simulation_allocations")
+    assert hasattr(allocation_policy, "build_pm12_allocation_policy_input")
+    assert not (BFF / "persona_allocation_policy.py").exists()

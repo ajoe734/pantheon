@@ -211,7 +211,7 @@ from services.control_plane.bff.action_catalog import get_catalog_entry
 
 from ..command_executor import _get_json, _post_json, _runtime_manager_client
 
-from ..persona_allocation_policy import build_pm12_allocation_policy_input
+from services.capital.allocation_policy import build_pm12_allocation_policy_input
 
 from services.control_plane.bff.paper_eligibility_proof import (
     BENCHMARK_VERSION as _PPL_ALLOC_009_ELIGIBILITY_BENCHMARK_VERSION,
