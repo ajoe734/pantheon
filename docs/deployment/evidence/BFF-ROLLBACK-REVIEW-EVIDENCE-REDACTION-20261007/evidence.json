@@ -1,6 +1,7 @@
 {
   "task": "BFF-ROLLBACK-REVIEW-EVIDENCE-REDACTION-20261007",
-  "base_sha": "867e829cacc887aed82dbe0ae4246a733343a05a",
+  "base_sha": "d5ac404707cc7b52199d38f22e74a64e8940699f",
+  "initial_base_sha": "867e829cacc887aed82dbe0ae4246a733343a05a",
   "head_sha": "see PR head (commit bbce9f8f6 plus this evidence commit)",
   "changed_files": [
     "services/control-plane/bff/governance/router.py",
