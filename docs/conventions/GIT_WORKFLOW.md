@@ -579,7 +579,7 @@ merged only at the exact head that reviewer approved.
 | `.github/workflows/nightly-publish-cut.yml`| cron `0 * * * *` + `workflow_dispatch`                                    | Cut immutable snapshots and independently reconcile the exact dev FE/BFF pair |
 | `.github/workflows/publish-promote.yml`    | cron hourly + `release/v*` push + `workflow_dispatch`                    | Open `promote/<v>` PR after soak; auto-merge             |
 | `.github/workflows/master-release.yml`     | push on `master`                                                         | Tag `prod/<v>` on promote merges; tag hotfix merges      |
-| `.github/workflows/nonprod-deploy.yml`     | push on `master`, and exact-pair `workflow_dispatch`           | Fail-closed nonprod deploy with exact-pair admission before dev switch |
+| `.github/workflows/nonprod-deploy.yml`     | exact-pair `workflow_dispatch`                                  | Fail-closed nonprod deploy with exact-pair admission before dev switch |
 
 ---
 
@@ -588,17 +588,14 @@ merged only at the exact head that reviewer approved.
 | Environment      | Tracks ref                              | Auto-deploy trigger                          | Operator role |
 |------------------|------------------------------------------|----------------------------------------------|---------------|
 | **dev**          | exact admitted Pantheon/execute-plans pair | separate governed deploy after pair admission | observe       |
-| **staging-live** | `master` HEAD (post-promote)             | push on `master` (every promote / hotfix merge) | smoke / sign-off |
+| **staging-live** | none (job retired 2026-10-08) | none | unavailable until its future packet |
 | **production**   | a chosen `prod/v<...>` tag (locked)      | never auto                                    | sign + manual workflow_dispatch |
 
 dev is the **CI-gate environment**, but a nightly snapshot does not by itself
 authorize a switch. The deploy lane must first admit the exact backend/frontend
 pair; inadmissible snapshots remain promotion inputs without creating a deploy
 dispatch. `publish-promote.yml` still opens promote PRs only after its publish
-criteria pass. staging-live is the post-promote pre-production rehearsal —
-`master` push triggers the staging-live lane of `nonprod-deploy.yml`, but staging
-has no VM ([§ 3.2](../deployment/vm-dev-staging-prod-management-plan.md)), so that
-lane has no target until ephemeral staging exists. Production is operator-locked.
+criteria pass. staging-live has no deploy lane: its `nonprod-deploy.yml` job and `master` push trigger were retired on 2026-10-08, and staging stays unavailable until its future packet ([§ 3.2](../deployment/vm-dev-staging-prod-management-plan.md)) is implemented. Production is operator-locked.
 
 ---
 
@@ -631,13 +628,7 @@ protect.
 **Sanctioned isolation, in order of preference:**
 
 1. **The workflow's own `concurrency:` group.** `nonprod-deploy.yml` keys
-   its group on `inputs.environment` for `workflow_dispatch` and on a
-   separate `dev-auto` / `staging-auto` key for push triggers, with
-   `cancel-in-progress` true only for push. A manual proof dispatch to
-   `dev` therefore already queues behind (never cancels, is never
-   cancelled by) any other manual `dev` dispatch, and runs independently
-   of automatic `publish/v*` / `master` push redeploys in their own
-   group. This is usually all a proof run needs: dispatch with the
+   its group on `inputs.environment` with `cancel-in-progress: false`. A manual proof dispatch to `dev` therefore already queues behind (never cancels, is never cancelled by) any other `dev` dispatch. This is usually all a proof run needs: dispatch with the
    `environment` input that matches what you're proving and let the
    group serialize it.
 2. **The dev environment lease** (`scripts/dev_environment_lease.py`,
