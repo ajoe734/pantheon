@@ -1,0 +1,35 @@
+{
+  "task_id": "SOURCE-BOUNDED-READER-ONE-HELPER-20261008",
+  "base_sha": "bd960c68350475e033746da06f9227e1d9624d38",
+  "problem": {
+    "observed": "On dev the same _read_bounded_response was duplicated across services/source_ingestion/connectors/taiwan_official.py, alpha_db.py, and social.py. In alpha_db.py and social.py, the reader stopped at the first chunk shorter than chunk_size (if len(chunk) < chunk_size: break), prematurely truncating multi-chunk streams and short reads before end of stream. While SOURCE-TW-OFFICIAL-TRUNCATED-RESPONSE-20261008 fixed the Taiwan official copy to read until EOF (empty chunk), alpha_db and social kept their own flawed duplicates.",
+    "cause": "Historical code treated len(chunk) < chunk_size as end of stream instead of reading until an empty chunk (b''). Each connector implemented its own copy rather than sharing a single helper."
+  },
+  "change": [
+    "Created services/source_ingestion/connectors/bounded_reader.py providing the single end-of-stream bounded reader helper (read_bounded_response, ResponseTruncated, declared_content_length) that loops until response.read() returns empty bytes (b'') and checks declared Content-Length.",
+    "Updated services/source_ingestion/connectors/taiwan_official.py to import bounded reader and remove duplicate definitions.",
+    "Updated services/source_ingestion/connectors/alpha_db.py to import bounded reader and remove duplicate short-read breaking definition.",
+    "Updated services/source_ingestion/connectors/social.py to import bounded reader and remove duplicate short-read breaking definition.",
+    "Updated test doubles in services/source_ingestion/tests/test_provider_management_coverage.py for StockTwits (line 684) and Alpha DB (line 741) to return payload then b'' via mock_resp.read.side_effect.",
+    "Added services/source_ingestion/tests/test_bounded_reader.py with 17 unit and connector call path tests covering short chunks before EOF, Content-Length truncation, max byte enforcement, and no-retry behavior."
+  ],
+  "unchanged": "Each connector keeps its current max byte limit (taiwan_official: 10485760, alpha_db: 4194304, social: 2097152) and its error type (SourceEvidenceError) for oversized payloads. No retry policy is added to alpha_db or social. No assertions in test_provider_management_coverage.py are loosened or weakened.",
+  "test_changes": [
+    "Added services/source_ingestion/tests/test_bounded_reader.py (17 tests).",
+    "Updated mock test doubles in test_provider_management_coverage.py for StockTwits and Alpha DB to return empty chunk after payload to properly model EOF; all test assertions remain strictly unchanged."
+  ],
+  "validation": {
+    "test_bounded_reader": "17 passed in 0.5s",
+    "test_provider_management_coverage": "29 passed, 1 warning",
+    "test_taiwan_official_fetch_retry": "12 passed",
+    "test_external_source_connectors": "10 passed, 1 warning",
+    "test_taiwan_official_connectors": "21 passed, 1 skipped",
+    "test_external_egress": "25 passed"
+  },
+  "review_status": "Ready for independent review.",
+  "delivery_verification": {
+    "agent": "Antigravity",
+    "command": "pytest -v services/source_ingestion/tests/test_bounded_reader.py services/source_ingestion/tests/test_provider_management_coverage.py services/source_ingestion/tests/test_taiwan_official_fetch_retry.py",
+    "result": "58 passed, 1 warning (StarletteDeprecationWarning), exit 0"
+  }
+}

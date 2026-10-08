@@ -37,6 +37,10 @@ from .base import (
     SourceMetadata,
     SourceRecord,
 )
+from .bounded_reader import (
+    ResponseTruncated,
+    read_bounded_response,
+)
 
 
 TW_OFFICIAL_CONNECTOR_ID = "tw-twse-tpex-official-market"
@@ -342,40 +346,6 @@ OFFICIAL_FETCH_ATTEMPTS = 3
 OFFICIAL_FETCH_BACKOFF_SECONDS = 1.0
 
 
-class OfficialResponseTruncated(SourceEvidenceError):
-    """An official endpoint ended the body before its declared Content-Length."""
-
-
-def _declared_content_length(response: Any) -> int | None:
-    headers = getattr(response, "headers", None)
-    value = headers.get("Content-Length") if hasattr(headers, "get") else None
-    if not isinstance(value, (str, int)) or isinstance(value, bool):
-        return None
-    try:
-        declared = int(value)
-    except ValueError:
-        return None
-    return declared if declared >= 0 else None
-
-
-def _read_bounded_response(response: Any, max_bytes: int = 10485760, chunk_size: int = 65536) -> bytes:
-    chunks: list[bytes] = []
-    total = 0
-    while True:
-        chunk = response.read(chunk_size)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > max_bytes:
-            raise SourceEvidenceError(f"Payload exceeded max byte limit ({max_bytes} bytes)")
-        chunks.append(chunk)
-    # http.client returns a short body without error when the peer closes early.
-    declared = _declared_content_length(response)
-    if declared is not None and total < declared:
-        raise OfficialResponseTruncated(
-            f"official response truncated: read {total} of {declared} declared bytes"
-        )
-    return b"".join(chunks)
 
 
 def _fetch_official(
@@ -396,9 +366,9 @@ def _fetch_official(
     for attempt in range(1, OFFICIAL_FETCH_ATTEMPTS + 1):
         try:
             with open_external_url(request, caller=caller, timeout=timeout_seconds) as response:
-                raw_bytes = _read_bounded_response(response, max_bytes=max_bytes)
+                raw_bytes = read_bounded_response(response, max_bytes=max_bytes)
             return parse(raw_bytes)
-        except (OfficialResponseTruncated, TimeoutError, http.client.IncompleteRead, json.JSONDecodeError) as exc:
+        except (ResponseTruncated, TimeoutError, http.client.IncompleteRead, json.JSONDecodeError) as exc:
             failures.append(f"attempt {attempt}: {type(exc).__name__}: {str(exc)[:200]}")
             if attempt < OFFICIAL_FETCH_ATTEMPTS:
                 time.sleep(OFFICIAL_FETCH_BACKOFF_SECONDS * attempt)
