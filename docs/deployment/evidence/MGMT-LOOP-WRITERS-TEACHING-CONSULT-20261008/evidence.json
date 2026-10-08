@@ -1,0 +1,32 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "MGMT-LOOP-WRITERS-TEACHING-CONSULT-20261008",
+  "title": "Teaching preview and consultation executors publish admissible controller truth",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "execution",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "c63c33287",
+  "objective": "L4 preview_eval_worker and L7 consultation workflow_executor publish desired_state, downstream_actual_state, a per-tick evidence ref (also when idle) and a lease >= interval + timeout, derived from values the tick already reads.",
+  "scope": {
+    "owned": [
+      "services/training-session/preview_eval_worker.py: heartbeat moved after claimable-job fetch; heartbeat/success/failure carry desired_state, downstream_actual_state, tick ref; writer lease = interval + timeout + 1.",
+      "services/consultation/workflow_executor.py: build_loop_truth/publish_loop_truth; writer lease = interval + timeout + 1."
+    ],
+    "not_changing": [
+      "services/loop-control",
+      "BFF admission rules",
+      "loop catalog (MGMT-LOOP-CATALOG-DECLARE-20261008 declares both)"
+    ],
+    "composes_with": [
+      "MGMT-LOOP-CATALOG-DECLARE-20261008"
+    ]
+  },
+  "verification": {
+    "commands": [
+      "PYTHONPATH=. pytest services/training-session/tests/test_preview_eval_worker.py services/consultation/test_workflow_executor.py -q"
+    ],
+    "result": "35 passed. New tests project the published fields through services/loop-control projector: both presences authoritative, refs non-empty, controller healthy (idle tick); preview schema-validates states; lease >= interval+timeout asserted for preview main."
+  }
+}

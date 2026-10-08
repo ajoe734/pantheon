@@ -199,7 +199,7 @@ def complete_and_read_terminal_session(
     }
 
 
-def build_loop_writer() -> Any | None:
+def build_loop_writer(*, lease_duration_seconds: int | None = None) -> Any | None:
     """Optional when unconfigured; a configured writer requires its image driver.
 
     ``services/loop-control`` is the shared owner-observation store for all
@@ -223,7 +223,35 @@ def build_loop_writer() -> Any | None:
             os.getenv("PANTHEON_CONTROLLER_NAME") or "training-session-preview-eval-worker"
         ),
         deployment_sha=str(os.getenv("GIT_SHA") or os.getenv("PANTHEON_DEPLOYMENT_SHA") or "unknown"),
+        lease_duration_seconds=lease_duration_seconds,
     )
+
+
+def _tick_truth(
+    *, jobs_found: int, failed: bool, tick_at: str, summary_extra: str = ""
+) -> dict[str, Any]:
+    """Controller truth derived from values the tick already read."""
+
+    source = "training-session.preview_jobs_api"
+    return {
+        "desired_state": {
+            "present": jobs_found > 0,
+            "source": source,
+            "checked_at": tick_at,
+            "summary": f"{jobs_found} claimable preview/eval job(s) discovered",
+        },
+        "downstream_actual_state": {
+            "status": "degraded" if failed else "ready",
+            "source": source,
+            "checked_at": tick_at,
+            "summary": f"preview/eval tick {'failed' if failed else 'ok'}{summary_extra}",
+        },
+    }
+
+
+def _tick_ref(tick_at: str) -> str:
+    # Identifies this tick's observation so an idle tick still has evidence.
+    return f"training-session://preview-eval-ticks/{LOOP_ID}/{tick_at}"
 
 
 def _extract_consultation(result: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
@@ -241,7 +269,9 @@ def _extract_consultation(result: dict[str, Any]) -> tuple[str | None, dict[str,
     )
 
 
-def _write_loop_heartbeat(loop_writer: Any, *, api_url: str) -> None:
+def _write_loop_heartbeat(
+    loop_writer: Any, *, api_url: str, jobs_found: int, tick_at: str
+) -> None:
     try:
         asyncio.run(
             loop_writer.record_heartbeat(
@@ -250,14 +280,17 @@ def _write_loop_heartbeat(loop_writer: Any, *, api_url: str) -> None:
                 actual_state_query=(
                     api_url.rstrip("/") + "/api/training/preview-jobs?status=claimable"
                 ),
+                evidence_refs=[_tick_ref(tick_at)],
+                **_tick_truth(jobs_found=jobs_found, failed=False, tick_at=tick_at),
             )
         )
     except Exception as exc:  # noqa: BLE001
         print(f"Warning: failed to write loop-control heartbeat: {exc}", file=sys.stderr)
 
 
-def _write_loop_result(loop_writer: Any, result: dict[str, Any]) -> None:
-    evidence_refs: list[str] = list(result.get("terminal_session_ids") or [])
+def _write_loop_result(loop_writer: Any, result: dict[str, Any], *, tick_at: str) -> None:
+    evidence_refs: list[str] = [_tick_ref(tick_at)]
+    evidence_refs.extend(result.get("terminal_session_ids") or [])
     for consult_request_id in result.get("consult_request_ids") or []:
         ref = f"consult-request:{consult_request_id}"
         if ref not in evidence_refs:
@@ -267,6 +300,11 @@ def _write_loop_result(loop_writer: Any, result: dict[str, Any]) -> None:
         "job_ids": result.get("job_ids"),
         "terminal_sessions": result.get("terminal_sessions"),
     }
+    truth = _tick_truth(
+        jobs_found=int(result.get("jobs_found") or 0),
+        failed=bool(result.get("failed")),
+        tick_at=tick_at,
+    )
     try:
         if result.get("failed"):
             asyncio.run(
@@ -275,6 +313,7 @@ def _write_loop_result(loop_writer: Any, result: dict[str, Any]) -> None:
                     "; ".join(result.get("errors") or []) or "preview/eval tick reported failures",
                     evidence_refs=evidence_refs,
                     payload=payload,
+                    **truth,
                 )
             )
         else:
@@ -287,6 +326,7 @@ def _write_loop_result(loop_writer: Any, result: dict[str, Any]) -> None:
                     ),
                     evidence_refs=evidence_refs,
                     payload=payload,
+                    **truth,
                 )
             )
     except Exception as exc:  # noqa: BLE001
@@ -303,8 +343,7 @@ def run_tick(
 ) -> dict[str, Any]:
     if heartbeat:
         heartbeat()
-    if loop_writer is not None:
-        _write_loop_heartbeat(loop_writer, api_url=api_url)
+    tick_at = _utc_now()
     completed = 0
     replayed = 0
     reclaimed = 0
@@ -337,7 +376,7 @@ def run_tick(
             "named_failures": [],
         }
         if loop_writer is not None:
-            _write_loop_result(loop_writer, result)
+            _write_loop_result(loop_writer, result, tick_at=tick_at)
         return result
     except urllib.error.URLError as exc:
         failed += 1
@@ -357,8 +396,13 @@ def run_tick(
             "named_failures": [],
         }
         if loop_writer is not None:
-            _write_loop_result(loop_writer, result)
+            _write_loop_result(loop_writer, result, tick_at=tick_at)
         return result
+
+    if loop_writer is not None:
+        _write_loop_heartbeat(
+            loop_writer, api_url=api_url, jobs_found=len(jobs), tick_at=tick_at
+        )
 
     for job in jobs:
         job_id = str(job.get("job_id") or "").strip()
@@ -459,7 +503,7 @@ def run_tick(
         "named_failures": named_failures,
     }
     if loop_writer is not None:
-        _write_loop_result(loop_writer, result)
+        _write_loop_result(loop_writer, result, tick_at=tick_at)
     return result
 
 
@@ -493,7 +537,10 @@ def main() -> int:
     batch_limit = _env_int("TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT", 10, minimum=1)
     timeout_seconds = float(os.getenv("TRAINING_SESSION_PREVIEW_WORKER_TIMEOUT_SECONDS", "30"))
     alive_path = os.getenv("TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH", DEFAULT_ALIVE_PATH)
-    loop_writer = build_loop_writer()
+    # The lease must outlive the gap between ticks plus one tick's timeout.
+    loop_writer = build_loop_writer(
+        lease_duration_seconds=int(interval_seconds + timeout_seconds) + 1
+    )
 
     tick = 0
     while True:
