@@ -179,7 +179,10 @@ if args[0] == "compose":
     if not sub:
         sys.exit(0)
     if sub[0] == "run":
-        print("")
+        if "runtime-manager" in sub:
+            print("0050.TW")
+        else:
+            log_event("compose_run", args=sub)
         sys.exit(0)
     elif sub[0] == "ps":
         target = sub[-1]
@@ -202,6 +205,14 @@ if args[0] == "compose":
         services = sub[4:]
         log_event("compose_rm", services=services)
         sys.exit(0)
+
+elif args[0] == "ps":
+    print("bounded-container-id")
+    sys.exit(0)
+
+elif args[0] == "rm":
+    log_event("docker_rm", names=args[2:])
+    sys.exit(0)
 
 elif args[0] == "inspect":
     fmt = args[2] if len(args) > 2 and args[1] == "--format" else ""
@@ -245,6 +256,21 @@ sys.exit(0)
     return bin_dir, state_file, events_file, output_file, port
 
 
+def _deploy_script_without_readback(tmp_path: Path) -> Path:
+    """Copy of the deploy script with the HTTP/Agora readback stubbed out; these tests cover restore, not readback."""
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    for entry in DEPLOY_SCRIPT.parent.iterdir():
+        if entry != DEPLOY_SCRIPT:
+            (scripts / entry.name).symlink_to(entry)
+    content = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    needle = '  verify_bounded_source_refresh_readback "${refresh_started_at}"\n'
+    assert needle in content
+    patched = scripts / DEPLOY_SCRIPT.name
+    patched.write_text(content.replace(needle, ""), encoding="utf-8")
+    return patched
+
+
 def test_refresh_entrypoint_restores_egress_deny_and_preserves_env(tmp_path: Path):
     initial_env = [
         "PANTHEON_EXTERNAL_EGRESS=deny",
@@ -267,7 +293,7 @@ def test_refresh_entrypoint_restores_egress_deny_and_preserves_env(tmp_path: Pat
     test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
 
     proc = subprocess.run(
-        ["bash", str(DEPLOY_SCRIPT), "--refresh-only", "--force", "--output", str(output_file)],
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
         env=test_env,
         capture_output=True,
         text=True,
@@ -298,10 +324,11 @@ def test_refresh_entrypoint_restores_egress_deny_and_preserves_env(tmp_path: Pat
     assert "SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS" not in restore_up["env"]
     assert "SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS" not in restore_up["env"]
 
-    rm_events = [e for e in events if e.get("event") == "compose_rm"]
+    steady = {"source-ingest-scheduler", "source-ingest-agora-projector"}
+    assert not [e for e in events if e.get("event") in ("compose_rm", "compose_up") and steady & set(e.get("services", []))]
+    assert len([e for e in events if e.get("event") == "compose_run"]) == 2
     assert any(
-        "source-ingest-scheduler" in e.get("services", []) or "source-ingest-agora-projector" in e.get("services", [])
-        for e in rm_events
+        n.startswith("pantheon-bounded-refresh-") for e in events if e.get("event") == "docker_rm" for n in e["names"]
     )
 
 
@@ -378,7 +405,7 @@ def test_refresh_entrypoint_env_equality_fails_closed_on_mismatch(tmp_path: Path
     test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
 
     proc = subprocess.run(
-        ["bash", str(DEPLOY_SCRIPT), "--refresh-only", "--force", "--output", str(output_file)],
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
         env=test_env,
         capture_output=True,
         text=True,

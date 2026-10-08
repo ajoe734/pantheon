@@ -1,0 +1,35 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "DEV-TW-REFRESH-STEADY-SERVICES-20261008",
+  "title": "Stop the bounded Taiwan refresh from deleting the steady source-ingest controller and projector",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "change_class": "corrective",
+  "incident": {
+    "date": "2026-10-08",
+    "workflow_run": "37705620642",
+    "pr_head": "15fae0198",
+    "summary": "workflow_dispatch force=true passed preflight, found no active paper Taiwan symbols, still recreated source-ingest-scheduler and source-ingest-agora-projector with bounded settings. The scheduler exited 1; restore ran 'docker compose rm -f -s' and removed both steady containers.",
+    "operator_repair": "Operator recreated only source-ingest-scheduler as a temporary live repair (steady env of source-ingest-1 plus PANTHEON_BFF_TENANT_ID=tenant-dev and GIT_SHA); healthy with ok ticks.",
+    "projector_state": "Left in Created; needs AGORA_PROJECTOR_SERVICE_JWT re-issued by the next deploy.",
+    "workflow_state": "dev-tw-market-refresh.yml disabled_manually until this lands"
+  },
+  "changes": [
+    "execute_bounded_source_refresh_entrypoint returns status skipped / reason no_active_taiwan_symbols right after symbol resolution, before any container is created or removed.",
+    "The bounded pull runs the scheduler and projector as named one-shot containers (docker compose run -d --no-deps --name pantheon-bounded-refresh-<service>); wait_for_bounded_source_refresh_service finds them by that name.",
+    "restore_bounded_source_refresh removes only the pantheon-bounded-refresh-* one-shots; the 'compose rm -f -s' of the steady services is gone."
+  ],
+  "tests": {
+    "command": "pytest scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py; pytest scripts/test_deploy_nonprod_vm.py -k 'refresh or bounded or taiwan or source'",
+    "result": "26 passed; 6 passed",
+    "coverage": "Stub-docker tests assert no up/rm/stop/restart touches the steady scheduler or projector after a successful and a failed (exit 1) refresh, and that no docker call happens when there are no Taiwan symbols."
+  },
+  "acceptance_status": {
+    "1": "met", "2": "met (one-shot containers)", "3": "met", "4": "external_wait: lease heartbeat 'stat is unavailable' lives in the pinned lease controller; needs an operator-dispatched run longer than two heartbeat intervals",
+    "5": "met", "6": "met", "7": "external_wait: operator re-enables the workflow after merge and a scheduled trading-day run must complete without removing steady services"
+  },
+  "known_risks": [
+    "The one-shot scheduler shares persisted controller state with the steady scheduler; tenant env for the one-shot depends on SOURCE-INGEST-TENANT-ENV-20261008 landing in docker-compose.yml.",
+    "The one-shot projector still needs AGORA_PROJECTOR_SERVICE_JWT in the refresh environment."
+  ]
+}
