@@ -1,0 +1,31 @@
+{
+  "task": "BFF-PERSONA-SERVICE-DEAD-ACTION-CHAIN-20261008",
+  "base": "7e5f829c1",
+  "deleted_from_personas_service_py": ["_strategy_persona_action_command", "_foundation_audit_for_command_record", "_project_final_command_response"],
+  "removed_orphan_imports": ["CommandResponse", "CommandStatus", "StalenessWarning", "TargetObject", "_check_read_surface_state", "get_catalog_entry"],
+  "caller_check_on_base": {
+    "method": "repo-wide grep (py/ts/js/yaml/toml/cfg/md/json) for each name plus quoted-string grep for core/app_factory.py _dep / getattr / route registration lookups; app_factory.py only string-imports other personas.service symbols",
+    "result": "No static call, import, attribute access or string lookup of any of the three names outside the chain. _strategy_persona_action_command is the only caller of the two service copies. Other mentions: main.py own copies (untouched), services/control-plane/bff/review_aud_002_claude.md (historical, untouched), docs/evidence/registry files (non-executable; docs/02-architecture/product-aggregate-ownership.yaml still lists them and scripts/check_product_ownership.py still PASSES)."
+  },
+  "nameerror_proof": {
+    "main_py_only_functions_referenced_by_service_copies": {
+      "_build_foundation_trace": "main.py:616",
+      "_foundation_actor_ref": "main.py:610",
+      "_foundation_environment_scope": "main.py:593",
+      "_action_command_status_from_command_status": "main.py:3113",
+      "_command_dual_write_receipts": "main.py:3080",
+      "_project_command_submission_response": "main.py:3046"
+    },
+    "note": "none of the six is defined or imported in personas/service.py on base, so calling the chain would raise NameError"
+  },
+  "tests": {
+    "interpreter": "PANTHEON_DEPENDENCY_PYTHON (runtime/worker-test-python/current)",
+    "files": ["tests/test_persona_main_residue.py", "tests/test_bff_main_composition.py", "test_bff_strategy_persona_contract.py"],
+    "base": "77 passed",
+    "head": "77 passed",
+    "new_failures": 0,
+    "check_product_ownership.py": "PASS (head)"
+  },
+  "files_changed": ["services/control-plane/bff/personas/service.py (-210 lines)"],
+  "not_touched": ["main.py", "review_aud_002_claude.md"]
+}
