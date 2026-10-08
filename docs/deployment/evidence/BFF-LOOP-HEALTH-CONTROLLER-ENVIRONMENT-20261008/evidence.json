@@ -1,0 +1,79 @@
+{
+  "task_id": "BFF-LOOP-HEALTH-CONTROLLER-ENVIRONMENT-20261008",
+  "base_sha": "9c5d3fe3e",
+  "root_cause": {
+    "summary": "loop_health and loop_health_detail queried LoopControllerStore with the authorized trading stage (paper) while every LoopControllerWriter records environment as the deployment environment (PANTHEON_ENV, dev on the dev VM), so /bff/v5/loop-health never returned a controller record for any of the twelve loops.",
+    "introduced_by": "#6287 BFF-LOOP-TRUTH-STAGE-SCOPE-20261007 (merged 2026-10-07T12:45Z): its shared authenticated_loop_truth_scope made loop_health use the stage; before it loop_health defaulted to the deployment name.",
+    "why_unnoticed": "MockLoopTruth in tests/test_control_loops_router.py asserted environment == 'paper', encoding the regression; the store-backed contract tests in test_loop_health_read_model_contract.py and test_current_twelve_owner_truth.py write records with environment dev and have been failing on dev since #6287.",
+    "detected_by": "Isolated runtime suite on a local merge of #6337 and #6339 (2026-10-08): L8-L11 evidence and the downstream-health wait passed, then the suite timed out waiting for the bff_health_monitoring loop-health row to reflect the stopped reconciler."
+  },
+  "controller_writer_call_sites": [
+    {
+      "call_site": "services/consultation/workflow_executor.py:56",
+      "environment_written": "os.getenv(\"PANTHEON_ENV\", \"dev\")"
+    },
+    {
+      "call_site": "services/control-plane/bff/downstream_health_monitor.py:1965",
+      "environment_written": "os.environ.get(\"PANTHEON_ENV\", \"dev\")"
+    },
+    {
+      "call_site": "services/policy-learning/scheduler_worker.py:89",
+      "environment_written": "os.getenv(\"PANTHEON_ENV\", \"dev\")"
+    },
+    {
+      "call_site": "services/reconciliation-drift/consumer.py:53",
+      "environment_written": "os.getenv(\"PANTHEON_ENV\", \"dev\")"
+    },
+    {
+      "call_site": "services/reconciliation-drift/incident_listener.py:49",
+      "environment_written": "os.getenv(\"PANTHEON_ENV\", \"dev\")"
+    },
+    {
+      "call_site": "services/reconciliation-drift/scheduler_worker.py:48",
+      "environment_written": "os.getenv(\"PANTHEON_ENV\", \"dev\")"
+    },
+    {
+      "call_site": "services/research/alpha_replication/replication_controller.py:124",
+      "environment_written": "state.environment"
+    },
+    {
+      "call_site": "services/source_ingestion/controller_worker.py:1235",
+      "environment_written": "state.environment"
+    },
+    {
+      "call_site": "services/source_ingestion/distillation_controller.py:421",
+      "environment_written": "state.environment"
+    },
+    {
+      "call_site": "services/training-session/preview_eval_worker.py:209",
+      "environment_written": "str(os.getenv(\"PANTHEON_ENV\") or \"dev\")"
+    }
+  ],
+  "change": "Authorization stays on authenticated_loop_truth_scope (trading stage). loop_health and loop_health_detail query the controller store with the service's deployment environment, and meta.scope adds controller_environment next to the authorized stage. No controller writer changed.",
+  "test_changes": [
+    "New test_loop_health_reads_controller_records_on_the_deployment_environment (committed first; base 9c5d3fe3e: 1 failed, 14 passed in tests/test_control_loops_router.py).",
+    "MockLoopTruth now asserts environment == 'dev' (the deployment environment) instead of 'paper', which encoded the regression.",
+    "Three exact meta.scope assertions (tests/test_control_loops_router.py and two in test_loop_health_read_model_contract.py) now state the post-#6287 contract: environment is the authorized stage and controller_environment is the deployment environment."
+  ],
+  "validation": {
+    "command": "pytest -q services/control-plane/bff/test_loop_health_read_model_contract.py services/control-plane/bff/tests/test_control_loops_router.py services/control-plane/bff/test_current_twelve_owner_truth.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+    "head": "128 passed",
+    "base_reference": "On dev before the fix test_loop_health_read_model_contract.py had 3 failures and test_current_twelve_owner_truth.py had 11 failures (all controller-store reads on the wrong environment); all pass with the fix.",
+    "isolated_runtime_suite": "To be recorded by the delivery owner or operator on the rebased head."
+  },
+  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending.",
+  "controller_writer_note": "state.environment in replication_controller.py, source_ingestion/controller_worker.py and distillation_controller.py is built from PANTHEON_ENV (or 'dev'), so all ten writers record the deployment environment. Line numbers are at the pre-rebase base 9c5d3fe3e.",
+  "delivery_verification": {
+    "verified_by": "Claude",
+    "head": "e7d9b36bd6da5dd0c10b4ffdf208103e9e1c02d7",
+    "command": "pytest -q services/control-plane/bff/test_loop_health_read_model_contract.py services/control-plane/bff/tests/test_control_loops_router.py services/control-plane/bff/test_current_twelve_owner_truth.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+    "result": "128 passed, 3 warnings in 135.20s",
+    "product_code_changed": false,
+    "isolated_runtime_suite": "Not run by delivery owner; no hosted action.",
+    "post_merge_rerun": {
+      "merged": "origin/dev (027633c6f) into branch, clean, no conflicts",
+      "tested_head": "merge commit of origin/dev into fa127b680",
+      "result": "128 passed, 3 warnings in 153.98s"
+    }
+  }
+}

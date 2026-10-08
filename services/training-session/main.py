@@ -894,7 +894,14 @@ def _load_authority_snapshot(*, trusted_now: datetime, strategy_id: str) -> Eval
 
 
 def _persona_authority_token() -> str:
-    token = str(os.getenv("TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN") or "").strip()
+    from services.service_token_file import configured_service_token
+
+    try:
+        token = configured_service_token("TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN")
+    except RuntimeError as exc:
+        raise PersonaTargetError(
+            f"TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN credential unavailable: {exc}"
+        ) from exc
     if not token:
         raise PersonaTargetError("TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN is required")
     return token

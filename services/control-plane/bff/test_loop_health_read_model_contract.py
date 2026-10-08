@@ -34,6 +34,8 @@ from services.runtime_auth_inbound import encode_jwt_hs256
 
 TENANT_ID = "tenant-loop-health"
 ENVIRONMENT = "dev"
+# Default trading stage a dev deployment serves for loop truth reads.
+SERVED_STAGE = "paper"
 HEADERS = {
     "Authorization": (
         "Bearer loop-health-operator:operator,reviewer,admin:"
@@ -854,9 +856,12 @@ def test_every_canonical_loop_record_conforms_and_reads_back_tenant_scoped(
     assert response.status_code == 200, response.text
     payload = response.json()
 
+    # Reads are authorized by trading stage (#6287); controller records are
+    # looked up on the deployment environment the writers record.
     assert payload["meta"]["scope"] == {
         "tenant_id": TENANT_ID,
-        "environment": ENVIRONMENT,
+        "environment": SERVED_STAGE,
+        "controller_environment": ENVIRONMENT,
         "source": "authenticated_identity_and_deployment_scope",
     }
     assert payload["meta"]["coverage"]["raw_health_record_count"] == 12
@@ -1279,7 +1284,8 @@ def test_loop_health_database_lookup_uses_authenticated_tenant_and_environment(
     assert response.status_code == 200, response.text
     assert response.json()["meta"]["scope"] == {
         "tenant_id": TENANT_ID,
-        "environment": ENVIRONMENT,
+        "environment": SERVED_STAGE,
+        "controller_environment": ENVIRONMENT,
         "source": "authenticated_identity_and_deployment_scope",
     }
     assert response.json()["meta"]["coverage"]["raw_health_record_count"] == 0

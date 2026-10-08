@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 import pytest
-from l12_owner_auth import approve_registry_entry, bearer, human_token, registry_advance_body
+from l12_owner_auth import approve_registry_entry, bearer, human_token, registry_advance_body, token_subject
 
 
 TASK_ID = "L12-GAP-F07-E2E-RESEARCH-20260818"
@@ -120,6 +120,7 @@ class DeployedResearchHarness:
         self.registry_url = os.getenv("PANTHEON_L12_REGISTRY_URL", "http://127.0.0.1:18087").rstrip("/")
         self.research_url = os.getenv("PANTHEON_L12_RESEARCH_URL", "http://127.0.0.1:18101").rstrip("/")
         self.training_url = os.getenv("PANTHEON_L12_TRAINING_URL", "http://127.0.0.1:18099").rstrip("/")
+        self.persona_url = os.getenv("PANTHEON_L12_PERSONA_URL", "http://127.0.0.1:18002").rstrip("/")
         self.governance_url = os.getenv("PANTHEON_L12_GOVERNANCE_URL", "http://127.0.0.1:18082").rstrip("/")
         self.tenant_id = os.getenv("PANTHEON_L12_TENANT_ID", "default").strip()
         self.report_path = Path(os.getenv("PANTHEON_L12_REPORT_PATH", str(DEFAULT_REPORT_PATH)))
@@ -340,6 +341,55 @@ class DeployedResearchHarness:
             "X-Tenant-Id": self.tenant_id,
             "X-Pantheon-Service": "training-session-preview-worker",
         }
+
+    def _persona_headers(self) -> dict[str, str]:
+        headers = bearer(human_token("OPERATOR"))
+        headers["X-Tenant-Id"] = self.tenant_id
+        return headers
+
+    def _ensure_persona(self, persona_id: str, *, name: str, mandate: str) -> None:
+        headers = self._persona_headers()
+        existing = self._http_json(
+            self.persona_url,
+            f"/api/personas/{urllib.parse.quote(persona_id, safe='')}",
+            headers=headers,
+            expected=(200, 404),
+        )
+        if isinstance(existing, Mapping) and existing.get("persona_id") == persona_id:
+            self._require(
+                existing.get("tenant_id") == self.tenant_id,
+                f"Existing persona {persona_id!r} tenant {existing.get('tenant_id')!r} does not match required tenant {self.tenant_id!r}",
+            )
+            return
+        token = human_token("OPERATOR")
+        actor_id = token_subject(token)
+        self._http_json(
+            self.persona_url,
+            "/api/personas",
+            method="POST",
+            payload={
+                "actor_id": actor_id,
+                "persona_id": persona_id,
+                "name": name,
+                "mandate": mandate,
+                "tenant_id": self.tenant_id,
+                "status": "active",
+            },
+            headers=headers,
+            expected=(201, 409),
+        )
+        readback = self._http_json(
+            self.persona_url,
+            f"/api/personas/{urllib.parse.quote(persona_id, safe='')}",
+            headers=headers,
+            expected=(200,),
+        )
+        self._require(
+            isinstance(readback, Mapping)
+            and readback.get("persona_id") == persona_id
+            and readback.get("tenant_id") == self.tenant_id,
+            f"Persona {persona_id!r} verification readback failed closed: tenant or identity mismatch",
+        )
 
     def _report_payload(self, status: str) -> dict[str, Any]:
         return {
@@ -798,6 +848,12 @@ class DeployedResearchHarness:
             "alpha.next_consumer_owner_identity",
             lambda: self._service_identity(OWNER_SERVICES["persona_teaching"]),
         )
+        persona_id = f"persona-l12-e2e-{self.run_token}"
+        self._ensure_persona(
+            persona_id,
+            name=f"L12 Research Persona {self.run_token}",
+            mandate="Evaluate controls against the admitted Alpha replication result",
+        )
         headers = self._training_headers()
         session = self._at(
             "alpha.next_consumer_command",
@@ -806,7 +862,7 @@ class DeployedResearchHarness:
                 "/api/training/sessions",
                 method="POST",
                 payload={
-                    "persona_id": f"persona-l12-e2e-{self.run_token}",
+                    "persona_id": persona_id,
                     "objective": "Evaluate controls against the admitted Alpha replication result",
                     "mode": "evaluation",
                     "trace_id": f"trace-teaching-{self.run_token}",
@@ -852,6 +908,12 @@ class DeployedResearchHarness:
 
     def _case_persona_teaching(self, case: dict[str, Any]) -> None:
         session_id = str(self.chain["session"]["session_id"])
+        persona_id = str(self.chain["session"].get("persona_id") or f"persona-l12-e2e-{self.run_token}")
+        self._ensure_persona(
+            persona_id,
+            name=f"L12 Research Persona {self.run_token}",
+            mandate="Evaluate controls against the admitted Alpha replication result",
+        )
         owner = self._at(
             "teaching.owner_compose_identity",
             lambda: self._service_identity(OWNER_SERVICES["persona_teaching"]),
