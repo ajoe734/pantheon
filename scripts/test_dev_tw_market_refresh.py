@@ -663,3 +663,78 @@ def test_bounded_refresh_one_shot_uses_ten_second_controller_interval(tmp_path: 
     runs = [e for e in events if e["event"] == "compose_run"]
     assert len(runs) == 2
     assert {e["interval"] for e in runs} == {"10"}
+
+
+def _bounded_run_env(compose: dict, run_args: list[str], data_root: Path) -> dict[str, str]:
+    """Environment a bounded controller container would see: compose service env plus `-e` overrides."""
+    service = next(a for a in run_args if a in compose["services"] and a.startswith("source-ingest-"))
+    env = {k: str(v) for k, v in compose["services"][service]["environment"].items() if "${" not in str(v)}
+    flags = [run_args[i + 1] for i, a in enumerate(run_args[:-1]) if a == "-e"]
+    env.update(dict(f.split("=", 1) for f in flags))
+    return {k: v.replace("/data/source-ingest", str(data_root)) if v.startswith("/data/source-ingest") else v for k, v in env.items()}
+
+
+def _writer_then_authoritative_readback(compose: dict, writer_env: dict[str, str], data_root: Path):
+    from services.source_ingestion.controller_state import ControllerStateStore
+    from services.source_ingestion.controller_worker import config_from_env, _new_state
+    from services.source_ingestion.runtime import SourceIngestionRuntime
+
+    api_env = {
+        k: str(v).replace("/data/source-ingest", str(data_root))
+        for k, v in compose["services"]["source-ingest"]["environment"].items()
+        if "${" not in str(v)
+    }
+    with patch.dict(os.environ, {**writer_env, "DATABASE_URL": "postgresql://x/x", "SOURCE_INGEST_CONTROLLER_TOKEN": "t" * 48}, clear=False):
+        config = config_from_env()
+    # Authoritative state previously written by the steady controller: retained history, old identity.
+    authoritative = ControllerStateStore(api_env["SOURCE_INGEST_CONTROLLER_STATE_PATH"])
+    prior = _new_state()
+    prior.controller_id = "steady-old"
+    prior.sequence_no = 41
+    prior.recent_operations = {"op-1": {"status": "succeeded"}}
+    authoritative.save(prior)
+    # The bounded controller loads its own configured path, advances a fresh identity/sequence, and saves.
+    writer = ControllerStateStore(config.state_path)
+    state = writer.load() or _new_state()
+    state.controller_id = "bounded-fresh"
+    state.sequence_no = 42
+    writer.save(state)
+    with patch.dict(os.environ, api_env, clear=False):
+        runtime = SourceIngestionRuntime(data_dir=data_root)
+        return runtime, runtime.CONTROLLER_STATE_PATH, config
+
+
+def test_bounded_refresh_controller_writes_the_authoritative_readback_state(tmp_path: Path):
+    from services.source_ingestion.controller_state import read_controller_state
+
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    proc, events = _run_refresh_with_steady_lease_env(tmp_path, ["SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1"])
+    assert proc.returncode == 0, f"Refresh failed: {proc.stderr}\n{proc.stdout}"
+    all_runs = [e for e in events if e["event"] == "compose_run"]
+    assert len(all_runs) == 2
+    # Only the scheduler is a state-writing controller; the Agora projector never writes controller state.
+    runs = [e for e in all_runs if "source-ingest-scheduler" in e["args"]]
+    assert len(runs) == 1
+
+    def readback(run_args: list[str], root: Path) -> dict:
+        _, api_path, config = _writer_then_authoritative_readback(
+            compose, _bounded_run_env(compose, run_args, root), root
+        )
+        # bounded liveness stays separate from the authoritative state
+        assert str(config.alive_path).endswith("bounded-refresh/controller_alive")
+        return read_controller_state(api_path)
+
+    # Original defect: a separate writer STATE_PATH leaves the API reading the stale identity/sequence.
+    for i, run in enumerate(runs):
+        split_args = list(run["args"])
+        split_args[split_args.index("--name"):split_args.index("--name")] = [
+            "-e", "SOURCE_INGEST_CONTROLLER_STATE_PATH=/data/source-ingest/bounded-refresh/controller_state.json",
+        ]
+        stale = readback(split_args, tmp_path / f"split{i}")
+        assert (stale["controller_id"], stale["sequence_no"]) == ("steady-old", 41)
+
+    # Fixed path: the shared native journal carries the fresh identity/sequence and retained history.
+    for i, run in enumerate(runs):
+        fresh = readback(run["args"], tmp_path / f"shared{i}")
+        assert (fresh["controller_id"], fresh["sequence_no"]) == ("bounded-fresh", 42)
+        assert fresh["recent_operations"] == {"op-1": {"status": "succeeded"}}
