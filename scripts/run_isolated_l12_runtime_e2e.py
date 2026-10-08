@@ -586,6 +586,10 @@ def _teardown_project(
         "down",
         "--volumes",
         "--remove-orphans",
+        # `local` drops only the <project>-<service> images compose built;
+        # `all` would also remove shared images (postgres, redis, nats, minio).
+        "--rmi",
+        "local",
     )
     process = subprocess.run(
         command,

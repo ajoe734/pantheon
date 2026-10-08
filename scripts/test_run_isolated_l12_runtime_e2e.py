@@ -164,6 +164,9 @@ def test_teardown_down_command_carries_all_profiles(monkeypatch: pytest.MonkeyPa
     ]
     assert command.index("--profile") < command.index("down")
     assert result["zero_project_containers"] is True
+    down_args = command[command.index("down") :]
+    assert down_args[down_args.index("--rmi") + 1] == "local"
+    assert "all" not in down_args
 
 
 def test_teardown_fails_closed_when_containers_remain(monkeypatch: pytest.MonkeyPatch) -> None:
