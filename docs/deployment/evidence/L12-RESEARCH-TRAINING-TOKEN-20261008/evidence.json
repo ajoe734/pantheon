@@ -1,0 +1,30 @@
+{
+  "task_id": "L12-RESEARCH-TRAINING-TOKEN-20261008",
+  "base_sha": "d7958d0c1",
+  "problem": {
+    "gate_run": "37769132664",
+    "candidate": "fe94579a2",
+    "observed": "The research suite ran 3 passed, 1 skipped, 1 failed; L1 Source including the bounded Taiwan official pull passed. test_deployed_alpha_replication_identity_chain failed at alpha.next_consumer_command: POST /api/training/sessions returned HTTP 401 {\"error\":{\"code\":\"AUTH_JWT_BAD_SIGNATURE\"}}.",
+    "cause": "ResearchLoopsE2E._training_headers reads PANTHEON_L12_TRAINING_TOKEN and, when unset, fell back to the module constant LOCAL_TRAINING_WORKER_TOKEN, which is signed with the removed published local secret. The isolated harness passes the suites agora handoff, policy learning, operator and reviewer principals but never a training principal. After #6385 and #6398 the Training verifier uses the per-run dev signer, so the fallback token is always rejected."
+  },
+  "change": [
+    "run_isolated_l12_runtime_e2e.py: the suite service principals move into _suite_service_token_env(compose_env), which also returns PANTHEON_L12_TRAINING_TOKEN set to the issuer-issued TRAINING_SESSION_WORKER_TOKEN (the same principal the preview worker reads from its token file). The run calls it where the two existing lines were.",
+    "test_current_research_loops_deployed_e2e.py: the published LOCAL_TRAINING_WORKER_TOKEN constant and fallback are removed; _training_headers raises 'PANTHEON_L12_TRAINING_TOKEN is unset or empty' instead."
+  ],
+  "unchanged": "No Training verifier, issuer, Compose or worker change and no new token minter. Agora handoff and policy learning tokens are passed exactly as before.",
+  "test_changes": [
+    "test_research_suite_training_token_is_the_issued_worker_principal: the passed token equals the composed TRAINING_SESSION_WORKER_TOKEN and authenticates against the real Training inbound authority as training-session-preview-worker for tenant-dev.",
+    "test_former_published_training_fixture_token_is_rejected: the former fallback token fails the same verifier with BAD_SIGNATURE."
+  ],
+  "validation": {
+    "base_with_new_tests": "with the harness change reverted, test_research_suite_training_token_is_the_issued_worker_principal fails",
+    "head": "pytest scripts/test_run_isolated_l12_runtime_e2e.py: 43 passed; scripts/test_current_l12_compose_wiring.py: 8 passed; research suite collects 5 tests"
+  },
+  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending.",
+  "delivery_verification": {
+    "agent": "Claude",
+    "head": "6d99bc1f5",
+    "command": "python -m pytest -q scripts/test_run_isolated_l12_runtime_e2e.py scripts/test_current_l12_compose_wiring.py",
+    "result": "51 passed (43 + 8), including test_research_suite_training_token_is_the_issued_worker_principal and test_former_published_training_fixture_token_is_rejected"
+  }
+}
