@@ -64,6 +64,7 @@ import contextvars
 
 from services.control_plane.bff import test_bff_promotion_review_governance as gov_test
 from services.control_plane.bff.personas import service as persona_service_module
+from services.control_plane.bff.tests.conftest import make_composed_persona_service
 
 _TENANT_ID = gov_test._PM12_ELIGIBLE_TENANT_ID
 
@@ -221,14 +222,18 @@ def test_builder_output_is_pm12_league_eligible_with_no_exclusion_reasons() -> N
     ctx = contextvars.copy_context()
 
     def _run():
-        # `_get_active_read_store()` falls back to this module-level global
+        # `_get_active_read_store()` falls back to the composed PersonaService
         # when no PersonaService request context is active (matches how
         # `_bff_management_promotion_reviews`-adjacent unit paths resolve
         # reads outside a live request).
-        persona_service_module.read_store = ports
-        rows = persona_service_module._pm12_persona_league_rows(tenant_id=_TENANT_ID)
-        quarter_window = persona_service_module._pm12_quarter_window("2026-Q1", "2026-01-15T00:00:00Z")
-        return persona_service_module._pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+        previous = persona_service_module._composed_persona_service
+        persona_service_module._composed_persona_service = make_composed_persona_service(read_store=ports)
+        try:
+            rows = persona_service_module._pm12_persona_league_rows(tenant_id=_TENANT_ID)
+            quarter_window = persona_service_module._pm12_quarter_window("2026-Q1", "2026-01-15T00:00:00Z")
+            return persona_service_module._pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+        finally:
+            persona_service_module._composed_persona_service = previous
 
     ranked_items = ctx.run(_run)
 

@@ -72,6 +72,28 @@ except ImportError:
     _HAS_BFF_APP_DEPS = False
 
 
+def make_composed_persona_service(
+    *, read_store: Any, write_owner: Any = None, command_store: Any = None
+) -> Any:
+    """Real PersonaService standing in for the one core/app_factory.py composes.
+
+    Bind it with ``monkeypatch.setattr(personas_service, "_composed_persona_service", ...)``
+    so out-of-context ``_get_active_*`` calls resolve to these stores.
+    """
+    from types import SimpleNamespace
+
+    from services.control_plane.bff.personas.service import PersonaService
+
+    if command_store is None:
+        command_store = CommandStore(os.path.join(tempfile.mkdtemp(prefix="persona-composed-"), "commands.jsonl"))
+    return PersonaService(
+        read_store=read_store,
+        write_owner=write_owner if write_owner is not None else SimpleNamespace(),
+        command_store=command_store,
+        ranking_write_owner=SimpleNamespace(),
+    )
+
+
 def build_auth_session_app(session_lifecycle_store: SessionLifecycleStore) -> FastAPI:
     """Build a standalone FastAPI app mounting the real BFF auth/session router
     (``auth.router.create_auth_router`` + ``auth.service.AuthFacadeService`` +
