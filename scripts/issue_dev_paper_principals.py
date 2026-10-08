@@ -40,6 +40,8 @@ READERS = {
     "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-registry-reader", "registry-reader"),
     "PERSONA_EVALUATOR_BFF_TOKEN": ("pantheon-dev-persona-evaluator-bff-reader", "viewer"),
     "TRAINING_SESSION_SOURCE_READ_TOKEN": ("pantheon-dev-training-session-source-reader", "source_ingest_reader"),
+    # Preview worker -> Training API only: training-service role, no owner/decide roles.
+    "TRAINING_SESSION_WORKER_TOKEN": ("training-session-preview-worker", "training-service"),
     # Persona precondition/CAS owner roles + Governance decision read; no decide/revoke/promotion roles.
     "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN": (
         "pantheon-dev-training-session-persona-authority", ("persona.admin", "approval_reader")),
@@ -73,6 +75,7 @@ CONSUMER_FILES = {
     "strategy-distillation-worker": ("DISTILLATION_REGISTRY_SERVICE_TOKEN",),
     "alpha-replication-worker": ("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN",),
     "persona-evaluator-agent": ("PERSONA_EVALUATOR_BFF_TOKEN", "PERSONA_EVALUATOR_GOVERNANCE_TOKEN"),
+    "training-session-preview-worker": ("TRAINING_SESSION_WORKER_TOKEN",),
     "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN", "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"),
 }
 REFRESH_SECONDS = 60 * 60

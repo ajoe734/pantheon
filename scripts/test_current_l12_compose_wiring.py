@@ -79,21 +79,14 @@ def test_source_controller_is_the_single_default_durable_owner() -> None:
 def test_teaching_worker_and_agora_service_boundaries_are_exact() -> None:
     teaching_api = _env("training-session-svc")
     teaching_worker = _env("training-session-preview-worker")
-    teaching_token = _default(teaching_worker["TRAINING_SESSION_WORKER_TOKEN"])
+    # No published fixture token: the worker reads the issuer-written principal file.
+    assert "TRAINING_SESSION_WORKER_TOKEN" not in teaching_worker
+    assert _default(teaching_worker["TRAINING_SESSION_WORKER_TOKEN_FILE"]) == (
+        "/run/pantheon-principals/TRAINING_SESSION_WORKER_TOKEN"
+    )
     assert teaching_api["TRAINING_SESSION_JWT_SECRET"] == (
         "${TRAINING_SESSION_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}"
     )
-    teaching_context = validate_request_auth(
-        authorization=f"Bearer {teaching_token}",
-        required_roles=("training-service",),
-        env={
-            "PANTHEON_RUNTIME_AUTH_MODE": "strict",
-            "PANTHEON_RUNTIME_JWT_SECRET": "pantheon-local-training-session-jwt-secret",
-        },
-    )
-    assert teaching_context.actor_id == "training-session-preview-worker"
-    assert teaching_context.claims["service"] == "training-session-preview-worker"
-    assert teaching_context.claims["allowed_tenants"] == ["*"]
     assert teaching_worker["TRAINING_SESSION_WORKER_SERVICE_ID"] == (
         "training-session-preview-worker"
     )
