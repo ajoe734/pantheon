@@ -66,9 +66,7 @@ def test_workflow_input_defaults_false_and_is_shape_locked() -> None:
     assert "type: boolean" in input_block
 
     dev_start = workflow.index("  deploy-dev:")
-    staging_start = workflow.index("  deploy-staging-live:")
-    dev = workflow[dev_start:staging_start]
-    staging = workflow[staging_start:]
+    dev = workflow[dev_start:]
     for marker in (
         '"${TARGET_COMPONENT}" != "root"',
         '"${DEV_AUTH_PROFILE}" != "strict"',
@@ -82,11 +80,6 @@ def test_workflow_input_defaults_false_and_is_shape_locked() -> None:
         "Upload dev deployment posture evidence",
     ):
         assert marker in dev
-    assert (
-        '[[ "${PPL_ALLOC_009_DEV_PROOF_ENABLED}" != "false" ]]'
-        in staging
-    )
-    assert "PPL-ALLOC-009 dev proof cannot be enabled for staging-live" in staging
 
 
 def test_deploy_script_defaults_false_and_passes_exact_compose_env() -> None:

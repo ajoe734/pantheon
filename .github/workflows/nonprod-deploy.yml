@@ -1,5 +1,5 @@
 name: Pantheon Nonprod Deploy
-run-name: ${{ inputs.environment == 'dev' && format('Dev release {0} + {1}', inputs.ref || github.sha, inputs.frontend_sha) || github.event.head_commit.message || github.workflow }}
+run-name: ${{ inputs.environment == 'dev' && format('Dev release {0} + {1}', inputs.ref || github.sha, inputs.frontend_sha) || github.workflow }}
 
 on:
   workflow_dispatch:
@@ -10,9 +10,8 @@ on:
         type: choice
         options:
           - dev
-          - staging-live
       component:
-        description: "Stack slice to deploy; auto maps to dev/root or staging/all"
+        description: "Stack slice to deploy; auto maps to dev/root"
         required: true
         default: auto
         type: choice
@@ -20,11 +19,8 @@ on:
           - auto
           - root
           - bff
-          - control
-          - exec
-          - all
       ref:
-        description: "Dev requires the exact current Pantheon dev SHA; staging may also use a branch or tag."
+        description: "Dev requires the exact current Pantheon dev SHA."
         required: false
         default: ""
         type: string
@@ -48,11 +44,6 @@ on:
           - operator-live
       allow_dirty:
         description: "Emergency only: allow dirty remote checkout"
-        required: false
-        default: false
-        type: boolean
-      allow_example_env:
-        description: "Rehearsal only: allow staging to use env/*.env.example"
         required: false
         default: false
         type: boolean
@@ -104,17 +95,13 @@ on:
         required: false
         default: false
         type: boolean
-  push:
-    branches:
-      - "master"
-
 permissions:
   contents: read
   id-token: write
 
 concurrency:
-  group: pantheon-nonprod-deploy-${{ github.event_name == 'push' && 'staging-auto' || inputs.environment }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  group: pantheon-nonprod-deploy-${{ inputs.environment }}
+  cancel-in-progress: false
 
 jobs:
   deploy-dev:
@@ -2719,109 +2706,3 @@ jobs:
           name: l12-provider-qualification-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/l12-qualification/
           if-no-files-found: warn
-
-  deploy-staging-live:
-    name: Deploy staging-live (independent environment)
-    if: ${{ (github.event_name == 'push' && github.ref_name == 'master') || (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging-live') }}
-    runs-on: ubuntu-latest
-    environment: staging-live
-    env:
-      TARGET_ENV: staging-live
-      TARGET_COMPONENT: ${{ github.event_name == 'push' && 'auto' || inputs.component }}
-      TARGET_REF: ${{ github.event_name == 'push' && github.sha || inputs.ref || github.sha }}
-      ALLOW_DIRTY: ${{ github.event_name == 'push' && 'false' || inputs.allow_dirty }}
-      ALLOW_EXAMPLE_ENV: ${{ github.event_name == 'push' && 'false' || inputs.allow_example_env }}
-      PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.ppl_alloc_009_dev_proof_enabled || false }}
-    steps:
-      - name: Checkout requested staging payload
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          ref: ${{ env.TARGET_REF }}
-          fetch-depth: 0
-          submodules: recursive
-          persist-credentials: false
-
-      - name: Resolve and validate staging payload
-        id: target
-        shell: /bin/bash --noprofile --norc -euo pipefail {0}
-        run: |
-          sha="$(git rev-parse HEAD)"
-          [[ "${sha}" =~ ^[0-9a-f]{40}$ ]]
-          trusted_ref="$(git rev-parse refs/remotes/origin/master)"
-          [[ "${trusted_ref}" =~ ^[0-9a-f]{40}$ ]]
-          git merge-base --is-ancestor "${sha}" "${trusted_ref}" || {
-            echo "Staging payload ${sha} is not contained in protected origin/master" >&2
-            exit 1
-          }
-          case "${TARGET_COMPONENT}" in
-            auto|control|exec|all) ;;
-            *) echo "Invalid staging deployment component: ${TARGET_COMPONENT}" >&2; exit 1 ;;
-          esac
-          if [[ "${PPL_ALLOC_009_DEV_PROOF_ENABLED}" != "false" ]]; then
-            echo "PPL-ALLOC-009 dev proof cannot be enabled for staging-live." >&2
-            exit 1
-          fi
-          if [[ "${{ inputs.bootstrap_empty_host || false }}" == "true" ]]; then
-            echo "Staging environment does not support bootstrap_empty_host; bootstrap is dev-only." >&2
-            exit 1
-          fi
-          bash scripts/validate_split_topology.sh
-          echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
-
-      - name: Authenticate to Google Cloud via Workload Identity Federation
-        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
-        with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT || vars.GCP_SERVICE_ACCOUNT }}
-
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
-
-      - name: Deploy staging VM stack
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
-          STAGING_CONTROL_VM: ${{ vars.STAGING_CONTROL_VM }}
-          STAGING_CONTROL_ZONE: ${{ vars.STAGING_CONTROL_ZONE || 'asia-east1-b' }}
-          STAGING_CONTROL_REMOTE_DIR: ${{ vars.STAGING_CONTROL_REMOTE_DIR }}
-          STAGING_EXEC_VM: ${{ vars.STAGING_EXEC_VM }}
-          STAGING_EXEC_ZONE: ${{ vars.STAGING_EXEC_ZONE || 'asia-east1-b' }}
-          STAGING_EXEC_REMOTE_DIR: ${{ vars.STAGING_EXEC_REMOTE_DIR }}
-          STAGING_EXEC_HEALTH_URL: ${{ vars.STAGING_EXEC_HEALTH_URL }}
-        shell: /bin/bash --noprofile --norc -euo pipefail {0}
-        run: |
-          args=(
-            --environment staging-live
-            --component "${TARGET_COMPONENT}"
-            --sha "${{ steps.target.outputs.sha }}"
-            --project-id "${{ vars.GCP_DEPLOY_PROJECT_ID }}"
-          )
-          [[ "${ALLOW_DIRTY}" == "true" ]] && args+=(--allow-dirty)
-          [[ "${ALLOW_EXAMPLE_ENV}" == "true" ]] && args+=(--allow-example-env)
-          bash scripts/deploy_nonprod_vm.sh "${args[@]}"
-
-      - name: Public staging BFF smoke
-        if: ${{ env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'control' || env.TARGET_COMPONENT == 'all' }}
-        env:
-          STAGING_BFF_URL: ${{ vars.STAGING_BFF_URL }}
-          STAGING_BFF_CORS_ORIGIN: ${{ vars.STAGING_BFF_CORS_ORIGIN }}
-          TARGET_SHA: ${{ steps.target.outputs.sha }}
-        shell: /bin/bash --noprofile --norc -euo pipefail {0}
-        run: |
-          curl -fsS "${STAGING_BFF_URL}/health" >/dev/null
-          actual="$(curl -fsS "${STAGING_BFF_URL}/bff/version" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")')"
-          [[ "${actual}" == "${TARGET_SHA}" ]]
-          curl -sS -D - -o "${RUNNER_TEMP}/staging-cors-body" \
-            -X OPTIONS "${STAGING_BFF_URL}/health" \
-            -H "Origin: ${STAGING_BFF_CORS_ORIGIN}" \
-            -H 'Access-Control-Request-Method: GET' \
-            | grep -qi "access-control-allow-origin: ${STAGING_BFF_CORS_ORIGIN}"
-
-      - name: Summarize staging deployment
-        if: ${{ success() }}
-        run: |
-          {
-            echo "## Staging-live deployment"
-            echo "- Payload: \`${{ steps.target.outputs.sha }}\`"
-            echo "- Target: \`staging-live/${TARGET_COMPONENT}\`"
-          } >> "${GITHUB_STEP_SUMMARY}"

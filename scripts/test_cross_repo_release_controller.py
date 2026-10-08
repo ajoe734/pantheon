@@ -661,7 +661,6 @@ def test_nonprod_workflow_seals_exact_dev_pair_before_any_switch() -> None:
 def test_rejected_frontend_transaction_restores_and_proves_exact_pair() -> None:
     controller_job = NONPROD_WORKFLOW[
         NONPROD_WORKFLOW.index("  coordinate-dev-release:") :
-        NONPROD_WORKFLOW.index("  deploy-staging-live:")
     ]
 
     assert "needs:\n      - deploy-dev" in controller_job
@@ -746,7 +745,6 @@ def test_compensation_step_provides_every_var_the_script_requires() -> None:
     # share) -- checking the step alone would falsely flag those as missing.
     job = NONPROD_WORKFLOW[
         NONPROD_WORKFLOW.index("  coordinate-dev-release:") :
-        NONPROD_WORKFLOW.index("  deploy-staging-live:")
     ]
     missing = [name for name in required_vars if name not in always_available and f"{name}:" not in job]
     assert missing == []
@@ -979,7 +977,6 @@ def test_nonprod_workflow_outputs_candidate_auto_binding_contract() -> None:
     ]
     coordinate_job = NONPROD_WORKFLOW[
         NONPROD_WORKFLOW.index("  coordinate-dev-release:") :
-        NONPROD_WORKFLOW.index("  deploy-staging-live:")
     ]
 
     # SHA-only synthesis and pair_id output are removed from deploy-dev

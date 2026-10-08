@@ -207,7 +207,7 @@ def _extract_job(workflow: str, start_job: str, next_job: str | None = None) -> 
 
 def test_workflow_declares_dev_only_bootstrap_inputs() -> None:
     workflow = _workflow_text()
-    inputs_block = workflow[: workflow.index("  push:")]
+    inputs_block = workflow[: workflow.index("permissions:")]
 
     assert "bootstrap_empty_host:" in inputs_block
     assert "bootstrap_predecessor_backend_sha:" in inputs_block
@@ -242,14 +242,6 @@ def test_workflow_target_step_rejects_malformed_bootstrap_shas() -> None:
     assert "bootstrap_predecessor_backend_sha must be one exact lowercase 40-character commit SHA" in target_step
     assert '[[ "${BOOTSTRAP_PREDECESSOR_FRONTEND_SHA,,}" =~ ^[0-9a-f]{40}$ ]]' in target_step
     assert "bootstrap_predecessor_frontend_sha must be one exact lowercase 40-character commit SHA" in target_step
-
-
-def test_workflow_staging_step_rejects_bootstrap_flag() -> None:
-    workflow = _workflow_text()
-    staging_job = _extract_job(workflow, "deploy-staging-live")
-
-    assert 'if [[ "${{ inputs.bootstrap_empty_host || false }}" == "true" ]]; then' in staging_job
-    assert "Staging environment does not support bootstrap_empty_host; bootstrap is dev-only." in staging_job
 
 
 def test_workflow_rollback_baseline_rejects_missing_manifest_when_not_bootstrapping() -> None:
@@ -368,7 +360,7 @@ def test_workflow_candidate_deploy_requires_predecessor_served_identity_readback
 
 def test_workflow_coordinate_release_passes_predecessor_pair_shas() -> None:
     workflow = _workflow_text()
-    coordinate_job = _extract_job(workflow, "coordinate-dev-release", "deploy-staging-live")
+    coordinate_job = _extract_job(workflow, "coordinate-dev-release")
 
     assert "PREVIOUS_BACKEND_SHA: ${{ needs.deploy-dev.outputs.previous_backend_sha }}" in coordinate_job
     assert "PREVIOUS_FRONTEND_SHA: ${{ needs.deploy-dev.outputs.previous_frontend_sha }}" in coordinate_job
@@ -404,7 +396,6 @@ def test_workflow_rollback_baseline_requires_dev_urls_when_bootstrapping() -> No
 def test_workflow_contains_no_retired_project_or_host_fallbacks_in_bootstrap_or_staging() -> None:
     workflow = _workflow_text()
     dev_job = _extract_job(workflow, "deploy-dev", "coordinate-dev-release")
-    staging_job = _extract_job(workflow, "deploy-staging-live")
 
     # In dev bootstrap steps
     bootstrap_step = dev_job[
@@ -414,11 +405,6 @@ def test_workflow_contains_no_retired_project_or_host_fallbacks_in_bootstrap_or_
     assert "pantheon-lupin-dev-20260719" not in bootstrap_step
     assert "sslip.io" not in bootstrap_step
     assert "35.201.204.12" not in bootstrap_step
-
-    # In staging job
-    assert "pantheon-benjamin-20260528" not in staging_job
-    assert "104.155.223.192" not in staging_job
-    assert "sslip.io" not in staging_job
 
 
 def test_deploy_script_contains_no_retired_fallbacks_in_source() -> None:

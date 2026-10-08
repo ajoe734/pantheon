@@ -63,7 +63,7 @@ def _git_show_sha256(ref_path: str) -> str:
 
 def test_controller_checkout_is_an_exact_immutable_separate_trust_root() -> None:
     workflow = _workflow()
-    dev = _job(workflow, "deploy-dev", "deploy-staging-live")
+    dev = _job(workflow, "deploy-dev")
 
     assert f"ref: {CONTROLLER_SHA}" in dev
     assert "path: .lease-controller" in dev
@@ -85,7 +85,7 @@ def test_controller_checkout_is_an_exact_immutable_separate_trust_root() -> None
 
 def test_controller_checksums_match_pinned_controller_files() -> None:
     workflow = _workflow()
-    dev = _job(workflow, "deploy-dev", "deploy-staging-live")
+    dev = _job(workflow, "deploy-dev")
 
     assert (
         _git_show_sha256(f"{CONTROLLER_SHA}:scripts/dev_environment_lease.py")
@@ -119,24 +119,15 @@ def test_compensation_and_other_lease_callers_use_the_repaired_controller() -> N
 
 def test_dev_and_staging_are_independent_jobs_and_staging_has_no_lease_secret() -> None:
     workflow = _workflow()
-    dev = _job(workflow, "deploy-dev", "deploy-staging-live")
-    staging = _job(workflow, "deploy-staging-live")
+    dev = _job(workflow, "deploy-dev")
 
     assert "environment: dev" in dev
-    assert "environment: staging-live" in staging
     assert "COORDINATION_REPO_TOKEN" in dev
-    assert "COORDINATION_REPO_TOKEN" not in staging
-    assert "run_with_dev_environment_lease" not in staging
-    assert "dev_environment_lease.py" not in staging
-    assert "PANTHEON_DEV_ENVIRONMENT_LEASE" not in staging
-    assert '${STAGING_BFF_URL}/bff/version' in staging
-    assert '[[ "${actual}" == "${TARGET_SHA}" ]]' in staging
 
 
 def test_payloads_must_come_from_their_protected_delivery_branches() -> None:
     workflow = _workflow()
-    dev = _job(workflow, "deploy-dev", "deploy-staging-live")
-    staging = _job(workflow, "deploy-staging-live")
+    dev = _job(workflow, "deploy-dev")
 
     assert "fetch-depth: 0" in dev
     assert "refs/remotes/origin/dev" in dev
@@ -144,14 +135,10 @@ def test_payloads_must_come_from_their_protected_delivery_branches() -> None:
     assert '"${GITHUB_REF}" != "refs/heads/dev"' in dev
     assert '"${GITHUB_SHA}" != "${sha}"' in dev
     assert "current execute-plans dev moved" in dev
-    assert "fetch-depth: 0" in staging
-    assert "refs/remotes/origin/master" in staging
-    assert 'git merge-base --is-ancestor "${sha}" "${trusted_ref}"' in staging
-    assert "not contained in protected origin/master" in staging
 
 
 def test_lease_coordinates_the_fixed_cross_repository_resource() -> None:
-    dev = _job(_workflow(), "deploy-dev", "deploy-staging-live")
+    dev = _job(_workflow(), "deploy-dev")
 
     assert dev.count("--repository ajoe734/execute-plans") >= 4
     assert dev.count("--branch environment-coordination") >= 4
@@ -167,7 +154,7 @@ def test_lease_coordinates_the_fixed_cross_repository_resource() -> None:
 
 
 def test_heartbeat_and_guard_paths_are_bound_to_acquire_step_outputs() -> None:
-    dev = _job(_workflow(), "deploy-dev", "deploy-staging-live")
+    dev = _job(_workflow(), "deploy-dev")
 
     for name in (
         "state_file",
@@ -186,7 +173,7 @@ def test_heartbeat_and_guard_paths_are_bound_to_acquire_step_outputs() -> None:
 
 
 def test_initial_visibility_retry_is_only_on_immediate_post_acquire_verify() -> None:
-    dev = _job(_workflow(), "deploy-dev", "deploy-staging-live")
+    dev = _job(_workflow(), "deploy-dev")
     heartbeat_start = dev.index("      - name: Start identity-bound lease heartbeat")
     next_step = dev.index("      - name: Deploy dev VM stack under lease", heartbeat_start)
     initial_verify = dev[heartbeat_start:next_step]
@@ -201,7 +188,7 @@ def test_initial_visibility_retry_is_only_on_immediate_post_acquire_verify() -> 
 
 
 def test_broad_initial_verify_retry_loop_is_absent() -> None:
-    dev = _job(_workflow(), "deploy-dev", "deploy-staging-live")
+    dev = _job(_workflow(), "deploy-dev")
     heartbeat_start = dev.index("      - name: Start identity-bound lease heartbeat")
     next_step = dev.index("      - name: Deploy dev VM stack under lease", heartbeat_start)
     initial_verify = dev[heartbeat_start:next_step]
@@ -213,7 +200,7 @@ def test_broad_initial_verify_retry_loop_is_absent() -> None:
 
 
 def test_all_dev_mutations_and_public_proofs_use_pinned_wrapper() -> None:
-    dev = _job(_workflow(), "deploy-dev", "deploy-staging-live")
+    dev = _job(_workflow(), "deploy-dev")
 
     for step_name in (
         "Deploy dev VM stack under lease",
@@ -242,7 +229,7 @@ def test_all_dev_mutations_and_public_proofs_use_pinned_wrapper() -> None:
 def test_bff_smoke_runs_before_mandatory_restart_probe() -> None:
     """Prove the target identity before restarting and verifying persistence."""
 
-    dev = _job(_workflow(), "deploy-dev", "deploy-staging-live")
+    dev = _job(_workflow(), "deploy-dev")
     bff_smoke_at = dev.index(
         "      - name: Public dev BFF smoke and exact version proof under lease"
     )
@@ -295,7 +282,7 @@ def test_dev_release_admission_requires_complete_backend_and_lease_success() -> 
     dev = _job(workflow, "deploy-dev", "coordinate-dev-release")
     assert "bff_fe_pair_verified: ${{ steps.lease_cleanup.outputs.complete_success == 'true' }}" in dev
 
-    coordinate = _job(workflow, "coordinate-dev-release", "deploy-staging-live")
+    coordinate = _job(workflow, "coordinate-dev-release")
     assert "needs.deploy-dev.result" not in coordinate
     assert (
         "if: ${{ !cancelled() && needs.deploy-dev.outputs.bff_fe_pair_verified "
@@ -308,7 +295,7 @@ def test_rollback_baseline_uses_the_accepted_frontend_pair_manifest() -> None:
     repair it. The immutable frontend deployment manifest carries that pair;
     a known dev-ancestor live BFF drift is recorded, never promoted to the
     rollback baseline."""
-    dev = _job(_workflow(), "deploy-dev", "deploy-staging-live")
+    dev = _job(_workflow(), "deploy-dev")
     start = dev.index("      - name: Capture exact hosted FE and BFF rollback baseline")
     end = dev.index("      - name: Seal exact-pair admission artifact", start)
     baseline = dev[start:end]
@@ -333,7 +320,7 @@ def test_rollback_baseline_uses_the_accepted_frontend_pair_manifest() -> None:
 
 
 def test_token_steps_use_a_fixed_sanitized_path_and_clear_shell_git_injection() -> None:
-    dev = _job(_workflow(), "deploy-dev", "deploy-staging-live")
+    dev = _job(_workflow(), "deploy-dev")
 
     assert (
         'safe_path="${trusted_bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"'
@@ -367,9 +354,9 @@ def test_token_steps_use_a_fixed_sanitized_path_and_clear_shell_git_injection() 
 def test_all_third_party_actions_are_full_sha_pinned() -> None:
     workflow = _workflow()
 
-    assert workflow.count(f"actions/checkout@{CHECKOUT_SHA}") == 7
-    assert workflow.count(f"google-github-actions/auth@{AUTH_SHA}") == 2
-    assert workflow.count(f"google-github-actions/setup-gcloud@{GCLOUD_SHA}") == 2
+    assert workflow.count(f"actions/checkout@{CHECKOUT_SHA}") == 6
+    assert workflow.count(f"google-github-actions/auth@{AUTH_SHA}") == 1
+    assert workflow.count(f"google-github-actions/setup-gcloud@{GCLOUD_SHA}") == 1
     for line in workflow.splitlines():
         if "uses:" in line:
             ref = line.rsplit("@", 1)[-1]
@@ -819,7 +806,7 @@ def _extract_rollback_baseline_python_script() -> str:
     import textwrap
 
     workflow = _workflow()
-    dev = _job(workflow, "deploy-dev", "deploy-staging-live")
+    dev = _job(workflow, "deploy-dev")
     start_marker = "<<'PY'\n"
     start = dev.index(start_marker, dev.index("Capture exact hosted FE and BFF rollback baseline")) + len(start_marker)
     match = re.search(r"\n\s*PY\n", dev[start:])
@@ -1278,7 +1265,7 @@ def test_dev_root_phase_failure_prevents_release_admission_and_switch() -> None:
     prevent coordinate-dev-release from admitting or switching the release candidate."""
     workflow = _workflow()
     dev_job = _job(workflow, "deploy-dev", "coordinate-dev-release")
-    coordinate_job = _job(workflow, "coordinate-dev-release", "deploy-staging-live")
+    coordinate_job = _job(workflow, "coordinate-dev-release")
 
     assert "bff_fe_pair_verified: ${{ steps.lease_cleanup.outputs.complete_success == 'true' }}" in dev_job
     assert (
