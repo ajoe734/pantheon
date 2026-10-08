@@ -3119,19 +3119,75 @@ stage_dev_paper_prerequisite_readiness() {
   local temporary_admission_active="false"
   local prior_enabled="false"
   local prior_interval=86400
+  local admitted_updated_at=""
 
   restore_dev_paper_schedule() {
-    local rc=$?
+    local caller_rc="${1:-0}"
     trap - EXIT INT TERM
-    if [[ "$temporary_admission_active" == "true" ]]; then
-      info "restoring connector ${simulation_connector_id} schedule (enabled=${prior_enabled}, interval=${prior_interval})"
-      curl -sS -X PUT "${auth_header[@]}" \
-        -H "Content-Type: application/json" \
-        -d "{\"interval_seconds\": ${prior_interval}, \"enabled\": ${prior_enabled}}" \
-        "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}/schedule" >/dev/null 2>&1 || true
-      temporary_admission_active="false"
+    [[ "$temporary_admission_active" == "true" ]] || return "$caller_rc"
+
+    info "restoring connector ${simulation_connector_id} schedule (enabled=${prior_enabled}, interval=${prior_interval})"
+
+    # Check for CAS conflict if schedule was updated after temporary admission
+    local cur_resp cur_code cur_body
+    cur_resp="$(curl -sS -w "\n%{http_code}" "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}/schedule" 2>&1 || true)"
+    cur_code="$(printf '%s\n' "$cur_resp" | tail -n 1)"
+    cur_body="$(printf '%s\n' "$cur_resp" | sed '$d')"
+    if [[ "$cur_code" == "200" && -n "${admitted_updated_at:-}" ]]; then
+      local cur_at
+      cur_at="$(python3 -c 'import json, sys; d=json.loads(sys.argv[1]); print(d.get("schedule", d).get("updated_at") or "")' "$cur_body" 2>/dev/null || true)"
+      if [[ -n "$cur_at" && "$cur_at" != "$admitted_updated_at" ]]; then
+        error "connector ${simulation_connector_id} schedule restore aborted due to CAS conflict (updated_at changed)"
+        return 1
+      fi
     fi
-    return "$rc"
+
+    # PUT restore schedule
+    local rest_resp rest_code rest_body
+    rest_resp="$(curl -sS -w "\n%{http_code}" -X PUT "${auth_header[@]}" \
+      -H "Content-Type: application/json" \
+      -d "{\"interval_seconds\": ${prior_interval}, \"enabled\": ${prior_enabled}}" \
+      "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}/schedule" 2>&1 || true)"
+    rest_code="$(printf '%s\n' "$rest_resp" | tail -n 1)"
+    rest_body="$(printf '%s\n' "$rest_resp" | sed '$d')"
+
+    if [[ "$rest_code" != "200" ]]; then
+      error "failed to restore connector ${simulation_connector_id} schedule: http_status=${rest_code}"
+      return 1
+    fi
+
+    # GET readback verification of restored schedule
+    local rb_resp rb_code rb_body
+    rb_resp="$(curl -sS -w "\n%{http_code}" "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}/schedule" 2>&1 || true)"
+    rb_code="$(printf '%s\n' "$rb_resp" | tail -n 1)"
+    rb_body="$(printf '%s\n' "$rb_resp" | sed '$d')"
+
+    if [[ "$rb_code" != "200" ]]; then
+      error "connector ${simulation_connector_id} schedule readback failed: http_status=${rb_code}"
+      return 1
+    fi
+
+    local check_err
+    check_err="$(python3 -c '
+import json, sys
+exp_en, exp_int = sys.argv[1] == "true", int(sys.argv[2])
+for label, raw in (("response", sys.argv[3]), ("readback", sys.argv[4])):
+    try:
+        s = json.loads(raw).get("schedule", {})
+        s_en, s_int = s.get("enabled"), s.get("interval_seconds")
+        if s_en is not exp_en or int(s_int if s_int is not None else -1) != exp_int:
+            sys.exit(f"{label} mismatch: enabled={s_en}, interval={s_int}")
+    except Exception as e:
+        sys.exit(f"{label} malformed: {e}")
+' "$prior_enabled" "$prior_interval" "$rest_body" "$rb_body" 2>&1 || true)"
+
+    if [[ -n "$check_err" ]]; then
+      error "connector ${simulation_connector_id} schedule restore verification failed: ${check_err}"
+      return 1
+    fi
+
+    temporary_admission_active="false"
+    return "$caller_rc"
   }
 
   local deadline attempt=0 triggered=false
@@ -3145,39 +3201,41 @@ stage_dev_paper_prerequisite_readiness() {
     local is_admissible=false
     if [[ -n "$snapshot_resp" ]]; then
       if python3 -c '
-import json, sys, math
+import json, math, sys
 from datetime import datetime, timezone
-raw = sys.argv[1]
 try:
-    data = json.loads(raw)
+    d = json.loads(sys.argv[1])
+    closes = d.get("closes")
+    if not isinstance(closes, list) or len(closes) < 2 or any(isinstance(c, bool) or not isinstance(c, (int, float)) or not math.isfinite(float(c)) or float(c) <= 0 for c in closes):
+        sys.exit(1)
+    if not str(d.get("market") or "").strip():
+        sys.exit(1)
+    ev_str = str(d.get("event_time") or "").strip()
+    if not ev_str:
+        sys.exit(1)
+    ev_dt = datetime.fromisoformat(ev_str.replace("Z", "+00:00"))
+    if ev_dt.tzinfo is None:
+        ev_dt = ev_dt.replace(tzinfo=timezone.utc)
+    age = (datetime.now(timezone.utc) - ev_dt.astimezone(timezone.utc)).total_seconds()
+    if age < 0 or age > 86400:
+        sys.exit(1)
+    chk = str(d.get("checksum") or d.get("data_checksum") or "").strip()
+    snap_id = str(d.get("snapshot_id") or "").strip()
+    if chk and snap_id and chk == snap_id:
+        sys.exit(1)
+    sys.exit(0)
 except Exception:
     sys.exit(1)
-closes = data.get("closes")
-if not isinstance(closes, list) or len(closes) < 2:
-    sys.exit(1)
-if any(isinstance(c, bool) or not isinstance(c, (int, float)) or not math.isfinite(float(c)) or float(c) <= 0 for c in closes):
-    sys.exit(1)
-market = data.get("market")
-if not market or not isinstance(market, str) or not market.strip():
-    sys.exit(1)
-ev_str = str(data.get("event_time") or "")
-if ev_str:
-    try:
-        ev_dt = datetime.fromisoformat(ev_str.replace("Z", "+00:00"))
-        now_dt = datetime.now(timezone.utc)
-        age = (now_dt - ev_dt).total_seconds()
-        if age > 86400 or age < 0:
-            sys.exit(1)
-    except Exception:
-        sys.exit(1)
-sys.exit(0)
 ' "$snapshot_resp" 2>/dev/null; then
         is_admissible=true
       fi
     fi
 
     if [[ "$is_admissible" == "true" ]]; then
-      restore_dev_paper_schedule
+      if ! restore_dev_paper_schedule 0; then
+        error "staged dev paper prerequisite readiness failed for ${symbol}: schedule restore was not verified"
+        return 1
+      fi
       info "staged dev paper prerequisite readiness satisfied for ${symbol}"
       return 0
     fi
@@ -3186,70 +3244,117 @@ sys.exit(0)
       triggered=true
       info "staged dev paper prerequisite snapshot for ${symbol} missing, non-admissible, or lacks market; triggering run-scheduled (attempt 1)"
 
-      # Check if simulation connector is stopped by explicit operator stop
-      local connector_resp=""
-      connector_resp="$(curl -fsS "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}" 2>/dev/null || true)"
-      if [[ -n "$connector_resp" ]]; then
-        local is_op_stop="false"
-        is_op_stop="$(python3 -c '
+      # Check if simulation connector is stopped by explicit operator stop (fail-closed)
+      local conn_resp conn_code conn_body
+      conn_resp="$(curl -sS -w "\n%{http_code}" "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}" 2>&1 || true)"
+      conn_code="$(printf '%s\n' "$conn_resp" | tail -n 1)"
+      conn_body="$(printf '%s\n' "$conn_resp" | sed '$d')"
+
+      if [[ "$conn_code" != "200" ]]; then
+        error "failed to read connector ${simulation_connector_id} state (http_status=${conn_code}); refusing prerequisite refresh"
+        return 1
+      fi
+
+      local op_res
+      op_res="$(python3 -c '
 import json, sys
 try:
     d = json.loads(sys.argv[1])
     conn = d.get("connector", d)
+    if not isinstance(conn, dict):
+        sys.exit(2)
     meta = conn.get("metadata") or {}
     if meta.get("operator_stop"):
-        print("true")
-        sys.exit(0)
+        sys.exit(3)
     if conn.get("status") == "disabled":
         rec = meta.get("persona_source_reconciliation") or {}
         if not (isinstance(rec, dict) and rec.get("retired_by_authoritative_snapshot") is True):
-            print("true")
-            sys.exit(0)
+            sys.exit(3)
+    sys.exit(0)
 except Exception:
-    pass
-print("false")
-' "$connector_resp" 2>/dev/null || printf 'false')"
-        if [[ "$is_op_stop" == "true" ]]; then
-          error "connector ${simulation_connector_id} has explicit operator stop; refusing prerequisite refresh"
-          return 1
-        fi
+    sys.exit(2)
+' "$conn_body" 2>/dev/null; echo $?)"
+
+      if [[ "$op_res" == "3" ]]; then
+        error "connector ${simulation_connector_id} has explicit operator stop; refusing prerequisite refresh"
+        return 1
+      elif [[ "$op_res" != "0" ]]; then
+        error "unknown operator stop state for connector ${simulation_connector_id}; refusing prerequisite refresh"
+        return 1
       fi
 
-      # Check prior schedule state
-      local sched_resp=""
-      sched_resp="$(curl -fsS "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}/schedule" 2>/dev/null || true)"
-      if [[ -n "$sched_resp" ]]; then
-        local sched_info=""
-        sched_info="$(python3 -c '
+      # Check prior schedule state (fail-closed)
+      local sched_resp sched_code sched_body
+      sched_resp="$(curl -sS -w "\n%{http_code}" "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}/schedule" 2>&1 || true)"
+      sched_code="$(printf '%s\n' "$sched_resp" | tail -n 1)"
+      sched_body="$(printf '%s\n' "$sched_resp" | sed '$d')"
+
+      if [[ "$sched_code" != "200" ]]; then
+        error "failed to read connector ${simulation_connector_id} schedule (http_status=${sched_code}); refusing prerequisite refresh"
+        return 1
+      fi
+
+      local sched_info
+      sched_info="$(python3 -c '
 import json, sys
 try:
-    d = json.loads(sys.argv[1])
-    sched = d.get("schedule", d)
-    enabled = "true" if sched.get("enabled") is True else "false"
-    interval = int(sched.get("interval_seconds", 86400))
-    print(f"{enabled} {interval}")
+    s = json.loads(sys.argv[1]).get("schedule", {})
+    if "enabled" not in s or int(s.get("interval_seconds", 0)) <= 0:
+        sys.exit(1)
+    en = "true" if s.get("enabled") is True else "false"
+    sec = s.get("interval_seconds")
+    upd = s.get("updated_at") or ""
+    print(f"{en} {sec} {upd}")
 except Exception:
-    print("false 86400")
-' "$sched_resp" 2>/dev/null || printf 'false 86400')"
-        prior_enabled="${sched_info%% *}"
-        prior_interval="${sched_info##* }"
+    sys.exit(1)
+' "$sched_body" 2>/dev/null || true)"
+
+      if [[ -z "$sched_info" ]]; then
+        error "failed to parse connector ${simulation_connector_id} schedule; refusing prerequisite refresh"
+        return 1
       fi
 
-      # If prior schedule is disabled, temporarily admit schedule
+      prior_enabled="$(printf '%s' "$sched_info" | cut -d' ' -f1)"
+      prior_interval="$(printf '%s' "$sched_info" | cut -d' ' -f2)"
+
+      # If prior schedule is disabled, temporarily admit schedule (fail-closed on admission failure)
       if [[ "$prior_enabled" != "true" ]]; then
         info "temporarily admitting schedule for connector ${simulation_connector_id} (interval=${prior_interval})"
-        local adm_resp="" http_adm=""
+        local adm_resp adm_code adm_body
         adm_resp="$(curl -sS -w "\n%{http_code}" -X PUT "${auth_header[@]}" \
           -H "Content-Type: application/json" \
           -d "{\"interval_seconds\": ${prior_interval}, \"enabled\": true}" \
           "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}/schedule" 2>&1 || true)"
-        http_adm="$(printf '%s\n' "$adm_resp" | tail -n 1)"
-        if [[ "$http_adm" == "200" ]]; then
-          temporary_admission_active="true"
-          trap restore_dev_paper_schedule EXIT INT TERM
-        else
-          info "temporary schedule admission returned http_status=${http_adm}; proceeding to trigger run-scheduled"
+        adm_code="$(printf '%s\n' "$adm_resp" | tail -n 1)"
+        adm_body="$(printf '%s\n' "$adm_resp" | sed '$d')"
+
+        if [[ "$adm_code" != "200" ]]; then
+          error "temporary schedule admission failed with http_status=${adm_code}; refusing prerequisite refresh"
+          return 1
         fi
+
+        local adm_eval
+        adm_eval="$(python3 -c '
+import json, sys
+try:
+    s = json.loads(sys.argv[1]).get("schedule", {})
+    if s.get("enabled") is True:
+        upd = s.get("updated_at") or ""
+        print(f"ok\t{upd}")
+    else:
+        print("error\tschedule not enabled in response")
+except Exception as e:
+    print(f"error\t{e}")
+' "$adm_body" 2>/dev/null || printf 'error\tfailed to parse admission response')"
+
+        if [[ "${adm_eval%%$'\t'*}" != "ok" ]]; then
+          error "temporary schedule admission response invalid (${adm_eval#*$'\t'}); refusing prerequisite refresh"
+          return 1
+        fi
+
+        admitted_updated_at="${adm_eval#*$'\t'}"
+        temporary_admission_active="true"
+        trap 'restore_dev_paper_schedule 1' EXIT INT TERM
       fi
 
       local trigger_resp http_code trigger_body
@@ -3287,7 +3392,7 @@ else:
 
       info "run-scheduled trigger attempt 1: http_status=${http_code} outcome=${outcome}${diag}"
       if [[ "$outcome" != "refreshed" ]]; then
-        restore_dev_paper_schedule
+        restore_dev_paper_schedule 1 || true
         error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: ${outcome}"
         return 1
       fi
@@ -3297,7 +3402,7 @@ else:
     sleep "$poll_interval"
   done
 
-  restore_dev_paper_schedule
+  restore_dev_paper_schedule 1 || true
   error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: snapshot still lacks market"
   return 1
 }
