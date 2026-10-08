@@ -789,6 +789,76 @@ def test_search_results_filtering_and_query():
     assert open_results[0]["result_id"] == "doc-1"
 
 
+def _health_usage_row(source_id: str) -> dict:
+    return {
+        "health": {"source_id": source_id, "source_kind": "filing", "status": "ok"},
+        "usage_aggregate_30d": {"query_count": 0},
+        "recommendation": None,
+    }
+
+
+def _health_usage_payload(rows: list, summary: dict) -> dict:
+    return {"source_count": len(rows), "sources": rows, "recommendation_summary": summary}
+
+
+def _health_usage_port(payload, available: bool = True) -> DefaultResearchKnowledgeSourcePort:
+    return DefaultResearchKnowledgeSourcePort(
+        source_ingest_service_url="http://source-ingest-service:8000",
+        http_get_fn=lambda base_url, path: (available, payload),
+    )
+
+
+def test_source_health_usage_snapshot_valid_populated_and_empty():
+    populated = _health_usage_port(
+        _health_usage_payload([_health_usage_row("sec")], {"no_action": 1})
+    ).get_source_health_usage_snapshot()
+    assert populated["source"] == "service_client"
+    assert populated["source_count"] == 1
+    assert populated["recommendation_summary"] == {"no_action": 1}
+
+    empty = _health_usage_port(
+        _health_usage_payload([], {"no_action": 0})
+    ).get_source_health_usage_snapshot()
+    assert empty["source"] == "service_client"
+    assert empty["source_count"] == 0
+    assert empty["sources"] == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"unexpected": "shape"},
+        [],
+        None,
+        {"source_count": 0, "sources": None, "recommendation_summary": {}},
+        {"source_count": 0, "sources": "abc", "recommendation_summary": {}},
+        {"source_count": 0, "sources": {"a": 1}, "recommendation_summary": {}},
+        {"source_count": 1, "sources": ["row"], "recommendation_summary": {}},
+        {"source_count": 1, "sources": [{"source_id": "sec"}], "recommendation_summary": {}},
+        {"source_count": 1, "sources": [{**_health_usage_row("sec"), "health": {}}], "recommendation_summary": {}},
+        {"source_count": 1, "sources": [{**_health_usage_row("sec"), "recommendation": "x"}], "recommendation_summary": {}},
+        {"source_count": 5, "sources": [], "recommendation_summary": {}},
+        {"source_count": 0, "sources": [], "recommendation_summary": None},
+        {"source_count": 0, "sources": [], "recommendation_summary": "x"},
+        {"source_count": 0, "sources": [], "recommendation_summary": {"no_action": "1"}},
+    ],
+)
+def test_source_health_usage_snapshot_rejects_malformed_envelope(payload):
+    result = _health_usage_port(payload).get_source_health_usage_snapshot()
+    assert result == {
+        "source": "unavailable",
+        "source_count": 0,
+        "sources": [],
+        "recommendation_summary": {},
+    }
+
+
+def test_source_health_usage_snapshot_unavailable_and_missing():
+    valid = _health_usage_payload([], {})
+    assert _health_usage_port(valid, available=False).get_source_health_usage_snapshot()["source"] == "unavailable"
+    assert DefaultResearchKnowledgeSourcePort().get_source_health_usage_snapshot()["source"] == "missing"
+
+
 def test_source_and_search_ops_with_http_client():
     def fake_http_get(base_url: str, path: str):
         if "freshness" in path:
@@ -806,10 +876,9 @@ def test_source_and_search_ops_with_http_client():
         if "source-change-proposals" in path:
             return True, {"proposals": [{"proposal_id": "scp-1", "status": "pending"}]}
         if "source-ingest/health-usage-snapshot" in path:
-            return True, {
-                "sources": [{"source_id": "sec", "status": "healthy"}],
-                "recommendation_summary": {"action": "none"},
-            }
+            return True, _health_usage_payload(
+                [_health_usage_row("sec")], {"no_action": 1}
+            )
         return False, None
 
     port = DefaultResearchKnowledgeSourcePort(
