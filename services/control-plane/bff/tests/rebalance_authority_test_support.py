@@ -288,16 +288,13 @@ class PplProjectionTestDouble(MarketPersonaProjectionTestDouble):
         record = self._ppl_ranking_snapshots.get(str(snapshot_id or ""))
         if record is not None:
             return copy.deepcopy(record)
-        try:
-            from services.control_plane.bff.personas.service import _get_ranking_write_owner
-            owner = _get_ranking_write_owner()
-            if owner is not None and hasattr(owner, "get_ranking_snapshot"):
-                rec = owner.get_ranking_snapshot(str(snapshot_id or ""))
-                if rec is not None:
-                    self.put_ranking_snapshot(rec)
-                    return copy.deepcopy(rec)
-        except Exception:
-            pass
+        from services.control_plane.bff.personas.service import _get_ranking_write_owner
+        owner = _get_ranking_write_owner()
+        if owner is not None and hasattr(owner, "get_ranking_snapshot"):
+            rec = owner.get_ranking_snapshot(str(snapshot_id or ""))
+            if rec is not None:
+                self.put_ranking_snapshot(rec)
+                return copy.deepcopy(rec)
         return None
 
     def put_allocation_evaluation(self, record: Dict[str, Any]) -> Dict[str, Any]:
@@ -805,7 +802,7 @@ class CapitalBffAuthorityHarness:
             lambda: self.ranking_reader if self.ranking_reader is not None else self.read_surface
         )
         if self.ranking_reader is None:
-            allocation_lineage.verify_rebalance_lineage = lambda proposal: None
+            allocation_lineage.verify_rebalance_lineage = lambda proposal: None  # no ranking snapshot behind these lines
         command_executor._post_json = self._post_json
         command_executor._get_json = self._get_json
         self._original_urlopen = urllib.request.urlopen
@@ -846,7 +843,12 @@ class CapitalBffAuthorityHarness:
         assert response.json()["capital_sleeve_id"] == "sleeve-live"
         assert response.json()["status"] == "pending"
         if self.seed_allocation:
-            self._seed_authoritative_allocation()
+            enforced = allocation_lineage.verify_rebalance_lineage
+            allocation_lineage.verify_rebalance_lineage = lambda proposal: None  # the baseline has no ranking snapshot
+            try:
+                self._seed_authoritative_allocation()
+            finally:
+                allocation_lineage.verify_rebalance_lineage = enforced
         return self
 
     def _patch_guard_collaborators(self) -> None:
@@ -1127,8 +1129,6 @@ class CapitalBffAuthorityHarness:
             self.read_surface.add_authoritative_binding(body)
         elif parsed.path == "/api/rebalances":
             self.read_surface.add_authoritative_rebalance(body)
-        elif parsed.path == "/api/allocation-evaluations":
-            self.read_surface.put_allocation_evaluation(body)
         return body
 
     def _get_json(
