@@ -980,9 +980,17 @@ def admit_market_snapshot(
     if not isinstance(snapshot, Mapping):
         return rejected("market_input_invalid", f"market snapshot must be an object{b_ctx}")
 
+    snap_id = str(snapshot.get("snapshot_id") or "").strip()
+    source_ref = str(snapshot.get("source_ref") or "").strip()
+    is_source = (
+        "points" in snapshot
+        or "schema_version" in snapshot
+        or bool(re.fullmatch(r"^mss-[0-9a-fA-F]{24}$", snap_id))
+        or bool(re.fullmatch(r"^source-ingest://snapshots/mss-[0-9a-fA-F]{24}$", source_ref))
+    )
     target_fn = (
         admit_canonical_source_snapshot
-        if ("points" in snapshot or "schema_version" in snapshot)
+        if is_source
         else _admit_market_snapshot_core
     )
     return target_fn(
