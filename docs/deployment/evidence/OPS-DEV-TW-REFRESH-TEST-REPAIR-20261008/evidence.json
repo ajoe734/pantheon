@@ -7,7 +7,7 @@
   "change_class": "corrective",
   "classification": "test_fixtures",
   "context": "Following the deliberate move of the refresh to managed-worktree execution in DEV-TW-REFRESH-WORKFLOW-R2-20261007",
-  "base_sha": "181243d7d45c609f642f2d143236ac4799783324",
+  "base_sha": "87d0c4e74e8fec30213bfbcb0181701b790d8d40",
   "initial_base_sha": "4a6f8b1de5285a094a2c8f90d8033a28c9318dee",
   "code_head_sha": "ff5e6a992a4b5680e83ae3042e70f4d45d10a324",
   "head_sha": "ff5e6a992a4b5680e83ae3042e70f4d45d10a324",
