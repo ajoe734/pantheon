@@ -1,6 +1,6 @@
 {
   "task_id": "OPS-REVIEW-DIRTY-PR-REOPEN-20261007",
-  "origin_dev_base_sha": "3b6f5dc8dee34c3816639678ae963e7c3229f4f7",
+  "origin_dev_base_sha": "89cc8b15fe091b1781b4af758e893a6c3fd505ab",
   "change": "scripts/ai_status.py execute_review_decision_intent: `if command in {\"approve\", \"reopen\"}` -> `if command == \"approve\"`",
   "behavior": {
     "reviewer_reopen_conflicted_or_moved_pr": {
@@ -19,11 +19,11 @@
     "new_tests_fail_without_fix": true
   },
   "diff_budget": {
-    "base": "3b6f5dc8dee34c3816639678ae963e7c3229f4f7",
-    "head": "281c1444d (code commit)",
+    "base": "89cc8b15fe091b1781b4af758e893a6c3fd505ab",
+    "head": "task branch HEAD after merging origin/dev",
     "production": "+1 -1 net +0",
     "test": "+126 -0 net +126",
-    "docs_evidence": "+11 -6 net +5 (before this evidence file)"
+    "docs_evidence": "+40 -6 net +34 (includes this evidence file)"
   },
   "live_effect": "Requires an operator runtime promotion of the command runtime; sync-dev-root, promote and supervisor restart were not run."
 }
