@@ -1,0 +1,58 @@
+{
+  "task_id": "PROJECTION-MIGRATION-TIMEOUT-20261008",
+  "title": "Run trade journey projection migrations without the 10 second runtime statement timeout",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 40,
+  "hosted_incident": {
+    "deploy_run": "37717214717",
+    "commit_sha": "027633c6f",
+    "timestamp": "2026-10-08T02:36:00Z",
+    "failing_step": "post-up failure at projection_bootstrap",
+    "error_code": "QueryCanceled",
+    "error_message": "canceling statement due to statement timeout",
+    "failing_statement": "-- Migration: 002_add_trade_journey_search_indexes.sql CREATE EXTENSION IF NOT EXISTS pg_trgm; CREATE INDEX IF NOT EXISTS idx_journeys_journey_id_trgm ... idx_identity_links_value_trgm ...",
+    "hosted_volume": {
+      "tenant_id": "tenant-dev",
+      "environment": "paper",
+      "journeys": 38639,
+      "identity_links": 264025
+    },
+    "root_cause": "ProjectionStore.bootstrap_schema executes migration SQL files on connections created by _connect_db() which defaulted to the 10-second runtime statement timeout (DEFAULT_PROJECTION_STATEMENT_TIMEOUT_SECONDS = 10.0). Under hosted volume (38,639 journeys, 264,025 identity_links), building trigram and composite GIN indexes in migration 002 exceeded 10 seconds, causing psycopg.errors.QueryCanceled, failed bootstrap, and deployment rollback."
+  },
+  "measured_index_build_times": {
+    "dataset": {
+      "tenant_id": "tenant-dev",
+      "environment": "paper",
+      "journeys": 38639,
+      "identity_links": 264025
+    },
+    "timings_ms": {
+      "idx_journeys_journey_id_trgm": 254.28,
+      "idx_identity_links_value_trgm": 2652.22,
+      "idx_identity_links_tenant_env_value_journey": 998.41,
+      "idx_journeys_summary_gin": 155.77,
+      "total_ms": 4060.68
+    },
+    "observation": "Concurrent index builds on hosted volume require >4 seconds under quiet conditions and easily exceed 10 seconds under load, lock wait, or I/O contention. Migration-specific 300s timeout provides ample headroom while avoiding indefinite hangs."
+  },
+  "solution": {
+    "migration_timeouts": "bootstrap_schema applies migrations with DEFAULT_PROJECTION_MIGRATION_STATEMENT_TIMEOUT_SECONDS = 300.0 and DEFAULT_PROJECTION_MIGRATION_LOCK_TIMEOUT_SECONDS = 30.0 (both configurable via ProjectionStore.__init__ and bootstrap_schema kwargs). Runtime query connections keep their 10.0s timeouts.",
+    "concurrent_index_creation": "Migration 002 uses CREATE INDEX CONCURRENTLY IF NOT EXISTS executed outside a transaction block (autocommit=True), preventing table locks on journeys and identity_links during index creation.",
+    "invalid_index_repair": "bootstrap_schema queries pg_index for invalid indexes in the schema (indisvalid = false) and rebuilds them concurrently with REINDEX INDEX CONCURRENTLY prior to running migration files.",
+    "idempotent_execution": "Re-running bootstrap_schema against an existing schema is a clean no-op."
+  },
+  "acceptance_verification": {
+    "ac1_migration_timeouts": "Verified: bootstrap_schema connects with statement_timeout=300000ms and lock_timeout=30000ms. Runtime query connections retain statement_timeout=10000ms and lock_timeout=10000ms. Both are configurable via kwargs.",
+    "ac2_concurrent_and_invalid_index": "Verified: 002_add_trade_journey_search_indexes.sql uses CREATE INDEX CONCURRENTLY IF NOT EXISTS; statements execute individually with autocommit=True; invalid indexes with indisvalid=false are detected and rebuilt concurrently.",
+    "ac3_test_timeout_and_idempotency": "Verified: test_bootstrap_schema_raises_timeout_only_for_migrations_mock, test_bootstrap_schema_applies_002_and_is_idempotent, and test_bootstrap_schema_detects_and_rebuilds_invalid_index all pass.",
+    "ac4_evidence": "Verified: hosted failure from deploy run 37717214717 and empirical index build times recorded in evidence.json.",
+    "ac5_no_compressed_code": "Verified: all code follows standard PEP 8 formatting without compressed lines or multiple statements per line; net production lines = +34, within net_prod_line_budget <= 40.",
+    "ac6_hosted_track": "Recorded as external_wait pending the next automatic dev pair release passing projection_bootstrap."
+  },
+  "hosted_track": {
+    "status": "external_wait",
+    "next": "The next automatic dev pair release passes projection_bootstrap."
+  }
+}

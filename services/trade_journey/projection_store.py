@@ -7,7 +7,6 @@ typed persistence interfaces, advisory locking, and atomic batch projection tran
 
 from __future__ import annotations
 
-import concurrent.futures
 import hashlib
 import inspect
 import json
@@ -28,10 +27,21 @@ DEFAULT_PROJECTION_TIMEOUT_SECONDS = 10.0
 DEFAULT_PROJECTION_CONNECT_TIMEOUT_SECONDS = 10.0
 DEFAULT_PROJECTION_STATEMENT_TIMEOUT_SECONDS = 10.0
 DEFAULT_PROJECTION_LOCK_TIMEOUT_SECONDS = 10.0
+DEFAULT_PROJECTION_MIGRATION_STATEMENT_TIMEOUT_SECONDS = 300.0
+DEFAULT_PROJECTION_MIGRATION_LOCK_TIMEOUT_SECONDS = 30.0
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 INITIAL_MIGRATION_PATH = (
     MIGRATIONS_DIR / "001_create_trade_journey_projection_schema.sql"
 )
+CONTROLLER_COLUMNS = (
+    "controller_id, tenant_scope, environment_scope, checkpoint_seq, "
+    "source_high_watermark, backlog_count, projection_revision, "
+    "deployment_sha, mode, status, accepted_live, last_poll_at, "
+    "last_success_at, last_live_success_at, last_recovery_at, "
+    "last_backfill_at, last_replay_at, last_failure_at, "
+    "last_error_message, unresolved_quarantine_count, updated_at"
+)
+PROJECTION_TABLES = ("controller", "event_receipts", "identity_links", "journeys", "journey_stages", "loop_runs", "quarantine")
 
 
 def _validate_timeout(
@@ -302,6 +312,8 @@ class ProjectionStore:
         connect_timeout_seconds: float | None = None,
         statement_timeout_seconds: float | None = None,
         lock_timeout_seconds: float | None = None,
+        migration_statement_timeout_seconds: float | None = None,
+        migration_lock_timeout_seconds: float | None = None,
     ) -> None:
         if not dsn:
             raise ValueError("Postgres DSN is required for ProjectionStore")
@@ -309,15 +321,7 @@ class ProjectionStore:
             raise ValueError("Invalid schema name for ProjectionStore")
         self.dsn = dsn
         self.schema = schema
-        base_timeout = (
-            _validate_timeout(
-                timeout_seconds,
-                name="timeout_seconds",
-                default=DEFAULT_PROJECTION_TIMEOUT_SECONDS,
-            )
-            if timeout_seconds is not None
-            else DEFAULT_PROJECTION_TIMEOUT_SECONDS
-        )
+        base_timeout = _validate_timeout(timeout_seconds, name="timeout_seconds")
         self.connect_timeout_seconds = _validate_timeout(
             connect_timeout_seconds,
             name="connect_timeout_seconds",
@@ -333,6 +337,16 @@ class ProjectionStore:
             name="lock_timeout_seconds",
             default=base_timeout,
         )
+        self.migration_statement_timeout_seconds = _validate_timeout(
+            migration_statement_timeout_seconds,
+            name="migration_statement_timeout_seconds",
+            default=DEFAULT_PROJECTION_MIGRATION_STATEMENT_TIMEOUT_SECONDS,
+        )
+        self.migration_lock_timeout_seconds = _validate_timeout(
+            migration_lock_timeout_seconds,
+            name="migration_lock_timeout_seconds",
+            default=DEFAULT_PROJECTION_MIGRATION_LOCK_TIMEOUT_SECONDS,
+        )
         if connect is None:
             try:
                 import psycopg  # type: ignore[import]
@@ -343,18 +357,20 @@ class ProjectionStore:
         if bootstrap:
             self.bootstrap_schema()
 
-    def _connect_db(self) -> Any:
-        statement_timeout_ms = int(math.ceil(self.statement_timeout_seconds * 1000.0))
-        lock_timeout_ms = int(math.ceil(self.lock_timeout_seconds * 1000.0))
+    def _connect_db(
+        self,
+        *,
+        statement_timeout_seconds: float | None = None,
+        lock_timeout_seconds: float | None = None,
+        autocommit: bool = False,
+    ) -> Any:
+        stmt_ms = int(math.ceil((statement_timeout_seconds or self.statement_timeout_seconds) * 1000.0))
+        lock_ms = int(math.ceil((lock_timeout_seconds or self.lock_timeout_seconds) * 1000.0))
         connect_timeout_s = max(1, int(math.ceil(self.connect_timeout_seconds)))
-        options = f"-c statement_timeout={statement_timeout_ms} -c lock_timeout={lock_timeout_ms}"
+        options = f"-c statement_timeout={stmt_ms} -c lock_timeout={lock_ms}"
 
         lock = threading.Lock()
-        outcome: dict[str, Any] = {
-            "status": "pending",
-            "conn": None,
-            "error": None,
-        }
+        outcome: dict[str, Any] = {"status": "pending", "conn": None, "error": None}
         done = threading.Event()
 
         def _worker() -> None:
@@ -363,11 +379,13 @@ class ProjectionStore:
                 can_kwargs = _can_accept_kwargs(self._connect)
                 if can_kwargs:
                     try:
-                        conn = self._connect(
-                            self.dsn,
-                            connect_timeout=connect_timeout_s,
-                            options=options,
-                        )
+                        kw: dict[str, Any] = {
+                            "connect_timeout": connect_timeout_s,
+                            "options": options,
+                        }
+                        if autocommit:
+                            kw["autocommit"] = True
+                        conn = self._connect(self.dsn, **kw)
                     except TypeError as exc:
                         if not _is_signature_mismatch_error(exc, self._connect):
                             raise
@@ -375,9 +393,11 @@ class ProjectionStore:
 
                 if conn is None:
                     conn = self._connect(self.dsn)
+                    if autocommit and hasattr(conn, "autocommit"):
+                        conn.autocommit = True
                     with conn.cursor() as cur:
                         cur.execute(
-                            f"SET statement_timeout = {statement_timeout_ms}; SET lock_timeout = {lock_timeout_ms};"
+                            f"SET statement_timeout = {stmt_ms}; SET lock_timeout = {lock_ms};"
                         )
 
                 with lock:
@@ -405,12 +425,8 @@ class ProjectionStore:
         if not done.wait(timeout=self.connect_timeout_seconds):
             conn_to_close = None
             with lock:
-                if outcome["status"] == "pending":
-                    outcome["status"] = "timed_out"
-                elif outcome["status"] == "success":
-                    outcome["status"] = "timed_out"
-                    conn_to_close = outcome["conn"]
-                    outcome["conn"] = None
+                conn_to_close = outcome["conn"] if outcome["status"] == "success" else None
+                outcome["status"], outcome["conn"] = "timed_out", None
             if conn_to_close is not None:
                 threading.Thread(
                     target=_safe_close_conn,
@@ -437,8 +453,6 @@ class ProjectionStore:
 
         if self.schema != DEFAULT_PROJECTION_SCHEMA:
             raise ValueError("Runtime role upgrade requires the known projection schema")
-        tables = ("controller", "event_receipts", "identity_links", "journeys",
-                  "journey_stages", "loop_runs", "quarantine")
         cur.execute("SELECT oid FROM pg_roles WHERE rolname=%s", (runtime_role,))
         runtime_oid = cur.fetchone()[0]
         cur.execute("SELECT oid, rolname FROM pg_roles WHERE rolname=current_user")
@@ -476,7 +490,7 @@ class ProjectionStore:
         )
         objects = cur.fetchall()
         if any(owner not in (runtime_oid, migration_oid) or not (
-            kind == 'r' and name in tables or kind == 'i' and parent in tables
+            kind == 'r' and name in PROJECTION_TABLES or kind == 'i' and parent in PROJECTION_TABLES
         ) for name, kind, owner, parent in objects):
             raise ValueError("Runtime role upgrade refuses unknown projection objects or owners")
         cur.execute(
@@ -511,12 +525,33 @@ class ProjectionStore:
             cur.execute(pgsql.SQL("ALTER SCHEMA {} OWNER TO {}").format(schema, authority))
         cur.execute(pgsql.SQL("REVOKE CREATE ON SCHEMA {} FROM {} RESTRICT").format(schema, runtime))
 
-    def bootstrap_schema(self, *, runtime_role: str | None = None,
-                         reconcile_runtime: bool = False) -> None:
+    def bootstrap_schema(
+        self,
+        *,
+        runtime_role: str | None = None,
+        reconcile_runtime: bool = False,
+        statement_timeout_seconds: float | None = None,
+        lock_timeout_seconds: float | None = None,
+    ) -> None:
         """Apply the versioned migration explicitly with migration credentials."""
+        from psycopg import sql as pgsql
 
+        stmt_timeout = _validate_timeout(
+            statement_timeout_seconds,
+            name="statement_timeout_seconds",
+            default=self.migration_statement_timeout_seconds,
+        )
+        lk_timeout = _validate_timeout(
+            lock_timeout_seconds,
+            name="lock_timeout_seconds",
+            default=self.migration_lock_timeout_seconds,
+        )
         migration_files = sorted(MIGRATIONS_DIR.glob("*.sql")) if MIGRATIONS_DIR.is_dir() else [INITIAL_MIGRATION_PATH]
-        with self._connect_db() as conn, conn.cursor() as cur:
+        with self._connect_db(
+            statement_timeout_seconds=stmt_timeout,
+            lock_timeout_seconds=lk_timeout,
+            autocommit=True,
+        ) as conn, conn.cursor() as cur:
             if runtime_role is not None:
                 # Refuse elevated runtime identities before any DDL or grants.
                 cur.execute(
@@ -528,11 +563,23 @@ class ProjectionStore:
                     raise ValueError("Projection runtime must be an existing non-admin role")
                 if reconcile_runtime:
                     self._reconcile_runtime_ddl(cur, runtime_role)
+            cur.execute(
+                "SELECT c.relname FROM pg_index i "
+                "JOIN pg_class c ON c.oid = i.indexrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = %s AND NOT i.indisvalid",
+                (self.schema,),
+            )
+            for (idx_name,) in cur.fetchall():
+                cur.execute(pgsql.SQL("REINDEX INDEX CONCURRENTLY {}.{}").format(
+                    pgsql.Identifier(self.schema), pgsql.Identifier(idx_name)
+                ))
             for migration_file in migration_files:
-                cur.execute(migration_file.read_text(encoding="utf-8").replace(DEFAULT_PROJECTION_SCHEMA, self.schema))
+                content = migration_file.read_text(encoding="utf-8").replace(DEFAULT_PROJECTION_SCHEMA, self.schema)
+                for stmt in content.split(";"):
+                    if stmt.strip():
+                        cur.execute(stmt.strip())
             if runtime_role is not None:
-                from psycopg import sql as pgsql
-
                 cur.execute(
                     "SELECT has_schema_privilege(%s, n.oid, 'CREATE') OR "
                     "pg_has_role(%s, n.nspowner, 'MEMBER') OR EXISTS ("
@@ -548,8 +595,7 @@ class ProjectionStore:
                 cur.execute(pgsql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
                     pgsql.Identifier(self.schema), pgsql.Identifier(runtime_role)
                 ))
-                for table in ("controller", "event_receipts", "identity_links", "journeys",
-                              "journey_stages", "loop_runs", "quarantine"):
+                for table in PROJECTION_TABLES:
                     cur.execute(pgsql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON {}.{} TO {}").format(
                         pgsql.Identifier(self.schema), pgsql.Identifier(table),
                         pgsql.Identifier(runtime_role),
@@ -560,11 +606,7 @@ class ProjectionStore:
     ) -> Optional[ControllerStateRow]:
         """Loads controller state row without locking."""
         sql = f"""
-        SELECT controller_id, tenant_scope, environment_scope, checkpoint_seq, source_high_watermark,
-               backlog_count, projection_revision, deployment_sha, mode, status, accepted_live,
-               last_poll_at, last_success_at, last_live_success_at, last_recovery_at,
-               last_backfill_at, last_replay_at, last_failure_at, last_error_message,
-               unresolved_quarantine_count, updated_at
+        SELECT {CONTROLLER_COLUMNS}
         FROM {self.schema}.controller
         WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
         """
@@ -629,14 +671,6 @@ class ProjectionStore:
             )
             return int(cur.fetchone()[0])
 
-        controller_columns = """
-            controller_id, tenant_scope, environment_scope, checkpoint_seq,
-            source_high_watermark, backlog_count, projection_revision,
-            deployment_sha, mode, status, accepted_live, last_poll_at,
-            last_success_at, last_live_success_at, last_recovery_at,
-            last_backfill_at, last_replay_at, last_failure_at,
-            last_error_message, unresolved_quarantine_count, updated_at
-        """
         controller_args = (controller_id, tenant_scope, environment_scope)
         migration_args = (
             migration_controller_id,
@@ -666,7 +700,7 @@ class ProjectionStore:
 
             cur.execute(
                 f"""
-                SELECT {controller_columns}
+                SELECT {CONTROLLER_COLUMNS}
                 FROM {self.schema}.controller
                 WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
                 FOR UPDATE
@@ -693,7 +727,7 @@ class ProjectionStore:
 
             cur.execute(
                 f"""
-                SELECT {controller_columns}
+                SELECT {CONTROLLER_COLUMNS}
                 FROM {self.schema}.controller
                 WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
                 FOR UPDATE

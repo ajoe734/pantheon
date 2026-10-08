@@ -1449,6 +1449,8 @@ def test_projection_store_timeout_configuration_and_validation() -> None:
     assert store.connect_timeout_seconds == 2.0
     assert store.statement_timeout_seconds == 3.0
     assert store.lock_timeout_seconds == 4.0
+    assert store.migration_statement_timeout_seconds == 300.0
+    assert store.migration_lock_timeout_seconds == 30.0
 
     # Validation errors
     for invalid in (0, -1, -0.5, True, False, "invalid", float("nan"), float("inf")):
@@ -1460,6 +1462,10 @@ def test_projection_store_timeout_configuration_and_validation() -> None:
             ProjectionStore(dsn, statement_timeout_seconds=invalid, connect=lambda *a, **kw: None)
         with pytest.raises(ValueError):
             ProjectionStore(dsn, lock_timeout_seconds=invalid, connect=lambda *a, **kw: None)
+        with pytest.raises(ValueError):
+            ProjectionStore(dsn, migration_statement_timeout_seconds=invalid, connect=lambda *a, **kw: None)
+        with pytest.raises(ValueError):
+            ProjectionStore(dsn, migration_lock_timeout_seconds=invalid, connect=lambda *a, **kw: None)
 
 
 def test_projection_store_statement_timeout_cancels_long_query(postgres_dsn: str) -> None:
