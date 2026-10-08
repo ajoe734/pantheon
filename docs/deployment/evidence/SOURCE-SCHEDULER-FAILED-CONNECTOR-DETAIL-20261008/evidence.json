@@ -23,5 +23,11 @@
     "head_focused": "same selection on head: 4 passed",
     "head_related_suites": "15 Source test files that reference the controller state, worker or readback: 285 passed, 25 failed on head; the same 25 node ids fail on base 84dad5f65 with the change stashed (identical sorted lists). Sampled causes are local-environment: REGISTRY_STORE_BACKEND unset outside the service conftest and 401 from runtime JWT settings."
   },
-  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending."
+  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending.",
+  "delivery_verification": {
+    "agent": "Claude",
+    "head": "bc281cfe9688c30ab2a11bb6ac013ac2f2ef41a1",
+    "command": "python -m pytest -q services/source_ingestion/tests/test_controller_worker.py",
+    "result": "111 passed in 31.45s (includes test_schedule_summary_bounds_failed_connectors_and_survives_resummary, test_main_failure_line_names_failed_connectors, test_main_failure_line_is_unchanged_without_schedule_context)"
+  }
 }
