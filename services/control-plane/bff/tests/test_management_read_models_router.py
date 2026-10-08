@@ -176,8 +176,11 @@ class MockManagementReadStore:
     def list_evidence_records(self) -> List[Dict[str, Any]]:
         return self.evidence_records
 
-    def list_personas(self) -> List[Dict[str, Any]]:
+    def list_personas(self, **_kwargs: Any) -> List[Dict[str, Any]]:
         return self.personas
+
+    def list_persona_league(self, **_kwargs: Any) -> List[Dict[str, Any]]:
+        return []
 
     def get_persona(self, persona_id: str) -> Optional[Dict[str, Any]]:
         for p in self.personas:

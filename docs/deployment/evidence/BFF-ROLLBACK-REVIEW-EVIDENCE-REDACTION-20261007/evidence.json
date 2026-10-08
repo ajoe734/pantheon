@@ -1,0 +1,83 @@
+{
+  "task": "BFF-ROLLBACK-REVIEW-EVIDENCE-REDACTION-20261007",
+  "base_sha": "d5ac404707cc7b52199d38f22e74a64e8940699f",
+  "initial_base_sha": "867e829cacc887aed82dbe0ae4246a733343a05a",
+  "head_sha": "see PR head (commit bbce9f8f6 plus this evidence commit)",
+  "changed_files": [
+    "services/control-plane/bff/governance/router.py",
+    "services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py",
+    "docs/bff/PKT-008-rollback-review.md",
+    "docs/deployment/evidence/BFF-ROLLBACK-REVIEW-EVIDENCE-REDACTION-20261007/evidence.json"
+  ],
+  "diff_budget": {
+    "change_class": "corrective",
+    "net_prod_line_budget": 10,
+    "table": [
+      "| class | added | deleted | net |",
+      "|---|---|---|---|",
+      "| production | +4 | -0 | +4 |",
+      "| test | +208 | -0 | +208 |",
+      "| docs/evidence | +84 | -0 | +84 |"
+    ]
+  },
+  "per_test_outcomes": {
+    "base_run": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py -k test_get_rollback_review",
+      "exit_code": 1,
+      "summary": "6 failed, 1 passed, 37 deselected, 3 warnings",
+      "cases": {
+        "test_get_rollback_review_redacts_for_low_capability_identity": "FAILED (KeyError: 'redacted')",
+        "test_get_rollback_review_redacts_for_viewer_identity": "FAILED (KeyError: 'redacted')",
+        "test_get_rollback_review_passes_through_for_full_capability_identity": "FAILED (KeyError: 'redacted_evidence_count')",
+        "test_get_rollback_review_fails_closed_when_capabilities_unresolvable": "FAILED (KeyError: 'redacted')",
+        "test_get_rollback_review_without_trigger_evidence": "FAILED (KeyError: 'redacted_evidence_count')",
+        "test_get_rollback_review_with_empty_evidence_refs": "FAILED (KeyError: 'redacted_evidence_count')",
+        "test_get_rollback_review_unknown_id_returns_404": "PASSED"
+      }
+    },
+    "head_run": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py -k test_get_rollback_review",
+      "exit_code": 0,
+      "summary": "7 passed, 37 deselected, 3 warnings",
+      "cases": {
+        "test_get_rollback_review_redacts_for_low_capability_identity": "PASSED",
+        "test_get_rollback_review_redacts_for_viewer_identity": "PASSED",
+        "test_get_rollback_review_passes_through_for_full_capability_identity": "PASSED",
+        "test_get_rollback_review_fails_closed_when_capabilities_unresolvable": "PASSED",
+        "test_get_rollback_review_without_trigger_evidence": "PASSED",
+        "test_get_rollback_review_with_empty_evidence_refs": "PASSED",
+        "test_get_rollback_review_unknown_id_returns_404": "PASSED"
+      }
+    }
+  },
+  "validation_commands": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py services/control-plane/bff/tests/test_governance_router.py services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py services/control-plane/bff/tests/test_review_queue_evidence_redaction.py services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py services/control-plane/bff/tests/test_governance_owner_unconfigured_503.py services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "base_exit_code": 0,
+      "base_result": "188 passed, 3 warnings in 166.21s",
+      "head_exit_code": 0,
+      "head_result": "195 passed, 3 warnings in 164.50s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_pkt008_rollback_review_contract.py",
+      "base_exit_code": 0,
+      "base_result": "1 passed in 3.45s",
+      "head_exit_code": 0,
+      "head_result": "1 passed in 2.71s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/smoke_test.py -k test_rollback_review_composed_view",
+      "base_exit_code": 0,
+      "base_result": "1 passed, 25 deselected, 3 warnings in 12.34s",
+      "head_exit_code": 0,
+      "head_result": "1 passed, 25 deselected, 3 warnings in 11.58s"
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base 867e829cacc887aed82dbe0ae4246a733343a05a --head HEAD",
+      "base_exit_code": 0,
+      "head_exit_code": 0
+    }
+  ],
+  "telemetry_alert_and_risk_control_event_note": "No SOURCE_TYPE_TO_EVIDENCE_KIND entries exist in models.py for TelemetryAlert or RiskControlEvent. In PKT-008 example ref_ids ev-rb-001 (TelemetryAlert) and ev-rb-002 (RiskControlEvent), neither resolves to an evidence kind; both are withheld for every identity with required_capability='unknown' and reason='unresolved_evidence_kind'. This is intentional out-of-scope behavior.",
+  "pre_existing_test_note": "test_governance_approval_queue_redacted_count_scoped_to_returned_page was recorded as failing in the brief on earlier base 82813ad67; on base 867e829ca (origin/dev tip containing BFF-GOV-REDACTION-SINGLE-PATH-20261007) it passes via monkeypatch. All 188 existing tests passed on base and all 195 pass at head."
+}

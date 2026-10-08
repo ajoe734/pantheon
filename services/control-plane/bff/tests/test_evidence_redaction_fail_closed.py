@@ -17,11 +17,11 @@ This file:
   direct callers of ``redact_evidence_refs`` audited for this task:
   ``research/service.py`` x3 -- KW03 evidence list/detail/linked-decisions
   -- ``personas/service.py`` PM12 quarterly evidence,
-  ``assistant/management_service.py`` NL-ask evidence grounding,
-  ``management_read_models/service.py`` management evidence list, and
-  ``governance/service.py`` x2 -- consult-memo and mutation-review
-  evidence) with a low-capability identity, a full-capability identity,
-  and a capability-resolution failure.
+  ``assistant/management_service.py`` NL-ask evidence grounding, and
+  ``management_read_models/service.py`` management evidence list) plus the
+  governance consult-memo and mutation-review surfaces (via
+  ``safe_redact_evidence_refs``) with a low-capability identity, a
+  full-capability identity, and a capability-resolution failure.
 
 Identities are built through ``OperatorIdentity`` (never ``SimpleNamespace``)
 via the real ``auth.policy`` stub-token identity extractor, so these are the
@@ -47,6 +47,7 @@ from services.control_plane.bff.models import (
     OperatorIdentity,
     fail_closed_redacted_refs,
     redact_evidence_refs,
+    safe_redact_evidence_refs,
 )
 
 
@@ -936,7 +937,7 @@ def test_mutation_review_evidence_fails_closed_when_capabilities_unresolvable() 
 
 # ===========================================================================
 # 8. Wrapper-caller surface: governance/service.py committee_projection via
-#    the real governance router. Unlike callers 1-8 above (which all call
+#    the real governance router. Unlike callers 1-6 above (which all call
 #    ``redact_evidence_refs`` directly), this surface goes through the
 #    ``safe_redact_evidence_refs``/``safe_redact_scalar_ref`` wrappers in
 #    models.py, so it exercises the wrapper's own capability-resolution
@@ -1023,3 +1024,101 @@ def test_committee_projection_wrapper_fails_closed_when_capabilities_unresolvabl
         "the wrapper's own capability-resolution-failure path must report "
         "redaction_policy_unavailable, distinct from insufficient_capability"
     )
+
+
+# ===========================================================================
+# 9. Single fail-closed path: safe_redact_evidence_refs calls redact_fn once
+#    with the resolved kwargs and never retries with different inputs.
+# ===========================================================================
+
+def test_safe_redact_does_not_retry_redactor_on_type_error() -> None:
+    calls: list[dict] = []
+
+    def _raises(identity: Any, refs: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs)
+        raise TypeError("unexpected signature")
+
+    refs, count = safe_redact_evidence_refs(
+        None,
+        ["ref-plain-1", "ref-plain-2"],
+        redact_fn=_raises,
+        capabilities_fn=lambda identity: ["policy.read"],
+        default_kind="metric",
+        kind_map={"ref-plain-1": "policy", "ref-plain-2": "policy"},
+    )
+
+    assert len(calls) == 1
+    assert count == 2
+    assert len(refs) == 2
+    for ref in refs:
+        ref = ref if isinstance(ref, dict) else ref.model_dump()
+        assert ref["redacted"] is True
+        assert ref["reason"] == "redaction_policy_unavailable"
+        assert ref["required_capability"] == "policy.read"
+
+
+def test_safe_redact_narrow_redactor_cannot_disclose_by_dropping_kind_map() -> None:
+    def _narrow(identity: Any, refs: Any, *, capabilities: Any, default_kind: Any = None) -> Any:
+        return redact_evidence_refs(identity, refs, capabilities, default_kind=default_kind)
+
+    refs, count = safe_redact_evidence_refs(
+        None,
+        ["ref-plain-1"],
+        redact_fn=_narrow,
+        capabilities_fn=lambda identity: ["metric.read"],
+        default_kind="metric",
+        kind_map={"ref-plain-1": "policy"},
+    )
+
+    assert count == 1
+    ref = refs[0] if isinstance(refs[0], dict) else refs[0].model_dump()
+    assert ref["redacted"] is True
+    assert ref["reason"] == "redaction_policy_unavailable"
+    assert ref["required_capability"] == "policy.read"
+
+
+def _raising_redactor_client(store: Any) -> TestClient:
+    def _raises(identity: Any, refs: Any, **kwargs: Any) -> Any:
+        raise TypeError("unexpected signature")
+
+    app = FastAPI()
+    app.include_router(
+        create_governance_router(
+            get_read_store=lambda: store,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+            redact_evidence_refs=_raises,
+            capabilities_for_identity=auth_policy.capabilities_for_identity,
+        )
+    )
+    return TestClient(app)
+
+
+def _memo_store_for_raising_redactor() -> Any:
+    from services.control_plane.bff.test_cw04_redteam_memo_contract import _MemoReadStore
+
+    return _MemoReadStore("/tmp/unused-consult-memo-store.json")
+
+
+@pytest.mark.parametrize(
+    ("store_factory", "path", "field"),
+    [
+        (_CommitteeReadStore, "/api/v1/committees/committee-fc-001", "linked_evidence"),
+        (_memo_store_for_raising_redactor, f"/api/v1/consult/memos/{_CONSULT_MEMO_ID}", "evidence_refs"),
+        (_MutationReviewStore, "/api/v1/operator/mutation-review/evo-fc-001", "evidence_refs"),
+    ],
+)
+def test_governance_routes_redact_all_refs_when_redactor_raises(
+    store_factory: Any, path: str, field: str
+) -> None:
+    with _stub_auth_env():
+        response = _raising_redactor_client(store_factory()).get(
+            path, headers={"Authorization": FULL_CAPABILITY_AUTH}
+        )
+    assert response.status_code == 200, response.text
+    refs = response.json()[field]
+    assert refs, "seeded evidence must not be empty"
+    assert all(ref.get("redacted") is True for ref in refs)
+    assert all(ref.get("reason") == "redaction_policy_unavailable" for ref in refs)

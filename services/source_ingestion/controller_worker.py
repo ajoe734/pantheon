@@ -23,6 +23,7 @@ from .controller_state import (
     ControllerStateStore,
     parse_utc,
     summarize_actual_readback,
+    summarize_schedule,
     utc_now,
 )
 from .controller_auth import load_controller_token
@@ -1865,6 +1866,9 @@ def main() -> int:
             print(_canonical_json({"tick": tick, **result}), flush=True)
         except Exception as exc:
             last_tick_failed = True
+            context = getattr(exc, "context", None)
+            schedule = context.get("schedule") if isinstance(context, Mapping) else None
+            failed_connectors = summarize_schedule(schedule)["failed"] if isinstance(schedule, Mapping) else []
             print(
                 _canonical_json(
                     {
@@ -1873,6 +1877,7 @@ def main() -> int:
                         "stage": getattr(exc, "stage", "controller"),
                         "error": f"{type(exc).__name__}: {exc}",
                         "state_sequence_no": state.sequence_no,
+                        **({"failed_connectors": failed_connectors} if failed_connectors else {}),
                     }
                 ),
                 flush=True,
