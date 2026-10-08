@@ -20,6 +20,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import signal
 import subprocess
@@ -635,6 +636,21 @@ def _teardown_project(
     }
 
 
+# Healthy services can still fail a loop (e.g. an owner answering 409), so a
+# failed run also keeps every service's error-signal lines, bounded per service.
+SERVICE_ERROR_SCAN_TAIL = "1000"
+SERVICE_ERROR_LINES_PER_SERVICE = 40
+# The preview worker logs JSON tick results with no ERROR prefix, so a non-empty
+# "errors"/"error" or a non-zero "failed" counts; idle ticks ("failed": 0,
+# "errors": []) must not.
+SERVICE_ERROR_LINE = re.compile(
+    r"ERROR|CRITICAL|Traceback|Exception|\b\w+Error\b"
+    r"|HTTP/\d(?:\.\d)?\" [45]\d\d"
+    r"|\"errors?\":\s*(?:\[\s*[^\s\]]|\"[^\"]|\{\s*[^\s}])"
+    r"|\"failed\":\s*[1-9]"
+)
+
+
 def _capture_failure_diagnostics(
     project: str,
     compose_files: list[str],
@@ -659,6 +675,7 @@ def _capture_failure_diagnostics(
 
     ps = _capture("compose-ps.txt", "ps", "-a", "--format", "json")
     unhealthy: list[str] = []
+    services: set[str] = set()
     for line in ps.stdout.splitlines():
         try:
             row = json.loads(line)
@@ -667,6 +684,7 @@ def _capture_failure_diagnostics(
         for item in row if isinstance(row, list) else [row]:
             if not isinstance(item, Mapping):
                 continue
+            services.add(str(item.get("Service")))
             health = str(item.get("Health") or "")
             if str(item.get("State")) != "running" or health not in ("", "healthy"):
                 unhealthy.append(str(item.get("Service")))
@@ -675,6 +693,24 @@ def _capture_failure_diagnostics(
         _capture(
             f"logs-{service}.txt", "logs", "--no-color", "--tail", "200", service
         )
+    error_sections: list[str] = []
+    for service in sorted(name for name in services if name and name != "None"):
+        proc = subprocess.run(
+            _compose_command(
+                project, compose_files, *COMPOSE_ALL_PROFILES,
+                "logs", "--no-color", "--tail", SERVICE_ERROR_SCAN_TAIL, service,
+            ),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=dict(compose_env),
+        )
+        hits = [line for line in proc.stdout.splitlines() if SERVICE_ERROR_LINE.search(line)]
+        error_sections.append(f"## {service}: {len(hits)} error-signal line(s)")
+        error_sections.extend(hits[-SERVICE_ERROR_LINES_PER_SERVICE:])
+    (out_dir / "service-error-lines.txt").write_text(
+        "\n".join(error_sections) + "\n", encoding="utf-8"
+    )
     return {"diagnostics_dir": str(out_dir), "captured_services": unhealthy}
 
 
