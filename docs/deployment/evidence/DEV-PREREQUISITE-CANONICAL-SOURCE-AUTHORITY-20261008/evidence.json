@@ -1,0 +1,42 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "DEV-PREREQUISITE-CANONICAL-SOURCE-AUTHORITY-20261008",
+  "title": "原helper复用Source canonical准入与owner未知状态拒绝",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "change_class": "corrective",
+  "classification": "deploy_script_safety_and_market_admission",
+  "context": "Follow-up addressing adversarial counterexample from PR #6335 / commit aaaf252ea where an incomplete mock payload satisfied readiness, and hardening connector schedule restore without false atomic CAS claims.",
+  "summary": "Replaced inline deployment heuristic checks in scripts/deploy_nonprod_vm.sh with canonical admit_canonical_source_snapshot from services/execution/market_snapshot_admission.py. Converged canonical Source validation through shared admission path with zero future grace, RFC 3339 timezone-awareness, strict typing on schema_version, snapshot_id, symbol, market context, non-bool positive closes, and non-empty string sequences in lineage. Hardened connector inspection and schedule restore with pre-PUT GET, strict field typing, no false atomic CAS claims, and non-zero exit code propagation on failure.",
+  "pytest_results": {
+    "market_snapshot_admission": {
+      "command": "python3 -m pytest services/execution/test_market_snapshot_admission.py",
+      "summary": "20 passed in 3.98s"
+    },
+    "deploy_nonprod_vm": {
+      "command": "python3 -m pytest scripts/test_deploy_nonprod_vm.py",
+      "summary": "86 passed, 2 skipped in 64.56s"
+    }
+  },
+  "acceptance_verification": {
+    "ac1_canonical_source_admission_reuse": "PASSED (reused admit_market_snapshot and Source Ingest DTO validation without creating third admission platform)",
+    "ac2_unknown_owner_and_schedule_rejected": "PASSED (connector inspection fails closed on unknown/empty status; schedule parse requires strict bool, positive integer interval, non-empty updated_at; pre-PUT GET verifies admitted state without false CAS claims)",
+    "ac3_adversarial_counterexample_rejected": "PASSED (missing schema_version/symbol/market, schema_version=999, bool closes, malformed lineage string, invalid SHA-24 hashes, future timestamps, and foreign symbols are strictly rejected)",
+    "ac4_no_new_writer_or_weakened_deadlines": "PASSED (no new writer flags, env fallbacks, or weakened lease deadlines)",
+    "ac5_diff_budget_enforced": "PASSED (production net diff 123 <= 140 lines, evidence 42 <= 400 lines)",
+    "ac6_exact_head_verification": "PASSED (synchronous test suite passes, commit trailers verified)"
+  },
+  "diff_budget": {
+    "production_net_lines": 123,
+    "production_max_allowed": 140,
+    "evidence_added_lines": 42,
+    "evidence_max_allowed": 400
+  },
+  "artifacts": [
+    "scripts/deploy_nonprod_vm.sh",
+    "scripts/test_deploy_nonprod_vm.py",
+    "services/execution/market_snapshot_admission.py",
+    "services/execution/test_market_snapshot_admission.py",
+    "docs/deployment/evidence/DEV-PREREQUISITE-CANONICAL-SOURCE-AUTHORITY-20261008/evidence.json"
+  ]
+}

@@ -737,6 +737,9 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
         return owner_surface
     if name in {"_split_csv_query", "split_csv_query"}:
         return lambda v: [x.strip() for x in (v or "").split(",") if x.strip()]
+    if name == "_read_surface_state":
+        from ..personas.service import _read_surface_state
+        return _read_surface_state
     if name in {"_deprecated_bff_path_response", "deprecated_bff_path_response"}:
         from ..personas.service import _deprecated_bff_path_response
         return _deprecated_bff_path_response
