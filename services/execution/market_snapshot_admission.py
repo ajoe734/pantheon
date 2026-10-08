@@ -389,6 +389,9 @@ def _tw_session_close_utc(trade_date: date) -> datetime:
     return local_close.astimezone(timezone.utc)
 
 
+MAX_TW_REFRESH_RECEIPT_AGE_SECONDS = 14 * 86400  # 14-day hard ceiling
+
+
 def evaluate_taiwan_market_freshness(
     *,
     event_time_dt: datetime,
@@ -422,14 +425,6 @@ def evaluate_taiwan_market_freshness(
     if refresh_receipt_dt > now_dt:
         return False, "market_input_invalid", "refresh receipt observed_at is in the future"
 
-    refresh_age_seconds = (now_dt - refresh_receipt_dt).total_seconds()
-    if refresh_age_seconds > max_refresh_age_seconds:
-        return (
-            False,
-            "market_input_stale_refresh",
-            f"refresh receipt is {int(refresh_age_seconds)}s old; maximum is {max_refresh_age_seconds}s",
-        )
-
     taipei_event_date = event_time_dt.astimezone(TAIPEI_TZ).date()
     taipei_now_date = now_dt.astimezone(TAIPEI_TZ).date()
 
@@ -450,6 +445,120 @@ def evaluate_taiwan_market_freshness(
                 f"official Taiwan calendar evidence validation failed: {val_err}",
             )
         validated_evidence = val_norm
+
+    def _get_day_status(check_date: date) -> Tuple[str, Optional[str]]:
+        if check_date.weekday() >= 5:
+            return "weekend", None
+
+        c_iso = check_date.isoformat()
+
+        if holiday_lookup is not None:
+            try:
+                evidence_rec = holiday_lookup(c_iso)
+            except Exception as exc:
+                return (
+                    "unverifiable",
+                    f"official Taiwan market-session evidence for {c_iso} failed lookup: {exc}",
+                )
+            if evidence_rec is CALENDAR_EVIDENCE_UNVERIFIABLE or evidence_rec is None:
+                return (
+                    "unverifiable",
+                    f"official Taiwan market-session evidence for {c_iso} is missing or unverifiable",
+                )
+            h_ok, h_err, h_norm = validate_taiwan_calendar_evidence(
+                evidence_rec,
+                trusted_pins=trusted_pins,
+                now_dt=now_dt,
+            )
+            if not h_ok or h_norm is None:
+                return (
+                    "unverifiable",
+                    f"official Taiwan market-session evidence for {c_iso} validation failed: {h_err}",
+                )
+            if c_iso in h_norm["holidays"]:
+                return "holiday", None
+            elif c_iso in h_norm["trading_days"]:
+                return "trading_day", None
+            else:
+                return (
+                    "unverifiable",
+                    f"official Taiwan market-session evidence missing explicit session record for weekday {c_iso}",
+                )
+
+        if validated_evidence is not None:
+            c_start = validated_evidence.get("coverage_start")
+            c_end = validated_evidence.get("coverage_end")
+            if c_start and c_iso < c_start:
+                return (
+                    "unverifiable",
+                    f"official Taiwan market-session evidence for {c_iso} is before coverage_start {c_start}",
+                )
+            if c_end and c_iso > c_end:
+                return (
+                    "unverifiable",
+                    f"official Taiwan market-session evidence for {c_iso} is after coverage_end {c_end}",
+                )
+
+            if c_iso in validated_evidence["holidays"]:
+                return "holiday", None
+            elif c_iso in validated_evidence["trading_days"]:
+                return "trading_day", None
+            else:
+                return (
+                    "unverifiable",
+                    f"official Taiwan market-session evidence missing explicit session record for weekday {c_iso}",
+                )
+
+        return (
+            "unverifiable",
+            f"no official Taiwan calendar evidence provided for completed weekday session {c_iso}",
+        )
+
+    refresh_age_seconds = (now_dt - refresh_receipt_dt).total_seconds()
+    if refresh_age_seconds > MAX_TW_REFRESH_RECEIPT_AGE_SECONDS:
+        return (
+            False,
+            "market_input_stale_refresh",
+            f"refresh receipt is {int(refresh_age_seconds)}s old; maximum is 14 days ({MAX_TW_REFRESH_RECEIPT_AGE_SECONDS}s)",
+        )
+
+    receipt_is_fresh = False
+    if refresh_age_seconds <= max_refresh_age_seconds:
+        receipt_is_fresh = True
+    else:
+        candidate_date = (
+            taipei_now_date
+            if now_dt >= _tw_session_close_utc(taipei_now_date)
+            else taipei_now_date - timedelta(days=1)
+        )
+        curr = candidate_date
+        latest_session_close: Optional[datetime] = None
+        search_failed = False
+        while curr >= candidate_date - timedelta(days=14):
+            if curr.weekday() >= 5:
+                curr -= timedelta(days=1)
+                continue
+            st, _ = _get_day_status(curr)
+            if st == "holiday":
+                curr -= timedelta(days=1)
+                continue
+            elif st == "trading_day":
+                latest_session_close = _tw_session_close_utc(curr)
+                break
+            else:
+                search_failed = True
+                break
+
+        if not search_failed and latest_session_close is not None:
+            if refresh_receipt_dt >= latest_session_close:
+                receipt_is_fresh = True
+
+    if not receipt_is_fresh:
+        return (
+            False,
+            "market_input_stale_refresh",
+            f"refresh receipt is {int(refresh_age_seconds)}s old; maximum is {max_refresh_age_seconds}s",
+        )
 
     event_date_iso = taipei_event_date.isoformat()
     if taipei_event_date.weekday() >= 5:
@@ -530,104 +639,29 @@ def evaluate_taiwan_market_freshness(
                 cursor += timedelta(days=1)
                 continue
 
-        # For any completed weekday session in the gap (or today after 13:30),
-        # an explicit validated session record (holiday/closure) must be present.
-        if holiday_lookup is not None:
-            try:
-                evidence_rec = holiday_lookup(c_iso)
-            except Exception as exc:
+        st, err = _get_day_status(cursor)
+        if st == "holiday":
+            cursor += timedelta(days=1)
+            continue
+        elif st == "trading_day":
+            if cursor < taipei_now_date:
                 return (
                     False,
-                    "market_input_calendar_unverifiable",
-                    f"official Taiwan market-session evidence for {c_iso} failed lookup: {exc}",
+                    "market_input_stale",
+                    f"a newer official Taiwan session closed on {c_iso}",
                 )
-            if evidence_rec is CALENDAR_EVIDENCE_UNVERIFIABLE or evidence_rec is None:
-                return (
-                    False,
-                    "market_input_calendar_unverifiable",
-                    f"official Taiwan market-session evidence for {c_iso} is missing or unverifiable",
-                )
-            # Full evidence contract validation (no authority-only bypass)
-            h_ok, h_err, h_norm = validate_taiwan_calendar_evidence(
-                evidence_rec,
-                trusted_pins=trusted_pins,
-                now_dt=now_dt,
+            today_close = _tw_session_close_utc(cursor)
+            return (
+                False,
+                "market_input_stale",
+                f"a newer official Taiwan session closed at {today_close.isoformat()}",
             )
-            if not h_ok or h_norm is None:
-                return (
-                    False,
-                    "market_input_calendar_unverifiable",
-                    f"official Taiwan market-session evidence for {c_iso} validation failed: {h_err}",
-                )
-            if c_iso in h_norm["holidays"]:
-                cursor += timedelta(days=1)
-                continue
-            elif c_iso in h_norm["trading_days"]:
-                if cursor < taipei_now_date:
-                    return (
-                        False,
-                        "market_input_stale",
-                        f"a newer official Taiwan session closed on {c_iso}",
-                    )
-                today_close = _tw_session_close_utc(cursor)
-                return (
-                    False,
-                    "market_input_stale",
-                    f"a newer official Taiwan session closed at {today_close.isoformat()}",
-                )
-            else:
-                return (
-                    False,
-                    "market_input_calendar_unverifiable",
-                    f"official Taiwan market-session evidence missing explicit session record for weekday {c_iso}",
-                )
-
-        if validated_evidence is not None:
-            c_start = validated_evidence.get("coverage_start")
-            c_end = validated_evidence.get("coverage_end")
-            if c_start and c_iso < c_start:
-                return (
-                    False,
-                    "market_input_calendar_unverifiable",
-                    f"official Taiwan market-session evidence for {c_iso} is before coverage_start {c_start}",
-                )
-            if c_end and c_iso > c_end:
-                return (
-                    False,
-                    "market_input_calendar_unverifiable",
-                    f"official Taiwan market-session evidence for {c_iso} is after coverage_end {c_end}",
-                )
-
-            if c_iso in validated_evidence["holidays"]:
-                cursor += timedelta(days=1)
-                continue
-            elif c_iso in validated_evidence["trading_days"]:
-                if cursor < taipei_now_date:
-                    return (
-                        False,
-                        "market_input_stale",
-                        f"a newer official Taiwan session closed on {c_iso}",
-                    )
-                today_close = _tw_session_close_utc(cursor)
-                return (
-                    False,
-                    "market_input_stale",
-                    f"a newer official Taiwan session closed at {today_close.isoformat()}",
-                )
-            else:
-                return (
-                    False,
-                    "market_input_calendar_unverifiable",
-                    f"official Taiwan market-session evidence missing explicit session record for weekday {c_iso}",
-                )
-
-        # No calendar_evidence and no holiday_lookup provided for this completed weekday:
-        # Fails closed as market_input_calendar_unverifiable (stale is reserved for explicit validated trading sessions).
-        return (
-            False,
-            "market_input_calendar_unverifiable",
-            f"no official Taiwan calendar evidence provided for completed weekday session {c_iso}",
-        )
+        else:
+            return (
+                False,
+                "market_input_calendar_unverifiable",
+                err,
+            )
 
     return True, None, None
 
