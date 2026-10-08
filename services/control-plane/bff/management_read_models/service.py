@@ -68,7 +68,10 @@ from services.control_plane.bff.models import (
     redact_evidence_refs,
 )
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeoutError
-from services.control_plane.bff.governance.human_inbox import _build_persona_readiness_items
+from services.control_plane.bff.governance.human_inbox import (
+    _build_persona_readiness_items,
+    _human_inbox_persona_blocking_reasons,
+)
 from services.control_plane.bff.governance.service import human_inbox_surface_timeout_seconds
 from services.control_plane.bff.management_read_models.models import ManagementObservation
 
@@ -3525,14 +3528,6 @@ class ManagementService:
                             "source": "bff_composed",
                             "snapshot_at": snap,
                         }
-                        try:
-                            from services.control_plane.bff.governance.human_inbox import (
-                                _human_inbox_persona_blocking_reasons,
-                            )
-                        except ImportError:
-                            from governance.human_inbox import (  # type: ignore[no-redef]
-                                _human_inbox_persona_blocking_reasons,
-                            )
                         for p in personas:
                             if isinstance(p, dict) and bool(p.get("human_needed") or p.get("humanNeeded")):
                                 p_id = str(p.get("persona_id") or p.get("id") or "")

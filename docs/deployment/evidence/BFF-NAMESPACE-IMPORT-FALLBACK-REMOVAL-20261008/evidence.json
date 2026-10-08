@@ -1,0 +1,14 @@
+{
+  "task_id": "BFF-NAMESPACE-IMPORT-FALLBACK-REMOVAL-20261008",
+  "changes": [
+    {"file": "services/control-plane/bff/events/router.py", "change": "auth.policy import is unconditional; removed ImportError fallback that set _auth_bff_me_tenant_payload/_auth_get_session_state to None. Removed the `_auth_get_session_state is not None` guard and the `if fn is not None` branch (unreachable: fn = tenant_payload_fn or _auth_bff_me_tenant_payload is always callable), so tenant/session resolution can no longer be silently skipped."},
+    {"file": "services/control-plane/bff/management_read_models/service.py", "change": "_human_inbox_persona_blocking_reasons imported at module top from services.control_plane.bff.governance.human_inbox; removed bare governance.human_inbox fallback."}
+  ],
+  "tests": {
+    "scripts/test_bff_package_boundary_prerequisite.py": "9 passed, no allowlist (includes test_internal_imports_do_not_have_namespace_fallbacks and test_declared_sources_use_only_canonical_internal_imports)",
+    "bff events + management_read_models related suites (18 files)": "411 passed, 1 skipped, 1 failed",
+    "pre_existing_failure": "tests/test_main_composition_seam_extraction_005.py::test_zero_duplicate_definitions_ast_readback fails identically on the base tree (missing _resolve_final_idempotency_key in management_service.py); unrelated to this change, not touched"
+  },
+  "test_expectation_changes": [],
+  "assertions_weakened": false
+}
