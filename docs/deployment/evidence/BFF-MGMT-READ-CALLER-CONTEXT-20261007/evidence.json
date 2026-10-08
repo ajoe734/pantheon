@@ -100,6 +100,7 @@
     "command": "python -m pytest <each file> -q --tb=short, in separate fresh processes",
     "base_log_directory": "/tmp/pi-caller-context-validation/base",
     "head_log_directory": "/tmp/pi-caller-context-validation/head",
+    "post_current_dev_integration": "48 passed after integrating dev 269c32c4: timeout/capacity, Persona owner contract, Human Inbox B3; no additional skips or failures.",
     "results": [
       {"suite": "tests/test_management_read_timeout_and_capacity.py", "base": "5 passed; new regression separately fails", "head": "6 passed"},
       {"suite": "tests/test_persona_create_owner_contract.py", "base": "37 passed", "head": "37 passed"},
