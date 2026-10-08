@@ -1,0 +1,53 @@
+{
+  "task_id": "DEV-COMPOSE-JWT-FAIL-CLOSED-20261008",
+  "change_class": "corrective",
+  "net_prod_line_budget": 5,
+  "summary": "Make docker-compose.yml governance and operator-bff PANTHEON_GOVERNANCE_JWT_SECRET fail closed (empty when unset), document explicit secret in .env.example, fix test_stage_promotion_compose.py expectations to match canonical fail-closed compose and consolidated deploy helper, and verify rendered compose for dev profiles.",
+  "acceptance_criteria": {
+    "ac1_fail_closed": "No service in docker-compose.yml verifies or signs JWTs with a published default secret; PANTHEON_GOVERNANCE_JWT_SECRET for governance and operator-bff resolves only from explicit environment and is empty (fail closed) when unset.",
+    "ac2_env_example": "Local full-stack reproduction that needs the secret gets it from explicit environment documented in .env.example; nothing in the repository supplies a usable default JWT secret.",
+    "ac3_test_passed": "services/runtime-manager/test_stage_promotion_compose.py passes; the deploy canary test checks that every rollout path in scripts/deploy_nonprod_vm.sh goes through with_dev_bff_runtime_env and that the helper sets PANTHEON_CANARY_EXECUTION_ENABLED=false instead of counting literal occurrences.",
+    "ac4_deciding_commits_classified": "Each changed test expectation is classified in the evidence with its deciding commit (442327f5b added the published default and a4dcf76ce consolidated the deploy environment into the shared helper).",
+    "ac5_rendered_compose_dev_profiles": "Rendered compose for the dev profiles still starts governance and operator-bff with the secret the deploy script passes (PANTHEON_DEV_BFF_JWT_SECRET) and the evidence shows the rendered values with the secret redacted."
+  },
+  "triage_classifications": {
+    "test_dev_compose_wires_shared_jwt_verification_and_fail_closed_switches": {
+      "file": "services/runtime-manager/test_stage_promotion_compose.py",
+      "classification": "intended_change",
+      "deciding_commit": "442327f5b",
+      "decision": "Commit 442327f5b introduced a fallback to a published default secret (pantheon-local-governance-jwt-secret) in docker-compose.yml for governance and operator-bff. The secret is now made fail-closed (${PANTHEON_GOVERNANCE_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}). The test expectation was updated from the stale 3b9336b0d assertion (${PANTHEON_BFF_JWT_SECRET:-}) to assert the canonical fail-closed expression without published defaults for both governance and operator-bff."
+    },
+    "test_dev_deploy_script_explicitly_keeps_canary_disabled": {
+      "file": "services/runtime-manager/test_stage_promotion_compose.py",
+      "classification": "intended_change",
+      "deciding_commit": "a4dcf76ce",
+      "decision": "Commit a4dcf76ce consolidated the dev deployment runtime environment into the shared with_dev_bff_runtime_env helper, eliminating duplicate inline environment exports and leaving exactly 1 occurrence of PANTHEON_CANARY_EXECUTION_ENABLED=false in scripts/deploy_nonprod_vm.sh. The test was updated to verify that with_dev_bff_runtime_env explicitly sets PANTHEON_CANARY_EXECUTION_ENABLED=false and that each dev rollout path (root and bff) executes through with_dev_bff_runtime_env."
+    }
+  },
+  "rendered_compose_verification": {
+    "profile": "root",
+    "unset_environment": {
+      "governance": {
+        "PANTHEON_GOVERNANCE_JWT_SECRET": ""
+      },
+      "operator-bff": {
+        "PANTHEON_GOVERNANCE_JWT_SECRET": ""
+      },
+      "status": "empty_fail_closed"
+    },
+    "deploy_script_environment": {
+      "supplied_secret": "[REDACTED]",
+      "governance": {
+        "PANTHEON_GOVERNANCE_JWT_SECRET": "[REDACTED]"
+      },
+      "operator-bff": {
+        "PANTHEON_GOVERNANCE_JWT_SECRET": "[REDACTED]"
+      },
+      "status": "correctly_resolved_from_passed_secret"
+    }
+  },
+  "local_verification": {
+    "command": ".venv-pantheon/bin/python3 -m pytest -v services/runtime-manager/test_stage_promotion_compose.py",
+    "result": "3 passed"
+  }
+}

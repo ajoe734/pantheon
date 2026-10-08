@@ -1014,7 +1014,7 @@ services:
       # an unrelated default -- otherwise every dev-paper approval proposal
       # fails closed with 401 before paper_approval_scope.py's dev-paper grant
       # check ever runs.
-      PANTHEON_GOVERNANCE_JWT_SECRET: ${PANTHEON_GOVERNANCE_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-pantheon-local-governance-jwt-secret}}
+      PANTHEON_GOVERNANCE_JWT_SECRET: ${PANTHEON_GOVERNANCE_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}
       PANTHEON_GOVERNANCE_JWT_ISSUER: ${PANTHEON_GOVERNANCE_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-pantheon-dev-control-plane}}
       PANTHEON_GOVERNANCE_JWT_AUDIENCE: ${PANTHEON_GOVERNANCE_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-pantheon-dev-owners}}
       PANTHEON_GOVERNANCE_ROLE_CLAIMS: ${PANTHEON_GOVERNANCE_ROLE_CLAIMS:-roles,role}
@@ -1400,7 +1400,7 @@ services:
       # the same pattern against capital). Chained to the exact same default
       # each owner's own service block below expects.
       PANTHEON_REGISTRY_JWT_SECRET: ${PANTHEON_REGISTRY_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-pantheon-local-registry-jwt-secret}}
-      PANTHEON_GOVERNANCE_JWT_SECRET: ${PANTHEON_GOVERNANCE_JWT_SECRET:-pantheon-local-governance-jwt-secret}
+      PANTHEON_GOVERNANCE_JWT_SECRET: ${PANTHEON_GOVERNANCE_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}
       PANTHEON_EVOLUTION_API_URL: http://evolution:8093
       PANTHEON_INCIDENTS_API_URL: http://incidents:8090
       PANTHEON_POSTMORTEMS_API_URL: http://postmortems:8091

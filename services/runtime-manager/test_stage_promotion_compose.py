@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import yaml
 
@@ -12,12 +13,14 @@ def test_dev_compose_wires_shared_jwt_verification_and_fail_closed_switches():
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     runtime = compose["services"]["runtime-manager"]["environment"]
     governance = compose["services"]["governance"]["environment"]
+    bff = compose["services"]["operator-bff"]["environment"]
     worker = compose["services"]["deployment-outbox-consumer"]["environment"]
 
     assert runtime["PANTHEON_RUNTIME_JWT_SECRET"] == "${PANTHEON_BFF_JWT_SECRET:-}"
     assert runtime["PANTHEON_CANARY_EXECUTION_ENABLED"] == "${PANTHEON_CANARY_EXECUTION_ENABLED:-false}"
     assert runtime["PANTHEON_LIVE_BROKER_ENABLED"] == "${PANTHEON_LIVE_BROKER_ENABLED:-false}"
-    assert governance["PANTHEON_GOVERNANCE_JWT_SECRET"] == "${PANTHEON_BFF_JWT_SECRET:-}"
+    assert governance["PANTHEON_GOVERNANCE_JWT_SECRET"] == "${PANTHEON_GOVERNANCE_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}"
+    assert bff["PANTHEON_GOVERNANCE_JWT_SECRET"] == "${PANTHEON_GOVERNANCE_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}"
     assert worker["PANTHEON_ENVIRONMENT"] == "${PANTHEON_ENV:-dev}"
 
 
@@ -44,4 +47,23 @@ def test_dev_deploy_script_explicitly_keeps_canary_disabled():
     script = (ROOT / "scripts" / "deploy_nonprod_vm.sh").read_text(
         encoding="utf-8"
     )
-    assert script.count("PANTHEON_CANARY_EXECUTION_ENABLED=false") >= 2
+    # The helper centralizes dev runtime environment exports and must keep canary disabled
+    helper_match = re.search(r"with_dev_bff_runtime_env\(\)\s*\{([\s\S]*?)\n\}", script)
+    assert helper_match is not None, "with_dev_bff_runtime_env definition not found"
+    assert "PANTHEON_CANARY_EXECUTION_ENABLED=false" in helper_match.group(1)
+
+    # Every dev rollout path (root and bff) must execute through with_dev_bff_runtime_env
+    remote_case_match = re.search(
+        r'case "\$\{PANTHEON_DEPLOY_COMPONENT\}" in([\s\S]*?)\nesac', script
+    )
+    assert remote_case_match is not None, "PANTHEON_DEPLOY_COMPONENT case block not found"
+    remote_case = remote_case_match.group(1)
+
+    for component in ("root", "bff"):
+        comp_match = re.search(
+            rf"^\s*{component}\)([\s\S]*?);;", remote_case, re.MULTILINE
+        )
+        assert comp_match is not None, f"Rollout path '{component}' not found in deploy script"
+        assert "with_dev_bff_runtime_env" in comp_match.group(1), (
+            f"Rollout path '{component}' must execute through with_dev_bff_runtime_env"
+        )
