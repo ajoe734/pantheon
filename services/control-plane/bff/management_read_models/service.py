@@ -67,6 +67,9 @@ from services.control_plane.bff.models import (
     fail_closed_redacted_refs,
     redact_evidence_refs,
 )
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeoutError
+from services.control_plane.bff.governance.human_inbox import _build_persona_readiness_items
+from services.control_plane.bff.governance.service import human_inbox_surface_timeout_seconds
 from services.control_plane.bff.management_read_models.models import ManagementObservation
 
 
@@ -115,6 +118,24 @@ class ManagementValidationError(ValueError):
         self.details_extra = details_extra
 
 log = logging.getLogger(__name__)
+
+_HUMAN_INBOX_READ_SLOT_COUNT = 4
+_HUMAN_INBOX_READ_SLOTS = threading.BoundedSemaphore(_HUMAN_INBOX_READ_SLOT_COUNT)
+_HUMAN_INBOX_READ_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_HUMAN_INBOX_READ_SLOT_COUNT,
+    thread_name_prefix="bff-human-inbox-read",
+)
+
+
+def _discard_late_management_read_result_sync(future: Any) -> None:
+    if future.cancelled():
+        return
+    exc = future.exception()
+    if exc is not None:
+        log.warning(
+            "bff.human_inbox_persona_readiness late worker-thread error after timeout budget: %r",
+            exc,
+        )
 
 
 def _utc_now_rfc3339() -> str:
@@ -3254,39 +3275,25 @@ class ManagementService:
     def _bounded_persona_readiness_rows(
         self, snapshot_at: str, store: Any
     ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
-        """Read the `persona_readiness` contributor within its own bound.
-
-        Delegates to `main.py`'s `_bounded_human_inbox_persona_readiness`
-        (real `_HUMAN_INBOX_READ_SLOTS` capacity + executor + timeout, and
-        the patchable `_build_persona_readiness_items` hook) so this is the
-        same production composition, not a second implementation. Falls
-        back to an inline, unbounded `_build_persona_readiness_items` call
-        when `main` isn't the live composition root (e.g. this service
-        constructed standalone in a unit test without the app imported),
-        and further degrades to the raw `store.list_personas()` rows if
-        even that helper module is unavailable -- preserving this
-        contributor's pre-repair behavior for such callers rather than
-        raising.
-        """
+        """Read the `persona_readiness` contributor within its own bound."""
+        capacity = _HUMAN_INBOX_READ_SLOTS
+        executor = _HUMAN_INBOX_READ_EXECUTOR
+        timeout_budget = human_inbox_surface_timeout_seconds()
+        build_fn = _build_persona_readiness_items
+        if not capacity.acquire(blocking=False):
+            return [], "read_capacity_saturated"
         try:
-            import sys
-            main_mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
-            if main_mod is not None:
-                bound_fn = getattr(main_mod, "_bounded_human_inbox_persona_readiness", None)
-                if bound_fn is not None:
-                    return bound_fn(snapshot_at, read_store=store)
-        except Exception:
-            pass
+            future = executor.submit(build_fn, snapshot_at, read_store=store)
+        except BaseException:
+            capacity.release()
+            raise
+        future.add_done_callback(lambda _future: capacity.release())
         try:
-            from services.control_plane.bff.governance.human_inbox import (
-                _build_persona_readiness_items,
-            )
-            return list(_build_persona_readiness_items(snapshot_at, read_store=store) or []), None
-        except Exception:
-            try:
-                return list(store.list_personas(include_market_persona_defaults=True) or []), None
-            except TypeError:
-                return list(store.list_personas() or []), None
+            rows = future.result(timeout=timeout_budget)
+            return list(rows or []), None
+        except _FuturesTimeoutError:
+            future.add_done_callback(_discard_late_management_read_result_sync)
+            return [], "read_timeout"
 
     # -----------------------------------------------------------------------
     # 6. Human Inbox & HIQ Backlog
