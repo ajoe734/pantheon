@@ -28,9 +28,8 @@ on:
         type: choice
         options:
           - dev
-          - staging-live
       bff_base_url:
-        description: "Optional BFF override; dev uses DEV_BFF_URL, staging requires an explicit URL"
+        description: "Optional BFF override; defaults to DEV_BFF_URL"
         required: false
         type: string
       expected_sha:

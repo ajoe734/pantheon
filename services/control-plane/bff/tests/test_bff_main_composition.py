@@ -173,14 +173,52 @@ def test_composed_persona_and_command_services_use_typed_app_dependencies() -> N
     assert bff_main.app.state.command_adapter_service.command_store is bff_main.app_deps.command_store
 
 
-def test_personas_module_global_read_store_not_instantiated_on_import() -> None:
-    """Verify personas.service does not construct a module-global read_store on import."""
-    import sys
+def test_personas_service_module_owns_no_default_store_objects() -> None:
+    """personas.service creates no read store, command store, or write owner of its own."""
     from services.control_plane.bff.personas import service as ps
 
-    # Module-level read_store must be None prior to explicit service construction
-    # or must have been injected explicitly by composition root.
-    assert hasattr(ps, "read_store"), "personas.service must declare read_store symbol"
+    for name in ("read_store", "command_store", "persona_write_owner", "_DefaultCommandStore"):
+        assert not hasattr(ps, name), f"personas.service must not declare a module-level {name}"
+
+
+def test_personas_out_of_context_accessors_fail_closed_when_not_composed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.control_plane.bff.personas import service as ps
+
+    monkeypatch.setattr(ps, "_composed_persona_service", None)
+    for accessor in (ps._get_active_read_store, ps._get_active_command_store, ps._get_active_write_owner):
+        with pytest.raises(RuntimeError, match="failing closed"):
+            accessor()
+
+
+def test_personas_out_of_context_accessors_return_the_main_composed_stores() -> None:
+    """Out-of-context persona accessors resolve to the very objects main.py exposes."""
+    from services.control_plane.bff import main as bff_main
+    from services.control_plane.bff.personas import service as ps
+
+    assert ps._composed_persona_service is bff_main.app.state.persona_service
+    assert ps._get_active_read_store() is bff_main.read_store
+    assert ps._get_active_command_store() is bff_main.command_store
+    assert ps._get_active_write_owner() is bff_main.persona_write_owner
+    assert ps._get_active_read_store() is bff_main.app_deps.read_surface
+    assert ps._get_active_command_store() is bff_main.app_deps.command_store
+    assert ps._get_active_write_owner() is bff_main.app_deps.persona_write_owner
+
+
+def test_command_written_through_persona_fallback_is_visible_in_main_command_store() -> None:
+    from services.control_plane.bff import main as bff_main
+    from services.control_plane.bff.models import CommandType
+    from services.control_plane.bff.personas import service as ps
+
+    command_id = "cmd-persona-single-store-visibility"
+    ps._get_active_command_store().submit_command(
+        command_id,
+        CommandType.PAUSE_RUNTIME,
+        {"type": "persona", "id": "persona-single-store"},
+        "2026-10-08T00:00:00Z",
+        {},
+        {},
+    )
+    assert bff_main.command_store.get_command(command_id)["command_id"] == command_id
 
 
 def test_personas_service_fails_startup_closed_when_ranking_owner_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:

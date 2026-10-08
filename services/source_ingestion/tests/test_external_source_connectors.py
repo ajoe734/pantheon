@@ -267,6 +267,16 @@ def _serve_live_feed(records: list[dict]) -> tuple[ThreadingHTTPServer, str]:
     return server, f"http://127.0.0.1:{server.server_port}/feed.json"
 
 
+def _read_headers(tenant: str = "tenant-a") -> dict[str, str]:
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    token = encode_jwt_hs256(
+        {"sub": "test-reader", "roles": ["operator"], "tenant_id": tenant, "exp": int(__import__("time").time()) + 600},
+        secret=os.environ["PANTHEON_RUNTIME_JWT_SECRET"],
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
 @pytest.fixture()
 def _source_ingest_client(tmp_path):
     env_backup = {key: os.environ.get(key) for key in (
@@ -277,15 +287,17 @@ def _source_ingest_client(tmp_path):
         "SOURCE_INGEST_DLQ_PATH",
         "SOURCE_INGEST_AUDIT_PATH",
         "SOURCE_INGEST_MAX_RECORDS",
+        "PANTHEON_RUNTIME_JWT_SECRET",
     )}
     os.environ["SOURCE_INGEST_DATA_DIR"] = str(tmp_path)
     os.environ["SOURCE_INGEST_MAX_RECORDS"] = "5"
+    os.environ["PANTHEON_RUNTIME_JWT_SECRET"] = "source-test-secret"
     sys.modules.pop("services.source_ingestion.main", None)
     try:
         from fastapi.testclient import TestClient
         module = importlib.import_module("services.source_ingestion.main")
         module = importlib.reload(module)
-        yield TestClient(module.app), tmp_path
+        yield TestClient(module.app, headers=_read_headers()), tmp_path
     finally:
         for key, value in env_backup.items():
             if value is None:
@@ -331,6 +343,7 @@ def test_live_connector_smoke_path_enforces_governance_and_preserves_pit(
                         "policy_ref": "source-ingest://license/smoke",
                     },
                     "metadata": {
+                        "tenant_id": "tenant-a",
                         "entitlement_tags": ["news-smoke-research"],
                         "access_scope": ["research"],
                         "direct_execution_allowed": False,
@@ -367,7 +380,7 @@ def test_live_connector_smoke_path_enforces_governance_and_preserves_pit(
         source_ids = evidence_refs.get("source_ids") or []
         assert "src-live-smoke-news-001" in source_ids
 
-        src_resp = client.get("/api/source-ingest/source-records/src-live-smoke-news-001")
+        src_resp = client.get("/api/source-ingest/source-records/src-live-smoke-news-001", headers=_read_headers())
         assert src_resp.status_code == 200, src_resp.text
         rec = src_resp.json()["source_record"]
         md = rec["metadata"]
@@ -383,7 +396,7 @@ def test_live_connector_smoke_path_enforces_governance_and_preserves_pit(
 
         bundle_id = evidence_refs.get("evidence_bundle_id")
         assert bundle_id
-        bundle_resp = client.get(f"/api/source-ingest/evidence/bundles/{bundle_id}")
+        bundle_resp = client.get(f"/api/source-ingest/evidence/bundles/{bundle_id}", headers=_read_headers())
         assert bundle_resp.status_code == 200, bundle_resp.text
         bundle = bundle_resp.json()["bundle"]
         assert "src-live-smoke-news-001" in bundle["source_ids"]
@@ -458,6 +471,7 @@ def test_source_search_end_to_end_durable_readback(
                         "policy_ref": "source-ingest://license/e2e-search-smoke",
                     },
                     "metadata": {
+                        "tenant_id": "tenant-a",
                         "entitlement_tags": ["news-e2e-search-smoke-research"],
                         "access_scope": ["research"],
                         "direct_execution_allowed": False,
@@ -494,7 +508,7 @@ def test_source_search_end_to_end_durable_readback(
         assert "src-e2e-search-smoke-001" in source_ids, f"source_ids={source_ids}"
 
         # Verify PIT/governance on the source record
-        src_resp = client.get("/api/source-ingest/source-records/src-e2e-search-smoke-001")
+        src_resp = client.get("/api/source-ingest/source-records/src-e2e-search-smoke-001", headers=_read_headers())
         assert src_resp.status_code == 200, src_resp.text
         src_md = src_resp.json()["source_record"]["metadata"]
         assert src_md["pit"]["validated"] is True
@@ -506,7 +520,7 @@ def test_source_search_end_to_end_durable_readback(
         # Verify EvidenceBundle was persisted
         bundle_id = evidence_refs.get("evidence_bundle_id")
         assert bundle_id, "expected evidence_bundle_id in evidence_refs"
-        bundle_resp = client.get(f"/api/source-ingest/evidence/bundles/{bundle_id}")
+        bundle_resp = client.get(f"/api/source-ingest/evidence/bundles/{bundle_id}", headers=_read_headers())
         assert bundle_resp.status_code == 200, bundle_resp.text
         bundle = bundle_resp.json()["bundle"]
         assert "src-e2e-search-smoke-001" in bundle["source_ids"]
@@ -552,6 +566,7 @@ def test_source_search_end_to_end_durable_readback(
                 "workspace_id": "research-workbench",
                 "source_types": ["news"],
                 "access_context": {
+                    "tenant_id": "tenant-a",
                     "persona_id": "operator-workbench",
                     "workspace_id": "research-workbench",
                     "environment": "paper",

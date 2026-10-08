@@ -1,0 +1,21 @@
+{
+  "task_id": "L12-ISOLATED-WORKER-AUTH-20261008",
+  "kind": "deterministic_auth_regression_not_full_qualification",
+  "observed_failure": {
+    "source": "protected dev d60314e7d8ed2f3724b8eb238185fa6c80bddd2f",
+    "workflow_run": "37754969880",
+    "attempt": 2,
+    "artifact": "11540521208",
+    "symptom": "training-session-preview-worker unhealthy; fetch_claimable_jobs http_error=401 AUTH_JWT_BAD_SIGNATURE on five ticks"
+  },
+  "root_cause": "docker-compose.yml gives the preview worker a static fixture TRAINING_SESSION_WORKER_TOKEN, while the Training API verifier (TRAINING_SESSION_JWT_SECRET) falls back to PANTHEON_DEV_BFF_JWT_SECRET, which the isolated harness sets to a per-run secret. Signer and verifier disagreed.",
+  "fix": "scripts/run_isolated_l12_runtime_e2e.py _isolated_dev_principal_env now mints TRAINING_SESSION_WORKER_TOKEN with the per-run signer, role training-service, service training-session-preview-worker, tenant tenant-dev (no wildcard). No product, Compose, secret default or health check change.",
+  "verification": {
+    "harness_tests": "37 passed (scripts/test_run_isolated_l12_runtime_e2e.py)",
+    "fails_before_fix": "2 new tests fail against HEAD harness (KeyError: missing worker token)",
+    "positive": "real authenticate_training_request accepts the generated worker token",
+    "negative_controls": ["wrong signer", "other tenant", "other service", "non-training role"],
+    "secrets_printed": false
+  },
+  "not_proven": "Full L1-L12 loop, hosted effects, browser and new-pair acceptance remain with DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 and Pi's FULL qualification."
+}

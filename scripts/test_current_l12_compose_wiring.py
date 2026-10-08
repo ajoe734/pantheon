@@ -10,6 +10,7 @@ monitoring at real service routes instead of guessed paths.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -79,20 +80,14 @@ def test_source_controller_is_the_single_default_durable_owner() -> None:
 def test_teaching_worker_and_agora_service_boundaries_are_exact() -> None:
     teaching_api = _env("training-session-svc")
     teaching_worker = _env("training-session-preview-worker")
-    teaching_token = _default(teaching_worker["TRAINING_SESSION_WORKER_TOKEN"])
-    teaching_context = validate_request_auth(
-        authorization=f"Bearer {teaching_token}",
-        required_roles=("training-service",),
-        env={
-            "PANTHEON_RUNTIME_AUTH_MODE": "strict",
-            "PANTHEON_RUNTIME_JWT_SECRET": _default(
-                teaching_api["TRAINING_SESSION_JWT_SECRET"]
-            ),
-        },
+    # No published fixture token: the worker reads the issuer-written principal file.
+    assert "TRAINING_SESSION_WORKER_TOKEN" not in teaching_worker
+    assert _default(teaching_worker["TRAINING_SESSION_WORKER_TOKEN_FILE"]) == (
+        "/run/pantheon-principals/TRAINING_SESSION_WORKER_TOKEN"
     )
-    assert teaching_context.actor_id == "training-session-preview-worker"
-    assert teaching_context.claims["service"] == "training-session-preview-worker"
-    assert teaching_context.claims["allowed_tenants"] == ["*"]
+    assert teaching_api["TRAINING_SESSION_JWT_SECRET"] == (
+        "${TRAINING_SESSION_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}"
+    )
     assert teaching_worker["TRAINING_SESSION_WORKER_SERVICE_ID"] == (
         "training-session-preview-worker"
     )
@@ -211,21 +206,86 @@ def test_bff_health_registry_uses_real_typed_paths_and_telemetry_identity() -> N
     assert telemetry["PANTHEON_TELEMETRY_INFRA_PRODUCERS"] == (
         "${PANTHEON_TELEMETRY_INFRA_PRODUCERS:-control-plane-bff}"
     )
-    health_token = _default(bff["PANTHEON_BFF_HEALTH_TELEMETRY_JWT"])
-    health_context = validate_request_auth(
+    assert telemetry["PANTHEON_TELEMETRY_JWT_SECRET"] == (
+        "${PANTHEON_TELEMETRY_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}"
+    )
+    assert "PANTHEON_BFF_HEALTH_TELEMETRY_JWT" not in bff  # no published fixture token
+    assert _default(bff["PANTHEON_BFF_HEALTH_TELEMETRY_JWT_FILE"]) == (
+        "/run/pantheon-principals/PANTHEON_BFF_HEALTH_TELEMETRY_JWT"
+    )
+    assert bff["PANTHEON_BFF_HEALTH_TENANT_ID"] == (
+        "${PANTHEON_BFF_HEALTH_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-tenant-dev}}"
+    )
+
+
+def _verifier_secret(interpolation: str, env: dict[str, str]) -> str:
+    """Resolve a compose ``${A:-${B:-}}`` verifier chain against ``env``."""
+
+    names = re.findall(r"\$\{([A-Z0-9_]+)", interpolation)
+    for name in names:
+        if env.get(name):
+            return env[name]
+    return ""
+
+
+def test_every_compose_consumer_token_verifies_against_compose_resolved_chain() -> None:
+    from scripts import issue_dev_paper_principals as issuer
+
+    secret = "synthetic-compose-chain-signer-" * 2
+    env = {
+        "PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
+        "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true",
+        "PANTHEON_DEV_BFF_JWT_SECRET": secret,
+        "PANTHEON_DEV_BFF_JWT_ISSUER": "wiring-issuer",
+        "PANTHEON_DEV_BFF_JWT_AUDIENCE": "wiring-audience",
+    }
+    issued = issuer.issue_environment(env)
+    telemetry = _env("telemetry")
+    training = _env("training-session-svc")
+    bff = _env("operator-bff")
+    producer = bff["PANTHEON_BFF_HEALTH_PRODUCER"]
+
+    # Telemetry verifies with the compose-resolved chain, not a literal secret.
+    telemetry_secret = _verifier_secret(telemetry["PANTHEON_TELEMETRY_JWT_SECRET"], env)
+    assert telemetry_secret == secret
+    health_token = issued[_default(bff["PANTHEON_BFF_HEALTH_TELEMETRY_JWT_FILE"]).rsplit("/", 1)[1]]
+    context = validate_request_auth(
         authorization=f"Bearer {health_token}",
         required_roles=("service",),
-        env={
-            "PANTHEON_RUNTIME_AUTH_MODE": "strict",
-            "PANTHEON_RUNTIME_JWT_SECRET": _default(
-                telemetry["PANTHEON_TELEMETRY_JWT_SECRET"]
-            ),
-        },
+        env={"PANTHEON_RUNTIME_AUTH_MODE": "strict", "PANTHEON_RUNTIME_JWT_SECRET": telemetry_secret},
     )
-    assert health_context.claims["allowed_tenants"] == [
-        _default(bff["PANTHEON_BFF_HEALTH_TENANT_ID"])
-    ]
-    assert health_context.claims["allowed_producers"] == [producer]
+    assert context.claims["allowed_tenants"] == [env["PANTHEON_DEV_BFF_TENANT_ID"]]
+    assert context.claims["allowed_producers"] == [producer]
+
+    # Training owner verifies the worker principal with its compose-resolved chain.
+    training_secret = _verifier_secret(training["TRAINING_SESSION_JWT_SECRET"], env)
+    assert training_secret == secret
+    worker_token = issued["TRAINING_SESSION_WORKER_TOKEN"]
+    worker = validate_request_auth(
+        authorization=f"Bearer {worker_token}",
+        required_roles=("training-service",),
+        env={"PANTHEON_RUNTIME_AUTH_MODE": "strict", "PANTHEON_RUNTIME_JWT_SECRET": training_secret},
+    )
+    assert worker.actor_id == "training-session-preview-worker"
+
+    # A token signed with a removed literal never verifies against the resolved chain.
+    from services.runtime_auth_inbound import AuthError, encode_jwt_hs256
+
+    stale = encode_jwt_hs256(
+        {"sub": "control-plane-bff-health-monitor", "roles": ["service"],
+         "allowed_tenants": ["tenant-dev"], "allowed_producers": [producer]},
+        secret="pantheon-local-telemetry-jwt-secret",
+    )
+    try:
+        validate_request_auth(
+            authorization=f"Bearer {stale}",
+            required_roles=("service",),
+            env={"PANTHEON_RUNTIME_AUTH_MODE": "strict", "PANTHEON_RUNTIME_JWT_SECRET": telemetry_secret},
+        )
+    except AuthError:
+        pass
+    else:
+        raise AssertionError("pre-fix fixture signer must not verify")
 
 
 def test_default_owner_services_are_not_hidden_behind_profiles() -> None:

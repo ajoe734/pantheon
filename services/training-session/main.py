@@ -1799,17 +1799,49 @@ def _preview_job_lease_seconds() -> int:
     return value
 
 
-def _job_is_claimable(job: Dict[str, Any], now: datetime) -> bool:
+TERMINAL_SESSION_STATUSES = {"completed", "committed", "discarded", "abandoned", "expired"}
+
+
+def _job_is_claimable(
+    job: Dict[str, Any],
+    now: datetime,
+    session: Optional[Dict[str, Any]] = None,
+) -> bool:
     status = str(job.get("status") or "").lower()
     attempts = int(job.get("attempt_count") or 0)
     max_attempts = int(job.get("max_attempts") or _preview_job_max_attempts())
-    if attempts >= max_attempts:
-        return False
     if status == "queued":
-        return True
+        return attempts < max_attempts
     if status == "failed":
-        return job.get("retryable") is True
+        return job.get("retryable") is True and attempts < max_attempts
+    if status == "completed":
+        if job.get("terminalize_session") is not True:
+            return False
+        if job.get("error_code") or job.get("failed_at"):
+            return False
+        session_id = str(job.get("session_id") or "").strip()
+        if not session_id:
+            return False
+        target_session = session if session is not None else store.get_session(session_id)
+        if not target_session:
+            return False
+        if str(target_session.get("tenant_id") or "").strip() != str(job.get("tenant_id") or "").strip():
+            return False
+        session_status = str(target_session.get("status") or "").strip().lower()
+        ended_at = str(target_session.get("ended_at") or target_session.get("completed_at") or "").strip()
+        if session_status in TERMINAL_SESSION_STATUSES and ended_at:
+            return False
+        lease_expires_at = job.get("lease_expires_at")
+        if lease_expires_at:
+            try:
+                if _parse_utc_timestamp(lease_expires_at, "job.lease_expires_at") > now:
+                    return False
+            except ValueError:
+                pass
+        return True
     if status != "running":
+        return False
+    if attempts >= max_attempts:
         return False
     try:
         return _parse_utc_timestamp(job.get("lease_expires_at"), "job.lease_expires_at") <= now
@@ -1951,6 +1983,63 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
             raise HTTPException(status_code=404, detail="preview job not found")
         _require_tenant_record(existing, "preview job not found")
         if existing.get("status") == "completed":
+            session_id = str(existing.get("session_id") or "").strip()
+            target_session = store.get_session(session_id) if session_id else None
+            session_is_terminal = (
+                target_session is not None
+                and str(target_session.get("status") or "").strip().lower() in TERMINAL_SESSION_STATUSES
+                and bool(str(target_session.get("ended_at") or target_session.get("completed_at") or "").strip())
+            )
+            if existing.get("terminalize_session") is True and not session_is_terminal:
+                if not _job_is_claimable(existing, now, session=target_session):
+                    raise HTTPException(status_code=409, detail="preview job is not claimable")
+                attempts = int(existing.get("attempt_count") or 0)
+                max_attempts = int(existing.get("max_attempts") or _preview_job_max_attempts())
+                if attempts >= max_attempts:
+                    existing.update(
+                        {
+                            "status": "failed",
+                            "failed_at": timestamp,
+                            "error_code": "terminal_session_completion_exhausted",
+                            "failure_reason": "terminal session completion retry budget exhausted",
+                            "retryable": False,
+                            "reclaimed": True,
+                            "replayed": True,
+                        }
+                    )
+                    existing.pop("lease_expires_at", None)
+                    try:
+                        failure_evidence = _runtime_evidence_log().append(
+                            "preview_job_failed",
+                            {
+                                "job_id": job_id,
+                                "session_id": session_id,
+                                "tenant_id": _tenant_id_for(existing),
+                                "worker_run_id": existing.get("worker_run_id"),
+                                "attempt_count": attempts,
+                                "error_code": "terminal_session_completion_exhausted",
+                                "failure_reason": "terminal session completion retry budget exhausted",
+                                "retryable": False,
+                            },
+                            recorded_at=timestamp,
+                        )
+                    except (OSError, RuntimeError):
+                        failure_evidence = None
+                    if failure_evidence:
+                        existing["failure_evidence"] = {
+                            "sequence": failure_evidence["sequence"],
+                            "checksum": failure_evidence["checksum"],
+                        }
+                    return existing
+                attempts += 1
+                existing["attempt_count"] = attempts
+                existing["last_attempt_at"] = timestamp
+                existing["lease_started_at"] = timestamp
+                existing["lease_expires_at"] = lease_expires_at
+                existing["reclaimed"] = True
+                existing["replayed"] = True
+                existing["retryable"] = attempts < max_attempts
+                return existing
             replayed = dict(existing)
             replayed["replayed"] = True
             return replayed
@@ -1975,6 +2064,19 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
         return existing
 
     job = store.mutate_preview_job(job_id, claim)
+    session_id = str(job.get("session_id") or "").strip()
+    if job.get("status") == "failed":
+        _record_functional_result(
+            "preview_evaluation",
+            status="failed",
+            detail={
+                "job_id": job_id,
+                "session_id": session_id,
+                "error_code": job.get("error_code"),
+                "retryable": False,
+            },
+        )
+        return job
     if job.get("replayed") is True:
         return job
 
@@ -2087,12 +2189,17 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
                 "evaluation_proof_ref": proof.get("proof_ref"),
                 "proof_digest": proof.get("proof_digest"),
                 "governance_gate_state": proof.get("governance_gate_state"),
-                "retryable": False,
+                "retryable": (
+                    int(active.get("attempt_count") or 1) < int(active.get("max_attempts") or _preview_job_max_attempts())
+                    if active.get("terminalize_session") is True
+                    else False
+                ),
                 "preview": preview,
             }
         )
         active.pop("error_code", None)
         active.pop("failed_at", None)
+        active.pop("lease_expires_at", None)
         return active
 
     completed_job = store.mutate_preview_job(job_id, complete)

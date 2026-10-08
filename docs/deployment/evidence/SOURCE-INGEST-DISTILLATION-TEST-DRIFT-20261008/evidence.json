@@ -1,0 +1,59 @@
+{
+  "task_id": "SOURCE-INGEST-DISTILLATION-TEST-DRIFT-20261008",
+  "task_title": "Update stale distillation tests for tenant-scoped claims and registry auth",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "deciding_commits_and_classifications": [
+    {
+      "deciding_commits": ["f15cbb1a7", "4429961d2"],
+      "task_id": "L2-DESIRED-OWNER-READS-20261006",
+      "pull_request": "#6225",
+      "classification": "tenant-scoped distillation claims",
+      "description": "DistillationController requires normalized SourceRecords to match state.tenant_id (enforced by read_source_records_for_tenant). Fixtures omitting tenant_id silently returned 0 records. Stamped tenant_id on _normalized_source in test_l12_dist_001_transactional_distillation.py and test_l12_mfc_r4_distill_001.py, and connector metadata.tenant_id in test_e2e_source_ingest_distillation_acceptance.py and test_product_v2_source_distillation_r3.py."
+    },
+    {
+      "deciding_commits": ["73cc22363", "19feaf0d4"],
+      "pull_request": "#5620",
+      "classification": "registry authentication and explicit store backend",
+      "description": "Registry service requires explicit REGISTRY_STORE_BACKEND ('memory') and authenticates all write/read routes with bearer tokens. Updated _registry_service() fixture in test_l12_dist_001_transactional_distillation.py and real_registry_server fixture in test_l12_mfc_r4_distill_001.py to set REGISTRY_STORE_BACKEND=memory and DISTILLATION_REGISTRY_SERVICE_TOKEN=test-operator:operator with bearer authorization headers on test HTTP requests."
+    },
+    {
+      "deciding_commits": ["bdb017d71"],
+      "task_id": "GOV-APPROVAL-AUTHORITY-PREREQUISITE-001",
+      "classification": "governance approval reference retirement on HTTP /advance",
+      "description": "The HTTP /advance route retired arbitrary caller-supplied approver strings and requires authoritative governance decision references. In test_l12_dist_001_transactional_distillation.py (test_real_registry_approval_before_controller_post_is_not_overwritten), pre-approved artifact state is seeded directly via in-process registry store (get_store().put(entry) with ArtifactState.APPROVED) to verify that the controller's create-if-absent tick does not overwrite approved artifacts."
+    },
+    {
+      "deciding_commits": ["f15cbb1a7"],
+      "task_id": "L2-DESIRED-OWNER-READS-20261006",
+      "classification": "distillation queue lifetime monkeypatch target update",
+      "description": "DistillationController replaced build_source_evidence_repository with read_source_records_for_tenant. In test_distillation_queue_lifetime.py, updated monkeypatch from controller.build_source_evidence_repository to controller.read_source_records_for_tenant, preserving the test verification that exactly one queue is reused across multiple ticks."
+    }
+  ],
+  "acceptance_verification": {
+    "ac1_evidence_classifies_each_expectation": "passed: all 4 expectation drift categories classified with deciding commits f15cbb1a7, 4429961d2, 73cc22363, 19feaf0d4, bdb017d71",
+    "ac2_explicit_tenant_and_registry_config": "passed: normalized sources provide tenant_id, and real registry test fixtures provide explicit memory backend and service token without relaxing production auth or defaults",
+    "ac3_real_registry_http_and_in_process_seeding": "passed: real-registry integration tests execute over real HTTP server with bearer auth; approval is seeded in-process only for the advance route verifying approved immutability",
+    "ac4_queue_lifetime_patches_read_source_records": "passed: test_controller_reuses_one_queue_across_ticks patches read_source_records_for_tenant and passes",
+    "ac5_all_tests_pass_with_fresh_data_dir": "passed: all 43 tests across the 5 test files pass cleanly in isolation; 0 production files modified",
+    "ac6_delivery_and_review": "pending: task branch ready for PR and review handoff"
+  },
+  "test_results": {
+    "total_collected": 43,
+    "total_passed": 43,
+    "total_failed": 0,
+    "files": {
+      "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py": "30 passed",
+      "services/source_ingestion/tests/test_l12_mfc_r4_distill_001.py": "3 passed",
+      "services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py": "1 passed",
+      "services/source_ingestion/tests/test_product_v2_source_distillation_r3.py": "1 passed",
+      "services/source_ingestion/tests/test_distillation_queue_lifetime.py": "8 passed"
+    }
+  },
+  "diff_budget": {
+    "production_lines_added": 0,
+    "production_lines_deleted": 0,
+    "production_net": 0,
+    "budget": 0
+  }
+}

@@ -326,11 +326,3 @@ def calculate_paper_simulation_allocations(
             "live_capital_side_effects": False,
         }
     ]
-
-
-def validate_emergency_lines(lines: Iterable[Dict[str, Any]]) -> None:
-    for line in lines:
-        if float(line.get("target_weight") or 0.0) > float(line.get("current_weight") or 0.0):
-            raise ValueError("emergency containment cannot increase allocation")
-        if str(line.get("recommendation") or "") in {"paper_to_canary_review", "canary_to_live_review"}:
-            raise ValueError("emergency containment cannot promote a persona")

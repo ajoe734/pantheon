@@ -7,12 +7,16 @@ import json
 import multiprocessing
 import os
 import sys
+import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from queue import Empty
 from typing import Any
 
+from fastapi.testclient import TestClient
+from services.source_ingestion.connectors.base import SourceConnector
+from services.source_ingestion.persona_source_reconciler import SourceProvisioningReconciler
 
 CONNECTOR_ID = "multiprocess-supervised-notes"
 SOURCE_ID = "src-multiprocess-supervised-note-1"
@@ -44,10 +48,11 @@ def _persona() -> dict[str, Any]:
 
 def _worker(
     data_dir: str,
-    barrier: Any,
+    ready_barrier: Any,
+    race_barrier: Any,
     result_queue: Any,
 ) -> None:
-    """Import an independent service module and race one full controller tick."""
+    """Import an independent service module, signal readiness, and race one full controller tick."""
 
     try:
         os.environ["SOURCE_INGEST_DATA_DIR"] = data_dir
@@ -59,11 +64,6 @@ def _worker(
         sys.modules.pop("services.source_ingestion.main", None)
         module = importlib.import_module("services.source_ingestion.main")
 
-        from fastapi.testclient import TestClient
-
-        from services.source_ingestion.connectors.base import SourceConnector
-        from services.source_ingestion.persona_source_reconciler import SourceProvisioningReconciler
-
         class MultiprocessProvider:
             def connector(self) -> SourceConnector:
                 return SourceConnector(
@@ -74,12 +74,6 @@ def _worker(
                 )
 
             def fetch_config(self) -> dict[str, Any]:
-                source_timestamp = (
-                    datetime.now(timezone.utc)
-                    .replace(microsecond=0)
-                    .isoformat()
-                    .replace("+00:00", "Z")
-                )
                 return {
                     "mode": "static_records",
                     "next_watermark": "multiprocess-watermark-1",
@@ -91,7 +85,7 @@ def _worker(
                             "metadata": {
                                 "body": "Exactly one worker may materialize this record.",
                                 "access_scope": ["operator"],
-                                "available_time": source_timestamp,
+                                "available_time": "2026-07-26T00:00:00Z",
                             },
                         }
                     ],
@@ -117,8 +111,10 @@ def _worker(
         }
         headers = {"Authorization": f"Bearer {module.controller_token}"}
 
-        barrier.wait(timeout=30)
+        # App construction and TestClient context setup completed before signalling readiness
         with TestClient(module.app) as client:
+            ready_barrier.wait(timeout=120)
+            race_barrier.wait(timeout=60)
             reconcile = client.post(
                 "/api/source-ingest/persona-source-provisioning/reconcile",
                 headers=headers,
@@ -138,13 +134,24 @@ def _worker(
                 "scheduled": scheduled.json(),
             }
         )
-    except Exception:  # noqa: BLE001 - child errors must reach the parent assertion.
-        result_queue.put(
-            {
-                "pid": os.getpid(),
-                "error": traceback.format_exc(),
-            }
-        )
+    except BaseException:  # noqa: BLE001 - child errors must reach the parent assertion.
+        try:
+            ready_barrier.abort()
+        except Exception:
+            pass
+        try:
+            race_barrier.abort()
+        except Exception:
+            pass
+        try:
+            result_queue.put(
+                {
+                    "pid": os.getpid(),
+                    "error": traceback.format_exc(),
+                }
+            )
+        except Exception:
+            pass
 
 
 def _jsonl_records(path: Path, record_type: str) -> list[dict[str, Any]]:
@@ -157,6 +164,110 @@ def _jsonl_records(path: Path, record_type: str) -> list[dict[str, Any]]:
         for payload in (json.loads(line),)
         if payload.get("record_type") == record_type
     ]
+
+
+def _failing_worker(
+    data_dir: str,
+    ready_barrier: Any,
+    race_barrier: Any,
+    result_queue: Any,
+) -> None:
+    try:
+        raise RuntimeError("simulated setup failure before barrier")
+    except BaseException:
+        try:
+            ready_barrier.abort()
+        except Exception:
+            pass
+        try:
+            race_barrier.abort()
+        except Exception:
+            pass
+        try:
+            result_queue.put(
+                {
+                    "pid": os.getpid(),
+                    "error": traceback.format_exc(),
+                }
+            )
+        except Exception:
+            pass
+
+
+def _run_multiprocess_workers(
+    tmp_path: Path,
+    worker_targets: list[Any] | None = None,
+) -> list[dict[str, Any]]:
+    context = multiprocessing.get_context("spawn")
+    ready_barrier = context.Barrier(2)
+    race_barrier = context.Barrier(2)
+    result_queue = context.Queue()
+    if worker_targets is None:
+        worker_targets = [_worker, _worker]
+    workers = [
+        context.Process(
+            target=target,
+            args=(str(tmp_path), ready_barrier, race_barrier, result_queue),
+        )
+        for target in worker_targets
+    ]
+
+    for worker in workers:
+        worker.start()
+    results = []
+    deadline = time.monotonic() + 150.0
+    try:
+        while len(results) < len(workers) and time.monotonic() < deadline:
+            try:
+                results.append(result_queue.get(timeout=1.0))
+            except Empty:
+                if any(not w.is_alive() for w in workers):
+                    time.sleep(0.5)
+                    while not result_queue.empty() and len(results) < len(workers):
+                        try:
+                            results.append(result_queue.get_nowait())
+                        except Empty:
+                            break
+                    break
+    finally:
+        for worker in workers:
+            worker.join(timeout=15)
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=5)
+
+    failed_workers = [w for w in workers if w.exitcode not in (0, None) and w.exitcode != 0]
+    if failed_workers:
+        details = ", ".join(f"pid={w.pid} exitcode={w.exitcode}" for w in failed_workers)
+        worker_errors = [r["error"] for r in results if "error" in r]
+        raise AssertionError(
+            f"Worker process failed ({details}). Recorded worker errors:\n"
+            + "\n---\n".join(worker_errors)
+        )
+
+    errors = [r for r in results if "error" in r]
+    if errors:
+        root_causes = [r for r in errors if "BrokenBarrierError" not in r["error"]]
+        if root_causes:
+            primary = root_causes[0]
+            other = [r["error"] for r in errors if r is not primary]
+            other_text = f"\nOther worker errors:\n" + "\n---\n".join(other) if other else ""
+            raise AssertionError(
+                f"Worker pid={primary['pid']} died before barrier:\n{primary['error']}{other_text}"
+            )
+        raise AssertionError(
+            f"Workers encountered BrokenBarrierError (timed out or broken barrier):\n"
+            + "\n---\n".join(r["error"] for r in errors)
+        )
+
+    if len(results) < len(workers):
+        raise AssertionError(
+            f"multi-process source workers did not return all results (got {len(results)}/{len(workers)}). "
+            f"Worker exit codes: {[w.exitcode for w in workers]}"
+        )
+
+    assert all(worker.exitcode == 0 for worker in workers)
+    return results
 
 
 def test_two_process_workers_create_one_connector_schedule_run_and_source_record(
@@ -173,34 +284,9 @@ def test_two_process_workers_create_one_connector_schedule_run_and_source_record
         deployment={},
     )
     ControllerStateStore(tmp_path / "controller_state.json").save(state)
-    context = multiprocessing.get_context("spawn")
-    barrier = context.Barrier(2)
-    result_queue = context.Queue()
-    workers = [
-        context.Process(
-            target=_worker,
-            args=(str(tmp_path), barrier, result_queue),
-        )
-        for _ in range(2)
-    ]
 
-    for worker in workers:
-        worker.start()
-    results = []
-    try:
-        for _ in workers:
-            results.append(result_queue.get(timeout=60))
-    except Empty as exc:
-        raise AssertionError("multi-process source workers did not return results") from exc
-    finally:
-        for worker in workers:
-            worker.join(timeout=15)
-            if worker.is_alive():
-                worker.terminate()
-                worker.join(timeout=5)
+    results = _run_multiprocess_workers(tmp_path)
 
-    assert all(worker.exitcode == 0 for worker in workers)
-    assert all("error" not in result for result in results), results
     assert len({result["pid"] for result in results}) == 2
     assert [result["reconcile_status"] for result in results] == [200, 200]
     assert [result["scheduled_status"] for result in results] == [200, 200]
@@ -226,3 +312,28 @@ def test_two_process_workers_create_one_connector_schedule_run_and_source_record
     assert len({record["record_id"] for record in frontier_records}) == 1
     assert len({record["record_id"] for record in run_records}) == 1
     assert [record["record_id"] for record in source_records] == [SOURCE_ID]
+
+
+def test_worker_failure_before_barrier_surfaces_own_traceback(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "controller_token").write_text(CONTROLLER_TOKEN, encoding="utf-8")
+    from services.source_ingestion.controller_state import ControllerState, ControllerStateStore
+
+    state = ControllerState(
+        controller_id="ctrl-test-multiprocess",
+        controller_name="test-controller",
+        environment="test",
+        tenant_id="tenant-dev",
+        deployment={},
+    )
+    ControllerStateStore(tmp_path / "controller_state.json").save(state)
+
+    try:
+        _run_multiprocess_workers(tmp_path, worker_targets=[_failing_worker, _worker])
+    except AssertionError as exc:
+        message = str(exc)
+        assert "died before barrier" in message
+        assert "simulated setup failure before barrier" in message
+    else:
+        raise AssertionError("Expected AssertionError surfacing the pre-barrier traceback")

@@ -9911,6 +9911,31 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(intent['status'], 'pending')
         self.assertEqual(intent['task_generation'], 7)
 
+    def test_local_operator_reopens_own_unheld_manual_todo(self) -> None:
+        task = self.state['tasks'][0]
+        task.update(status='todo', owner='Human/Ops', generation=3, depends_on=['REG-001'])
+        task.pop('waiting_for', None)
+        with mock.patch.dict(os.environ, {'AI_NAME': 'Human/Ops', ai_status.LOCAL_HUMAN_OPS_ENV: '1'}):
+            _command_reopen(self.state, ['REG-002', 'Operator resumes own manual todo'])
+        self.assertEqual(task['status'], 'in_progress')
+        self.assertEqual(task['owner'], 'Human/Ops')
+        self.assertEqual(task['generation'], 3)
+        self.assertEqual(task['depends_on'], ['REG-001'])
+        intent = task[ai_status.REVIEW_REQUEUE_INTENT_KEY]
+        self.assertEqual(intent['reopened_by'], 'Human/Ops')
+        self.assertEqual(intent['status'], 'pending')
+
+    def test_todo_reopen_denies_own_unheld_todo_for_wrong_actor_or_hold(self) -> None:
+        for actor, local, hold in [('Human/Ops', '0', None), ('Claude', '0', None), ('Human/Ops', '1', 'Codex')]:
+            with self.subTest(actor=actor, local=local, hold=hold):
+                task = self.state['tasks'][0]
+                task.update(status='todo', owner='Human/Ops', waiting_for=hold)
+                before = deepcopy(self.state)
+                with mock.patch.dict(os.environ, {'AI_NAME': actor, ai_status.LOCAL_HUMAN_OPS_ENV: local}):
+                    with self.assertRaises(SystemExit):
+                        _command_reopen(self.state, ['REG-002', 'Attempt todo resumption'])
+                self.assertEqual(self.state, before)
+
     def test_todo_reopen_requires_local_operator_and_actual_hold(self) -> None:
         for actor, local, hold in [('Codex', '0', 'Human/Ops'), ('Claude', '0', 'Human/Ops'),
                                    ('Human/Ops', '0', 'Human/Ops'), ('Human/Ops', '1', None)]:

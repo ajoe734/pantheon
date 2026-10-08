@@ -27,6 +27,7 @@ import re
 import threading
 import time
 import uuid
+from contextvars import copy_context
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
@@ -68,7 +69,10 @@ from services.control_plane.bff.models import (
     redact_evidence_refs,
 )
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeoutError
-from services.control_plane.bff.governance.human_inbox import _build_persona_readiness_items
+from services.control_plane.bff.governance.human_inbox import (
+    _build_persona_readiness_items,
+    _human_inbox_persona_blocking_reasons,
+)
 from services.control_plane.bff.governance.service import human_inbox_surface_timeout_seconds
 from services.control_plane.bff.management_read_models.models import ManagementObservation
 
@@ -3275,7 +3279,10 @@ class ManagementService:
     def _bounded_persona_readiness_rows(
         self, snapshot_at: str, store: Any
     ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
-        """Read the `persona_readiness` contributor within its own bound."""
+        """Bound the read in a copy of the caller authorization and tenant context.
+
+        With no request context, the owner port uses its configured service principal.
+        """
         capacity = _HUMAN_INBOX_READ_SLOTS
         executor = _HUMAN_INBOX_READ_EXECUTOR
         timeout_budget = human_inbox_surface_timeout_seconds()
@@ -3283,7 +3290,7 @@ class ManagementService:
         if not capacity.acquire(blocking=False):
             return [], "read_capacity_saturated"
         try:
-            future = executor.submit(build_fn, snapshot_at, read_store=store)
+            future = executor.submit(copy_context().run, build_fn, snapshot_at, read_store=store)
         except BaseException:
             capacity.release()
             raise
@@ -3525,14 +3532,6 @@ class ManagementService:
                             "source": "bff_composed",
                             "snapshot_at": snap,
                         }
-                        try:
-                            from services.control_plane.bff.governance.human_inbox import (
-                                _human_inbox_persona_blocking_reasons,
-                            )
-                        except ImportError:
-                            from governance.human_inbox import (  # type: ignore[no-redef]
-                                _human_inbox_persona_blocking_reasons,
-                            )
                         for p in personas:
                             if isinstance(p, dict) and bool(p.get("human_needed") or p.get("humanNeeded")):
                                 p_id = str(p.get("persona_id") or p.get("id") or "")

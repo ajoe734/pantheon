@@ -123,6 +123,7 @@ gate-before-switch、served identity 與 exact prior artifacts rollback。是否
 - 舊 Dev IP `35.201.239.38` 連線逾時，已徹底廢止。
 - 目前 Staging 處於 **0 台 VM** 狀態，Phase 2 之 ephemeral staging pipeline 與 template 尚未實作。
 - 因此目標 ephemeral staging 在完成實作與 acceptance 前，必須標記為 `unavailable`；不得把舊 hostname、舊 VM、dev 測試通過或範例 env 當作 staging 通過證據。
+- 2026-10-08：`nonprod-deploy.yml` 的舊 `deploy-staging-live` job、`staging-live` dispatch 選項與 `master` push trigger 已退役（`OPS-STAGING-LIVE-JOB-RETIRE-20261008`），指向舊 staging 身分的 13 個 repository variables 已於同日刪除；`ENV-STG-EPHEMERAL-IMPL-001` 實作並驗收前沒有任何 staging 部署入口。
 
 ### 3.3 Prod
 

@@ -65,13 +65,6 @@ OWNER_SERVICES = {
     "alpha_replication": "alpha-replication-worker",
     "persona_teaching": "training-session-preview-worker",
 }
-LOCAL_TRAINING_WORKER_TOKEN = (
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-    "eyJhbGxvd2VkX3RlbmFudHMiOlsiKiJdLCJyb2xlcyI6WyJ0cmFpbmluZy1zZXJ2aWNlIl0s"
-    "InNlcnZpY2UiOiJ0cmFpbmluZy1zZXNzaW9uLXByZXZpZXctd29ya2VyIiwic3ViIjoidHJh"
-    "aW5pbmctc2Vzc2lvbi1wcmV2aWV3LXdvcmtlciJ9."
-    "eb4LoU20NsZEfH8VYjhl1xyOaa37bzzg7yC-D87Uu2g"
-)
 
 
 def _utc_now() -> str:
@@ -165,9 +158,13 @@ class DeployedResearchHarness:
         )
 
     def _source_ingest_headers(self) -> dict[str, str]:
-        if not self.source_controller_token:
+        if self.source_controller_token:
+            return {"Authorization": f"Bearer {self.source_controller_token}"}
+        try:
+            from tests.integration.l12.l12_owner_auth import bearer, human_token
+            return bearer(human_token("OPERATOR"))
+        except Exception:
             return {}
-        return {"Authorization": f"Bearer {self.source_controller_token}"}
 
     def _command(self, argv: Sequence[str]) -> str:
         completed = subprocess.run(
@@ -340,9 +337,11 @@ class DeployedResearchHarness:
         return record if isinstance(record, Mapping) else view
 
     def _training_headers(self) -> dict[str, str]:
-        token = os.getenv("PANTHEON_L12_TRAINING_TOKEN", LOCAL_TRAINING_WORKER_TOKEN).strip()
+        # The isolated harness passes the issuer-issued preview-worker principal;
+        # there is no published fixture token to fall back to.
+        token = os.getenv("PANTHEON_L12_TRAINING_TOKEN", "").strip()
         if not token:
-            raise RuntimeError("PANTHEON_L12_TRAINING_TOKEN is empty")
+            raise RuntimeError("PANTHEON_L12_TRAINING_TOKEN is unset or empty")
         return {
             "Authorization": token if token.startswith("Bearer ") else f"Bearer {token}",
             "X-Tenant-Id": self.tenant_id,
@@ -544,6 +543,7 @@ class DeployedResearchHarness:
                 ],
             },
         }
+        headers = self._source_ingest_headers()
         configured = self._at(
             "source.connector_command",
             lambda: self._http_json(
@@ -551,11 +551,11 @@ class DeployedResearchHarness:
                 "/api/source-ingest/connectors",
                 method="POST",
                 payload=connector_payload,
+                headers=headers,
                 expected=(201,),
             ),
         )
         self._require(isinstance(configured, Mapping), "connector command did not return an object")
-        headers = self._source_ingest_headers()
         job_result = self._at(
             "source.manual_pull_job",
             lambda: self._http_json(
